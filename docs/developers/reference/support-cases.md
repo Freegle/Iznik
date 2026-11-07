@@ -20,7 +20,7 @@ covers:
 # Support cases and the first pass
 
 When a moderator refers a chat to Support, a **support case** is opened. The AI helper then makes one
-bounded **first pass** over the member's data and the chat, and Support gets a mail that already holds
+bounded **first pass**, an investigation of the question the moderator is asking, using the member's data and the chat, and Support gets a mail that already holds
 the findings. This page is the whole flow across the Go API, the batch and ModTools. The helper's own
 part is in [ai-support-helper.md](ai-support-helper.md), under "First pass on a referral". For
 moderators, see [Refer a chat to Support](../../moderators/managing-members.md#refer-a-chat-to-support).
@@ -110,9 +110,8 @@ never runs out silently.
 
 ## Who sees what
 
-- **Support and Admin** see the case list, and the full case: the brief (summary, classification,
-  confidence, the six fact sections, anything unusual, what could not be found, the draft and its link
-  warnings, the pool state), the rating, the chat, and the thread. They can mark it Handled or reopen it.
+- **Support and Admin** see the case list, and the full case: the brief (question, answer, classification,
+  confidence, checks, open questions, related cases, the draft and its link warnings, the pool state), the rating, the chat, and the thread. They can mark it Handled or reopen it.
 - **The referring moderator** sees only their own case: its status, their reason, and the replies between
   them and Support. The Go API builds that view from an explicit struct and column list (`Get` in
   `iznik-server-go/supportcase/supportcase.go`), so the first pass is not in the response at all, not merely
@@ -133,14 +132,29 @@ never runs out silently.
 
 ## The brief
 
-The brief is JSON with a fixed shape and a version number (`BriefFormatter.php` turns it into the mail
-text; the helper builds it). Facts are always the same six sections in the same order. A section with
-nothing to say has an empty list and a note such as "not collected" or "not available", never silence.
-The draft cites the fact keys it used, and any key the code did not build is dropped.
+The brief is JSON with a fixed shape and a version number, currently 2 (`BriefFormatter.php` turns it into
+the mail text; the helper builds it). It holds:
 
-The **mailbox history** (past mail with support and info) is a stub. `MailboxHistory` is an interface and
-the bound implementation (`UnconfiguredMailboxHistory`) returns "not available: mailbox access is not set
-up yet". The brief and the mail say so in one line, so absence is never read as "no history".
+- the **question**, one sentence: what the moderator needs answered;
+- the **answer**, for a Support volunteer: the conclusion in one plain sentence, then a few bullets;
+- the **classification**: Bug, Usage, Suggestion, Incident or Other;
+- the **confidence**, High, Medium or Low, with one line of reason;
+- the **checks**: what was looked at, one line each;
+- up to three **open questions**, usually none;
+- the **related cases**: ids of recent cases that are the same problem;
+- the **draft** to the referring moderator, with any link warnings.
+
+The helper investigates the one question rather than listing what is known about the member, so there are
+no fixed fact sections. Version 1 was never deployed, so the code reads version 2 only.
+
+The request carries what the helper needs to place the case in time and among others. `source.referredAt`
+is when the case was opened, so logs are searched around then. `recentCases` is up to 20 cases from the
+last 14 days, not this one, each with its id, date, classification, question and the latest Support reply
+(cut to 600 characters). With these, one incident behind many referrals is answered once and the later
+cases point at the earlier ones.
+
+A pass takes about two minutes and a few thousand output tokens, most of the input coming from the prompt
+cache. Both are measured on real referrals.
 
 ## Replay, for evaluation
 

@@ -99,7 +99,7 @@ class SupportFirstPassCommand extends Command
                 'firstpass_error' => DB::raw("COALESCE(firstpass_error, '".FirstPassService::REASON_BUSY."')"),
             ]);
 
-        $stale = (int) $this->cfg('timeout', 330) + self::RUNNING_GRACE_SECONDS;
+        $stale = (int) $this->cfg('timeout', 510) + self::RUNNING_GRACE_SECONDS;
         DB::table('support_cases')->where('firstpass_status', 'Running')
             ->where('updated_at', '<', now()->subSeconds($stale))
             ->update(['firstpass_status' => 'Failed', 'firstpass_error' => FirstPassService::REASON_INTERRUPTED]);

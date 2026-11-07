@@ -70,7 +70,7 @@ class SupportFirstPassReplayCommand extends Command
                 'durationMs' => (int) ($usage['durationMs'] ?? 0),
                 'classification' => is_string($brief['classification'] ?? null) ? $brief['classification'] : null,
                 'confidence' => is_array($brief['confidence'] ?? null) && is_string($brief['confidence']['level'] ?? null) ? $brief['confidence']['level'] : null,
-                'couldNotFind' => is_array($brief['could_not_find'] ?? null) ? count($brief['could_not_find']) : 0,
+                'openQuestions' => is_array($brief['open_questions'] ?? null) ? count($brief['open_questions']) : 0,
             ];
         }
 
@@ -81,7 +81,7 @@ class SupportFirstPassReplayCommand extends Command
             'note' => 'The model saw today\'s data, not the data at the time of referral.',
             'stopped' => $stopped,
             'passes' => $passes,
-            'averages' => ['inputTokens' => $avg('inputTokens'), 'outputTokens' => $avg('outputTokens'), 'durationMs' => $avg('durationMs'), 'couldNotFind' => $avg('couldNotFind')],
+            'averages' => ['inputTokens' => $avg('inputTokens'), 'outputTokens' => $avg('outputTokens'), 'durationMs' => $avg('durationMs'), 'openQuestions' => $avg('openQuestions')],
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
         return $stopped === null ? self::SUCCESS : self::FAILURE;

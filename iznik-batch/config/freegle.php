@@ -1875,7 +1875,7 @@ return [
     | and shared secret are the UX helper's (freegle.ux.prompts). Off unless
     | SUPPORT_FIRST_PASS_ENABLED is 1 or true; while off, the referral mail goes out without a brief.
     |
-    | timeout: the helper's own deadline is 300 seconds (FIRST_PASS_DEADLINE_MS); this wait is 30 longer.
+    | timeout: the helper's own deadline is 480 seconds (FIRST_PASS_DEADLINE_MS); this wait is 30 longer.
     | per_referrer_per_day: model passes one moderator may use a day, so one person cannot spend the pool.
     | max_age_minutes: a case still waiting this long gets the plain mail and is never run late.
     | run_minutes: one support:first-pass run stops claiming new cases after this long.
@@ -1884,7 +1884,7 @@ return [
     'support' => [
         'first_pass' => [
             'enabled' => EnvSetting::flag(EnvSetting::env('SUPPORT_FIRST_PASS_ENABLED', false)),
-            'timeout' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_TIMEOUT', 330),
+            'timeout' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_TIMEOUT', 510),
             'per_referrer_per_day' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_PER_REFERRER_PER_DAY', 10),
             'max_age_minutes' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_MAX_AGE_MINUTES', 60),
             'run_minutes' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_RUN_MINUTES', 10),

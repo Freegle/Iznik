@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Http;
  * The batch side of the support case first pass: builds the helper request from a case row, calls
  * the helper once, and builds the referral mail.
  *
- * Facts are gathered by the helper from the member's user dump; this class only supplies the chat,
+ * The helper investigates the case itself; this class supplies the chat, recent cases,
  * its latest images and the mailbox history. It never sends anything to a member.
  */
 class FirstPassService
@@ -83,6 +83,7 @@ class FirstPassService
                 'chatid' => $case->chatid ? (int) $case->chatid : null,
                 'referrerid' => $case->referrerid ? (int) $case->referrerid : null,
                 'reason' => $case->reason !== null && $case->reason !== '' ? (string) $case->reason : null,
+                'referredAt' => $this->referredAt($case),
             ],
             'chat' => [
                 'id' => $chat ? (int) $chat->id : null,
@@ -93,7 +94,65 @@ class FirstPassService
             'images' => $images,
             'imagesSkipped' => $skipped,
             'mailHistory' => $this->mailbox->forMember($case->userid ? (int) $case->userid : null),
+            'recentCases' => $this->recentCases($case),
         ];
+    }
+
+    public const RECENT_CASE_LIMIT = 20;
+
+    public const RECENT_CASE_DAYS = 14;
+
+    public const SUPPORT_REPLY_CHARS = 600;
+
+    /** When the case was referred, UTC, as the helper searches logs around it. */
+    private function referredAt(object $case): ?string
+    {
+        if (empty($case->created_at)) {
+            return null;
+        }
+
+        return \Carbon\Carbon::parse($case->created_at, config('app.timezone'))->utc()->format('Y-m-d H:i:s');
+    }
+
+    /**
+     * Other support cases from the last two weeks that have a brief or a Support reply, newest
+     * first, so one incident behind many referrals is answered once.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function recentCases(object $case): array
+    {
+        $rows = DB::table('support_cases as c')
+            ->where('c.id', '!=', $case->id)
+            ->where('c.created_at', '>=', now()->subDays(self::RECENT_CASE_DAYS))
+            ->where(function ($q) {
+                $q->whereNotNull('c.brief')
+                    ->orWhereExists(function ($s) {
+                        $s->select(DB::raw(1))->from('support_case_messages as m')
+                            ->whereColumn('m.caseid', 'c.id')->where('m.role', 'Support');
+                    });
+            })
+            ->orderByDesc('c.id')
+            ->limit(self::RECENT_CASE_LIMIT)
+            ->get(['c.id', 'c.created_at', 'c.brief']);
+
+        $replies = $rows->isEmpty() ? collect() : DB::table('support_case_messages')
+            ->whereIn('caseid', $rows->pluck('id'))->where('role', 'Support')
+            ->orderBy('id')->get(['caseid', 'body'])->keyBy('caseid');
+
+        return $rows->map(function ($r) use ($replies) {
+            $brief = $r->brief ? json_decode((string) $r->brief, true) : null;
+            $brief = is_array($brief) ? $brief : [];
+            $reply = $replies->get($r->id);
+
+            return [
+                'id' => (int) $r->id,
+                'created' => \Carbon\Carbon::parse($r->created_at, config('app.timezone'))->utc()->format('Y-m-d H:i:s'),
+                'classification' => is_string($brief['classification'] ?? null) ? $brief['classification'] : '',
+                'question' => is_string($brief['question'] ?? null) ? $brief['question'] : '',
+                'supportReply' => $reply ? mb_substr((string) $reply->body, 0, self::SUPPORT_REPLY_CHARS) : '',
+            ];
+        })->all();
     }
 
     /**
@@ -238,7 +297,7 @@ class FirstPassService
         if ($secret === '') {
             throw new FirstPassFailure('NOT_SET_UP', self::REASON_NOT_SET_UP, false, true);
         }
-        $timeout ??= (int) config('freegle.support.first_pass.timeout', 330);
+        $timeout ??= (int) config('freegle.support.first_pass.timeout', 510);
         $url = rtrim((string) ($ux['helper_url'] ?? 'http://ai-support-helper:3000'), '/').'/internal/support-first-pass';
 
         try {
@@ -268,7 +327,7 @@ class FirstPassService
         }
 
         $json = $response->json();
-        if (! is_array($json) || ! is_array($json['brief'] ?? null) || ! is_string($json['brief']['summary'] ?? null)) {
+        if (! is_array($json) || ! is_array($json['brief'] ?? null) || ! is_string($json['brief']['answer'] ?? null)) {
             throw new FirstPassFailure('BAD_OUTPUT', self::REASON_FAILED, true, true);
         }
 

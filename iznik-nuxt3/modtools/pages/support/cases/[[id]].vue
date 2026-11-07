@@ -124,12 +124,14 @@
         </NoticeMessage>
 
         <div v-if="brief" data-testid="case-brief">
-          <h3>First pass</h3>
+          <h3 class="case-question" data-testid="case-question">
+            {{ brief.question }}
+          </h3>
           <!-- eslint-disable vue/no-v-html -->
           <div
             class="mb-2"
-            data-testid="case-summary"
-            v-html="renderMarkdown(brief.summary)"
+            data-testid="case-answer"
+            v-html="renderMarkdown(brief.answer)"
           />
           <!-- eslint-enable vue/no-v-html -->
           <p
@@ -142,50 +144,41 @@
           </p>
 
           <div
-            v-if="brief.unusual?.length"
+            v-if="brief.open_questions?.length"
             class="mb-3"
-            data-testid="case-unusual"
+            data-testid="case-openquestions"
           >
-            <h4>Unusual</h4>
+            <h4>Still open</h4>
             <ul>
-              <li v-for="(u, i) in brief.unusual" :key="'u' + i">{{ u }}</li>
-            </ul>
-          </div>
-          <div
-            v-if="brief.could_not_find?.length"
-            class="mb-3"
-            data-testid="case-couldnotfind"
-          >
-            <h4>Could not find</h4>
-            <ul>
-              <li v-for="(u, i) in brief.could_not_find" :key="'c' + i">
-                {{ u }}
+              <li v-for="(q, i) in brief.open_questions" :key="'q' + i">
+                {{ q }}
               </li>
             </ul>
           </div>
 
           <div
-            v-for="section in brief.facts || []"
-            :key="section.key"
-            class="fact mb-3"
-            :data-testid="'fact-' + section.key"
+            v-if="brief.related_cases?.length"
+            class="mb-3"
+            data-testid="case-related"
           >
-            <h4>{{ section.title }}</h4>
-            <ul v-if="section.lines?.length" class="mb-1">
-              <li v-for="(l, i) in section.lines" :key="i">{{ l }}</li>
+            <h4>Related cases</h4>
+            <ul class="list-inline">
+              <li
+                v-for="rid in brief.related_cases"
+                :key="'r' + rid"
+                class="list-inline-item"
+              >
+                <nuxt-link :to="'/support/cases/' + rid"
+                  >Case {{ rid }}</nuxt-link
+                >
+              </li>
             </ul>
-            <p v-if="section.note" class="small text-muted mb-1">
-              {{ section.note }}
-            </p>
           </div>
 
           <div v-if="brief.draft" class="draft mb-3" data-testid="case-draft">
             <h4>Draft reply to the referring volunteer</h4>
             <p class="small text-muted">
               Not sent. Check it before you use it.
-              <template v-if="brief.draft.facts_used?.length">
-                Based on: {{ factsUsedText }}.
-              </template>
             </p>
             <div class="draft__text" data-testid="draft-text">
               {{ brief.draft.text }}
@@ -218,6 +211,17 @@
               </b-button>
             </div>
           </div>
+
+          <details
+            v-if="brief.checks?.length"
+            class="mb-3"
+            data-testid="case-checks"
+          >
+            <summary>What was checked</summary>
+            <ul class="small mb-0">
+              <li v-for="(c, i) in brief.checks" :key="'c' + i">{{ c }}</li>
+            </ul>
+          </details>
 
           <p v-if="poolText" class="small text-muted" data-testid="case-pool">
             {{ poolText }}
@@ -361,16 +365,6 @@ const referredLine = computed(() => {
   if (c.member) line += ` about ${c.member.displayname} (#${c.member.id})`
   if (c.source) line += `, from a ${c.source}`
   return line + '.'
-})
-
-const factsUsedText = computed(() => {
-  const titles = {}
-  for (const section of brief.value?.facts || []) {
-    titles[section.key] = section.title
-  }
-  return (brief.value?.draft?.facts_used || [])
-    .map((k) => titles[k] || k)
-    .join(', ')
 })
 
 const poolText = computed(() => {

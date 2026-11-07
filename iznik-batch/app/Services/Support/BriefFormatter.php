@@ -3,7 +3,7 @@
 namespace App\Services\Support;
 
 /**
- * Turns a first pass brief (the fixed JSON shape, version 1) into plain text and markdown.
+ * Turns a first pass brief (the fixed JSON shape, version 2) into plain text and markdown.
  *
  * The brief came from a model, so every value is read defensively: a missing or oddly typed key
  * leaves its line out and never throws.
@@ -39,58 +39,74 @@ class BriefFormatter
         return 'AI credit pool at run time: '.$part($pool['fiveHour'] ?? null, '5-hour').', '.$part($pool['sevenDay'] ?? null, '7-day');
     }
 
+    /** Case ids from the brief's related_cases, as positive integers only. @return array<int, int> */
+    private static function caseIds(mixed $value): array
+    {
+        $out = [];
+        foreach (is_array($value) ? $value : [] as $v) {
+            if (is_numeric($v) && (int) $v > 0) {
+                $out[] = (int) $v;
+            }
+        }
+
+        return array_values(array_unique($out));
+    }
+
+    private static function caseLink(int $id): string
+    {
+        return rtrim((string) config('freegle.sites.mod'), '/')."/support/cases/{$id}";
+    }
+
     /**
-     * The whole first pass as plain text: summary and judgement first, then the six fact sections,
-     * then what is unusual, what could not be found, the draft and the pool.
+     * The first pass as plain text, in the order a reader needs it: the question, the answer, the
+     * classification and confidence, open questions, related cases, the draft and its link
+     * warnings, what was checked, then the pool line.
      *
      * @param  array<string, mixed>  $brief
      */
     public static function text(array $brief): string
     {
         $out = [];
-        $summary = self::str($brief['summary'] ?? '');
-        if ($summary !== '') {
-            $out[] = "Summary: {$summary}";
+        $question = self::str($brief['question'] ?? '');
+        if ($question !== '') {
+            $out[] = "The question: {$question}";
+        }
+        $answer = self::str($brief['answer'] ?? '');
+        if ($answer !== '') {
+            $out[] = '';
+            $out[] = $answer;
         }
         $class = self::str($brief['classification'] ?? '');
         $conf = is_array($brief['confidence'] ?? null) ? $brief['confidence'] : [];
         $level = self::str($conf['level'] ?? '');
         $reason = self::str($conf['reason'] ?? '');
+        $line = [];
         if ($class !== '') {
-            $out[] = "Classification: {$class}";
+            $line[] = "Classification: {$class}";
         }
         if ($level !== '') {
-            $out[] = "Confidence: {$level}".($reason !== '' ? " ({$reason})" : '');
+            $line[] = "Confidence: {$level}".($reason !== '' ? " ({$reason})" : '');
         }
-
-        foreach (is_array($brief['facts'] ?? null) ? $brief['facts'] : [] as $fact) {
-            if (! is_array($fact)) {
-                continue;
-            }
-            $title = self::str($fact['title'] ?? ($fact['key'] ?? ''));
-            if ($title === '') {
-                continue;
-            }
+        if ($line) {
             $out[] = '';
-            $out[] = $title;
-            $lines = self::strings($fact['lines'] ?? []);
-            foreach ($lines as $l) {
-                $out[] = "  - {$l}";
-            }
-            $note = self::str($fact['note'] ?? '');
-            if ($note !== '') {
-                $out[] = $lines ? "  ({$note})" : "  {$note}";
+            $out[] = implode('. ', $line);
+        }
+
+        $open = self::strings($brief['open_questions'] ?? []);
+        if ($open) {
+            $out[] = '';
+            $out[] = 'Open questions';
+            foreach ($open as $q) {
+                $out[] = "  - {$q}";
             }
         }
 
-        foreach (['unusual' => 'Anything unusual', 'could_not_find' => 'Could not find'] as $key => $title) {
-            $items = self::strings($brief[$key] ?? []);
-            if ($items) {
-                $out[] = '';
-                $out[] = $title;
-                foreach ($items as $i) {
-                    $out[] = "  - {$i}";
-                }
+        $related = self::caseIds($brief['related_cases'] ?? []);
+        if ($related) {
+            $out[] = '';
+            $out[] = 'Related cases';
+            foreach ($related as $id) {
+                $out[] = '  - '.self::caseLink($id);
             }
         }
 
@@ -98,7 +114,7 @@ class BriefFormatter
         $draftText = self::str($draft['text'] ?? '');
         if ($draftText !== '') {
             $out[] = '';
-            $out[] = 'Draft to the referring volunteer (not sent)';
+            $out[] = 'Draft to the referring volunteer, not sent';
             $out[] = $draftText;
             $warnings = self::strings($draft['link_warnings'] ?? []);
             if ($warnings) {
@@ -109,10 +125,19 @@ class BriefFormatter
             }
         }
 
+        $checks = self::strings($brief['checks'] ?? []);
+        if ($checks) {
+            $out[] = '';
+            $out[] = 'What was checked';
+            foreach ($checks as $c) {
+                $out[] = "  - {$c}";
+            }
+        }
+
         $out[] = '';
         $out[] = self::poolLine($brief['pool'] ?? null);
 
-        return implode("\n", $out);
+        return ltrim(implode("\n", $out), "\n");
     }
 
     /**
@@ -123,42 +148,42 @@ class BriefFormatter
     public static function markdown(array $brief): string
     {
         $out = [];
-        $summary = self::str($brief['summary'] ?? '');
-        if ($summary !== '') {
-            $out[] = $summary;
+        $question = self::str($brief['question'] ?? '');
+        if ($question !== '') {
+            $out[] = "**The question:** {$question}";
+        }
+        $answer = self::str($brief['answer'] ?? '');
+        if ($answer !== '') {
+            $out[] = $answer;
         }
         $class = self::str($brief['classification'] ?? '');
         $conf = is_array($brief['confidence'] ?? null) ? $brief['confidence'] : [];
         $level = self::str($conf['level'] ?? '');
+        $reason = self::str($conf['reason'] ?? '');
         if ($class !== '' || $level !== '') {
-            $out[] = '**Classification:** '.($class !== '' ? $class : 'not given').'. **Confidence:** '.($level !== '' ? $level : 'not given').'.';
+            $out[] = '**Classification:** '.($class !== '' ? $class : 'not given').'. **Confidence:** '.($level !== '' ? $level : 'not given').($reason !== '' ? " ({$reason})" : '').'.';
         }
-        foreach (is_array($brief['facts'] ?? null) ? $brief['facts'] : [] as $fact) {
-            if (! is_array($fact) || self::str($fact['title'] ?? '') === '') {
-                continue;
-            }
-            $out[] = '## '.self::str($fact['title']);
-            $lines = self::strings($fact['lines'] ?? []);
-            foreach ($lines as $l) {
-                $out[] = "- {$l}";
-            }
-            if (self::str($fact['note'] ?? '') !== '') {
-                $out[] = '_'.self::str($fact['note']).'_';
-            }
+        $open = self::strings($brief['open_questions'] ?? []);
+        if ($open) {
+            $out[] = "## Open questions\n\n".implode("\n", array_map(fn ($q) => "- {$q}", $open));
         }
-        foreach (['unusual' => 'Anything unusual', 'could_not_find' => 'Could not find'] as $key => $title) {
-            $items = self::strings($brief[$key] ?? []);
-            if ($items) {
-                $out[] = "## {$title}";
-                foreach ($items as $i) {
-                    $out[] = "- {$i}";
-                }
-            }
+        $related = self::caseIds($brief['related_cases'] ?? []);
+        if ($related) {
+            $out[] = "## Related cases\n\n".implode("\n", array_map(fn ($id) => '- ['."#{$id}".'](' . self::caseLink($id) . ')', $related));
         }
-        $draftText = self::str((is_array($brief['draft'] ?? null) ? $brief['draft'] : [])['text'] ?? '');
+        $draft = is_array($brief['draft'] ?? null) ? $brief['draft'] : [];
+        $draftText = self::str($draft['text'] ?? '');
         if ($draftText !== '') {
-            $out[] = '## Draft to the referring volunteer (not sent)';
+            $out[] = '## Draft to the referring volunteer, not sent';
             $out[] = $draftText;
+            $warnings = self::strings($draft['link_warnings'] ?? []);
+            if ($warnings) {
+                $out[] = "Check before sending:\n\n".implode("\n", array_map(fn ($w) => "- {$w}", $warnings));
+            }
+        }
+        $checks = self::strings($brief['checks'] ?? []);
+        if ($checks) {
+            $out[] = "## What was checked\n\n".implode("\n", array_map(fn ($c) => "- {$c}", $checks));
         }
 
         return implode("\n\n", $out);

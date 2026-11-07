@@ -24,7 +24,7 @@ function row(id, extra = {}) {
     referrer: { id: 4, displayname: 'Rae Referrer' },
     classification: 'Usage',
     confidence: 'High',
-    summary: 'Summary ' + id,
+    summary: 'Why does case ' + id + ' fail?',
     firstpass_status: 'Done',
     messages: 2,
     lastactivity: '2026-11-07T10:30:00Z',
@@ -88,7 +88,7 @@ describe('ModSupportCaseList', () => {
     expect(rows[0].text()).toContain('About Morgan Member')
     expect(rows[0].text()).toContain('Referred by Rae Referrer')
     expect(rows[0].text()).toContain('2 replies')
-    expect(rows[0].text()).toContain('Summary 2')
+    expect(rows[0].text()).toContain('Why does case 2 fail?')
     expect(rows[1].text()).toContain('1 reply.')
     expect(rows[1].text()).toContain('First pass: Pending')
     expect(rows[0].text()).not.toContain('First pass:')

@@ -692,11 +692,12 @@ services:
       # helper refuses every internal call.
       - UX_INTERNAL_SECRET=${UX_INTERNAL_SECRET:-}
       # The support first pass: a dedicated key for fetching a member's dump (never the partner's
-      # USERDUMP_API_KEY), the model it uses (falls back to SUPPORT_AI_MODEL), and the one deadline
-      # in milliseconds that covers the dump and the model together.
+      # USERDUMP_API_KEY), the model it uses (falls back to SUPPORT_AI_MODEL), and the limits on the
+      # investigation: one deadline in milliseconds over the whole pass, and a turn limit.
       - USERDUMP_INTERNAL_KEY=${USERDUMP_INTERNAL_KEY:-}
       - FIRST_PASS_MODEL=${FIRST_PASS_MODEL:-}
-      - FIRST_PASS_DEADLINE_MS=${FIRST_PASS_DEADLINE_MS:-300000}
+      - FIRST_PASS_DEADLINE_MS=${FIRST_PASS_DEADLINE_MS:-480000}
+      - FIRST_PASS_MAX_TURNS=${FIRST_PASS_MAX_TURNS:-30}
     volumes:
       # Session mode (testing) ONLY: mount JUST the Claude OAuth credential read-only,
       # NOT the whole ~/.claude (which holds memory/transcripts/project notes). This

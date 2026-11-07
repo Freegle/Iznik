@@ -258,7 +258,7 @@ func List(c *fiber.Ctx) error {
 			"c.referrerid, " + nameOf("ru") + " AS referrername, " +
 			"IF(JSON_VALID(c.brief), JSON_UNQUOTE(JSON_EXTRACT(c.brief, '$.classification')), NULL) AS classification, " +
 			"IF(JSON_VALID(c.brief), JSON_UNQUOTE(JSON_EXTRACT(c.brief, '$.confidence.level')), NULL) AS confidence, " +
-			fmt.Sprintf("IF(JSON_VALID(c.brief), LEFT(JSON_UNQUOTE(JSON_EXTRACT(c.brief, '$.summary')), %d), NULL) AS summary, ", summaryChars) +
+			fmt.Sprintf("IF(JSON_VALID(c.brief), LEFT(JSON_UNQUOTE(JSON_EXTRACT(c.brief, '$.question')), %d), NULL) AS summary, ", summaryChars) +
 			"c.firstpass_status AS firstpass_state, " +
 			"(SELECT COUNT(*) FROM support_case_messages sm WHERE sm.caseid = c.id) AS messages, " +
 			"COALESCE((SELECT MAX(sm2.created_at) FROM support_case_messages sm2 WHERE sm2.caseid = c.id), c.updated_at) AS lastactivity").

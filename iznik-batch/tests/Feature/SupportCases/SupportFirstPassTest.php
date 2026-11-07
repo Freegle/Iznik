@@ -88,19 +88,15 @@ class SupportFirstPassTest extends TestCase
         });
     }
 
-    private function okBody(string $summary = 'The member could not find the item.'): array
+    private function okBody(string $answer = 'The member could not find the item.'): array
     {
-        $facts = [];
-        foreach (['member' => 'Member', 'posts_and_chats' => 'Recent posts and chats', 'bans_and_merges' => 'Bans and merges', 'device' => 'Device and app version', 'errors' => 'Recent errors', 'mail_history' => 'Past mail with support and info'] as $k => $t) {
-            $facts[] = ['key' => $k, 'title' => $t, 'lines' => $k === 'member' ? ['Joined last year & active'] : [], 'note' => $k === 'member' ? null : 'not collected'];
-        }
-
         return [
             'brief' => [
-                'version' => 1, 'summary' => $summary, 'classification' => 'Usage',
-                'confidence' => ['level' => 'High', 'reason' => 'Clear chat'], 'facts' => $facts,
-                'unusual' => ['Two accounts share a phone'], 'could_not_find' => ['App version'],
-                'draft' => ['to' => 'referrer', 'text' => 'Please tell them to tap Mark as taken.', 'facts_used' => ['member'], 'link_warnings' => ['https://example.invalid/x is not a Freegle page']],
+                'version' => 2, 'question' => 'Why can the member not collect the item?', 'answer' => $answer,
+                'classification' => 'Usage', 'confidence' => ['level' => 'High', 'reason' => 'Clear chat'],
+                'checks' => ['Read the chat & the post', 'Looked at the app logs'],
+                'open_questions' => ['Which phone is it?'], 'related_cases' => [4242],
+                'draft' => ['to' => 'referrer', 'text' => 'Please tell them to tap Mark as taken.', 'link_warnings' => ['https://example.invalid/x is not a Freegle page']],
                 'images' => ['sent' => 0, 'skipped' => 0],
             ],
             'usage' => ['inputTokens' => 1200, 'outputTokens' => 300, 'cacheCreation' => 10, 'cacheRead' => 20, 'durationMs' => 4500],
@@ -169,7 +165,7 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame('Done', $case->firstpass_status);
         $this->assertNull($case->firstpass_error);
         $brief = json_decode($case->brief, true);
-        $this->assertSame('The member could not find the item.', $brief['summary']);
+        $this->assertSame('The member could not find the item.', $brief['answer']);
         $this->assertEquals(['fiveHour' => 41.5, 'sevenDay' => 12.0], $brief['pool']);
 
         $run = DB::table('support_ai_runs')->find($case->firstpass_runid);
@@ -185,7 +181,9 @@ class SupportFirstPassTest extends TestCase
         $this->assertEquals(41.5, (float) $run->quota_5h_after);
         $this->assertEquals(40, (float) $run->quota_5h_before);
         $this->assertStringContainsString('The member could not find the item.', $run->analysis);
-        $this->assertStringContainsString('## Member', $run->analysis);
+        $this->assertStringContainsString('**The question:** Why can the member not collect the item?', $run->analysis);
+        $this->assertStringContainsString('## What was checked', $run->analysis);
+        $this->assertStringNotContainsString('## Member', $run->analysis);
 
         $this->assertSame(1, $this->mailsFor($c['case']));
         $mail = $this->sentMail($c['case']);
@@ -197,14 +195,20 @@ class SupportFirstPassTest extends TestCase
         $site = config('freegle.sites.mod');
         $this->assertStringContainsString("Support case #{$c['case']}", $text);
         $this->assertStringContainsString('The moderator asked: Member says they cannot collect', $text);
-        $this->assertStringContainsString('Summary: The member could not find the item.', $text);
-        $this->assertStringContainsString('Classification: Usage', $text);
-        $this->assertStringContainsString('Confidence: High (Clear chat)', $text);
-        $this->assertStringContainsString('Joined last year & active', $text, 'plain text is not HTML escaped');
-        $this->assertStringContainsString('Two accounts share a phone', $text);
-        $this->assertStringContainsString('Could not find', $text);
-        $this->assertStringContainsString('Draft to the referring volunteer (not sent)', $text);
+        $this->assertStringContainsString('The question: Why can the member not collect the item?', $text);
+        $this->assertStringContainsString('The member could not find the item.', $text);
+        $this->assertStringContainsString('Classification: Usage. Confidence: High (Clear chat)', $text);
+        $this->assertStringContainsString('Which phone is it?', $text);
+        $this->assertStringContainsString("{$site}/support/cases/4242", $text);
+        $this->assertStringContainsString('Draft to the referring volunteer, not sent', $text);
         $this->assertStringContainsString('Check before sending', $text);
+        $this->assertStringContainsString('What was checked', $text);
+        $this->assertStringContainsString('Read the chat & the post', $text, 'plain text is not HTML escaped');
+        foreach (['Summary:', 'Anything unusual', 'Could not find', 'Recent posts and chats', 'Bans and merges'] as $gone) {
+            $this->assertStringNotContainsString($gone, $text);
+        }
+        $this->assertLessThan(strpos($text, 'Draft to the referring'), strpos($text, 'The question:'));
+        $this->assertLessThan(strpos($text, 'What was checked'), strpos($text, 'Draft to the referring'));
         $this->assertStringContainsString('5-hour 42% used', $text);
         $this->assertStringContainsString("{$site}/support/cases/{$c['case']}", $text);
         $this->assertStringContainsString("{$site}/support/refer/{$c['chat']}", $text);
@@ -253,7 +257,7 @@ class SupportFirstPassTest extends TestCase
         $body = $req->data();
         $this->assertSame($c['case'], $body['caseid']);
         $this->assertSame($c['member']->id, $body['memberid']);
-        $this->assertSame(['kind' => 'referral', 'chatid' => $c['chat'], 'referrerid' => $c['referrer']->id, 'reason' => 'Help'], $body['source']);
+        $this->assertSame(['kind' => 'referral', 'chatid' => $c['chat'], 'referrerid' => $c['referrer']->id, 'reason' => 'Help', 'referredAt' => \Carbon\Carbon::parse(DB::table('support_cases')->where('id', $c['case'])->value('created_at'))->utc()->format('Y-m-d H:i:s')], $body['source']);
         $this->assertSame('User2User', $body['chat']['type']);
         $this->assertSame($c['group']->id, $body['chat']['group']['id']);
 
@@ -280,6 +284,39 @@ class SupportFirstPassTest extends TestCase
         $this->assertFalse($body['mailHistory']['available']);
         $this->assertSame(UnconfiguredMailboxHistory::REASON, $body['mailHistory']['reason']);
         $this->assertSame([], $body['mailHistory']['entries']);
+    }
+
+    public function test_the_helper_request_carries_the_referral_time_and_only_other_recent_cases(): void
+    {
+        Mail::fake();
+        $other = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 2, 'question' => 'Why did uploads fail?', 'classification' => 'Incident', 'answer' => 'x']), 'created_at' => now()->subDays(2)]);
+        $replied = $this->makeCase(['created_at' => now()->subDays(1)]);
+        DB::table('support_case_messages')->insert(['caseid' => $replied['case'], 'userid' => $replied['referrer']->id, 'role' => 'Referrer', 'body' => 'Referrer chat']);
+        DB::table('support_case_messages')->insert(['caseid' => $replied['case'], 'userid' => $replied['referrer']->id, 'role' => 'Support', 'body' => 'First reply']);
+        DB::table('support_case_messages')->insert(['caseid' => $replied['case'], 'userid' => $replied['referrer']->id, 'role' => 'Support', 'body' => str_repeat('L', 900)]);
+        $old = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 2, 'answer' => 'old']), 'created_at' => now()->subDays(15)]);
+        $bare = $this->makeCase(['created_at' => now()->subDays(1)]);
+        $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 2, 'answer' => 'this']), 'mailed_at' => now(), 'created_at' => now()->subHour()]);
+        $c = $this->makeCase(['created_at' => '2026-11-07 09:30:15']);
+        // Only this case is pending to the helper; the others are already done or left pending, so run the service directly.
+        $case = DB::table('support_cases')->where('id', $c['case'])->first();
+        $req = app(\App\Services\Support\FirstPassService::class)->buildRequest($case);
+
+        $this->assertSame('2026-11-07 09:30:15', $req['source']['referredAt']);
+        $ids = array_column($req['recentCases'], 'id');
+        $this->assertNotContains($c['case'], $ids);
+        $this->assertNotContains($old['case'], $ids, 'older than 14 days');
+        $this->assertNotContains($bare['case'], $ids, 'no brief and no Support reply');
+        $this->assertContains($other['case'], $ids);
+        $this->assertContains($replied['case'], $ids);
+        $this->assertSame($ids, array_values(array_reverse(collect($ids)->sort()->values()->all())), 'newest first');
+        $byId = collect($req['recentCases'])->keyBy('id');
+        $this->assertSame('Why did uploads fail?', $byId[$other['case']]['question']);
+        $this->assertSame('Incident', $byId[$other['case']]['classification']);
+        $this->assertSame('', $byId[$other['case']]['supportReply']);
+        $this->assertSame(str_repeat('L', 600), $byId[$replied['case']]['supportReply'], 'the latest Support reply, cut to 600');
+        $this->assertSame('', $byId[$replied['case']]['question']);
+        $this->assertMatchesRegularExpression('/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/', $byId[$other['case']]['created']);
     }
 
     public function test_images_that_are_too_big_or_not_images_are_skipped_and_at_most_five_are_fetched(): void
@@ -604,7 +641,7 @@ class SupportFirstPassTest extends TestCase
     public function test_a_case_already_marked_mailed_is_not_mailed_again(): void
     {
         Mail::fake();
-        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['summary' => 's']), 'mailed_at' => now()]);
+        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['answer' => 's']), 'mailed_at' => now()]);
 
         $this->runPass();
 
@@ -614,12 +651,12 @@ class SupportFirstPassTest extends TestCase
     public function test_a_finished_case_that_missed_its_mail_is_mailed_by_the_next_run(): void
     {
         Mail::fake();
-        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 1, 'summary' => 'Left over summary'])]);
+        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 2, 'answer' => 'Left over answer'])]);
 
         $this->runPass();
 
         $this->assertSame(1, $this->mailsFor($c['case']));
-        $this->assertStringContainsString('Left over summary', $this->bodyOf($this->sentMail($c['case'])));
+        $this->assertStringContainsString('Left over answer', $this->bodyOf($this->sentMail($c['case'])));
         $this->assertCount(0, $this->helperRequests);
     }
 
@@ -740,7 +777,7 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame($a->brief, $b->brief);
         $this->assertSame($a->firstpass_runid, $b->firstpass_runid);
         $this->assertSame(1, $this->mailsFor($second['case']));
-        $this->assertStringContainsString('Summary: The member could not find the item.', $this->bodyOf($this->sentMail($second['case'])));
+        $this->assertStringContainsString('The question: Why can the member not collect the item?', $this->bodyOf($this->sentMail($second['case'])));
         $this->assertSame(1, DB::table('support_ai_runs')->where('kind', 'FirstPass')->where('userid', $first['member']->id)->count());
     }
 
@@ -824,7 +861,7 @@ class SupportFirstPassTest extends TestCase
     public function test_the_mail_is_built_before_it_is_claimed_so_a_failure_building_it_leaves_it_to_the_next_run(): void
     {
         Mail::fake();
-        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 1, 'summary' => 'S'])]);
+        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 2, 'answer' => 'S'])]);
         $broken = new class(app(MailboxHistory::class)) extends FirstPassService {
             public function referralMail(object $case, ?array $brief, ?string $skipReason): ReferToSupportMail
             {
@@ -844,7 +881,7 @@ class SupportFirstPassTest extends TestCase
     public function test_a_failure_spooling_puts_the_claim_back(): void
     {
         Mail::fake();
-        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 1, 'summary' => 'S'])]);
+        $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 2, 'answer' => 'S'])]);
         $spooler = \Mockery::mock(\App\Services\EmailSpoolerService::class);
         $spooler->shouldReceive('spool')->andThrow(new \RuntimeException('spool down'));
         $this->app->instance(\App\Services\EmailSpoolerService::class, $spooler);
@@ -875,13 +912,16 @@ class SupportFirstPassTest extends TestCase
 
     public function test_a_malformed_brief_is_formatted_without_throwing(): void
     {
-        $odd = ['summary' => [1], 'facts' => ['junk', ['title' => 'Member', 'lines' => 'not a list', 'note' => 'not collected'], ['key' => '']], 'unusual' => 'x', 'draft' => 'y', 'pool' => 'z'];
+        $odd = ['question' => [1], 'answer' => 'Short answer', 'checks' => 'not a list', 'open_questions' => ['', [1]], 'related_cases' => ['x', -3, 7, 7], 'draft' => 'y', 'pool' => 'z'];
 
         $text = \App\Services\Support\BriefFormatter::text($odd);
 
-        $this->assertStringContainsString("Member\n  not collected", $text);
+        $this->assertStringContainsString('Short answer', $text);
+        $this->assertStringContainsString('/support/cases/7', $text);
+        $this->assertSame(1, substr_count($text, '/support/cases/'));
+        $this->assertStringNotContainsString('What was checked', $text);
         $this->assertStringContainsString('AI credit pool: not known', $text);
-        $this->assertSame("## Member\n\n_not collected_", \App\Services\Support\BriefFormatter::markdown($odd));
+        $this->assertStringStartsWith('Short answer', \App\Services\Support\BriefFormatter::markdown($odd));
         $this->assertSame('AI credit pool at run time: 5-hour not known, 7-day 3% used', \App\Services\Support\BriefFormatter::poolLine(['sevenDay' => 3.2]));
     }
 
@@ -933,7 +973,7 @@ class SupportFirstPassTest extends TestCase
     public function test_a_support_message_notifies_the_referrer_only_and_carries_no_brief(): void
     {
         Mail::fake();
-        $this->caseForMessages = $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['summary' => 'SECRET BRIEF TEXT'])]);
+        $this->caseForMessages = $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['answer' => 'SECRET BRIEF TEXT'])]);
         $supporter = $this->createTestUser(['fullname' => 'Sam Support', 'systemrole' => 'Support']);
         $msg = $this->message('Support', $supporter, 'Try asking them to refresh the app.');
 
@@ -1017,11 +1057,11 @@ class SupportFirstPassTest extends TestCase
 
     public function test_the_purge_deletes_old_handled_cases_and_clears_old_briefs(): void
     {
-        $oldHandled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'handled_at' => DB::raw('NOW() - INTERVAL 30 month')]);
+        $oldHandled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'handled_at' => DB::raw('NOW() - INTERVAL 30 month')]);
         DB::table('support_case_messages')->insert(['caseid' => $oldHandled['case'], 'userid' => $oldHandled['referrer']->id, 'role' => 'Referrer', 'body' => 'hi']);
-        $recentHandled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 18 month'), 'handled_at' => DB::raw('NOW() - INTERVAL 20 day')]);
-        $oldOpen = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 3 YEAR')]);
-        $fresh = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}']);
+        $recentHandled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 18 month'), 'handled_at' => DB::raw('NOW() - INTERVAL 20 day')]);
+        $oldOpen = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 3 YEAR')]);
+        $fresh = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}']);
 
         $this->artisan('support:purge-cases')->assertSuccessful();
 
@@ -1055,7 +1095,7 @@ class SupportFirstPassTest extends TestCase
         $talked = $this->makeCase(['created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'updated_at' => DB::raw('NOW() - INTERVAL 30 month')]);
         DB::table('support_case_messages')->insert(['caseid' => $talked['case'], 'userid' => $talked['referrer']->id, 'role' => 'Referrer', 'body' => 'still here']);
 
-        $briefed = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 14 month'), 'updated_at' => DB::raw('NOW() - INTERVAL 40 day')]);
+        $briefed = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 14 month'), 'updated_at' => DB::raw('NOW() - INTERVAL 40 day')]);
         $before = DB::table('support_cases')->where('id', $briefed['case'])->value('updated_at');
 
         $this->artisan('support:purge-cases')->assertSuccessful();
@@ -1082,7 +1122,7 @@ class SupportFirstPassTest extends TestCase
     public function test_replay_refuses_while_a_case_is_pending_or_running_and_writes_nothing(): void
     {
         Mail::fake();
-        $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}']);
+        $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}']);
         $pending = $this->makeCase();
 
         $this->artisan('support:first-pass-replay')->assertFailed();
@@ -1096,8 +1136,8 @@ class SupportFirstPassTest extends TestCase
     public function test_replay_runs_one_at_a_time_reports_ids_only_and_writes_nothing(): void
     {
         Mail::fake();
-        $a = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'mailed_at' => now()]);
-        $b = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'mailed_at' => now()]);
+        $a = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'mailed_at' => now()]);
+        $b = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'mailed_at' => now()]);
         $runsBefore = DB::table('support_ai_runs')->count();
         $casesBefore = DB::table('support_cases')->orderBy('id')->get()->map(fn ($r) => (array) $r)->all();
 
@@ -1112,7 +1152,7 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame(4500, $report['passes'][0]['durationMs']);
         $this->assertSame('Usage', $report['passes'][0]['classification']);
         $this->assertSame('High', $report['passes'][0]['confidence']);
-        $this->assertSame(1, $report['passes'][0]['couldNotFind']);
+        $this->assertSame(1, $report['passes'][0]['openQuestions']);
         $this->assertSame(1200.0, (float) $report['averages']['inputTokens']);
         $this->assertStringContainsString("today's data", $report['note']);
         $this->assertStringNotContainsString('The member could not find', json_encode($report));
@@ -1134,8 +1174,8 @@ class SupportFirstPassTest extends TestCase
     public function test_replay_stops_if_a_real_case_appears_and_reports_a_failed_pass_by_reason(): void
     {
         Mail::fake();
-        $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'mailed_at' => now()]);
-        $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'mailed_at' => now()]);
+        $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'mailed_at' => now()]);
+        $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'mailed_at' => now()]);
         $this->helper = ['status' => 502, 'body' => ['error' => 'x', 'code' => 'CREDIT'], 'throw' => null];
         $this->onHelperCall = fn () => $this->makeCase();
 
@@ -1155,7 +1195,7 @@ class SupportFirstPassTest extends TestCase
     {
         Mail::fake();
         for ($i = 0; $i < 22; $i++) {
-            $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"summary":"x"}', 'mailed_at' => now()]);
+            $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'mailed_at' => now()]);
         }
 
         $this->artisan('support:first-pass-replay', ['--limit' => 50])->assertSuccessful();
@@ -1197,7 +1237,7 @@ class SupportFirstPassTest extends TestCase
 
         $blank = $read(array_fill_keys($names, ''));
         $this->assertFalse($blank['enabled']);
-        $this->assertSame(330, $blank['timeout']);
+        $this->assertSame(510, $blank['timeout']);
         $this->assertSame(10, $blank['per_referrer_per_day']);
         $this->assertSame(60, $blank['max_age_minutes']);
         $this->assertSame(10, $blank['run_minutes']);

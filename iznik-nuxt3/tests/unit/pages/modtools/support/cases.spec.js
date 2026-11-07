@@ -57,20 +57,6 @@ vi.mock('#imports', async () => {
   }
 })
 
-const facts = [
-  'member',
-  'posts_and_chats',
-  'bans_and_merges',
-  'device',
-  'errors',
-  'mail_history',
-].map((key) => ({
-  key,
-  title: 'Title ' + key,
-  lines: ['line of ' + key],
-  note: key === 'mail_history' ? 'not available' : undefined,
-}))
-
 function messages() {
   return [
     {
@@ -101,17 +87,17 @@ function supportCase(extra = {}) {
     firstpass_error: null,
     firstpass_runid: 55,
     brief: {
-      version: 1,
-      summary: 'A short summary',
+      version: 2,
+      question: 'Why does the photo upload fail?',
+      answer: 'An old browser is blocking uploads.',
       classification: 'Bug',
       confidence: { level: 'High', reason: 'Clear errors' },
-      facts,
-      unusual: ['Odd thing'],
-      could_not_find: ['Missing thing'],
+      checks: ['Looked at the upload errors', 'Checked the browser version'],
+      open_questions: ['Which phone do they use?'],
+      related_cases: [3, 5],
       draft: {
         to: 'referrer',
         text: 'Hello Rae, try this.',
-        facts_used: ['member'],
         link_warnings: ['https://example.invalid/x is not a Freegle page'],
       },
       pool: { fiveHour: 12, sevenDay: 30 },
@@ -139,6 +125,10 @@ function referrerCase(extra = {}) {
 
 const stubs = {
   NoticeMessage: { template: '<div class="notice"><slot /></div>' },
+  'nuxt-link': {
+    template: '<a class="nl" :href="to"><slot /></a>',
+    props: ['to'],
+  },
   'b-badge': { template: '<span class="badge"><slot /></span>' },
   'b-spinner': { template: '<span class="spinner" />' },
   'b-button': {
@@ -191,7 +181,7 @@ describe('support/cases/[[id]].vue', () => {
       mockFetchCase.mockResolvedValue(supportCase())
     })
 
-    it('shows the header, the first pass and the six fact sections', async () => {
+    it('shows the header, the question, the answer and the supporting parts', async () => {
       const wrapper = mountPage()
       await flushPromises()
 
@@ -202,26 +192,27 @@ describe('support/cases/[[id]].vue', () => {
       expect(wrapper.find('[data-testid="case-classification"]').text()).toBe(
         'Bug'
       )
-      expect(wrapper.find('[data-testid="case-summary"]').html()).toContain(
-        'A short summary'
+      expect(wrapper.find('[data-testid="case-question"]').text()).toBe(
+        'Why does the photo upload fail?'
+      )
+      expect(wrapper.find('[data-testid="case-answer"]').html()).toContain(
+        'An old browser is blocking uploads.'
       )
       expect(wrapper.find('[data-testid="case-confidence"]').text()).toContain(
         'High'
       )
-      expect(wrapper.find('[data-testid="case-unusual"]').text()).toContain(
-        'Odd thing'
-      )
       expect(
-        wrapper.find('[data-testid="case-couldnotfind"]').text()
-      ).toContain('Missing thing')
-      for (const f of facts) {
-        expect(wrapper.find(`[data-testid="fact-${f.key}"]`).text()).toContain(
-          'line of ' + f.key
-        )
-      }
-      expect(
-        wrapper.find('[data-testid="fact-mail_history"]').text()
-      ).toContain('not available')
+        wrapper.find('[data-testid="case-openquestions"]').text()
+      ).toContain('Which phone do they use?')
+      const related = wrapper.findAll('[data-testid="case-related"] a')
+      expect(related.map((l) => l.attributes('href'))).toEqual([
+        '/support/cases/3',
+        '/support/cases/5',
+      ])
+      const checks = wrapper.find('[data-testid="case-checks"]')
+      expect(checks.element.tagName).toBe('DETAILS')
+      expect(checks.text()).toContain('What was checked')
+      expect(checks.text()).toContain('Checked the browser version')
       expect(wrapper.find('[data-testid="case-pool"]').text()).toContain('12%')
       expect(wrapper.find('[data-testid="case-tokens"]').text()).toContain(
         '4.0k tokens'
@@ -232,29 +223,31 @@ describe('support/cases/[[id]].vue', () => {
       ).toContain('not a Freegle page')
     })
 
-    it('sanitises model text before rendering it as html', async () => {
+    it('sanitises the answer before rendering it as html', async () => {
       mockFetchCase.mockResolvedValue(
         supportCase({
           brief: {
             ...supportCase().brief,
-            summary:
+            answer:
               'Safe <script>alert(1)</script><img src=x onerror=alert(1)>',
           },
         })
       )
       const wrapper = mountPage()
       await flushPromises()
-      const html = wrapper.find('[data-testid="case-summary"]').html()
+      const html = wrapper.find('[data-testid="case-answer"]').html()
       expect(html).toContain('Safe')
       expect(html).not.toContain('<script')
       expect(html).not.toContain('onerror')
     })
 
-    it('sanitises the summary with the real sanitiser and the draft is plain text', async () => {
+    it('sanitises the answer with the real sanitiser and the draft is plain text', async () => {
       mockFetchCase.mockResolvedValue(
         supportCase({
           brief: {
             ...supportCase().brief,
+            answer:
+              'Fine <script>alert(1)</script><img src=x onerror=alert(1)>',
             draft: {
               ...supportCase().brief.draft,
               text: 'Hi <script>alert(1)</script> there',
@@ -264,18 +257,50 @@ describe('support/cases/[[id]].vue', () => {
       )
       const wrapper = mountPage()
       await flushPromises()
+      const answer = wrapper.find('[data-testid="case-answer"]')
+      expect(answer.element.querySelector('script')).toBeNull()
+      expect(answer.html()).not.toContain('onerror')
       const draft = wrapper.find('[data-testid="draft-text"]')
       expect(draft.element.querySelector('script')).toBeNull()
       expect(draft.text()).toContain('Hi <script>')
       expect(draft.element.tagName).toBe('DIV')
     })
 
-    it('names the facts the draft used by their section titles', async () => {
+    it('renders no version 1 sections', async () => {
       const wrapper = mountPage()
       await flushPromises()
-      const text = wrapper.find('[data-testid="case-draft"]').text()
-      expect(text).toContain('Based on: Title member.')
-      expect(text).not.toContain('Based on: member')
+      const text = wrapper.text()
+      expect(text).not.toContain('Unusual')
+      expect(text).not.toContain('Could not find')
+      expect(text).not.toContain('Based on')
+      expect(text).not.toContain('First pass')
+      expect(wrapper.find('[data-testid="case-unusual"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="case-summary"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid^="fact-"]').exists()).toBe(false)
+    })
+
+    it('shows the classification Other and omits empty optional parts', async () => {
+      mockFetchCase.mockResolvedValue(
+        supportCase({
+          brief: {
+            ...supportCase().brief,
+            classification: 'Other',
+            open_questions: [],
+            related_cases: [],
+            checks: [],
+          },
+        })
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+      expect(wrapper.find('[data-testid="case-classification"]').text()).toBe(
+        'Other'
+      )
+      expect(wrapper.find('[data-testid="case-openquestions"]').exists()).toBe(
+        false
+      )
+      expect(wrapper.find('[data-testid="case-related"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="case-checks"]').exists()).toBe(false)
     })
 
     it('reads the header as one sentence with single spaces', async () => {
@@ -534,7 +559,9 @@ describe('support/cases/[[id]].vue', () => {
       )
       expect(wrapper.find('[data-testid="case-handle"]').exists()).toBe(false)
       expect(wrapper.find('.rating').exists()).toBe(false)
-      expect(wrapper.text()).not.toContain('A short summary')
+      expect(wrapper.text()).not.toContain(
+        'An old browser is blocking uploads.'
+      )
       expect(wrapper.text()).not.toContain('secret reason')
       expect(wrapper.text()).not.toContain('Morgan Member')
       expect(mockFetchRun).not.toHaveBeenCalled()

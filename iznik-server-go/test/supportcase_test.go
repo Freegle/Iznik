@@ -320,7 +320,7 @@ func TestSupportCaseReferrerViewLacksFirstPass(t *testing.T) {
 	supportID, sToken2 := scSupport(t, "scview_s2")
 	_ = sToken2
 	database.DBConn.Exec("UPDATE support_cases SET brief = ?, firstpass_error = 'SECRET-ERROR', firstpass_runid = NULL, handledby = ?, handled_at = NOW(), firstpass_status = 'Done' WHERE id = ?",
-		`{"version":1,"summary":"SECRET-SUMMARY","classification":"Bug","confidence":{"level":"High","reason":"x"}}`, supportID, caseid)
+		`{"version":2,"question":"SECRET-SUMMARY","classification":"Bug","confidence":{"level":"High","reason":"x"}}`, supportID, caseid)
 	status, _ := scCall(t, "POST", fmt.Sprintf("/api/supportcases/%d/messages", caseid), sToken, map[string]interface{}{"body": "Support says hello", "draftused": "Unchanged"})
 	assert.Equal(t, 200, status)
 
@@ -411,7 +411,7 @@ func TestSupportCaseSupportListGetPatch(t *testing.T) {
 
 	long := strings.Repeat("a", 300)
 	database.DBConn.Exec("UPDATE support_cases SET brief = ?, firstpass_status = 'Done' WHERE id = ?",
-		fmt.Sprintf(`{"version":1,"summary":"%s","classification":"Usage","confidence":{"level":"Medium","reason":"r"}}`, long), caseid)
+		fmt.Sprintf(`{"version":2,"question":"%s","classification":"Usage","confidence":{"level":"Medium","reason":"r"}}`, long), caseid)
 	status, _ := scCall(t, "POST", fmt.Sprintf("/api/supportcases/%d/messages", caseid), w.modToken, map[string]interface{}{"body": "ping"})
 	assert.Equal(t, 200, status)
 
@@ -426,7 +426,7 @@ func TestSupportCaseSupportListGetPatch(t *testing.T) {
 	assert.Equal(t, float64(w.chat), row["chatid"])
 	assert.Equal(t, "Usage", row["classification"])
 	assert.Equal(t, "Medium", row["confidence"])
-	assert.Equal(t, 200, len(row["summary"].(string)))
+	assert.Equal(t, strings.Repeat("a", 200), row["summary"])
 	assert.Equal(t, "Done", row["firstpass_status"])
 	assert.Equal(t, float64(1), row["messages"])
 	assert.Equal(t, float64(w.member), row["member"].(map[string]interface{})["id"])
