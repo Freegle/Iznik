@@ -49,16 +49,7 @@
           </b-badge>
         </div>
         <p class="small text-muted">
-          Referred {{ timeago(item.created) }}
-          <template v-if="item.referrer"
-            >by {{ item.referrer.displayname }}</template
-          >
-          <template v-if="item.member"
-            >about {{ item.member.displayname }} (#{{
-              item.member.id
-            }})</template
-          ><template v-if="item.source">, from a {{ item.source }}</template
-          >.
+          {{ referredLine }}
           <template v-if="item.handledby">
             Handled by {{ item.handledby.displayname }}
             <template v-if="item.handled_at">
@@ -359,6 +350,18 @@ const chatReady = ref(false)
 const pov = ref(0)
 
 const brief = computed(() => (item.value ? item.value.brief : null) || null)
+
+// "Referred 5 minutes ago by A about B (#1), from a Referral." Built here rather than in the
+// template, where the formatter's line breaks decide the spacing between the parts.
+const referredLine = computed(() => {
+  const c = item.value
+  if (!c) return ''
+  let line = `Referred ${timeago(c.created)}`
+  if (c.referrer) line += ` by ${c.referrer.displayname}`
+  if (c.member) line += ` about ${c.member.displayname} (#${c.member.id})`
+  if (c.source) line += `, from a ${c.source}`
+  return line + '.'
+})
 
 const factsUsedText = computed(() => {
   const titles = {}

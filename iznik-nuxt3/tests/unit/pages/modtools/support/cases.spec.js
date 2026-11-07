@@ -278,12 +278,13 @@ describe('support/cases/[[id]].vue', () => {
       expect(text).not.toContain('Based on: member')
     })
 
-    it('has no stray space before the comma in the header', async () => {
+    it('reads the header as one sentence with single spaces', async () => {
       const wrapper = mountPage()
       await flushPromises()
       const p = wrapper.find('.small.text-muted').text()
-      expect(p).toContain('(#2), from a referral.')
-      expect(p).not.toContain(' ,')
+      expect(p).toContain(
+        'Referred 5 minutes ago by Rae Referrer about Morgan Member (#2), from a referral.'
+      )
     })
 
     it('loads the case when the member logs in after the page opened', async () => {
