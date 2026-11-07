@@ -93,7 +93,7 @@ class SupportFirstPassCommand extends Command
         // Waited too long: never run the model on a case this old. A reason from an earlier failed
         // attempt is kept, as it is more useful than "busy".
         DB::table('support_cases')->where('firstpass_status', 'Pending')
-            ->whereRaw('created_at < NOW() - INTERVAL ? MINUTE', [$maxAge])
+            ->where('created_at', '<', now()->subMinutes($maxAge))
             ->update([
                 'firstpass_status' => 'Failed',
                 'firstpass_error' => DB::raw("COALESCE(firstpass_error, '".FirstPassService::REASON_BUSY."')"),
@@ -101,7 +101,7 @@ class SupportFirstPassCommand extends Command
 
         $stale = (int) $this->cfg('timeout', 330) + self::RUNNING_GRACE_SECONDS;
         DB::table('support_cases')->where('firstpass_status', 'Running')
-            ->whereRaw('updated_at < NOW() - INTERVAL ? SECOND', [$stale])
+            ->where('updated_at', '<', now()->subSeconds($stale))
             ->update(['firstpass_status' => 'Failed', 'firstpass_error' => FirstPassService::REASON_INTERRUPTED]);
     }
 
@@ -118,7 +118,7 @@ class SupportFirstPassCommand extends Command
         while (time() < $deadline) {
             $id = DB::table('support_cases')->where('firstpass_status', 'Pending')
                 ->whereNotIn('id', $tried)
-                ->whereRaw('created_at >= NOW() - INTERVAL ? MINUTE', [(int) $this->cfg('max_age_minutes', 60)])
+                ->where('created_at', '>=', now()->subMinutes((int) $this->cfg('max_age_minutes', 60)))
                 ->orderBy('id')->value('id');
             if (! $id) {
                 return;
@@ -173,7 +173,7 @@ class SupportFirstPassCommand extends Command
         $cap = (int) $this->cfg('per_referrer_per_day', 10);
         if ($case->referrerid) {
             $used = DB::table('support_ai_runs')->where('kind', 'FirstPass')->where('modid', $case->referrerid)
-                ->whereRaw('created_at >= NOW() - INTERVAL 1 DAY')->count();
+                ->where('created_at', '>=', now()->subDay())->count();
             if ($used >= $cap) {
                 $this->finish($id, 'Running', 'Skipped', FirstPassService::REASON_LIMIT);
 
@@ -228,8 +228,12 @@ class SupportFirstPassCommand extends Command
             ->leftJoin('support_ai_runs as r', 'r.id', '=', 'c.firstpass_runid')
             ->where('c.chatid', $case->chatid)->where('c.id', '!=', $case->id)
             ->where('c.firstpass_status', 'Done')->whereNotNull('c.brief')
-            ->whereRaw('c.userid <=> ?', [$case->userid])
-            ->whereRaw('c.created_at >= NOW() - INTERVAL 1 DAY')
+            ->when(
+                $case->userid === null,
+                fn ($q) => $q->whereNull('c.userid'),
+                fn ($q) => $q->where('c.userid', $case->userid),
+            )
+            ->where('c.created_at', '>=', now()->subDay())
             ->orderByDesc('c.id')
             ->first(['c.brief', 'c.firstpass_runid', 'c.reason', DB::raw('COALESCE(r.created_at, c.created_at) as ran_at')]);
         if (! $recent) {
@@ -284,7 +288,7 @@ class SupportFirstPassCommand extends Command
         $cases = DB::table('support_cases')
             ->whereIn('firstpass_status', ['Done', 'Failed', 'Skipped'])
             ->whereNull('mailed_at')
-            ->whereRaw('created_at >= NOW() - INTERVAL 7 DAY')
+            ->where('created_at', '>=', now()->subDays(7))
             ->orderBy('id')->limit(100)->get();
 
         $recipients = array_values(array_filter(array_map('trim', explode(',', (string) config('freegle.mail.support_addr', 'support@ilovefreegle.org')))));

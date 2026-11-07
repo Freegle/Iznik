@@ -30,7 +30,8 @@ class SupportPurgeCasesCommand extends Command
         $deleted = 0;
         do {
             $ids = DB::table('support_cases')->where('status', 'Handled')
-                ->whereRaw('COALESCE(handled_at, created_at) < NOW() - INTERVAL ? YEAR', [self::DELETE_AFTER_YEARS])
+                ->where(fn ($q) => $q->where('handled_at', '<', now()->subYears(self::DELETE_AFTER_YEARS))
+                    ->orWhere(fn ($q) => $q->whereNull('handled_at')->where('created_at', '<', now()->subYears(self::DELETE_AFTER_YEARS))))
                 ->limit(self::CHUNK)->pluck('id')->all();
             $deleted += $this->deleteCases($ids);
         } while (count($ids) === self::CHUNK);
@@ -38,10 +39,10 @@ class SupportPurgeCasesCommand extends Command
         // Open and untouched: no message and no change for two years.
         do {
             $ids = DB::table('support_cases as c')->where('c.status', 'Open')
-                ->whereRaw('c.updated_at < NOW() - INTERVAL ? YEAR', [self::DELETE_AFTER_YEARS])
+                ->where('c.updated_at', '<', now()->subYears(self::DELETE_AFTER_YEARS))
                 ->whereNotExists(function ($q) {
                     $q->select(DB::raw(1))->from('support_case_messages as m')->whereColumn('m.caseid', 'c.id')
-                        ->whereRaw('m.created_at >= NOW() - INTERVAL ? YEAR', [self::DELETE_AFTER_YEARS]);
+                        ->where('m.created_at', '>=', now()->subYears(self::DELETE_AFTER_YEARS));
                 })
                 ->limit(self::CHUNK)->pluck('c.id')->all();
             $deleted += $this->deleteCases($ids);
@@ -51,7 +52,7 @@ class SupportPurgeCasesCommand extends Command
         $cleared = 0;
         do {
             $n = DB::table('support_cases')->whereNotNull('brief')
-                ->whereRaw('created_at < NOW() - INTERVAL ? YEAR', [self::CLEAR_BRIEF_AFTER_YEARS])
+                ->where('created_at', '<', now()->subYears(self::CLEAR_BRIEF_AFTER_YEARS))
                 ->limit(self::CHUNK)->update(['brief' => null, 'updated_at' => DB::raw('updated_at')]);
             $cleared += $n;
         } while ($n === self::CHUNK);
@@ -59,7 +60,7 @@ class SupportPurgeCasesCommand extends Command
         do {
             $n = DB::table('support_ai_runs')->where('kind', 'FirstPass')
                 ->where(fn ($q) => $q->whereNotNull('analysis')->orWhereNotNull('transcript'))
-                ->whereRaw('created_at < NOW() - INTERVAL ? YEAR', [self::CLEAR_BRIEF_AFTER_YEARS])
+                ->where('created_at', '<', now()->subYears(self::CLEAR_BRIEF_AFTER_YEARS))
                 ->limit(self::CHUNK)->update(['analysis' => null, 'transcript' => null]);
         } while ($n === self::CHUNK);
 
