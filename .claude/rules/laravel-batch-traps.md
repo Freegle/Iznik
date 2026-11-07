@@ -188,6 +188,14 @@ which carries `_ckyStore._categories` with a `cookies` list per slug; `other` is
 uncategorised group. `CookieYesPublishedBanner` reads it. The scan results are fine for
 scan age and page counts, and as a log line.
 
+## A copied photo hash makes a post look repeated
+
+The content check counts how many posts used a photo's `hash` in the last day and flags a post
+over the limit. A derived `messages_attachments` row that copies the original's hash (an
+auto-split crop, a duplicate made for any other reason) adds to that count for the member's own
+single photo. A post with one group photo cut into three crops is four of the five allowed, with
+nothing in the logs. Leave `hash` empty on any row that is not a new upload.
+
 ## A schema check on the read connection can miss a table you just created
 
 `DB::select`/`selectOne` go to the read node, and DDL done a moment earlier on the write node
