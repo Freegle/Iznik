@@ -41,11 +41,19 @@ return new class extends Migration
                 $table->unsignedTinyInteger('firstpass_attempts')->default(0);
                 $table->unsignedBigInteger('firstpass_runid')->nullable();
                 $table->longText('brief')->nullable();
+                // "<chatid>-<referrerid>" while the case is Open, NULL once Handled. Set by the code, not
+                // generated: MySQL refuses a stored generated column over a SET NULL foreign key. The
+                // unique index makes a double-click, or two requests at once, find the same case.
+                $table->string('open_key', 64)->nullable();
+                // When the referral mail to Support was spooled. Every path that sends it sets this with
+                // "WHERE mailed_at IS NULL" and spools only if that updated the row, so it goes once.
+                $table->timestamp('mailed_at')->nullable();
                 $table->unsignedBigInteger('handledby')->nullable();
                 $table->timestamp('handled_at')->nullable();
                 $table->timestamp('created_at')->useCurrent();
                 $table->timestamp('updated_at')->useCurrent()->useCurrentOnUpdate();
 
+                $table->unique('open_key');
                 $table->index(['status', 'id']);
                 $table->index(['chatid', 'status']);
                 $table->index('referrerid');
