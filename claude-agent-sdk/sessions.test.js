@@ -7,8 +7,8 @@ const os = require('node:os')
 const path = require('node:path')
 const { sessionExists, pruneSessions, KEEP_MS } = require('./sessions')
 
-const ID = '5482cbde-1c75-487a-9675-bd5280c35248'
-const OTHER = '02fbce57-701c-4d86-8c5a-2afb3d783041'
+const ID = '11111111-2222-4333-8444-555555555555'
+const OTHER = '66666666-7777-4888-9999-aaaaaaaaaaaa'
 
 function projects() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sessions-'))
