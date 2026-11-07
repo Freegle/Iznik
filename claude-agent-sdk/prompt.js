@@ -72,6 +72,9 @@ function systemPrompt(userId, codebase) {
     `In testing this repeatedly found the real cause faster than live guesswork.\n` +
     `- **git_fixed_already** — date-aware history check for a suspect path.\n` +
     `- **Read / Grep / Glob** — read the code at ${codebase} to understand how a feature actually behaves before guessing.\n` +
+    `\n**Run independent checks together.** When several lookups do not depend on each other's results (a few ` +
+    `query_dump queries, a Sentry search, a Grep of the code), make all of those tool calls in the same turn rather ` +
+    `than one per turn. The volunteer is waiting, and each extra turn adds seconds.\n` +
     `\n## Playbook (common cases)\n` +
     `- **"Oh dear, something went wrong"** has two surfaces. Full-page (Nuxt error.vue) → Sentry tag ` +
     `\`source:error-page-mount\` or the SSR stderr line "SSR error on <method> <url>". Toast (SomethingWentWrong.vue) ` +
