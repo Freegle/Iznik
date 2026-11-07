@@ -282,3 +282,17 @@ test('internalHandler stops the run when the caller disconnects before the answe
     assert.equal(signal2.aborted, false)
   })
 })
+
+test('internalHandler adds the error code to a 502 when the failure carries one, and nothing else of the upstream', async () => {
+  await withSecret(SECRET, async () => {
+    const handler = internalHandler({
+      tag: 'Test',
+      clean: () => ({}),
+      run: async () => { throw Object.assign(new Error('the AI helper is out of credit'), { code: 'CREDIT' }) },
+    })
+    const res = fakeRes()
+    await handler(goodReq({}), res)
+    assert.equal(res.statusCode, 502)
+    assert.deepEqual(res.body, { error: 'the AI helper is out of credit', code: 'CREDIT' })
+  })
+})

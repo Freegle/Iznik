@@ -111,7 +111,7 @@
             <ModSupportConcernKeywords />
           </b-tab>
 
-          <!-- Lockdown Tab: last, in red - see plans/active/2026-09-27-lockdown-switch.md
+          <!-- Lockdown Tab: in red - see plans/active/2026-09-27-lockdown-switch.md
                section 11.11. Support opens on it only while a lockdown is on. -->
           <b-tab>
             <template #title>
@@ -123,6 +123,14 @@
               </h2>
             </template>
             <ModSupportLockdown />
+          </b-tab>
+
+          <!-- Cases Tab: appended after Lockdown so the existing tab indexes keep their numbers. -->
+          <b-tab>
+            <template #title>
+              <h2 class="ms-2 me-2" data-testid="cases-tab-title">Cases</h2>
+            </template>
+            <ModSupportCaseList />
           </b-tab>
         </b-tabs>
       </div>
@@ -172,6 +180,7 @@ const topTabMap = {
   ai: 3,
   spam: 4,
   lockdown: 5,
+  cases: 6,
 }
 
 // Support Tools opens on Lockdown only while a lockdown is on, or when the link asks

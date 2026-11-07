@@ -260,6 +260,33 @@ class ScheduledOutcomeRegistryTest extends TestCase
         );
     }
 
+    public function test_support_first_pass_checks_watch_unmailed_and_stuck_cases(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 12, 14, 0, 0));
+        $mailed = $this->check('support:first-pass');
+        $stuck = $this->check('support:first-pass stuck');
+        $user = $this->createTestUser();
+        $make = fn (string $status, int $minutes, ?string $mailedAt = null) => DB::table('support_cases')->insertGetId([
+            'userid' => $user->id, 'source' => 'Mail', 'firstpass_status' => $status,
+            'mailed_at' => $mailedAt, 'created_at' => Carbon::now()->subMinutes($minutes),
+        ]);
+
+        // A fresh unmailed case, an old mailed one and a young pending one are all fine.
+        $make('Done', 5);
+        $make('Failed', 500, '2026-06-12 10:00:00');
+        $make('Pending', 30);
+        $this->assertTrue($mailed->evaluate(Carbon::now())->isOk());
+        $this->assertTrue($stuck->evaluate(Carbon::now())->isOk());
+
+        $old = $make('Skipped', 20);
+        $this->assertTrue($mailed->evaluate(Carbon::now())->isBreach());
+        DB::table('support_cases')->where('id', $old)->update(['mailed_at' => Carbon::now()]);
+        $this->assertTrue($mailed->evaluate(Carbon::now())->isOk());
+
+        $make('Running', 71);
+        $this->assertTrue($stuck->evaluate(Carbon::now())->isBreach());
+    }
+
     /**
      * Host health checks exist ONLY when ssh targets are configured — the
      * estate's topology comes from the environment, never from code, and an

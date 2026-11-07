@@ -286,6 +286,31 @@ class ScheduledOutcomeRegistry
                 ->describedAs('Go-API background task queue not backing up')
                 ->inCategory('cursor-staleness'),
 
+            // support:first-pass runs the AI first pass for each referred support case and is the
+            // only thing that mails the referral to Support. A case that has reached a final state
+            // and is still unmailed after 15 minutes means the mailer is stuck; a case still Pending
+            // or Running after 70 minutes means the pass is stuck (the command fails an aged Pending
+            // case after 60 and reaps a Running one after about 13).
+            (new BacklogCheck(
+                'support:first-pass',
+                'support_cases',
+                'created_at',
+                15,
+                fn ($q) => $q->whereIn('firstpass_status', ['Done', 'Failed', 'Skipped'])->whereNull('mailed_at'),
+            ))
+                ->describedAs('Support case referral mails not backing up')
+                ->inCategory('cursor-staleness'),
+
+            (new BacklogCheck(
+                'support:first-pass stuck',
+                'support_cases',
+                'created_at',
+                70,
+                fn ($q) => $q->whereIn('firstpass_status', ['Pending', 'Running']),
+            ))
+                ->describedAs('Support case first passes not stuck')
+                ->inCategory('cursor-staleness'),
+
             // ripple:expand (every minute) advances rippling_reach rows whose
             // next_expansion_at has come due. The failure mode this asserts
             // against is real and went unnoticed for days (2026-08-31): the

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-07
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -12,6 +12,8 @@ covers:
   - iznik-nuxt3/modtools/stores/spammer.js
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
   - iznik-nuxt3/modtools/components/ModSupportUser.vue
+  - iznik-nuxt3/modtools/components/ModChatFooter.vue
+  - iznik-nuxt3/modtools/pages/support/cases/[[id]].vue
   - iznik-batch/app/Services/ChatProcessService.php
   - iznik-batch/app/Console/Commands/User/DetectRelatedAccountsCommand.php
   # cross-stack behaviour tests (change when the behaviour changes)
@@ -286,6 +288,23 @@ anything on yours.
   community is in your member list, and you can ban them or hold their chat as for anyone.
   Replying doesn't change a placement, though: only choosing your community on Trash Nothing
   does.
+
+## Refer a chat to Support
+
+If a chat needs more help than you can give, refer it to Support.
+
+1. Open the member's chat and press **Refer to Support**.
+2. If you like, say what you need help with in the box. It is optional, but it helps.
+3. Confirm. You will see a link to your case.
+
+Support will look at the chat and reply in the case. You also get an email to say there is a reply. Open
+the case from the link and reply there. Replying to the email does not reach Support.
+
+The case shows its status, what you asked and the replies. Support's own notes, including the AI's, are
+for Support only, and you will not see them. Nothing is sent to the member. If they need to be told
+something, Support will tell you and you can tell them.
+
+If you refer the same chat again while the case is open, your new note is added to the same case.
 
 ## Banning and removing
 

@@ -27,6 +27,9 @@ const maxTranscriptBytes = 2 * 1024 * 1024
 type Run struct {
 	ID                  uint64     `json:"id" gorm:"primaryKey"`
 	Modid               *uint64    `json:"modid"`
+	// Kind is Interactive for a question a volunteer typed into the helper, FirstPass for the
+	// automatic pass on a referred chat.
+	Kind                string     `json:"kind"`
 	Userid              *uint64    `json:"userid"`
 	Sessionid           *string    `json:"sessionid"`
 	Query               string     `json:"query"`
@@ -147,6 +150,7 @@ func Record(c *fiber.Ctx) error {
 
 	run := Run{
 		Modid:               &myid,
+		Kind:                "Interactive",
 		Sessionid:           nullableString(req.Sessionid),
 		Query:               req.Query,
 		Analysis:            nullableString(req.Analysis),
@@ -257,7 +261,7 @@ func List(c *fiber.Ctx) error {
 	}
 
 	q := database.DBConn.Table("support_ai_runs r").
-		Select("r.id, r.modid, r.userid, r.sessionid, r.query, r.analysis, r.status, r.error, r.driver, r.model, " +
+		Select("r.id, r.modid, r.kind, r.userid, r.sessionid, r.query, r.analysis, r.status, r.error, r.driver, r.model, " +
 			"r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens, r.duration_ms, r.cost_usd, " +
 			"r.quota_5h_before, r.quota_5h_after, r.quota_7d_before, r.quota_7d_after, " +
 			"r.rating, r.rating_comment, r.ratedby, r.rated_at, r.created_at, " +
