@@ -302,6 +302,10 @@
               </div>
             </div>
 
+            <!-- An ordinary post the server split into items: the list only,
+                 replied to like any other post. -->
+            <MessageItemList v-if="isSplit" :id="id" />
+
             <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
             <BulkItemsInterest
               v-if="isBulk"
@@ -704,6 +708,8 @@ import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
 import ChatReplyPane from '~/components/ChatReplyPane'
 import BulkItemsInterest from '~/components/BulkItemsInterest'
+import MessageItemList from '~/components/MessageItemList'
+import { isAutoSplit, isClearance } from '~/composables/useAutoSplit'
 import MessageInterested from '~/components/MessageInterested'
 import MessageOwnActions from '~/components/MessageOwnActions'
 import ProfileImage from '~/components/ProfileImage'
@@ -851,9 +857,10 @@ const reachFinished = computed(() => message.value?.reachfinished === true)
 // web page that just duplicates the catalogue — so suppress it. A giver's own
 // free-text description doesn't start with this generated marker, so it still
 // shows. (Marker kept in sync with buildBulkSummary in iznik-server-go.)
-const isBulk = computed(
-  () => (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
-)
+// Only a clearance; an automatically split post has an item list too, but is replied
+// to like any other post (composables/useAutoSplit.js).
+const isBulk = computed(() => isClearance(message.value))
+const isSplit = computed(() => isAutoSplit(message.value))
 const hideGeneratedBulkBody = computed(() => {
   const body = message.value?.textbody || ''
   return isBulk.value && body.startsWith('Items available in this offer:')

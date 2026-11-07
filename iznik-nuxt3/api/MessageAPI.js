@@ -186,6 +186,22 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
+  // Owner/mod: mark one item of a multi-item post gone (available false) or back on
+  // offer.
+  bulkItemAvailable(id, bulkitemid, available) {
+    return this.$postv2('/message', {
+      action: 'BulkItemAvailable',
+      id,
+      bulkitemid,
+      available,
+    })
+  }
+
+  // Owner/mod: take back an automatic split, so the post is as it was written.
+  autoSplitUndo(id) {
+    return this.$postv2('/message', { action: 'AutoSplitUndo', id })
+  }
+
   // Offerer/mod transition of one interest row (Interested → Reserved →
   // Collected, or Rejected/Withdrawn).
   bulkInterestState(id, bulkitemid, userid, state) {

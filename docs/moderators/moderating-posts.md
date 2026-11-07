@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-07
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -145,6 +145,9 @@ ModTools tells you *why* a post needs a look, right on the post:
   as several separate posts, until those are merged into one. See
   [TrashNothing posts](rippling-out.md#trashnothing-posts).
 - **Bulk clearance** posts show an item count and a "see how members see it" preview.
+- A post that says **Split automatically into N items** is an ordinary member's post that
+  listed several things, which Freegle has listed separately so people can say which they want.
+  It is moderated like any other post, and the member can undo the split.
 
 ## Standard messages
 

@@ -70,6 +70,22 @@ If you are clearing a house, office or garage, use the **bulk clearance** post
 post, instead of making dozens of separate ones. You can then manage who gets what from a
 single dashboard.
 
+## Posts of several things
+
+If one OFFER lists several separate things ("sofa, bed and two chairs"), Freegle lists them as
+separate items a minute or two after you post, and puts each photo with the thing it shows. People
+can then say which item they want, and you can mark each one gone as it goes. You will see "We've
+listed this as N items" on the post in My Posts:
+
+- **Mark gone** on an item when it has gone. When the last one goes, you are asked to mark the
+  post TAKEN as usual.
+- **Edit items** to change how many there are, or take an item off the list. To change the
+  names, use **Undo** and edit your post.
+- **Undo** to put the post back exactly as you wrote it. It will not be split again.
+
+Things that belong together, such as a dining set, a box of toys, or a drill and its bits, are
+left as one post. So is anything Freegle is not sure about.
+
 ## Replies and choosing someone
 
 When people are interested they reply, and each reply starts a private **chat** with you.

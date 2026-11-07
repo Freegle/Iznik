@@ -411,6 +411,10 @@ describe('MessageExpanded', () => {
           BulkItemsInterest: {
             template: '<div class="bulk-items-interest" />',
           },
+          MessageItemList: {
+            template: '<div class="message-item-list" />',
+            props: ['id'],
+          },
         },
         ...options.global,
       },
@@ -1573,6 +1577,32 @@ describe('MessageExpanded', () => {
       expect(button(wrapper).exists()).toBe(false)
       expect(marked(wrapper).exists()).toBe(false)
       expect(wrapper.find('.reply-button').exists()).toBe(true)
+    })
+  })
+
+  describe('posts with an item list', () => {
+    const items = [
+      { id: 1, name: 'Sofa', quantity: 1 },
+      { id: 2, name: 'Chairs', quantity: 2 },
+    ]
+
+    it('replies to a clearance by registering interest in its items', async () => {
+      mockMessage.value.bulkcount = 2
+      mockMessage.value.bulkitems = items
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.bulk-items-interest').exists()).toBe(true)
+      expect(wrapper.find('.message-item-list').exists()).toBe(false)
+      expect(wrapper.find('.reply-button').text()).toBe('Register interest')
+    })
+
+    it('shows an automatically split post as a list and replies to it as usual', async () => {
+      mockMessage.value.bulkcount = 2
+      mockMessage.value.bulkitems = items
+      mockMessage.value.autosplit = true
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.message-item-list').exists()).toBe(true)
+      expect(wrapper.find('.bulk-items-interest').exists()).toBe(false)
+      expect(wrapper.find('.reply-button').text()).toBe('Reply')
     })
   })
 })

@@ -612,6 +612,14 @@ describe('OutcomeModal', () => {
       expect(wrapper.find('.some-left').exists()).toBe(false)
     })
 
+    it('does not offer the choice on an automatically split post', () => {
+      // Its items are marked gone one by one in My Posts; TAKEN means all of them.
+      multiItem({ bulkcount: 2, bulkitems: [{}, {}], autosplit: true })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.some-left').exists()).toBe(false)
+      expect(wrapper.vm.isBulk).toBe(false)
+    })
+
     it('assumes everything has gone until told otherwise', () => {
       multiItem()
       const wrapper = createWrapper()
