@@ -70,7 +70,8 @@ function systemPrompt() {
     `- **could_not_find**: what you wanted to know and could not tell from the material. A fact section marked ` +
     `"not collected" or "not available" is unknown, not "none". Never turn "not collected" into "nothing happened".\n` +
     `- **draft**: a reply to the referring moderator, not to the member. Nothing is sent to the member from here: ` +
-    `the moderator deals with the member, so the draft may suggest what the moderator could tell them. List in ` +
+    `the moderator deals with the member, so the draft may suggest what the moderator could tell them. The draft ` +
+    `is sent by a member of the support team, so write it as them ("we"), never about support in the third person. List in ` +
     `facts_used the keys of the fact sections the draft relies on (${FACT_KEYS.join(', ')}); cite only sections you used.\n` +
     `\n## Style of the draft\n` +
     `The two rules below were written for replies to a member. Apply them to a reply to the referring moderator ` +

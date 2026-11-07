@@ -810,3 +810,9 @@ test('the Express handler maps a first pass failure to 502 with its code, and su
     else process.env.UX_INTERNAL_SECRET = saved
   }
 })
+
+test('the prompt has the draft written as the support team, to the moderator, never to the member', () => {
+  const p = systemPrompt()
+  assert.match(p, /write it as them \("we"\), never about support in the third person/)
+  assert.match(p, /a reply to the referring moderator, not to the member/)
+})
