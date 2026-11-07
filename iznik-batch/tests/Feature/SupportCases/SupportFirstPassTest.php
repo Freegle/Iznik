@@ -382,6 +382,7 @@ class SupportFirstPassTest extends TestCase
         return [
             'deadline' => [502, ['error' => 'x', 'code' => 'DEADLINE'], FirstPassService::REASON_TOO_LONG],
             'credit' => [502, ['error' => 'x', 'code' => 'CREDIT'], FirstPassService::REASON_CREDIT],
+            'too many steps' => [502, ['error' => 'x', 'code' => 'TOO_MANY_STEPS'], FirstPassService::REASON_STEPS],
             'dump' => [502, ['error' => 'x', 'code' => 'DUMP'], FirstPassService::REASON_FAILED],
             'model' => [502, ['error' => 'x', 'code' => 'MODEL'], FirstPassService::REASON_FAILED],
             'bad output code' => [502, ['error' => 'x', 'code' => 'BAD_OUTPUT'], FirstPassService::REASON_FAILED],
@@ -418,6 +419,22 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame('Error', $runs[0]->status);
         $this->assertSame($reason, $runs[0]->error);
         $this->assertNull($case->brief);
+    }
+
+    public function test_a_confidence_reason_ending_in_a_full_stop_renders_once_in_the_text_and_the_markdown(): void
+    {
+        $brief = $this->okBody()['brief'];
+        $brief['confidence'] = ['level' => 'High', 'reason' => 'Clear chat.'];
+
+        $text = \App\Services\Support\BriefFormatter::text($brief);
+        $this->assertStringContainsString('Confidence: High (Clear chat)', $text);
+        $this->assertStringNotContainsString('chat.)', $text);
+        $this->assertStringNotContainsString('chat..', $text);
+
+        $md = \App\Services\Support\BriefFormatter::markdown($brief);
+        $this->assertStringContainsString('**Confidence:** High (Clear chat).', $md);
+        $this->assertStringNotContainsString('chat.)', $md);
+        $this->assertStringNotContainsString('chat..', $md);
     }
 
     public function test_a_server_error_that_is_not_a_helper_answer_is_retried_three_times_and_each_attempt_is_recorded(): void

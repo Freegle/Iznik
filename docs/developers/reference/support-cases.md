@@ -70,7 +70,7 @@ if that changed a row. So running the command twice, or two runs overlapping, ma
 and get the old plain mail (`handleReferToSupport` in `ProcessBackgroundTasksCommand.php` returns at once
 for a case).
 
-The command runs every minute, `withoutOverlapping(15)` (`routes/console.php`). Each run:
+The command runs every minute, `withoutOverlapping(25)` (`routes/console.php`). Each run:
 
 - **Sweeps first.** First pass off: every Pending case becomes Skipped, "The first pass is turned off",
   and gets the plain mail. Pending for more than `max_age_minutes` (60): Failed, "The AI helper was busy".
@@ -104,7 +104,7 @@ The command runs every minute, `withoutOverlapping(15)` (`routes/console.php`). 
 A case's `firstpass_error`, and the mail, carry one of the constants in `FirstPassService.php` and nothing
 else. Upstream error text is never stored. The helper's 502 codes map to them
 ([ai-support-helper.md](ai-support-helper.md)). The reasons: turned off, helper busy, out of credit, took
-too long, data could not be read during a lockdown, helper not set up on this server, daily limit reached,
+too long, ran out of steps, data could not be read during a lockdown, member data not allowed on this server (missing or refused dump key), helper not set up on this server, daily limit reached,
 interrupted, helper failed, chat no longer there. A pass that could not run also records the pool state on the case, so credit
 never runs out silently.
 

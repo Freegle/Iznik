@@ -695,11 +695,12 @@ Schedule::command('purge:chats')
     ->runInBackground();
 
 // Support case first pass: runs the AI first pass for referred chats and mails Support. Every
-// minute, because the case row is the queue and a referral should reach Support promptly. One
-// run lasts up to ten minutes, so withoutOverlapping is longer than that.
+// minute, because the case row is the queue and a referral should reach Support promptly. A run
+// stops claiming cases after ten minutes, but the last one can wait up to 510 seconds for the helper,
+// so withoutOverlapping (25 minutes) is longer than the longest run.
 Schedule::command('support:first-pass')
     ->everyMinute()
-    ->withoutOverlapping(15)
+    ->withoutOverlapping(25)
     ->appendOutputTo(cronLog('support:first-pass'))
     ->runInBackground();
 

@@ -28,6 +28,8 @@ class FirstPassService
 
     public const REASON_LOCKDOWN = "The member's data could not be read during a lockdown";
 
+    public const REASON_STEPS = 'The first pass ran out of steps before it could answer';
+
     public const REASON_NOT_SET_UP = 'The AI helper is not set up on this server';
 
     public const REASON_LIMIT = 'The first pass limit for today was reached';
@@ -41,6 +43,7 @@ class FirstPassService
     /** Helper error codes (502 body) to the plain reason. */
     private const CODE_REASONS = [
         'DEADLINE' => self::REASON_TOO_LONG,
+        'TOO_MANY_STEPS' => self::REASON_STEPS,
         'CREDIT' => self::REASON_CREDIT,
         'DUMP_LOCKDOWN' => self::REASON_LOCKDOWN,
         'DUMP_AUTH' => self::REASON_NOT_SET_UP,

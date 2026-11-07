@@ -55,6 +55,8 @@ const REASONS = {
   CREDIT: 'the AI helper is out of credit',
   MODEL: 'the AI helper failed',
   DUMP_AUTH: 'the AI helper is not allowed to read member data on this server',
+  DUMP_LOCKDOWN: 'the member data could not be read during a lockdown',
+  TOO_MANY_STEPS: 'the first pass ran out of steps before it could answer',
   BAD_OUTPUT: 'the AI helper gave an answer that could not be used',
 }
 const fail = (code) => new FirstPassError(code, REASONS[code])
@@ -316,6 +318,9 @@ async function investigate({ request, prompt, model, maxTurns, codebase, key, si
   const createServer = deps.createMcpServer || ((o) => (sdk || require('@anthropic-ai/claude-agent-sdk')).createSdkMcpServer(o))
   const makeTools = deps.buildTools || ((ctx) => require('./tools').buildTools(ctx))
 
+  // A refused dump key or a held export stops the run: working round it with other tools would give a
+  // brief that reads as complete, or read data a lockdown is holding back.
+  let refused = null
   const { tools, names, cleanup } = makeTools({
     jwt: null,
     dumpKey: key,
@@ -324,6 +329,10 @@ async function investigate({ request, prompt, model, maxTurns, codebase, key, si
     userId: request.memberid || 0,
     modId: 'first-pass',
     progress: () => {},
+    onDumpRefused: (status) => {
+      refused = status === 409 ? 'DUMP_LOCKDOWN' : 'DUMP_AUTH'
+      abort.abort()
+    },
   })
   const options = agentOptions({
     model,
@@ -352,6 +361,7 @@ async function investigate({ request, prompt, model, maxTurns, codebase, key, si
   let cost = 0
   let model2 = model
   let failure = ''
+  let endSubtype = ''
   try {
     for await (const message of query({ prompt: input, options })) {
       entries.push(...transcriptEntries(message))
@@ -369,6 +379,7 @@ async function investigate({ request, prompt, model, maxTurns, codebase, key, si
       } else {
         // error_max_turns and the like: the run ended without an answer.
         usage = usageOf(message)
+        endSubtype = String(message.subtype || '')
         // The SDK's own end-of-run type (error_max_turns and so on) and the turn count say why, and
         // carry no member text.
         ;(deps.log || console.log)(`[SupportFirstPass] run ended without an answer: ${String(message.subtype || 'unknown').replace(/[^a-z_]/gi, '')} after ${Number(message.num_turns) || 0} turns`)
@@ -376,6 +387,7 @@ async function investigate({ request, prompt, model, maxTurns, codebase, key, si
       }
     }
   } catch (e) {
+    if (refused) throw fail(refused)
     if (signal.aborted) throw fail('DEADLINE')
     // The upstream text is only used to tell credit from other failures; it is never stored or returned.
     throw fail(CREDIT_PATTERN.test((e && e.message) || '') ? 'CREDIT' : 'MODEL')
@@ -384,7 +396,9 @@ async function investigate({ request, prompt, model, maxTurns, codebase, key, si
       cleanup()
     } catch (_) {}
   }
+  if (refused) throw fail(refused)
   if (signal.aborted) throw fail('DEADLINE')
+  if (endSubtype === 'error_max_turns') throw fail('TOO_MANY_STEPS')
   if (failure) throw fail(CREDIT_PATTERN.test(failure) ? 'CREDIT' : 'MODEL')
   if (!structured) (deps.log || console.log)(`[SupportFirstPass] no structured answer; ${text ? 'parsing the text' : 'the run returned no text'}`)
 

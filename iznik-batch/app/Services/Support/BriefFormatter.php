@@ -79,7 +79,8 @@ class BriefFormatter
         $class = self::str($brief['classification'] ?? '');
         $conf = is_array($brief['confidence'] ?? null) ? $brief['confidence'] : [];
         $level = self::str($conf['level'] ?? '');
-        $reason = self::str($conf['reason'] ?? '');
+        // The reason is a sentence the model wrote; its own full stop would double up in brackets.
+        $reason = rtrim(self::str($conf['reason'] ?? ''), '. ');
         $line = [];
         if ($class !== '') {
             $line[] = "Classification: {$class}";
@@ -159,7 +160,8 @@ class BriefFormatter
         $class = self::str($brief['classification'] ?? '');
         $conf = is_array($brief['confidence'] ?? null) ? $brief['confidence'] : [];
         $level = self::str($conf['level'] ?? '');
-        $reason = self::str($conf['reason'] ?? '');
+        // The reason is a sentence the model wrote; its own full stop would double up in brackets.
+        $reason = rtrim(self::str($conf['reason'] ?? ''), '. ');
         if ($class !== '' || $level !== '') {
             $out[] = '**Classification:** '.($class !== '' ? $class : 'not given').'. **Confidence:** '.($level !== '' ? $level : 'not given').($reason !== '' ? " ({$reason})" : '').'.';
         }

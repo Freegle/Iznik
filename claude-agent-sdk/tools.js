@@ -377,8 +377,9 @@ if (_dumpSweep.unref) _dumpSweep.unref()
 // ---------------------------------------------------------------------------
 function buildTools(ctx) {
   // ctx: { jwt, userId (selected member or 0), progress }, plus for the first pass, which has no login:
-  // { dumpKey, caseId, signal } so the dump is fetched with the key and stops at its deadline.
-  const state = { dumpFile: null }
+  // { dumpKey, caseId, signal, onDumpRefused } so the dump is fetched with the key, stops at its
+  // deadline, and a refused key or a held export is reported rather than worked around.
+  const state = { dumpFile: null, privateDumps: {} }
   const p = ctx.progress || (() => {})
   const text = (obj) => ({ content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj) }] })
   const err = (msg) => ({ content: [{ type: 'text', text: `ERROR: ${msg}` }], isError: true })
@@ -444,9 +445,32 @@ function buildTools(ctx) {
         const since = a.since || '90d'
         // Audit every access, even a cache hit — the trail must stay complete.
         audit({ mod: ctx.modId, modEmail: ctx.modEmail, target: id, tool: 'get_user_dump', since })
+        // The first pass fetches with its key, not a person's login. Its dump is private to the run:
+        // never put in or taken from the shared cache (a volunteer's own lookup must go through their
+        // login), reused if asked for twice, and deleted by cleanup() when the run ends.
+        const keyMode = !ctx.jwt && !!ctx.dumpKey
+        if (keyMode && state.privateDumps[`${id}:${since}`]) {
+          state.dumpFile = state.privateDumps[`${id}:${since}`]
+          state.dumpCached = false
+        } else if (keyMode) {
+          p('tool', `Downloading full snapshot for user ${id}…`)
+          let file
+          try {
+            file = await fetchUserDump({ userId: id, key: ctx.dumpKey, caseId: ctx.caseId, signal: ctx.signal, since })
+          } catch (e) {
+            // A refused key or a held export is not something to work around: the first pass stops.
+            if (e && [401, 403, 409].includes(e.status) && ctx.onDumpRefused) ctx.onDumpRefused(e.status)
+            throw e
+          }
+          state.privateDumps[`${id}:${since}`] = file
+          state.dumpFile = file
+          state.dumpCached = false
+        }
         const key = `${id}:${since}`
-        const cached = dumpCache.get(key)
-        if (cached && fs.existsSync(cached.file) && Date.now() - cached.at < DUMP_TTL_MS) {
+        const cached = keyMode ? null : dumpCache.get(key)
+        if (keyMode) {
+          // Downloaded above.
+        } else if (cached && fs.existsSync(cached.file) && Date.now() - cached.at < DUMP_TTL_MS) {
           state.dumpFile = cached.file
           state.dumpCached = true
           const ageS = Math.round((Date.now() - cached.at) / 1000)
@@ -474,8 +498,7 @@ function buildTools(ctx) {
               etaMs: pr.eta_ms > 1000 ? pr.eta_ms : null,
             })
           }
-          // A volunteer's run fetches with their login; the first pass, which has none, with its key.
-          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, key: ctx.jwt ? undefined : ctx.dumpKey, caseId: ctx.caseId, signal: ctx.signal, since, onProgress })
+          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since, onProgress })
           p('progress', { tool: 'get_user_dump', percent: 100, section: 'complete', done: true })
           if (cached && cached.file !== file) {
             try {
@@ -770,10 +793,13 @@ function buildTools(ctx) {
     ],
     cleanup() {
       // Cached dumps are owned by dumpCache (swept on TTL) so a follow-up
-      // question can reuse them — only delete a one-off, uncached file.
-      if (state.dumpFile && !state.dumpCached) {
+      // question can reuse them; only delete a one-off, uncached file, and
+      // every private dump the first pass fetched.
+      const files = new Set(Object.values(state.privateDumps))
+      if (state.dumpFile && !state.dumpCached) files.add(state.dumpFile)
+      for (const file of files) {
         try {
-          fs.unlinkSync(state.dumpFile)
+          fs.unlinkSync(file)
         } catch {}
       }
     },
