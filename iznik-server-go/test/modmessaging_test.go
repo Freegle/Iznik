@@ -413,18 +413,6 @@ func putUser2ModChat(t *testing.T, token string, groupid uint64, userid uint64) 
 	return resp.StatusCode, out.ID
 }
 
-func chatModsClosed(t *testing.T, token string, chatid uint64) bool {
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d?jwt=%s", chatid, token), nil)
-	resp, err := getApp().Test(req, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
-	var out struct {
-		Modsclosed bool `json:"modsclosed"`
-	}
-	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	return out.Modsclosed
-}
-
 func TestModeratorCannotOpenAChatToATrashNothingPlacement(t *testing.T) {
 	prefix := uniquePrefix("mmachat")
 	group := CreateTestGroup(t, prefix)
@@ -450,11 +438,11 @@ func TestModeratorCannotOpenAChatToATrashNothingPlacement(t *testing.T) {
 	assert.Equal(t, 200, status)
 }
 
-// The chat from before a TN member left closes to the community's moderators: they can
-// still open and read it, but not write in it, so an old chat can't get round the rule.
-// The member can still write in it.
-func TestAChatClosesToModeratorsWhenATrashNothingMemberLeaves(t *testing.T) {
-	prefix := uniquePrefix("mmaclosed")
+// A chat the member opened stays open to the community's moderators after a TrashNothing
+// member leaves a community they never chose: a chat that was opened to a moderator can
+// always be answered, and the member can still write too.
+func TestAModeratorCanAnswerAChatTheMemberOpenedAfterTheyLeave(t *testing.T) {
+	prefix := uniquePrefix("mmaopened")
 	group := CreateTestGroup(t, prefix)
 	poster := CreateTestUser(t, prefix+"_poster", "User")
 	makeTrashNothing(poster)
@@ -464,33 +452,17 @@ func TestAChatClosesToModeratorsWhenATrashNothingMemberLeaves(t *testing.T) {
 	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 
-	status, chatid := putUser2ModChat(t, modToken, group, poster)
+	// The member opens the chat themselves, as Contact does.
+	status, chatid := putUser2ModChat(t, posterToken, group, 0)
 	assert.Equal(t, 200, status)
 	assert.NotZero(t, chatid)
-	assert.Equal(t, 200, postChatMessageAs(t, modToken, chatid, "Hello from your volunteers "+prefix))
-
-	assert.False(t, chatModsClosed(t, modToken, chatid), "open while they are a member")
 
 	leaveGroup(poster, group)
 
-	assert.True(t, chatModsClosed(t, modToken, chatid), "ModTools is told the chat is closed")
-	assert.False(t, chatModsClosed(t, posterToken, chatid), "the member is not")
-
-	status, again := putUser2ModChat(t, modToken, group, poster)
-	assert.Equal(t, 200, status, "the existing chat is still handed back, so it can be read")
-	assert.Equal(t, chatid, again)
-	assert.Equal(t, 403, postChatMessageAs(t, modToken, chatid, "Are you still there? "+prefix),
-		"a moderator can't write in the old chat")
-	assert.Equal(t, 200, postChatMessageAs(t, posterToken, chatid, "I left, but here is a question "+prefix),
-		"the member can still write to the volunteers")
-
-	// The same for a non-TN member who leaves: nothing changes for them.
-	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
-	CreateTestMembership(t, ordinary, group, utils.ROLE_MEMBER)
-	status, ordChat := putUser2ModChat(t, modToken, group, ordinary)
-	assert.Equal(t, 200, status)
-	leaveGroup(ordinary, group)
-	assert.Equal(t, 200, postChatMessageAs(t, modToken, ordChat, "Still reachable "+prefix))
+	assert.Equal(t, 200, postChatMessageAs(t, modToken, chatid, "Hello from your volunteers "+prefix),
+		"the moderators can answer a chat that was opened to them")
+	assert.Equal(t, 200, postChatMessageAs(t, posterToken, chatid, "Thanks "+prefix),
+		"the member can still write")
 }
 
 func TestModeratorCannotMailATrashNothingMemberWhoLeft(t *testing.T) {
@@ -731,7 +703,6 @@ func TestSupportMayContactATrashNothingMemberAnyCommunity(t *testing.T) {
 	status, chatid := putUser2ModChat(t, supportToken, group, poster)
 	assert.Equal(t, 200, status, "Support can start a chat with a placed TN member")
 	assert.Equal(t, 200, postChatMessageAs(t, supportToken, chatid, "From Support "+prefix))
-	assert.False(t, chatModsClosed(t, supportToken, chatid), "and ModTools shows them the reply box")
 }
 
 // A moderator adding a note to a chat between two members speaks for no one community, so
