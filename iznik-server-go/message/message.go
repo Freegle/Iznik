@@ -4545,6 +4545,18 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		return fiber.NewError(fiber.StatusForbidden, "This post can't be edited - the poster didn't choose this community")
 	}
 
+	// Only an OFFER is ever split. A split post changed to a WANTED, by its poster or a
+	// moderator, is first put back as it was written, so a WANTED never has an item list,
+	// Mark TAKEN on its items, or "Which would you like?" in its reply box. Any item list
+	// sent with the change goes with the split.
+	if splitPost && req.Type != nil && *req.Type != utils.OFFER {
+		if err := undoAutoSplit(db, req.ID); err != nil && !errors.Is(err, errAlreadyUndone) {
+			return fiber.NewError(fiber.StatusInternalServerError, "Could not undo the split")
+		}
+		splitPost = false
+		req.Bulkitems = nil
+	}
+
 	// Get old values for edit tracking.
 	type msgValues struct {
 		Subject    string

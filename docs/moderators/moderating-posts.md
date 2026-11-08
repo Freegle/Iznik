@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-07
+last_reviewed: 2026-11-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -147,7 +147,8 @@ ModTools tells you *why* a post needs a look, right on the post:
 - **Bulk clearance** posts show an item count and a "see how members see it" preview.
 - A post that says **Split automatically into N items** is an ordinary member's post that
   listed several things, which Freegle has listed separately so people can say which they want.
-  It is moderated like any other post, and the member can undo the split.
+  It is moderated like any other post, and the member can undo the split. Only OFFERs are split.
+  If you change one to a WANTED, the split is undone and it goes back to one post.
 
 ## Standard messages
 

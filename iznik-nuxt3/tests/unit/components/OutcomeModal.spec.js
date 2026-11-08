@@ -613,7 +613,7 @@ describe('OutcomeModal', () => {
     })
 
     it('does not offer the choice on an automatically split post', () => {
-      // Its items are marked gone one by one in My Posts; TAKEN means all of them.
+      // Its items are marked TAKEN one by one in My Posts; TAKEN means all of them.
       multiItem({ bulkcount: 2, bulkitems: [{}, {}], autosplit: true })
       const wrapper = createWrapper()
       expect(wrapper.find('.some-left').exists()).toBe(false)

@@ -19,8 +19,8 @@ vi.mock('~/stores/message', () => ({
   }),
 }))
 
-function post(items) {
-  store.list[5] = { id: 5, autosplit: true, bulkitems: items }
+function post(items, type = 'Offer') {
+  store.list[5] = { id: 5, type, autosplit: true, bulkitems: items }
 }
 
 const opts = (props) => ({
@@ -56,15 +56,15 @@ describe('MessageItemList', () => {
     ])
   })
 
-  it('lists each item with its photo, how many and whether it has gone', () => {
+  it('lists each item with its photo, how many and whether it is TAKEN', () => {
     const w = mount(MessageItemList, opts())
     expect(w.text()).toContain('2 things in this post')
     const sofa = w.find('[data-testid="item-1"]')
     expect(sofa.find('img').attributes('src')).toBe('https://d/sofa&cx=1')
-    expect(sofa.text()).not.toContain('Gone')
+    expect(sofa.text()).not.toContain('TAKEN')
     const chairs = w.find('[data-testid="item-2"]')
     expect(chairs.text()).toContain('× 2')
-    expect(chairs.text()).toContain('Gone')
+    expect(chairs.text()).toContain('TAKEN')
     expect(chairs.classes()).toContain('itemlist__item--gone')
   })
 
@@ -73,18 +73,18 @@ describe('MessageItemList', () => {
     expect(w.find('[data-testid="item-toggle-1"]').exists()).toBe(false)
   })
 
-  it('lets the poster mark an item gone and back', async () => {
+  it('lets the poster mark an item TAKEN and undo it', async () => {
     const w = mount(MessageItemList, opts({ editable: true }))
-    expect(w.find('[data-testid="item-toggle-1"]').text()).toBe('Mark gone')
-    expect(w.find('[data-testid="item-toggle-2"]').text()).toBe('Still here')
+    expect(w.find('[data-testid="item-toggle-1"]').text()).toBe('Mark TAKEN')
+    expect(w.find('[data-testid="item-toggle-2"]').text()).toBe('Undo TAKEN')
 
     await w.find('[data-testid="item-toggle-2"]').trigger('click')
     await flushPromises()
     expect(bulkItemAvailable).toHaveBeenCalledWith(5, 2, true)
-    expect(w.emitted('all-gone')).toBeFalsy()
+    expect(w.emitted('all-taken')).toBeFalsy()
   })
 
-  it('says when the last item has gone', async () => {
+  it('says when the last item is TAKEN', async () => {
     const w = mount(MessageItemList, opts({ editable: true }))
     await w.find('[data-testid="item-toggle-1"]').trigger('click')
     await flushPromises()
@@ -93,12 +93,22 @@ describe('MessageItemList', () => {
       false,
       false,
     ])
-    expect(w.emitted('all-gone')).toHaveLength(1)
+    expect(w.emitted('all-taken')).toHaveLength(1)
   })
 
   it('renders nothing for a post with no items', () => {
     post([])
     const w = mount(MessageItemList, opts())
     expect(w.find('[data-testid="item-list"]').exists()).toBe(false)
+  })
+
+  it('renders nothing on a WANTED, so it never offers Mark TAKEN there', () => {
+    post(
+      [{ id: 1, name: 'Sofa', quantity: 1, available: true, attachments: [] }],
+      'Wanted'
+    )
+    const w = mount(MessageItemList, opts({ editable: true }))
+    expect(w.find('[data-testid="item-list"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('TAKEN')
   })
 })

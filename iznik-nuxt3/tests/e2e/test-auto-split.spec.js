@@ -5,7 +5,7 @@
  * The split itself is made by a batch job that asks Gemini, which a test run does not have. So
  * the test posts a real OFFER, and the browser is then served that post as if the job had split
  * it: the real API answers, and the item list is added to its answer. The actions on the items
- * (mark gone, edit, undo) are answered the same way, from the same state. Everything the member
+ * (Mark TAKEN, edit, undo) are answered the same way, from the same state. Everything the member
  * sees is the real frontend; the API side of these actions has its own Go tests.
  */
 const { test, expect } = require('./fixtures')
@@ -99,7 +99,7 @@ async function serveSplit(page, msgid, state) {
 }
 
 test.describe('Posts split automatically into items', () => {
-  test('the poster sees the items, marks one gone, edits and undoes; a replier says which they want', async ({
+  test('the poster sees the items, marks one TAKEN, edits and undoes; a replier says which they want', async ({
     page,
     testEmail,
     postMessage,
@@ -139,18 +139,18 @@ test.describe('Posts split automatically into items', () => {
     const section = page.locator('[data-testid="autosplit-section"]').first()
     await expect(section.locator('[data-testid^="item-9000"]')).toHaveCount(3)
 
-    // Mark the lamp gone, and back.
+    // Mark the lamp TAKEN, and undo it.
     const lampToggle = section.locator('[data-testid="item-toggle-900002"]')
-    await expect(lampToggle).toHaveText('Mark gone')
+    await expect(lampToggle).toHaveText('Mark TAKEN')
     await lampToggle.click()
     await expect(
       section
         .locator('[data-testid="item-900002"]')
-        .getByText('Gone', { exact: true })
+        .getByText('TAKEN', { exact: true })
     ).toBeVisible({ timeout: timeouts.ui.appearance })
-    await expect(lampToggle).toHaveText('Still here')
+    await expect(lampToggle).toHaveText('Undo TAKEN')
     await lampToggle.click()
-    await expect(lampToggle).toHaveText('Mark gone', {
+    await expect(lampToggle).toHaveText('Mark TAKEN', {
       timeout: timeouts.ui.appearance,
     })
     expect(state.calls).toEqual([

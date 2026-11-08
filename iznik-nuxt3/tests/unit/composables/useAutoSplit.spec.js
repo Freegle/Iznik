@@ -8,7 +8,12 @@ import {
 } from '~/composables/useAutoSplit'
 
 const clearance = { bulkcount: 2, bulkitems: [{}, {}] }
-const split = { bulkcount: 2, bulkitems: [{}, {}], autosplit: true }
+const split = {
+  type: 'Offer',
+  bulkcount: 2,
+  bulkitems: [{}, {}],
+  autosplit: true,
+}
 const single = { bulkcount: 0 }
 
 describe('useAutoSplit', () => {
@@ -18,6 +23,12 @@ describe('useAutoSplit', () => {
     expect(isClearance(split)).toBe(false)
     expect(isAutoSplit(split)).toBe(true)
     expect(hasItemList(split)).toBe(true)
+  })
+
+  it('never treats a WANTED as split, and never as a clearance either', () => {
+    const wanted = { ...split, type: 'Wanted' }
+    expect(isAutoSplit(wanted)).toBe(false)
+    expect(isClearance(wanted)).toBe(false)
   })
 
   it('treats a post with no items as neither', () => {

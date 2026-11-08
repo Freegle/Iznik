@@ -1604,5 +1604,15 @@ describe('MessageExpanded', () => {
       expect(wrapper.find('.bulk-items-interest').exists()).toBe(false)
       expect(wrapper.find('.reply-button').text()).toBe('Reply')
     })
+
+    it('shows no item list on a WANTED, and does not treat it as a clearance', async () => {
+      mockMessage.value.type = 'Wanted'
+      mockMessage.value.bulkcount = 2
+      mockMessage.value.bulkitems = items
+      mockMessage.value.autosplit = true
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.message-item-list').exists()).toBe(false)
+      expect(wrapper.find('.bulk-items-interest').exists()).toBe(false)
+    })
   })
 })

@@ -41,6 +41,7 @@ const opts = {
 function split(extra = {}) {
   store.list[5] = {
     id: 5,
+    type: 'Offer',
     autosplit: true,
     bulkcount: 2,
     bulkitems: [{ id: 1 }, { id: 2 }],
@@ -63,6 +64,20 @@ describe('MyMessageItems', () => {
     expect(w.find('[data-testid="autosplit-undo"]').exists()).toBe(true)
     expect(w.find('[data-testid="autosplit-edit"]').exists()).toBe(true)
     expect(w.find('.items').attributes('data-editable')).toBe('true')
+  })
+
+  it('asks the poster to mark each item TAKEN', () => {
+    const w = mount(MyMessageItems, opts)
+    expect(w.find('[data-testid="autosplit-notice"]').text()).toContain(
+      'Mark each one TAKEN when it goes.'
+    )
+    expect(w.text()).not.toMatch(/mark each one gone/i)
+  })
+
+  it('shows nothing on a WANTED', () => {
+    split({ type: 'Wanted' })
+    const w = mount(MyMessageItems, opts)
+    expect(w.find('[data-testid="autosplit-section"]').exists()).toBe(false)
   })
 
   it('undoes the split in one tap', async () => {

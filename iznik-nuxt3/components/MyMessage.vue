@@ -498,9 +498,9 @@
             </button>
           </div>
 
-          <!-- A post the server split into items: undo, edit, and each item
-               marked gone on its own. -->
-          <MyMessageItems :id="id" @all-gone="outcome('Taken')" />
+          <!-- An OFFER the server split into items: undo, edit, and each item
+               marked TAKEN on its own. -->
+          <MyMessageItems :id="id" @all-taken="outcome('Taken')" />
 
           <!-- Replies section -->
           <div v-if="replies?.length > 0" class="replies-section">

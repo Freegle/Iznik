@@ -220,6 +220,20 @@ class AutoSplitServiceTest extends TestCase
         $this->assertSame(1, (int) DB::table('messages')->where('id', $id)->value('availableinitially'));
     }
 
+    public function test_a_post_changed_to_a_wanted_while_the_model_worked_is_left_alone(): void
+    {
+        $id = $this->newPost();
+        $this->photo($id, 'freegletusd-a', [], 1);
+        $this->photos = [['photo' => 1, 'shows' => []]];
+        $this->whileAsking = fn () => DB::table('messages')->where('id', $id)->update(['type' => 'Wanted']);
+
+        $this->assertSame(0, $this->service()->process()['split']);
+
+        $this->assertSame(0, DB::table('messages_bulk_items')->where('msgid', $id)->count(), 'a WANTED is never split');
+        $this->assertSame(0, DB::table('messages_autosplit')->where('msgid', $id)->where('state', 'Split')->count());
+        $this->assertSame(1, (int) DB::table('messages')->where('id', $id)->value('availableinitially'));
+    }
+
     public function test_marking_a_split_posts_items_gone_leaves_a_clearance_alone(): void
     {
         $split = $this->newPost();

@@ -305,7 +305,7 @@ const message = computed(() => {
 const isBulk = computed(() => isClearance(message.value))
 
 // An automatically split post is marked taken like an ordinary one, but is not asked
-// whether any are left: its items are marked gone one by one in My Posts.
+// whether any are left: its items are marked TAKEN one by one in My Posts.
 const showSplitChoice = computed(
   () =>
     props.type === 'Taken' &&

@@ -1,19 +1,24 @@
 // Posts with an item list, and which of them are clearances.
 //
 // A clearance and an automatically split post both arrive with bulkitems (the item list,
-// each item with its own photos and its own "gone" flag). Only a clearance gets the
+// each item with its own photos and its own available flag). Only a clearance gets the
 // clearance extras: "Register interest" instead of a reply, collection slots, the
-// Clearances card in My Posts, the per-person counts when it is marked taken. A split
-// post is an ordinary member's Offer that the server turned into an item list
-// (message.autosplit), and is replied to and marked taken like any other.
-// docs/developers/reference/auto-split.md.
+// Clearances card in My Posts, the per-person counts when it is marked TAKEN. A split
+// post is an ordinary member's OFFER that the server turned into an item list
+// (message.autosplit), and is replied to and marked TAKEN like any other.
+//
+// Only an OFFER is ever split. The server undoes a split when the post is changed to a
+// WANTED, and isAutoSplit checks the type as well, so no item list, "Mark TAKEN" or
+// "Which would you like?" can show on a WANTED. docs/developers/reference/auto-split.md.
 
 export function hasItemList(message) {
   return (message?.bulkcount || message?.bulkitems?.length || 0) > 0
 }
 
 export function isAutoSplit(message) {
-  return !!message?.autosplit && hasItemList(message)
+  return (
+    !!message?.autosplit && message?.type === 'Offer' && hasItemList(message)
+  )
 }
 
 export function isClearance(message) {

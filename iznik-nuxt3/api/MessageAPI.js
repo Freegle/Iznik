@@ -186,8 +186,8 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  // Owner/mod: mark one item of a multi-item post gone (available false) or back on
-  // offer.
+  // Owner/mod: mark one item of a multi-item post TAKEN (available false), or undo
+  // that (available true).
   bulkItemAvailable(id, bulkitemid, available) {
     return this.$postv2('/message', {
       action: 'BulkItemAvailable',

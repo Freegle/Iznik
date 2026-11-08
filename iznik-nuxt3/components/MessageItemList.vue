@@ -1,5 +1,5 @@
 <template>
-  <div v-if="items.length" class="itemlist" data-testid="item-list">
+  <div v-if="split" class="itemlist" data-testid="item-list">
     <h4 class="itemlist__heading">
       <v-icon icon="list" class="me-1" />
       {{ items.length }} things in this post
@@ -39,7 +39,7 @@
           v-if="item.available === false"
           variant="secondary"
           class="itemlist__gone"
-          >Gone</b-badge
+          >TAKEN</b-badge
         >
         <b-button
           v-if="editable"
@@ -50,7 +50,7 @@
           :data-testid="'item-toggle-' + item.id"
           @click.stop="toggle(item)"
         >
-          {{ item.available === false ? 'Still here' : 'Mark gone' }}
+          {{ item.available === false ? 'Undo TAKEN' : 'Mark TAKEN' }}
         </b-button>
       </li>
     </ul>
@@ -64,6 +64,7 @@
 <script setup>
 import { computed, defineAsyncComponent, ref } from 'vue'
 import { useMessageStore } from '~/stores/message'
+import { isAutoSplit } from '~/composables/useAutoSplit'
 
 const MessagePhotosModal = defineAsyncComponent(
   () => import('~/components/MessagePhotosModal')
@@ -74,19 +75,22 @@ const props = defineProps({
     type: Number,
     required: true,
   },
-  // The poster's own view: each item can be marked gone or back.
+  // The poster's own view: each item can be marked TAKEN, or that undone.
   editable: {
     type: Boolean,
     default: false,
   },
 })
 
-// all-gone: the poster has just marked the last item gone.
-const emit = defineEmits(['all-gone'])
+// all-taken: the poster has just marked the last item TAKEN.
+const emit = defineEmits(['all-taken'])
 
 const messageStore = useMessageStore()
 const message = computed(() => messageStore.byId(props.id))
 const items = computed(() => message.value?.bulkitems || [])
+// Only an automatically split OFFER: the words are an OFFER's (TAKEN), and a WANTED is
+// never split (composables/useAutoSplit.js).
+const split = computed(() => isAutoSplit(message.value))
 
 function thumb(item) {
   const att = item.attachments && item.attachments[0]
@@ -115,7 +119,7 @@ async function toggle(item) {
       item.available === false
     )
     if (items.value.length && items.value.every((i) => i.available === false)) {
-      emit('all-gone')
+      emit('all-taken')
     }
   } finally {
     busy.value = null

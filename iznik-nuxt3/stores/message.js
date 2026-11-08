@@ -431,7 +431,7 @@ export const useMessageStore = defineStore('message', {
       this.list[id] = message
       return data
     },
-    // Owner/mod: mark one item gone or back on offer, then refetch.
+    // Owner/mod: mark one item TAKEN or undo that, then refetch.
     async bulkItemAvailable(id, bulkitemid, available) {
       const data = await api(this.config).message.bulkItemAvailable(
         id,

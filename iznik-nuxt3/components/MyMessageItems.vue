@@ -7,7 +7,7 @@
       data-testid="autosplit-notice"
     >
       We've listed this as {{ count }} items, so people can say which they want.
-      Mark each one gone when it goes.
+      Mark each one TAKEN when it goes.
       <div class="mymessage-items__actions">
         <b-button
           size="sm"
@@ -31,7 +31,7 @@
         {{ undoError }}
       </div>
     </NoticeMessage>
-    <MessageItemList :id="id" :editable="open" @all-gone="emit('all-gone')" />
+    <MessageItemList :id="id" :editable="open" @all-taken="emit('all-taken')" />
     <AutoSplitEditModal v-if="showEdit" :id="id" @hidden="showEdit = false" />
   </div>
 </template>
@@ -53,8 +53,8 @@ const props = defineProps({
   },
 })
 
-// all-gone: every item is now marked gone, so the post can be marked TAKEN.
-const emit = defineEmits(['all-gone'])
+// all-taken: every item is now marked TAKEN, so the post can be marked TAKEN.
+const emit = defineEmits(['all-taken'])
 
 const messageStore = useMessageStore()
 const message = computed(() => messageStore.byId(props.id))

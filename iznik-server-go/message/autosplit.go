@@ -140,59 +140,21 @@ func ownerOrMod(db *gorm.DB, myid uint64, msgid uint64) error {
 	return nil
 }
 
-// handleAutoSplitUndo takes back an automatic split: the items, their links and the crops go,
-// and the availability counts are put back, so the post is exactly as it was written. The
-// post is never split again. Owner or moderator, while the post has no outcome.
+// handleAutoSplitUndo takes back an automatic split at the poster's or a moderator's request.
+// Owner or moderator, while the post has no outcome.
 func handleAutoSplitUndo(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 	if err := ownerOrMod(db, myid, req.ID); err != nil {
 		return err
 	}
 
-	type splitRow struct {
-		ID                         uint64
-		Originalavailableinitially *int
-		Originalavailablenow       *int
-	}
-	var row splitRow
-	db.Table("messages_autosplit").Select("id, originalavailableinitially, originalavailablenow").
-		Where("msgid = ? AND state = ?", req.ID, autosplitStateSplit).Scan(&row)
-	if row.ID == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "This post was not split automatically")
-	}
-
 	var outcomes int64
 	db.Table("messages_outcomes").Where("msgid = ?", req.ID).Count(&outcomes)
-	if outcomes > 0 {
+	if outcomes > 0 && isAutoSplit(db, req.ID) {
 		return fiber.NewError(fiber.StatusConflict, "This post already has an outcome")
 	}
 
-	initially, now := 1, 1
-	if row.Originalavailableinitially != nil {
-		initially = *row.Originalavailableinitially
-	}
-	if row.Originalavailablenow != nil {
-		now = *row.Originalavailablenow
-	}
-
-	err := db.Transaction(func(tx *gorm.DB) error {
-		// The state change claims the undo, so two at once cannot both run.
-		res := tx.Table("messages_autosplit").Where("id = ? AND state = ?", row.ID, autosplitStateSplit).
-			Updates(map[string]interface{}{"state": autosplitStateUndone, "undoneat": gorm.Expr("NOW()")})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected == 0 {
-			return errAlreadyUndone
-		}
-		deleteAttachments(tx, cropAttachmentIDs(tx, req.ID))
-		// Items cascade to their photo links and any interest.
-		if err := tx.Table("messages_bulk_items").Where("msgid = ?", req.ID).Delete(nil).Error; err != nil {
-			return err
-		}
-		return tx.Table("messages").Where("id = ?", req.ID).
-			Updates(map[string]interface{}{"availableinitially": initially, "availablenow": now}).Error
-	})
+	err := undoAutoSplit(db, req.ID)
 	if errors.Is(err, errAlreadyUndone) {
 		return fiber.NewError(fiber.StatusBadRequest, "This post was not split automatically")
 	}
@@ -203,8 +165,54 @@ func handleAutoSplitUndo(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// handleBulkItemAvailable marks one item of a multi-item post as gone, or back on offer. Owner
-// or moderator. For a clearance, the last item going records the post as Taken, as the
+// undoAutoSplit puts a split post back as it was written: the items, their photo links and
+// the crops go, and the availability counts are put back. The row moves to Undone, so the
+// post is never split again. errAlreadyUndone when the post has no split to take back.
+// Used by Undo, and by an edit that changes a split post to a WANTED, because only an
+// OFFER is ever split.
+func undoAutoSplit(db *gorm.DB, msgid uint64) error {
+	type splitRow struct {
+		ID                         uint64
+		Originalavailableinitially *int
+		Originalavailablenow       *int
+	}
+	var row splitRow
+	db.Table("messages_autosplit").Select("id, originalavailableinitially, originalavailablenow").
+		Where("msgid = ? AND state = ?", msgid, autosplitStateSplit).Scan(&row)
+	if row.ID == 0 {
+		return errAlreadyUndone
+	}
+
+	initially, now := 1, 1
+	if row.Originalavailableinitially != nil {
+		initially = *row.Originalavailableinitially
+	}
+	if row.Originalavailablenow != nil {
+		now = *row.Originalavailablenow
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		// The state change claims the undo, so two at once cannot both run.
+		res := tx.Table("messages_autosplit").Where("id = ? AND state = ?", row.ID, autosplitStateSplit).
+			Updates(map[string]interface{}{"state": autosplitStateUndone, "undoneat": gorm.Expr("NOW()")})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errAlreadyUndone
+		}
+		deleteAttachments(tx, cropAttachmentIDs(tx, msgid))
+		// Items cascade to their photo links and any interest.
+		if err := tx.Table("messages_bulk_items").Where("msgid = ?", msgid).Delete(nil).Error; err != nil {
+			return err
+		}
+		return tx.Table("messages").Where("id = ?", msgid).
+			Updates(map[string]interface{}{"availableinitially": initially, "availablenow": now}).Error
+	})
+}
+
+// handleBulkItemAvailable marks one item of a multi-item post as TAKEN (gone), or undoes that.
+// Owner or moderator. For a clearance, the last item going records the post as Taken, as the
 // logged-out update page does. An automatic split is left for its poster to mark Taken in the
 // usual way, which also asks who took it.
 func handleBulkItemAvailable(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {

@@ -147,6 +147,99 @@ func TestAutoSplitUndoPutsThePostBackAsWritten(t *testing.T) {
 	assert.Nil(t, m["bulkitems"])
 }
 
+// assertSplitUndone checks the post is back as it was written: no items, no crop, the
+// member's photo kept, the counts put back, and the split recorded as undone.
+func assertSplitUndone(t *testing.T, f splitFixture) {
+	db := database.DBConn
+	var items, crops, photos int64
+	db.Table("messages_bulk_items").Where("msgid = ?", f.msgID).Count(&items)
+	db.Table("messages_attachments").Where("id = ?", f.cropID).Count(&crops)
+	db.Table("messages_attachments").Where("id = ?", f.photoID).Count(&photos)
+	assert.Zero(t, items)
+	assert.Zero(t, crops, "the crop goes")
+	assert.Equal(t, int64(1), photos, "the member's photo stays")
+
+	var counts struct{ Availableinitially, Availablenow int }
+	db.Table("messages").Select("availableinitially, availablenow").Where("id = ?", f.msgID).Scan(&counts)
+	assert.Equal(t, 1, counts.Availableinitially)
+	assert.Equal(t, 1, counts.Availablenow)
+
+	var state string
+	db.Table("messages_autosplit").Select("state").Where("msgid = ?", f.msgID).Scan(&state)
+	assert.Equal(t, "Undone", state)
+}
+
+func TestChangingASplitPostToAWantedUndoesTheSplit(t *testing.T) {
+	db := database.DBConn
+	f := newSplitFixture(t, uniquePrefix("as_to_wanted"))
+
+	status, body := splitPatch(t, f.token, map[string]interface{}{"id": f.msgID, "msgtype": "Wanted"})
+	require.Equal(t, 200, status, body)
+
+	var msgType string
+	db.Table("messages").Select("type").Where("id = ?", f.msgID).Scan(&msgType)
+	assert.Equal(t, "Wanted", msgType)
+	assertSplitUndone(t, f)
+
+	// A WANTED has no item list to show.
+	m := splitGet(t, f.token, f.msgID)
+	assert.Nil(t, m["autosplit"])
+	assert.Nil(t, m["bulkitems"])
+}
+
+func TestChangingASplitPostToAWantedDropsAnItemListSentWithIt(t *testing.T) {
+	db := database.DBConn
+	f := newSplitFixture(t, uniquePrefix("as_to_wanted_items"))
+
+	// The item list goes with the split, so the edit is not refused as a clearance edit
+	// and no items are written.
+	status, body := splitPatch(t, f.token, map[string]interface{}{
+		"id":      f.msgID,
+		"msgtype": "Wanted",
+		"bulkitems": []map[string]interface{}{
+			{"id": f.sofaID, "name": "Sofa", "quantity": 1},
+			{"id": f.bedID, "name": "Bed", "quantity": 1},
+		},
+	})
+	require.Equal(t, 200, status, body)
+	assertSplitUndone(t, f)
+
+	var items int64
+	db.Table("messages_bulk_items").Where("msgid = ?", f.msgID).Count(&items)
+	assert.Zero(t, items)
+}
+
+func TestAModeratorChangingASplitPostToAWantedUndoesTheSplit(t *testing.T) {
+	prefix := uniquePrefix("as_to_wanted_mod")
+	f := newSplitFixture(t, prefix)
+	mod := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, mod, f.groupID, "Moderator")
+
+	status, body := splitPatch(t, getToken(t, mod), map[string]interface{}{"id": f.msgID, "msgtype": "Wanted"})
+	require.Equal(t, 200, status, body)
+	assertSplitUndone(t, f)
+}
+
+func TestAnEditThatKeepsASplitPostAnOfferKeepsTheSplit(t *testing.T) {
+	db := database.DBConn
+	f := newSplitFixture(t, uniquePrefix("as_stays_offer"))
+
+	// The member's edit form always sends the type, unchanged here.
+	status, body := splitPatch(t, f.token, map[string]interface{}{
+		"id":       f.msgID,
+		"msgtype":  "Offer",
+		"textbody": "A sofa and a bed, both fine.",
+	})
+	require.Equal(t, 200, status, body)
+
+	var state string
+	db.Table("messages_autosplit").Select("state").Where("msgid = ?", f.msgID).Scan(&state)
+	assert.Equal(t, "Split", state)
+	var items int64
+	db.Table("messages_bulk_items").Where("msgid = ?", f.msgID).Count(&items)
+	assert.Equal(t, int64(2), items)
+}
+
 func TestAutoSplitUndoIsTheOwnersOrAModerators(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("as_undo_auth")
