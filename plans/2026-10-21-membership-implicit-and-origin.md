@@ -58,7 +58,8 @@ PR after that.
   TN poster who consented to group A and was cross-posted to group B can be contacted by A's
   moderators and not by B's. The mixed-poster rule goes, and nothing replaces it (Phase 5).
 - [x] **A post's status follows the poster's current relationship with the group, not their
-  consent when they posted.** Decided 2026-10-22. A TN post's "nobody owns this" status
+  consent when they posted.** Decided 2026-10-22. **Reversed 2026-11-08** for TN posts: see "Post ownership"
+  in Phase 5. A TN post's "nobody owns this" status
   (reports skip moderators, moderators can't edit it) is read from the poster's membership.
   When the poster later consents, joins or engages, their old posts on that group become
   moderator-owned.
@@ -940,6 +941,12 @@ Contact keys on the membership of the group in question (Phase 0: per group, not
   carried out; say so in the PR, and give the reason (Phase 0: per group, not per person).
 
 ### Post ownership (replacing `mod_messaging_allowed`)
+
+> **Superseded 2026-11-08 (Discourse 10315).** A TN post's status is not read from the
+> poster's membership. The member chooses the community for each post on TrashNothing
+> (`freegle_group_ids`): ingestion puts a post that names one on it, and only a post that names
+> none goes on the local community, unaddressed (`PostSyncer::placement()`). Memberships play
+> no part in either. Do not build the reader switch below.
 
 "Unaddressed" is not stored anywhere. It is worked out on each read and means nobody on the
 group owns the post: reports skip its moderators and two votes remove it, and moderators can't

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -314,7 +314,8 @@ the moderator who did it when it was a moderator rather than a members' review.
 ## Posts from Trash Nothing that nobody chose
 
 Some posts arrive from Trash Nothing without the person choosing a Freegle community at
-all - we match them to a community from where they are. Those posts carry a warning saying
+all - we match them to a community from where they are. A post where they did choose one
+goes on that community, even when they post from inside another community's area. Those posts carry a warning saying
 so, worded for where the post has got to: on one waiting in **Pending** it says approve or
 delete is the whole of it, and on one already **live** it says what happens if members
 report it. They behave differently from an ordinary post, because the person behind them
