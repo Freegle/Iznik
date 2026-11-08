@@ -492,7 +492,8 @@ That is a deliberate difference, like the others above.
 ### Posts nobody chose: unaddressed TN posts
 
 TN's out-of-spec `freegle_group_ids` field lists the Freegle groups chosen for **this post**
-that the poster has consented to posting to (per post, not a list of their memberships).
+that the poster has consented to posting to (per post, not a list of their memberships: a member of two
+communities who posts to one gets only that one, checked against TN on 2026-11-08).
 `PostSyncer::placement()` puts a post that names any on one of them, and stores
 `messages_groups.mod_messaging_allowed = 1`. A post that names none is placed by its
 coordinates on the local community, which the poster never asked for, and stores 0
