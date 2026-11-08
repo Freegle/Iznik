@@ -162,7 +162,11 @@ cmd_switch() {
     fi
 
     mkdir -p "$(dirname "$state_file")"
-    printf '%s\n' "$dir" > "$state_file"
+    # Add the worktree rather than replace the list: sub-agents share the session id, and each
+    # works in its own worktree, so one switching must not lock the others out.
+    if ! grep -Fxq -- "$dir" "$state_file" 2>/dev/null; then
+        printf '%s\n' "$dir" >> "$state_file"
+    fi
     rm -f "$legacy_file"
     echo -e "${GREEN}Switched active worktree to:${NC} $dir"
     [[ "$sid" == "nosession" ]] && echo -e "${RED}Warning: no CLAUDE_CODE_SESSION_ID; state is not session-isolated.${NC}"
