@@ -33,6 +33,10 @@ services:
     cgroup_parent: batch.slice
 
   spatial:
+    # The slim production image (the Dockerfile's "runtime" stage): the server and its
+    # cmd/ tools on Alpine, not the 3 GB toolchain image dev and CI test inside.
+    build:
+      target: runtime
     cgroup_parent: batch.slice
     # No swap for the reach engine. Its ~6GB graph heap is the kernel's
     # favourite eviction victim at the midday digest memory peak, and a
@@ -43,7 +47,7 @@ services:
     # the measured 6.1GB working set, and an overrun OOM-kills just this
     # container, which the restart policy heals in ~15s - strictly better
     # than the silent daily collapse. Pressure now lands on swappable idle
-    # anon (photon's JVMs) instead. Durable form of the live cgroup
+    # anon instead. Durable form of the live cgroup
     # memory.swap.max=0 applied during the incident.
     #
     # Sized to the compute gate, not the host: the gate defaults to NumCPU, so
@@ -60,4 +64,6 @@ services:
     memswap_limit: 16g
 
   spatial-knn:
+    build:
+      target: runtime
     cgroup_parent: batch.slice

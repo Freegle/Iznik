@@ -269,7 +269,8 @@ class GroupPostIngestionService
         // Note this uses `group_id` purely as a HAS-IT/HASN'T-IT flag. Its
         // value is still never used for placement (resolved decision #7: it is
         // TN's own opaque internal id, which drifts out of step with Freegle
-        // group boundaries) — PostSyncer resolves the group from the post's own
+        // group boundaries). PostSyncer places the post on a community the member chose in
+        // freegle_group_ids, or failing that from the post's own
         // coordinates via Location::groupsNear().
         //
         // REPOSTS are unaffected and deliberately not de-duplicated, matching
@@ -372,9 +373,9 @@ class GroupPostIngestionService
             $user->save();
         }
 
-        // No membership gate: the group here was chosen for the post (via
-        // Location::groupsNear() on its own coordinates), not supplied by a member
-        // posting to a group they belong to, so the poster is frequently not an
+        // No membership gate: when the member named no community on TN, the group
+        // here comes from the post's own coordinates (Location::groupsNear()), not
+        // from a group they belong to, so the poster is frequently not an
         // Approved member of the resolved group — that's expected, not an error.
         // If a membership does exist, its ourPostingStatus still applies (matches
         // the email path for genuine members), and a blank one is MODERATED as it is
@@ -990,9 +991,10 @@ class GroupPostIngestionService
      * deleted, or null if we have never ingested it. Lowest id wins, so the
      * answer is stable if an older duplicate somehow survives.
      *
-     * ANY GROUP, because a source post is one post. Its group comes from its
-     * coordinates (Location::groupsNear()), and a post on the line between two
-     * groups can resolve to either on different reads. The sync's windows
+     * ANY GROUP, because a source post is one post, and its group can differ
+     * between reads: a post that names no community is placed by its coordinates
+     * (Location::groupsNear()), so one on the line between two groups can resolve
+     * to either, and a member can change the communities they chose on TN. The sync's windows
      * overlap, so it reads a post more than once, and a check scoped to the
      * group would make a second message on the neighbour.
      *

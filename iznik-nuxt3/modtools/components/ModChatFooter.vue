@@ -1,15 +1,6 @@
 <template>
   <div class="cont bg-white">
     <div>
-      <notice-message
-        v-if="chat?.modsclosed && !otheruser?.deleted"
-        variant="info"
-        class="mb-2"
-        data-test="chat-mods-closed"
-      >
-        This Trash Nothing member isn't in this community any more, so you can
-        read this chat but you can't reply.
-      </notice-message>
       <notice-message v-if="otheruser?.deleted" variant="info" class="mb-2">
         This member has deleted their account, so you can't chat to them.
       </notice-message>
@@ -69,7 +60,7 @@
           <v-icon icon="times-circle" scale="1.5" />
         </b-button>
       </div>
-      <div v-if="!otheruser?.deleted && !chat?.modsclosed">
+      <div v-if="!otheruser?.deleted">
         <div v-if="uploading" class="bg-white">
           <OurUploader
             v-model="currentAtts"
@@ -217,7 +208,6 @@
           </b-button>
         </span>
         <SpinButton
-          v-if="!chat?.modsclosed"
           size="md"
           variant="primary"
           class="float-end ms-2 me-2"
@@ -229,7 +219,6 @@
           @handle="send"
         />
         <b-button
-          v-if="!chat?.modsclosed"
           v-b-tooltip="'Upload a photo'"
           variant="secondary"
           class="float-end"
@@ -352,7 +341,7 @@
           />
           <div class="mobtext text--smallest">Nudge</div>
         </div>
-        <div v-if="!chat?.modsclosed" class="" @click="photoAdd">
+        <div class="" @click="photoAdd">
           <v-icon
             scale="2"
             icon="camera"
@@ -362,7 +351,6 @@
           <div class="mobtext text--smallest">Photo</div>
         </div>
         <SpinButton
-          v-if="!chat?.modsclosed"
           variant="primary"
           size="md"
           label="Send"
