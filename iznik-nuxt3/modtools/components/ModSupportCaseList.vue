@@ -1,6 +1,22 @@
 <template>
   <div data-testid="case-list">
     <h2>Support cases</h2>
+    <div class="case-intro mb-3" data-testid="case-intro">
+      <p>
+        These are chats that moderators have sent to Support with
+        <strong>Refer to Support</strong>, usually with a question.
+      </p>
+      <p>
+        First the AI helper looks into the question and writes up what it
+        found. If it couldn't, the case says why. Check what it says, then
+        reply to the moderator on the case. Your reply goes to the moderator,
+        never to the member.
+      </p>
+      <p class="mb-0">
+        <b-badge variant="danger">Waiting for Support</b-badge> means the case
+        needs a reply from Support. Mark a case handled when you're done.
+      </p>
+    </div>
     <b-form-radio-group
       v-model="filter"
       :options="filterOptions"
@@ -28,6 +44,9 @@
       <div class="d-flex flex-wrap gap-2 align-items-center">
         <strong>Case {{ c.id }}</strong>
         <b-badge :variant="statusVariant(c.status)">{{ c.status }}</b-badge>
+        <b-badge v-if="c.awaiting" variant="danger" data-testid="case-awaiting">
+          Waiting for Support
+        </b-badge>
         <b-badge v-if="c.classification" variant="secondary">
           {{ c.classification }}
         </b-badge>
@@ -76,6 +95,7 @@ const runtimeConfig = useRuntimeConfig()
 const apiInstance = api(runtimeConfig)
 
 const filterOptions = [
+  { text: 'Waiting for Support', value: 'Waiting' },
   { text: 'Open', value: 'Open' },
   { text: 'Handled', value: 'Handled' },
   { text: 'All', value: 'All' },
@@ -137,6 +157,10 @@ onMounted(loadList)
   border-radius: 4px;
   background: #fff;
   color: inherit;
+}
+
+.case-intro {
+  max-width: 50em;
 }
 
 .case-row__summary {

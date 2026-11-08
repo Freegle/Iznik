@@ -15,6 +15,8 @@ covers:
   - iznik-nuxt3/modtools/components/ModSupportCaseList.vue
   - iznik-nuxt3/modtools/components/ModChatFooter.vue
   - iznik-nuxt3/api/SupportCasesAPI.js
+  - iznik-server-go/supportcase/casestore/casestore.go
+  - iznik-server-go/test/supportcase_work_test.go
 ---
 
 # Support cases and the first pass
@@ -111,6 +113,28 @@ too long, ran out of steps, data could not be read during a lockdown, helper not
 interrupted, helper failed, chat no longer there, helper could not be reached (a helper that cannot be reached
 goes back to Pending without counting an attempt), and "The first pass was cleared after a year" (retention). A pass that could not run also records the pool state on the case, so credit
 never runs out silently.
+
+## Waiting for Support: the red count
+
+A case is **waiting for Support** when it is Open, its first pass has finished (Done, Failed or Skipped),
+and the newest message in its thread is not from Support. So a new case counts once its referral mail can
+go, a Support reply clears it, and the referrer writing back, referring again or reopening a Handled case
+counts it again. The rule is one SQL condition, `AwaitingSupportSQL` in
+`iznik-server-go/supportcase/casestore/casestore.go`, used by both of these, so they always agree:
+
+- **The work count.** `GET /session` carries `work.supportcases` for Support and Admin, and adds it to the
+  red total, so it beeps like other work. Everyone else gets 0, including the referring moderator. ModTools
+  shows it on the Support menu item and on the Cases tab of Support Tools. Support Tools opens on Cases
+  while any are waiting, unless a lockdown is on or the link names a member or a tab.
+- **The list.** Each row carries `awaiting`, shown as a "Waiting for Support" badge, and
+  `status=Waiting` lists only those cases.
+
+A case whose first pass is still Pending or Running is not counted, because its referral mail has not gone
+yet. The sweep fails any first pass left Pending for more than an hour, so nothing waits uncounted for long.
+
+The Cases tab starts with a short note on what it is (chats moderators referred, the first pass, and that
+replies go to the moderator, never the member). The referring moderator's view of their case starts with
+the same kind of note from their side.
 
 ## Who sees what
 

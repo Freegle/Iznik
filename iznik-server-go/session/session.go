@@ -19,6 +19,7 @@ import (
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/maildeferral"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/supportcase/casestore"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
@@ -1157,6 +1158,7 @@ func GetSession(c *fiber.Ctx) error {
 		var emailin, emailout int64
 		var maildeferrals int64
 		var helperEscalated int64
+		var supportCases int64
 
 		var wg2 sync.WaitGroup
 
@@ -1526,6 +1528,17 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
+		// --- Support cases waiting for Support (Support and Admin) ---
+		// The Cases tab of Support Tools, which only Support and Admin see. A referring moderator
+		// follows their own case by mail and the case link, so they get no count for it.
+		if userRow.Systemrole == utils.SYSTEMROLE_SUPPORT || userRow.Systemrole == utils.SYSTEMROLE_ADMIN {
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+				supportCases, _ = casestore.CountAwaitingSupport(db)
+			}()
+		}
+
 		// --- Gift aid (global) ---
 		wg2.Add(1)
 		go func() {
@@ -1655,7 +1668,7 @@ func GetSession(c *fiber.Ctx) error {
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
-			emailin + emailout + helperEscalated + maildeferrals + uxExperimentsConfirm + uxExperimentsRemove
+			emailin + emailout + helperEscalated + supportCases + maildeferrals + uxExperimentsConfirm + uxExperimentsRemove
 
 		work = fiber.Map{
 			"pending":                  pending,
@@ -1676,6 +1689,7 @@ func GetSession(c *fiber.Ctx) error {
 			"chatreviewother":          chatreviewother,
 			"newsletterstories":        newsletterstories,
 			"helperEscalated":          helperEscalated,
+			"supportcases":             supportCases,
 			"giftaid":                  giftaid,
 			"happiness":                happiness,
 			"relatedmembers":           relatedmembers,

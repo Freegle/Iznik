@@ -266,6 +266,12 @@
           </b-badge>
         </div>
         <p class="small text-muted">Referred {{ timeago(item.created) }}.</p>
+        <p class="case-intro" data-testid="case-referrer-intro">
+          You sent this chat to Support with Refer to Support. Support will
+          reply to you here, and we'll email you when they do. You can reply
+          here too. This is between you and Support: nothing here goes to the
+          member.
+        </p>
         <p v-if="item.reason" class="case-reason" data-testid="case-reason">
           <strong>What you asked:</strong> {{ item.reason }}
         </p>

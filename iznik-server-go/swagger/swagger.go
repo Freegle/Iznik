@@ -4410,7 +4410,7 @@ type getSupportAIRunParams struct {
 // swagger:route GET /supportcases supportcase listSupportCases
 // List support cases
 //
-// Returns the chats moderators have referred to Support, newest first. Filter with status=Open|Handled|All or chatid; page back with before=<id>. Support/Admin only; anyone else gets 404.
+// Returns the chats moderators have referred to Support, newest first. Filter with status=Waiting|Open|Handled|All (Waiting is the open cases whose finished first pass or latest referrer message has no Support reply after it) or chatid; page back with before=<id>. Each row says whether it is waiting for Support. Support/Admin only; anyone else gets 404.
 //
 // security:
 // - BearerAuth: []

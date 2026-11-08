@@ -156,6 +156,45 @@ describe('ModSupportCaseList', () => {
     expect(rows[0].attributes('href')).toBe('/support/cases/8')
   })
 
+  it('says what the cases are: referrals from moderators, with a first pass', async () => {
+    mockFetchCases.mockResolvedValue([])
+    const wrapper = mountList()
+    await flushPromises()
+    const intro = wrapper.find('[data-testid="case-intro"]').text()
+    expect(intro).toContain('moderators have sent to Support')
+    expect(intro).toContain('Refer to Support')
+    expect(intro).toContain('AI helper looks into the question')
+    expect(intro).toContain('never to the member')
+    expect(intro).toContain('Waiting for Support')
+  })
+
+  it('marks the cases waiting for Support, and only those', async () => {
+    mockFetchCases.mockResolvedValue([
+      row(7, { awaiting: true }),
+      row(6, { awaiting: false }),
+    ])
+    const wrapper = mountList()
+    await flushPromises()
+    const rows = wrapper.findAll('[data-testid="case-row"]')
+    expect(rows[0].find('[data-testid="case-awaiting"]').exists()).toBe(true)
+    expect(rows[0].text()).toContain('Waiting for Support')
+    expect(rows[1].find('[data-testid="case-awaiting"]').exists()).toBe(false)
+  })
+
+  it('lists only the cases waiting for Support on that filter', async () => {
+    mockFetchCases.mockResolvedValue([row(9, { awaiting: true })])
+    const wrapper = mountList()
+    await flushPromises()
+    const waiting = wrapper.find('[data-value="Waiting"]')
+    expect(waiting.text()).toBe('Waiting for Support')
+    await waiting.trigger('click')
+    await flushPromises()
+    expect(mockFetchCases).toHaveBeenLastCalledWith({
+      status: 'Waiting',
+      limit: 50,
+    })
+  })
+
   it('says so when there are none, and when loading fails', async () => {
     mockFetchCases.mockResolvedValue([])
     let wrapper = mountList()

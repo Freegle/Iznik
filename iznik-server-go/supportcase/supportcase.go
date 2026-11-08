@@ -63,6 +63,7 @@ type Row struct {
 	FirstpassState string    `json:"firstpass_status"`
 	Messages       int       `json:"messages"`
 	Lastactivity   time.Time `json:"lastactivity"`
+	Awaiting       bool      `json:"awaiting"`
 }
 
 // SupportView is the full case, for Support and Admin.
@@ -223,6 +224,7 @@ type listScan struct {
 	FirstpassState string
 	Messages       int
 	Lastactivity   time.Time
+	Awaiting       bool
 }
 
 // List returns cases newest first, for Support and Admin.
@@ -263,16 +265,19 @@ func List(c *fiber.Ctx) error {
 			fmt.Sprintf("IF(JSON_VALID(c.brief), LEFT(JSON_UNQUOTE(JSON_EXTRACT(c.brief, '$.question')), %d), NULL) AS summary, ", summaryChars) +
 			"c.firstpass_status AS firstpass_state, " +
 			"(SELECT COUNT(*) FROM support_case_messages sm WHERE sm.caseid = c.id) AS messages, " +
-			"COALESCE((SELECT MAX(sm2.created_at) FROM support_case_messages sm2 WHERE sm2.caseid = c.id), c.updated_at) AS lastactivity").
+			"COALESCE((SELECT MAX(sm2.created_at) FROM support_case_messages sm2 WHERE sm2.caseid = c.id), c.updated_at) AS lastactivity, " +
+			casestore.AwaitingSupportSQL + " AS awaiting").
 		Joins("LEFT JOIN users mu ON mu.id = c.userid").
 		Joins("LEFT JOIN users ru ON ru.id = c.referrerid")
 
 	switch status {
 	case "Open", "Handled":
 		q = q.Where("c.status = ?", status)
+	case "Waiting":
+		q = q.Where(casestore.AwaitingSupportSQL)
 	case "All":
 	default:
-		return fiber.NewError(fiber.StatusBadRequest, "status must be Open, Handled or All")
+		return fiber.NewError(fiber.StatusBadRequest, "status must be Waiting, Open, Handled or All")
 	}
 	if chatid > 0 {
 		q = q.Where("c.chatid = ?", chatid)
@@ -294,6 +299,7 @@ func List(c *fiber.Ctx) error {
 			Referrer:       person(s.Referrerid, s.Referrername),
 			Classification: s.Classification, Confidence: s.Confidence, Summary: s.Summary,
 			FirstpassState: s.FirstpassState, Messages: s.Messages, Lastactivity: s.Lastactivity,
+			Awaiting: s.Awaiting,
 		})
 	}
 	return c.JSON(rows)

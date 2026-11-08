@@ -306,6 +306,10 @@ something, Support will tell you and you can tell them.
 
 If you refer the same chat again while the case is open, your new note is added to the same case.
 
+For Support volunteers: referred chats are on the **Cases** tab of Support Tools. The red number on the
+Support menu item and on that tab is the cases waiting for a reply from Support. A case stops counting
+when Support replies, and counts again if the moderator writes back.
+
 ## Banning and removing
 
 On a member you can:

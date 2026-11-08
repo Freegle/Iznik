@@ -128,7 +128,17 @@
           <!-- Cases Tab: appended after Lockdown so the existing tab indexes keep their numbers. -->
           <b-tab>
             <template #title>
-              <h2 class="ms-2 me-2" data-testid="cases-tab-title">Cases</h2>
+              <h2 class="ms-2 me-2" data-testid="cases-tab-title">
+                Cases
+                <b-badge
+                  v-if="work?.supportcases"
+                  variant="danger"
+                  :title="work.supportcases + ' waiting for Support'"
+                  data-testid="cases-tab-count"
+                >
+                  {{ work.supportcases }}
+                </b-badge>
+              </h2>
             </template>
             <ModSupportCaseList />
           </b-tab>
@@ -148,11 +158,13 @@ import { useChatStore } from '~/stores/chat'
 import { useMessageStore } from '~/stores/message'
 import { useLockdownStore } from '~/stores/lockdown'
 import { useMe } from '~/composables/useMe'
+import { useAuthStore } from '~/stores/auth'
 
 // Stores
 const chatStore = useChatStore()
 const messageStore = useMessageStore()
 const lockdownStore = useLockdownStore()
+const authStore = useAuthStore()
 
 // Composables
 const { supportOrAdmin } = useMe()
@@ -183,13 +195,22 @@ const topTabMap = {
   cases: 6,
 }
 
-// Support Tools opens on Lockdown only while a lockdown is on, or when the link asks
-// for it (?tab=lockdown); otherwise on User, as before the tab existed.
-const activeTab = ref(
-  route.query.tab === 'lockdown' || lockdownStore.active
-    ? topTabMap.lockdown
-    : topTabMap.user
-)
+// The red count on the Cases tab and on the Support menu entry: cases waiting for Support.
+const work = computed(() => authStore.work)
+
+// Support Tools opens on Lockdown while a lockdown is on, or when the link asks for it
+// (?tab=lockdown). Otherwise it opens on Cases while cases are waiting for Support, so the red
+// count on the menu leads to them, unless the link names a member. Otherwise on User.
+function initialTab() {
+  if (route.query.tab === 'lockdown' || lockdownStore.active) {
+    return topTabMap.lockdown
+  }
+  if (!id.value && !route.query.tab && work.value?.supportcases > 0) {
+    return topTabMap.cases
+  }
+  return topTabMap.user
+}
+const activeTab = ref(initialTab())
 
 const communitySubTabMap = {
   find: 0,
