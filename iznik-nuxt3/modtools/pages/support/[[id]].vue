@@ -152,7 +152,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute } from '#imports'
 import { useChatStore } from '~/stores/chat'
 import { useMessageStore } from '~/stores/message'
@@ -211,6 +211,25 @@ function initialTab() {
   return topTabMap.user
 }
 const activeTab = ref(initialTab())
+
+// On a direct load the work counts arrive after the page opens. Until a tab is chosen, by the
+// visitor or by the link, follow them onto Cases.
+let tabChosen = false
+watch(activeTab, () => {
+  tabChosen = true
+})
+watch(
+  () => work.value?.supportcases,
+  () => {
+    if (
+      !tabChosen &&
+      activeTab.value === topTabMap.user &&
+      initialTab() === topTabMap.cases
+    ) {
+      activeTab.value = topTabMap.cases
+    }
+  }
+)
 
 const communitySubTabMap = {
   find: 0,

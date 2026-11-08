@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref } from 'vue'
+import { ref, reactive, nextTick } from 'vue'
 import SupportPage from '~/modtools/pages/support/[[id]].vue'
 import { useLockdownStore } from '~/stores/lockdown'
 
@@ -345,6 +345,27 @@ describe('support/[[id]].vue page', () => {
       mockRouteParams.value = { id: '123' }
       const wrapper = mountComponent(withWaiting(2))
       expect(wrapper.vm.activeTab).toBe(0)
+    })
+
+    it('moves to Cases when the count arrives after the page opened', async () => {
+      const pinia = withWaiting(0)
+      const store = (globalThis.__mockAuthStore = reactive({ work: {} }))
+      const wrapper = mountComponent(pinia)
+      expect(wrapper.vm.activeTab).toBe(0)
+      store.work = { supportcases: 2 }
+      await nextTick()
+      expect(wrapper.vm.activeTab).toBe(6)
+    })
+
+    it('stays on the tab the visitor picked when the count arrives later', async () => {
+      const pinia = withWaiting(0)
+      const store = (globalThis.__mockAuthStore = reactive({ work: {} }))
+      const wrapper = mountComponent(pinia)
+      wrapper.vm.activeTab = 2
+      await nextTick()
+      store.work = { supportcases: 2 }
+      await nextTick()
+      expect(wrapper.vm.activeTab).toBe(2)
     })
 
     it('opens on Lockdown rather than Cases while a lockdown is on', () => {
