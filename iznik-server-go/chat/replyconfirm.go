@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	stdlog "log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -114,16 +115,46 @@ var replyConfirmOptions = []PromptOption{
 	{Value: "no", Label: "No, don't send it", Variant: "secondary"},
 }
 
-// childCarSeatTerms are the words in an offer's subject that mean it is a child car seat. Kept in step
-// with the "Car seats" entry in iznik-nuxt3/components/PostItem.vue, which shows the poster a note
-// under the box for the same words.
+// childCarSeatTerms are the words in an offer's subject that mean it is a child car seat, and
+// childCarSeatExclusions are phrases that are not one: a cover, or a seat for a dog. Kept in step with
+// the "Car seats" entry in iznik-nuxt3/composables/useItemWarnings.js, which shows the poster a note
+// under the item box for the same words, matched the same way.
 var childCarSeatTerms = []string{"car seat", "carseat", "child car", "booster seat", "isofix", "infant carrier"}
 
-// isChildCarSeat says whether a post's subject is offering a child car seat.
+var childCarSeatExclusions = []string{
+	"seat cover", "dog car seat", "dog booster seat", "dog seat", "pet car seat", "pet booster seat", "pet seat",
+}
+
+// wordPattern matches a phrase that ends where a word ends, allowing a plural in -s or -es, so that
+// "child car" does not match "child carrier".
+func wordPattern(phrase string) *regexp.Regexp {
+	return regexp.MustCompile(regexp.QuoteMeta(phrase) + `(?:e?s)?\b`)
+}
+
+var (
+	childCarSeatTermPatterns      = wordPatterns(childCarSeatTerms)
+	childCarSeatExclusionPatterns = wordPatterns(childCarSeatExclusions)
+)
+
+func wordPatterns(phrases []string) []*regexp.Regexp {
+	ret := make([]*regexp.Regexp, len(phrases))
+	for i, p := range phrases {
+		ret[i] = wordPattern(p)
+	}
+
+	return ret
+}
+
+// isChildCarSeat says whether a post's subject is offering a child car seat. The exclusions are taken out
+// first, so that "car seat and seat cover" is still a seat and "car seat cover" is not.
 func isChildCarSeat(subject string) bool {
 	lower := strings.ToLower(subject)
-	for _, term := range childCarSeatTerms {
-		if strings.Contains(lower, term) {
+	for _, re := range childCarSeatExclusionPatterns {
+		lower = re.ReplaceAllString(lower, " ")
+	}
+
+	for _, re := range childCarSeatTermPatterns {
+		if re.MatchString(lower) {
 			return true
 		}
 	}
