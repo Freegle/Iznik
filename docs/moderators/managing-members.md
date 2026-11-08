@@ -265,11 +265,11 @@ anything on yours.
 
 ### Contacting Trash Nothing members
 
-- **Only while they're a member.** Once a Trash Nothing member leaves your community, you can't
-  contact them any more, even in a chat you had with them before. You can still open and read
-  that chat; ModTools says it is closed and doesn't offer a reply box. They can still write to
-  you. A **Chat** button for a Trash Nothing member you can't contact says so instead of opening
-  a chat.
+- **A chat they opened stays open to you.** If a Trash Nothing member writes to your volunteers,
+  by email or with the Contact button, that chat is open to every moderator on your community,
+  and you can reply in it even after they leave. A new chat is different: once a Trash Nothing
+  member leaves, you can't start one with them. A **Chat** button for a Trash Nothing member you
+  can't contact says so instead of opening a chat.
 - **The same goes for notes in chat review.** You can add a note to a chat between two members
   only if any Trash Nothing member in it has chosen a community you moderate.
 - **Removing them still sends your message.** If you remove a Trash Nothing member of your
@@ -309,8 +309,8 @@ neighbour. It does **not**
 stop them writing to your volunteers, by email or with the Contact button on your community
 page, and that is deliberate: it is how someone appeals a ban. Their message arrives in
 their chat with your volunteers, which every moderator on the community can see. A Trash
-Nothing member you have banned is no longer a member, so you can read what they send but
-can't reply in that chat.
+Nothing member you have banned is no longer a member, but a chat they opened stays open to
+you, so you can read it and reply in it.
 
 The **spammer list** is the stronger measure. Someone on it is banned everywhere, and
 nothing they send reaches us at all: their email is dropped, the volunteers address
