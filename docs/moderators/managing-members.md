@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-07
+last_reviewed: 2026-11-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -305,6 +305,10 @@ for Support only, and you will not see them. Nothing is sent to the member. If t
 something, Support will tell you and you can tell them.
 
 If you refer the same chat again while the case is open, your new note is added to the same case.
+
+For Support volunteers: referred chats are on the **Cases** tab of Support Tools. The red number on the
+Support menu item and on that tab is the cases waiting for a reply from Support. A case stops counting
+when Support replies, and counts again if the moderator writes back.
 
 ## Banning and removing
 

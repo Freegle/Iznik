@@ -74,3 +74,18 @@ func AddMessage(tx *gorm.DB, caseid, userid uint64, role, body, draftused string
 	}
 	return m.ID, nil
 }
+
+// AwaitingSupportSQL is the condition, on support_cases aliased c, for a case that is waiting for
+// Support: it is Open, its first pass has finished (Done, Failed or Skipped, so the referral mail
+// carries the result), and the newest message in its thread is not from Support. A case with no
+// messages yet, one the referrer referred again, and one the referrer reopened by replying all count.
+// The ModTools work count and the case list both use it, so the badge and the list agree.
+const AwaitingSupportSQL = "(c.status = 'Open' AND c.firstpass_status IN ('Done', 'Failed', 'Skipped') AND " +
+	"COALESCE((SELECT sm.role FROM support_case_messages sm WHERE sm.caseid = c.id ORDER BY sm.id DESC LIMIT 1), 'Referrer') <> 'Support')"
+
+// CountAwaitingSupport counts the cases waiting for Support.
+func CountAwaitingSupport(db *gorm.DB) (int64, error) {
+	var n int64
+	err := db.Table("support_cases c").Where(AwaitingSupportSQL).Count(&n).Error
+	return n, err
+}

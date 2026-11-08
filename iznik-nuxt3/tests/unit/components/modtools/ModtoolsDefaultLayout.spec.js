@@ -357,6 +357,12 @@ describe('modtools default layout — pending badge includes spam', () => {
       expect(links).toContain('/images')
     })
 
+    it('puts the cases waiting for Support on the Support item', async () => {
+      mockMe.role = 'Support'
+      const item = (await captureMenu()).find((i) => i.link === '/support')
+      expect(item.count).toEqual(['supportcases'])
+    })
+
     it('gives Admin the SysAdmin item with every SysAdmin count', async () => {
       mockMe.role = 'Admin'
       const item = (await captureMenu()).find((i) => i.link === '/sysadmin')
