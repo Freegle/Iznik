@@ -116,6 +116,21 @@ describe('pages/ask/mobile/details.vue', () => {
     setState({})
   })
 
+  describe('item notes', () => {
+    it('tells someone asking for a car seat what to ask', () => {
+      setState({ item: 'Car seat' })
+      const wrapper = mountPage()
+      expect(wrapper.text()).toContain('Car seats')
+      expect(wrapper.text()).toContain('Ask for the make, model and age')
+    })
+
+    it('shows no note for an ordinary item', () => {
+      setState({ item: 'Kids bike for 8 year old' })
+      const wrapper = mountPage()
+      expect(wrapper.text()).not.toContain('childcarseats.org.uk')
+    })
+  })
+
   describe('control (the rule as it was)', () => {
     it('no description and no photo: shows the describe error and stays', async () => {
       setState({ item: 'Kids bike for 8 year old' })
