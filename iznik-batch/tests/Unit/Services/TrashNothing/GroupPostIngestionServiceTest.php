@@ -526,8 +526,8 @@ class GroupPostIngestionServiceTest extends TestCase
 
     public function test_creates_post_for_non_member_of_resolved_group(): void
     {
-        // The group here is resolved from the post's own coordinates
-        // (Location::groupsNear), not from membership, so the poster is
+        // When the member chose no community, the group here comes from the post's
+        // own coordinates (Location::groupsNear), not from membership, so the poster is
         // frequently not a member of the resolved group — that must still
         // succeed, using the same 'DEFAULT' posting status a brand-new
         // member would get, rather than being skipped. Like any unmoderated
