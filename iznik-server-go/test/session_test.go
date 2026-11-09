@@ -2007,6 +2007,41 @@ func TestWorkCountStoriesDateFilter(t *testing.T) {
 	assert.Equal(t, float64(0), stories, "Should NOT count story older than 31 days")
 }
 
+// The Stories count must leave out the same stories as the review list: an author whose only tie to
+// the group is a membership rippling made (rippled = 1) or one TrashNothing made on a group they did not
+// choose (implicit = 1) is not that group's member for stories. Counting them showed a red number on
+// Stories with nothing to review (seen on live, 9 November 2026).
+func TestWorkCountStoriesLeavesOutRippledAndImplicitMemberships(t *testing.T) {
+	for _, tc := range []struct{ name, update string }{
+		{"rippled", "UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?"},
+		{"implicit", "UPDATE memberships SET rippled = 0, implicit = 1, added_origin = 'tn_unaddressed' WHERE userid = ? AND groupid = ?"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prefix := uniquePrefix("wc_stories_" + tc.name)
+			db := database.DBConn
+			groupID := CreateTestGroup(t, prefix)
+			modID := CreateTestUser(t, prefix+"_mod", "User")
+			CreateTestMembership(t, modID, groupID, "Moderator")
+			_, token := CreateTestSession(t, modID)
+
+			memberID := CreateTestUser(t, prefix+"_member", "User")
+			CreateTestMembership(t, memberID, groupID, "Member")
+			db.Exec(tc.update, memberID, groupID)
+			storyID := CreateTestStory(t, memberID, "Story "+prefix, "story text", false, true)
+			defer db.Exec("DELETE FROM users_stories WHERE id = ?", storyID)
+
+			resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/story?reviewed=0&limit=1000&jwt="+token, nil))
+			assert.Equal(t, 200, resp.StatusCode)
+			var listed []uint64
+			json.Unmarshal(rsp(resp), &listed)
+			assert.NotContains(t, listed, storyID, "the review list leaves it out")
+
+			work := getSessionWork(t, token)
+			assert.Equal(t, float64(0), work["stories"].(float64), "so the count must leave it out too")
+		})
+	}
+}
+
 func TestWorkCountStoriesGroupFilter(t *testing.T) {
 	prefix := uniquePrefix("wc_stories_grp")
 	db := database.DBConn
@@ -3126,10 +3161,16 @@ func TestWorkCountWiderChatReviewGoesToOther(t *testing.T) {
 	CreateTestMembership(t, modID, widerGroupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
-	// Create two users — user1 on the wider group, user2 elsewhere.
+	// The message is in ANOTHER community that also has wider review. One in the mod's own community is
+	// in the base count (red), and the wider count leaves it out; the test passed in a full run only because
+	// rows other tests left behind made the wider count non-zero.
+	otherWiderGroupID := CreateTestGroup(t, prefix+"_otherwider")
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", otherWiderGroupID)
+
+	// Create two users: user1 on the other wider group, user2 elsewhere.
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, widerGroupID, "Member")
+	CreateTestMembership(t, user1ID, otherWiderGroupID, "Member")
 
 	// Create a chat and review-required message.
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
