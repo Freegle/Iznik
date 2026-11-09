@@ -431,6 +431,22 @@ export const useMessageStore = defineStore('message', {
       this.list[id] = message
       return data
     },
+    // Owner/mod: mark one item TAKEN or undo that, then refetch.
+    async bulkItemAvailable(id, bulkitemid, available) {
+      const data = await api(this.config).message.bulkItemAvailable(
+        id,
+        bulkitemid,
+        available
+      )
+      this.list[id] = await this.fetch(id, true)
+      return data
+    },
+    // Owner/mod: undo an automatic split, then refetch.
+    async autoSplitUndo(id) {
+      const data = await api(this.config).message.autoSplitUndo(id)
+      this.list[id] = await this.fetch(id, true)
+      return data
+    },
     // Offerer/mod: change the state of one interest row, then refetch.
     async bulkInterestState(id, bulkitemid, userid, state) {
       const data = await api(this.config).message.bulkInterestState(

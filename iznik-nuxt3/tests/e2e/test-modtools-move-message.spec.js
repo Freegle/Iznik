@@ -91,7 +91,9 @@ test.describe('ModTools move message', () => {
 
     // Step 5: Click the Edit button, scoped to this message's card so it
     // can't resolve to a different (already-visible) message in the queue.
-    const editButton = messageCard.locator('button:has-text("Edit")').first()
+    const editButton = messageCard
+      .locator('button:not(.title-toggle):has-text("Edit")')
+      .first()
     await expect(editButton).toBeVisible({
       timeout: timeouts.ui.appearance,
     })

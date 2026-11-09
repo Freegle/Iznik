@@ -24,7 +24,13 @@
                with a solid band of the post's own colour. -->
           <div class="title-bar d-lg-none">
             <div class="title-row">
-              <div class="title-content">
+              <component
+                :is="canToggleText ? 'button' : 'div'"
+                class="title-content"
+                :class="{ 'title-toggle': canToggleText }"
+                v-bind="toggleBindings"
+                @click="canToggleText && toggleText()"
+              >
                 <MessageTag
                   :id="message.id"
                   :inline="true"
@@ -42,7 +48,12 @@
                   :bulkcount="message.bulkcount"
                   badge-class="title-count"
                 />
-              </div>
+                <v-icon
+                  v-if="canToggleText"
+                  :icon="textOpen ? 'chevron-up' : 'chevron-down'"
+                  class="title-toggle-icon"
+                />
+              </component>
               <div class="photo-actions">
                 <button class="photo-action-btn" @click.stop="share">
                   <v-icon icon="share-alt" />
@@ -238,7 +249,13 @@
               <!-- Title row with edit button inline -->
               <div class="desktop-header-row">
                 <div class="desktop-title-area">
-                  <div class="desktop-title-row">
+                  <component
+                    :is="canToggleText ? 'button' : 'div'"
+                    class="desktop-title-row"
+                    :class="{ 'title-toggle': canToggleText }"
+                    v-bind="toggleBindings"
+                    @click="canToggleText && toggleText()"
+                  >
                     <MessageTag
                       :id="message.id"
                       :inline="true"
@@ -254,7 +271,12 @@
                         badge-class="ms-1"
                         badge-style="font-size: 0.7em; vertical-align: middle"
                     /></span>
-                  </div>
+                    <v-icon
+                      v-if="canToggleText"
+                      :icon="textOpen ? 'chevron-up' : 'chevron-down'"
+                      class="title-toggle-icon"
+                    />
+                  </component>
                   <div class="desktop-info">
                     <template v-if="message.area">
                       <v-icon icon="map-marker-alt" class="me-1" />
@@ -398,6 +420,12 @@
             </div>
           </div>
 
+          <!-- The post's own text. The post page always shows it; on My Posts the
+               title opens and closes it. -->
+          <div v-if="showText" :id="textId" class="my-message-text">
+            <MessageTextBody :id="message.id" />
+          </div>
+
           <!-- Promised line - mobile only. The desktop panel above has its own banner;
                below lg this is the only place the poster learns who has it, and the
                button beside it is the only way to unpromise (Discourse 10152, 890). -->
@@ -497,6 +525,10 @@
               <span>Withdraw</span>
             </button>
           </div>
+
+          <!-- An OFFER the server split into items: undo, edit, and each item
+               marked TAKEN on its own. -->
+          <MyMessageItems :id="id" @all-taken="outcome('Taken')" />
 
           <!-- Replies section -->
           <div v-if="replies?.length > 0" class="replies-section">
@@ -615,7 +647,11 @@ import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
 import ProfileImage from '~/components/ProfileImage'
 import MessageTag from '~/components/MessageTag'
 import OurUploadedImage from '~/components/OurUploadedImage'
+import MessageTextBody from '~/components/MessageTextBody'
 
+const MyMessageItems = defineAsyncComponent(
+  () => import('./MyMessageItems.vue')
+)
 const MyMessageReply = defineAsyncComponent(
   () => import('./MyMessageReply.vue')
 )
@@ -644,6 +680,13 @@ const props = defineProps({
     required: true,
   },
   expand: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  // The post's own page, which always shows the post's text. My Posts sets expand (replies open when there
+  // are few posts), so expand cannot mean this.
+  postPage: {
     type: Boolean,
     required: false,
     default: false,
@@ -687,6 +730,28 @@ const postLocation = computed(
 // Start visible immediately if data is already in the store (prefetched before mount)
 const visible = ref(!!messageStore.byId(props.id))
 const expanded = ref(false)
+
+// The post's own text. A poster could not read it on a phone: the card had none and the title did nothing
+// when tapped. The post page always shows it; on My Posts the title opens and closes it.
+const textOpen = ref(false)
+const hasText = computed(() => !!message.value?.textbody?.trim())
+const canToggleText = computed(() => hasText.value && !props.postPage)
+const showText = computed(
+  () => hasText.value && (props.postPage || textOpen.value)
+)
+const textId = computed(() => `my-message-text-${props.id}`)
+const toggleBindings = computed(() =>
+  canToggleText.value
+    ? {
+        type: 'button',
+        'aria-expanded': String(textOpen.value),
+        'aria-controls': textId.value,
+      }
+    : {}
+)
+function toggleText() {
+  textOpen.value = !textOpen.value
+}
 const showOutcomeModal = ref(false)
 const outcomeType = ref(null)
 const showEditModal = ref(false)
@@ -1952,5 +2017,29 @@ onMounted(async () => {
   opacity: 1;
   max-height: 2000px;
   transform: translateY(0);
+}
+
+/* The title opens the post's text. As a button it keeps the look it had as a heading. */
+.title-toggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.title-toggle-icon {
+  flex-shrink: 0;
+  margin-left: 0.25rem;
+  opacity: 0.8;
+}
+
+.my-message-text {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid $color-gray--light;
+  overflow-wrap: anywhere;
 }
 </style>

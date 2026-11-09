@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-09
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
@@ -13,7 +13,6 @@ covers:
   - iznik-batch/app/Services/Ux/ExposureSource.php
   - iznik-batch/app/Services/Ux/Sources/EmailClickSource.php
   - iznik-batch/app/Services/Ux/Sources/ActiveAfterSource.php
-  - iznik-batch/app/Services/Ux/Sources/ConfirmReplySource.php
   - iznik-batch/app/Models/UxExperimentExposure.php
   - iznik-batch/app/Support/ExperimentBucket.php
   - iznik-batch/config/ux_switches.php
@@ -63,8 +62,6 @@ covers:
   - iznik-batch/resources/views/emails/mjml/digest/unified.blade.php
   - iznik-batch/tests/Feature/Ux/DigestSubjectExperimentTest.php
   - iznik-batch/tests/Unit/Mail/UnifiedDigestSubjectExperimentTest.php
-  - iznik-batch/tests/Feature/Ux/ConfirmReplySourceTest.php
-  - iznik-batch/tests/Feature/Ux/ConfirmReplyExperimentTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureRetentionTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureErasureTest.php
   - iznik-batch/tests/Feature/Ux/UxExposureTableMissingTest.php
@@ -822,9 +819,8 @@ site; an Offer has two required boxes, and the second ("When could you collect?"
   holds exactly its text. Control is the box alone. A Wanted has no collect box, so it never asks for the arm.
 - **Reading the arm.** `flowArm(FlowName.REPLY, 'reply-collect-chips')`, once, when the pane first knows the post is
   an Offer, so only members who could see the buttons are counted. The app build is always control.
-- **Starts only when `confirm-reply` has stopped.** One experiment per funnel, and `confirm-reply` holds `reply`.
 - **By hand.** Whether members use the buttons: the share of sent replies whose collect text equals a chip.
-- **Starting it.** After the PR is deployed and the manifest entry is live, and `confirm-reply` is stopped:
+- **Starting it.** After the PR is deployed and the manifest entry is live:
 
   ```bash
   php artisan ux:experiment create --flow=reply --name=reply-collect-chips \
@@ -1139,7 +1135,7 @@ all three agree. What changes is the counting. A flow event in Loki cannot be sp
 the counts come from the database.
 
 Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. The batch
-switch list holds `familiar-poster` ([familiar-posts-email.md](familiar-posts-email.md)); the Go list holds `confirm-reply`, `interested-button` and `krystal-hosting-ad`, described below.
+switch list holds `familiar-poster` ([familiar-posts-email.md](familiar-posts-email.md)); the Go list holds `interested-button` and `krystal-hosting-ad`, described below.
 
 **No experiment code in the app build.** An app release takes days to weeks, so a switch shipped in the app cannot be turned on or off quickly. Behaviour in the app that the server decides is fine: a push title, a push's timing or an email chosen on the server per member can be an experiment (`push-posts-title` was stopped on 2026-10-19 because this was misread as "no experiments that reach app members"). See `.claude/rules/conventions.md`.
 
@@ -1226,13 +1222,12 @@ no row, so an experiment that changes both mail and the site is measured from it
 counts members per arm and stratum, and the engine does the rest as it does for Loki: the same
 probabilities, the same adopt, revert and inconclusive rules, the same holdout. `ExposureSource` does the
 counting in one grouped query over the cohort above; a subclass says what a conversion and a bad event
-are. Five ship.
+are. Four ship.
 
 | Source | Converted when, within the window of the exposure | Guardrail |
 |---|---|---|
 | `email_click` | the member clicked a link in the email, and it was not the unsubscribe link (that link also sets the click time) | clicking the unsubscribe link in the window, margin 0.3 points. That link opens the unsubscribe page, so it counts members who then do nothing, and a mail client's own Unsubscribe button is not seen (`unsubscribeUrl` in `UnifiedDigest.php`, the `unsubscribe` action of `Click` in `emailtracking.go`) |
 | `active_after` | the member has a `users_active` row in the hour of the exposure or inside the window. The site or app writes one when it loads the member's notifications, which it does when they have something unread or when they open the bell, so a member who visits with nothing unread is not counted, in either arm | turning the daily posts push off, for a push only, margin 0.3 points |
-| `confirm_reply` | the replier is promised the item, or a `messages_by` row names them, within the window of their reply (`primary` `handover`), or also the replier said no, so the reply never reached the poster (`primary` `no_wasted_reply`, the default; a question nobody answered and a post that went while the reply waited do not count) | `never_delivered`, repliers whose reply the question dropped, margin 50 points (`handover`); `fewer_handovers`, the share not handed the item, margin 2 points (`no_wasted_reply`) |
 | `familiar_reply` | the member replied to the post the exposure names (`familiar-poster`) | unsubscribing from any of our mail in the window, margin 0.3 points, because control is sent none of these |
 | `hosting_ad_click` | the member pressed the hosting ad's button within the window (`detail.clicked` on the exposure, written by `POST /user/hostingad`) | `not_back`, the share of members whose last access is not at least an hour after the exposure, margin 2 points |
 
@@ -1264,7 +1259,7 @@ All are set in `--design=<json>` of `ux:experiment create`; the Go create route 
 | `salt` | see above |
 | `slot` | see below |
 | `copy` | arm name to the text that arm shows, up to 240 characters, for the tab. Plain text, never used to build a message |
-| `primary` | which result a source with a choice is decided on. The source says which it offers (`confirm_reply`: `no_wasted_reply`, the default, or `handover`); `create` refuses any other, and refuses the key for a source that offers none. Only with a `source` |
+| `primary` | which result a source with a choice is decided on. The source says which it offers, by a static `primaries()`; none of the sources shipped now offers one. `create` refuses any other, and refuses the key for a source that offers none. Only with a `source` |
 | `touches`, `expected_points` | as for a web experiment. `touches` is stored as empty for a source experiment: the browser stamps only the arms it has code for, so another funnel's completion cannot be split by a server arm. Set `expected_points` in points of the source's own rate, because the default 5 is far too big for a click rate |
 
 ### Run length, slot and a fixed split
@@ -1309,7 +1304,7 @@ is more than 30 days old unless `keep_until` is still ahead. It warns past 14 da
 day 14 lives about 35 days, so set `keep_until` when it is adopted. The scans read the code as the compiler
 does and are tested on sample source, and each test counts the files it read.
 
-A server experiment is listed in Go only: `confirm-reply` has an entry in `ux.ServerSwitches` and none in the batch
+A server experiment is listed in Go only: `interested-button` has an entry in `ux.ServerSwitches` and none in the batch
 list, because no batch code reads its arm, and `start` checks the batch list only for mail and push.
 
 ### The kill switch
@@ -1340,51 +1335,18 @@ without an error. The export reads its rows from the write node too.
 
 ### Confirming a reply before it is passed on
 
-`confirm-reply` is the first experiment decided in Go code. It changes one step of replying to an offer.
-
-- **Who.** A reply made on the website or in the app (`CreateChatMessage`) to an OFFER whose newest `messages_eee` row
-  says the item looks damaged, or large or 20 kg and over unless the poster has said they might deliver. Not when either
-  member is a TrashNothing account, not a reply held by rippling, not a message in a chat with anyone but the poster,
-  and not an email, AMP or LoveJunk reply: those never ask, write no exposure and are not counted. Nor a reply made in the app
-  (`utils.RequestFromApp`, from the request's Origin): UX experiments are not run in the app. In the arm `ask`, the reply is held and Freegle asks the replier in the
-  chat "Do you still want it?"; a yes (the button) lets it through, a no or three days of silence drops it. Whatever
-  else the replier writes in that chat while the question is open waits behind it and goes the same way. In `control` nothing changes. Both arms write one exposure row per replier and post, with the reply's
-  `chat_messages.id` as the subject and `damaged`, `car` or `both` as the stratum.
-- **Not a child car seat.** A reply to an offer of a child car seat is asked a safety question whatever the arm,
-  and from the app too; that is policy, writes no exposure and is outside this experiment
-  ([chat-prompts.md](chat-prompts.md#child-car-seats)).
-- **Where.** `planReplyConfirm` in `iznik-server-go/chat/replyconfirm.go` reads the post, and for anything but a car
-  seat looks the arm up with `ux.ExperimentArm` before any other read, so with no experiment running a reply costs
-  one read and nothing more. It only decides, and it decides before
-  the reply is written. For `ask`, `CreateChatMessage` then writes the reply, the exposure (`ux.RecordExposure`), the
-  question and the hold in one transaction, because the batch takes any committed unprocessed reply, whatever its age: a
-  run between the reply and its hold would deliver it. The exposure, the question and the hold are in a savepoint, so if
-  they cannot be written the reply goes through unasked, in either arm. A reply that is not asked about leaves its
-  exposure after the reply is written. The hold is `ChatProcessService`, which leaves a reply named by an unanswered
-  `chat_prompts.heldchatmsgid` unprocessed ([chat-prompts.md](chat-prompts.md)).
-- **Counted.** `confirm_reply`: each replier once, on their first reply, once it is 7 days old. `design.primary` chooses
-  the result when the experiment is created. `no_wasted_reply` (the default): the poster promised the item to the
-  replier, or marked it taken by them, within 7 days, or the replier said no. A question nobody answered is not a win:
-  it is counted apart as `never_answered`, and so is a post that was taken or withdrawn while the reply waited. The guardrail is
-  `fewer_handovers`, the share of repliers not handed the item, margin 2 points. `handover`: the poster promised the
-  item to the replier, or marked it taken by them, within 7 days; the guardrail is `never_delivered`, repliers whose reply
-  the question dropped, margin 50 points. The Experiments section draws how repliers answered, for all reasons and for
-  each (`ModSysAdminUxReplyConfirmDetail`).
-- **When.** The run is 14 days: arms are served for 169 hours and the last reply is a week old at the decision. It has its
-  own slot, `server:confirm-reply`, which the create scripts put in the design, so web tests on the `reply` funnel run
-  beside it. They measure the send, and the question appears only after it. Take the `slot` key out of the design and it
-  takes the `reply` funnel instead.
-- **Stopping.** The kill switch, a stop and the end of serving return everyone to control within a minute. A question
-  already asked is not recalled: it ends with its answer or its three days.
-- **Cleanup.** One commit takes out the `ux.ExperimentArm` call, the exposure and the exposure test in
-  `planReplyConfirm`, the entry in `ux.ServerSwitches`, `ConfirmReplySource` and its line in `ux.sources`, the hosted
-  piece and its entry in `HOSTED`, and the fixture rows. If `ask` was adopted, asking becomes unconditional and the
-  test that stops a second question for the same post goes back to being the prompt-based one.
+`confirm-reply` held half of the replies to offers whose photo looked damaged, or large or 20 kg and over, and asked the
+replier in the chat "Do you still want it?". It ran from 20 October 2026 and was reverted on 2 November: 14.8% of the
+128 repliers asked had no wasted reply within 7 days, against 25.8% of the 132 not asked, and more of them were never
+handed the item. Its code (the arm, the photo check, the exposures, `ConfirmReplySource` and the switch list entry) is
+removed. Its page on the Experiments section still draws how repliers answered, from the stored result
+(`ModSysAdminUxReplyConfirmDetail`). The same question about a child car seat is policy and is still asked of everyone
+([chat-prompts.md](chat-prompts.md#child-car-seats)).
 
 ### An I'm interested button
 
 `interested-button` tests whether a quick way to say "I'm interested" before writing a reply leads more members to
-reply. It is decided in Go, like `confirm-reply`, so the app build carries no switch.
+reply. It is decided in Go, so the app build carries no switch.
 
 - **Who.** A signed-in member on the website who opens an Offer or Wanted they could reply to: not their own, not
   deleted, no outcome, still approved on a community, and neither member a TrashNothing account. Not a request from the

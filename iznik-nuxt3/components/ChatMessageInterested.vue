@@ -264,6 +264,7 @@ import ChatMessageSummary from '~/components/ChatMessageSummary'
 import { useChatStore } from '~/stores/chat'
 import { useMe } from '~/composables/useMe'
 import { useMiscStore } from '~/stores/misc'
+import { isClearance } from '~/composables/useAutoSplit'
 
 const OutcomeModal = defineAsyncComponent(
   () => import('~/components/OutcomeModal')
@@ -340,13 +341,9 @@ const canPromise = computed(() => {
 
 // A bulk ("clearance") offer: show the interactive per-item interest editor
 // instead of the plain "I'm interested in: …" text, so either party can adjust
-// which items are wanted right from the chat.
-const isBulk = computed(() => {
-  const m = refmsg.value
-  return (
-    !!m && ((m.bulkcount || 0) > 0 || (m.bulkitems && m.bulkitems.length > 0))
-  )
-})
+// which items are wanted right from the chat. A reply to an automatically split
+// post is an ordinary reply, shown as written.
+const isBulk = computed(() => isClearance(refmsg.value))
 
 // The replier's own free-text note is appended to the interest chat body after
 // the machine-generated item list, separated by a blank line. For a bulk offer

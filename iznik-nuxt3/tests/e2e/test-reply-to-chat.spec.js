@@ -503,15 +503,12 @@ test.describe('Reply-to-Chat - standalone page CTA reachability', () => {
   })
 })
 
-/* A reply to an offer whose photo looks damaged waits while Freegle asks the replier,
-   in the chat, whether they still want it. Offer 990101 is classified damaged in
-   scripts/test-fixtures-extra.sql, which also serves the arm ask of the experiment
-   confirm-reply to everyone, so the question is always asked here; no other test replies
-   to it. The API keeps its copy of those config rows for up to a minute, and a run resets
-   the database as it starts, so this case is last in its file and must not be moved to the
-   front of a run. */
+/* A reply to an offer of a child car seat waits while Freegle asks the replier, in the
+   chat, to check the seat and whether they still want it. Offer 990101 in
+   scripts/test-fixtures-extra.sql is a child car seat, so the question is always asked
+   here; no other test replies to it. */
 test.describe('Reply-to-Chat - still want it?', () => {
-  test('asks the replier about a damaged item before the reply goes', async ({
+  test('asks the replier about a child car seat before the reply goes', async ({
     page,
     testEnv,
   }) => {
@@ -529,7 +526,7 @@ test.describe('Reply-to-Chat - still want it?', () => {
 
     await page
       .locator('textarea[name="reply"]')
-      .fill('I would love the armchair')
+      .fill('I would love the car seat')
     await page.locator('textarea[name="collect"]').fill('Any evening this week')
     await page.locator('.composer-send-btn').first().click()
     await page.waitForURL(/\/chats\/\d+/, { timeout: 60000 })
@@ -553,7 +550,7 @@ test.describe('Reply-to-Chat - still want it?', () => {
     await expect(prompt).toContainText('before we pass your reply on', {
       timeout: timeouts.ui.appearance,
     })
-    await expect(prompt).toContainText('damaged')
+    await expect(prompt).toContainText('child car seat')
     await expect(prompt).toContainText('@')
     await expect(
       prompt.locator('[data-testid="chat-prompt-from-freegle"]')

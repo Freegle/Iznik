@@ -96,16 +96,6 @@ type ServerSwitchMetric struct {
 // entry, when an entry has no call, or when an entry is older than 30 days unless KeepUntil is
 // ahead (docs/developers/reference/ux-experiments.md, "Switch lists and corpse control").
 var ServerSwitches = map[string]ServerSwitch{
-	"confirm-reply": {
-		Name:    "confirm-reply",
-		Opened:  "2026-10-20",
-		PR:      "https://github.com/Freegle/Iznik/pull/1767",
-		Channel: "server",
-		Type:    "confirm_reply",
-		Varies:  "step",
-		Arms:    []string{"control", "ask"},
-		Metric:  ServerSwitchMetric{Source: "confirm_reply", WindowHours: 168},
-	},
 	"interested-button": {
 		Name:    "interested-button",
 		Opened:  "2026-10-23",

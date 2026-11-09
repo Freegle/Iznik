@@ -188,6 +188,14 @@ which carries `_ckyStore._categories` with a `cookies` list per slug; `other` is
 uncategorised group. `CookieYesPublishedBanner` reads it. The scan results are fine for
 scan age and page counts, and as a log line.
 
+## A copied photo hash makes a post look repeated
+
+The content check counts how many posts used a photo's `hash` in the last day and flags a post
+over the limit. A derived `messages_attachments` row that copies the original's hash (an
+auto-split crop, a duplicate made for any other reason) adds to that count for the member's own
+single photo. A post with one group photo cut into three crops is four of the five allowed, with
+nothing in the logs. Leave `hash` empty on any row that is not a new upload.
+
 ## A schema check on the read connection can miss a table you just created
 
 `DB::select`/`selectOne` go to the read node, and DDL done a moment earlier on the write node
@@ -240,6 +248,18 @@ more (`max_query_series`), and a label filled from a line has as many values as 
 Group only by labels with a fixed set of values: capture the arm only from the experiment's own arm
 names, and rewrite a free label to fixed words with `label_format` (`UxExperimentService::MAX_ARMS` and
 `SERIES_PER_ARM_AND_FLOW` keep the total under the limit).
+
+## A range query reads the window ending at a step boundary, not at the end you gave
+
+`query_range` rounds its start **down to a multiple of the step**, counted from 1970. With a 7-day step
+the evaluation lands on a Thursday at 00:00 UTC, so `count_over_time(... [7d])` asked for "the week to
+Monday" read Thursday to Thursday and gave a plausible, wrong count (`ux:weekly-report`, November 2026).
+Use a one-day step with the start equal to the end at a midnight, as `UxRollupService::metricOrThrow`
+and `WeeklyReportCommand::frictionDetail` do, and read the last point.
+
+The 500-series cap above also applies **inside** a query: `count(sum by (session_id) (...))` returns one
+series, and is still refused once more than 500 sessions match. Treat that refusal as "more than 500"
+(`lastMetricStatus` 400 with "maximum of series") rather than as Loki being down.
 
 ## Look the experiment arm up before the content is built
 

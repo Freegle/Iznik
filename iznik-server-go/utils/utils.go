@@ -469,3 +469,15 @@ func TidyName(name string) string {
 
 	return name
 }
+
+// IsClearanceSQL is a SQL condition, true when the post whose id is m (a column or a
+// placeholder-free expression) is a clearance. A clearance is an Offer with
+// messages_bulk_items rows, but so is a post the auto-splitter turned into an item list,
+// and that one is an ordinary member's Offer: it stays in freebie alerts and partner feeds
+// and gets none of the clearance extras. So "has bulk items" no longer means "is a
+// clearance"; this does. Its batch twin is App\Support\ClearanceSql.
+// docs/developers/reference/auto-split.md.
+func IsClearanceSQL(m string) string {
+	return "(EXISTS (SELECT 1 FROM messages_bulk_items cbi WHERE cbi.msgid = " + m + ")" +
+		" AND NOT EXISTS (SELECT 1 FROM messages_autosplit cas WHERE cas.msgid = " + m + " AND cas.state = 'Split'))"
+}

@@ -3028,6 +3028,66 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
+    public function test_freebie_alerts_add_sends_an_automatically_split_post_without_its_crops(): void
+    {
+        // Bulk items made by the auto-splitter do not make a clearance: the post goes to the
+        // partners like any Offer. Its item crops stay behind, or the photo they were cut
+        // from would arrive several times over.
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject'  => 'OFFER: Sofa and two chairs',
+            'textbody' => 'A sofa and two kitchen chairs.',
+            'type'     => 'Offer',
+            'lat'      => 52.5,
+            'lng'      => -1.8,
+            'date'     => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgId,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+        ]);
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $msgId, 'position' => 0, 'name' => 'Sofa', 'quantity' => 1, 'condition' => 'Unknown'],
+            ['msgid' => $msgId, 'position' => 1, 'name' => 'Chairs', 'quantity' => 2, 'condition' => 'Unknown'],
+        ]);
+        DB::table('messages_autosplit')->insert(['msgid' => $msgId, 'state' => 'Split', 'kind' => 'several_items']);
+        $photo = DB::table('messages_attachments')->insertGetId(['msgid' => $msgId, 'externaluid' => 'freegletusd-both', 'externalmods' => '{}', 'contenttype' => 'image/jpeg']);
+        $crop = DB::table('messages_attachments')->insertGetId(['msgid' => $msgId, 'externaluid' => 'freegletusd-both', 'externalmods' => '{"cx":1,"cy":2,"cw":300,"ch":200,"fw":800,"fh":600,"precrop":true}', 'contenttype' => 'image/jpeg']);
+
+        DB::table('background_tasks')->insert([
+            'task_type'  => 'freebie_alerts_add',
+            'data'       => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => 'test-key-123']);
+        config(['freegle.freebie_alerts.api_url' => 'https://api.freebiealerts.app']);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'api.freebiealerts.app/freegle/post/create' => \Illuminate\Support\Facades\Http::response(['success' => true], 200),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep'          => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        \Illuminate\Support\Facades\Http::assertSent(function ($request) use ($photo, $crop) {
+            return str_contains($request->url(), '/freegle/post/create')
+                && str_contains($request['images'], "timg_{$photo}.jpg")
+                && ! str_contains($request['images'], "timg_{$crop}.jpg");
+        });
+    }
+
     public function test_freebie_alerts_add_skips_clearance_posts(): void
     {
         // Defense-in-depth: even if a freebie_alerts_add task was somehow enqueued for a

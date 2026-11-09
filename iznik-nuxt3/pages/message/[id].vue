@@ -80,7 +80,7 @@
           "
         >
           <client-only>
-            <MyMessage :id="id" :show-old="true" expand />
+            <MyMessage :id="id" :show-old="true" expand post-page />
           </client-only>
         </div>
         <div v-else class="botpad">
