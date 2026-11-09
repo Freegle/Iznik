@@ -2,7 +2,7 @@
 
 namespace App\Services\TrashNothing\Verify;
 
-use App\Models\Location;
+use App\Models\Group;
 use App\Models\Message;
 use App\Services\TrashNothing\Ingestion\DeliberateSkips;
 use App\Services\TrashNothing\Sync\PostSyncer;
@@ -165,7 +165,7 @@ class CoverageVerifier
                 // outcome when asked to (--ingest-closed); still counted as resolved.
                 if ($bucket === self::RESOLVED
                     && in_array($result['outcome'], self::CLOSED_OUTCOMES, true)
-                    && $this->isPlaceable($result['lat'], $result['lng'])) {
+                    && $this->isPlaceable($result['lat'], $result['lng'], PostSyncer::chosenGroupIds($result['post']))) {
                     $closed[$postId] = [
                         'post_id'     => $postId,
                         'subject'     => $entry['subject'],
@@ -250,23 +250,45 @@ class CoverageVerifier
             return false;
         }
 
-        return ! $this->isPlaceable((float) $entry['lat'], (float) $entry['lng']);
+        return ! $this->isPlaceable((float) $entry['lat'], (float) $entry['lng'], $this->addressedTo($entry['envelope_to'] ?? ''));
     }
 
     /**
-     * Would PostSyncer have found a group for these coordinates?
+     * The community an archived email was sent to, as the one id in a list, or none. TN
+     * emails a post to the communities the member chose, so this is their choice, and
+     * ingestion places the post there wherever it is.
      *
-     * The same Location::groupsNear() call processPost() places a post with, so
-     * the answer reconstructs the API path's own decision rather than guessing
-     * at it.
+     * @return int[]
      */
-    private function isPlaceable(?float $lat, ?float $lng): bool
+    private function addressedTo(string $envelopeTo): array
+    {
+        $at = strrpos($envelopeTo, '@');
+        if ($at === false || $at === 0) {
+            return [];
+        }
+
+        $id = Group::where('nameshort', substr($envelopeTo, 0, $at))->value('id');
+
+        return $id === null ? [] : [(int) $id];
+    }
+
+    /**
+     * Would PostSyncer have found a group for this post?
+     *
+     * The same PostSyncer::placement() call processPost() places a post with, so
+     * the answer reconstructs the API path's own decision rather than guessing
+     * at it: a post that names a community goes there wherever it is, and one that
+     * names none needs a community near its coordinates.
+     *
+     * @param  int[]  $chosenIds  the communities the post names (freegle_group_ids)
+     */
+    private function isPlaceable(?float $lat, ?float $lng, array $chosenIds = []): bool
     {
         if ($lat === null || $lng === null) {
             return false;
         }
 
-        return ! empty(Location::groupsNear($lat, $lng, limit: 1));
+        return PostSyncer::placement($lat, $lng, $chosenIds)[0] !== null;
     }
 
     /**
@@ -309,7 +331,7 @@ class CoverageVerifier
         // one whose location was edited after the email may place differently
         // from the header. Backfilling either would be a no-op that comes back
         // as a repeat miss on the next run.
-        if (! $this->isPlaceable($result['lat'], $result['lng'])) {
+        if (! $this->isPlaceable($result['lat'], $result['lng'], PostSyncer::chosenGroupIds($result['post']))) {
             return self::UNPLACEABLE;
         }
 

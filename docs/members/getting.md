@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-25
+last_reviewed: 2026-11-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -115,7 +115,8 @@ TAKEN. You do not need to do anything, though a thank-you in the chat is always 
 - **Only legal items.** If something cannot legally be given away, it is not for Freegle.
 - **Some items come with safety guidance.** Things like car seats, cycle helmets and cot
   mattresses can be freegled, but check the guidance a moderator may attach to the post,
-  and use your judgement.
+  and use your judgement. When you post a WANTED for one, a note under the name box says
+  what to ask about, such as a car seat's make, model and age.
 - **Do not use auto-responders.** Automatically replying to lots of posts looks like spam
   and can get your account removed. Going away? Pause your Freegle emails in Settings
   instead.
