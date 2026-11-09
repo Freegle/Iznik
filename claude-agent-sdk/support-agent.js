@@ -15,6 +15,7 @@ const path = require('path')
 const { systemPrompt, reviewPrompt, hasSuggestedReply } = require('./prompt')
 const { buildPrompt } = require('./images')
 const { withLinkWarning } = require('./links')
+const { agentOptions } = require('./agent-options')
 const { subscriptionToken, fetchQuota, quotaFields, transcriptEntries, serialiseTranscript, recordRun } = require('./run-record')
 // Where runs are recorded: the same Go API that verifies the caller.
 const API_URL = process.env.API_URL || FREEGLE_API_URL
@@ -44,29 +45,17 @@ async function runSupportQuery({ query: userQuery, userId, jwt, agentSessionId, 
   const { tools, names, cleanup } = buildTools({ jwt, userId: userId || 0, modId, modEmail, progress })
   const mcpServer = createSdkMcpServer({ name: 'freegle', version: '2.0.0', tools })
 
-  const options = {
+  const options = agentOptions({
     model: MODEL,
     systemPrompt: systemPrompt(userId, CODEBASE),
-    mcpServers: { freegle: mcpServer },
-    allowedTools: [
-      ...names.map((n) => `mcp__freegle__${n}`),
-      'Read',
-      'Grep',
-      'Glob',
-    ],
-    // Read-only investigation; never let it try to edit/run code.
-    disallowedTools: ['Write', 'Edit', 'Bash', 'NotebookEdit'],
-    permissionMode: 'bypassPermissions',
-    // Keep file reads inside the codebase checkout (defence in depth alongside
-    // the narrowed ~/.claude mount — the container only exposes the OAuth
-    // credential, not memory/transcripts).
-    additionalDirectories: [CODEBASE],
+    toolNames: names,
+    mcpServer,
+    codebase: CODEBASE,
     // A real investigation fans out: dump, several SQL queries, Sentry across
     // ~5 projects, Loki, Discourse. 20 ran out mid-way (error_max_turns), so
     // give it real headroom. Tunable via SUPPORT_AI_MAX_TURNS.
     maxTurns: Number(process.env.SUPPORT_AI_MAX_TURNS || 80),
-    cwd: CODEBASE,
-  }
+  })
   if (agentSessionId) options.resume = agentSessionId
 
   let analysis = ''

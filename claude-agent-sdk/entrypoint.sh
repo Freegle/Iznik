@@ -1,10 +1,11 @@
 #!/bin/bash
 set -e
 
-# Started as root: take the audit volume (it keeps the owner of whichever uid
-# created it) and re-run this script as claude. Nothing else runs as root.
+# Started as root: take the audit and sessions volumes (each keeps the owner of
+# whichever uid created it) and re-run this script as claude. Nothing else runs as root.
 if [ "$(id -u)" = "0" ]; then
   chown -R claude:claude /app/audit
+  if [ -d /home/claude/.claude/projects ]; then chown -R claude:claude /home/claude/.claude/projects; fi
   exec setpriv --reuid=claude --regid=claude --init-groups "$0" "$@"
 fi
 
@@ -24,7 +25,7 @@ if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
   echo "Claude auth: subscription token from 'claude setup-token' (subscription mode)"
 elif [ -n "$ANTHROPIC_API_KEY" ]; then
   echo "Claude auth: API key (api mode)"
-elif [ -n "$(ls -A "$HOME/.claude" 2>/dev/null)" ]; then
+elif [ -s "$HOME/.claude/.credentials.json" ]; then
   echo "Claude auth: mounted ~/.claude session (session mode)"
 else
   echo "WARNING: no ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or ~/.claude session - AI features disabled"

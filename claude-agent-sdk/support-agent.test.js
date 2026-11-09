@@ -80,3 +80,22 @@ test('screenshots reach the model as image blocks and the audit counts them', as
   for await (const m of calls[0].prompt) sent.push(m)
   assert.strictEqual(sent[0].message.content.filter((b) => b.type === 'image').length, 2)
 })
+
+test('the interactive agent is started without the first pass dump keys in its environment', async () => {
+  calls.length = 0
+  script = [{ result: 'Fine.' }]
+  const saved = [process.env.USERDUMP_INTERNAL_KEY, process.env.USERDUMP_API_KEY]
+  process.env.USERDUMP_INTERNAL_KEY = 'canary-internal'
+  process.env.USERDUMP_API_KEY = 'canary-partner'
+  try {
+    await run()
+  } finally {
+    saved[0] === undefined ? delete process.env.USERDUMP_INTERNAL_KEY : (process.env.USERDUMP_INTERNAL_KEY = saved[0])
+    saved[1] === undefined ? delete process.env.USERDUMP_API_KEY : (process.env.USERDUMP_API_KEY = saved[1])
+  }
+  const env = calls[0].options.env
+  assert.ok(env && typeof env === 'object', 'an explicit env is passed to the SDK')
+  assert.ok(!('USERDUMP_INTERNAL_KEY' in env) && !('USERDUMP_API_KEY' in env))
+  assert.ok(!JSON.stringify(calls[0].options).includes('canary-'))
+  assert.ok(Object.keys(env).length > 0, 'the rest of the environment is kept')
+})

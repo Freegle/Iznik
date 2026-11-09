@@ -691,6 +691,13 @@ services:
       # Shared secret the /internal routes require, which the batch presents too. Unset, the
       # helper refuses every internal call.
       - UX_INTERNAL_SECRET=${UX_INTERNAL_SECRET:-}
+      # The support first pass: a dedicated key for fetching a member's dump (never the partner's
+      # USERDUMP_API_KEY), the model it uses (falls back to SUPPORT_AI_MODEL), and the limits on the
+      # investigation: one deadline in milliseconds over the whole pass, and a turn limit.
+      - USERDUMP_INTERNAL_KEY=${USERDUMP_INTERNAL_KEY:-}
+      - FIRST_PASS_MODEL=${FIRST_PASS_MODEL:-}
+      - FIRST_PASS_DEADLINE_MS=${FIRST_PASS_DEADLINE_MS:-480000}
+      - FIRST_PASS_MAX_TURNS=${FIRST_PASS_MAX_TURNS:-30}
     volumes:
       # Session mode (testing) ONLY: mount JUST the Claude OAuth credential read-only,
       # NOT the whole ~/.claude (which holds memory/transcripts/project notes). This
@@ -698,6 +705,9 @@ services:
       # ANTHROPIC_API_KEY (api mode) and should OMIT this mount entirely.
       - ${SUPPORT_CLAUDE_DIR:-/home/edward/.claude}/.credentials.json:/home/claude/.claude/.credentials.json:ro
       - ai-support-audit:/app/audit
+      # Saved agent sessions, so a follow-up question still works after a restart. Pruned after a day
+      # (claude-agent-sdk/sessions.js), because they hold what the tools returned about a member.
+      - ai-support-sessions:/home/claude/.claude/projects
     restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "curl -f --max-time 9 http://localhost:3000/health || exit 1"]
@@ -850,6 +860,8 @@ services:
       - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
       # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
       - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
+      # Dedicated key for the support first pass, accepted in the X-Dump-Key header only (blank = disabled)
+      - USERDUMP_INTERNAL_KEY=${USERDUMP_INTERNAL_KEY:-}
       # Allowed domains for email tracking redirects
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
@@ -1058,6 +1070,8 @@ services:
       - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
       # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
       - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
+      # Dedicated key for the support first pass, accepted in the X-Dump-Key header only (blank = disabled)
+      - USERDUMP_INTERNAL_KEY=${USERDUMP_INTERNAL_KEY:-}
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
       - GROUP_DOMAIN=groups.ilovefreegle.org
@@ -2107,6 +2121,8 @@ volumes:
     driver: local   # Elasticsearch index for the wiki's CirrusSearch (edge)
   ai-support-audit:
     driver: local   # durable audit log of AI Support Helper investigations (who queried whom)
+  ai-support-sessions:
+    driver: local   # AI Support Helper's saved sessions for follow-up questions, pruned after a day
   paf-data:
     driver: local   # PAF extractor: last applied release (~3 GB) and the job in hand
 

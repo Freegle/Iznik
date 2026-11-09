@@ -146,6 +146,53 @@ func TestUserDumpApiKeyBypass(t *testing.T) {
 	assert.Equal(t, 401, resp3.StatusCode)
 }
 
+func TestUserDumpInternalKeyHeaderOnly(t *testing.T) {
+	prefix := uniquePrefix("dumpinternal")
+	target := CreateTestUser(t, prefix+"_target", "User")
+
+	oldInternal := os.Getenv("USERDUMP_INTERNAL_KEY")
+	oldAPI := os.Getenv("USERDUMP_API_KEY")
+	os.Setenv("USERDUMP_INTERNAL_KEY", "internal-dump-key")
+	os.Setenv("USERDUMP_API_KEY", "partner-dump-key")
+	defer os.Setenv("USERDUMP_INTERNAL_KEY", oldInternal)
+	defer os.Setenv("USERDUMP_API_KEY", oldAPI)
+	url := fmt.Sprintf("/api/modtools/user/%d/dump?format=raw&include=db", target)
+
+	// The header works, with or without a case header, and the dump is the real thing.
+	req := httptest.NewRequest("GET", url, nil)
+	req.Header.Set("X-Dump-Key", "internal-dump-key")
+	req.Header.Set("X-Freegle-Case", "123")
+	resp, _ := getApp().Test(req, 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, 1, tableRowCount(t, writeTempDB(t, rsp(resp)), "users"))
+
+	// A forged case header cannot break the log line, and is still accepted.
+	req = httptest.NewRequest("GET", url, nil)
+	req.Header.Set("X-Dump-Key", "internal-dump-key")
+	req.Header.Set("X-Freegle-Case", "12\nFAKE")
+	resp, _ = getApp().Test(req, 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The internal key in the query string is refused: it must never appear in a URL.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", url+"&key=internal-dump-key", nil))
+	assert.Equal(t, 401, resp.StatusCode)
+
+	// A wrong header is refused, and the partner's key still works both ways.
+	req = httptest.NewRequest("GET", url, nil)
+	req.Header.Set("X-Dump-Key", "wrong")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+	resp, _ = getApp().Test(httptest.NewRequest("GET", url+"&key=partner-dump-key", nil), 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// With no internal key configured the header gets nothing.
+	os.Setenv("USERDUMP_INTERNAL_KEY", "")
+	req = httptest.NewRequest("GET", url, nil)
+	req.Header.Set("X-Dump-Key", "")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
 func TestUserDumpRawBuildsSqlite(t *testing.T) {
 	prefix := uniquePrefix("dumpraw")
 	sup := CreateTestUser(t, prefix+"_sup", "Support")

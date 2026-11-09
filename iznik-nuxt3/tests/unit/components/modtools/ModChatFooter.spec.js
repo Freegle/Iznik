@@ -310,7 +310,7 @@ describe('ModChatFooter', () => {
     },
     NudgeWarningModal: { template: '<div class="nudge-warning-modal" />' },
     MicroVolunteering: { template: '<div class="micro-volunteering" />' },
-    ConfirmModal: { template: '<div class="confirm-modal" />' },
+    ConfirmModal: { template: '<div class="confirm-modal"><slot /></div>' },
     ModSpammerReport: { template: '<div class="mod-spammer-report" />' },
     ModCommentAddModal: { template: '<div class="mod-comment-add-modal" />' },
     'v-icon': { template: '<i />', props: ['icon'] },
@@ -641,15 +641,49 @@ describe('ModChatFooter', () => {
     })
 
     it('tells the moderator when the referral has gone to Support', async () => {
-      mockReferToSupport.mockResolvedValue()
+      mockReferToSupport.mockResolvedValue({ ret: 0, caseid: 31 })
       const wrapper = await mountComponent({ id: 456 })
 
       await wrapper.findComponent(ModChatFooter).vm.referToSupport()
       await flushPromises()
 
-      expect(mockReferToSupport).toHaveBeenCalledWith(456)
+      expect(mockReferToSupport).toHaveBeenCalledWith(456, '')
       expect(wrapper.find('[data-test="refer-sent"]').exists()).toBe(true)
       expect(wrapper.find('[data-test="refer-failed"]').exists()).toBe(false)
+    })
+
+    it('sends the reason typed in the modal and links to the case', async () => {
+      mockReferToSupport.mockResolvedValue({ ret: 0, caseid: 31 })
+      const wrapper = await mountComponent({ id: 456 })
+      const footer = wrapper.findComponent(ModChatFooter)
+
+      footer.vm.confirmReferToSupport()
+      await flushPromises()
+      const box = wrapper.find('[data-test="refer-reason"]')
+      expect(box.exists()).toBe(true)
+      expect(box.attributes('maxlength')).toBe('2000')
+      await box.setValue('  They keep getting an error  ')
+      await footer.vm.referToSupport()
+      await flushPromises()
+
+      expect(mockReferToSupport).toHaveBeenCalledWith(
+        456,
+        'They keep getting an error'
+      )
+      const link = wrapper.find('[data-test="refer-case-link"]')
+      expect(link.exists()).toBe(true)
+      expect(link.attributes('to') || link.attributes('href')).toBe(
+        '/support/cases/31'
+      )
+    })
+
+    it('shows no case link when the response has no case id', async () => {
+      mockReferToSupport.mockResolvedValue({ ret: 0 })
+      const wrapper = await mountComponent({ id: 456 })
+      await wrapper.findComponent(ModChatFooter).vm.referToSupport()
+      await flushPromises()
+      expect(wrapper.find('[data-test="refer-sent"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="refer-case-link"]').exists()).toBe(false)
     })
 
     it('says so when the referral is refused, and where to turn instead', async () => {

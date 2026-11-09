@@ -53,6 +53,7 @@ import SpammersAPI from './SpammersAPI.js'
 import StatusAPI from './StatusAPI.js'
 import StoriesAPI from './StoriesAPI.js'
 import SupportAIAPI from './SupportAIAPI.js'
+import SupportCasesAPI from './SupportCasesAPI.js'
 import SystemLogsAPI from './SystemLogsAPI.js'
 import TeamAPI from './TeamAPI.js'
 import TownAPI from './TownAPI.js'
@@ -109,6 +110,7 @@ interface API {
   status: StatusAPI;
   stories: StoriesAPI;
   supportai: SupportAIAPI;
+  supportcases: SupportCasesAPI;
   systemlogs: SystemLogsAPI;
   team: TeamAPI;
   town: TownAPI;

@@ -251,10 +251,19 @@ const API_URL = process.env.API_URL || 'http://apiv2.localhost:8192'
 // raw format goes silent for the whole build, which is exactly how big dumps
 // died: HAProxy cut them at 50s, the model retried, and the retries piled
 // more concurrent builds onto the server.
-async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress }) {
-  const url = `${API_URL}/api/modtools/user/${userId}/dump?format=framed&include=${encodeURIComponent(
-    include
-  )}&since=${encodeURIComponent(since)}&jwt=${encodeURIComponent(jwt || '')}`
+//
+// Key mode (the support first pass, which has no moderator session): pass `key` and the dump is
+// requested with the key in the X-Dump-Key header and the case id in X-Freegle-Case, never in the URL,
+// so it cannot reach an access log. `signal` stops the fetch when the caller's deadline passes. A refused
+// dump throws an error carrying `status`.
+async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress, key, caseId, signal }) {
+  const base = `${API_URL}/api/modtools/user/${userId}/dump?format=framed&include=${encodeURIComponent(include)}&since=${encodeURIComponent(since)}`
+  const url = key ? base : `${base}&jwt=${encodeURIComponent(jwt || '')}`
+  const headers = { 'accept-encoding': 'identity' }
+  if (key) {
+    headers['X-Dump-Key'] = key
+    if (caseId) headers['X-Freegle-Case'] = String(caseId)
+  }
 
   // Inactivity-based abort, not a fixed overall deadline: a healthy framed
   // dump is never silent for long, while total build time legitimately varies
@@ -266,6 +275,11 @@ async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,se
     idleTimer = setTimeout(() => ctrl.abort(new Error('dump stalled: no frame for 90s')), 90000)
   }
   armIdle()
+  const onCallerAbort = () => ctrl.abort(signal.reason || new Error('dump aborted'))
+  if (signal) {
+    if (signal.aborted) onCallerAbort()
+    else signal.addEventListener('abort', onCallerAbort, { once: true })
+  }
 
   try {
     // identity: undici advertises gzip by default, and any compression layer
@@ -273,8 +287,12 @@ async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,se
     // until the build completes - exactly the LB-timeout failure the framed
     // protocol exists to prevent. The SQLite payload is worth compressing one
     // day, but only via a layer proven to flush per frame.
-    const res = await fetch(url, { signal: ctrl.signal, headers: { 'accept-encoding': 'identity' } })
-    if (!res.ok) throw new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    const res = await fetch(url, { signal: ctrl.signal, headers })
+    if (!res.ok) {
+      const refused = new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
+      refused.status = res.status
+      throw refused
+    }
 
     const crypto = require('crypto')
     const hash = crypto.createHash('sha256')
@@ -321,11 +339,14 @@ async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,se
       throw new Error('dump checksum mismatch')
     }
 
-    const file = path.join(os.tmpdir(), `dump-${userId}-${process.pid}-${data.length}.sqlite`)
+    // Key-mode files get their own name so a first pass never overwrites, or unlinks, the file an
+    // interactive session has cached for the same member.
+    const file = path.join(os.tmpdir(), `${key ? `fp-${crypto.randomBytes(4).toString('hex')}-` : ''}dump-${userId}-${process.pid}-${data.length}.sqlite`)
     fs.writeFileSync(file, data, { mode: 0o600 }) // member PII snapshot — owner-only
     return file
   } finally {
     clearTimeout(idleTimer)
+    if (signal) signal.removeEventListener('abort', onCallerAbort)
   }
 }
 
@@ -350,13 +371,94 @@ function sweepDumpCache(now = Date.now()) {
 const _dumpSweep = setInterval(sweepDumpCache, 60 * 1000)
 if (_dumpSweep.unref) _dumpSweep.unref()
 
+// Downloads under way, one per member and window, so a dump started when the member was picked
+// (prefetchDump) is joined rather than fetched a second time. key -> { promise, listeners }
+const dumpDownloads = new Map()
+
+function dumpDownloading(userId, since = '90d') {
+  return dumpDownloads.has(`${userId}:${since}`)
+}
+
+// The cached dump for this member and window while it is still fresh, else null.
+function freshDump(userId, since = '90d') {
+  const cached = dumpCache.get(`${userId}:${since}`)
+  return cached && fs.existsSync(cached.file) && Date.now() - cached.at < DUMP_TTL_MS ? cached : null
+}
+
+/**
+ * The member's dump for a volunteer: the cached one while it is fresh, else the download already under way
+ * for that member, else a new one. onProgress gets the framed progress of whichever download is used.
+ *
+ * @returns {Promise<{file: string, at: number, reused: boolean}>} reused is true for a cached dump.
+ */
+async function sharedDump({ userId, jwt, since = '90d', onProgress, fetchDump = fetchUserDump }) {
+  const key = `${userId}:${since}`
+  const cached = freshDump(userId, since)
+  if (cached) return { file: cached.file, at: cached.at, reused: true }
+  let download = dumpDownloads.get(key)
+  if (!download) {
+    const listeners = new Set()
+    const tellAll = (pr) => {
+      for (const listener of listeners) {
+        try {
+          listener(pr)
+        } catch (_) {
+          // One caller's progress display must not stop the download for the others.
+        }
+      }
+    }
+    const promise = fetchDump({ userId, jwt, since, onProgress: tellAll })
+      .then((file) => {
+        const old = dumpCache.get(key)
+        if (old && old.file !== file) {
+          try {
+            fs.unlinkSync(old.file)
+          } catch {}
+        }
+        const at = Date.now()
+        dumpCache.set(key, { file, at })
+        return { file, at }
+      })
+      .finally(() => dumpDownloads.delete(key))
+    download = { promise, listeners }
+    dumpDownloads.set(key, download)
+  }
+  if (onProgress) download.listeners.add(onProgress)
+  try {
+    const { file, at } = await download.promise
+    return { file, at, reused: false }
+  } finally {
+    if (onProgress) download.listeners.delete(onProgress)
+  }
+}
+
+/**
+ * Start downloading the member's dump as soon as a volunteer picks them, so it is ready, or nearly, when the
+ * question arrives: the first thing nearly every investigation does is fetch it, and a big member's takes
+ * minutes. Best effort: a failure is logged and the investigation fetches it as before. Never throws.
+ *
+ * @returns {Promise<boolean>} whether the dump is now cached.
+ */
+async function prefetchDump({ userId, jwt, since = '90d', fetchDump } = {}) {
+  if (!userId) return false
+  try {
+    await sharedDump({ userId, jwt, since, fetchDump })
+    return true
+  } catch (e) {
+    console.error(`[Prefetch] dump for user ${userId} failed: ${e.message}`)
+    return false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool factory. Each request builds tools bound to that caller's JWT + the
 // member they picked. The user dump is cached across requests (see dumpCache).
 // ---------------------------------------------------------------------------
 function buildTools(ctx) {
-  // ctx: { jwt, userId (selected member or 0), progress }
-  const state = { dumpFile: null }
+  // ctx: { jwt, userId (selected member or 0), progress }, plus for the first pass, which has no login:
+  // { dumpKey, caseId, signal, onDumpRefused } so the dump is fetched with the key, stops at its
+  // deadline, and a refused key or a held export is reported rather than worked around.
+  const state = { dumpFile: null, privateDumps: {} }
   const p = ctx.progress || (() => {})
   const text = (obj) => ({ content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj) }] })
   const err = (msg) => ({ content: [{ type: 'text', text: `ERROR: ${msg}` }], isError: true })
@@ -419,18 +521,38 @@ function buildTools(ctx) {
       try {
         const id = a.userid || ctx.userId
         if (!id) return err('No member selected/provided')
+        // The first pass (key, no login) may read only the member in its case: the key would otherwise
+        // open any member's dump.
+        if (!ctx.jwt && ctx.dumpKey && id !== ctx.userId) return err('In this run get_user_dump may only look at the member in the case')
         const since = a.since || '90d'
         // Audit every access, even a cache hit — the trail must stay complete.
         audit({ mod: ctx.modId, modEmail: ctx.modEmail, target: id, tool: 'get_user_dump', since })
-        const key = `${id}:${since}`
-        const cached = dumpCache.get(key)
-        if (cached && fs.existsSync(cached.file) && Date.now() - cached.at < DUMP_TTL_MS) {
-          state.dumpFile = cached.file
-          state.dumpCached = true
-          const ageS = Math.round((Date.now() - cached.at) / 1000)
-          p('tool', `Reusing snapshot for user ${id} (built ${ageS}s ago)…`)
-        } else {
+        // The first pass fetches with its key, not a person's login. Its dump is private to the run:
+        // never put in or taken from the shared cache (a volunteer's own lookup must go through their
+        // login), reused if asked for twice, and deleted by cleanup() when the run ends.
+        const keyMode = !ctx.jwt && !!ctx.dumpKey
+        if (keyMode && state.privateDumps[`${id}:${since}`]) {
+          state.dumpFile = state.privateDumps[`${id}:${since}`]
+          state.dumpCached = false
+        } else if (keyMode) {
           p('tool', `Downloading full snapshot for user ${id}…`)
+          let file
+          try {
+            file = await fetchUserDump({ userId: id, key: ctx.dumpKey, caseId: ctx.caseId, signal: ctx.signal, since })
+          } catch (e) {
+            // A refused key or a held export is not something to work around: the first pass stops.
+            if (e && [401, 403, 409].includes(e.status) && ctx.onDumpRefused) ctx.onDumpRefused(e.status)
+            throw e
+          }
+          state.privateDumps[`${id}:${since}`] = file
+          state.dumpFile = file
+          state.dumpCached = false
+        }
+        if (!keyMode) {
+          const cached = freshDump(id, since)
+          if (cached) p('tool', `Reusing snapshot for user ${id} (built ${Math.round((Date.now() - cached.at) / 1000)}s ago)…`)
+          else if (dumpDownloading(id, since)) p('tool', `Snapshot for user ${id} is already downloading…`)
+          else p('tool', `Downloading full snapshot for user ${id}…`)
           // Structured progress for the UI's progress bar: forward the framed
           // per-section updates (throttled to ~1/s), and let heartbeats
           // refresh elapsed time so a slow section still visibly ticks. A big
@@ -452,15 +574,9 @@ function buildTools(ctx) {
               etaMs: pr.eta_ms > 1000 ? pr.eta_ms : null,
             })
           }
-          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since, onProgress })
-          p('progress', { tool: 'get_user_dump', percent: 100, section: 'complete', done: true })
-          if (cached && cached.file !== file) {
-            try {
-              fs.unlinkSync(cached.file)
-            } catch {}
-          }
-          dumpCache.set(key, { file, at: Date.now() })
-          state.dumpFile = file
+          const got = await sharedDump({ userId: id, jwt: ctx.jwt, since, onProgress })
+          if (!got.reused) p('progress', { tool: 'get_user_dump', percent: 100, section: 'complete', done: true })
+          state.dumpFile = got.file
           state.dumpCached = true
         }
         const db = new Database(state.dumpFile, { readonly: true })
@@ -747,14 +863,17 @@ function buildTools(ctx) {
     ],
     cleanup() {
       // Cached dumps are owned by dumpCache (swept on TTL) so a follow-up
-      // question can reuse them — only delete a one-off, uncached file.
-      if (state.dumpFile && !state.dumpCached) {
+      // question can reuse them; only delete a one-off, uncached file, and
+      // every private dump the first pass fetched.
+      const files = new Set(Object.values(state.privateDumps))
+      if (state.dumpFile && !state.dumpCached) files.add(state.dumpFile)
+      for (const file of files) {
         try {
-          fs.unlinkSync(state.dumpFile)
+          fs.unlinkSync(file)
         } catch {}
       }
     },
   }
 }
 
-module.exports = { buildTools, getPool, lokiQuery, dbSelect, guardSelect, audit, fetchUserDump }
+module.exports = { buildTools, getPool, lokiQuery, dbSelect, guardSelect, audit, fetchUserDump, sharedDump, prefetchDump, dumpDownloading }

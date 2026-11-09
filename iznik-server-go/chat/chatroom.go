@@ -17,11 +17,13 @@ import (
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/modmessaging"
+	"github.com/freegle/iznik-server-go/supportcase/casestore"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/plugin/dbresolver"
 )
 
 const chatActiveLimitMT = 365
@@ -786,7 +788,7 @@ func PostChatRoom(c *fiber.Ctx) error {
 	case "Typing":
 		return handleTyping(c, db, myid, req.ID)
 	case "ReferToSupport":
-		return handleReferToSupport(c, db, myid, req.ID)
+		return handleReferToSupport(c, db, myid, req.ID, req.Reason)
 	case "ReportNoGroup":
 		return handleReportNoGroup(c, db, myid, req)
 	default:
@@ -1754,42 +1756,161 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 	})
 }
 
-func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
+// maxReferReasonRunes caps the free text a moderator can attach to a referral. It is cut, not refused,
+// so a long paste still refers the chat.
+const maxReferReasonRunes = 2000
+
+// repeatReferWindowSeconds is how long after a case opens an identical second referral counts as a
+// double-click rather than a deliberate nudge.
+const repeatReferWindowSeconds = 120
+
+// referMember chooses the member a referral is about. A chat with a member-to-mods side has one
+// (user1); a member-to-member chat has the participant who is not the referrer; a chat between
+// moderators, or one the referrer is not part of, has none.
+func referMember(chattype string, user1, user2, referrer uint64) *uint64 {
+	switch chattype {
+	case utils.CHAT_TYPE_USER2MOD:
+		if user1 > 0 {
+			return &user1
+		}
+	case utils.CHAT_TYPE_USER2USER:
+		if user1 == referrer && user2 > 0 {
+			return &user2
+		}
+		if user2 == referrer && user1 > 0 {
+			return &user1
+		}
+	}
+	return nil
+}
+
+func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64, reason string) error {
 	if chatid == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
 	}
 
 	var room struct {
-		ID      uint64 `gorm:"column:id"`
-		User1   uint64 `gorm:"column:user1"`
-		User2   uint64 `gorm:"column:user2"`
-		Groupid uint64 `gorm:"column:groupid"`
+		ID       uint64 `gorm:"column:id"`
+		Chattype string `gorm:"column:chattype"`
+		User1    uint64 `gorm:"column:user1"`
+		User2    uint64 `gorm:"column:user2"`
+		Groupid  uint64 `gorm:"column:groupid"`
 	}
-	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", chatid).Scan(&room)
+	if res := db.Table("chat_rooms").Select("id, chattype, COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", chatid).Scan(&room); res.Error != nil {
+		stdlog.Printf("[ReferToSupport] chat lookup failed for chat %d by %d: %v", chatid, myid, res.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")
+	}
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
 
-	// Anyone who may see the chat may refer it: its participants, the moderators of its
-	// community, and moderators reviewing a chat between their members. The button lives
-	// in ModTools on a member-to-mods chat, where the moderator is never a participant -
-	// a participants-only check refused every moderator with a 403 (Discourse 10199).
+	// Only a moderator who may see the chat can refer it: a moderator of its community, or one
+	// reviewing a chat between their members, or a participant who is a moderator. The button
+	// lives in ModTools on a member-to-mods chat, where the moderator is never a participant -
+	// a participants-only check refused every moderator with a 403 (Discourse 10199). Each
+	// referral spends a model pass, so a plain member may not open one.
 	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
 		return fiber.NewError(fiber.StatusForbidden, "You can't see this chat")
 	}
+	if !auth.IsSystemMod(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only moderators can refer a chat to Support")
+	}
+	if room.Chattype == utils.CHAT_TYPE_GROUP {
+		return fiber.NewError(fiber.StatusBadRequest, "A group chat can't be referred to Support")
+	}
 
-	// Queue sending a support referral email. The batch sends it; if the queue write
-	// fails the moderator must hear about it rather than be told it worked.
-	result := db.Table("background_tasks").Create(map[string]interface{}{
-		"task_type": "refer_to_support",
-		"data":      gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?)", chatid, myid),
-	})
-	if result.Error != nil {
-		stdlog.Printf("[ReferToSupport] queue write failed for chat %d by %d: %v", chatid, myid, result.Error)
+	reason = strings.TrimSpace(reason)
+	if r := []rune(reason); len(r) > maxReferReasonRunes {
+		reason = string(r[:maxReferReasonRunes])
+	}
+	var reasonPtr *string
+	if reason != "" {
+		reasonPtr = &reason
+	}
+
+	member := referMember(room.Chattype, room.User1, room.User2, myid)
+	openKey := casestore.OpenKey(chatid, myid)
+
+	// The case row is the work queue for the first pass, so no background task is queued for a
+	// new referral. A second referral of the same chat by the same moderator while the case is
+	// open finds the existing case through the unique open_key.
+	var caseid uint64
+	var lastErr error
+	for attempt := 0; attempt < 2 && caseid == 0; attempt++ {
+		lastErr = db.Transaction(func(tx *gorm.DB) error {
+			var err error
+			caseid, err = casestore.CreateCase(tx, &casestore.Case{
+				Chatid:          chatid,
+				Userid:          member,
+				Referrerid:      myid,
+				Source:          "Referral",
+				Reason:          reasonPtr,
+				Status:          "Open",
+				FirstpassStatus: "Pending",
+				OpenKey:         openKey,
+			})
+			return err
+		})
+		if lastErr == nil {
+			break
+		}
+		caseid = 0
+		if !casestore.IsDuplicateKey(lastErr) {
+			break
+		}
+
+		var existing uint64
+		var existingReason *string
+		var ageSeconds int64
+		if err := db.Clauses(dbresolver.Write).Table("support_cases").Select("id, reason, TIMESTAMPDIFF(SECOND, created_at, NOW())").
+			Where("open_key = ?", openKey).Row().Scan(&existing, &existingReason, &ageSeconds); err != nil || existing == 0 {
+			// Handled between our insert and our look: go round and create a fresh case.
+			continue
+		}
+
+		// A double-click lands here within moments with the same reason: it is the same referral, so
+		// it adds no message and mails Support nothing.
+		if ageSeconds < repeatReferWindowSeconds && (reason == "" || (existingReason != nil && *existingReason == reason)) {
+			caseid = existing
+			lastErr = nil
+			break
+		}
+
+		body := "Referred again"
+		if reason != "" {
+			body += ": " + reason
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			_, err := casestore.AddMessage(tx, existing, myid, "Referrer", body, "No")
+			if err != nil {
+				return err
+			}
+			// While the first pass has not run it reads support_cases.reason, so a new reason
+			// replaces the old one there. After it has run the brief stands and the message carries it.
+			if reason != "" {
+				return tx.Table("support_cases").Where("id = ? AND firstpass_status = ?", existing, "Pending").Update("reason", reason).Error
+			}
+			return nil
+		}); err != nil {
+			stdlog.Printf("[ReferToSupport] repeat referral write failed for chat %d by %d: %v", chatid, myid, err)
+			return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")
+		}
+		caseid = existing
+		lastErr = nil
+	}
+
+	if lastErr != nil || caseid == 0 {
+		stdlog.Printf("[ReferToSupport] case write failed for chat %d by %d: %v", chatid, myid, lastErr)
 		return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")
 	}
 
-	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "caseid": caseid})
+}
+
+// CanSeeChatRoom is canSeeChatRoom for other packages (a support case may be read only by someone who
+// can still see its chat).
+func CanSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
+	return canSeeChatRoom(myid, user1, user2, groupid)
 }
 
 // handleReportNoGroup queues a report to the central spam team for a User2User
