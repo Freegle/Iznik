@@ -189,6 +189,37 @@
           </div>
 
           <VeeForm ref="form" class="composer-form">
+            <!-- A post the server split into items: say which ones you'd like. The
+                 choice is written as the first line of the reply, where it can be
+                 seen and changed. -->
+            <div
+              v-if="splitItems.length"
+              class="composer-field"
+              data-testid="reply-item-choice"
+            >
+              <span class="composer-label">Which would you like?</span>
+              <div
+                class="collect-chips"
+                role="group"
+                aria-label="Which would you like?"
+              >
+                <button
+                  v-for="item in splitItems"
+                  :key="item.id"
+                  type="button"
+                  class="collect-chip"
+                  :class="{
+                    'collect-chip--on': chosenItems.includes(item.name),
+                  }"
+                  :aria-pressed="chosenItems.includes(item.name)"
+                  :data-testid="'reply-item-' + item.id"
+                  @click="toggleItem(item)"
+                >
+                  {{ item.name }}
+                </button>
+              </div>
+            </div>
+
             <!-- Reply text -->
             <div class="composer-field">
               <label
@@ -389,6 +420,7 @@ import {
 } from 'vue'
 import dayjs from 'dayjs'
 import { useMessageStore } from '~/stores/message'
+import { isAutoSplit, withItemChoice } from '~/composables/useAutoSplit'
 import { useUserStore } from '~/stores/user'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
@@ -482,6 +514,24 @@ try {
   await messageStore.fetch(props.messageId)
 } catch (e) {
   action('chatreplypane_fetch_failed', { message_id: props.messageId })
+}
+
+// The items of an automatically split post that are still on offer, for the "Which would
+// you like?" choice. A clearance has its own reply ("Register interest"), so never here.
+const splitItems = computed(() =>
+  isAutoSplit(message.value)
+    ? message.value.bulkitems.filter((i) => i.available !== false)
+    : []
+)
+const chosenItems = ref([])
+function toggleItem(item) {
+  chosenItems.value = chosenItems.value.includes(item.name)
+    ? chosenItems.value.filter((n) => n !== item.name)
+    : [...chosenItems.value, item.name]
+  stateMachine.replyText.value = withItemChoice(
+    stateMachine.replyText.value,
+    chosenItems.value
+  )
 }
 
 const message = computed(() => {

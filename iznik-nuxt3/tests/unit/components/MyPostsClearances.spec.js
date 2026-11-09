@@ -15,6 +15,14 @@ const store = {
     ],
   },
   2: { id: 2, subject: 'Single sofa', bulkcount: 0, bulkitems: [] },
+  // An ordinary post the server split into items: not a clearance.
+  4: {
+    id: 4,
+    subject: 'Sofa and chairs',
+    bulkcount: 2,
+    bulkitems: [{ interest: [] }, { interest: [] }],
+    autosplit: true,
+  },
 }
 
 vi.mock('~/stores/message', () => ({
@@ -35,6 +43,11 @@ describe('MyPostsClearances', () => {
     expect(w.vm.clearances.map((c) => c.id)).toEqual([1])
     expect(w.find('[data-testid="clearance-row-1"]').exists()).toBe(true)
     expect(w.find('[data-testid="clearance-row-2"]').exists()).toBe(false)
+  })
+
+  it('leaves out a post that was split automatically', () => {
+    const w = mount(MyPostsClearances, mountOpts([{ id: 1 }, { id: 4 }]))
+    expect(w.vm.clearances.map((c) => c.id)).toEqual([1])
   })
 
   it('surfaces the item and interested counts', () => {

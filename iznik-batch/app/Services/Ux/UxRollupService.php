@@ -57,6 +57,11 @@ class UxRollupService
 
     private const BASELINE_WINDOW_DAYS = 14;
 
+    /** Earlier days of the same weekday, within WEEKDAY_WINDOW_DAYS, that a weekday baseline needs. */
+    private const WEEKDAY_BASELINE_DAYS = 3;
+
+    private const WEEKDAY_WINDOW_DAYS = 28;
+
     private const STARTS_ON_ACTION = ['reply', 'settings'];
 
     private const FLOW_DIMS = ['device_class', 'logged_in', 'is_app', 'variant'];
@@ -670,29 +675,49 @@ class UxRollupService
     }
 
     /**
-     * Median of the metric's own recent days, counting only days collected the same way as today
-     * (on or after its change point) and ignoring days with nothing recorded. Null, meaning
-     * "not enough history", below MIN_BASELINE_DAYS days, so no alarm is raised on a thin base.
+     * The expected value for a day: the median of the same weekday in the last four weeks once there are
+     * three of them, because traffic has a weekly shape (Sundays run 10 to 35% above the median of all
+     * days on live, which read as an alarm). Until then, the median of the last 14 days. Either way only
+     * days collected the same way as today (on or after the metric's change point) with something
+     * recorded count. Null, meaning "not enough history", with under MIN_BASELINE_DAYS of the 14, so no
+     * alarm is raised on a thin base.
      */
     private function baselineMedian(string $metric, Carbon $day): ?float
     {
-        $from = $day->copy()->subDays(self::BASELINE_WINDOW_DAYS)->toDateString();
         $point = self::healthChangePoint($metric);
-        if ($point !== null && $point > $from) {
-            $from = $point;
+        $history = function (int $days) use ($metric, $day, $point) {
+            $from = $day->copy()->subDays($days)->toDateString();
+            if ($point !== null && $point > $from) {
+                $from = $point;
+            }
+
+            return DB::table('ux_telemetry_health_daily')
+                ->where('metric', $metric)
+                ->where('date', '>=', $from)->where('date', '<', $day->toDateString())
+                ->where('observed', '>', 0)
+                ->get(['date', 'observed']);
+        };
+
+        $weekday = $history(self::WEEKDAY_WINDOW_DAYS)
+            ->filter(fn ($r) => Carbon::parse((string) $r->date)->dayOfWeek === $day->dayOfWeek)
+            ->pluck('observed')->all();
+        if (count($weekday) >= self::WEEKDAY_BASELINE_DAYS) {
+            return self::median($weekday);
         }
 
-        $history = DB::table('ux_telemetry_health_daily')
-            ->where('metric', $metric)
-            ->where('date', '>=', $from)->where('date', '<', $day->toDateString())
-            ->where('observed', '>', 0)
-            ->pluck('observed')->map(fn ($v) => (float) $v)->sort()->values()->all();
-        if (count($history) < self::MIN_BASELINE_DAYS) {
-            return null;
-        }
-        $mid = intdiv(count($history), 2);
+        $all = $history(self::BASELINE_WINDOW_DAYS)->pluck('observed')->all();
 
-        return count($history) % 2 ? $history[$mid] : ($history[$mid - 1] + $history[$mid]) / 2;
+        return count($all) < self::MIN_BASELINE_DAYS ? null : self::median($all);
+    }
+
+    /** @param  array<int, mixed>  $values */
+    private static function median(array $values): float
+    {
+        $values = array_map(fn ($v) => (float) $v, $values);
+        sort($values);
+        $mid = intdiv(count($values), 2);
+
+        return count($values) % 2 ? $values[$mid] : ($values[$mid - 1] + $values[$mid]) / 2;
     }
 
     // -------------------------------------------------------------- samples

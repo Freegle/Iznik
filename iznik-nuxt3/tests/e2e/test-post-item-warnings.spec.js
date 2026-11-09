@@ -300,7 +300,10 @@ test.describe('PostItem compose warnings (desktop)', () => {
       await expect(messageCard).toBeVisible({
         timeout: timeouts.ui.appearance,
       })
-      await messageCard.locator('button:has-text("Edit")').first().click()
+      await messageCard
+        .locator('button:not(.title-toggle):has-text("Edit")')
+        .first()
+        .click()
 
       const editModal = page.locator('.modal.show')
       await expect(editModal).toBeVisible({ timeout: timeouts.ui.appearance })

@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands\Queue;
 
+use App\Services\AutoSplit\Crops;
+use App\Support\ClearanceSql;
 use App\Console\Commands\Mail\SendAdminCommand;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\AdminMail;
@@ -1961,9 +1963,9 @@ class ProcessBackgroundTasksCommand extends Command
             return null;
         }
 
-        // Defense-in-depth: skip clearance/bulk-offer posts even if somehow enqueued.
-        $isClearance = DB::table('messages_bulk_items')->where('msgid', $msgId)->exists();
-        if ($isClearance) {
+        // Defense-in-depth: skip clearances even if somehow enqueued. An automatically split
+        // post is an ordinary Offer and goes to the partners.
+        if (ClearanceSql::isClearance((int) $msgId)) {
             Log::info('Skipping freebie_alerts_add for clearance post', ['msgid' => $msgId]);
             return null;
         }
@@ -1989,7 +1991,8 @@ class ProcessBackgroundTasksCommand extends Command
         // Build image list from message attachments.
         // Same pattern as digest emails: externalurl if set, otherwise {images.domain}/timg_{id}.jpg.
         $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-        $attachments = DB::table('messages_attachments')->where('msgid', $msgId)->get();
+        // The post's own photos: an auto-split item crop would repeat the photo it was cut from.
+        $attachments = Crops::exclude(DB::table('messages_attachments')->where('msgid', $msgId))->get();
         $images = $attachments->map(function ($att) use ($imagesDomain) {
             return ! empty($att->externalurl)
                 ? $att->externalurl

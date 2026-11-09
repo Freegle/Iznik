@@ -1351,6 +1351,9 @@ func GetSession(c *fiber.Ctx) error {
 		}()
 
 		// --- Stories (active groups only — must match the listing query in story.go) ---
+		// A membership that rippling made (rippled = 1) or that TrashNothing made on a group the member did
+		// not choose (implicit = 1) is not membership for stories: the list leaves those stories out, so the
+		// count must too, or Stories shows a red number with nothing to review.
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
@@ -1360,7 +1363,7 @@ func GetSession(c *fiber.Ctx) error {
 					Select("COUNT(DISTINCT us.id)").
 					Joins("INNER JOIN memberships m ON m.userid = us.userid").
 					Joins("INNER JOIN users ON users.id = us.userid").
-					Where("m.groupid IN ? AND m.collection = ? AND us.date > ? AND us.reviewed = 0 AND users.deleted IS NULL",
+					Where("m.groupid IN ? AND m.collection = ? AND m.rippled = 0 AND m.implicit = 0 AND us.date > ? AND us.reviewed = 0 AND users.deleted IS NULL",
 						activeGroupIDs, utils.COLLECTION_APPROVED, storyCutoff).
 					Scan(&stories)
 			}

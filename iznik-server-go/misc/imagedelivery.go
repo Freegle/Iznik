@@ -50,19 +50,94 @@ func GetImageDeliveryUrl(uid string, mods string) string {
 	url := DELIVERY + "?url=" + UPLOADS + uid
 
 	if len(mods) > 0 {
-		// Add the stored mods to the URL.  Currently only rotate is stored.
-		var modifiers = struct {
-			Rotate int `json:"rotate"`
-		}{}
-
-		err := json.Unmarshal([]byte(mods), &modifiers)
-
-		if err == nil {
-			url += fmt.Sprintf("&ro=%d", modifiers.Rotate)
+		// Add the stored mods to the URL: the rotation, and the crop of an auto-split
+		// item photo.
+		if m, ok := ParseMods(mods); ok {
+			url += fmt.Sprintf("&ro=%d", m.Rotate)
+			if c := m.Crop(); c != nil {
+				url += fmt.Sprintf("&cx=%d&cy=%d&cw=%d&ch=%d&precrop=true", c.X, c.Y, c.W, c.H)
+			}
 		}
 	}
 
 	return url
+}
+
+// Mods is what an image row's externalmods holds. Rotate is the turn the poster gave the
+// photo, in degrees clockwise. Cx, Cy, Cw and Ch are a crop, in pixels of the photo as
+// turned; Fw and Fh are that turned photo's size, kept so the crop can turn with it. The
+// auto-splitter writes a crop for each item in a photo of several items, one row per item.
+// The delivery service applies ro first and then the crop; precrop crops before any resize.
+// docs/developers/reference/auto-split.md.
+type Mods struct {
+	Rotate int `json:"rotate,omitempty"`
+	Cx     int `json:"cx,omitempty"`
+	Cy     int `json:"cy,omitempty"`
+	Cw     int `json:"cw,omitempty"`
+	Ch     int `json:"ch,omitempty"`
+	Fw     int `json:"fw,omitempty"`
+	Fh     int `json:"fh,omitempty"`
+}
+
+// Crop is a rectangle cut out of a photo, in pixels of the photo as turned.
+type Crop struct{ X, Y, W, H int }
+
+// ParseMods reads externalmods. ok is false when it is not a JSON object.
+func ParseMods(mods string) (Mods, bool) {
+	var m Mods
+	if len(mods) == 0 {
+		return m, false
+	}
+	if err := json.Unmarshal([]byte(mods), &m); err != nil {
+		return m, false
+	}
+	return m, true
+}
+
+// Crop returns the crop the mods describe, or nil when there is none.
+func (m Mods) Crop() *Crop {
+	if m.Cw <= 0 || m.Ch <= 0 || m.Cx < 0 || m.Cy < 0 {
+		return nil
+	}
+	return &Crop{X: m.Cx, Y: m.Cy, W: m.Cw, H: m.Ch}
+}
+
+// IsCrop reports whether an image row's externalmods describe a crop.
+func IsCrop(mods string) bool {
+	m, ok := ParseMods(mods)
+	return ok && m.Crop() != nil
+}
+
+// Rotated returns the mods for the photo turned to an absolute rotation of degrees. A crop
+// turns with the photo: each quarter turn clockwise moves a rectangle (x, y, w, h) in a
+// W x H photo to (H - y - h, x, h, w) in the H x W photo. A crop whose photo size was not
+// kept cannot be turned, so it is dropped and the whole photo shows rather than the wrong
+// part of it.
+func (m Mods) Rotated(degrees int) Mods {
+	out := Mods{Rotate: degrees}
+	c := m.Crop()
+	if c == nil || m.Fw <= 0 || m.Fh <= 0 {
+		return out
+	}
+
+	x, y, w, h, fw, fh := c.X, c.Y, c.W, c.H, m.Fw, m.Fh
+	steps := (((degrees - m.Rotate) % 360) + 360) % 360 / 90
+	for i := 0; i < steps; i++ {
+		x, y, w, h = fh-y-h, x, h, w
+		fw, fh = fh, fw
+	}
+	out.Cx, out.Cy, out.Cw, out.Ch, out.Fw, out.Fh = x, y, w, h, fw, fh
+	return out
+}
+
+// JSON renders the mods for storing in externalmods. A crop carries "precrop":true, which
+// is for the delivery service: the frontend hands it every key.
+func (m Mods) JSON() string {
+	b, _ := json.Marshal(m)
+	if m.Crop() != nil {
+		return strings.TrimSuffix(string(b), "}") + `,"precrop":true}`
+	}
+	return string(b)
 }
 
 // deliveryBase returns the delivery proxy base URL without any trailing

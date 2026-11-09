@@ -6,9 +6,9 @@
   >
     <h6 class="ux-exp-h">Still want it?</h6>
     <p class="what mb-1">
-      Freegle asks the replier whether they still want an offer that looks
-      damaged, or too big to carry home, before the reply goes to the poster.
-      Only some repliers are asked.
+      Freegle asked some repliers whether they still wanted an offer that looked
+      damaged or too big to carry home. Reverted; only the child car seat
+      question is still asked.
     </p>
     <p v-if="!tables.length" class="none text-muted mb-0">
       No replies counted yet.

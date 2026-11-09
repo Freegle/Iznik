@@ -411,6 +411,13 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 
 	modsJSON := `{"rotate":` + strconv.Itoa(*req.Rotate) + `}`
 
+	// A crop (an auto-split item photo) turns with the photo; see misc.Mods.Rotated.
+	var current string
+	db.Table("`"+cfg.Table+"`").Select("COALESCE(externalmods, '')").Where("id = ?", req.ID).Scan(&current)
+	if m, ok := misc.ParseMods(current); ok && m.Crop() != nil {
+		modsJSON = m.Rotated(*req.Rotate).JSON()
+	}
+
 	// Same
 	// typeConfigs-driven table name as 6f9c3996f035 above - 10 possible
 	// rendered forms, proven by the retired ormharness (shapes.json /
