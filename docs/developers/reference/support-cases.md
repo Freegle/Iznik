@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-08
+last_reviewed: 2026-11-09
 owner: Freegle dev team
 covers:
   - iznik-server-go/supportcase/**
@@ -139,7 +139,14 @@ the same kind of note from their side.
 ## Who sees what
 
 - **Support and Admin** see the case list, and the full case: the brief (question, answer, classification,
-  confidence, checks, open questions, related cases, the draft and its link warnings, the pool state), the rating, the chat, and the thread. They can mark it Handled or reopen it.
+  confidence, checks, open questions, related cases, the pool state), the rating, the chat, and the thread. They can mark it Handled or reopen it.
+- **The draft is a suggested reply.** On the case page it is not shown on its own: it is put in Support's
+  reply box, under the label "Suggested reply from the AI helper. Check it, change what you need, then
+  send.", with any link warnings beside it. It goes in once a visit, only into an empty box, and only
+  while no Support reply is on the case, so it never overwrites what Support typed and does not come back
+  after Support clears the box. The label shows while the box holds the draft unchanged. Sending is an
+  ordinary Support reply to the referring moderator, recorded with `draftused` Unchanged, Edited, or No
+  once the box was cleared.
 - **The referring moderator** sees only their own case: its status, their reason, and the replies between
   them and Support. The Go API builds that view from an explicit struct and column list (`Get` in
   `iznik-server-go/supportcase/supportcase.go`), so the first pass is not in the response at all, not merely
