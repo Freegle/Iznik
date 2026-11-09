@@ -577,7 +577,7 @@ async function open(page, query = '') {
 }
 
 test.describe('ModTools SysAdmin UX tab: Experiments', () => {
-  test('lists a running, a kept and a draft experiment, running first', async ({
+  test('opens on what is waiting, then lists a running and a draft experiment, running first', async ({
     page,
     testEnv,
   }) => {
@@ -585,12 +585,20 @@ test.describe('ModTools SysAdmin UX tab: Experiments', () => {
     await serveExperiments(page)
     await open(page)
 
-    // The page opens on Active: the running and the not started ones, running first.
-    await expect(rows(page)).toHaveCount(2, { timeout: timeouts.ui.appearance })
+    // KEPT is adopted and not closed, so it has a verdict nobody has acted on: the page opens on
+    // Waiting for you, which shows that one, the one behind the red number on the tab.
+    await expect(rows(page)).toHaveCount(1, { timeout: timeouts.ui.appearance })
     await expect(section(page).locator('.chip')).toHaveText([
+      'Waiting for you (1)',
       'Active (2)',
       'Finished (1)',
     ])
+    await expect(rows(page).locator('.title')).toHaveText([
+      'Shorter first screen',
+    ])
+    // Active: the running and the not started ones, running first.
+    await section(page).locator('.chip-active').click()
+    await expect(rows(page)).toHaveCount(2)
     await expect(rows(page).locator('.title')).toHaveText([
       'Make skipping photos obvious',
       'Clearer labels on the settings page',
