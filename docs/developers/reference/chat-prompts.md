@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-07
+last_reviewed: 2026-11-08
 covers:
   - iznik-server-go/chat/chatprompt.go
   - iznik-server-go/chat/replyconfirm.go
@@ -70,9 +70,7 @@ and does not bar them.
 
 ### Child car seats
 
-A reply to an OFFER whose subject says it is a child car seat (`isChildCarSeat`: "car seat", "carseat",
-"child car", "booster seat", "isofix", "infant carrier", the same words that show the poster a note under
-the box in `PostItem.vue`) is asked about whatever the experiment is doing: in either arm, with no experiment
+A reply to an OFFER whose subject says it is a child car seat is asked about whatever the experiment is doing: in either arm, with no experiment
 running, and from the app, which the experiment leaves out. The question is the moderators' wording from
 Discourse 9939/61 (`childCarSeatQuestion`): know its history, never in an accident, the E mark, the maker's
 lifespan, and read childcarseats.org.uk, then "Do you still want it?" with the same two buttons. It is held,
@@ -81,6 +79,14 @@ writes no `ux_experiment_exposures` row, so it is not in the experiment's figure
 replier and post, which is read from `chat_prompts` rather than from an exposure. A damaged or bulky car seat
 gets the car seat question alone. A WANTED for a car seat is not asked about: the wording is for someone
 accepting one.
+
+Which subjects count (`isChildCarSeat`): "car seat", "carseat", "child car", "booster seat", "isofix" or
+"infant carrier", each ending where a word ends, with a plural in -s or -es allowed, so "child carrier" is not
+one. "seat cover" and seats for a dog or pet are taken out first, so "car seat cover" is not one and "car seat
+and seat cover" is. The poster's note under the item box uses the same words, matched the same way, from
+`iznik-nuxt3/composables/useItemWarnings.js`; `TestIsChildCarSeat` and `useItemWarnings.spec.js` pin the
+same subjects. Like the experiment's question, it is not asked when the poster or the replier is a
+TrashNothing member, and about half of car seat offers come through TrashNothing.
 
 `chat_prompts.answered_via` records how the question was answered; it is always `button`. The answer is
 claimed by an update that only an unanswered question matches, in the transaction that withdraws the reply, so

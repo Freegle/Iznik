@@ -60,6 +60,7 @@
         <div v-if="itemError" class="invalid-feedback d-block">
           {{ itemError }}
         </div>
+        <PostItemWarning :item="item" type="Wanted" />
       </div>
 
       <!-- Description -->
@@ -102,6 +103,7 @@ import { useComposeStore } from '~/stores/compose'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import OurUploadedImage from '~/components/OurUploadedImage'
+import PostItemWarning from '~/components/PostItemWarning'
 import api from '~/api'
 import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 import {

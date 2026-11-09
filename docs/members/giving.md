@@ -10,6 +10,9 @@ covers:
   - iznik-nuxt3/components/MessageOwnActions.vue
   - iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php
   - iznik-nuxt3/components/PhotoUploader.vue
+  - iznik-nuxt3/components/PostItem.vue
+  - iznik-nuxt3/components/PostItemWarning.vue
+  - iznik-nuxt3/composables/useItemWarnings.js
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-post-flow.spec.js
   - iznik-nuxt3/tests/e2e/test-bulk-offer-flow.spec.js
@@ -30,6 +33,10 @@ reply, you pick someone, and they collect. This guide walks through the whole th
    short description. A description that is only numbers or symbols, like "24", does not
    count, and the form says so. You can add one or more **photos**. On the app you can take a photo
    there and then, and Freegle can suggest a name from the picture.
+   Some items get a note under the name box as you type: for a child car seat it asks you to
+   say the make, model and age and that it has never been in a crash, and there are notes for
+   cycle helmets, knives, upholstered furniture, things that must be sealed and in date, and
+   plants that cannot be given away. The notes are the same on a computer, a phone and the app.
    Tap a photo in the strip underneath to see it large, and the rotate button turns it
    the right way up. The first photo is the main one; drag a photo onto the big one to make
    it the main photo.
