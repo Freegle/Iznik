@@ -61,6 +61,14 @@
               about {{ run.username || 'member' }} (#{{ run.userid }})
             </template>
             <b-badge
+              v-if="run.kind"
+              variant="secondary"
+              class="ms-1"
+              data-testid="supportai-kind"
+            >
+              {{ kindLabel(run.kind) }}
+            </b-badge>
+            <b-badge
               v-if="run.status === 'Error'"
               variant="danger"
               class="ms-1"
@@ -233,6 +241,12 @@ function parseSteps(transcript) {
 // as the helper itself does.
 function renderMarkdown(text) {
   return DOMPurify.sanitize(marked(text || ''))
+}
+
+// 'FirstPass' reads as 'First pass'.
+function kindLabel(kind) {
+  const spaced = String(kind).replace(/([a-z])([A-Z])/g, '$1 $2')
+  return spaced.charAt(0) + spaced.slice(1).toLowerCase()
 }
 
 function formatInput(input) {

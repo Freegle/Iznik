@@ -4407,6 +4407,74 @@ type getSupportAIRunParams struct {
 	ID int64 `json:"id"`
 }
 
+// swagger:route GET /supportcases supportcase listSupportCases
+// List support cases
+//
+// Returns the chats moderators have referred to Support, newest first. Filter with status=Waiting|Open|Handled|All (Waiting is the open cases whose finished first pass or latest referrer message has no Support reply after it) or chatid; page back with before=<id>. Each row says whether it is waiting for Support. Support/Admin only; anyone else gets 404.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	404: errorResponse
+
+// swagger:route PATCH /supportcases supportcase patchSupportCase
+// Mark a support case Handled or Open
+//
+// Support/Admin only; anyone else gets 404. Reopening answers 409 when another case for the same chat and referrer is already open.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	404: errorResponse
+//	409: errorResponse
+
+// swagger:route GET /supportcases/{id} supportcase getSupportCase
+// Get a support case
+//
+// Support and Admin get the full case with the first pass. The moderator who referred it, while they can still see the chat, gets only its status, their reason and the thread. Anyone else gets 404.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	404: errorResponse
+
+// swagger:parameters getSupportCase postSupportCaseMessage
+type supportCaseParams struct {
+	// Case ID
+	// in: path
+	// required: true
+	ID int64 `json:"id"`
+}
+
+// swagger:route POST /supportcases/{id}/messages supportcase postSupportCaseMessage
+// Reply on a support case
+//
+// Adds to the thread between Support and the referring moderator. A referrer posting to a Handled case reopens it.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	404: errorResponse
+//	409: errorResponse
+
 // swagger:route POST /donations/bulk donations bulkUploadDonations
 // Bulk upload donations
 //

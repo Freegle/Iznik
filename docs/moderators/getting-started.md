@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-24
+last_reviewed: 2026-11-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/index.vue
@@ -44,7 +44,8 @@ It shows:
 
 The **red badges** next to the menu items are your work list: pending posts, chat review,
 spam reports, stories and so on. They update automatically, so the numbers tell you where
-attention is needed.
+attention is needed. Support and Admin also see a count on **Support**: chats moderators have
+referred to Support that are waiting for a reply.
 
 ## Roles and permissions
 

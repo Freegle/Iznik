@@ -102,6 +102,20 @@ describe('ModSysAdminSupportAI', () => {
     expect(wrapper.text()).toContain('1 up, 1 down, 0 not rated')
   })
 
+  it("shows each run's kind", async () => {
+    mockFetchRuns.mockResolvedValue([
+      run(2, { kind: 'FirstPass' }),
+      run(1, { kind: 'Chat' }),
+      run(3, {}),
+    ])
+    const wrapper = mountPage()
+    await flushPromises()
+    const kinds = wrapper.findAll('[data-testid="supportai-kind"]')
+    expect(kinds).toHaveLength(2)
+    expect(kinds[0].text()).toBe('First pass')
+    expect(kinds[1].text()).toBe('Chat')
+  })
+
   it('leaves quota out when it is not known', async () => {
     mockFetchRuns.mockResolvedValue([
       run(1, { quota_5h_before: null, quota_7d_after: null }),

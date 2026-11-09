@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-07
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -26,6 +26,12 @@ covers:
   - claude-agent-sdk/ux-groups.js
   - claude-agent-sdk/ux-internal.js
   - claude-agent-sdk/ux-internal.test.js
+  - claude-agent-sdk/first-pass.js
+  - claude-agent-sdk/first-pass.test.js
+  - claude-agent-sdk/first-pass-prompt.js
+  - claude-agent-sdk/agent-options.js
+  - claude-agent-sdk/agent-options.test.js
+  - claude-agent-sdk/tools-dump.test.js
   - claude-agent-sdk/images.js
   - iznik-nuxt3/modtools/components/ModSupportScreenshotStrip.vue
   - iznik-nuxt3/modtools/composables/useSupportScreenshots.js
@@ -433,6 +439,66 @@ another is going. A second call gets 429 at once. Any other internal route that 
 idea generator's, makes `ux:prompt analyse` and `regroup` get 429 until its run ends, so run them at
 another time.
 
+## First pass on a referral
+
+When a moderator refers a chat to Support, the helper makes one bounded "first pass" before a person
+looks at it. The batch asks for it; nobody in a browser can. The whole flow, including the case, the mail
+and what each person sees, is in [support-cases.md](support-cases.md). This section is the helper's part.
+
+- **The route.** `POST /internal/support-first-pass` in `server.js`, behind the same guard, queue and
+  429 as the survey routes above. The body limit is 20 MB, because up to five chat images travel in it.
+  `cleanFirstPassRequest` in `first-pass.js` validates and trims the request. A picture that fails the
+  checks in `images.js` is dropped and counted as skipped rather than refusing the pass. A Group chat is
+  accepted, though the Go API does not open cases for one.
+- **An investigation, not a form.** `runFirstPass` runs the helper's own agent headless, with the same
+  read-only tools as the interactive helper (the member's dump in key mode, the live read-only database,
+  logs, the error tracker, the forum and the code) and its playbook. Added to that is a first-pass method:
+  find the one question the moderator needs answered, look at recent cases first, investigate only that
+  question, and stop after about twelve tool calls. No facts are built by code; the agent looks at what
+  the question needs. The answer is forced into a fixed shape (`first-pass-prompt.js`) and the chat
+  images travel with the prompt. There is no review turn.
+- **The shared options.** `agent-options.js` builds the `query()` options for both the interactive agent
+  and the first pass: the same tool list, the refusal of write, edit and shell tools, file reads
+  (Read, Grep, Glob) confined to the code checkout by a PreToolUse hook that resolves symlinks, and an
+  allowlisted environment for the agent's CLI (only what it needs to run and reach Claude, so no database
+  password, tokens, internal secret or dump keys).
+- **Two bounds.** `FIRST_PASS_MAX_TURNS` (default 30) limits the agent's turns, and
+  `FIRST_PASS_DEADLINE_MS` (default 480000) is one deadline over the whole pass. The batch waits 30
+  seconds longer (`SUPPORT_FIRST_PASS_TIMEOUT`). A pass that hits the deadline ends with `DEADLINE`, and one that
+  hits the turn limit with `TOO_MANY_STEPS`, rather than a partial brief.
+- **The brief, version 2.** The pass returns the question, the answer, a classification (Bug, Usage,
+  Suggestion, Incident or Other), confidence with a reason, the checks made, up to three open questions,
+  the related recent cases and a draft written to the referring moderator. Every link in the draft is
+  checked, and any that is not a known Freegle page is listed under "Check before sending", as are bare
+  domains (a name ending in a common top-level domain, with no scheme) and email addresses that are not
+  Freegle's. A credit or usage-limit error that the SDK returns as an error result is read as `CREDIT`.
+- **Error codes.** A failure is a 502 whose body carries a `code`: `DEADLINE`, `CREDIT`, `MODEL`,
+  `TOO_MANY_STEPS`, `DUMP_LOCKDOWN`, `DUMP_AUTH` (the dump key is missing or refused) or `BAD_OUTPUT`. A refused key or a
+  lockdown stops the run at once; the agent does not work round it with other tools. `ux-internal.js`
+  adds the code only when the route attached one, and the message is always the route's own fixed text,
+  never upstream text. The batch turns each code into a plain reason.
+- **Dump key mode.** `fetchUserDump` in `tools.js` takes a `key`, sent as `X-Dump-Key` with the case id in
+  `X-Freegle-Case`, never in the URL. The Go API accepts `USERDUMP_INTERNAL_KEY` by header only
+  (`validDumpKey` in `iznik-server-go/userdump/userdump.go`) and puts the case in its log line. A lockdown
+  refuses it like any other download. The dump is private to the run: not put in or taken from the shared cache, reused if asked for twice, and deleted when the pass ends. The first pass may dump only the member in the case.
+- **The key is not in the agent's environment.** `agentEnv()` passes the agent's CLI an allowlist, not the
+  helper's whole environment, and the dump keys are never in it. File reads (Read, Grep, Glob) go through a
+  PreToolUse hook in `agent-options.js` for the interactive helper and the first pass alike. It resolves
+  symlinks and refuses anything outside the code checkout, `/proc` included, so the key is no longer
+  readable that way. Hooks run whatever the permission mode, and the hook is set after any caller's options. It also refuses paths starting with `~`, `$` or `%`, and
+  Read, Grep and Glob are the only built-in tools the agent has.
+- **The first pass has its own trust boundary.** The interactive prompt lets a volunteer's question direct
+  the agent. A first pass has no volunteer and reads member text, so its prompt says only the system prompt
+  directs it, everything else is data, a request for another member's details is itself the finding, and no
+  email, phone or postal address goes in the answer. Markdown images are stripped from the answer, and the
+  case page forbids images.
+- **It never sends anything.** The pass returns data. It has no mail tool, and the batch alone decides what
+  is mailed. It is recorded in the audit trail as `first_pass`, with the case id.
+
+Settings, by name only: `USERDUMP_INTERNAL_KEY`, `FIRST_PASS_MODEL` (falls back to `SUPPORT_AI_MODEL`) and
+`FIRST_PASS_MAX_TURNS` and `FIRST_PASS_DEADLINE_MS` in the helper's `environment:` block; `USERDUMP_INTERNAL_KEY` also on the Go API.
+See [deployment-switches.md](deployment-switches.md).
+
 ## Files
 
 - **Backend**: `claude-agent-sdk/` — `server.js` (SSE endpoint + CORS + auth gate),
@@ -446,6 +512,7 @@ another time.
 - **Go API**: `iznik-server-go/supportai/` (record, list, get, rate runs).
 - **Internal routes**: `claude-agent-sdk/ux-internal.js` (guard, queue, handler and JSON parser),
   `ux-themes.js` and `ux-groups.js` (the two coders), wired in `server.js`.
+- **First pass**: `claude-agent-sdk/first-pass.js` (route logic, validation, the headless investigation), `first-pass-prompt.js` (method, prompt and answer schema), `agent-options.js` (options shared with the interactive agent). The case flow around it is in [support-cases.md](support-cases.md).
 - **Compose**: the `ai-support-helper` service in `docker-compose.yml` (profile `backend`).
 - **Lockdown**: the user dump (`iznik-server-go/userdump/userdump.go`) is a download, so it is
   refused while a [lockdown](../../ops/runbooks/lockdown.md) holds `export`, for Support and Admin
