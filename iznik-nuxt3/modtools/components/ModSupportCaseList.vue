@@ -7,10 +7,10 @@
         <strong>Refer to Support</strong>, usually with a question.
       </p>
       <p>
-        First the AI helper looks into the question and writes up what it
-        found. If it couldn't, the case says why. Check what it says, then
-        reply to the moderator on the case. Your reply goes to the moderator,
-        never to the member.
+        First the AI helper looks into the question and writes up what it found.
+        If it couldn't, the case says why. Check what it says, then reply to the
+        moderator on the case. Your reply goes to the moderator, never to the
+        member.
       </p>
       <p class="mb-0">
         <b-badge variant="danger">Waiting for Support</b-badge> means the case
