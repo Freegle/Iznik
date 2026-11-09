@@ -61,6 +61,7 @@
         <div v-if="itemError" class="invalid-feedback d-block">
           {{ itemError }}
         </div>
+        <PostItemWarning :item="item" type="Offer" />
       </div>
 
       <!-- Description -->
@@ -116,6 +117,7 @@ import { useMiscStore } from '~/stores/misc'
 import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 import NumberIncrementDecrement from '~/components/NumberIncrementDecrement'
 import OurUploadedImage from '~/components/OurUploadedImage'
+import PostItemWarning from '~/components/PostItemWarning'
 import api from '~/api'
 import { fetchAiIllustration as fetchAiIllustrationImpl } from '~/composables/useAiIllustration'
 import {

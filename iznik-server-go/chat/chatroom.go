@@ -58,11 +58,6 @@ type ChatRoomListEntry struct {
 	// not a conversation, so rating, blocking or reporting it is nonsense, and
 	// "this is automated" belongs there once instead of on every message.
 	Systemchat bool `json:"systemchat,omitempty" gorm:"-"`
-	// Modsclosed marks a User2Mod chat the community's moderators can no longer write in:
-	// its member is a TrashNothing member without a membership here they chose, usually
-	// because they have left (modmessaging.ModsMayContact). Set only for the moderators,
-	// so ModTools can say so instead of offering a reply box that will be refused.
-	Modsclosed     bool            `json:"modsclosed,omitempty" gorm:"-"`
 	Snippet        string          `json:"snippet"`
 	Unseen         uint64          `json:"unseen"`
 	Chatmsg        string          `json:"-"`
@@ -86,32 +81,6 @@ type ChatRoomListEntry struct {
 	Status         string          `json:"status"`
 
 	Search bool `json:"search,omitempty" gorm:"column:search"`
-}
-
-// markModsClosed sets Modsclosed on the User2Mod chats in which myid writes as one of the
-// community's moderators and may no longer (modmessaging.MayContact). Which members are
-// TrashNothing members is one query for the whole list; only those rooms are checked further.
-func markModsClosed(db *gorm.DB, myid uint64, chats []ChatRoomListEntry) {
-	if auth.IsAdminOrSupport(myid) {
-		return
-	}
-
-	members := []uint64{}
-	for _, chat := range chats {
-		if chat.Chattype == utils.CHAT_TYPE_USER2MOD && chat.User1 != myid && chat.User1 > 0 {
-			members = append(members, chat.User1)
-		}
-	}
-	if len(members) == 0 {
-		return
-	}
-
-	trashNothing := modmessaging.TrashNothingMembers(db, members)
-	for ix, chat := range chats {
-		if chat.Chattype == utils.CHAT_TYPE_USER2MOD && chat.User1 != myid && trashNothing[chat.User1] {
-			chats[ix].Modsclosed = !modmessaging.HasChosenMembership(db, chat.User1, chat.Groupid)
-		}
-	}
 }
 
 // buildUserIcon builds a profile image URL using the same logic as user.ProfileSetPath,
@@ -442,9 +411,6 @@ func PutChatRoom(c *fiber.Ctx) error {
 			chatUserID, utils.CHAT_TYPE_USER2MOD, req.Groupid).Limit(1).Scan(&existingID)
 
 		if existingID > 0 {
-			// Handed back even when the moderators may no longer write in it, so they can
-			// still read it: the room then carries modsclosed and CreateChatMessage refuses
-			// their messages.
 			ensureRosterRow(db, existingID, chatUserID)
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingID})
 		}
@@ -1213,8 +1179,6 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			chats[ix].Systemchat = true
 		}
 	}
-
-	markModsClosed(db, myid, chats)
 
 	// Now we have the basic chat info.  We still need:
 	// - the most recent chat message (if any) for a snippet

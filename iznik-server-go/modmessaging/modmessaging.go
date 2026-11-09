@@ -46,8 +46,9 @@ func PostIsUnaddressed(db *gorm.DB, msgid uint64) bool {
 	return n > 0
 }
 
-// ModsMayContact reports whether groupid's moderators may contact userid: open a chat to
-// them, write in an existing one, or send them mail or a standard message.
+// ModsMayContact reports whether groupid's moderators may contact userid: open a new chat to
+// them, or send them mail or a standard message. A chat the member already opened is not
+// gated by it: moderators can always reply in one.
 //
 // Anyone who is not a TrashNothing member can be contacted. A TrashNothing member can be
 // contacted only through a membership of this community that they chose: Approved, not
