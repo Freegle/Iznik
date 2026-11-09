@@ -25,6 +25,10 @@ const (
 	maxFieldRows = 500
 	// frictionTop is how many components the friction list returns.
 	frictionTop = 20
+	// A device is compared only with this many clicks in both periods, and a component only with
+	// frictionMinClicks over those devices. ux:weekly-report uses the same numbers.
+	frictionMinDeviceClicks = 20
+	frictionMinClicks       = 50
 )
 
 // flowRe and stepRe are what flow and step names look like: letters, digits and a few separators.

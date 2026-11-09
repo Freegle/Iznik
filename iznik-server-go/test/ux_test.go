@@ -385,10 +385,19 @@ func TestUxFriction(t *testing.T) {
 	for _, c := range out.Components {
 		order = append(order, c.Component)
 	}
-	assert.Equal(t, []string{"ghost", "photo-drop", "btn-next", "calm"}, order)
+	// By trouble clicks changed, either way: calm 29 fewer (compared on mobile), photo-drop 25 new,
+	// btn-next 20 (its 40 phone clicks are under the 50 needed to compare, so all 20 count), ghost 3.
+	assert.Equal(t, []string{"calm", "photo-drop", "btn-next", "ghost"}, order)
 
-	g := out.Components[0]
+	c := out.Components[0]
+	assert.True(t, c.Compared)
+	assert.InDelta(t, -29, c.Effect, 1e-9)
+	assert.InDelta(t, -0.29, c.Change, 1e-9)
+
+	g := out.Components[3]
 	assert.EqualValues(t, 3, g.RageClicks)
+	assert.False(t, g.Compared)
+	assert.InDelta(t, 3, g.Effect, 1e-9)
 	assert.InDelta(t, 3.0, g.Change, 1e-9)
 
 	n := out.Components[2]
@@ -402,13 +411,13 @@ func TestUxFriction(t *testing.T) {
 	assert.EqualValues(t, 100, n.Previous.Clicks)
 	assert.EqualValues(t, 2, n.Previous.DeadClicks)
 	assert.InDelta(t, 0.18, n.Change, 1e-9)
-
-	assert.InDelta(t, -0.29, out.Components[3].Change, 1e-9)
+	assert.False(t, n.Compared)
+	assert.InDelta(t, 20, n.Effect, 1e-9)
 
 	var raw map[string]interface{}
 	uxGet(t, token, "friction?start=2034-03-08&end=2034-03-14", &raw)
 	row := raw["components"].([]interface{})[0].(map[string]interface{})
-	assert.ElementsMatch(t, []string{"page", "component", "impressions", "clicks", "dead_clicks", "rage_clicks", "repeated_intent", "previous", "change"}, mapKeys(row))
+	assert.ElementsMatch(t, []string{"page", "component", "impressions", "clicks", "dead_clicks", "rage_clicks", "repeated_intent", "previous", "change", "effect", "compared"}, mapKeys(row))
 	assert.ElementsMatch(t, []string{"impressions", "clicks", "dead_clicks", "rage_clicks", "repeated_intent"}, mapKeys(row["previous"].(map[string]interface{})))
 }
 

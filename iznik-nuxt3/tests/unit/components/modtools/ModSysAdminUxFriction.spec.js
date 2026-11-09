@@ -22,6 +22,9 @@ const row = (page, component, over = {}) => ({
   },
   // A rise of 0.3 is 30 points: the server sends a difference of two shares.
   change: 0.3,
+  // Trouble clicks above what last period's rates would give at this period's clicks, device by device.
+  effect: 60,
+  compared: true,
   ...over,
 })
 
@@ -75,57 +78,61 @@ describe('ModSysAdminUxFriction', () => {
     expect(make().text()).toContain('bad')
   })
 
+  it('shows the change in trouble clicks, and says when there was nothing to compare with', () => {
+    store.friction.data = {
+      components: [
+        row('/a', 'A', { effect: -200 }),
+        row('/b', 'B', { effect: 70, compared: false }),
+      ],
+    }
+    const t = make({ open: true }).text()
+    expect(t).toContain('200 fewer')
+    expect(t).toContain('70 more, nothing to compare with')
+  })
+
   describe('the closed row', () => {
-    it('names the component whose trouble rose most, which is the first row the server sent', () => {
-      // The server ranks the rows by the rise in trouble, not by how much trouble there is. The first
-      // is the one with the biggest rise, whatever the others hold, so it is the one to name.
+    it('names the component whose trouble clicks changed most, which is the first row the server sent', () => {
+      // The server ranks by how many trouble clicks changed, either way, device by device. The
+      // first is that one, whatever share of clicks the others have.
       store.friction.data = {
         components: [
-          row('/give', 'PhotoUpload', { change: 0.4, clicks: 10 }),
-          row('/ask', 'Submit', { change: 0.2, clicks: 9000 }),
-          row('/home', 'Menu', { change: 0.1, clicks: 5000 }),
+          row('/ask', 'Submit', { change: -0.1, effect: -200, clicks: 2000 }),
+          row('/give', 'PhotoUpload', { change: 0.4, effect: 40, clicks: 100 }),
+          row('/home', 'Menu', { change: 0.1, effect: 5, clicks: 50 }),
         ],
       }
       expect(make().find('.ux-summary').text()).toBe(
-        'Trouble rose most at /give / PhotoUpload. 3 components listed, biggest rise first.'
+        'Trouble clicks changed most at /ask / Submit: 200 fewer. 3 components listed, biggest change first.'
       )
-    })
-
-    it('does not call the component with the biggest rise the one with the most trouble', () => {
-      // A button going from 1% to 4% outranks one stuck at 40%, and the stuck one may not be listed.
-      store.friction.data = {
-        components: [
-          row('/give', 'PhotoUpload', {
-            change: 0.03,
-            dead_clicks: 8,
-            rage_clicks: 0,
-            repeated_intent: 0,
-            clicks: 200,
-          }),
-          row('/ask', 'Submit', { change: 0.0, dead_clicks: 100, clicks: 200 }),
-        ],
-      }
-      const line = make().find('.ux-summary').text()
-      expect(line).not.toContain('Most trouble')
-      expect(line).toContain('Trouble rose most at /give / PhotoUpload.')
     })
 
     it('says one component in the singular', () => {
       store.friction.data = data
       expect(make().find('.ux-summary').text()).toBe(
-        'Trouble rose most at /give / PhotoUpload. 1 component listed.'
+        'Trouble clicks changed most at /give / PhotoUpload: 60 more. 1 component listed.'
       )
     })
 
-    it('says trouble did not rise when even the first row did not rise', () => {
+    it('says a first row with nothing to compare with is new trouble', () => {
       store.friction.data = {
         components: [
-          row('/give', 'PhotoUpload', { change: 0 }),
-          row('/ask', 'Submit', { change: -0.1 }),
+          row('/give', 'PhotoUpload', { effect: 70, compared: false }),
         ],
       }
       expect(make().find('.ux-summary').text()).toBe(
-        'Trouble did not rise at any component. 2 components listed.'
+        'Trouble clicks changed most at /give / PhotoUpload: 70 more, nothing to compare with. 1 component listed.'
+      )
+    })
+
+    it('says trouble clicks did not change when even the first row did not', () => {
+      store.friction.data = {
+        components: [
+          row('/give', 'PhotoUpload', { effect: 0 }),
+          row('/ask', 'Submit', { effect: 0 }),
+        ],
+      }
+      expect(make().find('.ux-summary').text()).toBe(
+        'Trouble clicks did not change at any component. 2 components listed.'
       )
     })
 

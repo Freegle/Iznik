@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-25
+last_reviewed: 2026-11-09
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/sysadmin/index.vue
@@ -234,8 +234,9 @@ key). Where each sentence is made:
   and `event:interaction`. A name it does not know prints as it is.
 - Second thoughts and Help say `Too few visits to say.` when no step has 20 visits, and `Nobody went
   back.` or `Nobody asked for help.` when the steps with enough visits had none
-  (`stepWithMost` in `useUxFunnel.js`). Friction names the component whose trouble rose most, not
-  the one with the most trouble: the server ranks by the rise since the period before.
+  (`stepWithMost` in `useUxFunnel.js`). Friction names the component whose trouble clicks changed
+  most, either way, not the one with the most trouble: the server ranks by trouble clicks gained or
+  lost against the period before, each device compared with itself, as `ux:weekly-report` does.
 - Second thoughts and Help say whether the people who showed a sign went on to finish
   (`useUxThenFinished.js`). A row gets `Then finished` (the share of those visits that finished the
   funnel, with the count), `Others finished` (the same for the other visits at that step) and `What it
