@@ -157,6 +157,18 @@ holds the allowlist and the named exceptions, each with a reason. The CI job
 the web and different handsets, and `NOTICE` grants an AGPL section 7 permission for it. Do
 not replace it with a hand-built button to tidy the licence.
 
+## Bulk items do not make a clearance
+
+A post with `messages_bulk_items` rows is either a clearance or an ordinary member's post that the
+auto-splitter turned into an item list (a `messages_autosplit` row in state `Split`). Only a
+clearance gets the clearance extras: left out of freebie alerts, partner feeds and LoveJunk,
+"Register interest" instead of a reply, the Clearances card in My Posts, per-person counts when
+marked taken. For those, ask `ClearanceSql` (batch), `utils.IsClearanceSQL` (Go) or
+`isClearance` (frontend), never "has bulk items". Keep asking about bulk items where the point is
+the item list itself: display, per-item photos, the digest's count and the per-item stats. A check
+written the old way gives a split post the clearance behaviour, with no error, and only once the
+splitter is switched on. See `docs/developers/reference/auto-split.md`.
+
 ## See also
 
 - `docs/developers/reference/coding-standards.md` - the rest of the coding rules.

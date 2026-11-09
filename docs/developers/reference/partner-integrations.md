@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-05
+last_reviewed: 2026-11-07
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Integrations
@@ -66,6 +66,9 @@ collection quote.
 
 - Command: `integrations:sync-lovejunk`
 - Config: `freegle.lovejunk.api`, `freegle.lovejunk.secret`
+- Clearances are not sent: LoveJunk takes one item per post. A post Freegle split into items
+  automatically is sent as the one post it was written as, with the member's own photos and not
+  the per-item crops ([auto-split.md](auto-split.md)).
 - The syndication path is described in [trashnothing.md](trashnothing.md), since TN
   brokered it.
 
@@ -91,7 +94,9 @@ processed by the batch tier. Config: `freegle.freebie_alerts.api_url`
 is skipped, and one partner failing does not stop the other getting the post.
 
 What is sent: Offers only, approved, with a location, no outcome yet, not clearances, and not
-posts that came from TrashNothing (TN feeds both partners itself). The create body is `id`,
+posts that came from TrashNothing (TN feeds both partners itself). A post Freegle split into
+items automatically is not a clearance and is sent like any Offer, without the per-item crops
+of its photos ([auto-split.md](auto-split.md)). The create body is `id`,
 `title`, `description`, `latitude`, `longitude`, `images` (comma-separated URLs) and
 `created_at`. Delete has no body. Create is an upsert on their side and a delete for an unknown
 id succeeds, so a repeat is harmless. Edits after a post goes live are not pushed.

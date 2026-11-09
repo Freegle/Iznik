@@ -282,6 +282,48 @@ func TestUxFieldsAndFrictionHonourDeviceOnly(t *testing.T) {
 	assert.Equal(t, []string{"signed_in"}, cut.Ignored)
 }
 
+// The Friction panel ranks like the weekly mail: device by device, by how many trouble clicks a
+// component gained or lost at this period's volume, so a small component with a big swing in points
+// does not outrank a busy one, and an app that only began sending this period does not read as a change.
+func TestUxFrictionRanksByTroubleClicksDeviceByDevice(t *testing.T) {
+	token := uxSupportToken(t, "uxfrank")
+	uxClean(t, "2041-08-01", "2041-08-14")
+	db := database.DBConn
+	ins := func(date, component, device string, clicks, dead int) {
+		require.NoError(t, db.Exec("INSERT INTO ux_component_daily (`date`,page,component,device_class,impressions,clicks,dead_clicks) VALUES (?,'p',?,?,?,?,?)",
+			date, component, device, clicks, clicks, dead).Error)
+	}
+	// small: 90% to 50% of 100 clicks, 40 fewer trouble clicks. big: 30% to 20% of 2,000, 200 fewer.
+	ins("2041-08-01", "small", "mobile", 100, 90)
+	ins("2041-08-08", "small", "mobile", 100, 50)
+	ins("2041-08-01", "big", "mobile", 2000, 600)
+	ins("2041-08-08", "big", "mobile", 2000, 400)
+	// chat: phones steady at 60%; 1,000 app-ios clicks at 10% arrive this period only.
+	ins("2041-08-01", "chat", "mobile", 100, 60)
+	ins("2041-08-08", "chat", "mobile", 100, 60)
+	ins("2041-08-08", "chat", "app-ios", 1000, 100)
+	// fresh: nothing to compare with, so all its 70 trouble clicks are new.
+	ins("2041-08-08", "fresh", "desktop", 100, 70)
+
+	var fric ux.FrictionResponse
+	require.Equal(t, 200, uxGet(t, token, "friction?start=2041-08-08&end=2041-08-14", &fric))
+	require.Equal(t, []string{"big", "fresh", "small", "chat"}, uxFilterComponents(fric.Components))
+
+	byName := map[string]ux.FrictionRow{}
+	for _, r := range fric.Components {
+		byName[r.Component] = r
+	}
+	assert.True(t, byName["big"].Compared)
+	assert.InDelta(t, -200, byName["big"].Effect, 0.001)
+	assert.InDelta(t, -0.1, byName["big"].Change, 0.0001)
+	assert.False(t, byName["fresh"].Compared)
+	assert.InDelta(t, 70, byName["fresh"].Effect, 0.001)
+	assert.True(t, byName["chat"].Compared)
+	assert.InDelta(t, 0, byName["chat"].Effect, 0.001, "the new app-ios clicks are not compared")
+	assert.InDelta(t, 0, byName["chat"].Change, 0.0001)
+	assert.EqualValues(t, 1100, byName["chat"].Clicks, "the totals still hold every device")
+}
+
 func uxFilterTwoDigits(i int) string {
 	return string(rune('0'+i/10)) + string(rune('0'+i%10))
 }

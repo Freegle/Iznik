@@ -498,6 +498,10 @@
             </button>
           </div>
 
+          <!-- An OFFER the server split into items: undo, edit, and each item
+               marked TAKEN on its own. -->
+          <MyMessageItems :id="id" @all-taken="outcome('Taken')" />
+
           <!-- Replies section -->
           <div v-if="replies?.length > 0" class="replies-section">
             <div class="replies-header" @click="toggleExpanded">
@@ -616,6 +620,9 @@ import ProfileImage from '~/components/ProfileImage'
 import MessageTag from '~/components/MessageTag'
 import OurUploadedImage from '~/components/OurUploadedImage'
 
+const MyMessageItems = defineAsyncComponent(
+  () => import('./MyMessageItems.vue')
+)
 const MyMessageReply = defineAsyncComponent(
   () => import('./MyMessageReply.vue')
 )
