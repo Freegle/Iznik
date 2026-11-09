@@ -176,6 +176,38 @@ describe('ModSysAdminUxExperimentChannel', () => {
     expect(w.find('.gloss').exists()).toBe(false)
   })
 
+  it('shows a figure for information only under the counts, saying it does not decide', () => {
+    const w = make(
+      experiment({
+        design: {
+          channel: 'server',
+          type: 'confirm_reply_post',
+          source: 'confirm_reply_post',
+          window_hours: 168,
+        },
+        result: {
+          detail: {
+            counted: { control: 170, ask: 174 },
+            information: {
+              nothing_passed_on: {
+                label:
+                  'the share of posters who had no reply passed on within 7 days',
+                arms: {
+                  control: { n: 4, base: 170 },
+                  ask: { n: 28, base: 174 },
+                },
+              },
+            },
+          },
+        },
+      })
+    )
+    expect(w.findAll('.information li').map((li) => li.text())).toEqual([
+      'For information only, not used to decide: the share of posters who had no reply passed on within 7 days was 16.1% with the change and 2.4% without.',
+    ])
+    expect(make(experiment()).find('.information').exists()).toBe(false)
+  })
+
   it('has no list of versions when the design gave no text', () => {
     const w = make(
       experiment({ design: { channel: 'email', type: 'x' }, result: null })

@@ -711,6 +711,26 @@ class UxExperimentSourceTest extends TestCase
         $this->assertStringNotContainsString('Replying to a post', $exp->decision);
     }
 
+    public function test_a_figure_for_information_only_is_shown_and_never_decides(): void
+    {
+        $id = $this->started(['window_hours' => 24, 'intake_hours' => 12, 'max_hours' => 36]);
+        FakeUxMetricSource::counting(['control' => [1200, 120], 'b' => [1200, 200]]);
+        // Far worse with the change, and still no reason to revert: a source shows it, the engine never weighs it.
+        FakeUxMetricSource::$counts['extra']['information'] = ['nothing_passed_on' => [
+            'label' => 'the share of posters who had no reply passed on within a day',
+            'arms' => ['control' => ['n' => 0, 'base' => 1200], 'b' => ['n' => 600, 'base' => 1200]],
+        ]];
+
+        $this->service->tick($this->at(36));
+
+        $exp = $this->service->find($id);
+        $this->assertSame('adopted', $exp->status);
+        $line = 'For information only, not used to decide: the share of posters who had no reply passed on within a day was 50.0% with the change and 0.0% without.';
+        $this->assertStringContainsString($line, $exp->decision);
+        $summary = DB::table('ux_experiment_reads')->where('experiment_id', $id)->value('summary');
+        $this->assertStringContainsString($line, $summary);
+    }
+
     public function test_no_source_calls_the_members_counted_sent(): void
     {
         // The members counted are fewer than the members the experiment has reached so far, and the tab says

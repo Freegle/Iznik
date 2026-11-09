@@ -945,7 +945,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	}
 
 	// A reply to an offer of a child car seat waits while the replier is asked to check the seat and whether they still
-	// want it (replyconfirm.go). That is decided here, before the reply is written, so that the reply and what holds it
+	// want it, and so does a reply to an offer that looks damaged or too big to carry from a poster in the arm "ask" of
+	// the experiment confirm-reply-post (replyconfirm.go). That is decided here, before the reply is written, so that the reply and what holds it
 	// are written together: chats:process-incoming takes any committed unprocessed reply, whatever its age, and a reply
 	// committed before its hold would be delivered by a run that landed between the two. A reply held by rippling is not
 	// asked about: the question would be shown to the poster before the reply.
@@ -975,7 +976,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			}
 		}
 
-		if confirm != nil {
+		if confirm != nil && confirm.asks() {
 			// In a savepoint of its own: a hold that cannot be written leaves the reply as it would have been with
 			// no question, not a reply that failed.
 			if err := tx.Transaction(func(inner *gorm.DB) error { return confirm.hold(inner, payload.ID) }); err != nil {
@@ -1034,8 +1035,13 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		})
 	}
 
+	// A reply to an eligible offer that is not asked about (control, a replier asked before) still counts the poster.
+	if confirm != nil && !confirm.asks() {
+		confirm.record(db)
+	}
+
 	// The question reaches the replier by push and email, as any chat message does.
-	if confirm != nil {
+	if confirm != nil && confirm.asks() {
 		confirm.notify()
 	}
 
