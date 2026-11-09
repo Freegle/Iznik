@@ -154,7 +154,9 @@ test.describe('ModTools Edits Flow', () => {
       .first()
     await expect(messageCard).toBeVisible({ timeout: timeouts.ui.appearance })
 
-    const editButton = messageCard.locator('button:has-text("Edit")').first()
+    const editButton = messageCard
+      .locator('button:not(.title-toggle):has-text("Edit")')
+      .first()
     await expect(editButton).toBeVisible({ timeout: timeouts.ui.appearance })
     await editButton.click()
 

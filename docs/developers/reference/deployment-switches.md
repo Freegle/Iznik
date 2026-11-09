@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-07
+last_reviewed: 2026-11-09
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
@@ -54,6 +54,7 @@ variables like every other Freegle setting.
 | `mail.relay_queue.min_age_minutes` | `FREEGLE_MAIL_RELAY_QUEUE_MIN_AGE` | `120` | The other way a domain earns a row. A handful of messages stuck for a day never reaches the size threshold and is the shape nobody notices, so age qualifies on its own. |
 | `mail.relay_queue.max_rows` | `FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS` | `500` | Most rows kept. An estate-wide episode names thousands of domains; the worst are kept and the rest dropped. |
 | `ai_images.gemini_api_key`, `ai_images.clean_model` | `GOOGLE_GEMINI_API_KEY`, `AI_IMAGE_CLEAN_MODEL` | blank, `gemini-3.5-flash-lite` | With a key, `messages:clean-items` works out each post's item, and AI item pictures, matched posts and search use it (see [message-items.md](message-items.md)). Blank, nothing is cleaned and all three behave as before. The model is fixed because the results were measured on it. |
+| `autosplit.mode`, `autosplit.model`, `autosplit.window_minutes`, `autosplit.max_photos` | `AUTOSPLIT_MODE`, `AUTOSPLIT_MODEL`, `AUTOSPLIT_WINDOW_MINUTES`, `AUTOSPLIT_MAX_PHOTOS` | `off`, `gemini-3.8-flash`, `120`, `8` | `on` turns new posts of several items into item lists, photos included; `shadow` records what it would do in `messages_autosplit` without changing posts; anything else is off. It also needs `GOOGLE_GEMINI_API_KEY`. The model is fixed because the prompts were backtested on it. See [auto-split.md](auto-split.md). |
 | `schedule.profile` | `FREEGLE_SCHEDULE_PROFILE` | `full` | `overlay-only` runs nothing from `routes/console.php` except what the overlay file below schedules. Any other value behaves as `full`, so a typo can never quietly stop the schedule. |
 | `schedule.overlay` | `FREEGLE_SCHEDULE_OVERLAY` | `routes/console.deployment.php` | A schedule file loaded **if it exists** (relative to the app root, or absolute). Freegle ships none. A deployment puts its own jobs there. |
 | `cookieyes.enabled` | `COOKIEYES_ENABLED` | `true` | Off, the weekly `cookieyes:check` is not scheduled. For a deployment with no CookieYes account, which would otherwise fail and email every week. See [cookieyes-watchdog.md](cookieyes-watchdog.md). |
@@ -100,7 +101,7 @@ variables like every other Freegle setting.
 | `ux.experiments.holdout_revert_looks` | `UX_EXPERIMENTS_HOLDOUT_REVERT_LOOKS` | `2` | How many daily looks in a row must be against an adopted change before it is reverted. |
 | `ux_server_arms` | none: a row in the `config` table, set with `PATCH /config/admin` and `{"ux_server_arms":"1"}` | unset, which is off | The one switch for every server arm. Only `1` serves arms. Missing or anything else makes every sender in the batch and the Go API act as control within a minute and stop writing exposure rows, with no deploy. `ux:experiment start` refuses a mail, push or server experiment while it is off. See [Experiments in mail, push and the server](ux-experiments.md#experiments-in-mail-push-and-the-server). |
 | `ux.channels.<channel>.ceiling_hours`, `.intake_hours` | none, set in `config/freegle.php` | push `48` and `24`, email `168` and `24`, server `336` and `168` | For an experiment decided on the server: the longest run `start` accepts, and the hours members are reached by default (the rest of the run is the window they have to convert in). A web experiment keeps `ux.experiments.max_hours`. |
-| `ux.sources.<name>` | none, set in `config/freegle.php` | `email_click`, `active_after`, `confirm_reply`, `interested_reply`, `familiar_reply` | The metric sources an experiment can name in `design.source`, each a class that counts from the database instead of Loki. A new source is a class and a line here. |
+| `ux.sources.<name>` | none, set in `config/freegle.php` | `email_click`, `active_after`, `interested_reply`, `familiar_reply`, `hosting_ad_click` | The metric sources an experiment can name in `design.source`, each a class that counts from the database instead of Loki. A new source is a class and a line here. |
 | `interested.chaseup_after_hours` | `FREEGLE_INTERESTED_CHASEUP_AFTER_HOURS` | `24` | How old an I'm interested mark must be before `messages:interested-chaseup` emails a reminder about it. See [An I'm interested button](ux-experiments.md#an-im-interested-button). |
 | `interested.max_age_days` | `FREEGLE_INTERESTED_MAX_AGE_DAYS` | `7` | Marks older than this are never chased. |
 | `interested.chunk` | `FREEGLE_INTERESTED_CHUNK` | `200` | Members the chase-up handles per round. |

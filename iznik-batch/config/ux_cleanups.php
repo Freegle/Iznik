@@ -23,4 +23,5 @@ return [
     ['name' => 'reply-job-interstitial', 'cleanup_pr' => 'https://github.com/Freegle/Iznik/pull/1868'],
     ['name' => 'digest-subject', 'cleanup_pr' => 'https://github.com/Freegle/Iznik/pull/1881'],
     ['name' => 'push-posts-title', 'cleanup_pr' => 'https://github.com/Freegle/Iznik/pull/1903'],
+    ['name' => 'confirm-reply', 'cleanup_pr' => 'https://github.com/Freegle/Iznik/pull/2012'],
 ];

@@ -1,7 +1,11 @@
 <template>
   <div v-if="volunteering" class="volop-card">
     <component :is="titleTag" class="volop-card__header">
+      <span v-if="onOwnPage" class="volop-card__title volop-card__title--plain">
+        {{ volunteering.title }}
+      </span>
       <nuxt-link
+        v-else
         :to="'/volunteering/' + volunteering.id"
         class="volop-card__title"
         no-prefetch
@@ -148,6 +152,7 @@ import { useAuthStore } from '~/stores/auth'
 import ReadMore from '~/components/ReadMore'
 import { twem } from '~/composables/useTwem'
 import { dateonly } from '~/composables/useTimeFormat'
+import { useRoute } from '#imports'
 
 const VolunteerOpportunityModal = defineAsyncComponent(
   () => import('./VolunteerOpportunityModal')
@@ -181,6 +186,13 @@ const props = defineProps({
 })
 
 const volunteeringStore = useVolunteeringStore()
+const route = useRoute()
+
+// On the opportunity's own page the title is not a link: it would lead to the page already open, so
+// tapping it did nothing and people tapped it again and again.
+const onOwnPage = computed(
+  () => route?.path?.replace(/\/$/, '') === '/volunteering/' + props.id
+)
 const userStore = useUserStore()
 const groupStore = useGroupStore()
 const authStore = useAuthStore()
@@ -332,6 +344,15 @@ async function expire() {
 
   &:hover {
     text-decoration: underline;
+  }
+}
+
+// Not a link on its own page, so it must not look like one.
+.volop-card__title--plain {
+  color: inherit;
+
+  &:hover {
+    text-decoration: none;
   }
 }
 

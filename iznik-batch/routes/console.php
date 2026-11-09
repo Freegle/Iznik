@@ -1835,6 +1835,14 @@ Schedule::command('messages:clean-items')
     ->appendOutputTo(cronLog('messages:clean-items'))
     ->runInBackground();
 
+// Turn new posts of several items into item lists, with each photo on its item. Off unless
+// AUTOSPLIT_MODE is shadow or on. docs/developers/reference/auto-split.md.
+Schedule::command('messages:auto-split')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->appendOutputTo(cronLog('messages:auto-split'))
+    ->runInBackground();
+
 
 // =============================================================================
 // GIFT AID

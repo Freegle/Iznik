@@ -196,11 +196,11 @@ const bulkAvailable = computed(() => {
   const m = message.value
   if (!m?.bulkitems?.length) return 0
   // Prefer availablenow (sum of quantities across items still available); fall
-  // back to summing the catalogue quantities if the list payload omits it.
-  return (
-    m.availablenow ||
-    m.bulkitems.reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
-  )
+  // back to summing the catalogue quantities only if the list payload omits it.
+  // 0 is an answer - every item has gone - not a missing value.
+  return typeof m.availablenow === 'number'
+    ? m.availablenow
+    : m.bulkitems.reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
 })
 
 const miscStore = useMiscStore()

@@ -92,6 +92,7 @@ import NumberIncrementDecrement from './NumberIncrementDecrement'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
+import { isClearance } from '~/composables/useAutoSplit'
 
 const props = defineProps({
   type: {
@@ -143,7 +144,7 @@ const message = computed(() =>
 // Bulk clearance offers keep the per-person counts: those posters are working
 // through a catalogue and the arithmetic is the point. On an ordinary post we
 // only ask who took some, never how many each of them took.
-const isBulk = computed(() => (message.value?.bulkcount ?? 0) > 0)
+const isBulk = computed(() => isClearance(message.value))
 
 // Was this post offering more than one thing? For a bulk offer that is a live
 // count, so availablenow is right. For an ordinary post the pool size is what
