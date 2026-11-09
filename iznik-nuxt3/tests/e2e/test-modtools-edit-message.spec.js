@@ -113,7 +113,9 @@ test.describe('ModTools Edit Message', () => {
 
     // Find and click the Edit button on the first message
     const editButton = page
-      .locator('button:has-text("Edit"), .btn:has-text("Edit")')
+      .locator(
+        'button:not(.title-toggle):has-text("Edit"), .btn:has-text("Edit")'
+      )
       .first()
     await expect(editButton).toBeVisible({ timeout: timeouts.ui.appearance })
     // Dismiss any late-appearing modals before clicking

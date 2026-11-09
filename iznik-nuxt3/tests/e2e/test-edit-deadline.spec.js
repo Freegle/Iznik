@@ -46,7 +46,10 @@ test.describe('Freegle Edit Deadline', () => {
       .locator(`.message-card:has-text("${posted.item}")`)
       .first()
     await expect(messageCard).toBeVisible({ timeout: timeouts.ui.appearance })
-    await messageCard.locator('button:has-text("Edit")').first().click()
+    await messageCard
+      .locator('button:not(.title-toggle):has-text("Edit")')
+      .first()
+      .click()
 
     const editModal = page.locator('.modal.show')
     await expect(editModal).toBeVisible({ timeout: timeouts.ui.appearance })
@@ -88,7 +91,10 @@ test.describe('Freegle Edit Deadline', () => {
       .locator(`.message-card:has-text("${posted.item}")`)
       .first()
     await expect(messageCard).toBeVisible({ timeout: timeouts.ui.appearance })
-    await messageCard.locator('button:has-text("Edit")').first().click()
+    await messageCard
+      .locator('button:not(.title-toggle):has-text("Edit")')
+      .first()
+      .click()
 
     const editModal = page.locator('.modal.show')
     await expect(editModal).toBeVisible({ timeout: timeouts.ui.appearance })
@@ -122,7 +128,10 @@ test.describe('Freegle Edit Deadline', () => {
     console.log('Deadline saved')
 
     // Re-open edit modal and verify the deadline persisted immediately
-    await messageCard.locator('button:has-text("Edit")').first().click()
+    await messageCard
+      .locator('button:not(.title-toggle):has-text("Edit")')
+      .first()
+      .click()
     const editModal2 = page.locator('.modal.show')
     await expect(editModal2).toBeVisible({ timeout: timeouts.ui.appearance })
 
@@ -149,7 +158,7 @@ test.describe('Freegle Edit Deadline', () => {
     })
 
     await messageCardAfterReload
-      .locator('button:has-text("Edit")')
+      .locator('button:not(.title-toggle):has-text("Edit")')
       .first()
       .click()
     const editModal3 = page.locator('.modal.show')
