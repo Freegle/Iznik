@@ -35,9 +35,9 @@ func newInterestedFixture(t *testing.T, name string, arm string) interestedFixtu
 	_, f.token = CreateTestSession(t, f.userID)
 
 	if arm == "" {
-		writeReplyConfirmConfig(t, "", "", false)
+		writeServerArmConfig(t, "", "", false)
 	} else {
-		writeReplyConfirmConfig(t, `{"interested-button":{"arms":{"`+arm+`":[0,99]},"adopted":true}}`, "1", true)
+		writeServerArmConfig(t, `{"interested-button":{"arms":{"`+arm+`":[0,99]},"adopted":true}}`, "1", true)
 	}
 
 	t.Cleanup(func() {
@@ -165,7 +165,7 @@ func TestInterested_SwitchOffGivesNoArmAndNoRow(t *testing.T) {
 	assert.Empty(t, interestedExposures(t, f.userID))
 
 	// The experiment is configured but the global switch is not 1.
-	writeReplyConfirmConfig(t, `{"interested-button":{"arms":{"button":[0,99]},"adopted":true}}`, "0", true)
+	writeServerArmConfig(t, `{"interested-button":{"arms":{"button":[0,99]},"adopted":true}}`, "0", true)
 	ux.FlushServerArmCache()
 	st = f.state(t, nil)
 	assert.Equal(t, "", st["arm"])

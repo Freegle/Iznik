@@ -41,9 +41,9 @@ func newHostingAdFixture(t *testing.T, name string, wordpress, krystal bool, arm
 	require.NotZero(t, f.siteID)
 
 	if arm == "" {
-		writeReplyConfirmConfig(t, "", "", false)
+		writeServerArmConfig(t, "", "", false)
 	} else {
-		writeReplyConfirmConfig(t, `{"krystal-hosting-ad":{"arms":{"`+arm+`":[0,99]},"adopted":true}}`, "1", true)
+		writeServerArmConfig(t, `{"krystal-hosting-ad":{"arms":{"`+arm+`":[0,99]},"adopted":true}}`, "1", true)
 	}
 
 	t.Cleanup(func() {
@@ -167,7 +167,7 @@ func TestHostingAdAMemberWithNoKnownDomainIsNotDecided(t *testing.T) {
 	prefix := uniquePrefix("hostingad_unknown")
 	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
-	writeReplyConfirmConfig(t, `{"krystal-hosting-ad":{"arms":{"ad":[0,99]},"adopted":true}}`, "1", true)
+	writeServerArmConfig(t, `{"krystal-hosting-ad":{"arms":{"ad":[0,99]},"adopted":true}}`, "1", true)
 
 	code, obj := hostingAdGet(t, token)
 	require.Equal(t, http.StatusOK, code)

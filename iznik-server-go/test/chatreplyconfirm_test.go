@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,15 +13,13 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/utils"
-	"github.com/freegle/iznik-server-go/ux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-// A reply to an OFFER that looks damaged, or looks like it needs a car to collect, is held
-// while Freegle asks the replier to confirm, for the repliers whose arm of the experiment
-// confirm-reply is ask. See chat/replyconfirm.go.
+// A reply to an OFFER of a child car seat is held while Freegle asks the replier to check the seat
+// and confirm. See chat/replyconfirm.go.
 
 // ensureFreegleUser returns the Freegle account the API resolves by its well-known address,
 // creating it if this database has never had one.
@@ -51,16 +48,6 @@ func ensureReplyConfirmColumns(t *testing.T) {
 	addColumnIfMissing("chat_prompts", "answered_via", "VARCHAR(16) NULL")
 }
 
-// seedEee records a classification for the post, as eee:classify-new would.
-func seedEee(t *testing.T, msgID uint64, condition string, size string, weight string) {
-	res := database.DBConn.Exec("INSERT INTO messages_eee (msgid, is_eee, item_condition, size_bucket, weight_bucket, "+
-		"model, prompt_version, classified_at) VALUES (?, 0, ?, ?, ?, 'gemini-test', 'v1', NOW())",
-		msgID, condition, size, weight)
-	if res.Error != nil {
-		t.Fatalf("could not seed messages_eee: %v", res.Error)
-	}
-}
-
 type replyConfirmFixture struct {
 	groupID      uint64
 	posterID     uint64
@@ -71,20 +58,23 @@ type replyConfirmFixture struct {
 	replierToken string
 }
 
-// newReplyConfirmFixture makes a poster, a replier and their chat, and serves every member the arm ask, so
-// the question is asked as the tests below were written to expect. A test of the other arms calls
-// forceReplyConfirmArm again.
+// newReplyConfirmFixture makes a poster with an OFFER of a child car seat, a replier and their chat, so a reply
+// is asked about. newOfferFixture makes one with any subject.
 func newReplyConfirmFixture(t *testing.T, name string) replyConfirmFixture {
+	return newOfferFixture(t, name, "OFFER: child car seat")
+}
+
+// newOfferFixture is newReplyConfirmFixture for an offer with this subject.
+func newOfferFixture(t *testing.T, name string, subject string) replyConfirmFixture {
 	ensureReplyConfirmColumns(t)
 	ensureFreegleUser(t)
-	forceReplyConfirmArm(t, "ask")
 
 	prefix := uniquePrefix(name)
 	groupID := CreateTestGroup(t, prefix)
 	f := replyConfirmFixture{groupID: groupID}
 	f.posterID = CreateTestUser(t, prefix+"_poster", "User")
 	f.replierID = CreateTestUser(t, prefix+"_replier", "User")
-	f.msgID = CreateTestMessage(t, f.posterID, groupID, "OFFER: armchair ("+prefix+")", 51.5, -0.1)
+	f.msgID = CreateTestMessage(t, f.posterID, groupID, subject+" ("+prefix+")", 51.5, -0.1)
 	f.chatID = CreateTestChatRoom(t, f.replierID, &f.posterID, nil, "User2User")
 	_, f.posterToken = CreateTestSession(t, f.posterID)
 	_, f.replierToken = CreateTestSession(t, f.replierID)
@@ -200,195 +190,20 @@ func processingState(msgID uint64) (int, int) {
 	return row.Processingrequired, row.Processingsuccessful
 }
 
-func TestReplyConfirm_DamagedOfferAsksTheReplier(t *testing.T) {
-	f := newReplyConfirmFixture(t, "rcdamaged")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
-
-	replyID := f.reply(t, "Is it still available?", true)
-
-	p := f.prompt(t)
-	if assert.NotNil(t, p, "a reply to a damaged item should be held for the replier to confirm") {
-		assert.Equal(t, f.replierID, *p.Userid, "asked of the replier, not the poster")
-		assert.Equal(t, replyID, *p.Heldchatmsgid)
-		assert.True(t, strings.HasPrefix(p.Message, "@"), "addressed to the replier by name: %s", p.Message)
-		assert.Contains(t, p.Message, "damaged")
-		assert.NotContains(t, p.Message, "car")
-		assert.Equal(t, 0, p.Processing, "never processed, so the poster is never shown or told about it")
-		rows := replyConfirmExposures(t, f.replierID)
-		if assert.Len(t, rows, 1, "one row for the reply, which the question names") {
-			assert.Equal(t, "damaged", rows[0]["stratum"])
-			assert.EqualValues(t, replyID, rows[0]["subject_id"])
-		}
-	}
-
-	// The reply itself waits for chats:process-incoming, which waits for the answer.
-	required, _ := processingState(replyID)
-	assert.Equal(t, 1, required)
-}
-
-func TestReplyConfirm_LargeOrHeavyAsksAboutACar(t *testing.T) {
-	for _, c := range []struct{ size, weight string }{
-		{"large", "5_20kg"},
-		{"medium", "20_100kg"},
-		{"unsure", "over_100kg"},
-	} {
-		f := newReplyConfirmFixture(t, "rcbig")
-		seedEee(t, f.msgID, "reusable", c.size, c.weight)
-
-		f.reply(t, "I'd love this", true)
-
-		p := f.prompt(t)
-		if assert.NotNil(t, p, "size %s / weight %s needs a car", c.size, c.weight) {
-			assert.Contains(t, p.Message, "car")
-			assert.NotContains(t, p.Message, "damaged")
-			rows := replyConfirmExposures(t, f.replierID)
-			if assert.Len(t, rows, 1) {
-				assert.Equal(t, "car", rows[0]["stratum"])
-			}
-		}
-	}
-}
-
-func TestReplyConfirm_BothReasonsInOneQuestion(t *testing.T) {
-	f := newReplyConfirmFixture(t, "rcboth")
-	seedEee(t, f.msgID, "damaged", "large", "over_100kg")
-
-	f.reply(t, "Can I have it?", true)
-
-	p := f.prompt(t)
-	if assert.NotNil(t, p) {
-		assert.Contains(t, p.Message, "damaged")
-		assert.Contains(t, p.Message, "car")
-		rows := replyConfirmExposures(t, f.replierID)
-		if assert.Len(t, rows, 1) {
-			assert.Equal(t, "both", rows[0]["stratum"])
-		}
-	}
-}
-
-// inEitherArm runs a case once in the arm ask and once in the arm control. A reply the question can never apply to
-// is asked about in neither arm and leaves no row in either: a row means the reply was eligible, so a row written
-// for any other reply would put a reply the question could not change into both arms and dilute what the run reads.
-func inEitherArm(t *testing.T, run func(t *testing.T, arm string)) {
-	t.Helper()
-	for _, arm := range []string{"ask", "control"} {
-		t.Run(arm, func(t *testing.T) { run(t, arm) })
-	}
-}
-
-// replyLeavesNothing replies as the fixture's member in the given arm and says that no question was asked and no
-// row was written.
-func replyLeavesNothing(t *testing.T, f replyConfirmFixture, arm string, why string) {
-	t.Helper()
-	forceReplyConfirmArm(t, arm)
-
-	f.reply(t, "Yes please", true)
-
-	assert.Nil(t, f.prompt(t), why)
-	assert.Empty(t, replyConfirmExposures(t, f.replierID), "and no row, because the reply was never in the experiment: "+why)
-}
-
-func TestReplyConfirm_NothingToAsk(t *testing.T) {
-	// A small reusable item, and an item nobody has classified yet, go straight through.
-	inEitherArm(t, func(t *testing.T, arm string) {
-		f := newReplyConfirmFixture(t, "rcfine")
-		seedEee(t, f.msgID, "reusable", "small", "1_5kg")
-		replyLeavesNothing(t, f, arm, "a small reusable item has nothing to ask about")
-
-		g := newReplyConfirmFixture(t, "rcunclassified")
-		replyLeavesNothing(t, g, arm, "an item nobody has classified has nothing to ask about")
-	})
-}
-
 func TestReplyConfirm_AnOfferThatHasGoneIsNotAskedAbout(t *testing.T) {
 	// A reply to an offer already taken, withdrawn or expired cannot be asked about: if it were held, nothing would be
 	// left to drop it when the offer's outcome had already been dealt with.
-	inEitherArm(t, func(t *testing.T, arm string) {
-		f := newReplyConfirmFixture(t, "rcgone")
-		seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
-		database.DBConn.Exec("INSERT INTO messages_outcomes (msgid, outcome, timestamp) VALUES (?, 'Taken', NOW())", f.msgID)
-		t.Cleanup(func() { database.DBConn.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", f.msgID) })
+	f := newReplyConfirmFixture(t, "rcgone")
+	database.DBConn.Exec("INSERT INTO messages_outcomes (msgid, outcome, timestamp) VALUES (?, 'Taken', NOW())", f.msgID)
+	t.Cleanup(func() { database.DBConn.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", f.msgID) })
 
-		replyLeavesNothing(t, f, arm, "an offer that has gone has nothing to ask about")
-	})
-}
+	f.reply(t, "Yes please", true)
 
-func TestReplyConfirm_NewestClassificationWins(t *testing.T) {
-	inEitherArm(t, func(t *testing.T, arm string) {
-		f := newReplyConfirmFixture(t, "rcnewest")
-		seedEee(t, f.msgID, "damaged", "large", "over_100kg")
-		database.DBConn.Exec("INSERT INTO messages_eee (msgid, is_eee, item_condition, size_bucket, weight_bucket, "+
-			"model, prompt_version, classified_at) VALUES (?, 0, 'reusable', 'small', 'under_1kg', 'gemini-test', 'v2', NOW())",
-			f.msgID)
-
-		replyLeavesNothing(t, f, arm, "a reclassification that clears the item replaces the old verdict")
-	})
-}
-
-func TestReplyConfirm_NotForTrashNothingMembers(t *testing.T) {
-	inEitherArm(t, func(t *testing.T, arm string) {
-		f := newReplyConfirmFixture(t, "rctnreplier")
-		seedEee(t, f.msgID, "damaged", "large", "over_100kg")
-		database.DBConn.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", f.replierID, f.replierID)
-		replyLeavesNothing(t, f, arm, "a TrashNothing replier is never asked")
-
-		g := newReplyConfirmFixture(t, "rctnposter")
-		seedEee(t, g.msgID, "damaged", "large", "over_100kg")
-		database.DBConn.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)",
-			g.posterID, fmt.Sprintf("tn%d@user.trashnothing.com", g.posterID))
-		replyLeavesNothing(t, g, arm, "nor is a reply to a TrashNothing poster")
-	})
-}
-
-func TestReplyConfirm_PosterWhoDeliversIsNotACarQuestion(t *testing.T) {
-	inEitherArm(t, func(t *testing.T, arm string) {
-		f := newReplyConfirmFixture(t, "rcdelivers")
-		seedEee(t, f.msgID, "reusable", "large", "over_100kg")
-		database.DBConn.Exec("UPDATE messages SET deliverypossible = 1 WHERE id = ?", f.msgID)
-
-		replyLeavesNothing(t, f, arm, "the poster may bring it, so the car question does not arise")
-	})
-}
-
-// A post that looks damaged and big, whose poster might deliver, is eligible for one reason only: the car is not a
-// reason, so the row says damaged and not both, and the question does not mention a car.
-func TestReplyConfirm_ADamagedOfferWhosePosterDeliversIsOnlyAboutTheDamage(t *testing.T) {
-	inEitherArm(t, func(t *testing.T, arm string) {
-		f := newReplyConfirmFixture(t, "rcdamageddelivers")
-		seedEee(t, f.msgID, "damaged", "large", "over_100kg")
-		database.DBConn.Exec("UPDATE messages SET deliverypossible = 1 WHERE id = ?", f.msgID)
-		forceReplyConfirmArm(t, arm)
-
-		f.reply(t, "Yes please", true)
-
-		rows := replyConfirmExposures(t, f.replierID)
-		if assert.Len(t, rows, 1) {
-			assert.Equal(t, "damaged", rows[0]["stratum"], "not both: the poster may deliver, so the car is no reason")
-			assert.Equal(t, arm, rows[0]["arm"])
-		}
-		if arm == "ask" {
-			p := f.prompt(t)
-			if assert.NotNil(t, p) {
-				assert.Contains(t, p.Message, "damaged")
-				assert.NotContains(t, p.Message, "car")
-			}
-		}
-	})
-}
-
-func TestReplyConfirm_OnlyOffers(t *testing.T) {
-	inEitherArm(t, func(t *testing.T, arm string) {
-		f := newReplyConfirmFixture(t, "rcwanted")
-		database.DBConn.Exec("UPDATE messages SET type = 'Wanted' WHERE id = ?", f.msgID)
-		seedEee(t, f.msgID, "damaged", "large", "over_100kg")
-
-		replyLeavesNothing(t, f, arm, "only an OFFER is asked about")
-	})
+	assert.Nil(t, f.prompt(t), "an offer that has gone has nothing to ask about")
 }
 
 func TestReplyConfirm_OnlyTheReplierSeesTheQuestion(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcvisible")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	f.reply(t, "Is it still available?", true)
 
 	assert.Contains(t, f.messageTypes(t, f.replierToken), "Prompt")
@@ -397,7 +212,6 @@ func TestReplyConfirm_OnlyTheReplierSeesTheQuestion(t *testing.T) {
 
 func TestReplyConfirm_OnlyTheReplierCanAnswer(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcanswerer")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	f.reply(t, "Is it still available?", true)
 
 	p := f.prompt(t)
@@ -408,7 +222,6 @@ func TestReplyConfirm_OnlyTheReplierCanAnswer(t *testing.T) {
 
 func TestReplyConfirm_YesLetsTheReplyThrough(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcyes")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	replyID := f.reply(t, "Is it still available?", true)
 
 	p := f.prompt(t)
@@ -429,7 +242,6 @@ func TestReplyConfirm_YesLetsTheReplyThrough(t *testing.T) {
 
 func TestReplyConfirm_NoDropsTheReply(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcno")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	replyID := f.reply(t, "Is it still available?", true)
 
 	p := f.prompt(t)
@@ -451,7 +263,6 @@ func TestReplyConfirm_WhatTheReplierTypesIsNeverTakenForAYes(t *testing.T) {
 	for _, text := range []string{"no thanks, sorry", "yes please", "Is the damage bad?"} {
 		t.Run(text, func(t *testing.T) {
 			f := newReplyConfirmFixture(t, "rctyped")
-			seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 			replyID := f.reply(t, "Is it still available?", true)
 			laterID := f.reply(t, text, false)
 
@@ -473,7 +284,6 @@ func TestReplyConfirm_WhatTheReplierTypesIsNeverTakenForAYes(t *testing.T) {
 
 func TestReplyConfirm_ANoWithdrawsTheReplyAndWhatTheReplierWroteAfterIt(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcnoall")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	replyID := f.reply(t, "Is it still available?", true)
 	laterID := f.reply(t, "no thanks, sorry", false)
 	p := f.prompt(t)
@@ -494,7 +304,6 @@ func TestReplyConfirm_ANoWithdrawsTheReplyAndWhatTheReplierWroteAfterIt(t *testi
 
 func TestReplyConfirm_ANoLeavesOtherChatsAndLaterMessagesAlone(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcnoother")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	otherPoster := CreateTestUser(t, uniquePrefix("rcnoother_op"), "User")
 	otherChat := CreateTestChatRoom(t, f.replierID, &otherPoster, nil, "User2User")
 
@@ -527,7 +336,6 @@ func TestReplyConfirm_ANoLeavesOtherChatsAndLaterMessagesAlone(t *testing.T) {
 
 func TestReplyConfirm_ASecondAnswerIsRefusedAndChangesNothing(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rctwice")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	replyID := f.reply(t, "Is it still available?", true)
 	p := f.prompt(t)
 	require.NotNil(t, p)
@@ -543,7 +351,6 @@ func TestReplyConfirm_ASecondAnswerIsRefusedAndChangesNothing(t *testing.T) {
 
 func TestReplyConfirm_AnAnswerRecordedByAnotherTapIsNotAppliedAgain(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcclaim")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	replyID := f.reply(t, "Is it still available?", true)
 	p := f.prompt(t)
 	require.NotNil(t, p)
@@ -576,7 +383,6 @@ func pushesQueuedFor(msgID uint64) int64 {
 
 func TestReplyConfirm_TheQuestionCountsAsUnseenForTheReplierAndNotThePoster(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcunseen")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	f.reply(t, "Is it still available?", true)
 	p := f.prompt(t)
 	require.NotNil(t, p)
@@ -603,7 +409,6 @@ func TestReplyConfirm_TheQuestionCountsAsUnseenForTheReplierAndNotThePoster(t *t
 
 func TestReplyConfirm_AQuestionThatHasRunOutIsNotUnseen(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcunseenexp")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	f.reply(t, "Is it still available?", true)
 	p := f.prompt(t)
 	require.NotNil(t, p)
@@ -617,7 +422,6 @@ func TestReplyConfirm_AQuestionThatHasRunOutIsNotUnseen(t *testing.T) {
 
 func TestReplyConfirm_TheQuestionIsPushedAsAnyChatMessageIs(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcpush")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
 	f.reply(t, "Is it still available?", true)
 	p := f.prompt(t)
 	require.NotNil(t, p)
@@ -626,8 +430,7 @@ func TestReplyConfirm_TheQuestionIsPushedAsAnyChatMessageIs(t *testing.T) {
 }
 
 func TestReplyConfirm_NothingIsPushedForAReplyThatIsNotAskedAbout(t *testing.T) {
-	f := eligibleReplyConfirmFixture(t, "rcnopush")
-	forceReplyConfirmArm(t, "control")
+	f := newOfferFixture(t, "rcnopush", "OFFER: armchair")
 	before := chatMessageCount(f.chatID)
 	f.reply(t, "Is it still available?", true)
 
@@ -639,8 +442,7 @@ func TestReplyConfirm_NothingIsPushedForAReplyThatIsNotAskedAbout(t *testing.T) 
 }
 
 func TestReplyConfirm_AMergeMovesTheQuestionWithTheReplyItHolds(t *testing.T) {
-	f := eligibleReplyConfirmFixture(t, "rcmerge")
-	forceReplyConfirmArm(t, "ask")
+	f := newReplyConfirmFixture(t, "rcmerge")
 	replyID := f.reply(t, "Is it still available?", true)
 	p := f.prompt(t)
 	require.NotNil(t, p)
@@ -685,8 +487,7 @@ func TestReplyConfirm_EveryCountOfRepliesLeavesOutAHeldOrRefusedReply(t *testing
 		return n
 	}
 	held := func() *replyConfirmFixture {
-		f := eligibleReplyConfirmFixture(t, "rccount")
-		forceReplyConfirmArm(t, "ask")
+		f := newReplyConfirmFixture(t, "rccount")
 
 		return &f
 	}
@@ -739,105 +540,6 @@ func TestReplyConfirm_EveryCountOfRepliesLeavesOutAHeldOrRefusedReply(t *testing
 		database.DBConn.Raw("SELECT COUNT(*) FROM chat_messages cm WHERE cm.chatid = ? AND NOT "+utils.ReplyHeldByQuestionSQL("cm"), otherChat).Scan(&n)
 		assert.EqualValues(t, 1, n, "a message in another chat is not held by this question")
 	})
-}
-
-// ----------------------------------------------------------------------------- the experiment confirm-reply
-
-// The experiment confirm-reply serves a replier one of two arms: control, whose reply goes through as it
-// always did, and ask, whose reply is held while Freegle asks. Both arms leave one row in
-// ux_experiment_exposures. See docs/developers/reference/ux-experiments.md, "Confirming a reply before it
-// is passed on". Each test forces the arm it needs with forceReplyConfirmArm and reads the rows back by the
-// experiment's name, so the name in ux.ExperimentArm and the name in ux.RecordExposure cannot drift apart.
-
-// writeReplyConfirmConfig writes the two config rows an arm is read from, flushes the API's copy of them,
-// and puts back what was there when the test ends. An empty experiments string writes no ux_experiments
-// row, and haveSwitch false writes no ux_server_arms row.
-func writeReplyConfirmConfig(t *testing.T, experiments string, switchValue string, haveSwitch bool) {
-	t.Helper()
-	db := database.DBConn
-
-	var old []struct {
-		Key   string
-		Value string
-	}
-	db.Raw("SELECT `key` AS `key`, value AS value FROM config WHERE `key` IN ('ux_experiments', 'ux_server_arms')").Scan(&old)
-	db.Exec("DELETE FROM config WHERE `key` IN ('ux_experiments', 'ux_server_arms')")
-	if experiments != "" {
-		db.Exec("INSERT INTO config (`key`, value) VALUES ('ux_experiments', ?)", experiments)
-	}
-	if haveSwitch {
-		db.Exec("INSERT INTO config (`key`, value) VALUES ('ux_server_arms', ?)", switchValue)
-	}
-	ux.FlushServerArmCache()
-
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM config WHERE `key` IN ('ux_experiments', 'ux_server_arms')")
-		for _, r := range old {
-			db.Exec("INSERT INTO config (`key`, value) VALUES (?, ?)", r.Key, r.Value)
-		}
-		ux.FlushServerArmCache()
-	})
-}
-
-// forceReplyConfirmArm serves every member the given arm of confirm-reply, as an adopted entry, so its end
-// time and the clock do not matter. An empty arm leaves no entry and no switch: nobody has an arm.
-func forceReplyConfirmArm(t *testing.T, arm string) {
-	t.Helper()
-	if arm == "" {
-		writeReplyConfirmConfig(t, "", "", false)
-
-		return
-	}
-
-	writeReplyConfirmConfig(t, `{"confirm-reply":{"arms":{"`+arm+`":[0,99]},"adopted":true}}`, "1", true)
-}
-
-// replyConfirmExposures is what the experiment recorded for a replier, oldest first. The rows are removed
-// when the test ends.
-func replyConfirmExposures(t *testing.T, userid uint64) []map[string]interface{} {
-	t.Helper()
-	db := database.DBConn
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM ux_experiment_exposures WHERE experiment = 'confirm-reply' AND userid = ?", userid)
-	})
-
-	var rows []map[string]interface{}
-	db.Raw("SELECT * FROM ux_experiment_exposures WHERE experiment = 'confirm-reply' AND userid = ? ORDER BY id", userid).Scan(&rows)
-
-	return rows
-}
-
-// hideExposureTable makes the exposure table missing, as it is on a database whose SQL has not been run.
-func hideExposureTable(t *testing.T) {
-	t.Helper()
-	db := database.DBConn
-
-	require.NoError(t, db.Exec("RENAME TABLE ux_experiment_exposures TO ux_experiment_exposures_hidden").Error)
-	t.Cleanup(func() { db.Exec("RENAME TABLE ux_experiment_exposures_hidden TO ux_experiment_exposures") })
-}
-
-// breakExposureInserts leaves a table that can be read but not written: it has the four columns the
-// exposure-exists read uses and not the column arm, so every insert fails. hideExposureTable cannot reach
-// the transaction, because the read fails first and returns.
-func breakExposureInserts(t *testing.T) {
-	t.Helper()
-	db := database.DBConn
-
-	require.NoError(t, db.Exec("RENAME TABLE ux_experiment_exposures TO ux_experiment_exposures_hidden").Error)
-	require.NoError(t, db.Exec("CREATE TABLE ux_experiment_exposures (experiment VARCHAR(64) NOT NULL, "+
-		"subject_type VARCHAR(16) NOT NULL, subject_id BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL)").Error)
-	t.Cleanup(func() {
-		db.Exec("DROP TABLE ux_experiment_exposures")
-		db.Exec("RENAME TABLE ux_experiment_exposures_hidden TO ux_experiment_exposures")
-	})
-}
-
-// eligibleReplyConfirmFixture is a fixture whose post looks damaged, so a reply to it is in the experiment.
-func eligibleReplyConfirmFixture(t *testing.T, name string) replyConfirmFixture {
-	f := newReplyConfirmFixture(t, name)
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
-
-	return f
 }
 
 // promptsHolding is how many questions name any of these replies as the one they hold.
@@ -893,124 +595,9 @@ func (f replyConfirmFixture) posterView(t *testing.T, replyID uint64) map[string
 	return nil
 }
 
-// fixtureWithAnotherBucket is a fixture whose poster has a different bucket for confirm-reply from the
-// replier, so an arm looked up for the poster by mistake would not match the replier's.
-func fixtureWithAnotherBucket(t *testing.T, name string) (replyConfirmFixture, int) {
-	for i := 0; i < 40; i++ {
-		f := eligibleReplyConfirmFixture(t, name)
-		b := ux.ExperimentBucket(f.replierID, "confirm-reply", "")
-		if ux.ExperimentBucket(f.posterID, "confirm-reply", "") != b {
-			return f, b
-		}
-	}
-
-	t.Fatal("could not make a poster whose bucket differs from the replier's")
-
-	return replyConfirmFixture{}, 0
-}
-
-func TestReplyConfirm_ControlIsNotAskedAndLeavesOneRow(t *testing.T) {
-	f := eligibleReplyConfirmFixture(t, "rccontrol")
-	g := eligibleReplyConfirmFixture(t, "rcnoarm")
-	var eeeID uint64
-	database.DBConn.Raw("SELECT id FROM messages_eee WHERE msgid = ? ORDER BY id DESC LIMIT 1", f.msgID).Scan(&eeeID)
-
-	forceReplyConfirmArm(t, "control")
-	controlReply := f.reply(t, "Is it still available?", true)
-	forceReplyConfirmArm(t, "")
-	plainReply := g.reply(t, "Is it still available?", true)
-
-	assert.Nil(t, f.prompt(t), "control is not asked")
-	required, successful := processingState(controlReply)
-	assert.Equal(t, 1, required, "unprocessed, as every new reply is")
-	assert.Equal(t, 0, successful)
-	assert.EqualValues(t, 0, promptsHolding(controlReply), "and not held for an answer")
-
-	rows := replyConfirmExposures(t, f.replierID)
-	if assert.Len(t, rows, 1) {
-		assert.Equal(t, "confirm-reply", rows[0]["experiment"])
-		assert.Equal(t, "control", rows[0]["arm"])
-		assert.Equal(t, "reply", rows[0]["subject_type"])
-		assert.EqualValues(t, controlReply, rows[0]["subject_id"])
-		assert.EqualValues(t, f.replierID, rows[0]["userid"])
-		assert.Equal(t, "damaged", rows[0]["stratum"])
-		assert.JSONEq(t, fmt.Sprintf(`{"eee_id":%d,"deliverypossible":0}`, eeeID), fmt.Sprint(rows[0]["detail"]))
-	}
-	assert.Empty(t, replyConfirmExposures(t, g.replierID), "a member with no arm leaves no row")
-
-	// So a control reply is today's reply apart from its one row: the same stored message, the same
-	// number of messages in the chat, nothing held, and the same fields for the poster once it is delivered.
-	assert.Equal(t, replyConfirmComparable(plainReply), replyConfirmComparable(controlReply))
-	assert.Equal(t, chatMessageCount(g.chatID), chatMessageCount(f.chatID))
-	assert.EqualValues(t, 1, chatMessageCount(f.chatID), "no question beside the reply")
-	assert.EqualValues(t, 0, promptsHolding(controlReply, plainReply))
-
-	var ripple int64
-	database.DBConn.Raw("SELECT COUNT(*) FROM rippling_held_replies WHERE chatmsgid IN ?", []uint64{controlReply, plainReply}).Scan(&ripple)
-	assert.EqualValues(t, 0, ripple)
-
-	database.DBConn.Exec("UPDATE chat_messages SET processingrequired = 0, processingsuccessful = 1 WHERE id IN ?", []uint64{controlReply, plainReply})
-	assert.Equal(t, g.posterView(t, plainReply), f.posterView(t, controlReply))
-}
-
-func TestReplyConfirm_AskWritesTheRowAndTheQuestionTogether(t *testing.T) {
-	f := eligibleReplyConfirmFixture(t, "rcask")
-	forceReplyConfirmArm(t, "ask")
-
-	replyID := f.reply(t, "Is it still available?", true)
-
-	rows := replyConfirmExposures(t, f.replierID)
-	if assert.Len(t, rows, 1) {
-		assert.Equal(t, "ask", rows[0]["arm"])
-		assert.EqualValues(t, replyID, rows[0]["subject_id"])
-		assert.Equal(t, "damaged", rows[0]["stratum"])
-	}
-
-	p := f.prompt(t)
-	if assert.NotNil(t, p) {
-		assert.Equal(t, replyID, *p.Heldchatmsgid, "the question holds the reply the row names")
-		assert.Equal(t, f.replierID, *p.Userid)
-	}
-	assert.EqualValues(t, 1, promptsHolding(replyID))
-}
-
-func TestReplyConfirm_WithNoArmThereIsNoQuestionAndNoRow(t *testing.T) {
-	soon := func(seconds int64) string {
-		return fmt.Sprintf(`{"confirm-reply":{"arms":{"ask":[0,99]},"until":%d}}`, time.Now().Unix()+seconds)
-	}
-	cases := []struct {
-		name        string
-		experiments string
-		switchValue string
-		haveSwitch  bool
-	}{
-		{"NothingInTheConfig", "", "", false},
-		{"TheExperimentWithNoSwitch", `{"confirm-reply":{"arms":{"ask":[0,99]},"adopted":true}}`, "", false},
-		{"TheSwitchIsZero", `{"confirm-reply":{"arms":{"ask":[0,99]},"adopted":true}}`, "0", true},
-		{"AnEntryForAnotherExperimentOnly", `{"digest-subject":{"arms":{"ask":[0,99]},"adopted":true}}`, "1", true},
-		{"ARunningEntryThatEndedAnHourAgo", soon(-3600), "1", true},
-		{"ARunningEntryMoreThanFifteenDaysAhead", soon(20 * 24 * 3600), "1", true},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			f := eligibleReplyConfirmFixture(t, "rcnoarm")
-			writeReplyConfirmConfig(t, c.experiments, c.switchValue, c.haveSwitch)
-
-			replyID := f.reply(t, "Is it still available?", true)
-
-			assert.Nil(t, f.prompt(t), "nobody is asked without an arm")
-			assert.EqualValues(t, 0, promptsHolding(replyID))
-			assert.Empty(t, replyConfirmExposures(t, f.replierID), "and no row is written")
-			required, _ := processingState(replyID)
-			assert.Equal(t, 1, required, "the reply is created as it always was")
-		})
-	}
-}
-
-func TestReplyConfirm_ARippleHeldReplyIsNotAskedAndLeavesNoRow(t *testing.T) {
+func TestReplyConfirm_ARippleHeldReplyIsNotAskedAbout(t *testing.T) {
 	db := database.DBConn
-	f := eligibleReplyConfirmFixture(t, "rcripple")
+	f := newReplyConfirmFixture(t, "rcripple")
 	CreateTestMembership(t, f.posterID, f.groupID, "Member")
 	CreateTestMembership(t, f.replierID, f.groupID, "Member")
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, f.replierID)
@@ -1024,7 +611,6 @@ func TestReplyConfirm_ARippleHeldReplyIsNotAskedAndLeavesNoRow(t *testing.T) {
 		db.Exec("DELETE FROM rippling_held_replies WHERE msgid = ?", f.msgID)
 	})
 	stubReachEvalMax(t, "out")
-	forceReplyConfirmArm(t, "ask")
 
 	replyID := f.reply(t, "I'd like this please", true)
 
@@ -1033,206 +619,28 @@ func TestReplyConfirm_ARippleHeldReplyIsNotAskedAndLeavesNoRow(t *testing.T) {
 	assert.EqualValues(t, 1, held, "rippling holds the reply")
 	assert.Nil(t, f.prompt(t), "so it is not asked about as well: the poster would see the question before the reply")
 	assert.EqualValues(t, 0, promptsHolding(replyID))
-	assert.Empty(t, replyConfirmExposures(t, f.replierID), "and it is not in the experiment")
 }
 
-func TestReplyConfirm_ASecondReplyToTheSamePostAddsNoRow(t *testing.T) {
-	for _, arm := range []string{"ask", "control"} {
-		for _, c := range []struct{ name, text string }{
-			{"TheSameTextTwice", "Is it still available?"},
-			{"OtherText", "I can come tonight"},
-		} {
-			t.Run(arm+"/"+c.name, func(t *testing.T) {
-				f := eligibleReplyConfirmFixture(t, "rcsecond")
-				forceReplyConfirmArm(t, arm)
-
-				first := f.reply(t, "Is it still available?", true)
-				f.reply(t, c.text, true)
-
-				rows := replyConfirmExposures(t, f.replierID)
-				if assert.Len(t, rows, 1, "one row for the replier and the post, whatever the number of replies") {
-					assert.Equal(t, arm, rows[0]["arm"])
-					assert.EqualValues(t, first, rows[0]["subject_id"], "and it is the first reply's")
-				}
-
-				if arm == "control" {
-					assert.Nil(t, f.prompt(t))
-
-					return
-				}
-
-				p := f.prompt(t) // asserts there is only one question
-				if assert.NotNil(t, p) {
-					assert.Nil(t, p.Answer, "the further message does not answer the question")
-				}
-				var unanswered int64
-				database.DBConn.Raw("SELECT COUNT(*) FROM chat_prompts WHERE heldchatmsgid = ? AND answered_at IS NULL", first).Scan(&unanswered)
-				assert.EqualValues(t, 1, unanswered, "so the first reply is still held, and the second waits behind it")
-			})
-		}
-	}
-}
-
-func TestReplyConfirm_AReplyToAnotherPostGetsTheSameArmAndItsOwnRow(t *testing.T) {
-	for _, arm := range []string{"ask", "control"} {
-		t.Run(arm, func(t *testing.T) {
-			f := eligibleReplyConfirmFixture(t, "rcother")
-			second := CreateTestMessage(t, f.posterID, f.groupID, "OFFER: bookcase ("+uniquePrefix("rcother")+")", 51.5, -0.1)
-			seedEee(t, second, "reusable", "large", "5_20kg")
-			forceReplyConfirmArm(t, arm)
+func TestReplyConfirm_ASecondReplyToTheSamePostWaitsBehindTheFirst(t *testing.T) {
+	for _, c := range []struct{ name, text string }{
+		{"TheSameTextTwice", "Is it still available?"},
+		{"OtherText", "I can come tonight"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newReplyConfirmFixture(t, "rcsecond")
 
 			first := f.reply(t, "Is it still available?", true)
-			again := f.replyAbout(t, second, "And is the bookcase still there?")
+			f.reply(t, c.text, true)
 
-			rows := replyConfirmExposures(t, f.replierID)
-			if assert.Len(t, rows, 2, "each post is its own unit") {
-				assert.Equal(t, arm, rows[0]["arm"])
-				assert.Equal(t, arm, rows[1]["arm"], "the same arm: it is the replier's")
-				assert.EqualValues(t, first, rows[0]["subject_id"])
-				assert.EqualValues(t, again, rows[1]["subject_id"])
-				assert.Equal(t, "damaged", rows[0]["stratum"])
-				assert.Equal(t, "car", rows[1]["stratum"])
+			p := f.prompt(t) // asserts there is only one question
+			if assert.NotNil(t, p) {
+				assert.Nil(t, p.Answer, "the further message does not answer the question")
 			}
+			var unanswered int64
+			database.DBConn.Raw("SELECT COUNT(*) FROM chat_prompts WHERE heldchatmsgid = ? AND answered_at IS NULL", first).Scan(&unanswered)
+			assert.EqualValues(t, 1, unanswered, "so the first reply is still held, and the second waits behind it")
 		})
 	}
-}
-
-func TestReplyConfirm_TheRowCarriesTheStratum(t *testing.T) {
-	cases := []struct {
-		name, condition, size, weight, stratum string
-	}{
-		{"Damaged", "damaged", "small", "1_5kg", "damaged"},
-		{"LargeNeedsACar", "reusable", "large", "5_20kg", "car"},
-		{"HeavyNeedsACar", "reusable", "medium", "20_100kg", "car"},
-		{"Both", "damaged", "large", "over_100kg", "both"},
-	}
-
-	for _, arm := range []string{"ask", "control"} {
-		for _, c := range cases {
-			t.Run(arm+"/"+c.name, func(t *testing.T) {
-				f := newReplyConfirmFixture(t, "rcstratum")
-				seedEee(t, f.msgID, c.condition, c.size, c.weight)
-				forceReplyConfirmArm(t, arm)
-
-				f.reply(t, "Is it still available?", true)
-
-				rows := replyConfirmExposures(t, f.replierID)
-				if assert.Len(t, rows, 1) {
-					assert.Equal(t, c.stratum, rows[0]["stratum"])
-					assert.Equal(t, arm, rows[0]["arm"])
-				}
-			})
-		}
-	}
-}
-
-func TestReplyConfirm_AFailedRowStillDeliversAControlReply(t *testing.T) {
-	t.Run("TheTableIsMissing", func(t *testing.T) {
-		f := eligibleReplyConfirmFixture(t, "rcmissingc")
-		forceReplyConfirmArm(t, "control")
-		hideExposureTable(t)
-
-		replyID := f.reply(t, "Is it still available?", true)
-
-		required, _ := processingState(replyID)
-		assert.Equal(t, 1, required, "the reply is created and left for processing, as it always was")
-		assert.Nil(t, f.prompt(t))
-		var n int64
-		database.DBConn.Raw("SELECT COUNT(*) FROM ux_experiment_exposures_hidden WHERE userid = ?", f.replierID).Scan(&n)
-		assert.EqualValues(t, 0, n, "no row")
-	})
-
-	t.Run("TheInsertFails", func(t *testing.T) {
-		f := eligibleReplyConfirmFixture(t, "rcbrokenc")
-		forceReplyConfirmArm(t, "control")
-		breakExposureInserts(t)
-
-		replyID := f.reply(t, "Is it still available?", true)
-
-		required, _ := processingState(replyID)
-		assert.Equal(t, 1, required)
-		assert.Nil(t, f.prompt(t))
-		var n int64
-		database.DBConn.Raw("SELECT COUNT(*) FROM ux_experiment_exposures WHERE userid = ?", f.replierID).Scan(&n)
-		assert.EqualValues(t, 0, n, "no row")
-	})
-}
-
-func TestReplyConfirm_AFailedRowLeavesNoQuestionAndNoHold(t *testing.T) {
-	check := func(t *testing.T, f replyConfirmFixture, replyID uint64) {
-		assert.Nil(t, f.prompt(t), "no question")
-		assert.EqualValues(t, 0, promptsHolding(replyID), "so nothing holds the reply, and chats:process-incoming would deliver it")
-		assert.EqualValues(t, 1, chatMessageCount(f.chatID), "and the chat holds the reply alone")
-		required, _ := processingState(replyID)
-		assert.Equal(t, 1, required, "the reply is created, as it was without the experiment")
-	}
-
-	t.Run("TheTableIsMissing", func(t *testing.T) {
-		f := eligibleReplyConfirmFixture(t, "rcmissinga")
-		forceReplyConfirmArm(t, "ask")
-		hideExposureTable(t)
-
-		check(t, f, f.reply(t, "Is it still available?", true))
-	})
-
-	t.Run("TheInsertFails", func(t *testing.T) {
-		f := eligibleReplyConfirmFixture(t, "rcbrokena")
-		forceReplyConfirmArm(t, "ask")
-		breakExposureInserts(t)
-
-		check(t, f, f.reply(t, "Is it still available?", true))
-	})
-}
-
-func TestReplyConfirm_AnArmThisCodeHasNoMeaningForIsRecordedAndLeftAlone(t *testing.T) {
-	f := eligibleReplyConfirmFixture(t, "rcotherarm")
-	writeReplyConfirmConfig(t, `{"confirm-reply":{"arms":{"b":[0,99]},"adopted":true}}`, "1", true)
-
-	replyID := f.reply(t, "Is it still available?", true)
-
-	rows := replyConfirmExposures(t, f.replierID)
-	if assert.Len(t, rows, 1) {
-		assert.Equal(t, "b", rows[0]["arm"])
-	}
-	assert.Nil(t, f.prompt(t), "only the arm ask asks")
-	assert.EqualValues(t, 0, promptsHolding(replyID))
-}
-
-func TestReplyConfirm_TheRepliersBucketDecidesTheArm(t *testing.T) {
-	// The replier's bucket is the only one in the arm that is first in the entry. The poster's is not, so
-	// an arm looked up for the poster would fall through to the second arm.
-	f, b := fixtureWithAnotherBucket(t, "rcbucket")
-	writeReplyConfirmConfig(t, fmt.Sprintf(`{"confirm-reply":{"arms":{"ask":[%d,%d],"control":[0,99]},"adopted":true}}`, b, b), "1", true)
-	f.reply(t, "Is it still available?", true)
-	rows := replyConfirmExposures(t, f.replierID)
-	if assert.Len(t, rows, 1) {
-		assert.Equal(t, "ask", rows[0]["arm"], "the replier's bucket %d", b)
-	}
-	assert.NotNil(t, f.prompt(t))
-
-	g, c := fixtureWithAnotherBucket(t, "rcbucketswapped")
-	writeReplyConfirmConfig(t, fmt.Sprintf(`{"confirm-reply":{"arms":{"control":[%d,%d],"ask":[0,99]},"adopted":true}}`, c, c), "1", true)
-	g.reply(t, "Is it still available?", true)
-	rows = replyConfirmExposures(t, g.replierID)
-	if assert.Len(t, rows, 1) {
-		assert.Equal(t, "control", rows[0]["arm"], "the replier's bucket %d", c)
-	}
-	assert.Nil(t, g.prompt(t))
-}
-
-func TestReplyConfirm_TheSwitchListEntryHasTheShapeTheCodeExpects(t *testing.T) {
-	s, ok := ux.ServerSwitches["confirm-reply"]
-	if !assert.True(t, ok, "the Go switch list holds the experiment") {
-		return
-	}
-
-	assert.Equal(t, "confirm-reply", s.Name)
-	assert.Regexp(t, regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`), s.Opened)
-	assert.Regexp(t, regexp.MustCompile(`^https://github.com/Freegle/Iznik/pull/[0-9]+$`), s.PR)
-	assert.Equal(t, "server", s.Channel)
-	assert.Equal(t, []string{"control", "ask"}, s.Arms)
-	assert.Equal(t, "confirm_reply", s.Metric.Source)
-	assert.Equal(t, 168, s.Metric.WindowHours)
 }
 
 // ----------------------------------------------------------------------------- two things the hold must leave alone
@@ -1244,17 +652,16 @@ func TestReplyConfirm_MyPostsDoesNotListAHeldReply(t *testing.T) {
 
 		return m.Replycount, len(m.MessageReply)
 	}
-	reply := func(t *testing.T, arm string) (replyConfirmFixture, uint64) {
-		f := eligibleReplyConfirmFixture(t, "rcmyposts")
+	reply := func(t *testing.T, subject string) (replyConfirmFixture, uint64) {
+		f := newOfferFixture(t, "rcmyposts", subject)
 		CreateTestMembership(t, f.posterID, f.groupID, "Member")
 		CreateTestMembership(t, f.replierID, f.groupID, "Member")
-		forceReplyConfirmArm(t, arm)
 
 		return f, f.reply(t, "Is it still available?", true)
 	}
 
 	t.Run("WhileTheQuestionIsOpen", func(t *testing.T) {
-		f, _ := reply(t, "ask")
+		f, _ := reply(t, "OFFER: child car seat")
 
 		count, replies := listed(t, f)
 		assert.Equal(t, 0, count, "a reply that waits for its sender's answer is not counted for the poster")
@@ -1262,7 +669,7 @@ func TestReplyConfirm_MyPostsDoesNotListAHeldReply(t *testing.T) {
 	})
 
 	t.Run("AfterANo", func(t *testing.T) {
-		f, _ := reply(t, "ask")
+		f, _ := reply(t, "OFFER: child car seat")
 		assert.Equal(t, 200, f.answer(t, f.prompt(t).Chatmsgid, f.replierToken, "no"))
 
 		count, replies := listed(t, f)
@@ -1271,7 +678,7 @@ func TestReplyConfirm_MyPostsDoesNotListAHeldReply(t *testing.T) {
 	})
 
 	t.Run("AfterAYes", func(t *testing.T) {
-		f, _ := reply(t, "ask")
+		f, _ := reply(t, "OFFER: child car seat")
 		assert.Equal(t, 200, f.answer(t, f.prompt(t).Chatmsgid, f.replierToken, "yes"))
 
 		count, replies := listed(t, f)
@@ -1279,8 +686,8 @@ func TestReplyConfirm_MyPostsDoesNotListAHeldReply(t *testing.T) {
 		assert.Equal(t, 1, replies)
 	})
 
-	t.Run("AControlReplyIsListedAtOnce", func(t *testing.T) {
-		f, _ := reply(t, "control")
+	t.Run("AReplyNotAskedAboutIsListedAtOnce", func(t *testing.T) {
+		f, _ := reply(t, "OFFER: armchair")
 
 		count, replies := listed(t, f)
 		assert.Equal(t, 1, count)
@@ -1297,7 +704,7 @@ func TestReplyConfirm_AnsweringIsNotCountedAsAFreegleChatPromptAnswer(t *testing
 	}
 
 	// A reply confirmation is asked of a replier in a chat between two members. It is not the Freegle chat's measure.
-	f := eligibleReplyConfirmFixture(t, "rcmetric")
+	f := newReplyConfirmFixture(t, "rcmetric")
 	f.reply(t, "Is it still available?", true)
 	before := promptAnswered()
 	assert.Equal(t, 200, f.answer(t, f.prompt(t).Chatmsgid, f.replierToken, "yes"))
@@ -1417,7 +824,7 @@ func TestReplyConfirm_TheQuestionNamesTheReplierAsOtherMembersSeeThem(t *testing
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			f := eligibleReplyConfirmFixture(t, "rcname")
+			f := newReplyConfirmFixture(t, "rcname")
 			database.DBConn.Exec("UPDATE users SET fullname = ? WHERE id = ?", c.fullname, f.replierID)
 
 			f.reply(t, "Is it still available?", true)
@@ -1427,26 +834,23 @@ func TestReplyConfirm_TheQuestionNamesTheReplierAsOtherMembersSeeThem(t *testing
 				assert.True(t, strings.HasPrefix(p.Message, "@"+c.want+", before we pass your reply on: "),
 					"the card names them as everyone else sees them: %q", p.Message)
 				assert.NotContains(t, p.Message, "\n", "on one line")
-				assert.NotContains(t, p.Message, "http", "no link of their own")
+				name := strings.SplitN(p.Message, ", before we pass your reply on: ", 2)[0]
+				assert.NotContains(t, name, "http", "no link of their own in the name")
 			}
 			assert.Equal(t, c.want, f.askedName(t, f.replierToken), "and so does the name the other member reads on the answer")
 		})
 	}
 }
 
-func TestReplyConfirm_AReplyInAChatWithSomeoneWhoDidNotPostIsNotAskedAboutAndLeavesNoRow(t *testing.T) {
-	inEitherArm(t, func(t *testing.T, arm string) {
-		f := eligibleReplyConfirmFixture(t, "rcelsewhere")
-		other := CreateTestUser(t, uniquePrefix("rcelsewhere")+"_other", "User")
-		g := f
-		g.chatID = CreateTestChatRoom(t, f.replierID, &other, nil, "User2User")
-		forceReplyConfirmArm(t, arm)
+func TestReplyConfirm_AReplyInAChatWithSomeoneWhoDidNotPostIsNotAskedAbout(t *testing.T) {
+	f := newReplyConfirmFixture(t, "rcelsewhere")
+	other := CreateTestUser(t, uniquePrefix("rcelsewhere")+"_other", "User")
+	g := f
+	g.chatID = CreateTestChatRoom(t, f.replierID, &other, nil, "User2User")
 
-		g.reply(t, "Is it still available?", true)
+	g.reply(t, "Is it still available?", true)
 
-		assert.Nil(t, g.prompt(t), "a member who did not post the offer is not shown a question about it")
-		assert.Empty(t, replyConfirmExposures(t, f.replierID), "and it is not a reply to the poster, so it is not counted")
-	})
+	assert.Nil(t, g.prompt(t), "a member who did not post the offer is not shown a question about it")
 }
 
 func TestReplyConfirm_ALookupThatFindsNoFreegleAccountIsNotRepeatedForAMinute(t *testing.T) {
@@ -1503,8 +907,7 @@ func TestReplyConfirm_ListingChatsLooksTheFreegleAccountUpOnceWhenThereIsNone(t 
 }
 
 func TestReplyConfirm_AWithdrawalThatFailsIsNotRecordedAsTheAnswer(t *testing.T) {
-	f := eligibleReplyConfirmFixture(t, "rcnofail")
-	forceReplyConfirmArm(t, "ask")
+	f := newReplyConfirmFixture(t, "rcnofail")
 	replyID := f.reply(t, "Is it still available?", true)
 	p := f.prompt(t)
 	require.NotNil(t, p)
@@ -1534,8 +937,7 @@ func TestReplyConfirm_AWithdrawalThatFailsIsNotRecordedAsTheAnswer(t *testing.T)
 }
 
 func TestReplyConfirm_ANoAfterTheReplyIsAlreadyProcessedIsRecordedAndNotApplied(t *testing.T) {
-	f := eligibleReplyConfirmFixture(t, "rcprocessed")
-	forceReplyConfirmArm(t, "ask")
+	f := newReplyConfirmFixture(t, "rcprocessed")
 	replyID := f.reply(t, "Is it still available?", true)
 	p := f.prompt(t)
 	require.NotNil(t, p)
@@ -1557,8 +959,7 @@ func TestReplyConfirm_ANoAfterTheReplyIsAlreadyProcessedIsRecordedAndNotApplied(
 }
 
 func TestReplyConfirm_NoReplyWaitsForProcessingBeforeItsHoldIsWritten(t *testing.T) {
-	f := eligibleReplyConfirmFixture(t, "rcatomic")
-	forceReplyConfirmArm(t, "ask")
+	f := newReplyConfirmFixture(t, "rcatomic")
 
 	// chats:process-incoming takes every committed reply that is unprocessed, whatever its age. So the reply must not
 	// be committed before the row that holds it: a run between the two would deliver a reply that its sender is then
@@ -1583,8 +984,7 @@ func TestReplyConfirm_NoReplyWaitsForProcessingBeforeItsHoldIsWritten(t *testing
 }
 
 func TestReplyConfirm_ALaterMessageDoesNotAnswerAnExpiredQuestion(t *testing.T) {
-	f := eligibleReplyConfirmFixture(t, "rcexpired")
-	forceReplyConfirmArm(t, "ask")
+	f := newReplyConfirmFixture(t, "rcexpired")
 	f.reply(t, "Is it still available?", true)
 	p := f.prompt(t)
 	require.NotNil(t, p)
@@ -1607,8 +1007,7 @@ func TestReplyConfirm_ApprovingAHeldReplyShowsItsQuestionAndRejectingItDoesNot(t
 	// What chats:process-incoming leaves for a confirmed reply from a member whose messages are held for review:
 	// processed and successful, and held. The poster is shown neither the reply nor the question while it is held.
 	setup := func(t *testing.T) (replyConfirmFixture, uint64, uint64, string) {
-		f := eligibleReplyConfirmFixture(t, "rcapprove")
-		forceReplyConfirmArm(t, "ask")
+		f := newReplyConfirmFixture(t, "rcapprove")
 		replyID := f.reply(t, "Is it still available?", true)
 		p := f.prompt(t)
 		require.NotNil(t, p)
@@ -1653,9 +1052,9 @@ func TestReplyConfirm_ApprovingAHeldReplyShowsItsQuestionAndRejectingItDoesNot(t
 	})
 }
 
-// A child car seat is asked about as policy, outside the experiment (Discourse 9939).
+// The words that make an offer a child car seat (Discourse 9939).
 
-// newCarSeatFixture is newReplyConfirmFixture with an offer whose subject says it is a child car seat.
+// newCarSeatFixture is newReplyConfirmFixture with an offer whose whole subject is this.
 func newCarSeatFixture(t *testing.T, name string, subject string) replyConfirmFixture {
 	f := newReplyConfirmFixture(t, name)
 	database.DBConn.Exec("UPDATE messages SET subject = ? WHERE id = ?", subject, f.msgID)
@@ -1672,37 +1071,27 @@ func carSeatQuestionsAsked(f replyConfirmFixture) int64 {
 	return n
 }
 
-func TestReplyConfirm_ChildCarSeatIsAskedAboutWhateverTheExperimentDoes(t *testing.T) {
-	// ask, control, and no experiment at all: the question is asked every time, and no exposure is written,
-	// because this is policy and not the experiment.
-	for _, arm := range []string{"ask", "control", ""} {
-		t.Run("arm="+arm, func(t *testing.T) {
-			f := newCarSeatFixture(t, "rccarseat", "OFFER: Child car seat, group 1 (SW1)")
-			forceReplyConfirmArm(t, arm)
+func TestReplyConfirm_ChildCarSeatIsAskedAbout(t *testing.T) {
+	f := newCarSeatFixture(t, "rccarseat", "OFFER: Child car seat, group 1 (SW1)")
 
-			replyID := f.reply(t, "Is this still available?", true)
+	replyID := f.reply(t, "Is this still available?", true)
 
-			p := f.prompt(t)
-			if assert.NotNil(t, p, "a reply to a child car seat is held for the replier to confirm") {
-				assert.Equal(t, f.replierID, *p.Userid)
-				assert.Equal(t, replyID, *p.Heldchatmsgid)
-				assert.True(t, strings.HasPrefix(p.Message, "@"), "addressed to the replier: %s", p.Message)
-				assert.Contains(t, p.Message, "child car seat")
-				assert.Contains(t, p.Message, "never been in an accident")
-				assert.Contains(t, p.Message, "childcarseats.org.uk")
-				assert.Contains(t, p.Message, "Do you still want it?")
-				assert.Equal(t, 0, p.Processing, "the poster is not shown it until the reply goes through")
-			}
-			assert.Empty(t, replyConfirmExposures(t, f.replierID), "no exposure: the car seat question is not the experiment")
-
-			required, _ := processingState(replyID)
-			assert.Equal(t, 1, required, "the reply waits for the answer")
-		})
+	p := f.prompt(t)
+	if assert.NotNil(t, p, "a reply to a child car seat is held for the replier to confirm") {
+		assert.Equal(t, f.replierID, *p.Userid)
+		assert.Equal(t, replyID, *p.Heldchatmsgid)
+		assert.True(t, strings.HasPrefix(p.Message, "@"), "addressed to the replier: %s", p.Message)
+		assert.Contains(t, p.Message, "child car seat")
+		assert.Contains(t, p.Message, "never been in an accident")
+		assert.Contains(t, p.Message, "childcarseats.org.uk")
+		assert.Contains(t, p.Message, "Do you still want it?")
+		assert.Equal(t, 0, p.Processing, "the poster is not shown it until the reply goes through")
 	}
+	required, _ := processingState(replyID)
+	assert.Equal(t, 1, required, "the reply waits for the answer")
 }
 
 func TestReplyConfirm_ChildCarSeatWordsThatCount(t *testing.T) {
-	forceReplyConfirmArm(t, "")
 	for _, subject := range []string{
 		"OFFER: Maxi-Cosi carseat (SW1)",
 		"OFFER: Booster seat for 4-12 years (SW1)",
@@ -1721,8 +1110,7 @@ func TestReplyConfirm_ChildCarSeatWordsThatCount(t *testing.T) {
 }
 
 func TestReplyConfirm_ChildCarSeatIsAskedInTheAppToo(t *testing.T) {
-	// The experiment leaves the app out; the car seat question does not.
-	forceReplyConfirmArm(t, "")
+	// The question is policy, so the app asks it as the website does.
 	f := newCarSeatFixture(t, "rccarseatapp", "OFFER: Child car seat (SW1)")
 
 	body, _ := json.Marshal(map[string]interface{}{"message": "Still available?", "refmsgid": f.msgID})
@@ -1734,11 +1122,9 @@ func TestReplyConfirm_ChildCarSeatIsAskedInTheAppToo(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 
 	assert.NotNil(t, f.prompt(t), "asked in the app as on the web")
-	assert.Empty(t, replyConfirmExposures(t, f.replierID))
 }
 
 func TestReplyConfirm_ChildCarSeatIsAskedOncePerReplierAndPost(t *testing.T) {
-	forceReplyConfirmArm(t, "")
 	f := newCarSeatFixture(t, "rccarseatonce", "OFFER: Child car seat (SW1)")
 
 	f.reply(t, "Is it still available?", true)
@@ -1756,7 +1142,6 @@ func TestReplyConfirm_ChildCarSeatIsAskedOncePerReplierAndPost(t *testing.T) {
 
 func TestReplyConfirm_ChildCarSeatWantedIsNotAskedAbout(t *testing.T) {
 	// The wording is for someone accepting a seat. A WANTED for one is answered by someone offering theirs.
-	forceReplyConfirmArm(t, "")
 	f := newCarSeatFixture(t, "rccarseatwanted", "WANTED: Child car seat (SW1)")
 	database.DBConn.Exec("UPDATE messages SET type = 'Wanted' WHERE id = ?", f.msgID)
 
@@ -1764,24 +1149,7 @@ func TestReplyConfirm_ChildCarSeatWantedIsNotAskedAbout(t *testing.T) {
 	assert.Nil(t, f.prompt(t))
 }
 
-func TestReplyConfirm_ADamagedChildCarSeatGetsTheCarSeatQuestionAndNoExposure(t *testing.T) {
-	// Both reasons apply; the car seat wording covers the accident and the age, which is what matters, and
-	// the reply stays out of the experiment's figures.
-	forceReplyConfirmArm(t, "ask")
-	f := newCarSeatFixture(t, "rccarseatdamaged", "OFFER: Child car seat (SW1)")
-	seedEee(t, f.msgID, "damaged", "medium", "5_20kg")
-
-	f.reply(t, "Yes please", true)
-	p := f.prompt(t)
-	if assert.NotNil(t, p) {
-		assert.Contains(t, p.Message, "child car seat")
-		assert.NotContains(t, p.Message, "from the photo")
-	}
-	assert.Empty(t, replyConfirmExposures(t, f.replierID))
-}
-
 func TestReplyConfirm_ChildCarSeatNotForTrashNothingMembers(t *testing.T) {
-	forceReplyConfirmArm(t, "")
 	f := newCarSeatFixture(t, "rccarseattn", "OFFER: Child car seat (SW1)")
 	database.DBConn.Exec("UPDATE users SET tnuserid = 12345 WHERE id = ?", f.posterID)
 
