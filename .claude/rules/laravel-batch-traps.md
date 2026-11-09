@@ -241,6 +241,18 @@ Group only by labels with a fixed set of values: capture the arm only from the e
 names, and rewrite a free label to fixed words with `label_format` (`UxExperimentService::MAX_ARMS` and
 `SERIES_PER_ARM_AND_FLOW` keep the total under the limit).
 
+## A range query reads the window ending at a step boundary, not at the end you gave
+
+`query_range` rounds its start **down to a multiple of the step**, counted from 1970. With a 7-day step
+the evaluation lands on a Thursday at 00:00 UTC, so `count_over_time(... [7d])` asked for "the week to
+Monday" read Thursday to Thursday and gave a plausible, wrong count (`ux:weekly-report`, November 2026).
+Use a one-day step with the start equal to the end at a midnight, as `UxRollupService::metricOrThrow`
+and `WeeklyReportCommand::frictionDetail` do, and read the last point.
+
+The 500-series cap above also applies **inside** a query: `count(sum by (session_id) (...))` returns one
+series, and is still refused once more than 500 sessions match. Treat that refusal as "more than 500"
+(`lastMetricStatus` 400 with "maximum of series") rather than as Loki being down.
+
 ## Look the experiment arm up before the content is built
 
 A mail or push that varies by an experiment arm (`UxArm::for`) is wrong in four ways that look like a

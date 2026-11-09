@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-09
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useFlowTelemetry.js
@@ -205,7 +205,7 @@ Schema in the migration above.
 | `ux_feature_adoption_daily` | `page_view` for the routes in `config('freegle.ux.features')`, `users.lastaccess` | |
 | `ux_search_daily` | `source="vector_search"` lines, `browse_scroll_depth` | `re_searched_60s` is a floor: only logged-in searches can be linked |
 | `ux_regret_daily` | MySQL | `withdrawn_24h`, `duplicate_10m`, `promise_reneged`, `reply_after_taken`; `base` is the denominator |
-| `ux_telemetry_health_daily` | all of the above | `flow_start:<flow>` against the flow's entry `page_view`s, for the flows that start when their page opens. Reply starts on typing and settings at the first save, so a visit that only looks sends nothing, and both are left out. The routes in `ux.flow_entry_routes` are matched exactly (a Loki label regex matches anywhere in the value, so unanchored "give" counted every give page); `event:<type>` against the median of the metric's own last 14 days, using only days on or after its change point in `ux.health_change_points` (the first full day it was collected as it is now: scroll and impressions went to 10% of sessions, and flow lines began, in mid-October 2026) and only days with something recorded. Under 7 such days the row has no expected value and no ratio, which reads as "not enough history" and raises no alarm. Add a line to `health_change_points` when a sample rate or the lines a client sends changes |
+| `ux_telemetry_health_daily` | all of the above | `flow_start:<flow>` against the flow's entry `page_view`s, for the flows that start when their page opens. Reply starts on typing and settings at the first save, so a visit that only looks sends nothing, and both are left out. The routes in `ux.flow_entry_routes` are matched exactly (a Loki label regex matches anywhere in the value, so unanchored "give" counted every give page); `event:<type>` against the median of the same weekday in the metric's last 4 weeks once there are 3 of them (traffic has a weekly shape: Sundays run 10 to 35% above the median of all days, which read as an alarm), else the median of its own last 14 days, using only days on or after its change point in `ux.health_change_points` (the first full day it was collected as it is now: scroll and impressions went to 10% of sessions, and flow lines began, in mid-October 2026) and only days with something recorded. Under 7 such days the row has no expected value and no ratio, which reads as "not enough history" and raises no alarm. Add a line to `health_change_points` when a sample rate or the lines a client sends changes |
 | `ux_sample_sessions` | `flow_abandon` | up to 20 per (flow, step); deleted after 8 days |
 
 ## 6. Read API
@@ -240,7 +240,7 @@ outcomes (started, finished) cannot be cut by it: a signed-in rate of finished o
 | `GET /modtools/ux/funnels?flow=` | per flow and step: entered, reentered, visits (their sum, the denominator for rates), completed, backed, abandoned, revisits, validation_failures, help_sought, dwell p50/p90; `by` breakdown on `device_class`, `logged_in`, `variant`; and, from `ux_flow_signal_daily` and for the current period only, `reached`, `backed_then` and `help_then`, each `{people, finished}` (separate visits, and how many finished the funnel), left out when there are none |
 | `GET /modtools/ux/outcomes` | per flow: started, submitted, submit_ok, submit_failed, completed, abandoned, resumed |
 | `GET /modtools/ux/fields?flow=` | per field: revisits, validation_failures, choice_switches; and, for the current period, `reached` (the step's `{people, finished}`) and `then` (visits with trouble on this field, and how many finished), left out when there are none. Signed in is ignored, as for the rest of this read |
-| `GET /modtools/ux/friction` | top 20 (page, component) by rage, dead, repeated intent, sorted by change against previous |
+| `GET /modtools/ux/friction` | top 20 (page, component) by how many trouble clicks (rage, dead, repeated intent) changed against the previous period, either way. Each device is compared with itself, only where it had 20 clicks in both periods and the component 50 over those devices (`compared`); `effect` is the trouble clicks less what last period's rates give at this period's clicks. A component with nothing to compare with has all its trouble clicks as `effect` |
 | `GET /modtools/ux/adoption` | per feature: using_users / active_users |
 | `GET /modtools/ux/regret` | per signal, per day |
 | `GET /modtools/ux/search` | per day |
@@ -252,8 +252,14 @@ outcomes (started, finished) cannot be cut by it: a signed-in rate of finished o
 The **UX** sub-tab of ModTools SysAdmin. It is a row of sections: Overview (the Data health row and
 one row for each funnel), Funnels (one funnel at a time) and Pages and features. What each shows, the
 address keys, the filters and how to read Biggest loss are on its own page. `ux:weekly-report` mails
-the five largest week-on-week changes to `config('freegle.ux.report_to')` every Monday, with a link
-that opens the tab. A table whose week has fewer than 7 rollup days is not compared; the mail says how many days each week has. Event-metric alarms are only listed once they have the 7-day like-for-like baseline above.
+the five week-on-week changes that touched the most events to `config('freegle.ux.report_to')` every Monday. A table whose week has fewer than 7 rollup days is not compared; the mail says how many days each week has. Event-metric alarms are only listed once they have the 7-day like-for-like baseline above.
+
+| Part of the mail | What it says |
+|---|---|
+| TELEMETRY CHANGED | each health row outside 0.7 to 1.3, and whether events rose or fell |
+| WHO IS COUNTED CHANGED | a device class whose clicks moved by half or more from at least 1,000, flagged as new when it had under 100. An app release that starts sending telemetry is the usual cause (the iOS app, early November 2026) |
+| FIVE LARGEST CHANGES | step conversion, click friction and regret, each compared device by device on devices with 20 events in both weeks and 50 in all, ranked by the events the change touched at this week's volume. Each lists its devices, any device new this week, and a link to the place on the tab for the same week (`ux_period=custom`) |
+| Under a friction change | from Loki: how many people clicked it ("more than 500" when that is over Loki's series cap, and then there is no two-person check), whether two of them made half the clicks or more (then the change is theirs, not everyone's), and the three elements with the most trouble clicks, by tag and the first 40 characters of their label. Loki not answering is said, not skipped |
 
 - [The SysAdmin UX tab](ux-sysadmin-tab.md): the sections, the address, the filters, Biggest loss.
 - [UX experiments](ux-experiments.md): how a change is shown to some members, read every hour and
