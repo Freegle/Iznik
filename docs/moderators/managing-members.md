@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-08
+last_reviewed: 2026-11-09
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -308,7 +308,9 @@ If you refer the same chat again while the case is open, your new note is added 
 
 For Support volunteers: referred chats are on the **Cases** tab of Support Tools. The red number on the
 Support menu item and on that tab is the cases waiting for a reply from Support. A case stops counting
-when Support replies, and counts again if the moderator writes back.
+when Support replies, and counts again if the moderator writes back. When the AI helper has written a
+reply, it is already in the reply box, marked as a suggestion: check it, change what you need, then send.
+It goes to the moderator, not the member.
 
 ## Banning and removing
 

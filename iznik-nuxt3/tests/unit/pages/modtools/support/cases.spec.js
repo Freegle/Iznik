@@ -269,10 +269,12 @@ describe('support/cases/[[id]].vue', () => {
       const answer = wrapper.find('[data-testid="case-answer"]')
       expect(answer.element.querySelector('script')).toBeNull()
       expect(answer.html()).not.toContain('onerror')
-      const draft = wrapper.find('[data-testid="draft-text"]')
-      expect(draft.element.querySelector('script')).toBeNull()
-      expect(draft.text()).toContain('Hi <script>')
-      expect(draft.element.tagName).toBe('DIV')
+      const box = wrapper.find('[data-testid="case-reply"]')
+      expect(box.element.tagName).toBe('TEXTAREA')
+      expect(box.element.value).toBe('Hi <script>alert(1)</script> there')
+      expect(wrapper.find('[data-testid="case-thread"] script').exists()).toBe(
+        false
+      )
     })
 
     it('forbids images and other loaders and makes links safe', async () => {
@@ -407,7 +409,6 @@ describe('support/cases/[[id]].vue', () => {
     it('records Unchanged when the draft is sent as it was', async () => {
       const wrapper = mountPage()
       await flushPromises()
-      await wrapper.find('[data-testid="draft-use"]').trigger('click')
       expect(wrapper.find('[data-testid="case-reply"]').element.value).toBe(
         'Hello Rae, try this.'
       )
@@ -423,7 +424,6 @@ describe('support/cases/[[id]].vue', () => {
     it('records Edited when the draft is changed before sending', async () => {
       const wrapper = mountPage()
       await flushPromises()
-      await wrapper.find('[data-testid="draft-use"]').trigger('click')
       await wrapper
         .find('[data-testid="case-reply"]')
         .setValue('Hello Rae, try something else.')
@@ -437,6 +437,9 @@ describe('support/cases/[[id]].vue', () => {
     })
 
     it('records No for a reply typed from scratch, then reloads and clears the box', async () => {
+      mockFetchCase.mockResolvedValue(
+        supportCase({ brief: { ...supportCase().brief, draft: null } })
+      )
       const wrapper = mountPage()
       await flushPromises()
       await wrapper
@@ -450,6 +453,9 @@ describe('support/cases/[[id]].vue', () => {
     })
 
     it('does not send an empty reply', async () => {
+      mockFetchCase.mockResolvedValue(
+        supportCase({ brief: { ...supportCase().brief, draft: null } })
+      )
       const wrapper = mountPage()
       await flushPromises()
       expect(
@@ -510,31 +516,152 @@ describe('support/cases/[[id]].vue', () => {
       expect(wrapper.find('[data-testid="case-brief"]').exists()).toBe(true)
     })
 
-    it('copies the draft to the clipboard', async () => {
-      const writeText = vi.fn().mockResolvedValue()
-      Object.defineProperty(navigator, 'clipboard', {
-        value: { writeText },
-        configurable: true,
-      })
-      const wrapper = mountPage()
-      await flushPromises()
-      await wrapper.find('[data-testid="draft-copy"]').trigger('click')
-      await flushPromises()
-      expect(writeText).toHaveBeenCalledWith('Hello Rae, try this.')
-      expect(wrapper.find('[data-testid="draft-copy"]').text()).toBe('Copied')
-    })
+    describe('the suggested reply', () => {
+      const SUGGESTED =
+        'Suggested reply from the AI helper. Check it, change what you need, then send.'
+      const box = (w) => w.find('[data-testid="case-reply"]')
+      const label = (w) => w.find('[data-testid="case-reply-suggested"]')
+      const noDraft = (extra = {}) =>
+        supportCase({
+          brief: { ...supportCase().brief, draft: null },
+          ...extra,
+        })
 
-    it('does not claim to have copied when the clipboard refuses', async () => {
-      const writeText = vi.fn().mockRejectedValue(new Error('denied'))
-      Object.defineProperty(navigator, 'clipboard', {
-        value: { writeText },
-        configurable: true,
+      it('puts the draft in the reply box, flagged as a suggestion', async () => {
+        const wrapper = mountPage()
+        await flushPromises()
+        expect(box(wrapper).element.value).toBe('Hello Rae, try this.')
+        expect(label(wrapper).text()).toBe(SUGGESTED)
+        expect(
+          wrapper.find('[data-testid="case-linkwarnings"]').text()
+        ).toContain('not a Freegle page')
       })
-      const wrapper = mountPage()
-      await flushPromises()
-      await wrapper.find('[data-testid="draft-copy"]').trigger('click')
-      await flushPromises()
-      expect(wrapper.find('[data-testid="draft-copy"]').text()).toBe('Copy')
+
+      it('has no Copy or Use as reply buttons, and no separate draft block', async () => {
+        const wrapper = mountPage()
+        await flushPromises()
+        expect(wrapper.find('[data-testid="draft-copy"]').exists()).toBe(false)
+        expect(wrapper.find('[data-testid="draft-use"]').exists()).toBe(false)
+        expect(wrapper.find('[data-testid="case-draft"]').exists()).toBe(false)
+        expect(wrapper.text()).not.toContain('Use as reply')
+      })
+
+      it('drops the label once the suggestion is edited', async () => {
+        const wrapper = mountPage()
+        await flushPromises()
+        await box(wrapper).setValue('Hello Rae, try this instead.')
+        expect(label(wrapper).exists()).toBe(false)
+      })
+
+      it('drops the label once the suggestion is sent', async () => {
+        const wrapper = mountPage()
+        await flushPromises()
+        mockFetchCase.mockResolvedValue(
+          supportCase({
+            messages: [
+              ...messages(),
+              {
+                id: 2,
+                role: 'Support',
+                userid: 1,
+                displayname: 'Sam Support',
+                body: 'Hello Rae, try this.',
+                draftused: 'Unchanged',
+                created: '2026-11-07T10:05:00Z',
+              },
+            ],
+          })
+        )
+        await wrapper.find('[data-testid="case-send"]').trigger('click')
+        await flushPromises()
+        expect(mockSendMessage).toHaveBeenCalledWith(
+          7,
+          'Hello Rae, try this.',
+          'Unchanged'
+        )
+        expect(box(wrapper).element.value).toBe('')
+        expect(label(wrapper).exists()).toBe(false)
+      })
+
+      it('does not put it back after Support clears the box', async () => {
+        const wrapper = mountPage()
+        await flushPromises()
+        await box(wrapper).setValue('')
+        expect(label(wrapper).exists()).toBe(false)
+        expect(wrapper.find('[data-testid="case-linkwarnings"]').exists()).toBe(
+          false
+        )
+        // A reload in the same visit, such as after a status change, does not refill it.
+        await wrapper.find('[data-testid="case-handle"]').trigger('click')
+        await flushPromises()
+        expect(mockFetchCase).toHaveBeenCalledTimes(2)
+        expect(box(wrapper).element.value).toBe('')
+        // What Support then writes is their own.
+        await box(wrapper).setValue('My own words')
+        await wrapper.find('[data-testid="case-send"]').trigger('click')
+        await flushPromises()
+        expect(mockSendMessage).toHaveBeenCalledWith(7, 'My own words', 'No')
+      })
+
+      it('never overwrites what Support has typed', async () => {
+        mockFetchCase.mockResolvedValue(
+          noDraft({ firstpass_status: 'Pending', brief: null })
+        )
+        const wrapper = mountPage()
+        await flushPromises()
+        expect(box(wrapper).element.value).toBe('')
+        await box(wrapper).setValue('Started typing')
+        // The first pass finishes and the case is loaded again.
+        mockFetchCase.mockResolvedValue(supportCase())
+        await wrapper.find('[data-testid="case-handle"]').trigger('click')
+        await flushPromises()
+        expect(box(wrapper).element.value).toBe('Started typing')
+        expect(label(wrapper).exists()).toBe(false)
+      })
+
+      it('suggests a draft that arrives on a later load, if the box is empty', async () => {
+        mockFetchCase.mockResolvedValue(
+          noDraft({ firstpass_status: 'Running', brief: null })
+        )
+        const wrapper = mountPage()
+        await flushPromises()
+        mockFetchCase.mockResolvedValue(supportCase())
+        await wrapper.find('[data-testid="case-handle"]').trigger('click')
+        await flushPromises()
+        expect(box(wrapper).element.value).toBe('Hello Rae, try this.')
+        expect(label(wrapper).exists()).toBe(true)
+      })
+
+      it('suggests nothing once Support has replied on the case', async () => {
+        mockFetchCase.mockResolvedValue(
+          supportCase({
+            messages: [
+              ...messages(),
+              {
+                id: 2,
+                role: 'Support',
+                userid: 9,
+                displayname: 'Sam Support',
+                body: 'Looking now',
+                draftused: 'No',
+                created: '2026-11-07T10:05:00Z',
+              },
+            ],
+          })
+        )
+        const wrapper = mountPage()
+        await flushPromises()
+        expect(box(wrapper).element.value).toBe('')
+        expect(label(wrapper).exists()).toBe(false)
+      })
+
+      it('suggests nothing when the first pass has no draft', async () => {
+        mockFetchCase.mockResolvedValue(noDraft())
+        const wrapper = mountPage()
+        await flushPromises()
+        expect(box(wrapper).element.value).toBe('')
+        expect(label(wrapper).exists()).toBe(false)
+      })
     })
 
     it('opens the chat from the first user', async () => {
@@ -659,6 +786,10 @@ describe('support/cases/[[id]].vue', () => {
       mockFetchCase.mockResolvedValue(referrerCase())
       const wrapper = mountPage()
       await flushPromises()
+      expect(wrapper.find('[data-testid="case-reply"]').element.value).toBe('')
+      expect(
+        wrapper.find('[data-testid="case-reply-suggested"]').exists()
+      ).toBe(false)
       await wrapper.find('[data-testid="case-reply"]').setValue('More detail')
       await wrapper.find('[data-testid="case-send"]').trigger('click')
       await flushPromises()

@@ -184,43 +184,6 @@
             </ul>
           </div>
 
-          <div v-if="brief.draft" class="draft mb-3" data-testid="case-draft">
-            <h4>Draft reply to the referring volunteer</h4>
-            <p class="small text-muted">
-              Not sent. Check it before you use it.
-            </p>
-            <div class="draft__text" data-testid="draft-text">
-              {{ brief.draft.text }}
-            </div>
-            <div
-              v-if="brief.draft.link_warnings?.length"
-              data-testid="case-linkwarnings"
-            >
-              <strong>Check before sending</strong>
-              <ul>
-                <li v-for="(w, i) in brief.draft.link_warnings" :key="i">
-                  {{ w }}
-                </li>
-              </ul>
-            </div>
-            <div class="d-flex flex-wrap gap-2">
-              <b-button
-                variant="outline-secondary"
-                data-testid="draft-copy"
-                @click="copyDraft"
-              >
-                {{ copied ? 'Copied' : 'Copy' }}
-              </b-button>
-              <b-button
-                variant="outline-primary"
-                data-testid="draft-use"
-                @click="fillReplyFromDraft"
-              >
-                Use as reply
-              </b-button>
-            </div>
-          </div>
-
           <details
             v-if="brief.checks?.length"
             class="mb-3"
@@ -296,10 +259,29 @@
 
         <div class="mt-3">
           <label for="case-reply" class="form-label">Your reply</label>
+          <p
+            v-if="suggested"
+            class="reply-suggested small mb-1"
+            data-testid="case-reply-suggested"
+          >
+            Suggested reply from the AI helper. Check it, change what you need,
+            then send.
+          </p>
+          <div
+            v-if="linkWarnings.length"
+            class="small mb-1"
+            data-testid="case-linkwarnings"
+          >
+            <strong>Check before sending</strong>
+            <ul class="mb-1">
+              <li v-for="(w, i) in linkWarnings" :key="i">{{ w }}</li>
+            </ul>
+          </div>
           <b-form-textarea
             id="case-reply"
             v-model="reply"
-            rows="5"
+            :class="{ 'reply-box--suggested': suggested }"
+            rows="8"
             maxlength="10000"
             autocapitalize="none"
             data-testid="case-reply"
@@ -359,8 +341,10 @@ const notfound = ref(false)
 const item = ref(null)
 const run = ref(null)
 const reply = ref('')
+// The first pass's draft, while the reply box holds it or an edit of it. It goes in the box once
+// a visit, and only into an empty box on a case Support has not replied on yet.
 const draftText = ref(null)
-const copied = ref(false)
+const draftOffered = ref(false)
 const sending = ref(false)
 const sendError = ref('')
 const busy = ref(false)
@@ -369,6 +353,31 @@ const chatReady = ref(false)
 const pov = ref(0)
 
 const brief = computed(() => (item.value ? item.value.brief : null) || null)
+
+// The label shows while the box holds the suggestion exactly as written.
+const suggested = computed(
+  () => draftText.value !== null && reply.value === draftText.value
+)
+const linkWarnings = computed(() =>
+  draftText.value !== null ? brief.value?.draft?.link_warnings || [] : []
+)
+
+function suggestDraft() {
+  const c = item.value
+  if (draftOffered.value || c?.viewer !== 'Support') return
+  const text = c.brief?.draft?.text
+  if (!text || !text.trim()) return
+  draftOffered.value = true
+  if (reply.value.trim() !== '') return
+  if ((c.messages || []).some((m) => m.role === 'Support')) return
+  draftText.value = text
+  reply.value = text
+}
+
+// Clearing the box drops the suggestion: what Support writes next is their own.
+watch(reply, (value) => {
+  if (draftText.value !== null && !value.trim()) draftText.value = null
+})
 
 // "Referred 5 minutes ago by A about B (#1), from a Referral." Built here rather than in the
 // template, where the formatter's line breaks decide the spacing between the parts.
@@ -462,6 +471,7 @@ async function loadCase() {
   } finally {
     loading.value = false
   }
+  suggestDraft()
   if (item.value?.viewer === 'Support' && item.value.firstpass_runid) {
     try {
       run.value = await apiInstance.supportai.fetchRun(
@@ -516,20 +526,6 @@ async function setStatus(status) {
   }
 }
 
-function fillReplyFromDraft() {
-  draftText.value = brief.value?.draft?.text || ''
-  reply.value = draftText.value
-}
-
-async function copyDraft() {
-  try {
-    await navigator.clipboard.writeText(brief.value?.draft?.text || '')
-    copied.value = true
-  } catch (e) {
-    copied.value = false
-  }
-}
-
 async function viewChat() {
   chatReady.value = false
   actionError.value = ''
@@ -577,17 +573,20 @@ onMounted(() => {
 }
 
 .case-reason,
-.reply__body,
-.draft__text {
+.reply__body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.draft__text {
-  background: #f1f3f5;
-  padding: 0.5rem;
-  max-width: 100%;
-  font-family: inherit;
+.reply-suggested {
+  background: #e7f1ff;
+  border-left: 3px solid #0d6efd;
+  padding: 0.25rem 0.5rem;
+}
+
+.reply-box--suggested {
+  border-color: #0d6efd;
+  background: #f5f9ff;
 }
 
 .support-case {
