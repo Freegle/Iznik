@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-09
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
@@ -660,9 +660,12 @@ sign-in filters, and the tab says so. It is one entry in the tab's section list
   still in place offer Start again and a box for the cleanup pull request with Mark as cleaned up (an
   https address); once it is recorded neither is offered. A route that is not there yet says "This part is not switched on yet." The strip
   says how many of the slots are in use, from `max_running`.
-- **The address.** `ux_exp` is the open experiment's id, or `new` for the form. `ux_estate` is `finished`
-  for the Finished pill and absent for Active; the old values `running`, `draft` and `all` are read as
-  Active so old links still work. `ux_flow` is the shared funnel. One row is open at a time, and
+- **The pills and the address.** Waiting for you is drawn only when some experiment has a verdict nobody has
+  acted on (`verdictOf` in `useUxVerdict.js`, the same rule as the red number), and the section then opens on
+  it, so the number leads to what it counts. Otherwise, and when a link opens one experiment and names no
+  pill, the section opens on Active. `ux_exp` is the open
+  experiment's id, or `new` for the form. `ux_estate` is `waiting`, `active` or `finished`, and absent for
+  where the section opens; the old values `running`, `draft` and `all` land there too so old links still work. `ux_flow` is the shared funnel. One row is open at a time, and
   changing a filter closes it.
 - **The open experiment is always drawn**, whatever an address says. A finished one beyond the first 25 is
   reached by drawing more rows, in their place, with the rest still paged from there. One that the Funnel
