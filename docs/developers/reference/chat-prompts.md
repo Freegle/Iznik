@@ -40,8 +40,10 @@ The client side shipped first, on its own - see "Why this shipped on its own".
 
 When someone replies to an OFFER of a child car seat, `CreateChatMessage` asks them in the same chat to check
 the seat and whether they still want it, and holds the reply until they answer (see [Child car seats](#child-car-seats)).
-The same question about offers whose photo looked damaged or too big to carry was the experiment `confirm-reply`; it
-was reverted on 2 November 2026 and its code removed ([ux-experiments.md](ux-experiments.md#confirming-a-reply-before-it-is-passed-on)).
+The same question about offers whose photo looks damaged or too big to carry is the experiment `confirm-reply-post`:
+the poster is in an arm, and in "ask" every replier to their eligible offers is asked, on the website and in the app
+([ux-experiments.md](ux-experiments.md#confirming-a-reply-judged-per-poster)). It replaces `confirm-reply`, which
+assigned repliers and was reverted on 2 November 2026.
 Not when either member is a TrashNothing account, not for a reply held by rippling, not for a post that
 already has an outcome, and only once per post per replier. The unit is the replier and the post, so after a no
 or an expiry a second reply to the same post goes straight through with no question: a no delays the replier
@@ -49,7 +51,7 @@ and does not bar them.
 
 | Piece | How |
 |---|---|
-| Who is asked | `planReplyConfirm` decides before the reply is written. Only a message in the chat between the replier and the poster is asked about |
+| Who is asked | `planReplyConfirm` decides before the reply is written. Only a message in the chat between the replier and the poster is asked about. A child car seat is asked about as policy; otherwise the poster's arm of `confirm-reply-post` decides, and the offer must look damaged, or large or 20 kg and over with no delivery offered (the newest `messages_eee` row). Both arms write the poster's exposure, one row per poster and post (subject `post`) |
 | The question | A `confirm_reply` prompt by the Freegle account, starting "@name," and with `chat_prompts.userid` = the replier. The name is the one every other surface shows (`promptName`): control characters become spaces, and it is cut at an at sign and at 32 characters |
 | Who sees it | Written `processingsuccessful = 0`, so no delivery path gives it to the poster; `FetchChatMessages` shows it to `chat_prompts.userid` |
 | Telling the replier | The question reaches the replier as any chat prompt does, and never the poster. While it is open (unanswered and not expired) the Go unseen count includes it for the replier (`questionAskedOfMeSQL`), `ChatNotificationService` selects it although it is unsuccessful and mails the replier alone, and `CreateChatMessage` queues `push_notify_chat_message` for it, which `PushNotificationService::getChatMessageRecipients` sends to the replier alone (`ChatMessage::questionAskedOnlyOf`). Once the reply is delivered the question is successful and goes to the poster with it, as before. Without this a replier who leaves the chat never learns of the question and the reply is dropped after 3 days |
@@ -85,7 +87,8 @@ TrashNothing member, and about half of car seat offers come through TrashNothing
 `chat_prompts.answered_via` records how the question was answered; it is always `button`. The answer is
 claimed by an update that only an unanswered question matches, in the transaction that withdraws the reply, so
 two taps cannot both win and a no that is recorded has been applied. How repliers answered while
-`confirm-reply` ran is kept on its page in the Experiments section of the SysAdmin UX tab.
+`confirm-reply` ran is kept on its page in the Experiments section of the SysAdmin UX tab. A car seat offer is not in
+`confirm-reply-post`, whatever its photo looks like: the policy question is asked and no exposure is written.
 
 Deploy order: run `iznik-batch/database/migrations/2026_10_13_000001_add_reply_confirm_to_chat_prompts_migration.sql`
 first. `FetchChatMessages` reads `chat_prompts.userid` for every member's chat fetch and `chats:process-incoming`
