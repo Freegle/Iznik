@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-08
+last_reviewed: 2026-11-09
 covers:
   - iznik-server-go/chat/chatprompt.go
   - iznik-server-go/chat/replyconfirm.go
@@ -38,13 +38,10 @@ The client side shipped first, on its own - see "Why this shipped on its own".
 
 ## Confirming a reply
 
-When someone replies to an OFFER whose newest `messages_eee` row says it looks damaged
-(`item_condition = 'damaged'`), or needs a car (`size_bucket = 'large'`, or `weight_bucket` of
-20kg or more, unless the poster has said they might deliver), and the replier is in the arm
-`ask` of the experiment `confirm-reply`, `CreateChatMessage` asks them in the same chat whether
-they still want it, and holds the reply until they answer. While the experiment runs half of the
-repliers to such an offer are in that arm; the others are counted and their reply goes through as
-it always did ([ux-experiments.md](ux-experiments.md#confirming-a-reply-before-it-is-passed-on)).
+When someone replies to an OFFER of a child car seat, `CreateChatMessage` asks them in the same chat to check
+the seat and whether they still want it, and holds the reply until they answer (see [Child car seats](#child-car-seats)).
+The same question about offers whose photo looked damaged or too big to carry was the experiment `confirm-reply`; it
+was reverted on 2 November 2026 and its code removed ([ux-experiments.md](ux-experiments.md#confirming-a-reply-before-it-is-passed-on)).
 Not when either member is a TrashNothing account, not for a reply held by rippling, not for a post that
 already has an outcome, and only once per post per replier. The unit is the replier and the post, so after a no
 or an expiry a second reply to the same post goes straight through with no question: a no delays the replier
@@ -52,12 +49,12 @@ and does not bar them.
 
 | Piece | How |
 |---|---|
-| Who is asked | `ux.ExperimentArm(db, replier, "confirm-reply")` is the first line of `planReplyConfirm`, which decides before the reply is written; every eligible reply writes one `ux_experiment_exposures` row, in either arm. Only a message in the chat between the replier and the poster is eligible |
+| Who is asked | `planReplyConfirm` decides before the reply is written. Only a message in the chat between the replier and the poster is asked about |
 | The question | A `confirm_reply` prompt by the Freegle account, starting "@name," and with `chat_prompts.userid` = the replier. The name is the one every other surface shows (`promptName`): control characters become spaces, and it is cut at an at sign and at 32 characters |
 | Who sees it | Written `processingsuccessful = 0`, so no delivery path gives it to the poster; `FetchChatMessages` shows it to `chat_prompts.userid` |
 | Telling the replier | The question reaches the replier as any chat prompt does, and never the poster. While it is open (unanswered and not expired) the Go unseen count includes it for the replier (`questionAskedOfMeSQL`), `ChatNotificationService` selects it although it is unsuccessful and mails the replier alone, and `CreateChatMessage` queues `push_notify_chat_message` for it, which `PushNotificationService::getChatMessageRecipients` sends to the replier alone (`ChatMessage::questionAskedOnlyOf`). Once the reply is delivered the question is successful and goes to the poster with it, as before. Without this a replier who leaves the chat never learns of the question and the reply is dropped after 3 days |
 | Who answers it | Only `chat_prompts.userid`; anyone else gets 403 |
-| The hold | `chat_prompts.heldchatmsgid` names the reply; `ChatProcessService` leaves it unprocessed while the prompt is unanswered. The reply, the exposure, the question and the hold are written in one transaction (`CreateChatMessage`), because the batch takes any committed unprocessed reply |
+| The hold | `chat_prompts.heldchatmsgid` names the reply; `ChatProcessService` leaves it unprocessed while the prompt is unanswered. The reply, the question and the hold are written in one transaction (`CreateChatMessage`), because the batch takes any committed unprocessed reply |
 | Yes | The next `chats:process-incoming` run delivers the reply as normal, and in the same step marks the question successful, so the poster gets the question, the answer and the reply together |
 | A reply that is held or dropped | A reply held for review (a Fully moderated member, a Moderated member whose text trips a check, a message after a held one) or dropped by a block keyword is processed and successful too, and the poster is shown nothing of it. Its question stays hidden. A moderator who approves the reply shows the question with it (`revealQuestionOfApprovedReply`); one who rejects it never does |
 | No | The reply is marked processed and unsuccessful, `processingfailreason = 'ReplyWithdrawn'`. If that update fails the answer is 500 and is not recorded, so the member can tap again: recorded, it would release the reply. A no that finds the reply already processed is recorded and reported as not applied |
@@ -70,34 +67,30 @@ and does not bar them.
 
 ### Child car seats
 
-A reply to an OFFER whose subject says it is a child car seat is asked about whatever the experiment is doing: in either arm, with no experiment
-running, and from the app, which the experiment leaves out. The question is the moderators' wording from
+A reply to an OFFER whose subject says it is a child car seat is asked about, on the website and in the app. It is
+policy, not an experiment. The question is the moderators' wording from
 Discourse 9939/61 (`childCarSeatQuestion`): know its history, never in an accident, the E mark, the maker's
-lifespan, and read childcarseats.org.uk, then "Do you still want it?" with the same two buttons. It is held,
-answered, pushed, expired and withdrawn exactly as the experiment's question is; only the deciding differs. It
-writes no `ux_experiment_exposures` row, so it is not in the experiment's figures, and it is asked once per
-replier and post, which is read from `chat_prompts` rather than from an exposure. A damaged or bulky car seat
-gets the car seat question alone. A WANTED for a car seat is not asked about: the wording is for someone
-accepting one.
+lifespan, and read childcarseats.org.uk, then "Do you still want it?" with the two buttons above. It is asked
+once per replier and post, read from `chat_prompts`. A WANTED for a car seat is not asked about: the wording is
+for someone accepting one.
 
 Which subjects count (`isChildCarSeat`): "car seat", "carseat", "child car", "booster seat", "isofix" or
 "infant carrier", each ending where a word ends, with a plural in -s or -es allowed, so "child carrier" is not
 one. "seat cover" and seats for a dog or pet are taken out first, so "car seat cover" is not one and "car seat
 and seat cover" is. The poster's note under the item box uses the same words, matched the same way, from
 `iznik-nuxt3/composables/useItemWarnings.js`; `TestIsChildCarSeat` and `useItemWarnings.spec.js` pin the
-same subjects. Like the experiment's question, it is not asked when the poster or the replier is a
+same subjects. It is not asked when the poster or the replier is a
 TrashNothing member, and about half of car seat offers come through TrashNothing.
 
 `chat_prompts.answered_via` records how the question was answered; it is always `button`. The answer is
 claimed by an update that only an unanswered question matches, in the transaction that withdraws the reply, so
-two taps cannot both win and a no that is recorded has been applied. How
-repliers answered, for all reasons and for each, is on the experiment's page in the Experiments
-section of the SysAdmin UX tab.
+two taps cannot both win and a no that is recorded has been applied. How repliers answered while
+`confirm-reply` ran is kept on its page in the Experiments section of the SysAdmin UX tab.
 
 Deploy order: run `iznik-batch/database/migrations/2026_10_13_000001_add_reply_confirm_to_chat_prompts_migration.sql`
 first. `FetchChatMessages` reads `chat_prompts.userid` for every member's chat fetch and `chats:process-incoming`
 reads `heldchatmsgid` on every pass, so code that is live before the columns fails loudly for all members, not
-only the ones asked. Then deploy the Go API and the batch, then switch the experiment on.
+only the ones asked. Then deploy the Go API and the batch.
 
 ModTools chat review explains each reason a reply is not delivered (`ReplyWithdrawn`, `ReplyNotConfirmed`,
 `ReplyPostGone`). The `chats:process-incoming` backlog check ignores a
@@ -180,9 +173,9 @@ answer rule (wrong member, unoffered option, twice, expired, picked date, out-of
 `ChatPromptPost.spec.js` cover rendering and the answered state.
 
 `iznik-server-go/test/chatreplyconfirm_test.go` covers confirming a reply: which posts ask and
-which do not (TrashNothing on either side, a poster who delivers, a WANTED, no classification,
-a newer classification), that only the replier sees and answers it, and yes, no and what the
-replier writes while the question is open. The `TestReplyConfirm_*` tests also cover the exposure rows, the arms and the failures, the
+which do not (the words that make a child car seat, TrashNothing on either side, a WANTED, a post that has
+gone, a reply held by rippling, a chat with someone else), that only the replier sees and answers it, and
+yes, no and what the replier writes while the question is open. The `TestReplyConfirm_*` tests also cover the
 name on the card, the reply and its hold written in one transaction, a no that fails, a question that has
 run out, and a moderator approving a held reply. `ChatProcessServiceTest` covers the hold, delivery after
 yes, the drop on expiry, a held or dropped reply whose question stays hidden, and the hold chain.

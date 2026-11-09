@@ -702,7 +702,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
 				// (no mod exemption), matching the #927 count-surface gates.
 				//
-				// A reply held for its sender's answer (the confirm-reply question) is gated the same way and
+				// A reply held for its sender's answer (the car seat question) is gated the same way and
 				// for the same reason: it is left unprocessed, which every surface that reads
 				// processingsuccessful already skips, and this list does not. utils.ReplyHeldByQuestionSQL
 				// is the gate every count of replies shares. It is out while its question is unanswered,

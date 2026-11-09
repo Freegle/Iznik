@@ -167,9 +167,9 @@ describe('ModSysAdminUxReplyConfirmDetail', () => {
 
     expect(w.find('.ux-exp-h').text()).toBe('Still want it?')
     expect(w.find('.what').text()).toContain(
-      'Freegle asks the replier whether they still want an offer that looks damaged'
+      'Freegle asked the replier whether they still wanted an offer that looked damaged'
     )
-    expect(w.find('.what').text()).toContain('Only some repliers are asked')
+    expect(w.find('.what').text()).toContain('Only some repliers were asked')
     expect(w.find('.none').text()).toBe('No replies counted yet.')
     expect(w.find('table').exists()).toBe(false)
     expect(w.find('.rows-toggle').exists()).toBe(false)
