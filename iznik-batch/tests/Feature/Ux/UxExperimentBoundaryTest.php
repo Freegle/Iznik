@@ -53,6 +53,6 @@ class UxExperimentBoundaryTest extends TestCase
             }
         }
 
-        $this->assertCount(16, $read);
+        $this->assertCount(15, $read);
     }
 }

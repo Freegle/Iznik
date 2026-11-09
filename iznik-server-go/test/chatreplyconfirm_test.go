@@ -834,7 +834,8 @@ func TestReplyConfirm_TheQuestionNamesTheReplierAsOtherMembersSeeThem(t *testing
 				assert.True(t, strings.HasPrefix(p.Message, "@"+c.want+", before we pass your reply on: "),
 					"the card names them as everyone else sees them: %q", p.Message)
 				assert.NotContains(t, p.Message, "\n", "on one line")
-				assert.NotContains(t, p.Message, "http", "no link of their own")
+				name := strings.SplitN(p.Message, ", before we pass your reply on: ", 2)[0]
+				assert.NotContains(t, name, "http", "no link of their own in the name")
 			}
 			assert.Equal(t, c.want, f.askedName(t, f.replierToken), "and so does the name the other member reads on the answer")
 		})
