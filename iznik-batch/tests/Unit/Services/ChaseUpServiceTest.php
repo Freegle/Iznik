@@ -73,6 +73,44 @@ class ChaseUpServiceTest extends TestCase
         ];
     }
 
+    public function test_an_intended_taken_on_a_split_post_marks_its_items_gone(): void
+    {
+        // TAKEN from the chase-up link is recorded here, not by the Go API, and a split post
+        // is counted item by item; without its items marked gone it would count nothing.
+        $message = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $message->id, 'name' => 'Sofa', 'quantity' => 1, 'available' => 1],
+            ['msgid' => $message->id, 'name' => 'Chairs', 'quantity' => 2, 'available' => 1],
+        ]);
+        DB::table('messages_autosplit')->insert(['msgid' => $message->id, 'state' => 'Split']);
+        DB::table('messages')->where('id', $message->id)->update(['availableinitially' => 3, 'availablenow' => 3]);
+        DB::table('messages_outcomes_intended')->insert([
+            'msgid' => $message->id,
+            'outcome' => 'Taken',
+            'timestamp' => now()->subHour(),
+        ]);
+
+        $this->assertSame(1, app(ChaseUpService::class)->processIntendedOutcomes());
+
+        $this->assertSame(0, DB::table('messages_bulk_items')->where('msgid', $message->id)->where('available', 1)->count());
+        $this->assertSame(0, (int) DB::table('messages')->where('id', $message->id)->value('availablenow'));
+    }
+
+    public function test_an_intended_taken_on_a_clearance_leaves_its_items(): void
+    {
+        $message = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
+        DB::table('messages_bulk_items')->insert(['msgid' => $message->id, 'name' => 'Desk', 'quantity' => 4, 'available' => 1]);
+        DB::table('messages_outcomes_intended')->insert([
+            'msgid' => $message->id,
+            'outcome' => 'Taken',
+            'timestamp' => now()->subHour(),
+        ]);
+
+        app(ChaseUpService::class)->processIntendedOutcomes();
+
+        $this->assertSame(1, DB::table('messages_bulk_items')->where('msgid', $message->id)->where('available', 1)->count());
+    }
+
     public function test_no_messages_returns_zero_stats(): void
     {
         $stats = $this->service->process();

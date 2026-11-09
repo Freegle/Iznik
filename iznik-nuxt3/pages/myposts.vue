@@ -87,6 +87,7 @@ import {
   computed,
   watch,
   onMounted,
+  onBeforeUnmount,
   defineAsyncComponent,
   useHead,
   useRouter,
@@ -268,7 +269,39 @@ onMounted(() => {
     ids.value = window.history.state.ids
     newUserPassword.value = window.history.state.newpassword
   }
+
+  if (type.value === 'Offer' && ids.value?.length) {
+    watchForSplit(ids.value)
+  }
 })
+
+// A new OFFER of several things is split into items a minute or two after it is
+// posted (docs/developers/reference/auto-split.md). Refresh it for a few minutes so
+// the split appears here, with its Undo, without a reload.
+const SPLIT_POLL_MS = 20000
+const SPLIT_POLL_TIMES = 9
+let splitPoll = null
+function stopSplitPoll() {
+  if (splitPoll) {
+    window.clearInterval(splitPoll)
+    splitPoll = null
+  }
+}
+function watchForSplit(msgids) {
+  let times = 0
+  splitPoll = window.setInterval(async () => {
+    times++
+    const waiting = msgids.filter((id) => !messageStore.byId(id)?.autosplit)
+    if (!waiting.length || times > SPLIT_POLL_TIMES) {
+      stopSplitPoll()
+      return
+    }
+    await Promise.all(
+      waiting.map((id) => messageStore.fetch(id, true).catch(() => null))
+    )
+  }, SPLIT_POLL_MS)
+}
+onBeforeUnmount(stopSplitPoll)
 
 function donationMade() {
   action('Donation made from myposts', { messageIds: ids.value })

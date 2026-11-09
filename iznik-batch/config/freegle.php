@@ -1757,6 +1757,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Auto-split of multi-item posts
+    |--------------------------------------------------------------------------
+    |
+    | A new native OFFER that lists several separate things becomes a multi-item post: the
+    | text splitter lists the items, the photo splitter gives each photo to the item it shows
+    | and crops photos of several items. docs/developers/reference/auto-split.md.
+    |
+    | mode: "off" does nothing, "shadow" records what it would do in messages_autosplit
+    | without changing the post, "on" splits. Anything else is off. The model is pinned,
+    | because the prompts were tuned and backtested on it: a "latest" alias would change the
+    | answers underneath.
+    |
+    */
+    'autosplit' => [
+        'mode' => EnvSetting::env('AUTOSPLIT_MODE', 'off'),
+        'gemini_api_key' => EnvSetting::env('GOOGLE_GEMINI_API_KEY', ''),
+        'model' => EnvSetting::env('AUTOSPLIT_MODEL', 'gemini-3.8-flash'),
+        // Posts older than this when the job first sees them are left alone.
+        'window_minutes' => (int) EnvSetting::env('AUTOSPLIT_WINDOW_MINUTES', 120),
+        // Photos looked at per post; the rest stay shared post photos.
+        'max_photos' => (int) EnvSetting::env('AUTOSPLIT_MAX_PHOTOS', 8),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | EEE (Electrical and Electronic Equipment) Identification
     |--------------------------------------------------------------------------
     |

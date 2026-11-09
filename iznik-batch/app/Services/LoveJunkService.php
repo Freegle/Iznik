@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Services\AutoSplit\Crops;
+use App\Support\ClearanceSql;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -64,8 +66,8 @@ class LoveJunkService
             ->whereNull('lovejunk.msgid')
             ->where('messages_groups.collection', 'Approved')
             ->where('groups.onlovejunk', 1)
-            ->whereNotExists(fn ($q) => $q->from('messages_bulk_items')
-                ->whereColumn('messages_bulk_items.msgid', 'messages.id'))
+            // Not clearances; an automatically split post is an ordinary Offer.
+            ->where(fn ($q) => ClearanceSql::whereNotClearance($q, 'messages.id'))
             ->orderBy('messages.arrival')
             ->get()
             ->all();
@@ -289,9 +291,11 @@ class LoveJunkService
         $lastName = $msg->fullname ? ' ' : ($msg->lastname ?? '');
 
         $images = null;
-        $attachments = DB::table('messages_attachments')
+        // The post's own photos: LoveJunk fetches the upload, so an auto-split item crop would
+        // arrive as a second copy of the whole photo.
+        $attachments = Crops::exclude(DB::table('messages_attachments')
             ->where('msgid', $msgId)
-            ->whereNotNull('externaluid')
+            ->whereNotNull('externaluid'))
             ->get(['externaluid']);
 
         if ($attachments->isNotEmpty()) {

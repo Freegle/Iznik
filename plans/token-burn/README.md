@@ -31,6 +31,7 @@ are done before the window, not during it.
 | [Make the code run on PostgreSQL as well as MySQL](postgresql-migration.md) | draft | 7 | 7 (A: 1-2, 6, 10, B: 3-4, 8, 15, C: 5, D: 7, E: 9, F: 11-12, G: 13-14) | 2026-10-30 |
 | [Role values only through constants](role-constants.md) | ready | 0 | 5 (A: 1, 6, B: 2, C: 3, D: 4, E: 5) | 2026-11-03 |
 | [Shrink the routing server's memory](routing-memory.md) | ready | 0 | 4 (A: 1, B: 2, 4-5, 7-9, C: 3, D: 6) | 2026-11-03 |
+| [Posts of several items become item lists automatically, photos included](auto-split-multi-item-posts.md) | running (worktree autosplit) | 0 | 4 (A: 1-2, 6, B: 3, C: 4, D: 5) | 2026-11-07 |
 
 Status: `draft` (open questions remain), `ready` (none remain, prerequisites in hand),
 `running` (a worktree exists), `done` (delete the file; git keeps it).
