@@ -77,14 +77,23 @@ const DRAFT_GIVE = exp(5, 'give', 'draft', {
 const DRAFT_SETTINGS = exp(6, 'settings', 'draft', {
   created_at: '2026-10-13 08:00:00',
 })
+// Both cleaned up, so neither is waiting for anyone. WAITING_REPLY below is.
 const ADOPTED_GIVE = exp(2, 'give', 'adopted', {
   started_at: '2026-10-10 09:00:00',
   decided_at: '2026-10-11 09:00:00',
   result: read(),
+  cleanup_pr_url: 'https://github.com/Freegle/Iznik/pull/2',
 })
 const REVERTED_ASK = exp(1, 'ask', 'reverted', {
   started_at: '2026-10-04 09:00:00',
   decided_at: '2026-10-05 09:00:00',
+  result: read(),
+  cleanup_pr_url: 'https://github.com/Freegle/Iznik/pull/1',
+})
+// Reverted with its variant code still in: the red number on the tab counts it.
+const WAITING_REPLY = exp(14, 'reply', 'reverted', {
+  started_at: '2026-10-20 09:00:00',
+  decided_at: '2026-11-02 09:00:00',
   result: read(),
 })
 
@@ -447,6 +456,57 @@ describe('ModSysAdminUxExperiments', () => {
     })
   })
 
+  describe('what is waiting for you', () => {
+    const chipTexts = (w) => w.findAll('.chip').map((c) => c.text())
+    const withWaiting = () => {
+      store.experiments.data = answer([...LIST, WAITING_REPLY])
+    }
+
+    it('opens on Waiting for you, showing the experiment behind the red number', () => {
+      withWaiting()
+      const w = make()
+      expect(chipTexts(w)).toEqual([
+        'Waiting for you (1)',
+        'Active (4)',
+        'Finished (3)',
+      ])
+      expect(titles(w)).toEqual(['Experiment 14'])
+      expect(w.find('.chip-waiting').attributes('aria-pressed')).toBe('true')
+    })
+
+    it('has no Waiting pill when nothing is waiting', () => {
+      expect(chipTexts(make())).toEqual(['Active (4)', 'Finished (2)'])
+    })
+
+    it('writes Active to the address when it is not where the section opens', async () => {
+      withWaiting()
+      const w = make()
+      await w.find('.chip-active').trigger('click')
+      expect(lastNavigate(w)).toStrictEqual({
+        estate: 'active',
+        exp: undefined,
+      })
+      await w.find('.chip-waiting').trigger('click')
+      expect(lastNavigate(w)).toStrictEqual({
+        estate: undefined,
+        exp: undefined,
+      })
+    })
+
+    it('shows Active when the address asks for it, though something is waiting', () => {
+      withWaiting()
+      const w = make(viewOf({ estate: 'active' }))
+      expect(titles(w)).toHaveLength(4)
+      expect(w.find('.chip-active').attributes('aria-pressed')).toBe('true')
+    })
+
+    it('lands on Active when the address asks for Waiting and nothing is', () => {
+      const w = make(viewOf({ estate: 'waiting' }))
+      expect(titles(w)).toHaveLength(4)
+      expect(w.find('.chip-active').attributes('aria-pressed')).toBe('true')
+    })
+  })
+
   describe('the chips', () => {
     const chipTexts = (w) => w.findAll('.chip').map((c) => c.text())
 
@@ -506,7 +566,9 @@ describe('ModSysAdminUxExperiments', () => {
   describe('paging the finished experiments', () => {
     const many = (n) =>
       Array.from({ length: n }, (_, i) =>
+        // Old and cleaned up, so none is waiting for anyone.
         exp(100 + i, 'give', 'stopped', {
+          cleanup_pr_url: 'https://github.com/Freegle/Iznik/pull/1',
           decided_at: `2026-09-${String(10 + (i % 18)).padStart(2, '0')} ${String(i % 24).padStart(2, '0')}:00:00`,
         })
       )
