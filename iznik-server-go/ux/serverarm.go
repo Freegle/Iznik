@@ -99,7 +99,7 @@ var ServerSwitches = map[string]ServerSwitch{
 	"confirm-reply-post": {
 		Name:    "confirm-reply-post",
 		Opened:  "2026-11-09",
-		PR:      "https://github.com/Freegle/Iznik/pull/PR_NUMBER",
+		PR:      "https://github.com/Freegle/Iznik/pull/2015",
 		Channel: "server",
 		Type:    "confirm_reply_post",
 		Varies:  "step",
