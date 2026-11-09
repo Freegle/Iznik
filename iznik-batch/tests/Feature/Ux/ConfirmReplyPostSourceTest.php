@@ -191,7 +191,7 @@ class ConfirmReplyPostSourceTest extends TestCase
         $c = $this->counts();
 
         $this->assertSame(1, $c['arms']['ask']['completes'], 'no reply was passed on, so none was dead');
-        $this->assertSame(1, $c['guards']['nothing_passed_on']['ask']['bad'], 'which the second guardrail counts');
+        $this->assertSame(['n' => 1, 'base' => 1], $c['extra']['information']['nothing_passed_on']['arms']['ask'], 'which is shown for information');
     }
 
     public function test_the_posters_own_message_is_not_a_reply(): void
@@ -228,7 +228,7 @@ class ConfirmReplyPostSourceTest extends TestCase
         $this->assertSame(3, $c['guards']['not_taken']['control']['base']);
     }
 
-    public function test_nothing_passed_on_counts_posters_who_were_given_no_reply(): void
+    public function test_nothing_passed_on_is_shown_for_information_and_is_never_a_guardrail(): void
     {
         $given = $this->makeOffer();
         $this->exposed($given, 'ask', '2026-10-08 10:00:00');
@@ -240,19 +240,20 @@ class ConfirmReplyPostSourceTest extends TestCase
 
         $c = $this->counts();
 
-        $this->assertSame(1, $c['guards']['nothing_passed_on']['ask']['bad']);
-        $this->assertSame(2, $c['guards']['nothing_passed_on']['ask']['base']);
+        $info = $c['extra']['information']['nothing_passed_on'];
+        $this->assertSame('the share of posters who had no reply passed on within 7 days', $info['label']);
+        $this->assertSame(['n' => 1, 'base' => 2], $info['arms']['ask']);
+        $this->assertSame(['n' => 0, 'base' => 0], $info['arms']['control']);
+        $this->assertArrayNotHasKey('nothing_passed_on', $c['guards'], 'the engine never sees it, so it cannot revert the run');
     }
 
-    public function test_the_guardrails_have_their_own_margins_and_plain_labels(): void
+    public function test_not_taken_is_the_only_guardrail_with_a_five_point_margin(): void
     {
         $g = $this->source->guardrails($this->exp());
 
-        $this->assertSame(['not_taken', 'nothing_passed_on'], array_keys($g));
+        $this->assertSame(['not_taken'], array_keys($g));
         $this->assertSame(5.0, $g['not_taken']['margin_points']);
-        $this->assertSame(3.0, $g['nothing_passed_on']['margin_points']);
         $this->assertSame('the share of posts not taken within 7 days', $g['not_taken']['label']);
-        $this->assertSame('the share of posters who had no reply passed on within 7 days', $g['nothing_passed_on']['label']);
     }
 
     public function test_words_say_what_a_dead_reply_is_and_name_the_guardrails(): void
@@ -267,6 +268,7 @@ class ConfirmReplyPostSourceTest extends TestCase
         $this->assertStringContainsString('dropped before the poster saw it', $w['note']);
         $this->assertStringContainsString('not taken within 7 days', $w['note']);
         $this->assertStringContainsString('no reply passed on', $w['note']);
+        $this->assertStringContainsString('for information only', $w['note']);
     }
 
     public function test_the_source_is_registered_and_offers_one_primary(): void

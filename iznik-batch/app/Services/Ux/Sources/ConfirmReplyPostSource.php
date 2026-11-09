@@ -20,9 +20,13 @@ use Illuminate\Support\Facades\Log;
  * as taking it (messages_promises, messages_by) by the end of the window. A reply dropped before the poster saw it,
  * because the replier said no or did not answer in 3 days, is not dead: the poster never had it.
  *
- * Guardrails, so that hiding replies cannot score as a win:
- *  - not_taken: the post was not taken within the window, margin 5 points (fewer items finding a home);
- *  - nothing_passed_on: the poster was given no reply at all within the window, margin 3 points (over-hiding).
+ * Guardrail, so that hiding replies cannot score as a win: not_taken, the post was not taken within the window,
+ * margin 5 points (fewer items finding a home).
+ *
+ * For information only, never used to decide: nothing_passed_on, the poster was given no reply at all within the
+ * window. The change raises it on purpose, since a reply the replier withdraws is never passed on and most of these
+ * posts get one reply, so as a guardrail it would revert the run for doing what it is meant to do. It is shown per
+ * arm beside the result so that over-hiding is visible; not_taken is what stops it from winning.
  *
  * The first run, confirm-reply, counted each replier and scored a dropped reply as a failure on both of its measures,
  * though a dropped reply cost the poster nothing. docs/developers/reference/ux-experiments.md, "Confirming a reply,
@@ -33,8 +37,6 @@ class ConfirmReplyPostSource extends ExposureSource
     public const NO_DEAD_REPLY = 'no_dead_reply';
 
     public const NOT_TAKEN_MARGIN_POINTS = 5.0;
-
-    public const NOTHING_PASSED_ON_MARGIN_POINTS = 3.0;
 
     /** A reply to the post (alias d) that the poster was given, inside the window of the exposure. */
     private const PASSED_ON = "d.refmsgid = c.subject_id AND d.type = 'Interested' AND d.userid <> c.userid"
@@ -84,7 +86,8 @@ class ConfirmReplyPostSource extends ExposureSource
             'note' => 'Each poster is counted once, for their first offer that looked damaged or too big to carry and got a reply, and only when that was at least '.$window.' ago. '
                 .'A dead reply is one passed on to the poster whose replier was not promised the item or marked as taking it within '.$window.'. '
                 .'A reply dropped before the poster saw it, because the replier said no or did not answer in 3 days, is not dead. '
-                .'Two checks stop hiding replies from looking like a win: the share of posts not taken within '.$window.', and the share of posters who had no reply passed on at all.',
+                .'The share of posts not taken within '.$window.' stops hiding replies from looking like a win. '
+                .'The share of posters who had no reply passed on is shown for information only: asking is meant to raise it, so it does not decide.',
         ];
     }
 
@@ -94,7 +97,18 @@ class ConfirmReplyPostSource extends ExposureSource
 
         return [
             'not_taken' => ['label' => 'the share of posts not taken within '.$window, 'margin_points' => self::NOT_TAKEN_MARGIN_POINTS],
-            'nothing_passed_on' => ['label' => 'the share of posters who had no reply passed on within '.$window, 'margin_points' => self::NOTHING_PASSED_ON_MARGIN_POINTS],
+        ];
+    }
+
+    protected function information(object $exp): array
+    {
+        $window = self::windowText($this->windowOf($exp));
+
+        return [
+            'nothing_passed_on' => [
+                'label' => 'the share of posters who had no reply passed on within '.$window,
+                'sql' => 'NOT EXISTS (SELECT 1 FROM chat_messages d WHERE '.self::PASSED_ON.')',
+            ],
         ];
     }
 
@@ -115,7 +129,6 @@ class ConfirmReplyPostSource extends ExposureSource
         return [
             'not_taken' => "NOT EXISTS (SELECT 1 FROM messages_outcomes o WHERE o.msgid = c.subject_id AND o.outcome = 'Taken'"
                 .' AND o.`timestamp` < c.exposed_at + INTERVAL :window HOUR)',
-            'nothing_passed_on' => 'NOT EXISTS (SELECT 1 FROM chat_messages d WHERE '.self::PASSED_ON.')',
         ];
     }
 

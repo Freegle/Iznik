@@ -605,7 +605,9 @@ What to know about where the figures come from:
   `ModSysAdminUxExperimentChannel.vue` adds to the details the text each version shows
   (`design.copy`), how long members are reached and when it is decided, and the members exposed and
   counted, in the read-out's words and order ("Exposed: 12,512 with the change, 12,500 without."), or by
-  version name with control first when there are more than two. It draws nothing for a change to the site.
+  version name with control first when there are more than two. Under them it draws any figure the source shows
+  for information only ("For information only, not used to decide: ... was 16.1% with the change and 2.4% without.",
+  `informationLines`). It draws nothing for a change to the site.
   The details of `confirm-reply` also draw `ModSysAdminUxReplyConfirmDetail.vue`, a piece the section hosts
   (`HOSTED.experiment` in `useUxSections.js`), which shows how repliers answered the question. It is short and drills
   down: the rows that tell the story for all reasons, a toggle for the rest, and each reason closed until it is opened,
@@ -1233,7 +1235,7 @@ are. Five ship.
 | `email_click` | the member clicked a link in the email, and it was not the unsubscribe link (that link also sets the click time) | clicking the unsubscribe link in the window, margin 0.3 points. That link opens the unsubscribe page, so it counts members who then do nothing, and a mail client's own Unsubscribe button is not seen (`unsubscribeUrl` in `UnifiedDigest.php`, the `unsubscribe` action of `Click` in `emailtracking.go`) |
 | `active_after` | the member has a `users_active` row in the hour of the exposure or inside the window. The site or app writes one when it loads the member's notifications, which it does when they have something unread or when they open the bell, so a member who visits with nothing unread is not counted, in either arm | turning the daily posts push off, for a push only, margin 0.3 points |
 | `familiar_reply` | the member replied to the post the exposure names (`familiar-poster`) | unsubscribing from any of our mail in the window, margin 0.3 points, because control is sent none of these |
-| `confirm_reply_post` | `primary` `no_dead_reply`: the poster saw no dead reply on the post within the window. A dead reply was passed on to the poster and its replier was not promised the item or recorded as taking it by the end of the window. A reply dropped before the poster saw it (a no, or no answer in 3 days) is not dead | `not_taken`, the post not taken within the window, margin 5 points; `nothing_passed_on`, the poster given no reply at all within the window, margin 3 points |
+| `confirm_reply_post` | `primary` `no_dead_reply`: the poster saw no dead reply on the post within the window. A dead reply was passed on to the poster and its replier was not promised the item or recorded as taking it by the end of the window. A reply dropped before the poster saw it (a no, or no answer in 3 days) is not dead | `not_taken`, the post not taken within the window, margin 5 points. `nothing_passed_on`, the poster given no reply at all within the window, is shown for information only |
 | `hosting_ad_click` | the member pressed the hosting ad's button within the window (`detail.clicked` on the exposure, written by `POST /user/hostingad`) | `not_back`, the share of members whose last access is not at least an hour after the exposure, margin 2 points |
 
 Opens are never used: they are folded in nightly, and image proxies open mail for people who never looked
@@ -1244,6 +1246,14 @@ nothing else on the tab does. A guardrail has its own margin and the
 sentences name it, because the 2 point default is far too coarse for a 0.2 percent unsubscribe rate. A
 guardrail is read once 100 members are counted across both arms, and an early revert still needs 300
 counted on each arm.
+
+**For information only.** A source can also show a share that never decides: `information()` in
+`ExposureSource`, a label and a SQL test over the cohort like `bad()`. It is counted in the same query, with
+the members counted as its base, and goes in the read's detail as `information`, never in the guardrails. The
+result text adds "For information only, not used to decide: <label> was X% with the change and Y% without." to
+the read and to the decision, and the tab draws the same line. It is for a share the change moves on purpose,
+where a guardrail would revert the run for doing what it was meant to do; a big margin on a guardrail would
+still count it in the split of the error between guardrails, and would read as a check that is not there.
 
 A source that fails is a read that failed, like Loki being down: the tick uses its last read for up to two
 hours, and after the end waits six hours before it calls the experiment inconclusive. A run that counted
@@ -1368,17 +1378,18 @@ reply nobody answered was "wasted" though it cost the poster nothing. Neither me
 - **Primary, `no_dead_reply`.** The poster saw no dead reply on that post within 7 days of the exposure. A dead reply was
   passed on (processed and delivered) and its replier was not promised the item or recorded as taking it
   (`messages_promises`, `messages_by`) by the end of the window. A reply dropped before the poster saw it is not dead.
-- **Guardrails.** `not_taken`, the post not taken within 7 days, margin 5 points, so fewer items finding a home shows.
-  `nothing_passed_on`, the poster given no reply at all within 7 days, margin 3 points, so that hiding every reply cannot
-  score as a win.
+- **Guardrail.** `not_taken`, the post not taken within 7 days, margin 5 points. It is the one that stops hiding replies
+  from scoring as a win: a poster with fewer replies has no dead reply, but if that costs items finding a home it shows here.
+- **For information only, `nothing_passed_on`.** The share of posters given no reply at all within 7 days, shown per
+  arm on the tab and in the result text, and never used to decide. Asking is meant to raise it: about a quarter of
+  asked replies were dropped in the first run, and 64% of these posts get only one reply, so about 16% of posters in
+  `ask` can be expected to have nothing passed on. As a guardrail it would revert the run for doing what it is meant
+  to do. It is shown so that over-hiding can be seen; `not_taken` is what decides whether that cost anything.
 - **Run.** Server channel, 7 days of intake and a 7-day window, 336 hours. On live in early November 2026 one week of
   intake held about 348 posters (174 an arm); 12% of their posts had no dead reply and 56% were taken within 7 days. The
   low base is because posters rarely record who took an item, so a reply that led to the item going often still counts as
   dead, in both arms alike. `expected_points` 10 gives a power of 0.98 (5 points would give 0.72).
-- **The second guardrail will move.** About a quarter of asked replies were dropped in the first run, and 64% of these
-  posts get only one reply, so about 16% of posters in `ask` can be expected to have nothing passed on. Against a 3 point
-  margin that reverts the run unless fewer replies are dropped this time. That is the question the guardrail asks: whether
-  leaving a poster with no reply at all is acceptable.
+
 
 The command that creates and starts it is in the Deploy section of the pull request that added it.
 

@@ -28,6 +28,7 @@ import {
   copyLines,
   servingLine,
   exposureLines,
+  informationLines,
 } from '~/modtools/composables/useUxExperimentRead'
 
 // The structured read the hourly tick stores in `result` (UxExperimentService::statistics). Rates are
@@ -1491,6 +1492,89 @@ describe('useUxExperimentRead', () => {
             })
           )
         ).toEqual({ exposed: 'Exposed: items 5.', counted: null })
+      })
+    })
+
+    describe('figures shown for information only', () => {
+      const info = (
+        arms,
+        label = 'the share of posters who had no reply passed on within 7 days'
+      ) => ({
+        nothing_passed_on: { label, arms },
+      })
+
+      it('is a line each, the change first, to one decimal place, saying it does not decide', () => {
+        expect(
+          informationLines(
+            email({
+              result: sourceResult({
+                detail: {
+                  counted: { control: 170, items: 174 },
+                  information: info({
+                    control: { n: 4, base: 170 },
+                    items: { n: 28, base: 174 },
+                  }),
+                },
+              }),
+            })
+          )
+        ).toEqual([
+          'For information only, not used to decide: the share of posters who had no reply passed on within 7 days was 16.1% with the change and 2.4% without.',
+        ])
+      })
+
+      it('names each version when there are more than two, control first', () => {
+        expect(
+          informationLines(
+            email({
+              result: sourceResult({
+                detail: {
+                  information: info({
+                    c: { n: 1, base: 4 },
+                    control: { n: 0, base: 4 },
+                    b: { n: 2, base: 4 },
+                  }),
+                },
+              }),
+            })
+          )
+        ).toEqual([
+          'For information only, not used to decide: the share of posters who had no reply passed on within 7 days was control 0.0%, b 50.0%, c 25.0%.',
+        ])
+      })
+
+      it('says unknown for a version with nobody counted yet', () => {
+        expect(
+          informationLines(
+            email({
+              result: sourceResult({
+                detail: {
+                  information: info({
+                    control: { n: 0, base: 0 },
+                    items: { n: 1, base: 2 },
+                  }),
+                },
+              }),
+            })
+          )
+        ).toEqual([
+          'For information only, not used to decide: the share of posters who had no reply passed on within 7 days was 50.0% with the change and unknown without.',
+        ])
+      })
+
+      it('is empty when the source shows nothing for information, or there is no read', () => {
+        expect(informationLines(email())).toEqual([])
+        expect(informationLines(email({ result: null }))).toEqual([])
+        expect(informationLines(null)).toEqual([])
+        expect(
+          informationLines(
+            email({
+              result: sourceResult({
+                detail: { information: { broken: { arms: 'none' } } },
+              }),
+            })
+          )
+        ).toEqual([])
       })
     })
   })
