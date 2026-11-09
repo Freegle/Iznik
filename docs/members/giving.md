@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-08
+last_reviewed: 2026-11-09
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -99,6 +99,9 @@ change a split OFFER to a WANTED, it goes back to one post.
 When people are interested they reply, and each reply starts a private **chat** with you.
 You will get a notification and can see all your posts and their replies under **My
 Posts** (`/myposts`).
+
+In My Posts, tap a post's title to read what you wrote, and tap it again to close it. Your post's own page
+always shows it.
 
 From My Posts, or from the post itself, you can:
 

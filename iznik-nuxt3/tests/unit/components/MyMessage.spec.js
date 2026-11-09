@@ -855,6 +855,68 @@ describe('MyMessage', () => {
     })
   })
 
+  // A poster could not read their own post's text on a phone: the card had no description and its
+  // title did nothing when tapped (510 taps by 244 people in a week of November 2026).
+  describe('Post text', () => {
+    const text = (w) => w.find('.my-message-text')
+
+    it('is hidden on My Posts until the title is tapped', async () => {
+      const wrapper = await createWrapper()
+      expect(text(wrapper).exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Test description')
+    })
+
+    it('opens when the title is tapped, and closes on a second tap', async () => {
+      const wrapper = await createWrapper()
+      const toggle = wrapper.find('.title-bar button.title-toggle')
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+
+      await toggle.trigger('click')
+      expect(text(wrapper).text()).toContain('Test description')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+
+      await toggle.trigger('click')
+      expect(text(wrapper).exists()).toBe(false)
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+    })
+
+    it('opens from the title on a wide screen too', async () => {
+      const wrapper = await createWrapper()
+      await wrapper
+        .find('button.desktop-title-row.title-toggle')
+        .trigger('click')
+      expect(text(wrapper).text()).toContain('Test description')
+    })
+
+    it('is always shown on the post page, where the title is not a toggle', async () => {
+      const wrapper = await createWrapper({ expand: true, postPage: true })
+      expect(text(wrapper).text()).toContain('Test description')
+      expect(wrapper.find('button.title-toggle').exists()).toBe(false)
+    })
+
+    it('still opens from the title on My Posts with few posts, where replies start open', async () => {
+      // My Posts sets expand when it has five posts or fewer. That opens the replies, not the text.
+      const wrapper = await createWrapper({ expand: true })
+      expect(text(wrapper).exists()).toBe(false)
+      await wrapper.find('.title-bar button.title-toggle').trigger('click')
+      expect(text(wrapper).text()).toContain('Test description')
+    })
+
+    it('does not open from the share button or the post number', async () => {
+      const wrapper = await createWrapper()
+      await wrapper.find('.title-bar .photo-action-btn').trigger('click')
+      await wrapper.find('.title-bar .post-id-link').trigger('click')
+      expect(text(wrapper).exists()).toBe(false)
+    })
+
+    it('has no toggle when the post has no text', async () => {
+      mockData.message.textbody = '   '
+      const wrapper = await createWrapper()
+      expect(wrapper.find('button.title-toggle').exists()).toBe(false)
+      expect(text(wrapper).exists()).toBe(false)
+    })
+  })
+
   describe('Replies Section', () => {
     beforeEach(() => {
       mockData.message.replies = [
