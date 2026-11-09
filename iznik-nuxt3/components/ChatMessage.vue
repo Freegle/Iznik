@@ -1,6 +1,10 @@
 <template>
   <div
-    :class="{ selected: selected, deleted: isMessageDeleted }"
+    :class="{
+      selected: selected,
+      deleted: isMessageDeleted,
+      selectable: canSelect,
+    }"
     @click="selectMe"
   >
     <div v-if="chatmessage?.type === 'Default'">
@@ -303,11 +307,20 @@ const isMessageDeleted = computed(() => {
   return chatmessage.value?.deleted
 })
 
-// Methods
-const selectMe = () => {
-  // don't allow to select deleted messages and messages consisting of a single image
-  if (!isMessageDeleted.value && !chatmessage.value?.imageid)
-    selected.value = true
+// Deleted messages and messages that are a single image cannot be selected.
+const canSelect = computed(
+  () => !isMessageDeleted.value && !chatmessage.value?.imageid
+)
+
+// A tap on a message selects it, to show Mark unread or Delete, and a second tap unselects it. A tap on a
+// button or link inside the message is for that control, not for the message.
+const CONTROLS =
+  'button, a, input, textarea, select, label, .btn, [role="button"]'
+
+const selectMe = (event) => {
+  if (!canSelect.value) return
+  if (event?.target?.closest?.(CONTROLS)) return
+  selected.value = !selected.value
 }
 
 const markUnread = async () => {
@@ -338,6 +351,11 @@ const deleteMessage = async () => {
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
+
+// It can be tapped, which a pointer says, and which the click telemetry reads as a working tap.
+.selectable {
+  cursor: pointer;
+}
 
 .selected {
   border: 1px solid $color-blue--bright;

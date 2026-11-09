@@ -124,6 +124,15 @@ describe('ChatMessageImage', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
+    it('shows an uploaded photo can be tapped to zoom, so a tap is not counted as a dead click', () => {
+      mockChatmessage.value = {
+        id: 1,
+        image: { ouruid: 'abc123', externalmods: {} },
+      }
+      const wrapper = createWrapper()
+      expect(wrapper.find('.our-uploaded-image').classes()).toContain('clickme')
+    })
+
     it('does not render a picture for a bare externaluid', () => {
       // Uploadcare is gone, so a bare externaluid must not render a picture. The zoom modal now uses OurUploadedImage too.
       mockChatmessage.value = {
