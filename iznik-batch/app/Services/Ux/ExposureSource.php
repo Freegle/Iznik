@@ -24,6 +24,10 @@ use Illuminate\Support\Facades\DB;
  * whole number before the query is run. A guardrail's base is the members counted. Strata are the
  * exposure's own stratum, and a null stratum is one pooled stratum. A subclass may override counts()
  * or add keys to extra() to show more.
+ *
+ * information() is a figure shown per arm and never used to decide. It is for a share the change
+ * moves on purpose, where a guardrail would revert the run for doing what it was meant to do. It goes
+ * in the read's detail as information, and the result text and the tab show it beside the decision.
  */
 abstract class ExposureSource implements UxMetricSource
 {
@@ -40,6 +44,17 @@ abstract class ExposureSource implements UxMetricSource
      * @return array<string, string>
      */
     abstract protected function bad(object $exp): array;
+
+    /**
+     * Name => ['label' => what it is, 'sql' => SQL boolean over c, like bad()]: a share shown per arm
+     * for information and never used to decide. The label reads "the share of ...".
+     *
+     * @return array<string, array{label: string, sql: string}>
+     */
+    protected function information(object $exp): array
+    {
+        return [];
+    }
 
     /**
      * More keys for the read's detail, beside exposed and counted.
@@ -114,6 +129,16 @@ abstract class ExposureSource implements UxMetricSource
         foreach ($names as $i => $name) {
             $select .= ', SUM(CASE WHEN ('.$bad[$name].") THEN 1 ELSE 0 END) AS bad_$i";
         }
+        $information = $this->information($exp);
+        $infoNames = array_keys($information);
+        $shown = [];
+        foreach ($infoNames as $i => $name) {
+            $select .= ', SUM(CASE WHEN ('.$information[$name]['sql'].") THEN 1 ELSE 0 END) AS info_$i";
+            $shown[$name] = ['label' => $information[$name]['label'], 'arms' => []];
+            foreach (array_keys($arms) as $arm) {
+                $shown[$name]['arms'][$arm] = ['n' => 0, 'base' => 0];
+            }
+        }
         $sql = "SELECT $select FROM (SELECT x.* FROM ux_experiment_exposures x JOIN ($first) f ON f.id = x.id WHERE x.exposed_at <= ?) c "
             .$this->joins($exp).' GROUP BY c.arm, c.stratum';
         // The window is a whole number from the design, put in as a literal because a named binding
@@ -135,17 +160,31 @@ abstract class ExposureSource implements UxMetricSource
                 $col = "bad_$i";
                 $guards[$name][$row->arm]['bad'] += (int) $row->$col;
             }
+            foreach ($infoNames as $i => $name) {
+                $col = "info_$i";
+                $shown[$name]['arms'][$row->arm]['n'] += (int) $row->$col;
+            }
         }
         foreach ($guards as $name => $byArm) {
             foreach ($byArm as $arm => $_) {
                 $guards[$name][$arm]['base'] = $counted[$arm];
             }
         }
+        foreach ($shown as $name => $figure) {
+            foreach (array_keys($figure['arms']) as $arm) {
+                $shown[$name]['arms'][$arm]['base'] = $counted[$arm];
+            }
+        }
+
+        $extra = ['exposed' => $exposed, 'counted' => $counted];
+        if ($shown) {
+            $extra['information'] = $shown;
+        }
 
         return [
             'arms' => $arms,
             'guards' => $guards,
-            'extra' => ['exposed' => $exposed, 'counted' => $counted] + $this->extra($exp, $now, $since),
+            'extra' => $extra + $this->extra($exp, $now, $since),
         ];
     }
 }
