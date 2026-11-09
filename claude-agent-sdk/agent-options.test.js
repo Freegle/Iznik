@@ -2,7 +2,7 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
-const { agentEnv, agentOptions, SECRET_ENV } = require('./agent-options')
+const { agentEnv, agentEffort, agentOptions, SECRET_ENV } = require('./agent-options')
 
 const base = () => ({
   model: 'opus',
@@ -50,7 +50,7 @@ test('the agent environment has no dump keys', () => {
   } finally {
     SECRET_ENV.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i])))
   }
-  assert.deepStrictEqual(agentEnv({ USERDUMP_INTERNAL_KEY: 'a', USERDUMP_API_KEY: 'b', X: '1', LANG: 'C' }), { LANG: 'C' })
+  assert.deepStrictEqual(agentEnv({ USERDUMP_INTERNAL_KEY: 'a', USERDUMP_API_KEY: 'b', X: '1', LANG: 'C' }), { LANG: 'C', CLAUDE_CODE_MAX_RETRIES: '2' })
 })
 
 test('agentEnv keeps what the CLI needs and drops every secret', () => {
@@ -80,9 +80,39 @@ test('agentEnv keeps what the CLI needs and drops every secret', () => {
     CLAUDE_CODE_OAUTH_TOKEN: 'oauth',
     ANTHROPIC_BASE_URL: 'http://broker',
     HTTPS_PROXY: 'http://proxy',
+    CLAUDE_CODE_MAX_RETRIES: '2',
   })
   for (const k of ['DB_PASSWORD', 'SENTRY_AUTH_TOKEN', 'DISCOURSE_API_KEY', 'UX_INTERNAL_SECRET', 'USERDUMP_INTERNAL_KEY', 'USERDUMP_API_KEY']) {
     assert.ok(!(k in env), k)
+  }
+})
+
+test('a failed call is retried twice, not for minutes, unless the environment says otherwise', () => {
+  // The CLI's own default retries a 503 for about three minutes. The broker answers 503 when it has no
+  // account free, and a volunteer waited that long for an error each time.
+  assert.strictEqual(agentEnv({ PATH: '/bin' }).CLAUDE_CODE_MAX_RETRIES, '2')
+  assert.strictEqual(agentEnv({ PATH: '/bin', CLAUDE_CODE_MAX_RETRIES: '5' }).CLAUDE_CODE_MAX_RETRIES, '5')
+})
+
+test('effort comes from SUPPORT_AI_EFFORT, is medium by default, and an unknown level falls back to medium', () => {
+  assert.strictEqual(agentEffort({}), 'medium')
+  for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) assert.strictEqual(agentEffort({ SUPPORT_AI_EFFORT: level }), level)
+  assert.strictEqual(agentEffort({ SUPPORT_AI_EFFORT: ' High ' }), 'high')
+  assert.strictEqual(agentEffort({ SUPPORT_AI_EFFORT: 'turbo' }), 'medium')
+  assert.strictEqual(agentEffort({ SUPPORT_AI_EFFORT: '' }), 'medium')
+})
+
+test('agentOptions sets the effort, and a run can ask for its own', () => {
+  const saved = process.env.SUPPORT_AI_EFFORT
+  try {
+    delete process.env.SUPPORT_AI_EFFORT
+    assert.strictEqual(agentOptions(base()).effort, 'medium')
+    process.env.SUPPORT_AI_EFFORT = 'high'
+    assert.strictEqual(agentOptions(base()).effort, 'high')
+    assert.strictEqual(agentOptions({ ...base(), extra: { effort: 'low' } }).effort, 'low')
+  } finally {
+    if (saved === undefined) delete process.env.SUPPORT_AI_EFFORT
+    else process.env.SUPPORT_AI_EFFORT = saved
   }
 })
 

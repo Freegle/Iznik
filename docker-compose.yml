@@ -705,6 +705,9 @@ services:
       # ANTHROPIC_API_KEY (api mode) and should OMIT this mount entirely.
       - ${SUPPORT_CLAUDE_DIR:-/home/edward/.claude}/.credentials.json:/home/claude/.claude/.credentials.json:ro
       - ai-support-audit:/app/audit
+      # Saved agent sessions, so a follow-up question still works after a restart. Pruned after a day
+      # (claude-agent-sdk/sessions.js), because they hold what the tools returned about a member.
+      - ai-support-sessions:/home/claude/.claude/projects
     restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "curl -f --max-time 9 http://localhost:3000/health || exit 1"]
@@ -2118,6 +2121,8 @@ volumes:
     driver: local   # Elasticsearch index for the wiki's CirrusSearch (edge)
   ai-support-audit:
     driver: local   # durable audit log of AI Support Helper investigations (who queried whom)
+  ai-support-sessions:
+    driver: local   # AI Support Helper's saved sessions for follow-up questions, pruned after a day
   paf-data:
     driver: local   # PAF extractor: last applied release (~3 GB) and the job in hand
 

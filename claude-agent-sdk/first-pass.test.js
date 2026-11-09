@@ -156,7 +156,7 @@ test('more than ten images are refused, and ten are accepted', () => {
 
 test('agentEnv drops both dump keys and keeps what the CLI needs', () => {
   const env = agentEnv({ USERDUMP_INTERNAL_KEY: 'k1', USERDUMP_API_KEY: 'k2', PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 't', GONE: undefined })
-  assert.deepStrictEqual(env, { PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 't' })
+  assert.deepStrictEqual(env, { PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 't', CLAUDE_CODE_MAX_RETRIES: '2' })
 })
 
 test('agentEnv reads process.env by default without the keys', () => {
