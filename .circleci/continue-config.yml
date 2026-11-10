@@ -123,6 +123,24 @@ jobs:
             git fetch --no-tags --depth=100 origin master
             .claude/check-raw-sql.sh --diff origin/master
 
+  # The role-literal guard: a role (User, Moderator, Support, Admin, Member, Owner) is read
+  # from a constant, never written as a string. Same two-part shape as check-raw-sql: the
+  # editor hook catches it at authoring time, this job holds the line for any editor.
+  check-role-literals:
+    docker:
+      - image: cimg/base:current
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Self-test the guard
+          command: .claude/check-role-literals.test.sh
+      - run:
+          name: No new role written as a string
+          command: |
+            git fetch --no-tags --depth=100 origin master
+            .claude/check-role-literals.sh --diff origin/master
+
   # Apple refuses App Store requests while an agreement waits for the Account Holder, and
   # only they can accept it. Run daily so a new one fails this job, and sends CircleCI's
   # failure notice, before it stops a deploy. Defined here rather than in the orb so it
@@ -217,6 +235,7 @@ workflows:
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - check-raw-sql
+      - check-role-literals
       - check-licences
       - check-ux-cleanups
       - freegle/build-and-test:
@@ -291,6 +310,7 @@ workflows:
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - check-raw-sql
+      - check-role-literals
       - check-licences
       - check-ux-cleanups
       - freegle/build-and-test:
@@ -498,6 +518,7 @@ workflows:
         - not: << pipeline.parameters.run_apple_agreement_check >>
     jobs:
       - check-raw-sql
+      - check-role-literals
       - check-licences
       - check-ux-cleanups
       - freegle/build-and-test:
