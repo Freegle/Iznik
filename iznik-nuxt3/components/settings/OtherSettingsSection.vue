@@ -86,14 +86,12 @@ import {
 } from '~/composables/useDonationAsks'
 import { ref, computed, defineEmits, watch } from 'vue'
 import { useAuthStore } from '~/stores/auth'
-import { useMiscStore } from '~/stores/misc'
 import OurToggle from '~/components/OurToggle'
 import { useMe } from '~/composables/useMe'
 
 const emit = defineEmits(['update'])
 
 const authStore = useAuthStore()
-const miscStore = useMiscStore()
 
 const { me } = useMe()
 
@@ -103,7 +101,7 @@ const toggleColor = '#61AE24'
 // State
 const autorepostsLocal = ref(true)
 const enterNewLineLocal = ref(false)
-const marketingConsentLocal = ref(true)
+const marketingConsentLocal = ref(false)
 const donationAsksLocal = ref(true)
 
 // Only donors get the choice, and they keep it for good once they have donated.
@@ -131,8 +129,9 @@ const changeAutorepost = async (e) => {
   emit('update')
 }
 
-const changeMarketingConsent = (e) => {
-  miscStore.setMarketingConsent(e)
+const changeMarketingConsent = async (e) => {
+  await authStore.saveAndGet({ marketingconsent: e })
+  emit('update')
 }
 
 const changeDonationAsks = async (e) => {
@@ -151,7 +150,7 @@ watch(
     if (newVal) {
       autorepostsLocal.value = !newVal.settings?.autorepostsdisable
       enterNewLineLocal.value = newVal.settings?.enterNewLine || false
-      marketingConsentLocal.value = miscStore.marketingConsent
+      marketingConsentLocal.value = !!newVal.marketingconsent
       donationAsksLocal.value = !donationAsksPaused(newVal.settings)
     }
   },

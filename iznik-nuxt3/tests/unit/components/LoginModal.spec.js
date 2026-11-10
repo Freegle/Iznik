@@ -27,8 +27,8 @@ const {
   mockLoggedInEver,
   mockLoginType,
   mockForceLogin,
-  mockMarketingConsent,
-  mockSetMarketingConsent,
+  mockMarketingConsentTicked,
+  mockSetMarketingConsentTicked,
   mockModtools,
   mockAppOutOfDate,
   mockIsApp,
@@ -48,8 +48,8 @@ const {
     mockLoggedInEver: { value: false },
     mockLoginType: { value: null },
     mockForceLogin: { value: false },
-    mockMarketingConsent: { value: true },
-    mockSetMarketingConsent: vi.fn(),
+    mockMarketingConsentTicked: { value: false },
+    mockSetMarketingConsentTicked: vi.fn(),
     mockModtools: { value: false },
     mockAppOutOfDate: { value: false },
     mockIsApp: { value: false },
@@ -119,10 +119,10 @@ vi.mock('~/stores/auth', () => ({
 
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => ({
-    get marketingConsent() {
-      return mockMarketingConsent.value
+    get marketingConsentTicked() {
+      return mockMarketingConsentTicked.value
     },
-    setMarketingConsent: mockSetMarketingConsent,
+    setMarketingConsentTicked: mockSetMarketingConsentTicked,
     get modtools() {
       return mockModtools.value
     },
@@ -276,7 +276,7 @@ describe('LoginModal', () => {
     mockLoggedInEver.value = false
     mockLoginType.value = null
     mockForceLogin.value = false
-    mockMarketingConsent.value = true
+    mockMarketingConsentTicked.value = false
     mockAppOutOfDate.value = false
     mockIsApp.value = false
     mockIsiOS.value = false
@@ -1285,12 +1285,19 @@ describe('LoginModal', () => {
       expect(wrapper.find('input[type="checkbox"]').exists()).toBe(true)
     })
 
-    it('checkbox is checked by default', async () => {
-      mockMarketingConsent.value = true
+    // Consent has to be given, so the box is never ticked for the member.
+    it('checkbox is unticked by default', async () => {
       const wrapper = createWrapper()
       await flushPromises()
       const checkbox = wrapper.find('input[type="checkbox"]')
-      expect(checkbox.element.checked).toBe(true)
+      expect(checkbox.element.checked).toBe(false)
+    })
+
+    it('records a tick for the next user fetch to save', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('input[type="checkbox"]').setValue(true)
+      expect(mockSetMarketingConsentTicked).toHaveBeenCalledWith(true)
     })
   })
 
@@ -1306,20 +1313,12 @@ describe('LoginModal', () => {
   })
 
   describe('component initialization', () => {
-    it('sets marketing consent to true on mount if not set', async () => {
-      mockMarketingConsent.value = null
+    it('does not tick the marketing consent box on mount', async () => {
+      mockMarketingConsentTicked.value = null
       mockForceLogin.value = true
       createWrapper()
       await flushPromises()
-      expect(mockSetMarketingConsent).toHaveBeenCalledWith(true)
-    })
-
-    it('does not override existing marketing consent', async () => {
-      mockMarketingConsent.value = false
-      mockForceLogin.value = true
-      createWrapper()
-      await flushPromises()
-      expect(mockSetMarketingConsent).not.toHaveBeenCalled()
+      expect(mockSetMarketingConsentTicked).not.toHaveBeenCalled()
     })
   })
 

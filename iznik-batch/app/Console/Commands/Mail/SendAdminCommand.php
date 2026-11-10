@@ -87,6 +87,9 @@ class SendAdminCommand extends Command
             'emails_sent' => 0,
             'skipped_activeonly' => 0,
             'skipped_relevantallowed' => 0,
+            'skipped_marketingconsent' => 0,
+            'skipped_donationasks' => 0,
+            'skipped_not_chosen' => 0,
             'skipped_dedup' => 0,
             'skipped_no_email' => 0,
             'skipped_simplemail' => 0,
@@ -126,6 +129,9 @@ class SendAdminCommand extends Command
                 ['Emails Sent', $stats['emails_sent']],
                 ['Skipped (active only)', $stats['skipped_activeonly']],
                 ['Skipped (relevantallowed)', $stats['skipped_relevantallowed']],
+                ['Skipped (no marketing consent)', $stats['skipped_marketingconsent']],
+                ['Skipped (donation requests off)', $stats['skipped_donationasks']],
+                ['Skipped (not chosen by member)', $stats['skipped_not_chosen']],
                 ['Skipped (dedup)', $stats['skipped_dedup']],
                 ['Skipped (no email)', $stats['skipped_no_email']],
                 ['Skipped (simplemail=None)', $stats['skipped_simplemail']],
@@ -313,7 +319,10 @@ class SendAdminCommand extends Command
             ->select([
                 'memberships.userid',
                 'memberships.role',
+                'memberships.rippled',
+                'memberships.implicit',
                 'users.relevantallowed',
+                'users.marketingconsent',
                 'users.lastaccess',
                 'users.deleted',
             ])
@@ -376,6 +385,21 @@ class SendAdminCommand extends Command
 
                     continue;
                 }
+            }
+
+            // A Newsletter ADMIN can be a fundraising appeal, which needs the member's marketing
+            // consent. That holds for moderators too.
+            if (!$admin->essential && !$member->marketingconsent) {
+                $stats['skipped_marketingconsent']++;
+
+                continue;
+            }
+
+            // Nor may it come from a community Rippling or TrashNothing put the member on.
+            if (!$admin->essential && ($member->rippled || $member->implicit)) {
+                $stats['skipped_not_chosen']++;
+
+                continue;
             }
 
             // Filter: dedup via pre-loaded set (covers both suggested and regular admins).
@@ -474,6 +498,14 @@ class SendAdminCommand extends Command
             // Filter: skip simplemail=None for non-essential admins.
             if (!$admin->essential && $user->getSimpleMail() === User::SIMPLE_MAIL_NONE) {
                 $stats['skipped_simplemail']++;
+
+                continue;
+            }
+
+            // Filter: a member who turned off donation requests gets no Newsletter ADMIN until
+            // that lapses.
+            if (!$admin->essential && !User::settingsAllowDonationAsks($user->settings)) {
+                $stats['skipped_donationasks']++;
 
                 continue;
             }
