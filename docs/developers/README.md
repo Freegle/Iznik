@@ -76,6 +76,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Electricals and reuse reporting | [./reference/electricals.md](./reference/electricals.md) |
 | Impact figures on the stats pages (benefit, fly-tipping, inflation) | [./reference/impact-figures.md](./reference/impact-figures.md) |
 | Item desirability scoring | [./reference/item-desirability.md](./reference/item-desirability.md) |
+| Repost settings (one system-wide row, not per community) | [./reference/repost-settings.md](./reference/repost-settings.md) |
 | Matched-posts email | [./reference/matched-posts-email.md](./reference/matched-posts-email.md) |
 | New posts from people you have chatted with (experiment) | [./reference/familiar-posts-email.md](./reference/familiar-posts-email.md) |
 | AI item images | [./reference/ai-item-images.md](./reference/ai-item-images.md) |

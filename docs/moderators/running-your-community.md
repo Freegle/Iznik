@@ -4,6 +4,9 @@ owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
   - iznik-nuxt3/modtools/components/ModSettingsModConfig.vue
+  - iznik-nuxt3/modtools/components/ModSettingsGroup.vue
+  - iznik-nuxt3/modtools/components/ModStdMessageModal.vue
+  - iznik-nuxt3/composables/useRepostSettings.js
   - iznik-nuxt3/modtools/composables/useModConfigPdf.js
   - iznik-nuxt3/modtools/pages/members/stories.vue
   - iznik-nuxt3/modtools/pages/communityevents/**
@@ -44,6 +47,11 @@ Moderator of it). It is a set of sections, each covering one topic:
 - **Micro-volunteering**, **Spam detection** and **Duplicate detection** tuning.
 - **Mapping** - the community boundary, with a link to the map.
 - **Social media** and **Status**.
+
+**Reposting is the same for every community.** Settings shows how it works but you cannot
+change it here: an OFFER is reposted after 3 days, a WANTED after 7, up to 3 times, and we
+ask the poster what happened every 5 days after that. Your standard messages fill in
+`$repostoffer` and `$repostwanted` with these numbers. "Expire posts" is still yours to set.
 
 Keep local rules short, apply them kindly, and do not try to enforce them on other
 communities. A homepage with a logo, a tagline and a warm welcome message helps new
