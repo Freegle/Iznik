@@ -302,9 +302,9 @@ func TestModToolsChatNameUsesFirstLastWhenFullnameNull(t *testing.T) {
 	var memberID uint64
 	db.Exec(
 		"INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
-			"VALUES (?, ?, NULL, 'User', NULL, ?)",
+			"VALUES (?, ?, NULL, ?, NULL, ?)",
 		prefix+"First", prefix+"Last",
-		`{"mylocation":{"lat":51.5,"lng":-0.1}}`,
+		utils.SYSTEMROLE_USER, `{"mylocation":{"lat":51.5,"lng":-0.1}}`,
 	)
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&memberID)
 	if memberID == 0 {

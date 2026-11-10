@@ -94,8 +94,8 @@ func TestHomeBackToPendingKeepsHandApprovedRippledCopy(t *testing.T) {
 
 	var poster uint64
 	db.Raw("SELECT fromuser FROM messages WHERE id = ?", f.msgID).Scan(&poster)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, 'Member', 1)", poster, f.recv)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, 'Member', 1)", poster, other.gid)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, ?, 1)", poster, f.recv, utils.ROLE_MEMBER)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, ?, 1)", poster, other.gid, utils.ROLE_MEMBER)
 
 	approveByHand(t, f.msgID, f.recv, f.tokRecv)
 	before := approvalOf(f.msgID, f.recv)

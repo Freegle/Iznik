@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func init() {
@@ -77,8 +78,8 @@ func TestGetGroupVolunteersPopulated(t *testing.T) {
 	require.NotZero(t, userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
-	db.Exec("INSERT INTO memberships (userid, groupid, role, added) VALUES (?, ?, 'Moderator', NOW())",
-		userID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added) VALUES (?, ?, ?, NOW())",
+		userID, groupID, utils.ROLE_MODERATOR)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID)
 
 	volunteers := GetGroupVolunteers(groupID)

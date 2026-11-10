@@ -88,8 +88,8 @@ func TestGetGroupWork_BackupMod(t *testing.T) {
 	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create backup mod membership (active=0 in settings).
-	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, 'Moderator', ?)",
-		userID, groupID, `{"active":0}`)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, ?, ?)",
+		userID, groupID, utils.ROLE_MODERATOR, `{"active":0}`)
 	_, token := CreateTestSession(t, userID)
 
 	// Insert a pending message.
@@ -234,8 +234,8 @@ func TestGetGroupWork_SpamMembers(t *testing.T) {
 
 	// Insert a spam member (reviewrequestedat set, reviewedat NULL).
 	spamUserID := CreateTestUser(t, prefix+"_spam", utils.SYSTEMROLE_USER)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection, reviewrequestedat) VALUES (?, ?, 'Member', 'Approved', NOW())",
-		spamUserID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection, reviewrequestedat) VALUES (?, ?, ?, 'Approved', NOW())",
+		spamUserID, groupID, utils.ROLE_MEMBER)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -272,10 +272,10 @@ func TestGetGroupWork_SpamMembersReFlaggedAfterRecentReview(t *testing.T) {
 	// this member; the correct reviewrequestedat > reviewedat condition does.
 	spamUserID := CreateTestUser(t, prefix+"_spam", utils.SYSTEMROLE_USER)
 	db.Exec(`INSERT INTO memberships (userid, groupid, role, collection, reviewedat, reviewrequestedat)
-		VALUES (?, ?, 'Member', 'Approved',
+		VALUES (?, ?, ?, 'Approved',
 		DATE_SUB(NOW(), INTERVAL 5 DAY),
 		NOW())`,
-		spamUserID, groupID)
+		spamUserID, groupID, utils.ROLE_MEMBER)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -305,8 +305,8 @@ func TestGetGroupWork_MultipleGroups(t *testing.T) {
 
 	// Active on group 1, backup on group 2.
 	CreateTestMembership(t, modID, groupID1, utils.ROLE_MODERATOR)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, 'Moderator', ?)",
-		modID, groupID2, `{"active":0}`)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, ?, ?)",
+		modID, groupID2, utils.ROLE_MODERATOR, `{"active":0}`)
 	_, token := CreateTestSession(t, modID)
 
 	// Pending message in each group.
@@ -407,8 +407,8 @@ func TestGetGroupWork_PendingMembers(t *testing.T) {
 
 	// Create a pending member.
 	pendingUserID := CreateTestUser(t, prefix+"_pending", utils.SYSTEMROLE_USER)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Pending')",
-		pendingUserID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Pending')",
+		pendingUserID, groupID, utils.ROLE_MEMBER)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -607,8 +607,8 @@ func TestGetGroupWork_PendingAdmins_BackupGroupIgnored(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	// Backup mod.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, 'Moderator', ?)",
-		modID, groupID, `{"active":0}`)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, ?, ?)",
+		modID, groupID, utils.ROLE_MODERATOR, `{"active":0}`)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a pending admin.
@@ -908,8 +908,8 @@ func TestPendingCountsAPostOncePerModerator(t *testing.T) {
 	for _, gid := range []uint64{g1, g2, g3} {
 		CreateTestMembership(t, modID, gid, utils.ROLE_MODERATOR)
 	}
-	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, 'Moderator', ?)",
-		modID, backup, `{"active":0}`)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, ?, ?)",
+		modID, backup, utils.ROLE_MODERATOR, `{"active":0}`)
 	_, token := CreateTestSession(t, modID)
 
 	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)

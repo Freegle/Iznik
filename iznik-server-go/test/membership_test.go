@@ -852,8 +852,8 @@ func TestPatchMembershipsOurPostingStatusByMod(t *testing.T) {
 // createPendingMember inserts a membership with collection='Pending' for testing.
 func createPendingMember(t *testing.T, userID uint64, groupID uint64) {
 	db := database.DBConn
-	result := db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Pending')",
-		userID, groupID)
+	result := db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Pending')",
+		userID, groupID, utils.ROLE_MEMBER)
 	if result.Error != nil {
 		t.Fatalf("ERROR: Failed to create pending membership: %v", result.Error)
 	}
@@ -2127,7 +2127,7 @@ func TestGetMembershipsSearchNullFullname(t *testing.T) {
 	lastname := prefix + "_findme"
 	settings := `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`
 	res := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
-		"VALUES ('Lj', ?, NULL, 'User', NULL, ?)", lastname, settings)
+		"VALUES ('Lj', ?, NULL, ?, NULL, ?)", lastname, utils.SYSTEMROLE_USER, settings)
 	assert.NoError(t, res.Error)
 	var targetID uint64
 	db.Raw("SELECT id FROM users WHERE lastname = ? AND fullname IS NULL ORDER BY id DESC LIMIT 1", lastname).Scan(&targetID)
@@ -2175,7 +2175,7 @@ func TestGetMembershipsSearchFullNameLoveJunk(t *testing.T) {
 	lastname := prefix + "_Last"
 	settings := `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`
 	res := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
-		"VALUES (?, ?, NULL, 'User', NULL, ?)", firstname, lastname, settings)
+		"VALUES (?, ?, NULL, ?, NULL, ?)", firstname, lastname, utils.SYSTEMROLE_USER, settings)
 	assert.NoError(t, res.Error)
 	var targetID uint64
 	db.Raw("SELECT id FROM users WHERE firstname = ? AND lastname = ? AND fullname IS NULL ORDER BY id DESC LIMIT 1", firstname, lastname).Scan(&targetID)

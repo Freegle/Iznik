@@ -221,7 +221,7 @@ func TestInventNameForBlankUser(t *testing.T) {
 			// Keep local part under 32 chars so TidyName does not truncate it.
 			localPart := fmt.Sprintf("inv%d", time.Now().UnixNano()%100000000)
 
-			db.Exec("INSERT INTO users (fullname, systemrole) VALUES (?, 'User')", tc.fullname)
+			db.Exec("INSERT INTO users (fullname, systemrole) VALUES (?, ?)", tc.fullname, utils.SYSTEMROLE_USER)
 			var targetID uint64
 			db.Raw("SELECT id FROM users ORDER BY id DESC LIMIT 1").Scan(&targetID)
 			require.NotZero(t, targetID)
@@ -268,7 +268,7 @@ func TestInventNamePersistsBadStoredNames(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prefix := uniquePrefix("invent_persist")
 
-			db.Exec("INSERT INTO users (fullname, systemrole) VALUES (?, 'User')", tc.fullname)
+			db.Exec("INSERT INTO users (fullname, systemrole) VALUES (?, ?)", tc.fullname, utils.SYSTEMROLE_USER)
 			var targetID uint64
 			db.Raw("SELECT id FROM users ORDER BY id DESC LIMIT 1").Scan(&targetID)
 			require.NotZero(t, targetID)
@@ -304,7 +304,7 @@ func TestInventNameFallsBackToGeneratedName(t *testing.T) {
 	db := database.DBConn
 
 	// User with no email at all — must fall back to trigram-generated name.
-	db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('A freegler', 'User')")
+	db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('A freegler', ?)", utils.SYSTEMROLE_USER)
 	var targetID uint64
 	db.Raw("SELECT id FROM users ORDER BY id DESC LIMIT 1").Scan(&targetID)
 	require.NotZero(t, targetID)
@@ -333,7 +333,7 @@ func TestInventNameRejectsAuthorityEmailLocalPart(t *testing.T) {
 	// SanitizeDisplayName rewrites it to "A freegler" on every read. Storing it
 	// would strand the user there permanently: InventName only runs when the
 	// stored fullname is "A freegler", which it no longer would be.
-	db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('A freegler', 'User')")
+	db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('A freegler', ?)", utils.SYSTEMROLE_USER)
 	var targetID uint64
 	db.Raw("SELECT id FROM users ORDER BY id DESC LIMIT 1").Scan(&targetID)
 	require.NotZero(t, targetID)
@@ -810,7 +810,7 @@ func TestPostUserAddEmailSupportForOtherUser(t *testing.T) {
 	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
 	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, supportID)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 
 	newEmail := prefix + "_new@test.com"
 	payload := map[string]interface{}{
@@ -1680,7 +1680,7 @@ func TestPatchUserPasswordBySupportUser(t *testing.T) {
 
 	// Create an admin/support user and a target user.
 	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_USER)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", adminID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, adminID)
 	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	_, adminToken := CreateTestSession(t, adminID)
 
@@ -1997,7 +1997,7 @@ func TestLimboUserAdminCannotDeleteModerator(t *testing.T) {
 
 	// Make the target user a moderator of some group.
 	groupID := CreateTestGroup(t, prefix+"_group")
-	db.Exec("INSERT INTO memberships (userid, groupid, role, added, collection) VALUES (?, ?, 'Moderator', NOW(), 'Approved') ON DUPLICATE KEY UPDATE role = 'Moderator'", modID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, collection) VALUES (?, ?, ?, NOW(), 'Approved') ON DUPLICATE KEY UPDATE role = ?", modID, groupID, utils.ROLE_MODERATOR, utils.ROLE_MODERATOR)
 
 	payload := map[string]interface{}{"id": modID}
 	s, _ := json.Marshal(payload)
@@ -3695,7 +3695,7 @@ func TestPublicLocation_MostRecentMembership(t *testing.T) {
 
 	// Create the target user with no mylocation setting and no lastlocation.
 	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
-		"VALUES ('Test', ?, ?, 'User', NULL, NULL)", prefix, "Test User "+prefix)
+		"VALUES ('Test', ?, ?, ?, NULL, NULL)", prefix, "Test User "+prefix, utils.SYSTEMROLE_USER)
 	var targetUserID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", "Test User "+prefix).Scan(&targetUserID)
 	require.Greater(t, targetUserID, uint64(0))
@@ -4373,7 +4373,7 @@ func TestGetUserEmailsVisibleToSupport(t *testing.T) {
 
 	// Support user — should be able to see target's emails via modtools.
 	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	resp, err := getApp().Test(httptest.NewRequest("GET",
@@ -4398,7 +4398,7 @@ func TestGetUserEmailFieldPopulatedForFDEmail(t *testing.T) {
 
 	// Support user viewing the target.
 	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	resp, err := getApp().Test(httptest.NewRequest("GET",
@@ -4499,7 +4499,7 @@ func TestGetUserModSeesTnuserid(t *testing.T) {
 	prefix := uniquePrefix("mod_sees_tnuserid")
 
 	callerID := CreateTestUser(t, prefix+"_caller", utils.SYSTEMROLE_USER)
-	db.Exec("UPDATE users SET systemrole = 'Moderator' WHERE id = ?", callerID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_MODERATOR, callerID)
 	_, token := CreateTestSession(t, callerID)
 
 	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
@@ -5330,8 +5330,8 @@ func TestPrivateLocationName_FallsBackToClosestPostcode(t *testing.T) {
 
 	makeUser := func(tag string, lat, lng float32) uint64 {
 		db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
-			"VALUES ('Test', ?, ?, 'User', NULL, ?)", prefix+tag, "Test User "+prefix+tag,
-			fmt.Sprintf(`{"mylocation":{"lat":%v,"lng":%v}}`, lat, lng))
+			"VALUES ('Test', ?, ?, ?, NULL, ?)", prefix+tag, "Test User "+prefix+tag,
+			utils.SYSTEMROLE_USER, fmt.Sprintf(`{"mylocation":{"lat":%v,"lng":%v}}`, lat, lng))
 		var id uint64
 		db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", "Test User "+prefix+tag).Scan(&id)
 		require.Greater(t, id, uint64(0))

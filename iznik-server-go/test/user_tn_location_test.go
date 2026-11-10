@@ -85,7 +85,7 @@ func TestTNMemberModtoolsLocationNameIgnoresFDSetting(t *testing.T) {
 	prefix := uniquePrefix("tnloc_mt")
 	uid := createUserWithStaleMylocation(t, prefix, true)
 	adminID, token := CreateFullTestUser(t, prefix+"_admin")
-	database.DBConn.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", adminID)
+	database.DBConn.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_ADMIN, adminID)
 
 	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", uid, token), nil))
 	require.NoError(t, err)

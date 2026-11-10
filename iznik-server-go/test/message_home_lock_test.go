@@ -80,7 +80,7 @@ func TestHomeBackToPendingWithdrawsRippledCopies(t *testing.T) {
 	var poster uint64
 	db.Raw("SELECT fromuser FROM messages WHERE id = ?", f.msgID).Scan(&poster)
 	// The ripple joined the poster to the receiving community to carry the post.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, 'Member', 1)", poster, f.recv)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, ?, 1)", poster, f.recv, utils.ROLE_MEMBER)
 
 	status, _ := postModAction(t, f.tokHome, f.msgID, "BackToPending", f.home)
 	require.Equal(t, 200, status)

@@ -283,7 +283,7 @@ func TestTeamGetVolunteersWithMember(t *testing.T) {
 	// Create a user with showmod=true directly so the settings string is exact.
 	fullname := "Vol " + prefix
 	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, settings) "+
-		"VALUES ('Vol', ?, ?, 'User', '{\"showmod\":true}')", prefix, fullname)
+		"VALUES ('Vol', ?, ?, ?, '{\"showmod\":true}')", prefix, fullname, utils.SYSTEMROLE_USER)
 	var userID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)
 	assert.NotZero(t, userID)

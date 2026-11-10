@@ -130,8 +130,8 @@ func TestMergeMembershipConflictTakesOlderDate(t *testing.T) {
 	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
-	db.Exec(fmt.Sprintf("INSERT INTO memberships (userid, groupid, role, added) VALUES (%d, %d, 'Member', '2013-01-01 00:00:00')", id1, groupID))
-	db.Exec(fmt.Sprintf("INSERT INTO memberships (userid, groupid, role, added) VALUES (%d, %d, 'Member', NOW())", id2, groupID))
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added) VALUES (?, ?, ?, '2013-01-01 00:00:00')", id1, groupID, utils.ROLE_MEMBER)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added) VALUES (?, ?, ?, NOW())", id2, groupID, utils.ROLE_MEMBER)
 
 	status := mergeUsers(t, adminToken, id1, id2)
 	assert.Equal(t, 200, status, "merge request should succeed")
@@ -154,9 +154,9 @@ func TestMergeMembershipConflictTakesTheOlderOriginAndTheLowerImplicit(t *testin
 	groupID := CreateTestGroup(t, prefix)
 
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'manual', 0, 0)", id1, groupID)
+		"VALUES (?, ?, ?, '2013-01-01 00:00:00', 'manual', 0, 0)", id1, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', NOW(), 'rippled', 1, 1)", id2, groupID)
+		"VALUES (?, ?, ?, NOW(), 'rippled', 1, 1)", id2, groupID, utils.ROLE_MEMBER)
 
 	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
 
@@ -183,9 +183,9 @@ func TestMergeMembershipConflictLogsAPlacementMadeOrdinary(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'tn_unaddressed', 1, 0)", id1, groupID)
+		"VALUES (?, ?, ?, '2013-01-01 00:00:00', 'tn_unaddressed', 1, 0)", id1, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', NOW(), 'manual', 0, 0)", id2, groupID)
+		"VALUES (?, ?, ?, NOW(), 'manual', 0, 0)", id2, groupID, utils.ROLE_MEMBER)
 
 	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
 
@@ -223,9 +223,9 @@ func TestMergeMembershipConflictOfARippleJoinAndATNPlacementIsATNPlacement(t *te
 	groupID := CreateTestGroup(t, prefix)
 
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', NOW(), 'tn_unaddressed', 1, 0)", id1, groupID)
+		"VALUES (?, ?, ?, NOW(), 'tn_unaddressed', 1, 0)", id1, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID)
+		"VALUES (?, ?, ?, '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID, utils.ROLE_MEMBER)
 
 	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
 
@@ -249,9 +249,9 @@ func TestMergeMembershipConflictOfTwoRippleJoinsIsARippleJoin(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', NOW(), 'rippled', 1, 1)", id1, groupID)
+		"VALUES (?, ?, ?, NOW(), 'rippled', 1, 1)", id1, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID)
+		"VALUES (?, ?, ?, '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID, utils.ROLE_MEMBER)
 
 	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
 

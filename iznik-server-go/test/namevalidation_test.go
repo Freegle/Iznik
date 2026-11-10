@@ -66,8 +66,8 @@ func TestSuspiciousNameKeptForGroupMod(t *testing.T) {
 	db := database.DBConn
 	db.Exec("UPDATE users SET fullname = ? WHERE id = ?",
 		"Freegle Aberdeen", userID)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Owner', 'Approved')",
-		userID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')",
+		userID, groupID, utils.ROLE_OWNER)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID), nil))
 	assert.Equal(t, 200, resp.StatusCode)
