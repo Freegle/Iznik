@@ -60,7 +60,7 @@ func TestAddedOriginEnumMatchesTheGoList(t *testing.T) {
 func TestMembershipStructsWithNoOriginStoreUnknown(t *testing.T) {
 	prefix := uniquePrefix("memorigin_default")
 	group := CreateTestGroup(t, prefix)
-	member := CreateTestUser(t, prefix, "User")
+	member := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	assert.NoError(t, db.Create(&user.MembershipTable{Userid: member, Groupid: group, Role: utils.ROLE_MEMBER,
@@ -88,7 +88,7 @@ func joinGroup(t *testing.T, token string, body map[string]interface{}) int {
 func TestAddMembershipRecordsTheOriginOnBothTables(t *testing.T) {
 	prefix := uniquePrefix("memorigin_add")
 	group := CreateTestGroup(t, prefix)
-	member := CreateTestUser(t, prefix, "User")
+	member := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	reports := recordOriginReports(t, fmt.Sprintf("user %d,", member))
 
 	assert.True(t, user.AddMembership(member, group, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED,
@@ -105,7 +105,7 @@ func TestAddMembershipRecordsTheOriginOnBothTables(t *testing.T) {
 func TestAddMembershipWithNoOriginIsUnknownAndReported(t *testing.T) {
 	prefix := uniquePrefix("memorigin_addnone")
 	group := CreateTestGroup(t, prefix)
-	member := CreateTestUser(t, prefix, "User")
+	member := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	reports := recordOriginReports(t, fmt.Sprintf("user %d,", member))
 
 	assert.True(t, user.AddMembership(member, group, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED,
@@ -121,7 +121,7 @@ func TestAddMembershipWithNoOriginIsUnknownAndReported(t *testing.T) {
 func TestJoinRecordsTheOriginTheClientSends(t *testing.T) {
 	prefix := uniquePrefix("memorigin_join")
 	group := CreateTestGroup(t, prefix)
-	member := CreateTestUser(t, prefix, "User")
+	member := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, member)
 	reports := recordOriginReports(t, fmt.Sprintf("user %d,", member))
 
@@ -143,7 +143,7 @@ func TestJoinLogTextFollowsTheOrigin(t *testing.T) {
 	group := CreateTestGroup(t, prefix)
 
 	for origin, want := range map[string]string{"manual": "Manual", "replied": "Auto", "posted": "Auto", "signup": "Auto"} {
-		member := CreateTestUser(t, prefix+"_"+origin, "User")
+		member := CreateTestUser(t, prefix+"_"+origin, utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, member)
 
 		assert.Equal(t, 200, joinGroup(t, token, map[string]interface{}{"groupid": group, "origin": origin, "manual": origin != "manual"}))
@@ -167,7 +167,7 @@ func TestJoinWithoutOriginFallsBackToTheManualFlag(t *testing.T) {
 	group := CreateTestGroup(t, prefix)
 
 	for manual, want := range map[bool]string{true: "manual", false: "replied"} {
-		member := CreateTestUser(t, fmt.Sprintf("%s_%v", prefix, manual), "User")
+		member := CreateTestUser(t, fmt.Sprintf("%s_%v", prefix, manual), utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, member)
 
 		assert.Equal(t, 200, joinGroup(t, token, map[string]interface{}{"groupid": group, "manual": manual}))
@@ -179,7 +179,7 @@ func TestJoinWithoutOriginFallsBackToTheManualFlag(t *testing.T) {
 func TestJoinWithNeitherOriginNorManualIsUnknownAndReported(t *testing.T) {
 	prefix := uniquePrefix("memorigin_none")
 	group := CreateTestGroup(t, prefix)
-	member := CreateTestUser(t, prefix, "User")
+	member := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, member)
 	reports := recordOriginReports(t, fmt.Sprintf("user %d,", member))
 
@@ -197,7 +197,7 @@ func TestJoinWithNeitherOriginNorManualIsUnknownAndReported(t *testing.T) {
 func TestJoinRefusesAnOriginTheClientMayNotSet(t *testing.T) {
 	prefix := uniquePrefix("memorigin_refuse")
 	group := CreateTestGroup(t, prefix)
-	member := CreateTestUser(t, prefix, "User")
+	member := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, member)
 
 	for _, origin := range []string{"rippled", "tn_unaddressed", "partner", "moderator", "unknown", "nonsense"} {
@@ -209,10 +209,10 @@ func TestJoinRefusesAnOriginTheClientMayNotSet(t *testing.T) {
 func TestModeratorAddingSomeoneIsAModeratorAddWhateverTheRequestSays(t *testing.T) {
 	prefix := uniquePrefix("memorigin_modadd")
 	group := CreateTestGroup(t, prefix)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
-	member := CreateTestUser(t, prefix+"_member", "User")
+	member := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
 	assert.Equal(t, 200, joinGroup(t, modToken, map[string]interface{}{
 		"userid": member, "groupid": group, "origin": "manual",
@@ -222,7 +222,7 @@ func TestModeratorAddingSomeoneIsAModeratorAddWhateverTheRequestSays(t *testing.
 	assert.Equal(t, "moderator", addedOriginOf(t, "memberships_history", member, group))
 
 	// An origin a member could not send is ignored for a moderator add, not refused.
-	other := CreateTestUser(t, prefix+"_other", "User")
+	other := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	assert.Equal(t, 200, joinGroup(t, modToken, map[string]interface{}{
 		"userid": other, "groupid": group, "origin": "moderator",
 	}))
@@ -300,19 +300,19 @@ func TestMembersListCarriesAddedOrigin(t *testing.T) {
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
 
-	rippled := CreateTestUser(t, prefix+"_rippled", "User")
-	rippledMembership := CreateTestMembership(t, rippled, group, "Member")
+	rippled := CreateTestUser(t, prefix+"_rippled", utils.SYSTEMROLE_USER)
+	rippledMembership := CreateTestMembership(t, rippled, group, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1, implicit = 1, added_origin = 'rippled' WHERE id = ?", rippledMembership)
 
-	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
-	ordinaryMembership := CreateTestMembership(t, ordinary, group, "Member")
+	ordinary := CreateTestUser(t, prefix+"_ordinary", utils.SYSTEMROLE_USER)
+	ordinaryMembership := CreateTestMembership(t, ordinary, group, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET added_origin = 'manual' WHERE id = ?", ordinaryMembership)
 
-	banned := CreateTestUser(t, prefix+"_banned", "User")
+	banned := CreateTestUser(t, prefix+"_banned", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_banned (userid, groupid, date) VALUES (?, ?, NOW())", banned, group)
 
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 
 	type member struct {
@@ -349,14 +349,14 @@ func TestMembersListCarriesAddedOrigin(t *testing.T) {
 func TestUserMembershipsCarryAddedOrigin(t *testing.T) {
 	prefix := uniquePrefix("memorigin_user")
 	db := database.DBConn
-	member := CreateTestUser(t, prefix, "User")
+	member := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
-	rippledMembership := CreateTestMembership(t, member, rippledGroup, "Member")
+	rippledMembership := CreateTestMembership(t, member, rippledGroup, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1, implicit = 1, added_origin = 'rippled' WHERE id = ?", rippledMembership)
 
 	postedGroup := CreateTestGroup(t, prefix+"_posted")
-	postedMembership := CreateTestMembership(t, member, postedGroup, "Member")
+	postedMembership := CreateTestMembership(t, member, postedGroup, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET added_origin = 'posted' WHERE id = ?", postedMembership)
 
 	byGroup := map[uint64]user.Membership{}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,11 +23,11 @@ func TestListMessagesMTApprovedOriginOnly(t *testing.T) {
 
 	originGroup := CreateTestGroup(t, prefix+"_orig")
 	rippledGroup := CreateTestGroup(t, prefix+"_rip")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, originGroup, "Member")
-	CreateTestMembership(t, modID, originGroup, "Moderator")
-	CreateTestMembership(t, modID, rippledGroup, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, originGroup, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, originGroup, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, rippledGroup, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Approved on its origin group (rippled_in=0 from CreateTestMessage), then rippled

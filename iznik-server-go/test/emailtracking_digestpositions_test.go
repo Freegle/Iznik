@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailtracking"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -83,7 +84,7 @@ func TestDigestPositions_Unauthorized(t *testing.T) {
 
 func TestDigestPositions_ForbiddenForRegularUser(t *testing.T) {
 	prefix := uniquePrefix("dpforbid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/email/stats/digestpositions?jwt="+token, nil))
@@ -92,7 +93,7 @@ func TestDigestPositions_ForbiddenForRegularUser(t *testing.T) {
 
 func TestDigestPositions_SupportUserAccess(t *testing.T) {
 	prefix := uniquePrefix("dpsupport")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/email/stats/digestpositions?jwt="+token, nil))
@@ -108,7 +109,7 @@ func TestDigestPositions_SupportUserAccess(t *testing.T) {
 // per post position, with a non-post (summary) click correctly ignored.
 func TestDigestPositions_CTRByPosition(t *testing.T) {
 	prefix := uniquePrefix("dpctr")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	now := time.Now()
@@ -166,7 +167,7 @@ func TestDigestPositions_CTRByPosition(t *testing.T) {
 // emails and silently under-reports, since compact "pN" clicks dominate.
 func TestDigestPositions_CompactPositionLabels(t *testing.T) {
 	prefix := uniquePrefix("dpcompact")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	now := time.Now()
@@ -215,7 +216,7 @@ func TestDigestPositions_CompactPositionLabels(t *testing.T) {
 // denominator is cumulative: a digest with K posts contributes to positions 0..K-1.
 func TestDigestPositions_CumulativeShownAcrossSizes(t *testing.T) {
 	prefix := uniquePrefix("dpcum")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	now := time.Now()
@@ -294,7 +295,7 @@ func getDigestPositions(t *testing.T, token string, query string) map[string]int
 }
 
 func supportToken(t *testing.T, name string) string {
-	userID := CreateTestUser(t, uniquePrefix(name), "Support")
+	userID := CreateTestUser(t, uniquePrefix(name), utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 	return token
 }

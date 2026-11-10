@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -20,11 +21,11 @@ func TestMyGroupsComputesDistance(t *testing.T) {
 
 	prefix := uniquePrefix("mygroups_distance")
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
-	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, viewerID, group, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, group, utils.ROLE_MEMBER)
 
 	// Viewer in London; the post well to the north-west, so the distance is clearly non-zero
 	// even after the coordinate blurring the feed applies.

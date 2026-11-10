@@ -31,16 +31,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func TestHoldLogAppearsInMessagesLog(t *testing.T) {
 	prefix := uniquePrefix("HoldMsgAudit")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)

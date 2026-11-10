@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,8 +15,8 @@ func createTestVisualiseData(t *testing.T, prefix string) (uint64, uint64, uint6
 	db := database.DBConn
 
 	// Create two users with profiles.
-	fromUserID := CreateTestUser(t, prefix+"_from", "User")
-	toUserID := CreateTestUser(t, prefix+"_to", "User")
+	fromUserID := CreateTestUser(t, prefix+"_from", utils.SYSTEMROLE_USER)
+	toUserID := CreateTestUser(t, prefix+"_to", utils.SYSTEMROLE_USER)
 
 	// Create a message for the visualisation.
 	msgID := CreateTestMessage(t, fromUserID, CreateTestGroup(t, prefix), prefix+"_offer", 55.957, -3.205)

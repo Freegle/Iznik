@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +17,7 @@ import (
 
 func createTNMemberWithIdentity(t *testing.T, prefix string) uint64 {
 	db := database.DBConn
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 900000000+uid, uid)
 	db.Exec("INSERT INTO users_aboutme (userid, text) VALUES (?, ?)", uid, "About "+prefix)
 	db.Exec("INSERT INTO users_images (userid, url) VALUES (?, ?)", uid, "https://example.com/"+prefix+".jpg")
@@ -57,7 +58,7 @@ func TestTNMemberIdentityHiddenWhenLoggedOut(t *testing.T) {
 func TestTNMemberIdentityHiddenWhenLoggedOutBatch(t *testing.T) {
 	prefix := uniquePrefix("tnpriv_batch")
 	uid := createTNMemberWithIdentity(t, prefix)
-	other := CreateTestUser(t, prefix+"_fd", "User")
+	other := CreateTestUser(t, prefix+"_fd", utils.SYSTEMROLE_USER)
 
 	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/user/%d,%d", uid, other), nil))
 	require.NoError(t, err)
@@ -106,7 +107,7 @@ func TestTNMemberIdentityShownToPartner(t *testing.T) {
 
 func TestNonTNMemberIdentityShownWhenLoggedOut(t *testing.T) {
 	prefix := uniquePrefix("tnpriv_fd")
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	u := fetchUserJSON(t, fmt.Sprintf("/api/user/%d", uid))
 	assert.Contains(t, u["displayname"], "Test User")

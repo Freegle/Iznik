@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,9 +42,9 @@ func TestUserUnrated_BothDirectionsAndRated(t *testing.T) {
 	prefix := uniquePrefix("unrated")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	me := CreateTestUser(t, prefix+"me", "User")
-	taker := CreateTestUser(t, prefix+"taker", "User")
-	giver := CreateTestUser(t, prefix+"giver", "User")
+	me := CreateTestUser(t, prefix+"me", utils.SYSTEMROLE_USER)
+	taker := CreateTestUser(t, prefix+"taker", utils.SYSTEMROLE_USER)
+	giver := CreateTestUser(t, prefix+"giver", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, me)
 
 	// I offered a sofa and marked it taken by taker.
@@ -88,9 +89,9 @@ func TestUserUnrated_WantedOldAndDuplicates(t *testing.T) {
 	prefix := uniquePrefix("unrated2")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	me := CreateTestUser(t, prefix+"me", "User")
-	other := CreateTestUser(t, prefix+"other", "User")
-	stale := CreateTestUser(t, prefix+"stale", "User")
+	me := CreateTestUser(t, prefix+"me", utils.SYSTEMROLE_USER)
+	other := CreateTestUser(t, prefix+"other", utils.SYSTEMROLE_USER)
+	stale := CreateTestUser(t, prefix+"stale", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, me)
 
 	// I asked for a bike and other gave it to me: on a Wanted the poster receives.

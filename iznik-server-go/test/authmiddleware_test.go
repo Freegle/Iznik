@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -12,7 +13,7 @@ func TestPublicEndpointWithStaleJWT(t *testing.T) {
 	// A public endpoint should return 200 even if the request includes a JWT
 	// for a deleted/expired session. The auth middleware must not override the
 	// handler's success response with 401.
-	uid := CreateTestUser(t, "stalepublic", "User")
+	uid := CreateTestUser(t, "stalepublic", utils.SYSTEMROLE_USER)
 	token := getToken(t, uid)
 
 	// Delete the session to make the JWT stale.
@@ -26,7 +27,7 @@ func TestPublicEndpointWithStaleJWT(t *testing.T) {
 
 func TestAuthEndpointWithStaleJWT(t *testing.T) {
 	// An auth-requiring endpoint should still return 401 with a stale JWT.
-	uid := CreateTestUser(t, "staleauth", "User")
+	uid := CreateTestUser(t, "staleauth", utils.SYSTEMROLE_USER)
 	token := getToken(t, uid)
 
 	// Delete the session to make the JWT stale.

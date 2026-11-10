@@ -720,13 +720,13 @@ func CreateFullTestUser(t *testing.T, prefix string) (uint64, string) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create main user
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create another user for user-to-user chat
-	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+	otherUserID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	// Create membership
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Create address and isochrone
 	CreateTestAddress(t, userID)

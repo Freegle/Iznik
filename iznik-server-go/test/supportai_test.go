@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -49,13 +50,13 @@ func recordSupportAIRun(t *testing.T, token string, body map[string]interface{})
 
 func TestSupportAIRunsRequireSupport(t *testing.T) {
 	prefix := uniquePrefix("saiauth")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
 	id := recordSupportAIRun(t, supportToken, map[string]interface{}{"query": "secret question " + prefix})
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, userToken := CreateTestSession(t, userID)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	cases := []struct {
@@ -92,9 +93,9 @@ func TestSupportAIRunsRequireSupport(t *testing.T) {
 
 func TestSupportAIRecordListAndGet(t *testing.T) {
 	prefix := uniquePrefix("sairec")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
 	id := recordSupportAIRun(t, token, map[string]interface{}{
 		"userid":          memberID,
@@ -154,7 +155,7 @@ func TestSupportAIRecordListAndGet(t *testing.T) {
 
 func TestSupportAIRecordValidation(t *testing.T) {
 	prefix := uniquePrefix("saival")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	resp, _ := supportAIRequest(t, "POST", "/api/supportai/runs", token, map[string]interface{}{"query": "  "})
@@ -182,9 +183,9 @@ func TestSupportAIRecordValidation(t *testing.T) {
 
 func TestSupportAIRate(t *testing.T) {
 	prefix := uniquePrefix("sairate")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	id := recordSupportAIRun(t, token, map[string]interface{}{"query": "q " + prefix})
@@ -257,7 +258,7 @@ func TestSupportAIRate(t *testing.T) {
 
 func TestSupportAIListPaging(t *testing.T) {
 	prefix := uniquePrefix("saipage")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	first := recordSupportAIRun(t, token, map[string]interface{}{"query": "one " + prefix})

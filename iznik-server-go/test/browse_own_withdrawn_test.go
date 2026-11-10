@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,7 +22,7 @@ func ownWithdrawnAndPending(t *testing.T, prefix string) (withdrawn, pending uin
 	db := database.DBConn
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
+	CreateTestMembership(t, viewerID, group, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 

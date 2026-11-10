@@ -11,14 +11,15 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	volunteering2 "github.com/freegle/iznik-server-go/volunteering"
 	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func TestVolunteering(t *testing.T) {
 	// Create test data for this test
 	prefix := uniquePrefix("vol")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 
 	// Get non-existent volunteering - should return 404 (use very high ID guaranteed not to exist)
@@ -83,8 +84,8 @@ func TestVolunteering_PendingList(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create a regular user who creates a pending volunteering
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	CreateTestMembership(t, creatorID, groupID, "Member")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, creatorID, groupID, utils.ROLE_MEMBER)
 
 	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'Pending Vol', 'Pending desc', '', 1, 0, 0)", creatorID)
 	var pendingID uint64
@@ -93,8 +94,8 @@ func TestVolunteering_PendingList(t *testing.T) {
 	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", pendingID, groupID)
 
 	// Create a moderator user for the same group
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Moderator should see pending volunteering
@@ -105,8 +106,8 @@ func TestVolunteering_PendingList(t *testing.T) {
 	assert.Contains(t, ids, pendingID)
 
 	// Regular member should NOT see pending volunteering
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, memberToken := CreateTestSession(t, memberID)
 
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/volunteering?pending=true&jwt="+memberToken, nil))
@@ -129,8 +130,8 @@ func TestVolunteering_PendingListAdmin(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create a pending volunteering
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	CreateTestMembership(t, creatorID, groupID, "Member")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, creatorID, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'Admin Pending Vol', 'Admin test', '', 1, 0, 0)", creatorID)
 	var pendingID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&pendingID)
@@ -138,8 +139,8 @@ func TestVolunteering_PendingListAdmin(t *testing.T) {
 
 	// admin only sees pending volunteering from groups they mod,
 	// not all groups nationwide (#309).
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, adminID, groupID, "Owner")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, adminID, groupID, utils.ROLE_OWNER)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/volunteering?pending=true&jwt="+adminToken, nil))
@@ -159,8 +160,8 @@ func TestVolunteering_PendingListNationalPermission(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create a per-group pending op that the mod would see anyway.
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	CreateTestMembership(t, creatorID, groupID, "Member")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, creatorID, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'Group Pending Vol', 'group desc', '', 1, 0, 0)", creatorID)
 	var groupPendingID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&groupPendingID)
@@ -174,8 +175,8 @@ func TestVolunteering_PendingListNationalPermission(t *testing.T) {
 	// No INSERT INTO volunteering_groups — this is a national op.
 
 	// Mod without NationalVolunteers permission: should NOT see the national op.
-	plainModID := CreateTestUser(t, prefix+"_plainmod", "User")
-	CreateTestMembership(t, plainModID, groupID, "Moderator")
+	plainModID := CreateTestUser(t, prefix+"_plainmod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, plainModID, groupID, utils.ROLE_MODERATOR)
 	_, plainModToken := CreateTestSession(t, plainModID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/volunteering?pending=true&jwt="+plainModToken, nil))
@@ -186,8 +187,8 @@ func TestVolunteering_PendingListNationalPermission(t *testing.T) {
 	assert.NotContains(t, plainIds, nationalPendingID, "plain mod without NationalVolunteers perm must not see national pending op")
 
 	// Mod WITH NationalVolunteers permission: should see both group and national ops.
-	natModID := CreateTestUser(t, prefix+"_natmod", "User")
-	CreateTestMembership(t, natModID, groupID, "Moderator")
+	natModID := CreateTestUser(t, prefix+"_natmod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, natModID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE users SET permissions = 'NationalVolunteers' WHERE id = ?", natModID)
 	defer db.Exec("UPDATE users SET permissions = NULL WHERE id = ?", natModID)
 	_, natModToken := CreateTestSession(t, natModID)
@@ -202,9 +203,9 @@ func TestVolunteering_PendingListNationalPermission(t *testing.T) {
 
 func TestVolunteeringCreate(t *testing.T) {
 	prefix := uniquePrefix("volwr_create")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body := fmt.Sprintf(`{"title":"Test Vol %s","location":"Edinburgh","description":"A test volunteering opportunity","contactname":"Test","contactemail":"test@test.com","groupid":%d}`, prefix, groupID)
@@ -228,7 +229,7 @@ func TestVolunteeringCreateUnauthorized(t *testing.T) {
 
 func TestVolunteeringCreateMissingFields(t *testing.T) {
 	prefix := uniquePrefix("volwr_miss")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Missing title
@@ -255,9 +256,9 @@ func TestVolunteeringCreateMissingFields(t *testing.T) {
 
 func TestVolunteeringSave(t *testing.T) {
 	prefix := uniquePrefix("volwr_save")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -292,11 +293,11 @@ func TestVolunteeringSaveUnauthorized(t *testing.T) {
 
 func TestVolunteeringSaveNonOwner(t *testing.T) {
 	prefix := uniquePrefix("volwr_noown")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, ownerID, groupID)
 	_, otherToken := CreateTestSession(t, otherID)
 
@@ -309,11 +310,11 @@ func TestVolunteeringSaveNonOwner(t *testing.T) {
 
 func TestVolunteeringSaveByModerator(t *testing.T) {
 	prefix := uniquePrefix("volwr_mod")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	volunteeringID := CreateTestVolunteering(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -326,11 +327,11 @@ func TestVolunteeringSaveByModerator(t *testing.T) {
 
 func TestVolunteeringAddGroup(t *testing.T) {
 	prefix := uniquePrefix("volwr_addg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	group2ID := CreateTestGroup(t, prefix+"_2")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMembership(t, userID, group2ID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userID, group2ID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -350,9 +351,9 @@ func TestVolunteeringAddGroup(t *testing.T) {
 
 func TestVolunteeringRemoveGroup(t *testing.T) {
 	prefix := uniquePrefix("volwr_remg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -365,9 +366,9 @@ func TestVolunteeringRemoveGroup(t *testing.T) {
 
 func TestVolunteeringAddDate(t *testing.T) {
 	prefix := uniquePrefix("volwr_addd")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -380,9 +381,9 @@ func TestVolunteeringAddDate(t *testing.T) {
 
 func TestVolunteeringRemoveDate(t *testing.T) {
 	prefix := uniquePrefix("volwr_remd")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -400,9 +401,9 @@ func TestVolunteeringRemoveDate(t *testing.T) {
 
 func TestVolunteeringSetPhoto(t *testing.T) {
 	prefix := uniquePrefix("volwr_photo")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -421,9 +422,9 @@ func TestVolunteeringSetPhoto(t *testing.T) {
 
 func TestVolunteeringRenew(t *testing.T) {
 	prefix := uniquePrefix("volwr_renew")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -454,9 +455,9 @@ func TestVolunteeringRenew(t *testing.T) {
 
 func TestVolunteeringExpire(t *testing.T) {
 	prefix := uniquePrefix("volwr_expire")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -475,9 +476,9 @@ func TestVolunteeringExpire(t *testing.T) {
 
 func TestVolunteeringDelete(t *testing.T) {
 	prefix := uniquePrefix("volwr_del")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -502,11 +503,11 @@ func TestVolunteeringDeleteUnauthorized(t *testing.T) {
 
 func TestVolunteeringDeleteNonOwner(t *testing.T) {
 	prefix := uniquePrefix("volwr_dno")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, ownerID, groupID)
 	_, otherToken := CreateTestSession(t, otherID)
 
@@ -516,11 +517,11 @@ func TestVolunteeringDeleteNonOwner(t *testing.T) {
 
 func TestVolunteeringHold(t *testing.T) {
 	prefix := uniquePrefix("volwr_hold")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	volunteeringID := CreateTestVolunteering(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -540,11 +541,11 @@ func TestVolunteeringHold(t *testing.T) {
 
 func TestVolunteeringRelease(t *testing.T) {
 	prefix := uniquePrefix("volwr_rel")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	volunteeringID := CreateTestVolunteering(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -567,9 +568,9 @@ func TestVolunteeringRelease(t *testing.T) {
 
 func TestVolunteeringHoldNonModerator(t *testing.T) {
 	prefix := uniquePrefix("volwr_holdnm")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, ownerID, groupID)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
@@ -589,11 +590,11 @@ func TestVolunteeringHoldNonModerator(t *testing.T) {
 
 func TestVolunteeringPending(t *testing.T) {
 	prefix := uniquePrefix("volwr_pend")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	volunteeringID := CreateTestVolunteering(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -623,15 +624,15 @@ func TestVolunteeringPendingListFiltersByModGroups(t *testing.T) {
 	// Create two groups — support user mods group1, NOT group2.
 	group1ID := CreateTestGroup(t, prefix+"_g1")
 	group2ID := CreateTestGroup(t, prefix+"_g2")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
-	CreateTestMembership(t, supportID, group1ID, "Owner")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+	CreateTestMembership(t, supportID, group1ID, utils.ROLE_OWNER)
 	// Support is NOT a member of group2.
 	_, supportToken := CreateTestSession(t, supportID)
 
 	// Create pending volunteering on each group.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, group1ID, "Member")
-	CreateTestMembership(t, memberID, group2ID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, group1ID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, memberID, group2ID, utils.ROLE_MEMBER)
 	vol1ID := CreateTestVolunteering(t, memberID, group1ID)
 	vol2ID := CreateTestVolunteering(t, memberID, group2ID)
 	db.Exec("UPDATE volunteering SET pending = 1 WHERE id IN (?, ?)", vol1ID, vol2ID)
@@ -650,11 +651,11 @@ func TestVolunteeringPendingListFiltersByModGroups(t *testing.T) {
 
 func TestVolunteeringDeleteByModerator(t *testing.T) {
 	prefix := uniquePrefix("volwr_dmod")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	volunteeringID := CreateTestVolunteering(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -664,7 +665,7 @@ func TestVolunteeringDeleteByModerator(t *testing.T) {
 
 func TestVolunteeringCreateWithoutGroup(t *testing.T) {
 	prefix := uniquePrefix("volwr_nogrp")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Regular user can create without a group (groups added separately via AddGroup).
@@ -677,7 +678,7 @@ func TestVolunteeringCreateWithoutGroup(t *testing.T) {
 
 func TestVolunteeringCreateNoGroupAdminAllowed(t *testing.T) {
 	prefix := uniquePrefix("volwr_admngrp")
-	adminID := CreateTestUser(t, prefix, "User")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, adminID)
 	db := database.DBConn
 	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", adminID)
@@ -692,7 +693,7 @@ func TestVolunteeringCreateNoGroupAdminAllowed(t *testing.T) {
 
 func TestVolunteeringCreateNonMemberGroupRejected(t *testing.T) {
 	prefix := uniquePrefix("volwr_nonmem")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	// No membership created.
 	_, token := CreateTestSession(t, userID)
@@ -706,10 +707,10 @@ func TestVolunteeringCreateNonMemberGroupRejected(t *testing.T) {
 
 func TestVolunteeringAddGroupNonMemberRejected(t *testing.T) {
 	prefix := uniquePrefix("volwr_addnm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	group2ID := CreateTestGroup(t, prefix + "_2")
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	// No membership in group2.
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
@@ -723,11 +724,11 @@ func TestVolunteeringAddGroupNonMemberRejected(t *testing.T) {
 
 func TestVolunteeringAddGroupMemberAllowed(t *testing.T) {
 	prefix := uniquePrefix("volwr_addmem")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	group2ID := CreateTestGroup(t, prefix + "_2")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMembership(t, userID, group2ID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userID, group2ID, utils.ROLE_MEMBER)
 	volunteeringID := CreateTestVolunteering(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -758,8 +759,8 @@ func TestVolunteeringNullUserid(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 
 	// A moderator trying to PATCH should get 403 from canModify (not a 500 scan crash).
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"id":%d,"title":"Updated by mod"}`, volID)
@@ -777,8 +778,8 @@ func TestVolunteering_NationalOpsListedFirst(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	CreateTestMembership(t, creatorID, groupID, "Member")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, creatorID, groupID, utils.ROLE_MEMBER)
 
 	// The live NATIONAL op is created FIRST so it gets the LOWER id. That matters: a plain
 	// "ORDER BY id DESC" would then put it BELOW the group op, so this test fails unless the
@@ -796,8 +797,8 @@ func TestVolunteering_NationalOpsListedFirst(t *testing.T) {
 	assert.Greater(t, groupOpID, nationalOpID, "group op must have the higher id for this test to mean anything")
 	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", groupOpID, groupID)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, memberToken := CreateTestSession(t, memberID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/volunteering?jwt="+memberToken, nil))
@@ -825,13 +826,13 @@ func TestVolunteering_NationalOpsListedWithNoGroups(t *testing.T) {
 	prefix := uniquePrefix("volnatnogrp")
 	db := database.DBConn
 
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'National Only Vol', 'national desc', '', 0, 0, 0)", creatorID)
 	var nationalOpID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND title = 'National Only Vol' ORDER BY id DESC LIMIT 1", creatorID).Scan(&nationalOpID)
 	assert.Greater(t, nationalOpID, uint64(0))
 
-	loneID := CreateTestUser(t, prefix+"_lone", "User")
+	loneID := CreateTestUser(t, prefix+"_lone", utils.SYSTEMROLE_USER)
 	_, loneToken := CreateTestSession(t, loneID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/volunteering?jwt="+loneToken, nil))
@@ -860,10 +861,10 @@ func TestVolunteeringListGroupSettingsGate(t *testing.T) {
 	// Group with NULL settings (default = enabled).
 	defaultGroupID := CreateTestGroup(t, prefix+"_def")
 
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, disabledGroupID, "Member")
-	CreateTestMembership(t, userID, enabledGroupID, "Member")
-	CreateTestMembership(t, userID, defaultGroupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, disabledGroupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userID, enabledGroupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userID, defaultGroupID, utils.ROLE_MEMBER)
 
 	CreateTestVolunteering(t, userID, disabledGroupID)
 	enabledVolID := CreateTestVolunteering(t, userID, enabledGroupID)
@@ -898,9 +899,9 @@ func TestVolunteeringSingleResponseFields(t *testing.T) {
 	prefix := uniquePrefix("volfields")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Create a volunteering with online=1 and a contacturl that has no scheme.
 	db.Exec("INSERT INTO volunteering (userid, title, location, description, online, pending, deleted, expired, contacturl) "+

@@ -32,7 +32,7 @@ func ensureFreegleUser(t *testing.T) uint64 {
 		return id
 	}
 
-	id = CreateTestUser(t, uniquePrefix("freeglesys"), "User")
+	id = CreateTestUser(t, uniquePrefix("freeglesys"), utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, 'freegle@ilovefreegle.org', 1)", id)
 
 	// The API believes a lookup that found no account for a minute, and an earlier test may have made one.
@@ -72,8 +72,8 @@ func newOfferFixture(t *testing.T, name string, subject string) replyConfirmFixt
 	prefix := uniquePrefix(name)
 	groupID := CreateTestGroup(t, prefix)
 	f := replyConfirmFixture{groupID: groupID}
-	f.posterID = CreateTestUser(t, prefix+"_poster", "User")
-	f.replierID = CreateTestUser(t, prefix+"_replier", "User")
+	f.posterID = CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	f.replierID = CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	f.msgID = CreateTestMessage(t, f.posterID, groupID, subject+" ("+prefix+")", 51.5, -0.1)
 	f.chatID = CreateTestChatRoom(t, f.replierID, &f.posterID, nil, "User2User")
 	_, f.posterToken = CreateTestSession(t, f.posterID)
@@ -304,7 +304,7 @@ func TestReplyConfirm_ANoWithdrawsTheReplyAndWhatTheReplierWroteAfterIt(t *testi
 
 func TestReplyConfirm_ANoLeavesOtherChatsAndLaterMessagesAlone(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcnoother")
-	otherPoster := CreateTestUser(t, uniquePrefix("rcnoother_op"), "User")
+	otherPoster := CreateTestUser(t, uniquePrefix("rcnoother_op"), utils.SYSTEMROLE_USER)
 	otherChat := CreateTestChatRoom(t, f.replierID, &otherPoster, nil, "User2User")
 
 	replyID := f.reply(t, "Is it still available?", true)
@@ -451,7 +451,7 @@ func TestReplyConfirm_AMergeMovesTheQuestionWithTheReplyItHolds(t *testing.T) {
 	// go with them, or the foreign key deletes it with the old account and the reply it held is delivered unasked.
 	prefix := uniquePrefix("rcmerge_s")
 	_, adminToken := mergeAdminSetup(t, prefix)
-	survivor := CreateTestUser(t, prefix+"_survivor", "User")
+	survivor := CreateTestUser(t, prefix+"_survivor", utils.SYSTEMROLE_USER)
 	_, survivorToken := CreateTestSession(t, survivor)
 
 	require.Equal(t, 200, mergeUsers(t, adminToken, f.replierID, survivor))
@@ -531,7 +531,7 @@ func TestReplyConfirm_EveryCountOfRepliesLeavesOutAHeldOrRefusedReply(t *testing
 	t.Run("InAnotherChat", func(t *testing.T) {
 		f := held()
 		f.reply(t, "Is it still available?", true)
-		otherPoster := CreateTestUser(t, uniquePrefix("rccount_op"), "User")
+		otherPoster := CreateTestUser(t, uniquePrefix("rccount_op"), utils.SYSTEMROLE_USER)
 		otherChat := CreateTestChatRoom(t, f.replierID, &otherPoster, nil, "User2User")
 		resp := postChatmessages(t, fmt.Sprintf("/api/chat/%d/message", otherChat), map[string]interface{}{"message": "Hello"}, f.replierToken)
 		require.Equal(t, 200, resp.StatusCode)
@@ -598,8 +598,8 @@ func (f replyConfirmFixture) posterView(t *testing.T, replyID uint64) map[string
 func TestReplyConfirm_ARippleHeldReplyIsNotAskedAbout(t *testing.T) {
 	db := database.DBConn
 	f := newReplyConfirmFixture(t, "rcripple")
-	CreateTestMembership(t, f.posterID, f.groupID, "Member")
-	CreateTestMembership(t, f.replierID, f.groupID, "Member")
+	CreateTestMembership(t, f.posterID, f.groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, f.replierID, f.groupID, utils.ROLE_MEMBER)
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, f.replierID)
 
 	// A reach that exists and does not cover the replier, far to the east.
@@ -654,8 +654,8 @@ func TestReplyConfirm_MyPostsDoesNotListAHeldReply(t *testing.T) {
 	}
 	reply := func(t *testing.T, subject string) (replyConfirmFixture, uint64) {
 		f := newOfferFixture(t, "rcmyposts", subject)
-		CreateTestMembership(t, f.posterID, f.groupID, "Member")
-		CreateTestMembership(t, f.replierID, f.groupID, "Member")
+		CreateTestMembership(t, f.posterID, f.groupID, utils.ROLE_MEMBER)
+		CreateTestMembership(t, f.replierID, f.groupID, utils.ROLE_MEMBER)
 
 		return f, f.reply(t, "Is it still available?", true)
 	}
@@ -713,8 +713,8 @@ func TestReplyConfirm_AnsweringIsNotCountedAsAFreegleChatPromptAnswer(t *testing
 	// A prompt of another kind is a poster answering Freegle's question in their own chat, and it counts.
 	prefix := uniquePrefix("rcmetricdelivery")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: metric test", 51.5, -0.1)
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, nil, "User2User")
 	chatMsgID := seedPrompt(t, chatID, freegleID, msgID, "delivery", deliveryOptions)
@@ -844,7 +844,7 @@ func TestReplyConfirm_TheQuestionNamesTheReplierAsOtherMembersSeeThem(t *testing
 
 func TestReplyConfirm_AReplyInAChatWithSomeoneWhoDidNotPostIsNotAskedAbout(t *testing.T) {
 	f := newReplyConfirmFixture(t, "rcelsewhere")
-	other := CreateTestUser(t, uniquePrefix("rcelsewhere")+"_other", "User")
+	other := CreateTestUser(t, uniquePrefix("rcelsewhere")+"_other", utils.SYSTEMROLE_USER)
 	g := f
 	g.chatID = CreateTestChatRoom(t, f.replierID, &other, nil, "User2User")
 
@@ -870,7 +870,7 @@ func TestReplyConfirm_ALookupThatFindsNoFreegleAccountIsNotRepeatedForAMinute(t 
 	t.Cleanup(func() { firstreply.SetSystemUserMissCache(previous) })
 	firstreply.FlushSystemUserCache()
 	assert.EqualValues(t, 0, firstreply.SystemUserID(database.DBConn))
-	id := CreateTestUser(t, uniquePrefix("rcsystem"), "User")
+	id := CreateTestUser(t, uniquePrefix("rcsystem"), utils.SYSTEMROLE_USER)
 	database.DBConn.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", id, absent)
 	time.Sleep(60 * time.Millisecond)
 	before := lookups()
@@ -887,9 +887,9 @@ func TestReplyConfirm_ListingChatsLooksTheFreegleAccountUpOnceWhenThereIsNone(t 
 	t.Cleanup(firstreply.FlushSystemUserCache)
 
 	prefix := uniquePrefix("rclist")
-	me := CreateTestUser(t, prefix+"_me", "User")
+	me := CreateTestUser(t, prefix+"_me", utils.SYSTEMROLE_USER)
 	for i := 0; i < 4; i++ {
-		other := CreateTestUser(t, fmt.Sprintf("%s_other%d", prefix, i), "User")
+		other := CreateTestUser(t, fmt.Sprintf("%s_other%d", prefix, i), utils.SYSTEMROLE_USER)
 		chatID := CreateTestChatRoom(t, me, &other, nil, "User2User")
 		CreateTestChatMessage(t, chatID, other, "Hello")
 	}
@@ -1014,8 +1014,8 @@ func TestReplyConfirm_ApprovingAHeldReplyShowsItsQuestionAndRejectingItDoesNot(t
 		require.Equal(t, 200, f.answer(t, p.Chatmsgid, f.replierToken, "yes"))
 		database.DBConn.Exec("UPDATE chat_messages SET processingrequired = 0, processingsuccessful = 1, reviewrequired = 1, "+
 			"reportreason = 'Spam' WHERE id = ?", replyID)
-		modID := CreateTestUser(t, uniquePrefix("rcmod"), "User")
-		CreateTestMembership(t, modID, f.groupID, "Moderator")
+		modID := CreateTestUser(t, uniquePrefix("rcmod"), utils.SYSTEMROLE_USER)
+		CreateTestMembership(t, modID, f.groupID, utils.ROLE_MODERATOR)
 		_, modToken := CreateTestSession(t, modID)
 
 		assert.NotContains(t, f.messageTypes(t, f.posterToken), "Prompt", "held: no question for the poster")

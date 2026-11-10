@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	_ "modernc.org/sqlite"
 )
@@ -85,9 +86,9 @@ func parseFrames(t *testing.T, body []byte) (progress []map[string]interface{}, 
 func seedDumpTarget(t *testing.T, prefix string) uint64 {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	target := CreateTestUser(t, prefix+"_target", "User")
-	other := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, target, groupID, "Member")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	other := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, target, groupID, utils.ROLE_MEMBER)
 	CreateTestMessage(t, target, groupID, "DumpTest Offer Sofa", 55.9533, -3.1883)
 
 	chatID := CreateTestChatRoom(t, target, &other, nil, "User2User")
@@ -105,7 +106,7 @@ func TestUserDumpUnauthorized(t *testing.T) {
 
 func TestUserDumpForbidden(t *testing.T) {
 	prefix := uniquePrefix("dumpforbid")
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, uid)
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/user/%d/dump?jwt=%s", uid, token), nil))
 	assert.Equal(t, 403, resp.StatusCode)
@@ -113,7 +114,7 @@ func TestUserDumpForbidden(t *testing.T) {
 
 func TestUserDumpNotFound(t *testing.T) {
 	prefix := uniquePrefix("dumpnf")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/user/999999999/dump?jwt=%s", token), nil))
 	assert.Equal(t, 404, resp.StatusCode)
@@ -121,7 +122,7 @@ func TestUserDumpNotFound(t *testing.T) {
 
 func TestUserDumpApiKeyBypass(t *testing.T) {
 	prefix := uniquePrefix("dumpkey")
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	old := os.Getenv("USERDUMP_API_KEY")
 	os.Setenv("USERDUMP_API_KEY", "s3cret-dump-key")
@@ -148,7 +149,7 @@ func TestUserDumpApiKeyBypass(t *testing.T) {
 
 func TestUserDumpInternalKeyHeaderOnly(t *testing.T) {
 	prefix := uniquePrefix("dumpinternal")
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	oldInternal := os.Getenv("USERDUMP_INTERNAL_KEY")
 	oldAPI := os.Getenv("USERDUMP_API_KEY")
@@ -195,7 +196,7 @@ func TestUserDumpInternalKeyHeaderOnly(t *testing.T) {
 
 func TestUserDumpRawBuildsSqlite(t *testing.T) {
 	prefix := uniquePrefix("dumpraw")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
 	target := seedDumpTarget(t, prefix)
 
@@ -225,7 +226,7 @@ func TestUserDumpRawBuildsSqlite(t *testing.T) {
 
 func TestUserDumpFramedProtocol(t *testing.T) {
 	prefix := uniquePrefix("dumpframed")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
 	target := seedDumpTarget(t, prefix)
 
@@ -260,9 +261,9 @@ func TestUserDumpFramedProtocol(t *testing.T) {
 
 func TestUserDumpRedactsSecrets(t *testing.T) {
 	prefix := uniquePrefix("dumpredact")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	database.DBConn.Exec(
 		"INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, 'Native', ?, ?)",
@@ -283,9 +284,9 @@ func TestUserDumpRedactsSecrets(t *testing.T) {
 
 func TestUserDumpLokiViaFakeServer(t *testing.T) {
 	prefix := uniquePrefix("dumploki")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -313,9 +314,9 @@ func TestUserDumpLokiViaFakeServer(t *testing.T) {
 
 func TestUserDumpLokiErrorBecomesWarning(t *testing.T) {
 	prefix := uniquePrefix("dumplokierr")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
@@ -338,9 +339,9 @@ func TestUserDumpLokiErrorBecomesWarning(t *testing.T) {
 
 func TestUserDumpSentryViaFakeServer(t *testing.T) {
 	prefix := uniquePrefix("dumpsentry")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -364,9 +365,9 @@ func TestUserDumpSentryViaFakeServer(t *testing.T) {
 
 func TestUserDumpSentryNoTokenWarns(t *testing.T) {
 	prefix := uniquePrefix("dumpsentrynotok")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	oldTok := os.Getenv("SENTRY_AUTH_TOKEN")
 	os.Setenv("SENTRY_AUTH_TOKEN", "")

@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,12 +42,12 @@ func newHomeLockFixture(t *testing.T, name string) homeLockFixture {
 	f := homeLockFixture{}
 	f.home = CreateTestGroup(t, prefix+"_home")
 	f.recv = CreateTestGroup(t, prefix+"_recv")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	f.modHome = CreateTestUser(t, prefix+"_modh", "User")
-	f.modRecv = CreateTestUser(t, prefix+"_modr", "User")
-	CreateTestMembership(t, poster, f.home, "Member")
-	CreateTestMembership(t, f.modHome, f.home, "Moderator")
-	CreateTestMembership(t, f.modRecv, f.recv, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	f.modHome = CreateTestUser(t, prefix+"_modh", utils.SYSTEMROLE_USER)
+	f.modRecv = CreateTestUser(t, prefix+"_modr", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, f.home, utils.ROLE_MEMBER)
+	CreateTestMembership(t, f.modHome, f.home, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, f.modRecv, f.recv, utils.ROLE_MODERATOR)
 	_, f.tokHome = CreateTestSession(t, f.modHome)
 	_, f.tokRecv = CreateTestSession(t, f.modRecv)
 
@@ -125,7 +126,7 @@ func TestHomeBackToPendingKeepsOrganicMembership(t *testing.T) {
 
 	var poster uint64
 	db.Raw("SELECT fromuser FROM messages WHERE id = ?", f.msgID).Scan(&poster)
-	CreateTestMembership(t, poster, f.recv, "Member")
+	CreateTestMembership(t, poster, f.recv, utils.ROLE_MEMBER)
 
 	status, _ := postModAction(t, f.tokHome, f.msgID, "BackToPending", f.home)
 	require.Equal(t, 200, status)
@@ -192,11 +193,11 @@ func TestApprovePendingCopiesRespectsAnotherModeratorsHold(t *testing.T) {
 	prefix := uniquePrefix("hl_race")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_p", "User")
-	modA := CreateTestUser(t, prefix+"_a", "User")
-	modB := CreateTestUser(t, prefix+"_b", "User")
-	CreateTestMembership(t, modA, group, "Moderator")
-	CreateTestMembership(t, modB, group, "Moderator")
+	poster := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
+	modA := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	modB := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modA, group, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modB, group, utils.ROLE_MODERATOR)
 	msgID := createPendingMessage(t, poster, group, prefix)
 
 	// modB's hold has landed; modA's approval goes ahead having already passed the check.
@@ -223,9 +224,9 @@ func TestApprovePendingCopiesApprovesUnheldGroupsOnly(t *testing.T) {
 	db := database.DBConn
 	g1 := CreateTestGroup(t, prefix+"_1")
 	g2 := CreateTestGroup(t, prefix+"_2")
-	poster := CreateTestUser(t, prefix+"_p", "User")
-	modA := CreateTestUser(t, prefix+"_a", "User")
-	modB := CreateTestUser(t, prefix+"_b", "User")
+	poster := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
+	modA := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	modB := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
 	msgID := createPendingMessage(t, poster, g1, prefix)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, g2)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", modB, msgID, g2)

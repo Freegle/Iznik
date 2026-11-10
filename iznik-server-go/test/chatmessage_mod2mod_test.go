@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,15 +18,15 @@ import (
 func mod2modFixture(t *testing.T, prefix string) (groupID, chatID, modID, backupID, memberID uint64) {
 	db := database.DBConn
 	groupID = CreateTestGroup(t, prefix)
-	modID = CreateTestUser(t, prefix+"_mod", "User")
-	backupID = CreateTestUser(t, prefix+"_backup", "User")
-	memberID = CreateTestUser(t, prefix+"_member", "User")
+	modID = CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	backupID = CreateTestUser(t, prefix+"_backup", utils.SYSTEMROLE_USER)
+	memberID = CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
-	CreateTestMembership(t, modID, groupID, "Owner")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	db.Exec("UPDATE memberships SET settings = '{\"active\":1}' WHERE userid = ? AND groupid = ?", modID, groupID)
-	CreateTestMembership(t, backupID, groupID, "Moderator")
+	CreateTestMembership(t, backupID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET settings = '{\"active\":0}' WHERE userid = ? AND groupid = ?", backupID, groupID)
-	CreateTestMembership(t, memberID, groupID, "Member")
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
 	chatID = CreateTestChatRoom(t, 0, nil, &groupID, "Mod2Mod")
 	CreateTestChatMessage(t, chatID, modID, "Hello volunteers")
@@ -74,7 +75,7 @@ func TestGetChatMessagesMod2ModBackupModerator(t *testing.T) {
 }
 
 func TestGetChatMessagesMissingRoom(t *testing.T) {
-	modID := CreateTestUser(t, uniquePrefix("m2mnoroom"), "User")
+	modID := CreateTestUser(t, uniquePrefix("m2mnoroom"), utils.SYSTEMROLE_USER)
 	assert.Equal(t, http.StatusNotFound, getMod2ModMessages(t, 999999999, modID).StatusCode)
 }
 

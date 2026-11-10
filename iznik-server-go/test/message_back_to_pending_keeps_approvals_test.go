@@ -5,6 +5,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,8 +24,8 @@ type modCommunity struct {
 func addModCommunity(t *testing.T, name string) modCommunity {
 	prefix := uniquePrefix(name)
 	c := modCommunity{gid: CreateTestGroup(t, prefix)}
-	c.mod = CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, c.mod, c.gid, "Moderator")
+	c.mod = CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, c.mod, c.gid, utils.ROLE_MODERATOR)
 	_, c.tok = CreateTestSession(t, c.mod)
 	return c
 }

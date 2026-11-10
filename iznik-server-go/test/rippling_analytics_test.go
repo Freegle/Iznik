@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -98,7 +99,7 @@ func TestBullseye(t *testing.T) {
 // payload (every section present, no panic from the goroutine fan-out) even on an empty test DB.
 func TestRipplingAnalyticsEndpoint(t *testing.T) {
 	prefix := uniquePrefix("rippleanalytics")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	url := fmt.Sprintf("/api/rippling/analytics?jwt=%s&stratum=rural", token)
@@ -133,7 +134,7 @@ func TestRipplingAnalyticsEndpoint(t *testing.T) {
 // graph is unreachable here (an empty sample still produces well-formed stats).
 func TestRipplingAnalyticsDriveTimeEndpoint(t *testing.T) {
 	prefix := uniquePrefix("rippledrivetime")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	// Step 1: the SAMPLE endpoint returns the posts to score (fast — one query, no routing). An 8s

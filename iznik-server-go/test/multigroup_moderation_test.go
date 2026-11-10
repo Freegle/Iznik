@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,8 +28,8 @@ func multiGroupPost(t *testing.T, name string) (uint64, uint64, uint64, uint64, 
 	db := database.DBConn
 	prefix := uniquePrefix(name)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	home := CreateTestGroup(t, prefix+"_home")
 	second := CreateTestGroup(t, prefix+"_second")
 	third := CreateTestGroup(t, prefix+"_third")
@@ -41,7 +42,7 @@ func multiGroupPost(t *testing.T, name string) (uint64, uint64, uint64, uint64, 
 	}
 
 	for _, gid := range []uint64{home, second, third} {
-		CreateTestMembership(t, modID, gid, "Moderator")
+		CreateTestMembership(t, modID, gid, utils.ROLE_MODERATOR)
 	}
 	_, token := CreateTestSession(t, modID)
 
@@ -114,8 +115,8 @@ func TestApproveOnSeveralCommunitiesSkipsCopyHeldByAnother(t *testing.T) {
 	db := database.DBConn
 	home, second, third, msgID, _, token := multiGroupPost(t, "mg_held")
 
-	otherMod := CreateTestUser(t, uniquePrefix("mg_held_other"), "User")
-	CreateTestMembership(t, otherMod, third, "Moderator")
+	otherMod := CreateTestUser(t, uniquePrefix("mg_held_other"), utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherMod, third, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", otherMod, msgID, third)
 
 	status, result := postMultiAction(t, token, map[string]interface{}{
@@ -138,7 +139,7 @@ func TestApproveOnSeveralCommunitiesAllHeldIsRefused(t *testing.T) {
 	db := database.DBConn
 	home, second, third, msgID, _, token := multiGroupPost(t, "mg_allheld")
 
-	otherMod := CreateTestUser(t, uniquePrefix("mg_allheld_other"), "User")
+	otherMod := CreateTestUser(t, uniquePrefix("mg_allheld_other"), utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", otherMod, msgID)
 
 	status, _ := postMultiAction(t, token, map[string]interface{}{
@@ -155,8 +156,8 @@ func TestApproveOnSeveralCommunitiesSkipsCopyLockedByHome(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mg_locked")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	home := CreateTestGroup(t, prefix+"_home")
 	locked := CreateTestGroup(t, prefix+"_locked")
 	open := CreateTestGroup(t, prefix+"_open")
@@ -169,8 +170,8 @@ func TestApproveOnSeveralCommunitiesSkipsCopyLockedByHome(t *testing.T) {
 		"VALUES (?, ?, NOW(), 'Pending', 0, 1)", msgID, open)
 
 	// This moderator runs the two receiving communities, not the home one.
-	CreateTestMembership(t, modID, locked, "Moderator")
-	CreateTestMembership(t, modID, open, "Moderator")
+	CreateTestMembership(t, modID, locked, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, open, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	status, result := postMultiAction(t, token, map[string]interface{}{
@@ -189,13 +190,13 @@ func TestApproveOnSeveralCommunitiesSkipsCopyLockedByHome(t *testing.T) {
 func TestApproveCrossPostOnSeveralCommunitiesSendsOneMessage(t *testing.T) {
 	prefix := uniquePrefix("mg_xpost")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	first, second, _, msgID := crossPostedPost(t, prefix, posterID, "Pending")
 	// crossPostedPost leaves the first direct copy Approved; this one is still waiting.
 	database.DBConn.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ? AND groupid = ?", msgID, first)
-	CreateTestMembership(t, modID, first, "Moderator")
-	CreateTestMembership(t, modID, second, "Moderator")
+	CreateTestMembership(t, modID, first, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, second, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// The member posted to both directly, so either could write to them. The community
@@ -214,13 +215,13 @@ func TestApproveCrossPostOnSeveralCommunitiesSendsOneMessage(t *testing.T) {
 func TestRejectOnSeveralCommunitiesSendsOneMessage(t *testing.T) {
 	prefix := uniquePrefix("mg_reject")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	first, second, rippled, msgID := crossPostedPost(t, prefix, posterID, "Pending")
 	// crossPostedPost leaves the first direct copy Approved; this one is still waiting.
 	database.DBConn.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ? AND groupid = ?", msgID, first)
 	for _, gid := range []uint64{first, second, rippled} {
-		CreateTestMembership(t, modID, gid, "Moderator")
+		CreateTestMembership(t, modID, gid, utils.ROLE_MODERATOR)
 	}
 	_, token := CreateTestSession(t, modID)
 
@@ -246,7 +247,7 @@ func TestRejectOnSeveralCommunitiesSkipsCopyHeldByAnother(t *testing.T) {
 	db := database.DBConn
 	home, second, third, msgID, _, token := multiGroupPost(t, "mg_rejheld")
 
-	otherMod := CreateTestUser(t, uniquePrefix("mg_rejheld_other"), "User")
+	otherMod := CreateTestUser(t, uniquePrefix("mg_rejheld_other"), utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", otherMod, msgID, second)
 
 	status, result := postMultiAction(t, token, map[string]interface{}{

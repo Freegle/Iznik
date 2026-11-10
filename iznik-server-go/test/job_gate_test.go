@@ -293,7 +293,7 @@ func TestJobGate_SignedInOpensEvenOnAHostingAddress(t *testing.T) {
 	setGateSwitch(t, "force")
 
 	prefix := uniquePrefix("jobgate")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	wantDecision(t, getJob(t, app, jobID, gateReq{ip: azureUK, token: token}), true, "", "signed in, even with the gate forced")
@@ -310,7 +310,7 @@ func TestJobGate_APersistentTokenCountsAsSignedIn(t *testing.T) {
 	setGateSwitch(t, "")
 
 	prefix := uniquePrefix("jobgatepersist")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, _ := CreateTestSession(t, userID)
 	persistent := CreatePersistentToken(t, userID, sessionID)
 
@@ -336,7 +336,7 @@ func TestJobGate_AStaleSessionStillGetsTheJob(t *testing.T) {
 	setGateSwitch(t, "")
 
 	prefix := uniquePrefix("jobgatestale")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, token := CreateTestSession(t, userID)
 	database.DBConn.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
 

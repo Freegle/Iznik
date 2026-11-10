@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -584,8 +585,8 @@ func TestExposureAFailureIsReturnedAndDoesNotPanic(t *testing.T) {
 func TestExposureMergeMovesTheRowsToTheSurvivingAccount(t *testing.T) {
 	prefix := uniquePrefix("expmerge")
 	_, adminToken := mergeAdminSetup(t, prefix)
-	id1 := CreateTestUser(t, prefix+"_u1", "User") // merged away
-	id2 := CreateTestUser(t, prefix+"_u2", "User") // survives
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER) // merged away
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER) // survives
 	exposureClean(t, prefix)
 
 	require.NoError(t, ux.RecordExposure(database.DBConn, prefix, "items", id1, "email", 1, nil, nil))
@@ -604,8 +605,8 @@ func TestExposureMergeMovesTheRowsToTheSurvivingAccount(t *testing.T) {
 func TestExposureMergeLeavesARowThatClashesWhereItIsWithoutAnError(t *testing.T) {
 	prefix := uniquePrefix("expmergeclash")
 	_, adminToken := mergeAdminSetup(t, prefix)
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	exposureClean(t, prefix)
 
 	// The surviving account already has a row for subject 1, so the other account's row cannot move.
@@ -625,8 +626,8 @@ func TestExposureMergeLeavesARowThatClashesWhereItIsWithoutAnError(t *testing.T)
 func TestExposureMergeWorksWhenTheTableIsMissing(t *testing.T) {
 	prefix := uniquePrefix("expmergemissing")
 	_, adminToken := mergeAdminSetup(t, prefix)
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	require.NoError(t, db.Exec("RENAME TABLE ux_experiment_exposures TO ux_experiment_exposures_hidden").Error)

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,7 +27,7 @@ import (
 func TestForgetWritesGroupLeftLog(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("forget-left")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Approved')", userID, groupID)
 
@@ -57,7 +58,7 @@ func TestForgetWritesGroupLeftLog(t *testing.T) {
 func TestLimboUserWritesGroupLeftLogPerGroup(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("limbo-left")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	group1 := CreateTestGroup(t, prefix+"a")
 	group2 := CreateTestGroup(t, prefix+"b")
 	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Approved')", userID, group1)

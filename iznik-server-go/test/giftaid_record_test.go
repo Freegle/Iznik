@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/donations"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -50,9 +51,9 @@ func findNoResponse(list []donations.GiftAidNoResponse, userid uint64) *donation
 
 func TestRecordGiftAidDeclinedOnBehalf(t *testing.T) {
 	prefix := uniquePrefix("ga_rec_decl")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	defer db.Exec("DELETE FROM giftaid WHERE userid = ?", donorID)
 
@@ -76,9 +77,9 @@ func TestRecordGiftAidDeclinedOnBehalf(t *testing.T) {
 func TestRecordGiftAidDeclinedReplacesConsent(t *testing.T) {
 	// A donor who gave consent and later writes to say they no longer pay tax.
 	prefix := uniquePrefix("ga_rec_withdraw")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec(`INSERT INTO giftaid (userid, timestamp, period, fullname, homeaddress) VALUES (?, '2022-01-01 00:00:00', 'Future', 'Donor Name', '1 Street')`, donorID)
 	defer db.Exec("DELETE FROM giftaid WHERE userid = ?", donorID)
@@ -97,9 +98,9 @@ func TestRecordGiftAidDeclinedReplacesConsent(t *testing.T) {
 
 func TestRecordGiftAidNoResponseCanRepeat(t *testing.T) {
 	prefix := uniquePrefix("ga_rec_nr")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("INSERT INTO users_donations (userid, type, Payer, PayerDisplayName, GrossAmount, source) VALUES (?, 'BankTransfer', 'Test', 'Test', 25.00, 'BankTransfer')", donorID)
 	defer db.Exec("DELETE FROM users_donations WHERE userid = ?", donorID)
@@ -130,12 +131,12 @@ func TestRecordGiftAidNoResponseCanRepeat(t *testing.T) {
 
 func TestRecordGiftAidNoResponseRefusedOnceAnswered(t *testing.T) {
 	prefix := uniquePrefix("ga_rec_nr_ans")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 	db := database.DBConn
 
 	for _, period := range []string{"Future", "Declined"} {
-		donorID := CreateTestUser(t, prefix+"_"+period, "User")
+		donorID := CreateTestUser(t, prefix+"_"+period, utils.SYSTEMROLE_USER)
 		db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, ?, 'Donor', '1 Street')`, donorID, period)
 
 		status, body := recordGiftAid(t, adminToken, donorID, "NoResponse")
@@ -153,9 +154,9 @@ func TestRecordGiftAidNoResponseAllowedAfterGiveUp(t *testing.T) {
 	// "Give Up" in ModTools deletes a declaration whose details could not be used. The donor has
 	// then not answered usably, so asking again and hearing nothing can be recorded.
 	prefix := uniquePrefix("ga_rec_nr_gu")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress, deleted) VALUES (?, 'Future', 'Donor', '', NOW())`, donorID)
 	defer db.Exec("DELETE FROM giftaid WHERE userid = ?", donorID)
@@ -168,9 +169,9 @@ func TestRecordGiftAidNoResponseAllowedAfterGiveUp(t *testing.T) {
 
 func TestRecordGiftAidBadRequests(t *testing.T) {
 	prefix := uniquePrefix("ga_rec_bad")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 
 	status, _ := recordGiftAid(t, adminToken, donorID, "Maybe")
 	assert.Equal(t, 400, status)
@@ -184,9 +185,9 @@ func TestRecordGiftAidBadRequests(t *testing.T) {
 
 func TestRecordGiftAidNeedsGiftAidPermission(t *testing.T) {
 	prefix := uniquePrefix("ga_rec_perm")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	status, _ := recordGiftAid(t, token, donorID, "Declined")
@@ -208,11 +209,11 @@ func TestRecordGiftAidNeedsGiftAidPermission(t *testing.T) {
 
 func TestRecordGiftAidWithGiftAidPermission(t *testing.T) {
 	prefix := uniquePrefix("ga_rec_permok")
-	volID := CreateTestUser(t, prefix+"_vol", "User")
+	volID := CreateTestUser(t, prefix+"_vol", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", volID)
 	_, token := CreateTestSession(t, volID)
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM giftaid_asks WHERE userid = ?", donorID)
 
 	status, _ := recordGiftAid(t, token, donorID, "NoResponse")
@@ -221,13 +222,13 @@ func TestRecordGiftAidWithGiftAidPermission(t *testing.T) {
 
 func TestNoResponseListLeavesOutAnsweredDonors(t *testing.T) {
 	prefix := uniquePrefix("ga_nr_list")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 	db := database.DBConn
 
-	asked := CreateTestUser(t, prefix+"_asked", "User")
-	declared := CreateTestUser(t, prefix+"_declared", "User")
-	never := CreateTestUser(t, prefix+"_never", "User")
+	asked := CreateTestUser(t, prefix+"_asked", utils.SYSTEMROLE_USER)
+	declared := CreateTestUser(t, prefix+"_declared", utils.SYSTEMROLE_USER)
+	never := CreateTestUser(t, prefix+"_never", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO giftaid_asks (userid, askedby, timestamp) VALUES (?, NULL, '2026-09-01 10:00:00'), (?, NULL, '2026-10-01 10:00:00')", asked, declared)
 	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'Future', 'Donor', '1 Street')`, declared)
 	defer db.Exec("DELETE FROM giftaid WHERE userid IN (?, ?, ?)", asked, declared, never)
@@ -251,8 +252,8 @@ func TestNoResponseListLeavesOutAnsweredDonors(t *testing.T) {
 func TestSetGiftAidByDonorClearsRecordedBy(t *testing.T) {
 	// A volunteer recorded a decline; the donor then fills in the form themselves.
 	prefix := uniquePrefix("ga_rec_own")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	_, donorToken := CreateTestSession(t, donorID)
 	db := database.DBConn
 	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress, recordedby) VALUES (?, 'Declined', 'Donor', '', ?)`, donorID, adminID)
@@ -271,9 +272,9 @@ func TestSetGiftAidByDonorClearsRecordedBy(t *testing.T) {
 
 func TestSearchGiftAidSaysWhoRecordedIt(t *testing.T) {
 	prefix := uniquePrefix("ga_rec_search")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	name := "RecordedSearch_" + prefix
 	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'Future', ?, '')`, donorID, name)
@@ -299,8 +300,8 @@ func TestSearchGiftAidSaysWhoRecordedIt(t *testing.T) {
 
 func TestGetOwnGiftAidDoesNotNameTheVolunteer(t *testing.T) {
 	prefix := uniquePrefix("ga_rec_ownget")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	_, donorToken := CreateTestSession(t, donorID)
 	db := database.DBConn
 	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress, recordedby) VALUES (?, 'Declined', 'Donor', '', ?)`, donorID, adminID)
@@ -315,8 +316,8 @@ func TestMergeMovesGiftAidAsks(t *testing.T) {
 	prefix := uniquePrefix("merge_gaasks")
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO giftaid_asks (userid, askedby) VALUES (?, NULL), (?, NULL)", id1, id2)
 	defer db.Exec("DELETE FROM giftaid_asks WHERE userid IN (?, ?)", id1, id2)
 

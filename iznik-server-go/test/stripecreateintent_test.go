@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,7 +25,7 @@ func TestCreateIntent_RejectsUnauthenticated(t *testing.T) {
 func TestCreateIntent_RejectsBelowMinimum(t *testing.T) {
 	prefix := uniquePrefix("intlow")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 	_, jwt := CreateTestSession(t, userID)
 
@@ -41,7 +42,7 @@ func TestCreateIntent_RejectsBelowMinimum(t *testing.T) {
 func TestCreateIntent_RejectsAboveMaximum(t *testing.T) {
 	prefix := uniquePrefix("inthigh")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 	_, jwt := CreateTestSession(t, userID)
 
@@ -60,7 +61,7 @@ func TestCreateIntent_RejectsAboveMaximum(t *testing.T) {
 func TestCreateIntent_AcceptsAmountAsString(t *testing.T) {
 	prefix := uniquePrefix("intstr")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 	_, jwt := CreateTestSession(t, userID)
 
@@ -78,7 +79,7 @@ func TestCreateIntent_AcceptsAmountAsString(t *testing.T) {
 func TestCreateIntent_AcceptsAmountAsNumber(t *testing.T) {
 	prefix := uniquePrefix("intnum")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 	_, jwt := CreateTestSession(t, userID)
 
@@ -97,7 +98,7 @@ func TestCreateIntent_AcceptsAmountAsNumber(t *testing.T) {
 func TestCreateSubscription_AcceptsAmountAsString(t *testing.T) {
 	prefix := uniquePrefix("substr")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 	_, jwt := CreateTestSession(t, userID)
 

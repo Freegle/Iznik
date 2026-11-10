@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -29,10 +30,10 @@ func TestReplyEligibleGridGate(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("spbre")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, viewerID, group, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, viewerID, group, utils.ROLE_MEMBER)
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, viewerID)
 
 	mid := CreateTestMessage(t, posterID, group, "OFFER: single point grid (spbre)", 51.5, -0.1)
@@ -87,10 +88,10 @@ func TestChatReplyGateGridGate(t *testing.T) {
 
 	prefix := uniquePrefix("spbchat")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, replierID, groupID, utils.ROLE_MEMBER)
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, replierID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: chat gate grid (spbchat)", 51.5, -0.1)

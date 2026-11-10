@@ -23,6 +23,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -94,7 +95,7 @@ func getModtoolsLockdown(t *testing.T, token string) (*http.Response, map[string
 
 func TestGetLockdownPublicShape(t *testing.T) {
 	prefix := uniquePrefix("ld_pub")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "test incident "+prefix)
@@ -133,15 +134,15 @@ func TestGetLockdownPublicShape(t *testing.T) {
 
 func TestGetModtoolsLockdownAnyModerator(t *testing.T) {
 	prefix := uniquePrefix("ld_mt_mod")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, supportToken, "mod visibility "+prefix)
 	defer cleanupIncident(t, incidentID)
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	resp, result := getModtoolsLockdown(t, modToken)
@@ -159,7 +160,7 @@ func TestGetModtoolsLockdownAnyModerator(t *testing.T) {
 
 func TestGetModtoolsLockdownRefusesPlainMember(t *testing.T) {
 	prefix := uniquePrefix("ld_mt_member")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getModtoolsLockdown(t, token)
@@ -180,7 +181,7 @@ func TestPatchLockdownRefusesUnauthenticated(t *testing.T) {
 
 func TestPatchLockdownRefusesPlainMember(t *testing.T) {
 	prefix := uniquePrefix("ld_patch_member")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := patchLockdown(t, token, map[string]interface{}{"action": "press", "reason": "x"})
@@ -190,8 +191,8 @@ func TestPatchLockdownRefusesPlainMember(t *testing.T) {
 func TestPatchLockdownRefusesPlainModerator(t *testing.T) {
 	prefix := uniquePrefix("ld_patch_mod")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	resp, _ := patchLockdown(t, token, map[string]interface{}{"action": "press", "reason": "x"})
@@ -202,7 +203,7 @@ func TestPatchLockdownRefusesPlainModerator(t *testing.T) {
 
 func TestPatchLockdownPressFullPreset(t *testing.T) {
 	prefix := uniquePrefix("ld_press")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	resp, result := patchLockdown(t, token, map[string]interface{}{"action": "press", "reason": "spam wave " + prefix})
@@ -225,7 +226,7 @@ func TestPatchLockdownPressFullPreset(t *testing.T) {
 
 func TestPatchLockdownPressRequiresReason(t *testing.T) {
 	prefix := uniquePrefix("ld_press_noreason")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	resp, _ := patchLockdown(t, token, map[string]interface{}{"action": "press"})
@@ -234,7 +235,7 @@ func TestPatchLockdownPressRequiresReason(t *testing.T) {
 
 func TestPatchLockdownPressRefusesWhenAlreadyActive(t *testing.T) {
 	prefix := uniquePrefix("ld_press_twice")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "first "+prefix)
@@ -248,7 +249,7 @@ func TestPatchLockdownPressRefusesWhenAlreadyActive(t *testing.T) {
 
 func TestPatchLockdownSurfacesPartialUpdate(t *testing.T) {
 	prefix := uniquePrefix("ld_surfaces")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "surfaces "+prefix)
@@ -269,7 +270,7 @@ func TestPatchLockdownSurfacesPartialUpdate(t *testing.T) {
 
 func TestPatchLockdownSurfacesRefusesWhenNotActive(t *testing.T) {
 	prefix := uniquePrefix("ld_surfaces_inactive")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "close then surfaces "+prefix)
@@ -294,7 +295,7 @@ func TestPatchLockdownSurfacesRefusesWhenNotActive(t *testing.T) {
 // calls loadStateFrom directly), so this only passes once PatchLockdown reads the real row.
 func TestPatchLockdownPressRefusesEvenWithStaleCacheSayingInactive(t *testing.T) {
 	prefix := uniquePrefix("ld_press_stale_cache")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "stale cache press "+prefix)
@@ -317,7 +318,7 @@ func TestPatchLockdownPressRefusesEvenWithStaleCacheSayingInactive(t *testing.T)
 func TestPatchLockdownSurfacesMergesFromFreshRowNotStaleCache(t *testing.T) {
 	prefix := uniquePrefix("ld_surf_fresh_row")
 	db := database.DBConn
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "surfaces fresh row "+prefix)
@@ -350,7 +351,7 @@ func TestPatchLockdownSurfacesMergesFromFreshRowNotStaleCache(t *testing.T) {
 
 func TestPatchLockdownNoticeAllowedAfterClose(t *testing.T) {
 	prefix := uniquePrefix("ld_notice_afterclose")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "notice after close "+prefix)
@@ -368,7 +369,7 @@ func TestPatchLockdownNoticeAllowedAfterClose(t *testing.T) {
 // seeing "we're dealing with a spam attack" long after the incident that caused it had ended.
 func TestGetLockdownNoticeClearedOnClose(t *testing.T) {
 	prefix := uniquePrefix("ld_notice_close_sec")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "notice close security "+prefix)
@@ -403,7 +404,7 @@ func TestGetLockdownNoticeClearedOnClose(t *testing.T) {
 func TestGetLockdownNoticeAfterCloseExpiresAfter24Hours(t *testing.T) {
 	prefix := uniquePrefix("ld_notice_expire")
 	db := database.DBConn
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "notice expiry "+prefix)
@@ -441,7 +442,7 @@ func TestGetLockdownNoticeAfterCloseExpiresAfter24Hours(t *testing.T) {
 
 func TestPatchLockdownLiftall(t *testing.T) {
 	prefix := uniquePrefix("ld_liftall")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "liftall "+prefix)
@@ -460,7 +461,7 @@ func TestPatchLockdownLiftall(t *testing.T) {
 
 func TestPatchLockdownClose(t *testing.T) {
 	prefix := uniquePrefix("ld_close")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "close "+prefix)
@@ -482,7 +483,7 @@ func TestPatchLockdownClose(t *testing.T) {
 
 func TestPatchLockdownCloseRequiresEndnote(t *testing.T) {
 	prefix := uniquePrefix("ld_close_noendnote")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "close no endnote "+prefix)
@@ -496,7 +497,7 @@ func TestPatchLockdownCloseRequiresEndnote(t *testing.T) {
 
 func TestGetModtoolsLockdownHistory(t *testing.T) {
 	prefix := uniquePrefix("ld_history")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "history "+prefix)
@@ -531,7 +532,7 @@ func TestGetModtoolsLockdownHistory(t *testing.T) {
 // can say which area a row lifted.
 func TestGetModtoolsLockdownHistorySurfaces(t *testing.T) {
 	prefix := uniquePrefix("ld_histsurf")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "history surfaces "+prefix)
@@ -560,7 +561,7 @@ func TestGetModtoolsLockdownHistorySurfaces(t *testing.T) {
 // for GET /modtools/lockdown/stats.
 func TestGetModtoolsLockdownHistoryEndedByName(t *testing.T) {
 	prefix := uniquePrefix("ld_history_endedby")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "history endedby "+prefix)
@@ -588,8 +589,8 @@ func TestGetModtoolsLockdownHistoryEndedByName(t *testing.T) {
 func TestGetModtoolsLockdownHistoryRefusesPlainModerator(t *testing.T) {
 	prefix := uniquePrefix("ld_history_mod")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	req := httptest.NewRequest("GET", "/api/modtools/lockdown/history?jwt="+token, nil)
@@ -607,10 +608,10 @@ func TestGetModtoolsLockdownHistoryRefusesPlainModerator(t *testing.T) {
 func TestGetModtoolsLockdownStatsLeakedChatExcludesReleasedHolds(t *testing.T) {
 	prefix := uniquePrefix("ld_leaked_chat")
 	db := database.DBConn
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	recipientID := CreateTestUser(t, prefix+"_recip", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+	recipientID := CreateTestUser(t, prefix+"_recip", utils.SYSTEMROLE_USER)
 
 	incidentID := pressLockdown(t, token, "leaked chat "+prefix)
 	defer cleanupIncident(t, incidentID, senderID, recipientID)
@@ -648,8 +649,8 @@ func TestGetModtoolsLockdownStatsLeakedChatExcludesReleasedHolds(t *testing.T) {
 func TestGetModtoolsLockdownStatsRefusesPlainModerator(t *testing.T) {
 	prefix := uniquePrefix("ld_stats_mod")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	req := httptest.NewRequest("GET", "/api/modtools/lockdown/stats?jwt="+token, nil)

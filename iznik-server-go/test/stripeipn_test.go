@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -39,7 +40,7 @@ func TestStripeIPN_ChargeSucceeded(t *testing.T) {
 	db := database.DBConn
 
 	// Create a test user with an email.
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 
 	// Send a charge.succeeded event with the user's ID in metadata.
@@ -76,7 +77,7 @@ func TestStripeIPN_MatchByBillingEmail(t *testing.T) {
 	prefix := uniquePrefix("stripemail")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 
 	// Send event without metadata UID — should match by billing email.
@@ -192,7 +193,7 @@ func TestStripeIPN_RecurringFirstDonation(t *testing.T) {
 	prefix := uniquePrefix("striperecur")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 
 	// First recurring donation — should trigger thank-you.
@@ -224,7 +225,7 @@ func TestStripeIPN_GiftAidNotification(t *testing.T) {
 	prefix := uniquePrefix("stripegift")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 
 	chargeID := "ch_test_" + prefix
@@ -251,7 +252,7 @@ func TestStripeIPN_MatchByPriorDonation(t *testing.T) {
 	prefix := uniquePrefix("stripeprior")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	billingEmail := prefix + "_card@external.com" // not in users_emails
 	priorTxn := "ch_prior_" + prefix
 	chargeID := "ch_test_" + prefix
@@ -283,7 +284,7 @@ func TestStripeIPN_MatchByCanon(t *testing.T) {
 	prefix := uniquePrefix("stripecanon")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	// Gmail ignores dots in the username, so canon matches the two; other domains keep them.
 	billingEmail := prefix + ".donor@gmail.com"
 	storedEmail := prefix + "donor@gmail.com"
@@ -323,7 +324,7 @@ func TestStripeIPN_GiftAid_SoftDeletedDeclarationGetsNotification(t *testing.T) 
 	prefix := uniquePrefix("stripegadel")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 
 	// Insert a soft-deleted 'All' declaration: the donor previously opted in for
@@ -359,7 +360,7 @@ func TestStripeIPN_GiftAid_LiveDeclarationSuppressesNotification(t *testing.T) {
 	prefix := uniquePrefix("stripegalive")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 
 	// Live 'All' declaration — donor has an ongoing gift aid agreement.
@@ -392,7 +393,7 @@ func TestStripeIPN_GiftAid_DuplicateInsertNoError(t *testing.T) {
 	prefix := uniquePrefix("stripegadup")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 
 	// First charge — creates a GiftAid notification.

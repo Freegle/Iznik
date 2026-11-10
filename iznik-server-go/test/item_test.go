@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/item"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -12,7 +13,7 @@ func TestFetchForMessageWithValidMessage(t *testing.T) {
 
 	// Create test data
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a message with specific coordinates
 	messageID := CreateTestMessage(t, userID, groupID, "Test Chair for Item Test", 55.9533, -3.1883)
@@ -34,7 +35,7 @@ func TestFetchForMessageWithNoItem(t *testing.T) {
 
 	// Create test data
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a message without linking an item
 	messageID := CreateTestMessage(t, userID, groupID, "Test Item No Link", 55.9533, -3.1883)
