@@ -3327,7 +3327,7 @@ func TestGetUserFetchMT_MembershipsReturned(t *testing.T) {
 	for _, m := range u.Memberships {
 		if m.Groupid == groupID {
 			found = true
-			assert.Equal(t, "Member", m.Role)
+			assert.Equal(t, utils.ROLE_MEMBER, m.Role)
 			break
 		}
 	}

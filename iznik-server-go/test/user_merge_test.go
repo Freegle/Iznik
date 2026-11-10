@@ -95,7 +95,7 @@ func TestMergeMembershipTransferred(t *testing.T) {
 
 	var role string
 	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&role)
-	assert.Equal(t, "Member", role, "id2 should inherit id1's membership")
+	assert.Equal(t, utils.ROLE_MEMBER, role, "id2 should inherit id1's membership")
 
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ?", id1).Scan(&count)
@@ -118,7 +118,7 @@ func TestMergeMembershipRoleTakesMax(t *testing.T) {
 
 	var role string
 	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&role)
-	assert.Equal(t, "Moderator", role, "merged user should have the higher role")
+	assert.Equal(t, utils.ROLE_MODERATOR, role, "merged user should have the higher role")
 }
 
 func TestMergeMembershipConflictTakesOlderDate(t *testing.T) {
@@ -477,7 +477,7 @@ func TestMergeSystemroleTakesMax(t *testing.T) {
 
 	var role string
 	db.Raw("SELECT systemrole FROM users WHERE id = ?", id2).Scan(&role)
-	assert.Equal(t, "Support", role, "id2 should have the higher systemrole after merge")
+	assert.Equal(t, utils.SYSTEMROLE_SUPPORT, role, "id2 should have the higher systemrole after merge")
 }
 
 func TestMergeAddedDateTakesOldest(t *testing.T) {

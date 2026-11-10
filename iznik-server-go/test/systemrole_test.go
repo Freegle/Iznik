@@ -21,7 +21,7 @@ func readSystemrole(userID uint64) string {
 func TestSyncSystemRole_DemotesStaleModerator(t *testing.T) {
 	uid := CreateTestUser(t, uniquePrefix("syncrole_demote"), utils.SYSTEMROLE_MODERATOR)
 	user.SyncSystemRole(database.DBConn, uid)
-	assert.Equal(t, "User", readSystemrole(uid))
+	assert.Equal(t, utils.SYSTEMROLE_USER, readSystemrole(uid))
 }
 
 // Still a Moderator on a group → keep Moderator systemrole.
@@ -31,7 +31,7 @@ func TestSyncSystemRole_KeepsModeratorWithModMembership(t *testing.T) {
 	gid := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, uid, gid, utils.ROLE_MODERATOR)
 	user.SyncSystemRole(database.DBConn, uid)
-	assert.Equal(t, "Moderator", readSystemrole(uid))
+	assert.Equal(t, utils.SYSTEMROLE_MODERATOR, readSystemrole(uid))
 }
 
 // Owner counts as a mod role too → keep Moderator systemrole.
@@ -41,7 +41,7 @@ func TestSyncSystemRole_KeepsModeratorWithOwnerMembership(t *testing.T) {
 	gid := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, uid, gid, utils.ROLE_OWNER)
 	user.SyncSystemRole(database.DBConn, uid)
-	assert.Equal(t, "Moderator", readSystemrole(uid))
+	assert.Equal(t, utils.SYSTEMROLE_MODERATOR, readSystemrole(uid))
 }
 
 // The mirror: a plain User who holds a mod membership is promoted to Moderator.
@@ -51,7 +51,7 @@ func TestSyncSystemRole_PromotesUserWithModMembership(t *testing.T) {
 	gid := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, uid, gid, utils.ROLE_MODERATOR)
 	user.SyncSystemRole(database.DBConn, uid)
-	assert.Equal(t, "Moderator", readSystemrole(uid))
+	assert.Equal(t, utils.SYSTEMROLE_MODERATOR, readSystemrole(uid))
 }
 
 // Support/Admin outrank Moderator and are set deliberately — never auto-changed,
@@ -59,18 +59,18 @@ func TestSyncSystemRole_PromotesUserWithModMembership(t *testing.T) {
 func TestSyncSystemRole_LeavesSupportUntouched(t *testing.T) {
 	uid := CreateTestUser(t, uniquePrefix("syncrole_support"), utils.SYSTEMROLE_SUPPORT)
 	user.SyncSystemRole(database.DBConn, uid)
-	assert.Equal(t, "Support", readSystemrole(uid))
+	assert.Equal(t, utils.SYSTEMROLE_SUPPORT, readSystemrole(uid))
 }
 
 func TestSyncSystemRole_LeavesAdminUntouched(t *testing.T) {
 	uid := CreateTestUser(t, uniquePrefix("syncrole_admin"), utils.SYSTEMROLE_ADMIN)
 	user.SyncSystemRole(database.DBConn, uid)
-	assert.Equal(t, "Admin", readSystemrole(uid))
+	assert.Equal(t, utils.SYSTEMROLE_ADMIN, readSystemrole(uid))
 }
 
 // A plain User with no mod membership stays a User (no spurious promotion).
 func TestSyncSystemRole_UserWithNoMembershipStaysUser(t *testing.T) {
 	uid := CreateTestUser(t, uniquePrefix("syncrole_user"), utils.SYSTEMROLE_USER)
 	user.SyncSystemRole(database.DBConn, uid)
-	assert.Equal(t, "User", readSystemrole(uid))
+	assert.Equal(t, utils.SYSTEMROLE_USER, readSystemrole(uid))
 }

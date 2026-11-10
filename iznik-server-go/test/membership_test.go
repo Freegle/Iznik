@@ -296,7 +296,7 @@ func TestDeleteMembershipsLeaveGroup(t *testing.T) {
 func TestDeleteMembershipsSelfLeaveRefusedForModeratorRoles(t *testing.T) {
 	db := database.DBConn
 
-	for _, role := range []string{"Owner", "Moderator"} {
+	for _, role := range []string{utils.ROLE_OWNER, utils.ROLE_MODERATOR} {
 		prefix := uniquePrefix("mem_selfleave_" + role)
 		userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
@@ -910,12 +910,12 @@ func TestPatchMembershipsOwnerPromotesMemberToModerator(t *testing.T) {
 	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
-	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Moderator")
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, utils.ROLE_MODERATOR)
 	assert.Equal(t, 200, resp.StatusCode)
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
-	assert.Equal(t, "Moderator", getActualRole(groupID, memberID))
+	assert.Equal(t, utils.ROLE_MODERATOR, getActualRole(groupID, memberID))
 
 	// Verify log entry.
 	db := database.DBConn
@@ -940,11 +940,11 @@ func TestPatchMembershipsPromoteSetsSystemroleModerator(t *testing.T) {
 	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
-	assert.Equal(t, "User", getActualSystemrole(memberID), "baseline")
+	assert.Equal(t, utils.SYSTEMROLE_USER, getActualSystemrole(memberID), "baseline")
 
-	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Moderator")
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, utils.ROLE_MODERATOR)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "Moderator", getActualSystemrole(memberID),
+	assert.Equal(t, utils.SYSTEMROLE_MODERATOR, getActualSystemrole(memberID),
 		"Member→Moderator must flip users.systemrole to Moderator (V1 parity)")
 }
 
@@ -958,9 +958,9 @@ func TestPatchMembershipsPromoteToOwnerSetsSystemroleModerator(t *testing.T) {
 	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
-	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Owner")
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, utils.ROLE_OWNER)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "Moderator", getActualSystemrole(memberID),
+	assert.Equal(t, utils.SYSTEMROLE_MODERATOR, getActualSystemrole(memberID),
 		"Member→Owner must still flip users.systemrole to Moderator (V1 parity)")
 }
 
@@ -975,9 +975,9 @@ func TestPatchMembershipsPromoteDoesNotDemoteSupportOrAdmin(t *testing.T) {
 	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	CreateTestMembership(t, adminID, groupID, utils.ROLE_MEMBER)
 
-	resp := patchMembershipRole(t, ownerToken, groupID, adminID, "Moderator")
+	resp := patchMembershipRole(t, ownerToken, groupID, adminID, utils.ROLE_MODERATOR)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "Admin", getActualSystemrole(adminID),
+	assert.Equal(t, utils.SYSTEMROLE_ADMIN, getActualSystemrole(adminID),
 		"Admin systemrole must NOT be overwritten by a per-group promotion (V1 guard)")
 }
 
@@ -990,9 +990,9 @@ func TestPatchMembershipsDemoteToMemberClearsSystemroleWhenLastModGroup(t *testi
 	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
-	resp := patchMembershipRole(t, ownerToken, groupID, modID, "Member")
+	resp := patchMembershipRole(t, ownerToken, groupID, modID, utils.ROLE_MEMBER)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "User", getActualSystemrole(modID),
+	assert.Equal(t, utils.SYSTEMROLE_USER, getActualSystemrole(modID),
 		"demoting the user's last Mod/Owner group must revert systemrole to User (V1 parity)")
 }
 
@@ -1010,9 +1010,9 @@ func TestPatchMembershipsDemoteKeepsSystemroleWhenStillModElsewhere(t *testing.T
 	CreateTestMembership(t, modID, groupID2, utils.ROLE_MODERATOR)
 
 	// Demote on group 1 only — user is still a Moderator on group 2.
-	resp := patchMembershipRole(t, ownerToken, groupID1, modID, "Member")
+	resp := patchMembershipRole(t, ownerToken, groupID1, modID, utils.ROLE_MEMBER)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "Moderator", getActualSystemrole(modID),
+	assert.Equal(t, utils.SYSTEMROLE_MODERATOR, getActualSystemrole(modID),
 		"systemrole must stay Moderator while the user still holds Mod/Owner on another group (V1 parity)")
 }
 
@@ -1028,9 +1028,9 @@ func TestPatchMembershipsDemoteDoesNotTouchSupportSystemrole(t *testing.T) {
 	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	CreateTestMembership(t, adminID, groupID, utils.ROLE_MODERATOR)
 
-	resp := patchMembershipRole(t, ownerToken, groupID, adminID, "Member")
+	resp := patchMembershipRole(t, ownerToken, groupID, adminID, utils.ROLE_MEMBER)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "Admin", getActualSystemrole(adminID),
+	assert.Equal(t, utils.SYSTEMROLE_ADMIN, getActualSystemrole(adminID),
 		"Admin systemrole must survive a per-group demote (V1 demote runs only when current=Moderator)")
 }
 
@@ -1043,12 +1043,12 @@ func TestPatchMembershipsOwnerPromotesMemberToOwner(t *testing.T) {
 	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
-	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Owner")
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, utils.ROLE_OWNER)
 	assert.Equal(t, 200, resp.StatusCode)
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
-	assert.Equal(t, "Owner", getActualRole(groupID, memberID))
+	assert.Equal(t, utils.ROLE_OWNER, getActualRole(groupID, memberID))
 }
 
 func TestPatchMembershipsOwnerDemotesModeratorToMember(t *testing.T) {
@@ -1060,9 +1060,9 @@ func TestPatchMembershipsOwnerDemotesModeratorToMember(t *testing.T) {
 	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
-	resp := patchMembershipRole(t, ownerToken, groupID, modID, "Member")
+	resp := patchMembershipRole(t, ownerToken, groupID, modID, utils.ROLE_MEMBER)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "Member", getActualRole(groupID, modID))
+	assert.Equal(t, utils.ROLE_MEMBER, getActualRole(groupID, modID))
 }
 
 func TestPatchMembershipsModeratorCannotPromoteToModerator(t *testing.T) {
@@ -1074,10 +1074,10 @@ func TestPatchMembershipsModeratorCannotPromoteToModerator(t *testing.T) {
 	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
-	resp := patchMembershipRole(t, modToken, groupID, memberID, "Moderator")
+	resp := patchMembershipRole(t, modToken, groupID, memberID, utils.ROLE_MODERATOR)
 	assert.Equal(t, 403, resp.StatusCode)
 	// Role must not have changed.
-	assert.Equal(t, "Member", getActualRole(groupID, memberID))
+	assert.Equal(t, utils.ROLE_MEMBER, getActualRole(groupID, memberID))
 }
 
 func TestPatchMembershipsModeratorCannotPromoteToOwner(t *testing.T) {
@@ -1089,9 +1089,9 @@ func TestPatchMembershipsModeratorCannotPromoteToOwner(t *testing.T) {
 	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
-	resp := patchMembershipRole(t, modToken, groupID, memberID, "Owner")
+	resp := patchMembershipRole(t, modToken, groupID, memberID, utils.ROLE_OWNER)
 	assert.Equal(t, 403, resp.StatusCode)
-	assert.Equal(t, "Member", getActualRole(groupID, memberID))
+	assert.Equal(t, utils.ROLE_MEMBER, getActualRole(groupID, memberID))
 }
 
 func TestPatchMembershipsModeratorCanDemoteToMember(t *testing.T) {
@@ -1104,9 +1104,9 @@ func TestPatchMembershipsModeratorCanDemoteToMember(t *testing.T) {
 	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	CreateTestMembership(t, mod2ID, groupID, utils.ROLE_MODERATOR)
 
-	resp := patchMembershipRole(t, modToken, groupID, mod2ID, "Member")
+	resp := patchMembershipRole(t, modToken, groupID, mod2ID, utils.ROLE_MEMBER)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "Member", getActualRole(groupID, mod2ID))
+	assert.Equal(t, utils.ROLE_MEMBER, getActualRole(groupID, mod2ID))
 }
 
 func TestPatchMembershipsInvalidRole(t *testing.T) {
@@ -1131,7 +1131,7 @@ func TestPatchMembershipsNonModCannotChangeRole(t *testing.T) {
 	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
 
-	resp := patchMembershipRole(t, memberToken, groupID, targetID, "Moderator")
+	resp := patchMembershipRole(t, memberToken, groupID, targetID, utils.ROLE_MODERATOR)
 	assert.Equal(t, 403, resp.StatusCode)
 }
 
@@ -1142,7 +1142,7 @@ func TestPatchMembershipsTNAccountCannotBePromoted(t *testing.T) {
 	db := database.DBConn
 
 	for _, mark := range []string{"tnuserid", "tnemail"} {
-		for _, target := range []string{"Moderator", "Owner"} {
+		for _, target := range []string{utils.ROLE_MODERATOR, utils.ROLE_OWNER} {
 			prefix := uniquePrefix("role_tn_" + mark + "_" + target)
 			ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 			tnID := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
@@ -1161,8 +1161,8 @@ func TestPatchMembershipsTNAccountCannotBePromoted(t *testing.T) {
 
 			resp := patchMembershipRole(t, ownerToken, groupID, tnID, target)
 			assert.Equal(t, 400, resp.StatusCode, "%s promote to %s", mark, target)
-			assert.Equal(t, "Member", getActualRole(groupID, tnID), "%s promote to %s", mark, target)
-			assert.Equal(t, "User", getActualSystemrole(tnID), "%s promote to %s", mark, target)
+			assert.Equal(t, utils.ROLE_MEMBER, getActualRole(groupID, tnID), "%s promote to %s", mark, target)
+			assert.Equal(t, utils.SYSTEMROLE_USER, getActualSystemrole(tnID), "%s promote to %s", mark, target)
 		}
 	}
 }
@@ -1180,9 +1180,9 @@ func TestPatchMembershipsTNAccountCanBeDemoted(t *testing.T) {
 	CreateTestMembership(t, tnID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnID+900000000, tnID)
 
-	resp := patchMembershipRole(t, ownerToken, groupID, tnID, "Member")
+	resp := patchMembershipRole(t, ownerToken, groupID, tnID, utils.ROLE_MEMBER)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "Member", getActualRole(groupID, tnID))
+	assert.Equal(t, utils.ROLE_MEMBER, getActualRole(groupID, tnID))
 }
 
 // A TrashNothing address that is not the preferred one does not make the account a
@@ -1199,9 +1199,9 @@ func TestPatchMembershipsNonPreferredTNEmailCanBePromoted(t *testing.T) {
 	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)",
 		memberID, prefix+"-g1@user.trashnothing.com")
 
-	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Moderator")
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, utils.ROLE_MODERATOR)
 	assert.Equal(t, 200, resp.StatusCode)
-	assert.Equal(t, "Moderator", getActualRole(groupID, memberID))
+	assert.Equal(t, utils.ROLE_MODERATOR, getActualRole(groupID, memberID))
 }
 
 // --- POST /memberships (mod actions) ---
@@ -4766,7 +4766,7 @@ func TestDeleteMembershipsDemotesStaleModeratorSystemRole(t *testing.T) {
 
 	var systemrole string
 	database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
-	assert.Equal(t, "User", systemrole, "losing the only mod role must demote systemrole to User")
+	assert.Equal(t, utils.SYSTEMROLE_USER, systemrole, "losing the only mod role must demote systemrole to User")
 }
 
 // TestGetMembershipsMailDelayed covers the deferral-aware suppression fields.

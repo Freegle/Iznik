@@ -32,8 +32,8 @@ func scWorkCount(t *testing.T, token, key string) float64 {
 func TestWorkCountSupportCasesWaitingForSupport(t *testing.T) {
 	db := database.DBConn
 	w := scSetup(t, "scwork")
-	supTok := scWorkUser(t, "scwork_sup", "Support")
-	admTok := scWorkUser(t, "scwork_adm", "Admin")
+	supTok := scWorkUser(t, "scwork_sup", utils.SYSTEMROLE_SUPPORT)
+	admTok := scWorkUser(t, "scwork_adm", utils.SYSTEMROLE_ADMIN)
 	_, replyTok := scSupport(t, "scwork_reply")
 
 	baseSup := scWorkCount(t, supTok, "supportcases")
@@ -84,7 +84,7 @@ func TestWorkCountSupportCasesNotForModerators(t *testing.T) {
 	w := scSetup(t, "scworkmod")
 	caseid := scReferOK(t, w.modToken, w.chat, "")
 	database.DBConn.Exec("UPDATE support_cases SET firstpass_status = 'Done' WHERE id = ?", caseid)
-	modTok := scWorkUser(t, "scworkmod_other", "Moderator")
+	modTok := scWorkUser(t, "scworkmod_other", utils.SYSTEMROLE_MODERATOR)
 	assert.Equal(t, float64(0), scWorkCount(t, modTok, "supportcases"))
 }
 
