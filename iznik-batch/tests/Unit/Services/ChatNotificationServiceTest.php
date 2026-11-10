@@ -1035,14 +1035,14 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $moderator1->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
         Membership::create([
             'userid' => $moderator2->id,
             'groupid' => $group->id,
-            'role' => 'Owner',
+            'role' => Membership::ROLE_OWNER,
             'added' => now(),
         ]);
 
@@ -1094,7 +1094,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $moderator->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
@@ -1139,7 +1139,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $moderator->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
@@ -1196,7 +1196,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $activeMod->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => null,
         ]);
@@ -1205,7 +1205,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $backupMod->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => ['active' => false],
         ]);
@@ -1262,7 +1262,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $activeMod->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => ['active' => true],
         ]);
@@ -1311,7 +1311,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
                 'settings' => null, // Active by default.
             ]);
@@ -1389,7 +1389,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $activeMod1->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => null,
         ]);
@@ -1398,7 +1398,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $activeMod2->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => ['active' => true],
         ]);
@@ -1407,7 +1407,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $backupMod->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => ['active' => false],
         ]);
@@ -1478,14 +1478,14 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $mod1->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
         Membership::create([
             'userid' => $mod2->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
@@ -1537,7 +1537,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -1601,7 +1601,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -1653,7 +1653,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -1699,7 +1699,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -1743,7 +1743,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -2066,7 +2066,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $moderator->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 

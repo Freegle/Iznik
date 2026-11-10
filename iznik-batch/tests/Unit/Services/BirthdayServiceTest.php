@@ -34,11 +34,11 @@ class BirthdayServiceTest extends TestCase
         // Genuine member (rippled=0) and a rippled auto-join (rippled=1).
         DB::table('memberships')->insert([
             'userid' => $genuine->id, 'groupid' => $group->id,
-            'role' => 'Member', 'collection' => 'Approved', 'rippled' => 0, 'added' => now(),
+            'role' => Membership::ROLE_MEMBER, 'collection' => 'Approved', 'rippled' => 0, 'added' => now(),
         ]);
         DB::table('memberships')->insert([
             'userid' => $rippled->id, 'groupid' => $group->id,
-            'role' => 'Member', 'collection' => 'Approved', 'rippled' => 1, 'added' => now(),
+            'role' => Membership::ROLE_MEMBER, 'collection' => 'Approved', 'rippled' => 1, 'added' => now(),
         ]);
 
         $count = $service->sendBirthdayEmails(null, [$group->id], dryRun: true);

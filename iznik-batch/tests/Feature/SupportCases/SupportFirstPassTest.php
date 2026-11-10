@@ -1037,7 +1037,7 @@ class SupportFirstPassTest extends TestCase
     {
         Mail::fake();
         $this->caseForMessages = $c = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['answer' => 'SECRET BRIEF TEXT'])]);
-        $supporter = $this->createTestUser(['fullname' => 'Sam Support', 'systemrole' => 'Support']);
+        $supporter = $this->createTestUser(['fullname' => 'Sam Support', 'systemrole' => User::SYSTEMROLE_SUPPORT]);
         $msg = $this->message('Support', $supporter, 'Try asking them to refresh the app.');
 
         $this->runMessageTask($c['case'], $msg);

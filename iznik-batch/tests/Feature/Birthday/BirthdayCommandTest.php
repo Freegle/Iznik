@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Birthday;
 
+use App\Models\Membership;
 use App\Mail\Birthday\BirthdayMail;
 use App\Services\BirthdayService;
 use Illuminate\Support\Facades\DB;
@@ -27,7 +28,7 @@ class BirthdayCommandTest extends TestCase
         DB::table('memberships')->insert([
             'userid'     => $user->id,
             'groupid'    => $groupId,
-            'role'       => 'Member',
+            'role'       => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'added'      => now(),
         ]);
@@ -198,7 +199,7 @@ class BirthdayCommandTest extends TestCase
         DB::table('memberships')->insert([
             'userid'     => $owner->id,
             'groupid'    => $group->id,
-            'role'       => 'Owner',
+            'role'       => Membership::ROLE_OWNER,
             'collection' => 'Approved',
             'added'      => now(),
         ]);
@@ -230,7 +231,7 @@ class BirthdayCommandTest extends TestCase
         DB::table('memberships')->insert([
             'userid'     => $opted_out->id,
             'groupid'    => $group->id,
-            'role'       => 'Moderator',
+            'role'       => Membership::ROLE_MODERATOR,
             'collection' => 'Approved',
             'added'      => now(),
         ]);
@@ -262,7 +263,7 @@ class BirthdayCommandTest extends TestCase
         DB::table('memberships')->insert([
             'userid'     => $mod->id,
             'groupid'    => $group->id,
-            'role'       => 'Moderator',
+            'role'       => Membership::ROLE_MODERATOR,
             'collection' => 'Approved',
             'added'      => now(),
         ]);

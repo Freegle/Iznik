@@ -3,6 +3,7 @@
 namespace App\Services\Support;
 
 use App\Mail\Chat\ReferToSupportMail;
+use App\Models\Membership;
 use App\Models\User;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
@@ -194,9 +195,9 @@ class FirstPassService
         $authors = $rows->pluck('userid')->filter()->unique()->values()->all();
         $mods = [];
         if ($authors) {
-            $mods = DB::table('users')->whereIn('id', $authors)->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])->pluck('id')->all();
+            $mods = DB::table('users')->whereIn('id', $authors)->whereIn('systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])->pluck('id')->all();
             if ($chat->groupid) {
-                $mods = array_merge($mods, DB::table('memberships')->where('groupid', $chat->groupid)->whereIn('userid', $authors)->whereIn('role', ['Moderator', 'Owner'])->pluck('userid')->all());
+                $mods = array_merge($mods, DB::table('memberships')->where('groupid', $chat->groupid)->whereIn('userid', $authors)->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])->pluck('userid')->all());
             }
         }
         $mods = array_flip($mods);

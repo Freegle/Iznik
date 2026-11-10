@@ -1540,7 +1540,7 @@ class ExpandServiceTest extends TestCase
         $legacyModerated = $this->seedGroupInReach();
         $noView = $this->seedGroupInReach();
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $legacyModerated->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $legacyModerated->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'ourPostingStatus' => 'MODERATED', 'added' => now(),
         ]);
 
@@ -1569,7 +1569,7 @@ class ExpandServiceTest extends TestCase
 
         $prohibits = $this->seedGroupInReach();
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $prohibits->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $prohibits->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'ourPostingStatus' => 'PROHIBITED', 'added' => now(),
         ]);
 
@@ -1595,7 +1595,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->seedGroupInReach();
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'ourPostingStatus' => null, 'added' => now(),
         ]);
 
@@ -2327,7 +2327,7 @@ class ExpandServiceTest extends TestCase
         // Home-group membership on IMMEDIATE with events/volunteering off, to prove the downgrade
         // (-1 -> 24) and the verbatim copy of events/volunteering.
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $originGid, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $originGid, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => -1, 'eventsallowed' => 0,
             'volunteeringallowed' => 0, 'added' => now(),
         ]);
@@ -2351,7 +2351,7 @@ class ExpandServiceTest extends TestCase
         // to daily and events/volunteering copied from home.
         $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
         $this->assertNotNull($m, 'poster added as a member of the rippled-into group');
-        $this->assertSame('Member', $m->role);
+        $this->assertSame(Membership::ROLE_MEMBER, $m->role);
         $this->assertSame('Approved', $m->collection);
         $this->assertSame(24, (int) $m->emailfrequency, 'immediate (-1) downgraded to daily (24)');
         $this->assertSame(0, (int) $m->eventsallowed, 'eventsallowed copied from home group');
@@ -2401,7 +2401,7 @@ class ExpandServiceTest extends TestCase
         );
 
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Banned', 'added' => now(),
         ]);
 
@@ -2429,7 +2429,7 @@ class ExpandServiceTest extends TestCase
         );
 
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Owner',
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => Membership::ROLE_OWNER,
             'collection' => 'Approved', 'added' => now()->subYears(2), 'rippled' => 0,
         ]);
 
@@ -2437,7 +2437,7 @@ class ExpandServiceTest extends TestCase
 
         $rows = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->get();
         $this->assertCount(1, $rows, 'still exactly one membership row');
-        $this->assertSame('Owner', $rows[0]->role, 'owner role untouched by rippling');
+        $this->assertSame(Membership::ROLE_OWNER, $rows[0]->role, 'owner role untouched by rippling');
         $this->assertSame(0, (int) $rows[0]->rippled, 'a chosen membership is never marked ripple-created');
     }
 
@@ -2488,7 +2488,7 @@ class ExpandServiceTest extends TestCase
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
         );
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Banned', 'added' => now(),
         ]);
 
@@ -2521,7 +2521,7 @@ class ExpandServiceTest extends TestCase
         ]);
         // The ripple-join membership and the ban that should have blocked it.
         DB::table('memberships')->insert([
-            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'rippled' => 1, 'added' => now()->subDay(),
         ]);
         DB::table('users_banned')->insert([
@@ -2563,7 +2563,7 @@ class ExpandServiceTest extends TestCase
         $poster = $this->createTestUser();
         $groupB = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'rippled' => 0, 'added' => now()->subDay(),
         ]);
         DB::table('users_banned')->insert([
@@ -2590,7 +2590,7 @@ class ExpandServiceTest extends TestCase
 
         // Home membership on NO email (emailfrequency 0).
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $originGid, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $originGid, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => 0, 'eventsallowed' => 1,
             'volunteeringallowed' => 1, 'added' => now(),
         ]);
@@ -2655,7 +2655,7 @@ class ExpandServiceTest extends TestCase
         DB::table('memberships')->where('userid', $posterId)->delete();
         $elsewhere = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $elsewhere->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $elsewhere->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => 4, 'eventsallowed' => 1,
             'volunteeringallowed' => 1, 'added' => now()->subDay(),
         ]);
@@ -3516,7 +3516,7 @@ class ExpandServiceTest extends TestCase
             'msgtype' => Message::TYPE_OFFER, 'rippled_in' => 1, 'deleted' => 0,
         ]);
         DB::table('memberships')->insert([
-            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => 'Member', 'collection' => 'Approved',
+            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER, 'collection' => 'Approved',
             'emailfrequency' => 24, 'eventsallowed' => 1, 'volunteeringallowed' => 1, 'rippled' => 1, 'added' => now(),
         ]);
         DB::statement(
@@ -3699,7 +3699,7 @@ class ExpandServiceTest extends TestCase
             'msgtype' => Message::TYPE_OFFER, 'rippled_in' => 1, 'deleted' => 0,
         ]);
         DB::table('memberships')->insert([
-            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => 'Member', 'collection' => 'Approved',
+            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER, 'collection' => 'Approved',
             'emailfrequency' => 24, 'eventsallowed' => 1, 'volunteeringallowed' => 1, 'rippled' => 1, 'added' => now(),
         ]);
         // A messages_spatial row (the live rippled copy has one) so the post is NOT stale-by-spatial.
@@ -3973,7 +3973,7 @@ class ExpandServiceTest extends TestCase
         }
         foreach ([$near->id, $far->id] as $gid) {
             DB::table('memberships')->insert([
-                'userid' => $poster->id, 'groupid' => $gid, 'role' => 'Member',
+                'userid' => $poster->id, 'groupid' => $gid, 'role' => Membership::ROLE_MEMBER,
                 'collection' => 'Approved', 'rippled' => 1,
             ]);
         }

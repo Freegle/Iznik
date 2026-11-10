@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Mail;
 
+use App\Models\Membership;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Traits\AvatarResolver;
@@ -230,7 +231,7 @@ class SendAdminCommand extends Command
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->where('memberships.groupid', $groupId)
             ->where('memberships.collection', 'Approved')
-            ->whereIn('memberships.role', ['Moderator', 'Owner'])
+            ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->where('users.lastaccess', '>', $oneYearAgo)
             ->where(function ($q) {
                 $q->whereJsonDoesntContainKey('users.settings->showmod')
@@ -379,7 +380,7 @@ class SendAdminCommand extends Command
             // Filter: non-essential admins skip users with relevantallowed=0.
             // Moderators are always included (they can't opt out).
             if (!$admin->essential && !$member->relevantallowed) {
-                $isMod = in_array($member->role, ['Moderator', 'Owner']);
+                $isMod = in_array($member->role, [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
                 if (!$isMod) {
                     $stats['skipped_relevantallowed']++;
 

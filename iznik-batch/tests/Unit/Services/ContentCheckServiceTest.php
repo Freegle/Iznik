@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
@@ -678,7 +679,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => null,
@@ -697,7 +698,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'MODERATED',
@@ -716,7 +717,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'PROHIBITED',
@@ -737,7 +738,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'DEFAULT',
@@ -784,7 +785,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'MODERATED',
@@ -803,7 +804,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'moderated', // lowercase
@@ -822,7 +823,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'DEFAULT',

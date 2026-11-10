@@ -3,6 +3,7 @@
 namespace Tests\Unit\Database;
 
 use App\Database\Expressions\CaseWhen;
+use App\Models\User;
 use App\Database\Expressions\CastAs;
 use App\Database\Expressions\Coalesce;
 use App\Database\Expressions\Comparison;
@@ -535,7 +536,7 @@ class ExpressionsTest extends TestCase
     {
         $query = DB::table('users')
             ->where(new Comparison('id', '>', Value::of(5)))
-            ->where('systemrole', '=', 'Admin');
+            ->where('systemrole', '=', User::SYSTEMROLE_ADMIN);
 
         $this->assertSame(
             'select * from `users` where `id` > 5 and `systemrole` = ?',
@@ -543,7 +544,7 @@ class ExpressionsTest extends TestCase
         );
         // The native ->where('systemrole', '=', 'Admin') call IS bound as
         // usual - only the ConditionExpression side is unbound/escaped.
-        $this->assertSame(['Admin'], $query->getBindings());
+        $this->assertSame([User::SYSTEMROLE_ADMIN], $query->getBindings());
     }
 
     public function test_comparison_semantics_true(): void
@@ -614,7 +615,7 @@ class ExpressionsTest extends TestCase
     public function test_casewhen_via_real_query_builder(): void
     {
         $case = (new CaseWhen())
-            ->when(new Comparison('systemrole', '=', Value::of('Admin')))->then(Value::of('admin'))
+            ->when(new Comparison('systemrole', '=', Value::of(User::SYSTEMROLE_ADMIN)))->then(Value::of('admin'))
             ->otherwise(Value::of('member'));
 
         $query = DB::table('users')->select($case)->where(new Comparison('id', '>', Value::of(1)));

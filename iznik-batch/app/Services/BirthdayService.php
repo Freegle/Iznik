@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Mail\Birthday\BirthdayMail;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -128,7 +129,7 @@ class BirthdayService
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
             ->where('memberships.collection', 'Approved')
-            ->whereIn('memberships.role', ['Moderator', 'Owner'])
+            ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->whereNull('users.deleted')
             ->where('users.lastaccess', '>=', $oneYearAgo)
             ->where(function ($q) {

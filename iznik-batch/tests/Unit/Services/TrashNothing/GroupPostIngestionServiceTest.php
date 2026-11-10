@@ -410,7 +410,7 @@ class GroupPostIngestionServiceTest extends TestCase
         DB::table('users')->insert([
             'id'         => $tnId,
             'fullname'   => 'Decoy who merely holds the number',
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'added'      => now(),
         ]);
         $this->assertTrue(DB::table('users')->where('id', $tnId)->exists(), 'Pre-condition: a Freegle account holds the TN id');

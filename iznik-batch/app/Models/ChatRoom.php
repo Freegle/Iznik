@@ -247,7 +247,7 @@ class ChatRoom extends Model implements Auditable
 
             $modUserIds = DB::table('memberships')
                 ->where('groupid', $groupId)
-                ->whereIn('role', ['Owner', 'Moderator'])
+                ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
                 ->pluck('userid');
 
             foreach ($modUserIds as $modUserId) {

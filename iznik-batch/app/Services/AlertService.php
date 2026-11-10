@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Mail\Alert\AlertMail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -126,7 +127,7 @@ class AlertService
 
         $mods = DB::table('memberships')
             ->where('groupid', $group->id)
-            ->whereIn('role', ['Owner', 'Moderator'])
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->pluck('userid');
 
         $sent = 0;
