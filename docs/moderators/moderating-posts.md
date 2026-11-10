@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-11-08
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
   - iznik-nuxt3/modtools/components/ModMessage*.vue
   - iznik-nuxt3/modtools/components/ModStdMessageModal.vue
+  - iznik-nuxt3/modtools/components/ModStdMessageSegments.vue
   - iznik-nuxt3/modtools/utils/stdMessageDirectives.js
   - iznik-nuxt3/modtools/composables/multiGroupModeration.js
   # cross-stack behaviour tests (change when the behaviour changes)
@@ -203,8 +204,9 @@ that goes into the post, at the top or the bottom. A second box, **Message to po
 holds what the poster is sent. The subject prefix and suffix apply to that message.
 
 When you use it, you see what the post will read and the message to the poster, and you
-can change either before you click **Save Edit and Send**. The post is changed and the
-message is sent together. If the poster can't be messaged from your community, for example
+can change either before you click **Save Edit and Send**. Both can use
+[fill-in boxes and optional bits](#fill-in-boxes-and-optional-bits), and each is laid out
+the same way. The post is changed and the message is sent together. If the poster can't be messaged from your community, for example
 on a post that rippled in, nothing is changed, and you are told why. On those posts the
 button isn't offered, though a plain **Edit** still is.
 
@@ -239,7 +241,8 @@ you must write yourself each time) or `<optional>...</optional>` (something that
 applies sometimes). You add those tags when you write the message under Settings.
 
 When a message uses either of them, sending it opens the message laid out in order rather
-than as one block of text:
+than as one block of text. For **Edit and Message** this applies to the text added to the
+post and to the message to the poster alike:
 
 - An **`<editthis>`** part is a highlighted box. Fill it in before you send.
 - An **`<optional>`** part comes with **Keep** and **Remove**. You must choose one, and you
