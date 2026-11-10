@@ -314,14 +314,14 @@ describe('modgroup store — full behaviour', () => {
     it('applies role and cached work data to each fetched group', async () => {
       const store = useModGroupStore()
       store.config = {}
-      store.sessionGroups = [{ groupid: 1, role: 'Admin' }]
+      store.sessionGroups = [{ groupid: 1, role: ROLE_OWNER }]
       store.cachedWorkData = [{ groupid: 2, count: 4 }]
       mockFetchGroupsMT.mockResolvedValue([{ id: 1 }, { id: 2 }])
 
       await store.fetchGroupsMTBatch([1, 2])
 
-      expect(store.list[1].role).toBe('Admin')
-      expect(store.list[1].mysettings).toEqual({ groupid: 1, role: 'Admin' })
+      expect(store.list[1].role).toBe(ROLE_OWNER)
+      expect(store.list[1].mysettings).toEqual({ groupid: 1, role: ROLE_OWNER })
       expect(store.list[2].work).toEqual({ groupid: 2, count: 4 })
       expect(store.received).toBe(true)
     })
