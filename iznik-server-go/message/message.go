@@ -1027,7 +1027,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 						ra := mg.Arrival.AddDate(0, 0, interval)
 						if rs.Max > 0 && mg.Autoreposts < uint(rs.Max) && !autoRepostOffKnown {
 							var autorepostsDisabled []string
-							db.Raw("SELECT JSON_EXTRACT(settings, '$.autorepostsdisable') FROM users WHERE id = ?", message.Fromuser).Scan(&autorepostsDisabled)
+							db.Table("users").Select("JSON_EXTRACT(settings, '$.autorepostsdisable')").Where("id = ?", message.Fromuser).Scan(&autorepostsDisabled)
 							autoRepostOff = len(autorepostsDisabled) > 0 && autorepostsDisabled[0] == "true"
 							autoRepostOffKnown = true
 						}
