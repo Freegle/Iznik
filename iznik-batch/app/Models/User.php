@@ -443,6 +443,20 @@ class User extends Model implements Auditable
     }
 
     /**
+     * The member's TrashNothing address: the preferred email when it is one, otherwise the
+     * newest. Most members hold several, one per group TN has mailed for them
+     * ("tricia.hayes-g298@user.trashnothing.com"). NULL when they hold none.
+     */
+    public function tnAddress(): ?string
+    {
+        return $this->emails()
+            ->where('email', 'LIKE', '%' . self::TN_EMAIL_SUFFIX)
+            ->orderByDesc('preferred')
+            ->orderByDesc('id')
+            ->value('email');
+    }
+
+    /**
      * Check if user is a moderator of any group.
      */
     public function isModerator(): bool
