@@ -3327,7 +3327,7 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	}
 
 	// Membership merge: V1 parity (max role, older date, non-null attrs from id1).
-	roleWeight := map[string]int{"Non-member": 0, "Member": 1, "Moderator": 2, "Owner": 3}
+	roleWeight := map[string]int{"Non-member": 0, utils.ROLE_MEMBER: 1, utils.ROLE_MODERATOR: 2, utils.ROLE_OWNER: 3}
 
 	type MembershipRow struct {
 		ID       uint64
@@ -3493,7 +3493,7 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	}
 
 	// systemrole: take the max (User < Moderator < Support < Admin).
-	sysRoleOrder := map[string]int{"User": 0, "Moderator": 1, "Support": 2, "Admin": 3}
+	sysRoleOrder := map[string]int{utils.SYSTEMROLE_USER: 0, utils.SYSTEMROLE_MODERATOR: 1, utils.SYSTEMROLE_SUPPORT: 2, utils.SYSTEMROLE_ADMIN: 3}
 	if sysRoleOrder[u1Attrs.Systemrole] > sysRoleOrder[u2Attrs.Systemrole] {
 		tx.Table("users").Where("id = ?", id2).Update("systemrole", u1Attrs.Systemrole)
 	}

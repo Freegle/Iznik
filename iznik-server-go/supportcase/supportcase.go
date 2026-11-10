@@ -437,7 +437,7 @@ func PostMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "body is too long")
 	}
 
-	role := "Support"
+	role := "Support" // role-literal-ok: support case message role
 	if cr.Referrerid != nil && *cr.Referrerid == myid {
 		role = "Referrer"
 	}
@@ -445,7 +445,7 @@ func PostMessage(c *fiber.Ctx) error {
 	switch req.Draftused {
 	case "", "No":
 	case "Unchanged", "Edited":
-		if role == "Support" {
+		if role == "Support" { // role-literal-ok: support case message role
 			draftused = req.Draftused
 		}
 	default:
