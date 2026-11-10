@@ -573,12 +573,12 @@ func GetMemberships(c *fiber.Ctx) error {
 		// removed in d22ba1d6c).
 		var members []GetMembershipsMember
 		bannedTx := db.Table("users_banned b").
-			Select("b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
+			Select("b.userid, b.groupid, ? AS role, 'Banned' AS collection, "+
 				"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
 				"u.fullname, u.firstname, u.lastname, u.engagement, "+
 				"b.userid AS id, NULL AS heldby, NULL AS settings, "+
 				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, 0 AS rippled, 0 AS implicit, 'unknown' AS added_origin, "+
-				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason, "+mailDelayedCols).
+				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason, "+mailDelayedCols, utils.ROLE_MEMBER).
 			Joins("JOIN users u ON u.id = b.userid").
 			Where("b.groupid = ?", groupid)
 		if contextID > 0 {
@@ -990,16 +990,16 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	mergeable := user.MergeableSidesSQL("u1", "u2")
 	db.Table("(SELECT users_related.id, user1, user2, reason FROM users_related "+
 		"INNER JOIN memberships ON users_related.user1 = memberships.userid "+
-		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
+		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? AND "+mergeable+" "+
 		"UNION "+
 		"SELECT users_related.id, user1, user2, reason FROM users_related "+
 		"INNER JOIN memberships ON users_related.user2 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL "+
-		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
+		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? AND "+mergeable+") t",
-		modGroupIDs, modGroupIDs).
+		utils.SYSTEMROLE_USER, modGroupIDs, utils.SYSTEMROLE_USER, modGroupIDs).
 		Select("DISTINCT id, user1, user2, reason").
 		Order("id DESC").
 		Limit(limit).

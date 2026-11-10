@@ -202,7 +202,7 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, ssoFailure, erro
 	var freegleGroupCount int64
 	db.Table("memberships").
 		Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
-		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
+		Where("memberships.userid = ? AND memberships.role IN (?, ?) AND `groups`.type = 'Freegle'", userID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).
 		Count(&freegleGroupCount)
 
 	if freegleGroupCount == 0 {
@@ -252,7 +252,7 @@ func getModGroupList(userID uint64) string {
 	db.Table("`groups`").
 		Select("COALESCE(namefull, nameshort) AS namedisplay").
 		Joins("INNER JOIN memberships ON memberships.groupid = `groups`.id").
-		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
+		Where("memberships.userid = ? AND memberships.role IN (?, ?) AND `groups`.type = 'Freegle'", userID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).
 		Scan(&groups)
 
 	names := make([]string, 0, len(groups))
