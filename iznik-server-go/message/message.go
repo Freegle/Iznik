@@ -1700,7 +1700,10 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 
 	// First pass: identify candidates past expiry age.
 	now := time.Now()
-	repost := group.SystemRepostSettings()
+
+	// The system-wide repost settings, read lazily: a page of messages that all have outcomes never needs them.
+	var repost group.RepostSettings
+	repostLoaded := false
 	var candidateIDs []uint64
 	candidateIndices := map[uint64][]int{}
 
@@ -1708,6 +1711,11 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 		m := &msgs[i]
 		if m.Hasoutcome {
 			continue
+		}
+
+		if !repostLoaded {
+			repost = group.SystemRepostSettings()
+			repostLoaded = true
 		}
 
 		s := settingsMap[m.Groupid]
