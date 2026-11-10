@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useMe.js
@@ -15,6 +15,8 @@ covers:
   - iznik-batch/resources/views/emails/mjml/donation/thank-prep.blade.php
   - iznik-batch/app/Services/PaypalDownloadService.php
   - iznik-batch/app/Console/Commands/Donation/**
+  - iznik-batch/app/Console/Commands/Mail/SendAdminCommand.php
+  - iznik-nuxt3/pages/marketing-optout.vue
 ---
 
 # Donations and Gift Aid
@@ -161,11 +163,29 @@ The flag stops every ask:
   donate banner in ad slots, "Hate ads? Donate", and the "please donate £1" after adding an
   event or volunteering opportunity.
 - **By email:** `User::wantsDonationAsks()` is false. The ask email
-  (`DonationService::askForDonations`) and the birthday appeal skip the member, and the
+  (`DonationService::askForDonations`), the birthday appeal and Newsletter ADMINs
+  (`SendAdminCommand`) skip the member, and the
   digest, chat notification and volunteering digest get a null `donateUrl`, which leaves out
   every donate button. See [Donation asks in email](donation-asks-in-email.md).
 
 Links to `/donate` in footers and menus stay; they are not asks.
+
+## Marketing consent
+
+Fundraising and newsletter email needs the member's yes, held in `users.marketingconsent`
+(default 0). The server owns it.
+
+- **Giving it at sign-up or login.** The box under the form (`LoginModal.vue`) starts unticked.
+  A tick sets `marketingConsentTicked` in the misc store, which is not persisted, and the next
+  `fetchUser` in `stores/auth.js` saves it. The box can only give consent; it never withdraws it.
+- **Changing it.** **Freegle updates** in Settings (`OtherSettingsSection.vue`) shows and saves the
+  server value. The opt-out link in a Newsletter ADMIN (`pages/marketing-optout.vue`) sets it
+  to 0, and `relevantallowed` to 0 as well.
+- **Other places that set it.** Microvolunteering and the Gift Aid form, from their own wording.
+- **Readers.** The birthday appeal (`BirthdayService`) and Newsletter ADMINs
+  (`SendAdminCommand`). A Newsletter ADMIN also skips members with donation requests off, and
+  memberships that Rippling or TrashNothing made (`memberships.rippled`, `memberships.implicit`).
+  Essential ADMINs ignore all three.
 
 ## Things to be careful about
 

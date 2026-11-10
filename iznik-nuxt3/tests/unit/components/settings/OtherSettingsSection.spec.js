@@ -18,17 +18,8 @@ const mockAuthStore = {
   saveAndGet: vi.fn().mockResolvedValue({}),
 }
 
-const mockMiscStore = {
-  marketingConsent: true,
-  setMarketingConsent: vi.fn(),
-}
-
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
-}))
-
-vi.mock('~/stores/misc', () => ({
-  useMiscStore: () => mockMiscStore,
 }))
 
 vi.mock('~/composables/useMe', () => ({
@@ -45,6 +36,7 @@ describe('OtherSettingsSection', () => {
       autorepostsdisable: false,
     }
     mockMe.donated = null
+    mockMe.marketingconsent = false
   })
 
   function createWrapper() {
@@ -165,12 +157,21 @@ describe('OtherSettingsSection', () => {
       expect(mockAuthStore.saveAndGet).toHaveBeenCalled()
     })
 
-    it('sets marketing consent on toggle', async () => {
+    it('shows the marketing consent the server holds', () => {
+      mockMe.marketingconsent = true
+      const wrapper = createWrapper()
+      const toggles = wrapper.findAll('.our-toggle')
+      expect(toggles[2].attributes('data-checked')).toBe('true')
+    })
+
+    it('saves marketing consent to the server on toggle', async () => {
       const wrapper = createWrapper()
       const toggles = wrapper.findAll('.our-toggle')
       await toggles[2].trigger('click')
       await flushPromises()
-      expect(mockMiscStore.setMarketingConsent).toHaveBeenCalled()
+      expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({
+        marketingconsent: true,
+      })
     })
   })
 
