@@ -371,6 +371,7 @@ import {
 import ModAdminFooterPreview from '~/modtools/components/ModAdminFooterPreview.vue'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 defineRule('required', required)
 defineRule('email', email)
@@ -459,7 +460,7 @@ const pendingcount = computed(() => {
     if (group) {
       if (
         group.type === 'Freegle' &&
-        (group.role === 'Owner' || group.role === 'Moderator')
+        (group.role === ROLE_OWNER || group.role === ROLE_MODERATOR)
       ) {
         if (group.work && group.work.pendingadmins) {
           count += group.work.pendingadmins

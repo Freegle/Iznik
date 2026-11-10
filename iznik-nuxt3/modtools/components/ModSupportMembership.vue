@@ -7,19 +7,19 @@
             <div>
               <h4>
                 <v-icon
-                  v-if="membership.role === 'Owner'"
+                  v-if="membership.role === ROLE_OWNER"
                   icon="crown"
                   class="text-warning"
                   title="Owner"
                 />
                 <v-icon
-                  v-if="membership.role === 'Moderator'"
+                  v-if="membership.role === ROLE_MODERATOR"
                   icon="crown"
                   class="text-info"
                   title="Moderator"
                 />
                 <v-icon
-                  v-if="membership.role === 'Member'"
+                  v-if="membership.role === ROLE_MEMBER"
                   icon="user"
                   class="text-success"
                   title="Member"
@@ -109,6 +109,7 @@ import { computed } from 'vue'
 import { useMemberStore } from '~/stores/member'
 import { useUserStore } from '~/stores/user'
 import { useModMe } from '~/composables/useModMe'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
   membershipid: {

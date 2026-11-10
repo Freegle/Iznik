@@ -12,6 +12,7 @@ import {
   prewarmRoadDistances,
   roadAnswersVersion,
 } from '~/composables/useDriveDistance'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
@@ -877,7 +878,7 @@ export const useMessageStore = defineStore('message', {
       const authStore = useAuthStore()
       const moderates = (g) =>
         typeof authStore?.member !== 'function' ||
-        ['Moderator', 'Owner'].includes(authStore.member(g.groupid))
+        [ROLE_MODERATOR, ROLE_OWNER].includes(authStore.member(g.groupid))
       const myid = parseInt(authStore?.user?.id)
       const leftAlone = (g) => {
         if (!severalCommunities) return false

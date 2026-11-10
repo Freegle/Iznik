@@ -366,6 +366,11 @@ import NewsPreviews from '~/components/NewsPreviews'
 import ProfileImage from '~/components/ProfileImage'
 import { useTeamStore } from '~/stores/team'
 import { useUserStore } from '~/stores/user'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const props = defineProps({
   id: {
@@ -519,9 +524,9 @@ const tagusers = computed(() => {
 const mod = computed(() => {
   return (
     me.value &&
-    (me.value.systemrole === 'Moderator' ||
-      me.value.systemrole === 'Admin' ||
-      me.value.systemrole === 'Support')
+    (me.value.systemrole === SYSTEMROLE_MODERATOR ||
+      me.value.systemrole === SYSTEMROLE_ADMIN ||
+      me.value.systemrole === SYSTEMROLE_SUPPORT)
   )
 })
 
@@ -566,9 +571,9 @@ watch(
 // Get ChitChat moderation team so that we can show extra options for them.
 if (
   me.value &&
-  (me.value.systemrole === 'Moderator' ||
-    me.value.systemrole === 'Support' ||
-    me.value.systemrole === 'Admin')
+  (me.value.systemrole === SYSTEMROLE_MODERATOR ||
+    me.value.systemrole === SYSTEMROLE_SUPPORT ||
+    me.value.systemrole === SYSTEMROLE_ADMIN)
 ) {
   teamStore.fetch('ChitChat Moderation')
 }

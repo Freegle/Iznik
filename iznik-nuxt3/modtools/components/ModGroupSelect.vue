@@ -34,6 +34,12 @@ import cloneDeep from 'lodash.clonedeep'
 import { useMiscStore } from '~/stores/misc'
 import { useModGroupStore } from '~/stores/modgroup'
 import { useMe } from '~/composables/useMe'
+import {
+  ROLE_MODERATOR,
+  ROLE_OWNER,
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 /**
  * Selected value
@@ -242,7 +248,8 @@ const groupOptions = computed(() => {
     // Check we're allowed.
     if (
       me.value &&
-      (me.value.systemrole === 'Admin' || me.value.systemrole === 'Support')
+      (me.value.systemrole === SYSTEMROLE_ADMIN ||
+        me.value.systemrole === SYSTEMROLE_SUPPORT)
     ) {
       groupList.push({
         value: -2,
@@ -256,8 +263,8 @@ const groupOptions = computed(() => {
     if (
       props.listall ||
       !props.modonly ||
-      roleOf(group) === 'Owner' ||
-      roleOf(group) === 'Moderator'
+      roleOf(group) === ROLE_OWNER ||
+      roleOf(group) === ROLE_MODERATOR
     ) {
       let text = group.namedisplay
       let hasWork = false
