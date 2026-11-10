@@ -52,7 +52,7 @@ Every reader uses this row and nothing else. A community's own `groups.settings.
 | Code | How it reads it |
 |------|-----------------|
 | Batch: `AutoRepostService`, `ChaseUpService`, `MessageExpiryService` | `RepostSettings::get()`, once at the start of a run. |
-| Go API: expiry, "can this post be reposted", `repostat` | `group.SystemRepostSettings()`, cached in memory for five minutes. |
+| Go API: expiry, `canrepost` (the member's Repost button) and `repostat` (the next auto-repost, shown as "Will auto-repost") | `group.SystemRepostSettings()`, cached in memory for five minutes. |
 | ModTools: the community settings page and standard messages (`$repostoffer`, `$repostwanted`, `$repeatoffertime`, `$repeatwantedtime`) | `useRepostSettings()` through `GET /config/reposts`. |
 
 `reposts` is one of the keys `isPublicConfigKey` lets `GET /config/:key` serve without signing
@@ -62,6 +62,8 @@ If the row is missing or is not JSON, each code base falls back to the same four
 as one constant in each: `RepostSettings::FALLBACK` (batch), `group.DefaultRepostSettings()`
 (Go) and `GROUP_REPOSTS` in `iznik-nuxt3/constants.js`. Each logs a warning (the frontend uses
 the fallback without one). Change all four places together.
+
+The Repost button (`canrepost`) needs only the interval to have passed: `max` limits auto-reposts, not a member's own repost. `repostat` exists only while the post has auto-reposts left.
 
 `maxagetoshow` ("Expire posts") is still per community. A post expires after the greater of
 `maxagetoshow` and `offer or wanted x (max + 1)` days, with the repost values from this row.
