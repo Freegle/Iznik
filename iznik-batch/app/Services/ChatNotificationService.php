@@ -161,7 +161,21 @@ class ChatNotificationService
             ->pluck('heldchatmsgid')
             ->all();
 
-        $releasedRecently = array_values(array_unique(array_merge($releasedRecently, $lockdownReleasedRecently, $confirmedRecently)));
+        // A message held for chat review is delivered when a moderator approves it, which leaves chat_messages.date alone
+        // and can be hours later, so it is admitted by the time of the approval, as a released hold is by its release.
+        // The approval's time is only in its log row, written by approveChatMessage in iznik-server-go/chat/chatmessage.go
+        // with this exact text; the (timestamp, type, subtype) index answers it. Without this a reply approved more than
+        // the look-back after it was written was never mailed: 4 of 502 approved in the week to 2026-11-10.
+        $approvedRecently = DB::table('logs')
+            ->where('timestamp', '>=', $startTime)
+            ->where('type', 'Chat')
+            ->where('subtype', 'Approved')
+            ->pluck('text')
+            ->map(fn ($text) => preg_match('/^Chat message (\d+) approved$/', (string) $text, $m) ? (int) $m[1] : null)
+            ->filter()
+            ->all();
+
+        $releasedRecently = array_values(array_unique(array_merge($releasedRecently, $lockdownReleasedRecently, $confirmedRecently, $approvedRecently)));
 
         $query = ChatMessage::query()
             ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')

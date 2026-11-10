@@ -292,10 +292,13 @@ Keep the arm name out of links, headers and `email_type`, which other code match
 
 ## Anything that holds a chat message and releases it later must be admitted by its release time
 
-`ChatNotificationService::getUnmailedMessages` selects replies by `chat_messages.date` inside a 24 hour look-back. A reply
+`ChatNotificationService::getUnmailedMessages` selects replies by `chat_messages.date` inside a look-back (4 hours as scheduled, `--since`). A reply
 held for longer is outside it when it is released, so the poster is never emailed, with no error. It admits a released
 rippling hold by `rippling_held_replies.releasedat`, a released lockdown hold by `lockdown_holds.releasedat`, and a reply
-confirmed by its sender by `chat_prompts.answered_at`. A new way to hold a chat message needs its own line in that list and
+confirmed by its sender by `chat_prompts.answered_at`. A reply held for chat review is admitted by the time of its
+`Chat`/`Approved` log row, whose text ("Chat message N approved", `approveChatMessage` in Go) is matched exactly; that one
+was missed until 2026-11-10, and replies a moderator approved more than four hours after they were written were never mailed.
+A new way to hold a chat message needs its own line in that list and
 a test like `test_released_reply_older_than_window_is_delivered_by_releasedat`.
 
 ## `processingsuccessful = 1` does not mean the poster gets the message
