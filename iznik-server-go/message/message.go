@@ -996,9 +996,17 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					// widely-rippling post can stay un-repostable indefinitely
 					// even though its home group passed the interval days ago.
 					//
-					// repostAt is the EARLIEST per-group repost time: the point at
-					// which the message first becomes repostable, and the point at
-					// which auto-repost next fires on some group.
+					// repostAt is the EARLIEST per-group time at which auto-repost next
+					// fires, which the member sees as "Will auto-repost ...". A group
+					// only counts while it has auto-reposts left (autoreposts below
+					// max, and max above 0); after that nothing more will fire, so there
+					// is no time to show.
+					//
+					// canRepost is the Repost button, for a member's own repost by
+					// hand. It needs the interval to have passed and nothing else: the
+					// auto-repost count limits auto-reposts only (AutoRepostService
+					// skips a post at max; ChaseUpService.canRepost, like V1's
+					// canRepost, looks only at the interval).
 					canRepost = false
 					for _, mg := range message.MessageGroups {
 						if interval >= 365 {
@@ -1007,7 +1015,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 						}
 
 						ra := mg.Arrival.AddDate(0, 0, interval)
-						if repostAt == nil || ra.Before(*repostAt) {
+						if rs.Max > 0 && mg.Autoreposts < uint(rs.Max) && (repostAt == nil || ra.Before(*repostAt)) {
 							raCopy := ra
 							repostAt = &raCopy
 						}

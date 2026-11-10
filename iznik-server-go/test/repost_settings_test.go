@@ -2,6 +2,7 @@ package test
 
 import (
 	json2 "encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -142,4 +143,53 @@ func TestBrowseOwnExpiryUsesTheSystemRepostLifetime(t *testing.T) {
 
 	setSystemRepostsForTest(t, `{"offer":15,"wanted":7,"max":3,"chaseups":5}`)
 	assert.True(t, visible(), "45 days is inside a 60 day repost lifetime")
+}
+
+// The Repost button (canrepost) is for a member's own repost by hand: it needs the interval to have
+// passed and nothing else, so it ignores the number of auto-reposts. repostat is when the next
+// AUTO-repost fires, which the member sees as "Will auto-repost ...", so it exists only while the
+// post still has auto-reposts left (autoreposts below max, and max above 0).
+func TestMessageRepostatStopsAtTheAutoRepostLimit(t *testing.T) {
+	prefix := uniquePrefix("repost_max")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix+"_group")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
+
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: Repost limit test", 55.9533, -3.1883)
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE msgid = ?", msgID)
+
+	get := func() message.Message {
+		resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token), nil))
+		assert.NoError(t, err)
+		var msg message.Message
+		json2.Unmarshal(rsp(resp), &msg)
+		return msg
+	}
+
+	db.Exec("UPDATE messages_groups SET autoreposts = 2 WHERE msgid = ?", msgID)
+	msg := get()
+	assert.NotNil(t, msg.Repostat, "two of three auto-reposts used: one is still to come")
+	assert.False(t, msg.Canrepost, "a day is inside the 3 day interval")
+
+	db.Exec("UPDATE messages_groups SET autoreposts = 3 WHERE msgid = ?", msgID)
+	msg = get()
+	assert.Nil(t, msg.Repostat, "all three auto-reposts used: nothing more will fire")
+
+	// A member can still repost by hand once the interval has passed.
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 5 DAY) WHERE msgid = ?", msgID)
+	msg = get()
+	assert.True(t, msg.Canrepost, "the Repost button does not depend on the auto-repost count")
+	assert.Nil(t, msg.Repostat)
+
+	// Auto-reposting off (max 0): no auto-repost time, but the button still follows the interval.
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":0,"chaseups":5}`)
+	db.Exec("UPDATE messages_groups SET autoreposts = 0 WHERE msgid = ?", msgID)
+	msg = get()
+	assert.Nil(t, msg.Repostat, "max 0 turns auto-reposting off")
+	assert.True(t, msg.Canrepost)
 }
