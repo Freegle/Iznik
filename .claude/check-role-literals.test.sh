@@ -82,11 +82,11 @@ editor 'sql upper-case column'     block $G  'db.Raw("SELECT 1 FROM memberships 
 editor 'sql in list lower-case'    block $P  '$q = "SELECT 1 FROM memberships m WHERE m.role IN ('"'"'moderator'"'"')";'
 editor 'sql insert lower-case'     block $GT 'db.Exec("insert into memberships (userid, groupid, role) values (?, ?, '"'"'owner'"'"')")'
 # Single-value lists.
-editor 'php single list'           block $P  "\$ok = ['Owner'];"
+editor 'php single list'           block $P  "\$roles = ['Owner'];"
 editor 'php array index is not a list' allow $P  "if ((\$result['Support'] ?? '') === 'no') {"
 editor 'go single list'            block $G  'roles := []string{"Owner"}'
-editor 'double-quoted list'        block $J  'const r = ["Admin"]'
-editor 'php in_array single'       block $P  "in_array(\$r, ['Owner'], true)"
+editor 'double-quoted list'        block $J  'const roles = ["Admin"]'
+editor 'php in_array single'       block $P  "in_array(\$role, ['Owner'], true)"
 editor 'js includes on literal'    block $J  "['Moderator'].includes(role)"
 editor 'js includes on roles'      block $J  "roles.includes('Owner')"
 editor 'vue single option list'    block $C  '<b-form-select :options="['"'"'Moderator'"'"']" />'
@@ -107,6 +107,23 @@ editor 'php match on a type'       allow $P  "\$n = match (\$type) {
     'Owner' => 1,
     default => 0,
 };"
+# A single-value list counts only when its subject is a role.
+editor 'list with a category subject'  allow $J  "['Support'].includes(category)"
+editor 'in_array on a type'            allow $P  "in_array(\$type, ['Admin'])"
+editor 'in_array on a channel'         allow $P  "in_array(\$channel, ['User'])"
+editor 'php roles var assigned'        block $P  "\$roles = ['Owner'];"
+editor 'js const roles assigned'       block $J  "const roles = ['Moderator']"
+editor 'in_array needle systemrole'    block $P  "in_array(\$u->systemrole, ['User'])"
+editor 'includes a systemrole'         block $J  "['Admin'].includes(me.systemrole)"
+editor 'options binding single'        block $C  '<b-form-select :options="['"'"'Owner'"'"']" />'
+# A role string in a list next to a role constant.
+editor 'js constant then string'       block $J  "[ROLE_MODERATOR, 'Owner'].includes(role)"
+editor 'php constant then string'      block $P  "in_array(\$r, [Membership::ROLE_OWNER, 'Moderator'])"
+editor 'go constant then string'       block $G  'roles := []string{utils.ROLE_OWNER, "Moderator"}'
+editor 'string then constant'          block $J  "['Owner', ROLE_MODERATOR]"
+editor 'systemrole constant + string' block $J  "[SYSTEMROLE_ADMIN, 'Support']"
+editor 'constants only still fine'     allow $J  "[ROLE_MODERATOR, ROLE_OWNER].includes(role)"
+editor 'constant then non-role string' allow $J  "[ROLE_MODERATOR, 'x'].map(f)"
 # Escaped quotes inside SQL strings.
 editor 'go escaped dquote sql'     block $G  'db.Raw("SELECT 1 FROM users WHERE systemrole = \"Support\"")'
 editor 'php escaped squote sql'    block $P  "\$s = 'SELECT 1 FROM memberships m WHERE m.role=\\'Owner\\'';"

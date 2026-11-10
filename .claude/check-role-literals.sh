@@ -28,7 +28,9 @@
 #   - a role in a request body or query string (role: 'Owner', ?role=Owner)
 #   - two role values side by side (['Moderator', 'Owner']), a case label,
 #     or a map key to a number ('Moderator': 3)
-#   - a single-value list (['Owner'], []string{"Owner"}), a role function or list on a literal
+#   - a single-value list whose subject is a role ($roles = ['Owner'], roles := []string{"Owner"},
+#     in_array($role, ['Owner']), ['Owner'].includes(role)), a role string beside a role constant
+#     ([ROLE_MODERATOR, 'Owner']), a role function or list on a literal
 #     (roles.includes('Owner')), an assertion on a role (assertEquals('Owner', $m->role)),
 #     a ternary on a role (role = x ? 'Owner' : 'Member') and a match arm in a match on a role
 # In SQL (a role column named in a quoted string) the column and the value match in any case,
@@ -114,10 +116,17 @@ PATTERNS=(
   "${ROLECI}[[:space:]]+($(ci NOT)[[:space:]]+)?$(ci IN)[[:space:]]*\(.*${SQ}${VCI}${SQ}"
   "$(ci INSERT)[[:space:]]+$(ci INTO)[[:space:]]+($(ci memberships)|$(ci users))[^)]*${ROLECI}[^)]*\).*$(ci VALUES).*${SQ}${VCI}${SQ}"
   "$(ci FIND_IN_SET)\([[:space:]]*${SQ}${VCI}${SQ}"
-  # a single-value list: ['Owner'], ["Admin"], []string{"Owner"}
-  "(^|[^])A-Za-z0-9_])\\[[[:space:]]*${V2Q}[[:space:]]*\\]"
+  # a single-value list, only where its subject is role-named: the assignment target
+  # (roles = ['Owner'], roles := []string{"Owner"}), a role earlier on the line (in_array($r->role, ['Owner'])),
+  # the argument .includes() is given, or an options binding
+  "${NAME}[[:space:]]*(=>|:=|=|:)[[:space:]]*(\[\]string)?[[{][[:space:]]*${VQ}"
   "[Rr]ole[A-Za-z_]*[^[]*\[[[:space:]]*${VQ}[[:space:]]*\]"
-  "\[\]string\{[[:space:]]*${VQ}"
+  "[Rr]ole.*\[\]string\{[[:space:]]*${VQ}"
+  "\[[[:space:]]*${VQ}[[:space:]]*\]\.[A-Za-z]+\(.*[Rr]ole"
+  "[Oo]ptions[[:space:]]*=[[:space:]]*${Q}?\[[[:space:]]*${VQ}"
+  # a role string in a list next to a role constant: [ROLE_MODERATOR, 'Owner']
+  "[[{][^]}]*ROLE_[A-Z_]+[[:space:]]*,[[:space:]]*${VQ}"
+  "${VQ}[[:space:]]*,[^]}]*ROLE_[A-Z]"
   # a role list or role value tested with a literal: roles.includes('Owner')
   "[Rr]oles?[A-Za-z_]*(\(\))?\.(includes|has|indexOf|contains)\(${VQ}"
   # an assertion on a role, PHP: assertEquals('Owner', $m->role), either order
