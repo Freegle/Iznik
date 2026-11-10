@@ -16,7 +16,7 @@ import (
 
 // unsubscribeFixture creates a member of one group with a known Link key.
 func unsubscribeFixture(t *testing.T, prefix string) (uint64, string) {
-	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	userID := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 	groupID := CreateTestGroup(t, prefix)
 	db := database.DBConn
 

@@ -9,7 +9,6 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -79,7 +78,7 @@ func TestMatchesNoLocation(t *testing.T) {
 
 func TestMatchesExcludesOwnPosts(t *testing.T) {
 	prefix := uniquePrefix("matchesown")
-	poster := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	poster := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 	token := getToken(t, poster)
 
 	queryVec := makeTestVec(0.5)
@@ -113,7 +112,7 @@ func TestMatchesReachFilter(t *testing.T) {
 
 	prefix := uniquePrefix("matchesreach")
 	groupID := CreateTestGroup(t, prefix)
-	posterOut := CreateTestUser(t, prefix+"po", utils.SYSTEMROLE_USER)
+	posterOut := CreateTestUser(t, prefix+"po", "Member") // role-literal-ok: not a system role, see #2023
 	// Out-of-reach candidate needs a real message (rippling_reach FK to messages).
 	outID := CreateTestMessage(t, posterOut, groupID, "out of reach sofa", 51.5, -0.1)
 
