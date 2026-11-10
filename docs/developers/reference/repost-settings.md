@@ -63,7 +63,7 @@ as one constant in each: `RepostSettings::FALLBACK` (batch), `group.DefaultRepos
 (Go) and `GROUP_REPOSTS` in `iznik-nuxt3/constants.js`. Each logs a warning (the frontend uses
 the fallback without one). Change all four places together.
 
-The Repost button (`canrepost`) needs only the interval to have passed: `max` limits auto-reposts, not a member's own repost. `repostat` exists only while the post has auto-reposts left.
+The Repost button (`canrepost`) needs only the interval to have passed: `max` limits auto-reposts, not a member's own repost. `repostat` exists only while the post has auto-reposts left and its poster has not turned auto-reposting off in their own settings (`users.settings.autorepostsdisable`, the rule `AutoRepostService` skips on).
 
 `maxagetoshow` ("Expire posts") is still per community. A post expires after the greater of
 `maxagetoshow` and `offer or wanted x (max + 1)` days, with the repost values from this row.

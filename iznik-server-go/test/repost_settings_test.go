@@ -193,3 +193,44 @@ func TestMessageRepostatStopsAtTheAutoRepostLimit(t *testing.T) {
 	assert.Nil(t, msg.Repostat, "max 0 turns auto-reposting off")
 	assert.True(t, msg.Canrepost)
 }
+
+// A poster who has turned auto-reposting off in their own settings (settings.autorepostsdisable,
+// the rule AutoRepostService skips on) is never auto-reposted, so there is no auto-repost time to
+// show them. Their Repost button still follows the interval.
+func TestMessageRepostatIsNilForAPosterWhoTurnedAutoRepostOff(t *testing.T) {
+	prefix := uniquePrefix("repost_optout")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix+"_group")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
+
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: Repost opt-out test", 55.9533, -3.1883)
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 1 DAY), autoreposts = 0 WHERE msgid = ?", msgID)
+
+	get := func() message.Message {
+		resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token), nil))
+		assert.NoError(t, err)
+		var msg message.Message
+		json2.Unmarshal(rsp(resp), &msg)
+		return msg
+	}
+
+	assert.NotNil(t, get().Repostat, "auto-repost on (the default): a time is shown")
+
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.autorepostsdisable', false) WHERE id = ?", posterID)
+	assert.NotNil(t, get().Repostat, "autorepostsdisable false: a time is shown")
+
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.autorepostsdisable', true) WHERE id = ?", posterID)
+	msg := get()
+	assert.Nil(t, msg.Repostat, "the poster turned auto-reposting off: nothing will fire")
+	assert.False(t, msg.Canrepost, "a day is inside the 3 day interval")
+
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 5 DAY) WHERE msgid = ?", msgID)
+	msg = get()
+	assert.True(t, msg.Canrepost, "the Repost button still follows the interval")
+	assert.Nil(t, msg.Repostat)
+}

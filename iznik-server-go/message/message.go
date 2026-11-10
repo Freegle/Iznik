@@ -1007,6 +1007,16 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					// auto-repost count limits auto-reposts only (AutoRepostService
 					// skips a post at max; ChaseUpService.canRepost, like V1's
 					// canRepost, looks only at the interval).
+					//
+					// A poster who has turned auto-reposting off in their own settings
+					// (users.settings.autorepostsdisable, the JSON true AutoRepostService
+					// skips on) is never auto-reposted either, so repostAt is not set for
+					// them. Their Repost button still follows the interval.
+					// Looked up only when a group could otherwise give a time, so a post
+					// with no auto-reposts left costs no extra query.
+					autoRepostOff := false
+					autoRepostOffKnown := false
+
 					canRepost = false
 					for _, mg := range message.MessageGroups {
 						if interval >= 365 {
@@ -1015,7 +1025,13 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 						}
 
 						ra := mg.Arrival.AddDate(0, 0, interval)
-						if rs.Max > 0 && mg.Autoreposts < uint(rs.Max) && (repostAt == nil || ra.Before(*repostAt)) {
+						if rs.Max > 0 && mg.Autoreposts < uint(rs.Max) && !autoRepostOffKnown {
+							var autorepostsDisabled []string
+							db.Raw("SELECT JSON_EXTRACT(settings, '$.autorepostsdisable') FROM users WHERE id = ?", message.Fromuser).Scan(&autorepostsDisabled)
+							autoRepostOff = len(autorepostsDisabled) > 0 && autorepostsDisabled[0] == "true"
+							autoRepostOffKnown = true
+						}
+						if !autoRepostOff && rs.Max > 0 && mg.Autoreposts < uint(rs.Max) && (repostAt == nil || ra.Before(*repostAt)) {
 							raCopy := ra
 							repostAt = &raCopy
 						}
