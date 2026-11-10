@@ -801,6 +801,11 @@ class GroupPostIngestionService
 
             $fromName = $user->fullname ?? $user->firstname ?? null;
 
+            // The member's TN address is the sender, as it is on a post TN emails to the
+            // group: ModTools reads it to say the post came via TrashNothing, and TN's
+            // partner key acts as the owner only of posts whose sender is in TN's domain.
+            $fromAddr = $user->tnAddress();
+
             // TN's own post date, however it arrived. The OpenAPI client hands
             // us a DateTime; an array-shaped post (fixtures, --local-testing,
             // the backfill path) carries the same value as an ISO-8601 string,
@@ -812,7 +817,7 @@ class GroupPostIngestionService
             // re-parses messages.message still recovers the key fields.
             $dateStr = ($postedAt ?? now())->format('D, d M Y H:i:s +0000');
             $groupEmail = $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-            $rfc822 = $this->synthesizeRfc822($fromName, $groupEmail, $subject, $dateStr, $messageid, $postId, $lat, $lng, $content);
+            $rfc822 = $this->synthesizeRfc822($fromName, $fromAddr, $groupEmail, $subject, $dateStr, $messageid, $postId, $lat, $lng, $content);
 
             $msgData = [
                 'date'            => $postedAt !== null ? $postedAt->format('Y-m-d H:i:s') : now(),
@@ -820,10 +825,10 @@ class GroupPostIngestionService
                 'sourceheader'    => self::SOURCEHEADER,
                 'message'         => $rfc822,
                 'fromuser'        => $user->id,
-                'envelopefrom'    => null,
+                'envelopefrom'    => $fromAddr,
                 'envelopeto'      => $groupEmail,
                 'fromname'        => $fromName,
-                'fromaddr'        => null,
+                'fromaddr'        => $fromAddr,
                 'replyto'         => null,
                 'fromip'          => null,
                 'fromcountry'     => null,
@@ -893,10 +898,10 @@ class GroupPostIngestionService
                     'groupid'       => $group->id,
                     'source'        => Message::SOURCE_EMAIL,
                     'fromuser'      => $user->id,
-                    'envelopefrom'  => null,
+                    'envelopefrom'  => $fromAddr,
                     'envelopeto'    => $groupEmail,
                     'fromname'      => $fromName,
-                    'fromaddr'      => null,
+                    'fromaddr'      => $fromAddr,
                     'fromip'        => null,
                     'subject'       => $subject,
                     'prunedsubject' => $prunedSubject,
@@ -1282,11 +1287,23 @@ class GroupPostIngestionService
     }
 
     /**
+     * The From line of the blob synthesizeRfc822() writes: the member's TN address, or TN's
+     * noreply address for a member who has none. tn:backfill-post-senders writes it too.
+     */
+    public static function fromHeader(?string $fromName, ?string $fromAddr): string
+    {
+        $address = $fromAddr ?? 'noreply@trashnothing.com';
+
+        return 'From: ' . ($fromName ? "{$fromName} <{$address}>" : $address);
+    }
+
+    /**
      * Synthesize a minimal RFC822 message blob so any code that re-parses
      * messages.message can still recover the key fields.
      */
     private function synthesizeRfc822(
         ?string $fromName,
+        ?string $fromAddr,
         string $groupEmail,
         string $subject,
         string $date,
@@ -1296,11 +1313,10 @@ class GroupPostIngestionService
         mixed $lng,
         string $body,
     ): string {
-        $from = $fromName ? "{$fromName} <noreply@trashnothing.com>" : 'noreply@trashnothing.com';
         $coords = ($lat !== null && $lng !== null) ? "{$lat},{$lng}" : '';
 
         return implode("\r\n", [
-            "From: {$from}",
+            self::fromHeader($fromName, $fromAddr),
             "To: {$groupEmail}",
             "Subject: {$subject}",
             "Date: {$date}",

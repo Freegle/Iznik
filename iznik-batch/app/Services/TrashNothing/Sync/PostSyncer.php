@@ -443,8 +443,9 @@ class PostSyncer
         }
 
         $entry = $this->loki->logIngestedPost(
-            // No SMTP envelope on this path; mirrors the null/synthesized values
-            // createMessage() writes to messages.envelopefrom/fromaddr.
+            // No SMTP envelope on this path. createMessage() records the member's TN
+            // address as the sender on the message, but this entry is written whether
+            // or not a message was made, so it keeps both empty.
             envelopeFrom: '',
             envelopeTo: $group !== null
                 ? $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org')
