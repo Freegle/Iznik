@@ -2167,6 +2167,8 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	// identical twin in rejectChatMessage (b8fc832d50a0): a half-converted
 	// pair renumbers the survivor's site ID, so gate (h) refuses the split
 	// state.
+	// The batch chat mailer reads this row, by this exact text, to mail a reply approved after its look-back window
+	// (ChatNotificationService::getUnmailedMessages). Change the text there too.
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log.LOG_TYPE_CHAT,
