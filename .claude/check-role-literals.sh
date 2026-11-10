@@ -37,12 +37,12 @@
 # MODES:
 #   (no args)        Claude Code PreToolUse hook on Write|Edit. Reads the tool call
 #                    as JSON on stdin and judges only the text being written.
-#   --diff [BASE]    CI gate. Only lines added by `git diff BASE...HEAD`
-#                    (BASE defaults to origin/master). Holds the line whatever
-#                    editor the change was made in.
-#   --all [PATH...]  Whole tree, or only the given path prefixes, relative to the
-#                    repo root (--all iznik-server-go). One line per hit
+#   --diff [BASE]    Only lines added by `git diff BASE...HEAD` (BASE defaults to
+#                    origin/master). For checking a branch on its own.
+#   --all [PATH...]  CI gate. Whole tree, or only the given path prefixes, relative
+#                    to the repo root (--all iznik-server-go). One line per hit
 #                    (file:line: snippet), a count per file, a total. Exits 1 if any.
+#                    The tree holds at zero, so CI runs it with no paths.
 #
 # ESCAPE HATCH: a hit on a line carrying `role-literal-ok: <reason>` is allowed.
 # Use it where the string really is not a role (another enum that shares the word)
