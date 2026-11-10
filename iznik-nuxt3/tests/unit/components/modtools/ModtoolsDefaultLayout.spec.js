@@ -4,14 +4,20 @@ import { defineComponent, h, Suspense, computed, nextTick } from 'vue'
 
 // Import layout after mocks
 import DefaultLayout from '~/modtools/layouts/default.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Stub Nuxt auto-imported globals not available in vitest
 vi.stubGlobal('useHead', vi.fn())
 vi.stubGlobal('useRuntimeConfig', vi.fn().mockReturnValue({ public: {} }))
 
 // Use vi.hoisted so these refs are available inside vi.mock factories (which are hoisted)
-const { mockAuthStore, mockCheckWork, mockResetCheckWork, mockMe } = vi.hoisted(
-  () => {
+const { mockAuthStore, mockCheckWork, mockResetCheckWork, mockMe } =
+  await vi.hoisted(async () => {
+    const { SYSTEMROLE_USER } = await import('~/constants')
     const { reactive } = require('vue')
     const mockAuthStore = reactive({
       user: null,
@@ -31,10 +37,9 @@ const { mockAuthStore, mockCheckWork, mockResetCheckWork, mockMe } = vi.hoisted(
       mockCheckWork: vi.fn(),
       mockResetCheckWork: vi.fn(),
       // The signed-in system role, read by the useMe mock when the layout mounts.
-      mockMe: { role: 'User' },
+      mockMe: { role: SYSTEMROLE_USER },
     }
-  }
-)
+  })
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
@@ -87,8 +92,10 @@ vi.mock('@/stores/mobile', () => ({
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    supportOrAdmin: computed(() => ['Support', 'Admin'].includes(mockMe.role)),
-    admin: computed(() => mockMe.role === 'Admin'),
+    supportOrAdmin: computed(() =>
+      [SYSTEMROLE_SUPPORT, SYSTEMROLE_ADMIN].includes(mockMe.role)
+    ),
+    admin: computed(() => mockMe.role === SYSTEMROLE_ADMIN),
   }),
 }))
 
@@ -338,10 +345,10 @@ describe('modtools default layout — pending badge includes spam', () => {
 
   describe('SysAdmin is for Admin only', () => {
     afterEach(() => {
-      mockMe.role = 'User'
+      mockMe.role = SYSTEMROLE_USER
     })
 
-    it.each(['User', 'Support'])(
+    it.each([SYSTEMROLE_USER, SYSTEMROLE_SUPPORT])(
       'has no SysAdmin item for %s',
       async (role) => {
         mockMe.role = role
@@ -351,20 +358,20 @@ describe('modtools default layout — pending badge includes spam', () => {
     )
 
     it('leaves Support with Support and Images', async () => {
-      mockMe.role = 'Support'
+      mockMe.role = SYSTEMROLE_SUPPORT
       const links = (await captureMenu()).map((i) => i.link)
       expect(links).toContain('/support')
       expect(links).toContain('/images')
     })
 
     it('puts the cases waiting for Support on the Support item', async () => {
-      mockMe.role = 'Support'
+      mockMe.role = SYSTEMROLE_SUPPORT
       const item = (await captureMenu()).find((i) => i.link === '/support')
       expect(item.count).toEqual(['supportcases'])
     })
 
     it('gives Admin the SysAdmin item with every SysAdmin count', async () => {
-      mockMe.role = 'Admin'
+      mockMe.role = SYSTEMROLE_ADMIN
       const item = (await captureMenu()).find((i) => i.link === '/sysadmin')
       expect(item, 'SysAdmin menu item must be rendered').toBeDefined()
       expect(item.count).toEqual([

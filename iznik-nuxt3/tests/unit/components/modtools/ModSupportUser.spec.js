@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ModSupportUser from '~/modtools/components/ModSupportUser.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Mock the API module used by ModSupportUser for separate support data fetches.
 const mockApiFns = {
@@ -70,7 +75,7 @@ describe('ModSupportUser', () => {
     email: 'test@example.com',
     displayname: 'Test User',
     lastaccess: new Date().toISOString(),
-    systemrole: 'User',
+    systemrole: SYSTEMROLE_USER,
     bouncing: false,
     spammer: null,
     memberships: [],
@@ -329,7 +334,7 @@ describe('ModSupportUser', () => {
     it('shows admin notice when user is Admin', async () => {
       const wrapper = await mountComponent(
         { expand: true },
-        { systemrole: 'Admin' }
+        { systemrole: SYSTEMROLE_ADMIN }
       )
       expect(wrapper.text()).toContain('admin rights')
     })
@@ -337,7 +342,7 @@ describe('ModSupportUser', () => {
     it('shows support notice when user is Support', async () => {
       const wrapper = await mountComponent(
         { expand: true },
-        { systemrole: 'Support' }
+        { systemrole: SYSTEMROLE_SUPPORT }
       )
       expect(wrapper.text()).toContain('support rights')
     })
@@ -424,12 +429,12 @@ describe('ModSupportUser', () => {
     })
 
     it('admin returns true when systemrole is Admin', async () => {
-      const wrapper = await mountComponent({}, { systemrole: 'Admin' })
+      const wrapper = await mountComponent({}, { systemrole: SYSTEMROLE_ADMIN })
       expect(wrapper.vm.admin).toBe(true)
     })
 
     it('admin returns false when systemrole is not Admin', async () => {
-      const wrapper = await mountComponent({}, { systemrole: 'User' })
+      const wrapper = await mountComponent({}, { systemrole: SYSTEMROLE_USER })
       expect(wrapper.vm.admin).toBe(false)
     })
 

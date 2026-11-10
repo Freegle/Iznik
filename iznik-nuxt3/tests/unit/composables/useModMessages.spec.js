@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
+import { ROLE_MEMBER, ROLE_MODERATOR } from '~/constants'
 
 // Minimal mock for APIError (same shape as the real class)
 class APIError extends Error {
@@ -44,7 +45,7 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
     work: mockAuthWork,
     member: (gid) =>
-      mockNotModeratedGroups.has(parseInt(gid)) ? 'Member' : 'Moderator',
+      mockNotModeratedGroups.has(parseInt(gid)) ? ROLE_MEMBER : ROLE_MODERATOR,
   }),
 }))
 

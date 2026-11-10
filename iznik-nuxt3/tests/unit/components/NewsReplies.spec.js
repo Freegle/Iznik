@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import NewsReplies from '~/components/NewsReplies.vue'
+import { SYSTEMROLE_MODERATOR, SYSTEMROLE_USER } from '~/constants'
 
 const { mockReplies, mockNewsfeed } = vi.hoisted(() => {
   return {
@@ -49,7 +50,7 @@ const mockNewsfeedStore = {
 }
 
 const mockAuthStore = {
-  user: { id: 1, systemrole: 'User' },
+  user: { id: 1, systemrole: SYSTEMROLE_USER },
 }
 
 vi.mock('~/stores/newsfeed', () => ({
@@ -63,7 +64,7 @@ vi.mock('~/stores/auth', () => ({
 describe('NewsReplies', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockAuthStore.user = { id: 1, systemrole: 'User' }
+    mockAuthStore.user = { id: 1, systemrole: SYSTEMROLE_USER }
     mockNewsfeedStore.seenBeforeVisit = null
     mockNewsfeedStore.byId.mockImplementation((id) => {
       if (id === 1) return mockNewsfeed
@@ -1043,7 +1044,7 @@ describe('NewsReplies', () => {
     })
 
     it('shows deleted replies for moderators', () => {
-      mockAuthStore.user = { id: 1, systemrole: 'Moderator' }
+      mockAuthStore.user = { id: 1, systemrole: SYSTEMROLE_MODERATOR }
       const repliesWithDeleted = [
         ...mockReplies,
         {

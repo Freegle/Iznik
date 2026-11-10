@@ -16,6 +16,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useAuthStore } from '~/stores/auth.js'
 import { abortAllPendingRequests } from '~/api/BaseAPI'
 import { flowCalls, resetFlowCalls } from '../helpers/flowTelemetryMock'
+import { ROLE_MEMBER, ROLE_OWNER } from '~/constants'
 
 const mockLogin = vi.fn()
 const mockLogout = vi.fn()
@@ -1054,17 +1055,17 @@ describe('auth store', () => {
       store.setAuth('valid-jwt', 'valid-persistent')
       mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
 
-      await store.setGroup({ groupid: 5, role: 'Member' })
+      await store.setGroup({ groupid: 5, role: ROLE_MEMBER })
 
       expect(mockUpdateMembership).toHaveBeenCalledWith({
         groupid: 5,
-        role: 'Member',
+        role: ROLE_MEMBER,
       })
       expect(mockFetchv2).toHaveBeenCalled()
     })
 
     it('setGroup skips the refetch when nofetch is set', async () => {
-      await store.setGroup({ groupid: 5, role: 'Member' }, true)
+      await store.setGroup({ groupid: 5, role: ROLE_MEMBER }, true)
 
       expect(mockUpdateMembership).toHaveBeenCalled()
       expect(mockFetchv2).not.toHaveBeenCalled()
@@ -1415,15 +1416,15 @@ describe('auth store', () => {
   describe('member getter', () => {
     it('returns the role for a group the user belongs to', () => {
       store.user = { id: 1 }
-      store.groups = [{ groupid: 10, role: 'Owner' }]
+      store.groups = [{ groupid: 10, role: ROLE_OWNER }]
 
-      expect(store.member(10)).toBe('Owner')
-      expect(store.member('10')).toBe('Owner')
+      expect(store.member(10)).toBe(ROLE_OWNER)
+      expect(store.member('10')).toBe(ROLE_OWNER)
     })
 
     it('returns false when the user does not belong to the group', () => {
       store.user = { id: 1 }
-      store.groups = [{ groupid: 10, role: 'Owner' }]
+      store.groups = [{ groupid: 10, role: ROLE_OWNER }]
 
       expect(store.member(20)).toBe(false)
     })

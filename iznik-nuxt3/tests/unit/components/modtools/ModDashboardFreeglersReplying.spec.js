@@ -3,6 +3,12 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import ModDashboardFreeglersReplying from '~/modtools/components/ModDashboardFreeglersReplying.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Mock the composable
 const mockLoading = ref(false)
@@ -49,28 +55,28 @@ describe('ModDashboardFreeglersReplying', () => {
       displayname: 'User One',
       replies: 5,
       profile: { turl: 'https://example.com/avatar1.jpg' },
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
     },
     {
       id: 2,
       displayname: 'User Two',
       replies: 3,
       profile: { turl: 'https://example.com/avatar2.jpg' },
-      systemrole: 'Moderator',
+      systemrole: SYSTEMROLE_MODERATOR,
     },
     {
       id: 3,
       displayname: 'Admin User',
       replies: 10,
       profile: { turl: 'https://example.com/avatar3.jpg' },
-      systemrole: 'Admin',
+      systemrole: SYSTEMROLE_ADMIN,
     },
     {
       id: 4,
       displayname: 'Support User',
       replies: 1,
       profile: { turl: 'https://example.com/avatar4.jpg' },
-      systemrole: 'Support',
+      systemrole: SYSTEMROLE_SUPPORT,
     },
   ]
 
@@ -252,7 +258,7 @@ describe('ModDashboardFreeglersReplying', () => {
           displayname: 'Zero Reply User',
           replies: 0,
           profile: { turl: 'https://example.com/avatar.jpg' },
-          systemrole: 'User',
+          systemrole: SYSTEMROLE_USER,
         },
       ]
       const wrapper = mountComponent()
@@ -266,7 +272,7 @@ describe('ModDashboardFreeglersReplying', () => {
           displayname: 'Power User',
           replies: 10000,
           profile: { turl: 'https://example.com/avatar.jpg' },
-          systemrole: 'User',
+          systemrole: SYSTEMROLE_USER,
         },
       ]
       const wrapper = mountComponent()

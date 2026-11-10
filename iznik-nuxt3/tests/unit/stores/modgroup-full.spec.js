@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const mockFetchGroupsMT = vi.fn()
 const mockFetchWork = vi.fn()
@@ -166,13 +167,13 @@ describe('modgroup store — full behaviour', () => {
 
       // Previously fetched while still a moderator of both groups.
       store.list = {
-        1: { id: 1, role: 'Moderator' },
-        2: { id: 2, role: 'Moderator' },
+        1: { id: 1, role: ROLE_MODERATOR },
+        2: { id: 2, role: ROLE_MODERATOR },
       }
 
       // The session now only lists group 1 - the moderator was removed from group 2.
       authState = {
-        groups: { a: { groupid: 1, role: 'Moderator' } },
+        groups: { a: { groupid: 1, role: ROLE_MODERATOR } },
         user: { id: 9 },
       }
 
@@ -191,11 +192,11 @@ describe('modgroup store — full behaviour', () => {
       mockFetchWork.mockResolvedValue([])
 
       store.list = {
-        1: { id: 1, role: 'Moderator' },
+        1: { id: 1, role: ROLE_MODERATOR },
         77: { id: 77, myrole: 'Non-member' },
       }
       authState = {
-        groups: { a: { groupid: 1, role: 'Moderator' } },
+        groups: { a: { groupid: 1, role: ROLE_MODERATOR } },
         user: { id: 9 },
       }
 
@@ -225,15 +226,15 @@ describe('modgroup store — full behaviour', () => {
     it('applies role/mysettings from sessionGroups and marks received when getting is empty', async () => {
       const store = useModGroupStore()
       store.config = {}
-      store.sessionGroups = [{ groupid: 7, role: 'Owner' }]
+      store.sessionGroups = [{ groupid: 7, role: ROLE_OWNER }]
       store.getting = [7]
       mockFetchGroupMT.mockResolvedValue({ id: 7 })
 
       await store.fetchGroupMT(7)
 
-      expect(store.list[7].role).toBe('Owner')
-      expect(store.list[7].myrole).toBe('Owner')
-      expect(store.list[7].mysettings).toEqual({ groupid: 7, role: 'Owner' })
+      expect(store.list[7].role).toBe(ROLE_OWNER)
+      expect(store.list[7].myrole).toBe(ROLE_OWNER)
+      expect(store.list[7].mysettings).toEqual({ groupid: 7, role: ROLE_OWNER })
       expect(store.getting).toEqual([])
       expect(store.received).toBe(true)
     })

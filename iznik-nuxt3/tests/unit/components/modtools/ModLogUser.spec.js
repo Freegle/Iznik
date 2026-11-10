@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ModLogUser from '~/modtools/components/ModLogUser.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Mock user store
 const mockUserStore = {
@@ -18,7 +23,7 @@ describe('ModLogUser', () => {
       id: 123,
       displayname: 'Test User',
       email: 'test@example.com',
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
       ...userOverrides,
     }
 
@@ -85,19 +90,19 @@ describe('ModLogUser', () => {
 
   describe('systemrole icons', () => {
     it('shows crown icon for non-User systemrole', () => {
-      const wrapper = mountModLogUser({ systemrole: 'Moderator' })
+      const wrapper = mountModLogUser({ systemrole: SYSTEMROLE_MODERATOR })
       const crownIcon = wrapper.find('i[data-icon="crown"]')
       expect(crownIcon.exists()).toBe(true)
     })
 
     it('shows user icon for User systemrole', () => {
-      const wrapper = mountModLogUser({ systemrole: 'User' })
+      const wrapper = mountModLogUser({ systemrole: SYSTEMROLE_USER })
       const userIcon = wrapper.find('i[data-icon="user"]')
       expect(userIcon.exists()).toBe(true)
     })
 
     it('shows crown icon for Admin systemrole', () => {
-      const wrapper = mountModLogUser({ systemrole: 'Admin' })
+      const wrapper = mountModLogUser({ systemrole: SYSTEMROLE_ADMIN })
       const crownIcon = wrapper.find('i[data-icon="crown"]')
       expect(crownIcon.exists()).toBe(true)
     })
