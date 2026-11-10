@@ -29,7 +29,7 @@ class SupportCaseMessageMail extends Mailable
     public function envelope(): Envelope
     {
         $noreply = new Address(config('freegle.mail.noreply_addr'), config('freegle.branding.name'));
-        $subject = $this->role === 'Support'
+        $subject = $this->role === 'Support' // role-literal-ok: support case message role
             ? "Support has replied about case #{$this->caseId}"
             : "{$this->authorName} replied on support case #{$this->caseId}";
 
@@ -39,7 +39,7 @@ class SupportCaseMessageMail extends Mailable
     public function build(): static
     {
         $modSite = config('freegle.sites.mod');
-        $lead = $this->role === 'Support'
+        $lead = $this->role === 'Support' // role-literal-ok: support case message role
             ? "{$this->authorName} from Support wrote:"
             : "{$this->authorName} wrote:";
         $text = "{$lead}\n\n{$this->body}\n\nReply in ModTools, not by email: {$modSite}/support/cases/{$this->caseId}\n\nThis is an automated message.";

@@ -55,7 +55,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Owner']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_OWNER]);
 
         // Insert a task simulating what Go would insert.
         DB::table('background_tasks')->insert([
@@ -194,7 +194,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         $mod = $this->createTestUser(['fullname' => 'Jane Smith', 'lastaccess' => now()]);
         $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         DB::table('background_tasks')->insert([
             'task_type' => 'email_admin_test',
@@ -1760,7 +1760,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $mod = $this->createTestUser(['fullname' => 'Sending Mod']);
         $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
 
-        $this->createMembership($otherMod, $group, ['role' => 'Moderator']);
+        $this->createMembership($otherMod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         DB::table('background_tasks')->insert([
             'task_type' => 'email_mod_stdmsg',
@@ -2480,7 +2480,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $poster = $this->createTestUser();
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'BCC Test Mod']);
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Create a mod_config with ccrejectto = Specific.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2564,7 +2564,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $member = $this->createTestUser();
         $memberEmail = $this->createTestUserEmail($member, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'BCC Me Mod']);
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Create a mod_config with ccfollmembto = Me.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2632,7 +2632,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $poster = $this->createTestUser();
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'No BCC Mod']);
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Config with all CC set to Nobody.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2702,7 +2702,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $poster = $this->createTestUser();
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'Subst Mod']);
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Config with $groupname in the BCC address.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2776,8 +2776,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $modWithConfig = $this->createTestUser(['fullname' => 'Configured Mod']);
         $modWithoutConfig = $this->createTestUser(['fullname' => 'New Mod']);
-        $this->createMembership($modWithConfig, $group, ['role' => 'Owner']);
-        $this->createMembership($modWithoutConfig, $group, ['role' => 'Moderator']);
+        $this->createMembership($modWithConfig, $group, ['role' => Membership::ROLE_OWNER]);
+        $this->createMembership($modWithoutConfig, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Only modWithConfig has a config.
         $configId = DB::table('mod_configs')->insertGetId([

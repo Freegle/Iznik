@@ -2,6 +2,7 @@
 
 namespace App\Services\TrashNothing\Sync;
 
+use App\Models\User;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\UserEmail;
@@ -361,7 +362,7 @@ class EmailReplaySyncer
 
         $userId = DB::table('users')->insertGetId([
             'fullname'   => $fullname,
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'added'      => now(),
             'lastaccess' => now(),
         ]);

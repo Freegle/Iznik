@@ -18,7 +18,7 @@ class CorrectDonationUserIdsCommandTest extends TestCase
             'firstname'  => 'Test',
             'lastname'   => 'Donor',
             'fullname'   => 'Test Donor',
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'added'      => now()->subYears(2),
         ], $attrs);
         DB::table('users')->insert($row);

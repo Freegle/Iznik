@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Database\Expressions\Coalesce;
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Count;
@@ -290,7 +291,7 @@ class UserManagementService
             ->whereNull('spam_users.userid')
             ->whereNull('users_comments.userid')
             ->where('users.lastaccess', '<', $sixMonthsAgo)
-            ->where('users.systemrole', 'User')
+            ->where('users.systemrole', User::SYSTEMROLE_USER)
             ->whereNull('users.deleted')
             ->whereNull('users.forgotten')
             ->limit($limit)
@@ -797,7 +798,7 @@ class UserManagementService
 
         // Users who currently have Support or Admin role.
         $currentSupport = DB::table('users')
-            ->whereIn('systemrole', ['Support', 'Admin'])
+            ->whereIn('systemrole', [User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
             ->pluck('id')
             ->all();
 
@@ -815,7 +816,7 @@ class UserManagementService
                 if (!$dryRun) {
                     DB::table('users')
                         ->where('id', $userId)
-                        ->update(['systemrole' => 'Support']);
+                        ->update(['systemrole' => User::SYSTEMROLE_SUPPORT]);
 
                     Log::info("Granted support role to user #{$userId}");
                 }
@@ -834,11 +835,11 @@ class UserManagementService
                 ->value('systemrole');
 
             // Only downgrade Support, never Admin.
-            if ($currentRole === 'Support') {
+            if ($currentRole === User::SYSTEMROLE_SUPPORT) {
                 if (!$dryRun) {
                     DB::table('users')
                         ->where('id', $userId)
-                        ->update(['systemrole' => 'Moderator']);
+                        ->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
                     Log::info("Removed support role from user #{$userId}");
                 }
@@ -870,14 +871,14 @@ class UserManagementService
         $stats = ['demoted' => 0];
 
         $staleMods = DB::table('users')
-            ->where('systemrole', 'Moderator')
+            ->where('systemrole', User::SYSTEMROLE_MODERATOR)
             ->whereNotExists(function ($q) {
                 // No select() call needed: the subquery is used only for its
                 // existence, not its column list, so the default "select *" is
                 // functionally identical to "select 1" here.
                 $q->from('memberships')
                     ->whereColumn('memberships.userid', 'users.id')
-                    ->whereIn('memberships.role', ['Moderator', 'Owner']);
+                    ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
             })
             ->pluck('id')
             ->all();
@@ -886,8 +887,8 @@ class UserManagementService
             if (!$dryRun) {
                 DB::table('users')
                     ->where('id', $userId)
-                    ->where('systemrole', 'Moderator')
-                    ->update(['systemrole' => 'User']);
+                    ->where('systemrole', User::SYSTEMROLE_MODERATOR)
+                    ->update(['systemrole' => User::SYSTEMROLE_USER]);
 
                 Log::info("Demoted stale Moderator systemrole to User for user #{$userId}");
             }

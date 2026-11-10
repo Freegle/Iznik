@@ -286,7 +286,7 @@ class ReengageContentService
                 ->join('users', 'users.id', '=', 'memberships.userid')
                 ->where('memberships.groupid', $group->id)
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-                ->whereIn('memberships.role', ['Moderator', 'Owner'])
+                ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
                 ->whereNull('users.deleted')
                 ->where('users.lastaccess', '>=', $oneYearAgo)
                 ->where(function ($q) {

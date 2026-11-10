@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -24,8 +26,6 @@ use Illuminate\Support\Facades\Log;
 class SpamCleanupService
 {
     private const SPAMMER_COLLECTION = 'Spammer';
-
-    private const MEMBER_ROLE = 'Member';
 
     /**
      * Remove spammers from groups and clean up their content.
@@ -60,7 +60,7 @@ class SpamCleanupService
             ->select('memberships.userid', 'memberships.groupid')
             ->join('spam_users', 'memberships.userid', '=', 'spam_users.userid')
             ->where('spam_users.collection', self::SPAMMER_COLLECTION)
-            ->where('memberships.role', self::MEMBER_ROLE)
+            ->where('memberships.role', Membership::ROLE_MEMBER)
             ->get()
             ->all();
 
@@ -118,7 +118,7 @@ class SpamCleanupService
             // posts by moderators or support staff who happen to be flagged.
             ->join('users', function ($j) {
                 $j->on('messages.fromuser', '=', 'users.id')
-                  ->where('users.systemrole', 'User');
+                  ->where('users.systemrole', User::SYSTEMROLE_USER);
             })
             ->whereNull('messages.deleted')
             ->get()
