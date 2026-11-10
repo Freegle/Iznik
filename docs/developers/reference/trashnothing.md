@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-08
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -327,6 +327,14 @@ when reading any coverage report:
   TN invoice on `sourceheader LIKE 'TN-%'`, `LoveJunkService` attributes the post's
   source by it, and `ProcessBackgroundTasksCommand` uses it to skip creating
   freebie alerts for TN posts, which TN syndicates itself.
+- **The sender is the member's TN address**, as on a post TN emails to the group:
+  `fromaddr` and `envelopefrom` on the message and its `messages_history` row, and the
+  From line of the synthesized message, come from `User::tnAddress()` (the preferred email
+  when it is a TN address, otherwise the newest one). `MessageHistory.vue` says "via
+  TrashNothing" only when `fromaddr` is a TN address, and `FindPartnerOwnerForMessage` lets
+  TN's partner key act as the owner only of a post whose sender is in TN's domain. Posts
+  ingested before this had no sender; `tn:backfill-post-senders` fills them in. A member with
+  no TN address at all posts with none.
 
 **Routing matches the email path**, including approval. A post from an unmoderated
 poster (`ourPostingStatus` `DEFAULT`/`UNMODERATED`, which is also the fallback used
