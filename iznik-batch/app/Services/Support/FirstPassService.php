@@ -135,7 +135,7 @@ class FirstPassService
                 $q->whereNotNull('c.brief')
                     ->orWhereExists(function ($s) {
                         $s->select(DB::raw(1))->from('support_case_messages as m')
-                            ->whereColumn('m.caseid', 'c.id')->where('m.role', 'Support');
+                            ->whereColumn('m.caseid', 'c.id')->where('m.role', 'Support'); // role-literal-ok: support case message role
                     });
             })
             ->orderByDesc('c.id')
@@ -143,7 +143,7 @@ class FirstPassService
             ->get(['c.id', 'c.created_at', 'c.brief']);
 
         $replies = $rows->isEmpty() ? collect() : DB::table('support_case_messages')
-            ->whereIn('caseid', $rows->pluck('id'))->where('role', 'Support')
+            ->whereIn('caseid', $rows->pluck('id'))->where('role', 'Support') // role-literal-ok: support case message role
             ->orderBy('id')->get(['caseid', 'body'])->keyBy('caseid');
 
         return $rows->map(function ($r) use ($replies) {

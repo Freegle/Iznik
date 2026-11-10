@@ -621,7 +621,7 @@ class ExpressionsTest extends TestCase
         $query = DB::table('users')->select($case)->where(new Comparison('id', '>', Value::of(1)));
 
         $this->assertSame(
-            "select CASE WHEN `systemrole` = 'Admin' THEN 'admin' ELSE 'member' END from `users` where `id` > 1",
+            "select CASE WHEN `systemrole` = '" . User::SYSTEMROLE_ADMIN . "' THEN 'admin' ELSE 'member' END from `users` where `id` > 1",
             $query->toSql()
         );
         $this->assertSame([], $query->getBindings());

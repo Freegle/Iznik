@@ -292,8 +292,8 @@ class SupportFirstPassTest extends TestCase
         $other = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 2, 'question' => 'Why did uploads fail?', 'classification' => 'Incident', 'answer' => 'x']), 'created_at' => now()->subDays(2)]);
         $replied = $this->makeCase(['created_at' => now()->subDays(1)]);
         DB::table('support_case_messages')->insert(['caseid' => $replied['case'], 'userid' => $replied['referrer']->id, 'role' => 'Referrer', 'body' => 'Referrer chat']);
-        DB::table('support_case_messages')->insert(['caseid' => $replied['case'], 'userid' => $replied['referrer']->id, 'role' => 'Support', 'body' => 'First reply']);
-        DB::table('support_case_messages')->insert(['caseid' => $replied['case'], 'userid' => $replied['referrer']->id, 'role' => 'Support', 'body' => str_repeat('L', 900)]);
+        DB::table('support_case_messages')->insert(['caseid' => $replied['case'], 'userid' => $replied['referrer']->id, 'role' => 'Support', 'body' => 'First reply']); // role-literal-ok: support case message role
+        DB::table('support_case_messages')->insert(['caseid' => $replied['case'], 'userid' => $replied['referrer']->id, 'role' => 'Support', 'body' => str_repeat('L', 900)]); // role-literal-ok: support case message role
         $old = $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 2, 'answer' => 'old']), 'created_at' => now()->subDays(15)]);
         $bare = $this->makeCase(['created_at' => now()->subDays(1)]);
         $this->makeCase(['firstpass_status' => 'Done', 'brief' => json_encode(['version' => 2, 'answer' => 'this']), 'mailed_at' => now(), 'created_at' => now()->subHour()]);
