@@ -163,6 +163,11 @@ situation (approve, reject, hold, and so on). You configure your sets under Sett
 
 Keep them friendly and personal. A short human note lands far better than a corporate one.
 
+A standard message can also change the member's email frequency or moderation status on
+your community, for example to approve a post and unmoderate the poster. If the poster is
+not a member any more, perhaps because they left after posting, there is nothing to change.
+The message box says so, and the approve, reply or delete still goes ahead.
+
 The member gets a standard message once, by email. It also goes into their chat with the
 volunteers, so the other moderators can see what was said. Whether they are emailed a copy
 depends on **Leave chat unread?** in your settings: "Leave as unread" emails them and shows

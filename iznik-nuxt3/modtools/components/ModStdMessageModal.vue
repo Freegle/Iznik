@@ -143,8 +143,21 @@
       <NoticeMessage v-if="directiveWarning" variant="danger" class="mt-1 mb-1">
         {{ directiveWarning }}
       </NoticeMessage>
+      <NoticeMessage
+        v-if="posterNotMember && changesMembership"
+        variant="info"
+        class="mt-1 mb-1"
+        data-test="stdmsg-not-member"
+      >
+        {{ user.displayname }} is not a member of this community, so there is no
+        membership to change. Everything else still goes ahead.
+      </NoticeMessage>
       <div
-        v-if="stdmsg?.newdelstatus && stdmsg.newdelstatus !== 'UNCHANGED'"
+        v-if="
+          stdmsg?.newdelstatus &&
+          stdmsg.newdelstatus !== 'UNCHANGED' &&
+          !posterNotMember
+        "
         class="mt-1"
       >
         <v-icon
@@ -161,7 +174,11 @@
         Change email frequency to <em>{{ emailfrequency }}</em>
       </div>
       <div
-        v-if="stdmsg?.newmodstatus && stdmsg.newmodstatus !== 'UNCHANGED'"
+        v-if="
+          stdmsg?.newmodstatus &&
+          stdmsg.newmodstatus !== 'UNCHANGED' &&
+          !posterNotMember
+        "
         class="mt-1"
       >
         <v-icon
@@ -495,6 +512,30 @@ const user = computed(() => {
 const userid = computed(() => {
   return user.value?.id || null
 })
+
+// The poster is not a member of the community the post is being moderated on:
+// they can leave after posting (Discourse 10321). Known once their memberships
+// have been fetched; until then the server says so when a change is tried.
+const posterNotMember = computed(() => {
+  if (!message.value || membership.value || !groupid.value) {
+    return false
+  }
+
+  if (!user.value || !('memberships' in user.value)) {
+    return false
+  }
+
+  return !(user.value.memberships || []).some(
+    (m) => m.groupid === groupid.value
+  )
+})
+
+// The standard message changes the member's email frequency or moderation status.
+const changesMembership = computed(
+  () =>
+    (stdmsg.value?.newdelstatus && stdmsg.value.newdelstatus !== 'UNCHANGED') ||
+    (stdmsg.value?.newmodstatus && stdmsg.value.newmodstatus !== 'UNCHANGED')
+)
 
 const fromName = computed(() => {
   return me.value.displayname
@@ -1049,13 +1090,12 @@ async function process(callback) {
       stdmsg.value.newdelstatus !== 'UNCHANGED'
     ) {
       changingNewDelStatus.value = true
-      await memberStore.updateMembership({
+      changedNewDelStatus.value = await updateMemberSettings({
         userid: userid.value,
         groupid: groupid.value,
         emailfrequency: emailfrequency.value,
       })
       changingNewDelStatus.value = false
-      changedNewDelStatus.value = true
     }
 
     if (
@@ -1063,13 +1103,12 @@ async function process(callback) {
       stdmsg.value.newmodstatus !== 'UNCHANGED'
     ) {
       changingNewModStatus.value = true
-      await memberStore.updateMembership({
+      changedNewModStatus.value = await updateMemberSettings({
         userid: userid.value,
         groupid: groupid.value,
         ourPostingStatus: stdmsg.value.newmodstatus,
       })
       changingNewModStatus.value = false
-      changedNewModStatus.value = true
     }
 
     const subj = subject.value.trim()
@@ -1219,6 +1258,28 @@ async function process(callback) {
     hide()
   }
   if (callback) callback()
+}
+
+// Change the member's email frequency or moderation status on this community.
+// Someone who is not a member has nothing to change, and that must not stop the
+// approve, reply or delete that follows. Returns whether anything changed.
+async function updateMemberSettings(params) {
+  if (posterNotMember.value) {
+    return false
+  }
+
+  try {
+    await memberStore.updateMembership(params)
+    return true
+  } catch (e) {
+    // What the server answers when they are not a member: they left after their
+    // memberships were fetched.
+    if (e?.response?.status === 404) {
+      return false
+    }
+
+    throw e
+  }
 }
 
 // The fields an edit sends for the post itself.

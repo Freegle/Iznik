@@ -59,6 +59,7 @@ const mockMemberStore = {
   reply: vi.fn(),
   delete: vi.fn(),
   get: vi.fn(),
+  updateMembership: vi.fn(),
 }
 
 const mockUserStore = {
@@ -319,6 +320,7 @@ describe('ModStdMessageModal', () => {
     mockMessageStore.patch.mockResolvedValue({})
     mockMemberStore.reply.mockResolvedValue({})
     mockMemberStore.delete.mockResolvedValue({})
+    mockMemberStore.updateMembership.mockResolvedValue({})
     mockUserStore.edit.mockResolvedValue({})
   })
 
@@ -549,6 +551,95 @@ describe('ModStdMessageModal', () => {
         { stdmsgData: createStdmsg({ action: 'Hold Message' }) }
       )
       expect(wrapper.text()).toContain('Hold message')
+    })
+  })
+
+  // Discourse 10321: the poster left the community a minute after posting, and
+  // "Approve and unmod" failed on the membership change, which stopped the approve.
+  describe('a poster who is not a member of the community', () => {
+    const unmodApprove = () =>
+      createStdmsg({
+        action: 'Approve',
+        body: 'Thanks for your post, it has been approved and will go out shortly.',
+        newmodstatus: 'DEFAULT',
+        newdelstatus: 'DIGEST',
+      })
+
+    const posterWith = (memberships) =>
+      createMessage({ fromuser: { ...createMessage().fromuser, memberships } })
+
+    it('approves without trying to change a membership they do not have', async () => {
+      const wrapper = mountComponent(
+        {},
+        { message: posterWith(null), stdmsgData: unmodApprove() }
+      )
+      await wrapper.vm.fillin()
+      await wrapper.vm.process()
+
+      expect(mockMemberStore.updateMembership).not.toHaveBeenCalled()
+      expect(mockMessageStore.approve).toHaveBeenCalledTimes(1)
+      expect(mockHide).toHaveBeenCalled()
+    })
+
+    it('says there is no membership to change', async () => {
+      const wrapper = mountComponent(
+        {},
+        { message: posterWith([{ groupid: 999 }]), stdmsgData: unmodApprove() }
+      )
+      await wrapper.vm.fillin()
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('is not a member of this community')
+      expect(wrapper.text()).not.toContain('Change moderation status to')
+      expect(wrapper.text()).not.toContain('Change email frequency to')
+    })
+
+    it('still changes the settings of a poster who is a member', async () => {
+      const wrapper = mountComponent(
+        {},
+        { message: posterWith([{ groupid: 123 }]), stdmsgData: unmodApprove() }
+      )
+      await wrapper.vm.fillin()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('is not a member of this community')
+
+      await wrapper.vm.process()
+
+      expect(mockMemberStore.updateMembership).toHaveBeenCalledWith({
+        userid: 456,
+        groupid: 123,
+        ourPostingStatus: 'DEFAULT',
+      })
+      expect(mockMemberStore.updateMembership).toHaveBeenCalledWith({
+        userid: 456,
+        groupid: 123,
+        emailfrequency: 24,
+      })
+      expect(mockMessageStore.approve).toHaveBeenCalledTimes(1)
+    })
+
+    it('approves when the server says they are not a member', async () => {
+      // Their memberships are not loaded here, so only the server knows.
+      mockMemberStore.updateMembership.mockRejectedValue({
+        response: { status: 404 },
+      })
+      const wrapper = mountComponent({}, { stdmsgData: unmodApprove() })
+      await wrapper.vm.fillin()
+      await wrapper.vm.process()
+
+      expect(mockMemberStore.updateMembership).toHaveBeenCalled()
+      expect(mockMessageStore.approve).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not approve when the change fails for another reason', async () => {
+      mockMemberStore.updateMembership.mockRejectedValue({
+        response: { status: 500 },
+      })
+      const wrapper = mountComponent({}, { stdmsgData: unmodApprove() })
+      await wrapper.vm.fillin()
+
+      await expect(wrapper.vm.process()).rejects.toBeTruthy()
+      expect(mockMessageStore.approve).not.toHaveBeenCalled()
     })
   })
 
