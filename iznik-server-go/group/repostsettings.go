@@ -49,8 +49,23 @@ func SystemRepostSettings() RepostSettings {
 		return repostSettingsCopy
 	}
 
+	if database.DBConn == nil {
+		return DefaultRepostSettings()
+	}
+
 	var rows []string
-	database.DBConn.Table("config").Select("value").Where("`key` = ?", RepostConfigKey).Limit(1).Scan(&rows)
+	res := database.DBConn.Table("config").Select("value").Where("`key` = ?", RepostConfigKey).Limit(1).Scan(&rows)
+
+	if res.Error != nil {
+		// Not cached: the next call tries again. Until then the last good copy, or the built-in values.
+		log.Printf("Repost settings: could not read the `%s` config row: %v", RepostConfigKey, res.Error)
+
+		if !repostSettingsFetched.IsZero() {
+			return repostSettingsCopy
+		}
+
+		return DefaultRepostSettings()
+	}
 
 	settings := DefaultRepostSettings()
 

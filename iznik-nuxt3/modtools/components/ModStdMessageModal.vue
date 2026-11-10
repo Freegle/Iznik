@@ -878,6 +878,10 @@ async function fillin() {
 }
 
 async function substitutionStrings(text) {
+  // The system-wide repost settings, so $repostoffer and friends never use the fallback by mistake.
+  // The config store keeps them, so after the first time this costs nothing.
+  await loadRepostSettings()
+
   await modGroupStore.fetchIfNeedBeMT(groupid.value)
   const group = modGroupStore.get(groupid.value)
   if (!group) return text
