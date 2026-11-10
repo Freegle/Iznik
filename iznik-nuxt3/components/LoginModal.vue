@@ -2,9 +2,9 @@
   <b-modal
     v-if="!loggedIn"
     id="loginModal"
-    :data-instance="instanceId"
     ref="loginModal"
     v-model="showModal"
+    :data-instance="instanceId"
     no-fade
     size="lg"
     no-trap
@@ -304,8 +304,8 @@ const email = ref(null)
 const emailValid = ref(false)
 const password = ref(null)
 const marketingConsent = computed({
-  get: () => miscStore.marketingConsent,
-  set: (value) => miscStore.setMarketingConsent(value),
+  get: () => !!miscStore.marketingConsentTicked,
+  set: (value) => miscStore.setMarketingConsentTicked(value),
 })
 const isModTools = computed(() => miscStore.modtools)
 // GET /session said this build is too old (ret:123). We have no user, but
@@ -465,14 +465,6 @@ watch([mounted, showModal, signUp], readExperimentArm)
 onMounted(() => {
   mounted.value = true
   document.addEventListener('cookieyes_consent_update', onCookieConsentChanged)
-
-  // Set marketing consent to true if it doesn't have a value yet
-  if (
-    miscStore.marketingConsent === null ||
-    miscStore.marketingConsent === undefined
-  ) {
-    miscStore.setMarketingConsent(true)
-  }
 })
 
 // Methods

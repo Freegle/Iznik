@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -13,6 +13,7 @@ covers:
   - iznik-nuxt3/modtools/components/ModAdmin.vue
   - iznik-server-go/admin/admin.go
   - iznik-batch/app/Console/Commands/Mail/CopyAdminsCommand.php
+  - iznik-batch/app/Console/Commands/Mail/SendAdminCommand.php
   - iznik-server-go/admin/content.go
   - iznik-batch/app/Services/AdminMjmlSanitiser.php
   - iznik-nuxt3/modtools/composables/useAdminContent.js
@@ -96,8 +97,11 @@ already read and copy those.
 ## Broadcasts to the whole community
 
 **ADMINs** (`/admins`) sends a message to the whole community. You can create an
-**Essential** message (which members cannot opt out of) or a **Newsletter** message
-(which they can), optionally with a call-to-action button. Admins and Support can target a
+**Essential** message (which members cannot opt out of) or a **Newsletter** message,
+optionally with a call-to-action button. A Newsletter can ask for donations, so it only goes
+to members who have said yes to **Freegle updates** (news and ways to support Freegle) and
+have not turned off donation requests. It never goes to someone that Rippling or TrashNothing
+put on the community without them choosing it. Moderators get it on the same terms. Admins and Support can target a
 single community or suggest copies to many communities that each community then edits and
 approves. A community's own ADMIN goes to all its members; a copy of a suggested ADMIN only goes to
 members active in the last six months, to keep a burst of mail across every community from drawing spam

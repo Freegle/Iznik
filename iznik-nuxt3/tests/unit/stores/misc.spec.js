@@ -33,7 +33,7 @@ describe('misc store', () => {
       expect(store.apiCount).toBe(0)
       expect(store.online).toBe(true)
       expect(store.modtools).toBe(false)
-      expect(store.marketingConsent).toBe(true)
+      expect(store.marketingConsentTicked).toBe(false)
       expect(store.source).toBeNull()
     })
   })
@@ -97,10 +97,10 @@ describe('misc store', () => {
       expect(store.source).toBe('google')
     })
 
-    it('setMarketingConsent sets value', () => {
+    it('setMarketingConsentTicked sets value', () => {
       const store = useMiscStore()
-      store.setMarketingConsent(false)
-      expect(store.marketingConsent).toBe(false)
+      store.setMarketingConsentTicked(true)
+      expect(store.marketingConsentTicked).toBe(true)
     })
   })
 
