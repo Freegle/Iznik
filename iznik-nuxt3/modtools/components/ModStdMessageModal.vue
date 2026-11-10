@@ -74,129 +74,20 @@
         max-rows="40"
         class="mt-2"
       />
-      <!-- Segmented inline editor: the message in flow, with a box per <editthis>
-           and a keep/remove control per <optional>, filled in order so you never
-           have to look back at the template. -->
-      <div v-else class="mt-2 segmented-editor border rounded p-3">
-        <!-- Red rather than muted: this way of editing is unfamiliar and
-             moderators were reading straight past a grey instruction. -->
-        <p class="text-danger small mb-2">
-          Fill in the highlighted boxes and choose Keep or Remove for any
-          optional parts. You can edit any of the rest of the wording too. This
-          is the message the member will receive.
-        </p>
-        <div class="segmented-body">
-          <template v-for="(seg, i) in segments" :key="'seg' + i">
-            <!-- A text segment which is nothing but the line break(s) between two
-                 blocks: shown as a paragraph-spacing toggle rather than an empty
-                 box, so the spacing is visible and fixable. -->
-            <div
-              v-if="seg.type === 'text' && isGap(seg)"
-              :data-seg="i"
-              class="seg-gap"
-            >
-              <b-button
-                size="sm"
-                variant="link"
-                class="p-0 seg-gap-toggle"
-                @click="toggleGap(i)"
-              >
-                <v-icon :icon="isParagraphGap(seg) ? 'minus' : 'plus'" />
-                {{
-                  isParagraphGap(seg)
-                    ? 'Blank line between these paragraphs (click to remove it)'
-                    : 'No blank line between these paragraphs (click to add one)'
-                }}
-              </b-button>
-            </div>
-            <AutoHeightTextarea
-              v-else-if="seg.type === 'text'"
-              v-model="seg.content"
-              :data-seg="i"
-              class="seg-text"
-              rows="3"
-              max-rows="30"
-            />
-            <AutoHeightTextarea
-              v-else-if="seg.type === 'editthis'"
-              v-model="seg.value"
-              :data-seg="i"
-              :class="[
-                'seg-editthis',
-                { 'seg-todo': !segEdited(seg), 'seg-blocked': isBlocked(i) },
-              ]"
-              rows="3"
-              max-rows="12"
-              :placeholder="seg.content"
-            />
-            <span v-else-if="seg.type === 'optional'" class="seg-optional">
-              <!-- Undecided: the wording is editable while you decide, and you
-                   must pick one before the message can go. -->
-              <span
-                v-if="seg.removed === undefined"
-                :data-seg="i"
-                :class="[
-                  'seg-optional-undecided',
-                  { 'seg-blocked': isBlocked(i) },
-                ]"
-              >
-                <AutoHeightTextarea
-                  v-model="seg.content"
-                  class="seg-text seg-optional-text"
-                  rows="2"
-                  max-rows="20"
-                />
-                <span class="seg-optional-buttons">
-                  <b-button
-                    size="sm"
-                    variant="outline-success"
-                    @click="decideOptional(i, false)"
-                  >
-                    Keep
-                  </b-button>
-                  <b-button
-                    size="sm"
-                    variant="outline-danger"
-                    class="ms-1"
-                    @click="decideOptional(i, true)"
-                  >
-                    Remove
-                  </b-button>
-                </span>
-              </span>
-              <!-- Kept: still editable, and you can change your mind. -->
-              <span v-else-if="seg.removed === false" class="seg-optional-kept">
-                <AutoHeightTextarea
-                  v-model="seg.content"
-                  :data-seg="i"
-                  class="seg-text"
-                  rows="2"
-                  max-rows="20"
-                />
-                <b-button
-                  size="sm"
-                  variant="link"
-                  class="p-0 seg-optional-change"
-                  @click="decideOptional(i, true)"
-                >
-                  remove this bit after all
-                </b-button>
-              </span>
-              <span v-else :data-seg="i" class="seg-optional-removed">
-                <s class="text-muted">{{ seg.content }}</s>
-                <b-button
-                  size="sm"
-                  variant="link"
-                  class="p-0 ms-1"
-                  @click="decideOptional(i, false)"
-                >
-                  undo
-                </b-button>
-              </span>
-            </span>
-          </template>
-        </div>
-      </div>
+      <!-- With directives, the wording is laid out in order with a box per
+           <editthis> and a keep/remove control per <optional>. -->
+      <ModStdMessageSegments
+        v-else
+        ref="postEditor"
+        v-model="segments"
+        :blocked="blockedSegments"
+        :description="
+          isEditAction
+            ? 'This is what the post will say.'
+            : 'This is the message the member will receive.'
+        "
+        class="mt-2"
+      />
       <div
         v-if="isEditAndMessage"
         class="mt-3"
@@ -224,11 +115,23 @@
           data-test="stdmsg-reply-subject"
         />
         <AutoHeightTextarea
+          v-if="!useReplySegmentedEditor"
           v-model="replyBody"
           rows="6"
           max-rows="30"
           class="mt-2"
           data-test="stdmsg-reply-body"
+        />
+        <!-- Laid out like the post text, so <optional> gets Keep and Remove here
+             too rather than showing its tags. -->
+        <ModStdMessageSegments
+          v-else
+          ref="replyEditor"
+          v-model="replySegments"
+          :blocked="replyBlockedSegments"
+          description="This is the message the member will receive."
+          class="mt-2"
+          data-test="stdmsg-reply-segments"
         />
       </div>
       <NoticeMessage v-if="sendError" variant="danger" class="mt-1 mb-1">
@@ -443,100 +346,89 @@ const directiveWarning = ref(null)
 // ── Segmented inline editor ──────────────────────────────────────────────────
 // When a standard message uses directives we don't edit the raw template in one
 // textarea (you hunt through the tags and lose your place with several blocks).
-// Instead we render the message in flow as an ordered list of segments: fixed
-// prose, an inline box per <editthis>, and a keep/remove control per <optional>.
-// The mod fills each box in order; the final message is reassembled from them.
+// ModStdMessageSegments lays it out in flow instead: fixed prose, an inline box
+// per <editthis>, and a keep/remove control per <optional>. The mod fills each box
+// in order; the final text is reassembled from them on send. The post text gets
+// one, and so does the message to the poster for Edit and Message.
 const useSegmentedEditor = ref(false)
 const segments = ref([])
+const useReplySegmentedEditor = ref(false)
+const replySegments = ref([])
+const postEditor = ref(null)
+const replyEditor = ref(null)
 
-// An <editthis> box counts as done once its text differs from the placeholder.
-function segEdited(seg) {
-  const v = (seg.value ?? '').trim()
-  return !!v && v !== (seg.content ?? '').trim()
-}
-function decideOptional(index, removed) {
-  const seg = segments.value[index]
-  if (seg && seg.type === 'optional') seg.removed = removed
-}
-
-// A text segment which is nothing but the line break(s) separating two blocks.
-// Rendered as an empty box it looked like a field you'd forgotten to fill in,
-// and gave no clue that it held the paragraph spacing - so a template written
-// with single line breaks produced a message with its paragraphs run together
-// and no obvious way to fix it. Shown as a toggle instead.
-// Needs a line break in it: a separator of only spaces is genuinely inline
-// wording, not paragraph spacing, and turning it into a paragraph control would
-// be wrong.
-function isGap(seg) {
-  return (
-    seg.type === 'text' &&
-    !!seg.content &&
-    /^\s*$/.test(seg.content) &&
-    seg.content.includes('\n')
-  )
-}
-function isParagraphGap(seg) {
-  return (seg.content?.match(/\n/g) || []).length > 1
-}
-function toggleGap(index) {
-  const seg = segments.value[index]
-  if (seg && isGap(seg)) seg.content = isParagraphGap(seg) ? '\n' : '\n\n'
-}
-
-// Which segments are holding the send up. Set when a send is refused so the
-// message points at the actual boxes rather than just complaining, and kept in
-// step as they're dealt with.
+// Which segments are holding the send up, in each editor. Set when a send is
+// refused so the message points at the actual boxes rather than just
+// complaining, and kept in step as they're dealt with.
 const blockedSegments = ref([])
-function isBlocked(index) {
-  return blockedSegments.value.includes(index)
-}
+const replyBlockedSegments = ref([])
 watch(
-  segments,
+  [segments, replySegments],
   () => {
-    if (blockedSegments.value.length) {
-      const sb = segmentsSendBlockers(segments.value)
-      blockedSegments.value = [...sb.unedited, ...sb.undecided]
+    if (blockedSegments.value.length || replyBlockedSegments.value.length) {
       // Keep the wording honest as they work through it, rather than leaving it
       // asking for things they have already done.
-      directiveWarning.value = sb.ok ? null : blockerMessage(sb)
+      markBlocked()
     }
   },
   { deep: true }
 )
 
-// Live gate for the segmented editor: outstanding editthis boxes + undecided
-// optionals. Mirrors sendBlockers() for the textarea path.
+// Live gate for each segmented editor: outstanding editthis boxes + undecided
+// optionals. Mirrors sendBlockers() for the textarea path. An editor not in use
+// has no segments, so it never blocks.
 const segmentBlockers = computed(() => segmentsSendBlockers(segments.value))
+const replySegmentBlockers = computed(() =>
+  segmentsSendBlockers(replySegments.value)
+)
+
+function markBlocked() {
+  const post = segmentBlockers.value
+  const reply = replySegmentBlockers.value
+  blockedSegments.value = [...post.unedited, ...post.undecided]
+  replyBlockedSegments.value = [...reply.unedited, ...reply.undecided]
+  directiveWarning.value =
+    post.ok && reply.ok ? null : blockerMessage(post, reply)
+}
 
 // Say what's outstanding, and that nothing has gone out - mods hit Send, saw the
 // button spin and had no idea a decision was missing.
-function blockerMessage(sb) {
+function blockerMessage(post, reply) {
+  const unedited = post.unedited.length + reply.unedited.length
+  const undecided = post.undecided.length + reply.undecided.length
   const bits = []
-  if (sb.unedited.length) {
+  if (unedited) {
     bits.push(
-      sb.unedited.length === 1
+      unedited === 1
         ? 'fill in the highlighted box'
-        : `fill in the ${sb.unedited.length} highlighted boxes`
+        : `fill in the ${unedited} highlighted boxes`
     )
   }
-  if (sb.undecided.length) {
+  if (undecided) {
     bits.push(
-      sb.undecided.length === 1
+      undecided === 1
         ? 'choose Keep or Remove for the highlighted optional wording'
-        : `choose Keep or Remove for the ${sb.undecided.length} highlighted optional sections`
+        : `choose Keep or Remove for the ${undecided} highlighted optional sections`
     )
   }
-  return `Nothing has been sent yet - please ${bits.join(' and ')}.`
+  const nothingYet = isEditAndMessage.value
+    ? 'Nothing has been saved or sent yet'
+    : 'Nothing has been sent yet'
+  // The message to the poster sits below the post, so say when that is where
+  // everything outstanding is.
+  const where = post.ok ? ' in the message to the poster' : ''
+  return `${nothingYet} - please ${bits.join(' and ')}${where}.`
 }
 
-// Point the moderator at the first thing that needs doing.
-async function showBlocked(indices) {
-  blockedSegments.value = indices
+// Mark everything outstanding and bring the first of it into view.
+async function showBlocked() {
+  markBlocked()
   await nextTick()
-  const el = window.document?.querySelector?.(
-    `#stdmsgmodal [data-seg="${indices[0]}"]`
-  )
-  el?.scrollIntoView?.({ block: 'center' })
+  if (blockedSegments.value.length) {
+    await postEditor.value?.scrollToSegment(blockedSegments.value[0])
+  } else if (replyBlockedSegments.value.length) {
+    await replyEditor.value?.scrollToSegment(replyBlockedSegments.value[0])
+  }
 }
 
 const keywordList = ['Offer', 'Taken', 'Wanted', 'Received', 'Other']
@@ -926,6 +818,10 @@ async function fillin() {
       await substitutionStrings(stdmsg.value.replybody || '')
     ).trim()
     originalReplyEditThis.value = parseEditThis(replyBody.value)
+    useReplySegmentedEditor.value = hasDirectives(replyBody.value)
+    replySegments.value = useReplySegmentedEditor.value
+      ? parseSegments(replyBody.value)
+      : []
   }
 
   if (props.autosend && !warning.value) {
@@ -1093,18 +989,20 @@ async function process(callback) {
   // decision. Block here (like the too-short check) rather than send.
   directiveWarning.value = null
   blockedSegments.value = []
+  replyBlockedSegments.value = []
+
+  // Segmented editors: anything outstanding in the post text or the message to
+  // the poster stops the send, and all of it is marked at once.
+  if (!segmentBlockers.value.ok || !replySegmentBlockers.value.ok) {
+    await showBlocked()
+    // Stop the Send button spinning. Without this it span until SpinButton's
+    // 20s "callback forgotten" timeout, which reads as the send having hung.
+    if (callback) callback()
+    return
+  }
+
   if (useSegmentedEditor.value) {
-    // Segmented editor: gate on outstanding editthis boxes / undecided optionals,
-    // and assemble the body the recipient sees from the segments before sending.
-    const sb = segmentBlockers.value
-    if (!sb.ok) {
-      directiveWarning.value = blockerMessage(sb)
-      await showBlocked([...sb.unedited, ...sb.undecided])
-      // Stop the Send button spinning. Without this it span until SpinButton's
-      // 20s "callback forgotten" timeout, which reads as the send having hung.
-      if (callback) callback()
-      return
-    }
+    // The body the recipient sees is assembled from the segments.
     body.value = assembleSegments(segments.value)
   } else {
     const blockers = sendBlockers(body.value || '', originalEditThis.value)
@@ -1118,16 +1016,20 @@ async function process(callback) {
   }
 
   if (isEditAndMessage.value) {
-    const replyBlockers = sendBlockers(
-      replyBody.value || '',
-      originalReplyEditThis.value
-    )
-    if (!replyBlockers.ok) {
-      directiveWarning.value = replyBlockers.editThis.length
-        ? 'Nothing has been saved or sent yet - please personalise the “edit this” wording in the message to the poster.'
-        : 'Nothing has been saved or sent yet - please remove the optional markers from the message to the poster, keeping the wording you want.'
-      if (callback) callback()
-      return
+    if (useReplySegmentedEditor.value) {
+      replyBody.value = assembleSegments(replySegments.value)
+    } else {
+      const replyBlockers = sendBlockers(
+        replyBody.value || '',
+        originalReplyEditThis.value
+      )
+      if (!replyBlockers.ok) {
+        directiveWarning.value = replyBlockers.editThis.length
+          ? 'Nothing has been saved or sent yet - please personalise the “edit this” wording in the message to the poster.'
+          : 'Nothing has been saved or sent yet - please remove the optional markers from the message to the poster, keeping the wording you want.'
+        if (callback) callback()
+        return
+      }
     }
     if (!stripDirectiveTags(replyBody.value || '').trim()) {
       directiveWarning.value =
@@ -1369,109 +1271,3 @@ function moveDown() {
 
 defineExpose({ fillin, show, modal })
 </script>
-
-<style scoped>
-/* Segmented inline editor: read the message in flow, fixed prose plus inline
-   boxes. Plain CSS (no SCSS vars) so a missing variable can't break page load. */
-.segmented-editor {
-  background-color: #fff;
-}
-.segmented-body {
-  white-space: pre-wrap;
-  line-height: 1.7;
-  font-size: 1rem;
-}
-/* Fixed prose is editable too (mods often tweak the wording), so render it as an
-   auto-sizing textarea rather than a static span. Styled to read as part of the
-   message — a light border that strengthens on hover/focus signals it's editable,
-   while staying visually quieter than the amber "must fill in" editthis boxes. */
-.seg-text {
-  display: block;
-  width: 100%;
-  margin: 4px 0;
-  padding: 4px 8px;
-  border: 1px solid #dee2e6;
-  border-radius: 6px;
-  background-color: #fff;
-  font: inherit;
-  line-height: 1.4;
-}
-.seg-text:hover {
-  border-color: #adb5bd;
-}
-.seg-text:focus,
-.seg-text:focus-visible {
-  outline: none;
-  border-color: #0d6efd;
-  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-}
-/* editthis boxes sit on their own full-width line so each editable bit reads as
-   a clear fillable field. A placeholder box is highlighted (amber) so outstanding
-   ones stand out, fading to plain once filled — so with several of them the
-   differences "disappear" as you go. */
-.seg-editthis {
-  display: block;
-  width: 100%;
-  margin: 4px 0;
-  padding: 4px 8px;
-  /* A clear, consistent box outline so each editable bit reads as a fillable
-     field rather than plain prose. Subtle once filled (so it blends back into
-     the message), prominent while still a placeholder. */
-  border: 1px solid #adb5bd;
-  border-radius: 6px;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
-  font: inherit;
-  line-height: 1.4;
-}
-.seg-editthis:hover {
-  border-color: #6c757d;
-}
-.seg-editthis:focus,
-.seg-editthis:focus-visible {
-  outline: none;
-  border-color: #0d6efd;
-  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-}
-.seg-editthis.seg-todo {
-  background-color: #fff3cd; /* amber: still needs personalising */
-  /* dashed amber outline = "fill me in"; becomes a plain solid box once edited */
-  border: 1px dashed #e0a800;
-}
-/* An optional section: its wording is editable while you decide (and after you
-   keep it), because mods want to reword these as well as take them or leave
-   them. Removing is reversible in both directions - Keep used to be final. */
-.seg-optional-undecided {
-  display: block;
-  background-color: #e2e3e5;
-  border-radius: 4px;
-  padding: 4px;
-  margin: 4px 0;
-}
-.seg-optional-text {
-  font-style: italic;
-}
-.seg-optional-kept {
-  display: block;
-}
-.seg-optional-change,
-.seg-gap-toggle {
-  font-size: 0.8125rem;
-}
-.seg-optional-removed {
-  white-space: normal;
-}
-/* Paragraph spacing between two blocks, shown as a toggle rather than an empty
-   textarea nobody could interpret. */
-.seg-gap {
-  margin: 2px 0;
-}
-/* What's stopping the send. Set only when a send is refused, cleared as each one
-   is dealt with. Wins over the focus styling above, or clicking into the box
-   would hide the very thing we're pointing at. */
-.seg-blocked,
-.seg-blocked:focus,
-.seg-blocked:focus-visible {
-  border: 1px solid #dc3545;
-  box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.4);
-}
-</style>
