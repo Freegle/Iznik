@@ -40,6 +40,11 @@ import { timeago, timeagoShort } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
 import NewsUserInfo from '~/components/NewsUserInfo'
 import ProfileImage from '~/components/ProfileImage'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const props = defineProps({
   userid: {
@@ -77,9 +82,9 @@ const addedagoShort = computed(() => {
 const mod = computed(() => {
   return (
     me.value &&
-    (me.value.systemrole === 'Moderator' ||
-      me.value.systemrole === 'Admin' ||
-      me.value.systemrole === 'Support')
+    (me.value.systemrole === SYSTEMROLE_MODERATOR ||
+      me.value.systemrole === SYSTEMROLE_ADMIN ||
+      me.value.systemrole === SYSTEMROLE_SUPPORT)
   )
 })
 

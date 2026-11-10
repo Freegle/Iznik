@@ -13,7 +13,7 @@
           ({{ timeago(user.bounceat) }})
         </span>
       </p>
-      <div v-if="user.role === 'Member' || supportOrAdmin">
+      <div v-if="user.role === ROLE_MEMBER || supportOrAdmin">
         <p>If you think the email is valid, you can:</p>
         <b-button variant="white" @click="unbounce">
           <v-icon v-if="unbouncing" icon="sync" class="fa-spin text-success" />
@@ -35,6 +35,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
 import { timeago } from '~/composables/useTimeFormat'
+import { ROLE_MEMBER } from '~/constants'
 
 const props = defineProps({
   userid: {

@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 
 import UnsubscribePage from '~/pages/unsubscribe/[[id]].vue'
+import { ROLE_MEMBER, ROLE_OWNER } from '~/constants'
 
 // Smoke test for the logged-out unsubscribe page: it should mount and render the
 // email-entry form (with an EmailValidator). The detailed behaviour is covered
@@ -126,8 +127,8 @@ describe('pages/unsubscribe/[[id]].vue', () => {
     meState.myid = 42
     meState.loggedIn = true
     meState.myGroups = [
-      { id: 1, namedisplay: 'Plain', role: 'Member' },
-      { id: 2, namedisplay: 'Mine', role: 'Owner' },
+      { id: 1, namedisplay: 'Plain', role: ROLE_MEMBER },
+      { id: 2, namedisplay: 'Mine', role: ROLE_OWNER },
     ]
 
     const wrapper = mountPage()
@@ -180,7 +181,7 @@ describe('pages/unsubscribe/[[id]].vue', () => {
     }
 
     it('shows an explanation instead of a Leave button', async () => {
-      loggedInWith([{ id: 2, namedisplay: 'Mine', role: 'Owner' }])
+      loggedInWith([{ id: 2, namedisplay: 'Mine', role: ROLE_OWNER }])
       const wrapper = mountPage()
       await flushPromises()
       await pick(wrapper, 2)
@@ -192,7 +193,7 @@ describe('pages/unsubscribe/[[id]].vue', () => {
     })
 
     it('still offers Leave for a plain membership', async () => {
-      loggedInWith([{ id: 1, namedisplay: 'Plain', role: 'Member' }])
+      loggedInWith([{ id: 1, namedisplay: 'Plain', role: ROLE_MEMBER }])
       const wrapper = mountPage()
       await flushPromises()
       await pick(wrapper, 1)
@@ -204,7 +205,7 @@ describe('pages/unsubscribe/[[id]].vue', () => {
     })
 
     it('shows the server refusal instead of crashing if the server says no', async () => {
-      loggedInWith([{ id: 1, namedisplay: 'Plain', role: 'Member' }])
+      loggedInWith([{ id: 1, namedisplay: 'Plain', role: ROLE_MEMBER }])
       const e = new Error('API Error DELETE /memberships -> status: 403')
       e.response = { status: 403, data: { error: 403, message: MSG } }
       leaveGroup.mockRejectedValue(e)

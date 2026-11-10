@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { ROLE_MEMBER, ROLE_MODERATOR } from '~/constants'
 
 const mockReviewIgnore = vi.fn().mockResolvedValue()
 const mockRemoveMember = vi.fn().mockResolvedValue()
@@ -425,12 +426,12 @@ describe('member store', () => {
       const store = useMemberStore()
       store.config = {}
 
-      await store.update({ userid: 42, groupid: 7, role: 'Moderator' })
+      await store.update({ userid: 42, groupid: 7, role: ROLE_MODERATOR })
 
       expect(mockMembershipsUpdate).toHaveBeenCalledWith({
         userid: 42,
         groupid: 7,
-        role: 'Moderator',
+        role: ROLE_MODERATOR,
       })
       expect(mockUserStoreFetch).toHaveBeenCalledTimes(1)
       expect(mockUserStoreFetch).toHaveBeenCalledWith(42, true)
@@ -440,7 +441,7 @@ describe('member store', () => {
       const store = useMemberStore()
       store.config = {}
 
-      await store.update({ userid: 42, groupid: 7, role: 'Member' })
+      await store.update({ userid: 42, groupid: 7, role: ROLE_MEMBER })
 
       expect(mockUserStoreFetch).toHaveBeenCalledWith(42, true)
     })
@@ -477,7 +478,7 @@ describe('member store', () => {
       const store = useMemberStore()
       store.config = {}
 
-      await store.update({ groupid: 7, role: 'Moderator' })
+      await store.update({ groupid: 7, role: ROLE_MODERATOR })
 
       expect(mockUserStoreFetch).not.toHaveBeenCalled()
     })
@@ -493,7 +494,7 @@ describe('member store', () => {
       const data = await store.update({
         userid: 42,
         groupid: 7,
-        role: 'Moderator',
+        role: ROLE_MODERATOR,
       })
 
       expect(data).toEqual({ ret: 0, status: 'Success' })

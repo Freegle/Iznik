@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import GroupHeader from '~/components/GroupHeader.vue'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const mockGroup = {
   id: 123,
@@ -279,13 +280,13 @@ describe('GroupHeader', () => {
 
   describe('leave functionality', () => {
     it('shows Leave button when a member', () => {
-      mockAuthStore.member.mockReturnValue('Member')
+      mockAuthStore.member.mockReturnValue(ROLE_MEMBER)
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('Leave')
     })
 
     it('calls leaveGroup on Leave click', async () => {
-      mockAuthStore.member.mockReturnValue('Member')
+      mockAuthStore.member.mockReturnValue(ROLE_MEMBER)
       const wrapper = createWrapper()
       const button = wrapper.find('[data-label="Leave"]')
       await button.trigger('click')
@@ -294,7 +295,7 @@ describe('GroupHeader', () => {
     })
 
     it('does not show Join or Leave for Moderator', () => {
-      mockAuthStore.member.mockReturnValue('Moderator')
+      mockAuthStore.member.mockReturnValue(ROLE_MODERATOR)
       const wrapper = createWrapper()
       expect(wrapper.find('[data-label="Join"]').exists()).toBe(false)
       expect(wrapper.find('[data-label="Leave"]').exists()).toBe(false)
@@ -303,19 +304,19 @@ describe('GroupHeader', () => {
 
   describe('moderator role display', () => {
     it('shows crown icon for Owner', () => {
-      mockAuthStore.member.mockReturnValue('Owner')
+      mockAuthStore.member.mockReturnValue(ROLE_OWNER)
       const wrapper = createWrapper()
       expect(wrapper.find('[data-icon="crown"]').exists()).toBe(true)
     })
 
     it('shows crown icon for Moderator', () => {
-      mockAuthStore.member.mockReturnValue('Moderator')
+      mockAuthStore.member.mockReturnValue(ROLE_MODERATOR)
       const wrapper = createWrapper()
       expect(wrapper.find('[data-icon="crown"]').exists()).toBe(true)
     })
 
     it('does not show crown icon for Member', () => {
-      mockAuthStore.member.mockReturnValue('Member')
+      mockAuthStore.member.mockReturnValue(ROLE_MEMBER)
       const wrapper = createWrapper()
       expect(wrapper.find('[data-icon="crown"]').exists()).toBe(false)
     })
@@ -425,8 +426,8 @@ describe('GroupHeader', () => {
   // asks to change it, so the compact bar and the full card never show together.
   describe('collapsible', () => {
     it('shows only the compact bar when folded, and asks to open on "Show details"', async () => {
-      mockMember.value = 'Member'
-      mockAuthStore.member.mockReturnValue('Member')
+      mockMember.value = ROLE_MEMBER
+      mockAuthStore.member.mockReturnValue(ROLE_MEMBER)
       const wrapper = createWrapper({ collapsible: true, collapsed: true })
 
       const bar = wrapper.find('.group-compact')
@@ -442,8 +443,8 @@ describe('GroupHeader', () => {
     })
 
     it('shows the full header with "Hide details" under the Leave button when open', async () => {
-      mockMember.value = 'Member'
-      mockAuthStore.member.mockReturnValue('Member')
+      mockMember.value = ROLE_MEMBER
+      mockAuthStore.member.mockReturnValue(ROLE_MEMBER)
       const wrapper = createWrapper({ collapsible: true, collapsed: false })
 
       expect(wrapper.find('.group-compact').exists()).toBe(false)
@@ -465,8 +466,8 @@ describe('GroupHeader', () => {
     })
 
     it('shows neither the compact bar nor "Hide details" unless collapsible', () => {
-      mockMember.value = 'Member'
-      mockAuthStore.member.mockReturnValue('Member')
+      mockMember.value = ROLE_MEMBER
+      mockAuthStore.member.mockReturnValue(ROLE_MEMBER)
       const wrapper = createWrapper({ collapsed: true })
 
       expect(wrapper.find('.group-compact').exists()).toBe(false)

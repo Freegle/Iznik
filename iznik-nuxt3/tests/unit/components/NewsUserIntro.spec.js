@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import NewsUserIntro from '~/components/NewsUserIntro.vue'
+import { SYSTEMROLE_MODERATOR, SYSTEMROLE_USER } from '~/constants'
 
 const mockMe = ref(null)
 
@@ -137,7 +138,7 @@ describe('NewsUserIntro', () => {
 
   describe('mod note', () => {
     beforeEach(() => {
-      mockMe.value = { systemrole: 'Moderator' }
+      mockMe.value = { systemrole: SYSTEMROLE_MODERATOR }
     })
 
     it('shows mod note for AboutMe type', () => {
@@ -165,7 +166,7 @@ describe('NewsUserIntro', () => {
     })
 
     it('hides mod note for non-mod users', () => {
-      mockMe.value = { systemrole: 'User' }
+      mockMe.value = { systemrole: SYSTEMROLE_USER }
       const wrapper = createWrapper({
         newsfeed: {
           id: 1,

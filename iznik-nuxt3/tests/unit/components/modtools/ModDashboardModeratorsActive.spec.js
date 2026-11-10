@@ -3,6 +3,12 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import ModDashboardModeratorsActive from '~/modtools/components/ModDashboardModeratorsActive.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Mock the composable
 const mockLoading = ref(false)
@@ -38,7 +44,11 @@ describe('ModDashboardModeratorsActive', () => {
         lastactive: `2024-01-${String(i).padStart(2, '0')}T12:00:00Z`,
         profile: { turl: `https://example.com/avatar${i}.jpg` },
         systemrole:
-          i % 3 === 0 ? 'Moderator' : i % 3 === 1 ? 'Support' : 'Admin',
+          i % 3 === 0
+            ? SYSTEMROLE_MODERATOR
+            : i % 3 === 1
+              ? SYSTEMROLE_SUPPORT
+              : SYSTEMROLE_ADMIN,
       })
     }
     return mods
@@ -159,7 +169,7 @@ describe('ModDashboardModeratorsActive', () => {
           displayname: 'Test Mod',
           lastactive: '2024-01-15T12:00:00Z',
           profile: { turl: 'https://example.com/avatar.jpg' },
-          systemrole: 'Moderator',
+          systemrole: SYSTEMROLE_MODERATOR,
         },
       ]
       const wrapper = mountComponent()
@@ -174,7 +184,7 @@ describe('ModDashboardModeratorsActive', () => {
           displayname: 'Support User',
           lastactive: '2024-01-15T12:00:00Z',
           profile: { turl: 'https://example.com/avatar.jpg' },
-          systemrole: 'Support',
+          systemrole: SYSTEMROLE_SUPPORT,
         },
       ]
       const wrapper = mountComponent()
@@ -189,7 +199,7 @@ describe('ModDashboardModeratorsActive', () => {
           displayname: 'Admin User',
           lastactive: '2024-01-15T12:00:00Z',
           profile: { turl: 'https://example.com/avatar.jpg' },
-          systemrole: 'Admin',
+          systemrole: SYSTEMROLE_ADMIN,
         },
       ]
       const wrapper = mountComponent()
@@ -204,7 +214,7 @@ describe('ModDashboardModeratorsActive', () => {
           displayname: 'Regular User',
           lastactive: '2024-01-15T12:00:00Z',
           profile: { turl: 'https://example.com/avatar.jpg' },
-          systemrole: 'User',
+          systemrole: SYSTEMROLE_USER,
         },
       ]
       const wrapper = mountComponent()

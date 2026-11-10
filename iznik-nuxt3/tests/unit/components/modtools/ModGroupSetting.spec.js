@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ModGroupSetting from '~/modtools/components/ModGroupSetting.vue'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Create mock store instance that can be configured per test
 let mockModGroupStore
@@ -21,7 +22,7 @@ describe('ModGroupSetting', () => {
     id: 123,
     nameshort: 'TestGroup',
     namedisplay: 'Test Group Display',
-    myrole: 'Owner',
+    myrole: ROLE_OWNER,
     settings: {
       autoapprove: 1,
       autopost: {
@@ -242,8 +243,8 @@ describe('ModGroupSetting', () => {
     })
 
     it.each([
-      ['Moderator', true],
-      ['Owner', false],
+      [ROLE_MODERATOR, true],
+      [ROLE_OWNER, false],
     ])('readonly is %s when myrole is %s', (myrole, expectedReadonly) => {
       const wrapper = mountComponent({}, { myrole })
       expect(wrapper.vm.readonly).toBe(expectedReadonly)
@@ -427,7 +428,7 @@ describe('ModGroupSetting', () => {
       // Test save button disabled
       const inputWrapper = mountComponent(
         { name: 'nameshort', type: 'input' },
-        { myrole: 'Moderator' }
+        { myrole: ROLE_MODERATOR }
       )
       await flushPromises()
       expect(
@@ -437,7 +438,7 @@ describe('ModGroupSetting', () => {
       // Test toggle disabled
       const toggleWrapper = mountComponent(
         { name: 'settings.autoapprove', type: 'toggle' },
-        { myrole: 'Moderator' }
+        { myrole: ROLE_MODERATOR }
       )
       await flushPromises()
       expect(

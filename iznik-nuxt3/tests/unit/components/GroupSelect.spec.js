@@ -1,16 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import GroupSelect from '~/components/GroupSelect.vue'
+import {
+  ROLE_MEMBER,
+  ROLE_MODERATOR,
+  ROLE_OWNER,
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
-const { mockMyGroups, mockMe } = vi.hoisted(() => {
+const { mockMyGroups, mockMe } = await vi.hoisted(async () => {
+  const { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER, SYSTEMROLE_USER } =
+    await import('~/constants')
   const { ref } = require('vue')
   return {
     mockMyGroups: ref([
-      { id: 1, namedisplay: 'Test Group A', role: 'Member' },
-      { id: 2, namedisplay: 'Test Group B', role: 'Moderator' },
-      { id: 3, namedisplay: 'Test Group C', role: 'Owner' },
+      { id: 1, namedisplay: 'Test Group A', role: ROLE_MEMBER },
+      { id: 2, namedisplay: 'Test Group B', role: ROLE_MODERATOR },
+      { id: 3, namedisplay: 'Test Group C', role: ROLE_OWNER },
     ]),
-    mockMe: ref({ id: 1, systemrole: 'User' }),
+    mockMe: ref({ id: 1, systemrole: SYSTEMROLE_USER }),
   }
 })
 
@@ -48,11 +58,11 @@ describe('GroupSelect', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockMyGroups.value = [
-      { id: 1, namedisplay: 'Test Group A', role: 'Member' },
-      { id: 2, namedisplay: 'Test Group B', role: 'Moderator' },
-      { id: 3, namedisplay: 'Test Group C', role: 'Owner' },
+      { id: 1, namedisplay: 'Test Group A', role: ROLE_MEMBER },
+      { id: 2, namedisplay: 'Test Group B', role: ROLE_MODERATOR },
+      { id: 3, namedisplay: 'Test Group C', role: ROLE_OWNER },
     ]
-    mockMe.value = { id: 1, systemrole: 'User' }
+    mockMe.value = { id: 1, systemrole: SYSTEMROLE_USER }
   })
 
   function createWrapper(props = {}) {
@@ -160,13 +170,13 @@ describe('GroupSelect', () => {
     })
 
     it('shows systemwide when user is Admin', () => {
-      mockMe.value = { id: 1, systemrole: 'Admin' }
+      mockMe.value = { id: 1, systemrole: SYSTEMROLE_ADMIN }
       const wrapper = createWrapper({ systemwide: true })
       expect(wrapper.text()).toContain('-- Systemwide --')
     })
 
     it('shows systemwide when user is Support', () => {
-      mockMe.value = { id: 1, systemrole: 'Support' }
+      mockMe.value = { id: 1, systemrole: SYSTEMROLE_SUPPORT }
       const wrapper = createWrapper({ systemwide: true })
       expect(wrapper.text()).toContain('-- Systemwide --')
     })
@@ -216,7 +226,7 @@ describe('GroupSelect', () => {
         {
           id: 1,
           namedisplay: 'Test Group',
-          role: 'Moderator',
+          role: ROLE_MODERATOR,
           work: { pending: 5 },
           mysettings: { active: 1 },
         },
@@ -230,7 +240,7 @@ describe('GroupSelect', () => {
         {
           id: 1,
           namedisplay: 'Test Group',
-          role: 'Moderator',
+          role: ROLE_MODERATOR,
           work: { pending: 5 },
           mysettings: { active: 0 },
         },
@@ -280,8 +290,8 @@ describe('GroupSelect', () => {
       // community renders as an option with no text and the list looks unusable
       // (Discourse 10046).
       mockMyGroups.value = [
-        { id: 11, namedisplay: '', role: 'Member' },
-        { id: 12, namedisplay: '', role: 'Member' },
+        { id: 11, namedisplay: '', role: ROLE_MEMBER },
+        { id: 12, namedisplay: '', role: ROLE_MEMBER },
       ]
 
       createWrapper()

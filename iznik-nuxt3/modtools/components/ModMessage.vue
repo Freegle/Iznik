@@ -719,7 +719,7 @@
                 <NoticeMessage
                   v-if="
                     message.myrole === 'Non-member' ||
-                    message.myrole === 'Member'
+                    message.myrole === ROLE_MEMBER
                   "
                   variant="danger"
                 >
@@ -945,7 +945,7 @@ import { setupKeywords } from '~/composables/useKeywords'
 import { useMemberStore } from '~/stores/member'
 import { useModConfigStore } from '~/stores/modconfig'
 import { useMiscStore } from '~/stores/misc'
-import { SUBJECT_REGEX } from '~/constants'
+import { ROLE_MEMBER, SUBJECT_REGEX } from '~/constants'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
 import { buildKeywordRegex } from '~/composables/useKeywordRegex'

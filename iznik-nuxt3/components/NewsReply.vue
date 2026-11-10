@@ -339,6 +339,11 @@ import AutoHeightTextarea from '~/components/AutoHeightTextarea'
 import { timeago, timeagoShort } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
 import { useLockdown } from '~/modtools/composables/useLockdown'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const NewsPhotoModal = defineAsyncComponent(
   () => import('./NewsPhotoModal.vue')
@@ -470,16 +475,17 @@ const tagusers = computed(() => {
 const mod = computed(() => {
   return (
     me.value &&
-    (me.value.systemrole === 'Moderator' ||
-      me.value.systemrole === 'Admin' ||
-      me.value.systemrole === 'Support')
+    (me.value.systemrole === SYSTEMROLE_MODERATOR ||
+      me.value.systemrole === SYSTEMROLE_ADMIN ||
+      me.value.systemrole === SYSTEMROLE_SUPPORT)
   )
 })
 
 const admin = computed(() => {
   return (
     me.value &&
-    (me.value.systemrole === 'Admin' || me.value.systemrole === 'Support')
+    (me.value.systemrole === SYSTEMROLE_ADMIN ||
+      me.value.systemrole === SYSTEMROLE_SUPPORT)
   )
 })
 

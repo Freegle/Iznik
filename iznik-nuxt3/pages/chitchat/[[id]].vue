@@ -211,6 +211,11 @@ import NewsThread from '~/components/NewsThread.vue'
 import MessageListUpToDate from '~/components/MessageListUpToDate.vue'
 import { untwem } from '~/composables/useTwem'
 import { useRoute } from '#imports'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const OurUploader = defineAsyncComponent(
   () => import('~/components/OurUploader')
@@ -282,9 +287,9 @@ const { me, chitChatMod } = useMe()
 // which teams we are in, so ordinary members cost no extra request.
 if (
   me.value &&
-  (me.value.systemrole === 'Moderator' ||
-    me.value.systemrole === 'Support' ||
-    me.value.systemrole === 'Admin' ||
+  (me.value.systemrole === SYSTEMROLE_MODERATOR ||
+    me.value.systemrole === SYSTEMROLE_SUPPORT ||
+    me.value.systemrole === SYSTEMROLE_ADMIN ||
     me.value.teams?.includes('ChitChat Moderation'))
 ) {
   teamStore.fetch('ChitChat Moderation')
@@ -292,9 +297,9 @@ if (
 const mod = computed(
   () =>
     me.value &&
-    (me.value.systemrole === 'Moderator' ||
-      me.value.systemrole === 'Support' ||
-      me.value.systemrole === 'Admin')
+    (me.value.systemrole === SYSTEMROLE_MODERATOR ||
+      me.value.systemrole === SYSTEMROLE_SUPPORT ||
+      me.value.systemrole === SYSTEMROLE_ADMIN)
 )
 
 // Refs and state

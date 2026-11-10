@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createMockMemberStore } from '../../mocks/stores'
 import ModRole from '~/modtools/components/ModRole.vue'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Create mock store instance that can be configured per test
 const mockMemberStore = createMockMemberStore()
@@ -15,7 +16,7 @@ describe('ModRole', () => {
   const defaultProps = {
     userid: 123,
     groupid: 456,
-    role: 'Member',
+    role: ROLE_MEMBER,
   }
 
   function mountModRole(props = {}) {
@@ -59,27 +60,27 @@ describe('ModRole', () => {
     })
 
     it('initializes with the role prop value', async () => {
-      const wrapper = mountModRole({ role: 'Moderator' })
+      const wrapper = mountModRole({ role: ROLE_MODERATOR })
       await wrapper.vm.$nextTick()
       // The component sets therole in mounted()
-      expect(wrapper.vm.therole).toBe('Moderator')
+      expect(wrapper.vm.therole).toBe(ROLE_MODERATOR)
     })
   })
 
   describe('role changes', () => {
     it('calls memberStore.update when role changes', async () => {
-      const wrapper = mountModRole({ role: 'Member' })
+      const wrapper = mountModRole({ role: ROLE_MEMBER })
       await wrapper.vm.$nextTick()
 
       // Change the select value
       const select = wrapper.find('select')
-      await select.setValue('Moderator')
+      await select.setValue(ROLE_MODERATOR)
 
       // Verify store was called with correct params
       expect(mockMemberStore.update).toHaveBeenCalledWith({
         userid: 123,
         groupid: 456,
-        role: 'Moderator',
+        role: ROLE_MODERATOR,
       })
     })
 
@@ -87,28 +88,28 @@ describe('ModRole', () => {
       const wrapper = mountModRole({
         userid: 999,
         groupid: 888,
-        role: 'Member',
+        role: ROLE_MEMBER,
       })
       await wrapper.vm.$nextTick()
 
       const select = wrapper.find('select')
-      await select.setValue('Owner')
+      await select.setValue(ROLE_OWNER)
 
       expect(mockMemberStore.update).toHaveBeenCalledWith({
         userid: 999,
         groupid: 888,
-        role: 'Owner',
+        role: ROLE_OWNER,
       })
     })
 
     it('updates local state when selection changes', async () => {
-      const wrapper = mountModRole({ role: 'Member' })
+      const wrapper = mountModRole({ role: ROLE_MEMBER })
       await wrapper.vm.$nextTick()
 
       const select = wrapper.find('select')
-      await select.setValue('Owner')
+      await select.setValue(ROLE_OWNER)
 
-      expect(wrapper.vm.therole).toBe('Owner')
+      expect(wrapper.vm.therole).toBe(ROLE_OWNER)
     })
   })
 
@@ -117,11 +118,11 @@ describe('ModRole', () => {
       const wrapper = mountModRole({
         userid: 100,
         groupid: 200,
-        role: 'Moderator',
+        role: ROLE_MODERATOR,
       })
       expect(wrapper.props('userid')).toBe(100)
       expect(wrapper.props('groupid')).toBe(200)
-      expect(wrapper.props('role')).toBe('Moderator')
+      expect(wrapper.props('role')).toBe(ROLE_MODERATOR)
     })
   })
 })

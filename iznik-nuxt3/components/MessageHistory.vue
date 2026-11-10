@@ -99,6 +99,11 @@ import { timeago } from '~/composables/useTimeFormat'
 import { useMiscStore } from '~/stores/misc'
 import { useMe } from '~/composables/useMe'
 import { homeGroupFirst, homeGroupId } from '~/composables/rippleStatus'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const props = defineProps({
   id: {
@@ -159,9 +164,9 @@ const me = authStore.user
 
 if (
   me &&
-  (me.systemrole === 'Moderator' ||
-    me.systemrole === 'Support' ||
-    me.systemrole === 'Admin')
+  (me.systemrole === SYSTEMROLE_MODERATOR ||
+    me.systemrole === SYSTEMROLE_SUPPORT ||
+    me.systemrole === SYSTEMROLE_ADMIN)
 ) {
   // Fetch any approving mod. No need to wait.
   const currentMessage = messageStore.byId(props.id)

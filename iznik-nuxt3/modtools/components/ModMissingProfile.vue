@@ -24,6 +24,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useMe } from '~/composables/useMe'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const { myGroups } = useMe()
 
@@ -35,7 +36,7 @@ const missing = computed(() => {
   for (const group of myGroups.value || []) {
     if (
       group.type === 'Freegle' &&
-      (group.role === 'Moderator' || group.role === 'Owner') &&
+      (group.role === ROLE_MODERATOR || group.role === ROLE_OWNER) &&
       group.publish &&
       (!group.tagline || !group.profile)
     ) {

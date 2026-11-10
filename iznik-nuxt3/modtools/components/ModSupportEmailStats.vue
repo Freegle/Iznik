@@ -706,7 +706,7 @@ const userIdOrEmail = ref('')
 
 const emailTypeOptions = [
   { text: 'All Types', value: '' },
-  { text: 'Admin', value: 'Admin' },
+  { text: 'Admin', value: 'Admin' }, // role-literal-ok: email type, not a role
   { text: 'Chat Notification', value: 'ChatNotification' },
   {
     text: 'Chat Notification (User to Mod)',
