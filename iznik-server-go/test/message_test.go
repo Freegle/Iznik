@@ -8275,11 +8275,10 @@ func TestGetMessageExpiresat(t *testing.T) {
 	assert.NotEmpty(t, arrival)
 }
 
-// V1 expiretime = max(maxagetoshow, repostDays * (max+1)) where repostDays
-// comes from reposts.offer or reposts.wanted depending on message type.
-// V1 honours an explicit maxagetoshow=0. Earlier Go code looked for
-// non-existent "wantedreposts" and "reposts.interval" keys and treated 0
-// as "missing" — both regressions are covered here.
+// expiretime = max(maxagetoshow, repostDays * (max+1)) where repostDays is the
+// system-wide repost setting (the config row "reposts"): offer or wanted
+// depending on message type. A community's own settings.reposts is ignored.
+// maxagetoshow stays per community and an explicit 0 is honoured (as V1 did).
 func TestExpiresatRespectsRepostsOfferKey(t *testing.T) {
 	prefix := uniquePrefix("msg_expiresat_offer")
 	db := database.DBConn
@@ -8290,7 +8289,9 @@ func TestExpiresatRespectsRepostsOfferKey(t *testing.T) {
 	CreateTestMembership(t, userID, groupID, "Member")
 
 	// maxagetoshow explicitly 0 means reposts alone govern expiry.
-	// Offer: 4 * (5+1) = 24 days.
+	// System setting 3 days, 3 reposts: Offer 3 * (3+1) = 12 days. The community's own
+	// reposts (4 days, 5 reposts, which would be 24) are ignored.
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
 		"'$.maxagetoshow', 0, '$.reposts', JSON_OBJECT('offer', 4, 'wanted', 7, 'max', 5)) "+
 		"WHERE id = ?", groupID)
@@ -8314,9 +8315,9 @@ func TestExpiresatRespectsRepostsOfferKey(t *testing.T) {
 	expiresat, perr := time.Parse(time.RFC3339, expiresatStr)
 	assert.NoError(t, perr)
 
-	want := arrival.Add(24 * 24 * time.Hour)
+	want := arrival.Add(12 * 24 * time.Hour)
 	assert.WithinDuration(t, want, expiresat, time.Minute,
-		"Offer expiresat should be arrival + 24d (offer=4, max=5, maxagetoshow=0)")
+		"Offer expiresat should be arrival + 12d (system offer=3, max=3, maxagetoshow=0)")
 }
 
 func TestExpiresatRespectsRepostsWantedKey(t *testing.T) {
@@ -8328,6 +8329,7 @@ func TestExpiresatRespectsRepostsWantedKey(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, userID, groupID, "Member")
 
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
 		"'$.maxagetoshow', 0, '$.reposts', JSON_OBJECT('offer', 4, 'wanted', 7, 'max', 5)) "+
 		"WHERE id = ?", groupID)
@@ -8352,9 +8354,9 @@ func TestExpiresatRespectsRepostsWantedKey(t *testing.T) {
 	expiresat, perr := time.Parse(time.RFC3339, expiresatStr)
 	assert.NoError(t, perr)
 
-	want := arrival.Add(42 * 24 * time.Hour)
+	want := arrival.Add(28 * 24 * time.Hour)
 	assert.WithinDuration(t, want, expiresat, time.Minute,
-		"Wanted expiresat should be arrival + 42d (wanted=7, max=5, maxagetoshow=0)")
+		"Wanted expiresat should be arrival + 28d (system wanted=7, max=3, maxagetoshow=0)")
 }
 
 func TestExpiresatMaxagetoshowWins(t *testing.T) {
@@ -8366,7 +8368,8 @@ func TestExpiresatMaxagetoshowWins(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, userID, groupID, "Member")
 
-	// maxagetoshow=60 beats repost lifetime of 3*(5+1)=18 for Offer.
+	// maxagetoshow=60 beats the system repost lifetime of 3*(3+1)=12 for Offer.
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
 		"'$.maxagetoshow', 60, '$.reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5)) "+
 		"WHERE id = ?", groupID)
@@ -9115,8 +9118,8 @@ func TestMessageRepostPerGroupArrival(t *testing.T) {
 	CreateTestMembership(t, posterID, groupB, "Member")
 	_, token := CreateTestSession(t, posterID)
 
-	// Give both groups a real reposts config (offer interval 3 days).
-	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5, 'chaseups', 5)) WHERE id IN (?, ?)", groupA, groupB)
+	// The offer interval is the system setting, 3 days, for both groups.
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
 
 	// CreateTestMessage adds the message to groupA with arrival NOW.
 	msgID := CreateTestMessage(t, posterID, groupA, "OFFER: Repost per-group test", 55.9533, -3.1883)
@@ -9175,8 +9178,8 @@ func TestMessageRepostNotBlockedByLaterRippledGroup(t *testing.T) {
 	CreateTestMembership(t, posterID, homeGroup, "Member")
 	_, token := CreateTestSession(t, posterID)
 
-	// Both groups use a 4-day offer interval, as the London groups do.
-	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 4, 'wanted', 4, 'max', 3, 'chaseups', 6)) WHERE id IN (?, ?)", homeGroup, rippledGroup)
+	// Both groups use the system 3-day offer interval.
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
 
 	msgID := CreateTestMessage(t, posterID, homeGroup, "OFFER: Repost ripple test", 55.9533, -3.1883)
 
@@ -9198,25 +9201,23 @@ func TestMessageRepostNotBlockedByLaterRippledGroup(t *testing.T) {
 	assert.True(t, msg.Canrepost, "A later ripple into another group must not hide the Repost option on the home group")
 }
 
-func TestMessageRepostDisabledOnOneGroupDoesNotBlockOthers(t *testing.T) {
-	// A group can turn reposting off by setting a very high interval (>= 365).
-	// V1 treats that as "this group never becomes eligible", not "nobody can
-	// repost this post".
-	prefix := uniquePrefix("repost_off")
+func TestMessageRepostIgnoresACommunitysOwnInterval(t *testing.T) {
+	// A community used to turn reposting off for itself by setting a very high interval (>= 365).
+	// The interval is the system setting now, the same for every community, so a community's own
+	// value changes nothing: the post is repostable once the system interval has passed.
+	prefix := uniquePrefix("repost_own")
 	db := database.DBConn
 
-	openGroup := CreateTestGroup(t, prefix+"_open")
-	disabledGroup := CreateTestGroup(t, prefix+"_disabled")
+	groupID := CreateTestGroup(t, prefix+"_group")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, openGroup, "Member")
+	CreateTestMembership(t, posterID, groupID, "Member")
 	_, token := CreateTestSession(t, posterID)
 
-	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5, 'chaseups', 5)) WHERE id = ?", openGroup)
-	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3650, 'wanted', 3650, 'max', 5, 'chaseups', 5)) WHERE id = ?", disabledGroup)
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3650, 'wanted', 3650, 'max', 5, 'chaseups', 5)) WHERE id = ?", groupID)
 
-	msgID := CreateTestMessage(t, posterID, openGroup, "OFFER: Repost disabled-group test", 55.9533, -3.1883)
-	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 30 DAY) WHERE msgid = ? AND groupid = ?", msgID, openGroup)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 30 DAY), 'Approved', 0)", msgID, disabledGroup)
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: Repost own-interval test", 55.9533, -3.1883)
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 5 DAY) WHERE msgid = ? AND groupid = ?", msgID, groupID)
 
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
 	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
@@ -9226,14 +9227,47 @@ func TestMessageRepostDisabledOnOneGroupDoesNotBlockOthers(t *testing.T) {
 	var msg message.Message
 	json2.Unmarshal(rsp(resp), &msg)
 
-	assert.True(t, msg.Canrepost, "A group with reposting disabled must not block reposting on the other groups")
+	assert.True(t, msg.Canrepost, "A community's own 3650 day interval must not stop a repost the system interval allows")
+	if msg.Repostat != nil {
+		assert.True(t, msg.Repostat.Before(time.Now()), "Repost time follows the system interval of 3 days, not the community's")
+	}
+}
+
+func TestMessageRepostFollowsTheSystemRow(t *testing.T) {
+	prefix := uniquePrefix("repost_row")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix+"_group")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: Repost system row test", 55.9533, -3.1883)
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 5 DAY) WHERE msgid = ? AND groupid = ?", msgID, groupID)
+	db.Exec("UPDATE messages_groups SET autoreposts = 0 WHERE msgid = ?", msgID)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	canRepost := func() bool {
+		resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.NoError(t, err)
+		var msg message.Message
+		json2.Unmarshal(rsp(resp), &msg)
+		return msg.Canrepost
+	}
+
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
+	assert.True(t, canRepost(), "five days is past a 3 day OFFER interval")
+
+	setSystemRepostsForTest(t, `{"offer":10,"wanted":7,"max":3,"chaseups":5}`)
+	assert.False(t, canRepost(), "five days is inside a 10 day OFFER interval")
 }
 
 func TestMessageRepostDefaultsWhenGroupHasNoRepostSettings(t *testing.T) {
-	// A group with no `reposts` entry falls back to V1's defaults
-	// (offer 3 / wanted 7). Previously the SQL fallback emitted a PHP hash
+	// A group with no `reposts` entry gets the same system interval as every
+	// other (offer 3 / wanted 7). Previously the SQL fallback emitted a PHP hash
 	// literal that failed to parse as JSON, giving interval 0 and making every
 	// such group instantly eligible.
+	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
 	prefix := uniquePrefix("repost_def")
 	db := database.DBConn
 
