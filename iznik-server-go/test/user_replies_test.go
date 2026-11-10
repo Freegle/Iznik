@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -23,11 +24,11 @@ func TestUserReplies_RippledPostAppearsOnce(t *testing.T) {
 	rippleGroup1 := CreateTestGroup(t, prefix+"rip1")
 	rippleGroup2 := CreateTestGroup(t, prefix+"rip2")
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, originGroup, "Moderator")
-	CreateTestMembership(t, replierID, originGroup, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, originGroup, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, replierID, originGroup, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, originGroup, "Rippled sofa "+prefix, 55.9533, -3.1883)
@@ -83,11 +84,11 @@ func TestUserReplies_MultipleOutcomesAppearOnceAndShowLatest(t *testing.T) {
 	prefix := uniquePrefix("replyOutcome")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, replierID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, replierID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, "Twice outcomed table "+prefix, 55.9533, -3.1883)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,11 +23,11 @@ func TestMyGroupsReturnsPosted(t *testing.T) {
 
 	prefix := uniquePrefix("mygroups_posted")
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
-	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, viewerID, group, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, group, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, posterID, group, prefix+" old offer", 51.5, -0.1)
 

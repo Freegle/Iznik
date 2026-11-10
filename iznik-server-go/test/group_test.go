@@ -26,8 +26,8 @@ func TestListGroups(t *testing.T) {
 	groupID2 := CreateTestGroup(t, prefix2)
 
 	// Create a moderator for the first group (GroupVolunteers returns Moderator/Owner members)
-	userID := CreateTestUser(t, prefix1, "Moderator")
-	CreateTestMembership(t, userID, groupID1, "Moderator")
+	userID := CreateTestUser(t, prefix1, utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, userID, groupID1, utils.ROLE_MODERATOR)
 
 	// List groups
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group", nil))
@@ -135,8 +135,8 @@ func TestGetGroup_WithAuth(t *testing.T) {
 	// Auth may include additional data for own group (e.g. showjoin)
 	prefix := uniquePrefix("grpgetauth")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/"+fmt.Sprint(groupID)+"?jwt="+token, nil))
@@ -179,8 +179,8 @@ func TestGetGroup_BatchFetchWithAuth(t *testing.T) {
 	prefix := uniquePrefix("grpbatchauth")
 	group1ID := CreateTestGroup(t, prefix + "_g1")
 	group2ID := CreateTestGroup(t, prefix + "_g2")
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, group1ID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, group1ID, utils.ROLE_MEMBER)
 	// Not a member of group2.
 	_, token := CreateTestSession(t, userID)
 
@@ -267,8 +267,8 @@ func TestGetGroup_WelcomemailModtoolsOnly(t *testing.T) {
 	prefix := uniquePrefix("grpwelcome")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Set a welcomemail on the group.
@@ -292,8 +292,8 @@ func TestGetGroup_BatchWelcomemailModtoolsOnly(t *testing.T) {
 	prefix := uniquePrefix("grpbchwelc")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	db.Exec("UPDATE `groups` SET welcomemail = 'Batch welcome!' WHERE id = ?", groupID)
@@ -326,7 +326,7 @@ func TestListGroupsWithSupport(t *testing.T) {
 	prefix := uniquePrefix("grpsupp")
 
 	// Create an Admin user so we can pass the systemrole check.
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	// Create a group and set support-specific fields on it.
@@ -405,7 +405,7 @@ func TestListGroupsWithSupport(t *testing.T) {
 	assert.Equal(t, float64(5), found["activemodcount"])
 
 	// Now verify that support=true as a regular User does NOT return support fields.
-	regularID := CreateTestUser(t, prefix+"_regular", "User")
+	regularID := CreateTestUser(t, prefix+"_regular", utils.SYSTEMROLE_USER)
 	_, regularToken := CreateTestSession(t, regularID)
 
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/group?support=true&jwt="+regularToken, nil))
@@ -437,8 +437,8 @@ func TestGetGroupWithShowmods(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create a moderator with showmod setting defaulting to true.
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
 	// Request with showmods=true.
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/"+fmt.Sprint(groupID)+"?showmods=true", nil))
@@ -625,11 +625,11 @@ func TestPatchGroupNotLoggedIn(t *testing.T) {
 func TestPatchGroupNotModOrOwner(t *testing.T) {
 	prefix := uniquePrefix("grpw_nomem")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Member only, not mod
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"id":      groupID,
@@ -643,7 +643,7 @@ func TestPatchGroupNotModOrOwner(t *testing.T) {
 
 func TestPatchGroupNoID(t *testing.T) {
 	prefix := uniquePrefix("grpw_noid")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -657,7 +657,7 @@ func TestPatchGroupNoID(t *testing.T) {
 
 func TestPatchGroupGroupNotFound(t *testing.T) {
 	prefix := uniquePrefix("grpw_notfound")
-	userID := CreateTestUser(t, prefix+"_user", "Admin")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -674,11 +674,11 @@ func TestPatchGroupConfirmAffiliation(t *testing.T) {
 	prefix := uniquePrefix("grpw_affil")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_owner", "User")
+	userID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Need to be owner
-	CreateTestMembership(t, userID, groupID, "Owner")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_OWNER)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"id":                    groupID,
@@ -702,9 +702,9 @@ func TestPatchGroupModSettableFields(t *testing.T) {
 	prefix := uniquePrefix("grpw_mod")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"id":      groupID,
@@ -735,9 +735,9 @@ func TestPatchGroupIgnoresOntn(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 	db.Exec("UPDATE `groups` SET ontn = 1 WHERE id = ?", groupID)
-	userID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"id":   groupID,
@@ -760,7 +760,7 @@ func TestPatchGroupAdminOnlyFields(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Admin user - not a member of the group
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	newShort := fmt.Sprintf("NS%d", groupID)
@@ -792,9 +792,9 @@ func TestPatchGroupAdminOnlyFieldsDeniedForMod(t *testing.T) {
 	prefix := uniquePrefix("grpw_admindeny")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_modonly", "User")
+	userID := CreateTestUser(t, prefix+"_modonly", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	// Get current lat
 	var origLat float64
@@ -821,7 +821,7 @@ func TestPatchGroupPolygon(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 
-	adminID := CreateTestUser(t, prefix+"_support", "Support")
+	adminID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	poly := "POLYGON((-0.1 51.5, -0.1 51.6, 0.0 51.6, 0.0 51.5, -0.1 51.5))"
@@ -845,9 +845,9 @@ func TestPatchGroupSettingsAndRules(t *testing.T) {
 	prefix := uniquePrefix("grpw_setrules")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	settings := map[string]interface{}{
 		"duplicates":   7,
@@ -884,9 +884,9 @@ func TestPatchGroupSettingsLogsAuditEntry(t *testing.T) {
 	prefix := uniquePrefix("grpw_setlog")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	// Clean up any pre-existing log entries for this group
 	db.Exec("DELETE FROM logs WHERE groupid = ? AND type = ? AND subtype = ?", groupID, log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_EDIT)
@@ -916,9 +916,9 @@ func TestPatchGroupRulesLogsAuditEntry(t *testing.T) {
 	prefix := uniquePrefix("grpw_rulelog")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	// Clean up any pre-existing log entries for this group
 	db.Exec("DELETE FROM logs WHERE groupid = ? AND type = ? AND subtype = ?", groupID, log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_EDIT)
@@ -947,9 +947,9 @@ func TestPatchGroupSettingsAndRulesLogsBothEntries(t *testing.T) {
 	prefix := uniquePrefix("grpw_bothlog")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	// Clean up any pre-existing log entries for this group
 	db.Exec("DELETE FROM logs WHERE groupid = ? AND type = ? AND subtype = ?", groupID, log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_EDIT)
@@ -981,7 +981,7 @@ func TestPatchGroupInvalidPolyReturnsError(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	// Self-intersecting polygon (bowtie shape) — invalid geometry
@@ -1007,7 +1007,7 @@ func TestPatchGroupInvalidPolyofficialReturnsError(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	// Self-intersecting polygon (bowtie shape) — invalid geometry
@@ -1032,7 +1032,7 @@ func TestPatchGroupInvalidPolyNotWKT(t *testing.T) {
 	prefix := uniquePrefix("grpw_notwkt")
 	groupID := CreateTestGroup(t, prefix)
 
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	// Completely invalid WKT — not parseable at all
@@ -1052,7 +1052,7 @@ func TestPatchGroupValidPolyStillAccepted(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	// Valid polygon
@@ -1079,7 +1079,7 @@ func TestPatchGroupSupportCanPatchWithoutMembership(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Support user, no membership in the group
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -1101,9 +1101,9 @@ func TestPatchGroupMicrovolunteeringoptions(t *testing.T) {
 	prefix := uniquePrefix("grpmv_opts")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	opts := map[string]interface{}{
 		"approvedmessages": true,
@@ -1199,9 +1199,9 @@ func TestPatchGroupProfileImage(t *testing.T) {
 	prefix := uniquePrefix("grpw_profile")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	// Seed a groups_images row with groupid=NULL (simulating OurUploader without groupid prop).
 	// groups.profile stores the groups_images.id directly; GET must resolve by id not by groupid.

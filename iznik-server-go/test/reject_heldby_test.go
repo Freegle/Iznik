@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,10 +32,10 @@ func TestRejectClearsHeldby(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -83,11 +84,11 @@ func TestRejectHeldCopyLeavesOtherGroupUnheld(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modA := CreateTestUser(t, prefix+"_moda", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modA, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modA, groupA, utils.ROLE_MODERATOR)
 	_, modAToken := CreateTestSession(t, modA)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -140,10 +141,10 @@ func TestRejectWorksOnSpamCollection(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)

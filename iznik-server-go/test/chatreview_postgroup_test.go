@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,18 +30,18 @@ func TestChatReview_CarriesTheGroupThePostIsOn(t *testing.T) {
 	modGroup := CreateTestGroup(t, prefix+"_mod")
 	postGroup := CreateTestGroup(t, prefix+"_post")
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, modGroup, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, modGroup, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// The replier is on the moderator's group - that is what puts this chat in
 	// their queue at all.
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, replierID, modGroup, "Member")
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, replierID, modGroup, utils.ROLE_MEMBER)
 
 	// The post lives on the OTHER community.
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, postGroup, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, postGroup, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, postGroup, "OFFER: sofa (review group test)", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, posterID, &replierID, nil, "User2User")
@@ -99,13 +100,13 @@ func TestChatReview_NoPostMeansNoGroup(t *testing.T) {
 	prefix := uniquePrefix("reviewnopost")
 
 	modGroup := CreateTestGroup(t, prefix+"_mod")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, modGroup, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, modGroup, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	recipientID := CreateTestUser(t, prefix+"_recipient", "User")
-	CreateTestMembership(t, recipientID, modGroup, "Member")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+	recipientID := CreateTestUser(t, prefix+"_recipient", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, recipientID, modGroup, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
 	db.Exec(
@@ -149,15 +150,15 @@ func TestChatReview_RippledPostListsEveryCommunityOriginFirst(t *testing.T) {
 	originGroup := CreateTestGroup(t, prefix+"_origin")
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, modGroup, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, modGroup, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, replierID, modGroup, "Member")
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, replierID, modGroup, utils.ROLE_MEMBER)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, originGroup, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, originGroup, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, originGroup, "OFFER: bookcase (rippled review test)", 51.5, -0.1)
 
 	// The same post, reached by rippling. rippled_in sorts after the origin's

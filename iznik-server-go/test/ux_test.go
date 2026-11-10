@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,7 +23,7 @@ import (
 // future year, so nothing here can meet real rollup rows, and removes them afterwards.
 
 func uxSupportToken(t *testing.T, name string) string {
-	id := CreateTestUser(t, uniquePrefix(name), "Support")
+	id := CreateTestUser(t, uniquePrefix(name), utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, id)
 	return token
 }
@@ -63,7 +64,7 @@ func uxClean(t *testing.T, from, to string) {
 
 func TestUxRequiresLoginAndSupport(t *testing.T) {
 	ux.ResetCache()
-	userID := CreateTestUser(t, uniquePrefix("uxnoauth"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxnoauth"), utils.SYSTEMROLE_USER)
 	_, userToken := CreateTestSession(t, userID)
 
 	for _, p := range []string{"funnels", "outcomes", "fields", "friction", "adoption", "regret", "search", "health",

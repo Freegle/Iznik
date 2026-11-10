@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
 )
@@ -155,7 +156,7 @@ func TestAppleLoginExistingUserByEmail(t *testing.T) {
 	prefix := uniquePrefix("apple-email")
 	email := fmt.Sprintf("%s@test.com", prefix)
 	appleUID := "apple-uid-" + prefix
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	assert.NoError(t, err)
@@ -194,7 +195,7 @@ func TestAppleLoginExistingUserByEmail(t *testing.T) {
 // whose email address they know. The attacker's login must instead create a fresh, separate account.
 func TestAppleLoginClientEmailNotTrusted(t *testing.T) {
 	prefix := uniquePrefix("apple-cross")
-	victimID := CreateTestUser(t, prefix, "User")
+	victimID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	var victimEmail string
@@ -232,7 +233,7 @@ func TestAppleLoginClientEmailNotTrusted(t *testing.T) {
 func TestAppleLoginExistingUserByAppleUID(t *testing.T) {
 	prefix := uniquePrefix("apple-uid")
 	appleUID := "apple-uid-" + prefix
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Apple', ?)", userID, appleUID)

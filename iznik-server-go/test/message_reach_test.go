@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/spatial"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -51,12 +52,12 @@ func TestMessageReachAsMod(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("reachmod")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
 	mid := CreateTestMessage(t, posterID, group, "OFFER: reach test", 51.5, -0.1)
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, group, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, group, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	insertReach(mid, 3, 9)
@@ -96,14 +97,14 @@ func TestMessageReachAsModOfDifferentGroup(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("reachothermod")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
 	mid := CreateTestMessage(t, posterID, group, "OFFER: reach other-group mod", 51.5, -0.1)
 
 	// A mod of an unrelated group, with no membership at all of the post's group.
 	otherGroup := CreateTestGroup(t, prefix+"_other")
-	modID := CreateTestUser(t, prefix+"_othermod", "User")
-	CreateTestMembership(t, modID, otherGroup, "Moderator")
+	modID := CreateTestUser(t, prefix+"_othermod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, otherGroup, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	insertReach(mid, 3, 9)
@@ -124,12 +125,12 @@ func TestMessageReachForbiddenForNonMod(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("reachnomod")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
 	mid := CreateTestMessage(t, posterID, group, "OFFER: reach forbidden", 51.5, -0.1)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, group, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, group, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	insertReach(mid, 3, 9)
@@ -145,13 +146,13 @@ func TestMessageReachNoReachRow(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("reachnone")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
 	mid := CreateTestMessage(t, posterID, group, "OFFER: reach none", 51.5, -0.1)
 	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, group, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, group, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d/reach?jwt=%s", mid, token), nil))
@@ -175,12 +176,12 @@ func TestMessageReachIncludesTheRings(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("reachrings")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
 	mid := CreateTestMessage(t, posterID, group, "OFFER: reach rings test", 51.5, -0.1)
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, group, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, group, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	insertReach(mid, 3, 9)
@@ -259,12 +260,12 @@ func TestMessageReachOmitsRingsWhenThereAreNone(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("reachnorings")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
 	mid := CreateTestMessage(t, posterID, group, "OFFER: no rings", 51.5, -0.1)
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, group, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, group, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	insertReach(mid, 1, 9)

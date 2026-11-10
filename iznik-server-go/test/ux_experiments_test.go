@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,7 +65,7 @@ func uxPatch(t *testing.T, token, path string, body interface{}) (int, map[strin
 }
 
 func TestUxExperimentsRequireSupport(t *testing.T) {
-	userID := CreateTestUser(t, uniquePrefix("uxexpuser"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxexpuser"), utils.SYSTEMROLE_USER)
 	_, userToken := CreateTestSession(t, userID)
 
 	assert.Equal(t, 401, uxGet(t, "", "experiments", nil))
@@ -879,14 +880,14 @@ func TestUxExperimentsVerdictCountsInSessionWork(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, adminID, groupID, "Moderator")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, adminID, groupID, utils.ROLE_MODERATOR)
 	_, adminToken := CreateTestSession(t, adminID)
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
-	CreateTestMembership(t, supportID, groupID, "Moderator")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+	CreateTestMembership(t, supportID, groupID, utils.ROLE_MODERATOR)
 	_, supportToken := CreateTestSession(t, supportID)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	baseConfirm, baseRemove := ux.VerdictCounts()

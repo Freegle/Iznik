@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	user2 "github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -58,7 +59,7 @@ func TestDonationAsksPausedHonoursTheDate(t *testing.T) {
 
 func TestTurningDonationAsksOffStartsAYear(t *testing.T) {
 	prefix := uniquePrefix("donlapse")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, memberID)
 
 	before := time.Now().UTC()
@@ -83,7 +84,7 @@ func TestTurningDonationAsksOffStartsAYear(t *testing.T) {
 func TestUnrelatedSaveDoesNotExtendTheOptOut(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("donkeep")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, memberID)
 
 	running := time.Now().UTC().AddDate(0, 2, 0).Format(time.RFC3339)
@@ -104,7 +105,7 @@ func TestUnrelatedSaveDoesNotExtendTheOptOut(t *testing.T) {
 func TestTurningDonationAsksBackOnClearsTheDate(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("donclear")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, memberID)
 
 	running := time.Now().UTC().AddDate(0, 2, 0).Format(time.RFC3339)
@@ -122,10 +123,10 @@ func TestTurningDonationAsksBackOnClearsTheDate(t *testing.T) {
 func TestLapsedOptOutReadsAsOffAndRestartsWhenTurnedOnAgain(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("donlapsed")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, memberID)
 
-	supportID := CreateTestUser(t, prefix+"_support", "User")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
 	_, supportToken := CreateTestSession(t, supportID)
 
@@ -147,7 +148,7 @@ func TestLapsedOptOutReadsAsOffAndRestartsWhenTurnedOnAgain(t *testing.T) {
 func TestEchoOfALapsedOptOutLetsItLapse(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("donecho")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, memberID)
 
 	lapsed := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)

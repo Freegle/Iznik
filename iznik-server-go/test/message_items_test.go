@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,7 +82,7 @@ func TestStoreLoadsItemKeys(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("msgitems")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, groupID, "Aluminium walking frame "+prefix, 51.5, -0.1)
 	t.Cleanup(func() { db.Exec("DELETE FROM messages_cleaned_items WHERE msgid = ?", msgID) })
 

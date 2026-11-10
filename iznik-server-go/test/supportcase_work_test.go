@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,7 +15,7 @@ import (
 func scWorkUser(t *testing.T, name, systemrole string) string {
 	prefix := uniquePrefix(name)
 	id := CreateTestUser(t, prefix, systemrole)
-	CreateTestMembership(t, id, CreateTestGroup(t, prefix), "Moderator")
+	CreateTestMembership(t, id, CreateTestGroup(t, prefix), utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, id)
 	return token
 }

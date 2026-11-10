@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	user2 "github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -32,14 +33,14 @@ func TestDonorFlagVisibleToSupportWithoutDonationList(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("donorflag")
 
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_donations (type, userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, source) VALUES ('Stripe', ?, ?, 'Donor', '2019-01-01 10:00:00', ?, 5.00, 'Stripe')",
 		donorID, prefix+"_donor@example.com", prefix+"_txn")
 	defer db.Exec("DELETE FROM users_donations WHERE userid = ?", donorID)
 
-	nonDonorID := CreateTestUser(t, prefix+"_nondonor", "User")
+	nonDonorID := CreateTestUser(t, prefix+"_nondonor", utils.SYSTEMROLE_USER)
 
-	supportID := CreateTestUser(t, prefix+"_support", "User")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
 	_, supportToken := CreateTestSession(t, supportID)
 
@@ -56,12 +57,12 @@ func TestDonorFlagHiddenFromOtherMembers(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("donorhidden")
 
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_donations (type, userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, source) VALUES ('Stripe', ?, ?, 'Donor', '2019-01-01 10:00:00', ?, 5.00, 'Stripe')",
 		donorID, prefix+"_donor@example.com", prefix+"_txn")
 	defer db.Exec("DELETE FROM users_donations WHERE userid = ?", donorID)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	resp, err := getApp().Test(httptest.NewRequest("GET",
@@ -86,10 +87,10 @@ func TestSupportCanTurnOffDonationAsksForMember(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("donoptout")
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	db.Exec(`UPDATE users SET settings = '{"notificationmails":true,"somecustom":"keep"}' WHERE id = ?`, memberID)
 
-	supportID := CreateTestUser(t, prefix+"_support", "User")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
 	_, supportToken := CreateTestSession(t, supportID)
 
@@ -117,7 +118,7 @@ func TestSupportCanTurnOffDonationAsksForMember(t *testing.T) {
 	assert.True(t, u.NoDonationAsks, "support must see the switch as it really is")
 
 	// And it reads false for a member who has not opted out.
-	other := CreateTestUser(t, prefix+"_other", "User")
+	other := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	assert.False(t, getUserAs(t, other, supportToken).NoDonationAsks)
 
 	var supportStored *string

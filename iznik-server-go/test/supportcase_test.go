@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -60,11 +61,11 @@ type scWorld struct {
 func scSetup(t *testing.T, name string) scWorld {
 	prefix := uniquePrefix(name)
 	w := scWorld{}
-	w.member = CreateTestUser(t, prefix+"_m", "User")
-	w.mod = CreateTestUser(t, prefix+"_mod", "Moderator")
+	w.member = CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	w.mod = CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	w.group = CreateTestGroup(t, prefix)
-	CreateTestMembership(t, w.member, w.group, "Member")
-	CreateTestMembership(t, w.mod, w.group, "Moderator")
+	CreateTestMembership(t, w.member, w.group, utils.ROLE_MEMBER)
+	CreateTestMembership(t, w.mod, w.group, utils.ROLE_MODERATOR)
 	w.chat = CreateTestChatRoom(t, w.member, nil, &w.group, "User2Mod")
 	CreateTestChatMessage(t, w.chat, w.member, "Hello mods")
 	_, w.modToken = CreateTestSession(t, w.mod)
@@ -95,7 +96,7 @@ func scReferOK(t *testing.T, token string, chatid uint64, reason string) uint64 
 }
 
 func scSupport(t *testing.T, name string) (uint64, string) {
-	id := CreateTestUser(t, uniquePrefix(name), "Support")
+	id := CreateTestUser(t, uniquePrefix(name), utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, id)
 	return id, token
 }
@@ -291,8 +292,8 @@ func TestSupportCaseReferAgainAfterHandledIsNewCase(t *testing.T) {
 
 func TestSupportCaseSecondReferrerGetsOwnCaseAndCannotSeeFirst(t *testing.T) {
 	w := scSetup(t, "scsecond")
-	mod2 := CreateTestUser(t, uniquePrefix("scsecond_mod2"), "Moderator")
-	CreateTestMembership(t, mod2, w.group, "Moderator")
+	mod2 := CreateTestUser(t, uniquePrefix("scsecond_mod2"), utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, mod2, w.group, utils.ROLE_MODERATOR)
 	_, token2 := CreateTestSession(t, mod2)
 
 	first := scReferOK(t, w.modToken, w.chat, "mine")
@@ -360,8 +361,8 @@ func TestSupportCaseNonReferrerModeratorGets404(t *testing.T) {
 	w := scSetup(t, "scother")
 	caseid := scReferOK(t, w.modToken, w.chat, "")
 
-	other := CreateTestUser(t, uniquePrefix("scother_o"), "User")
-	CreateTestMembership(t, other, w.group, "Moderator")
+	other := CreateTestUser(t, uniquePrefix("scother_o"), utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, other, w.group, utils.ROLE_MODERATOR)
 	_, otherToken := CreateTestSession(t, other)
 
 	path := fmt.Sprintf("/api/supportcases/%d", caseid)
@@ -634,8 +635,8 @@ func TestSupportCaseReopenConflictIs409(t *testing.T) {
 func TestSupportCaseMemberChoice(t *testing.T) {
 	// User2User: the participant who is not the referrer, in either position.
 	prefix := uniquePrefix("scmember")
-	a := CreateTestUser(t, prefix+"_a", "Moderator")
-	b := CreateTestUser(t, prefix+"_b", "Moderator")
+	a := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_MODERATOR)
+	b := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_MODERATOR)
 	chat := CreateTestChatRoom(t, a, &b, nil, "User2User")
 	_, tokenA := CreateTestSession(t, a)
 	_, tokenB := CreateTestSession(t, b)

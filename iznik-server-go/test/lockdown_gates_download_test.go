@@ -20,6 +20,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func exportHeld() func() {
@@ -32,7 +33,7 @@ func exportHeld() func() {
 func TestLockdownRefusesExportRequestEvenForSupport(t *testing.T) {
 	prefix := uniquePrefix("ld_export_post")
 	db := database.DBConn
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	restore := exportHeld()
@@ -51,7 +52,7 @@ func TestLockdownRefusesExportRequestEvenForSupport(t *testing.T) {
 
 func TestLockdownRefusesExportDownloadEvenForSupport(t *testing.T) {
 	prefix := uniquePrefix("ld_export_get")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	restore := exportHeld()
@@ -66,9 +67,9 @@ func TestLockdownRefusesExportDownloadEvenForSupport(t *testing.T) {
 
 func TestLockdownRefusesUserDumpEvenForSupport(t *testing.T) {
 	prefix := uniquePrefix("ld_userdump")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	restore := exportHeld()
 	defer restore()
@@ -86,7 +87,7 @@ func TestLockdownRefusesStatsFileDownload(t *testing.T) {
 	// handler ever reaches the lockdown gate, which would prove the wrong thing here.
 	// Support is used, matching TestLockdownRefusesUserDumpEvenForSupport above, so the
 	// test actually exercises "nobody is exempt from downloads, not even Support/Admin".
-	userID := CreateTestUser(t, prefix+"_user", "Support")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// partnerships_statsfiles.jobid is a not-null FK to partnerships_statsjobs

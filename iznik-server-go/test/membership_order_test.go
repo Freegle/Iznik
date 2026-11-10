@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -35,14 +36,14 @@ func getOrderedPage(t *testing.T, url string) orderedPage {
 // the order they joined.
 func orderedGroup(t *testing.T, prefix string, n int) (uint64, string, []uint64) {
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	var ids []uint64
 	for i := 0; i < n; i++ {
-		uid := CreateTestUser(t, fmt.Sprintf("%s_m%02d", prefix, i), "User")
-		CreateTestMembership(t, uid, groupID, "Member")
+		uid := CreateTestUser(t, fmt.Sprintf("%s_m%02d", prefix, i), utils.SYSTEMROLE_USER)
+		CreateTestMembership(t, uid, groupID, utils.ROLE_MEMBER)
 		ids = append(ids, uid)
 	}
 	return groupID, token, ids

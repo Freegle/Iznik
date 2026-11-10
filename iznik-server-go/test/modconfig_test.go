@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,8 +28,8 @@ func createTestModConfig(t *testing.T, name string, createdby uint64) uint64 {
 func TestGetModConfigSingle(t *testing.T) {
 	prefix := uniquePrefix("ModCfg")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -52,7 +53,7 @@ func TestGetModConfigSingle(t *testing.T) {
 // inaccessible" (9518.180). Keep V1 parity.
 func TestGetModConfigInvalidID(t *testing.T) {
 	prefix := uniquePrefix("ModCfgBadID")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, modID)
 
 	// An id that definitely doesn't exist.
@@ -69,8 +70,8 @@ func TestGetModConfigInvalidID(t *testing.T) {
 func TestPostModConfig(t *testing.T) {
 	prefix := uniquePrefix("ModCfgPost")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"name":"%s_newcfg"}`, prefix)
@@ -87,7 +88,7 @@ func TestPostModConfig(t *testing.T) {
 
 func TestPostModConfigNotMod(t *testing.T) {
 	prefix := uniquePrefix("ModCfgNM")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"name":"ShouldFail"}`
@@ -104,8 +105,8 @@ func TestPostModConfigNotMod(t *testing.T) {
 func TestPatchModConfig(t *testing.T) {
 	prefix := uniquePrefix("ModCfgPatch")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -123,7 +124,7 @@ func TestPatchModConfig(t *testing.T) {
 
 func TestDeleteModConfig(t *testing.T) {
 	prefix := uniquePrefix("ModCfgDel")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", adminID)
@@ -140,14 +141,14 @@ func TestDeleteModConfig(t *testing.T) {
 func TestDeleteModConfigInUse(t *testing.T) {
 	prefix := uniquePrefix("ModCfgDelUse")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Admin")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
 
 	// Assign config to membership so it's in use.
 	db := database.DBConn
-	CreateTestMembership(t, modID, groupID, "Owner")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?", cfgID, modID, groupID)
 
 	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/modconfig?id=%d&jwt=%s", cfgID, token), nil)
@@ -162,8 +163,8 @@ func TestDeleteModConfigInUse(t *testing.T) {
 func TestPostModConfigCreatesLog(t *testing.T) {
 	prefix := uniquePrefix("ModCfgLogC")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"name":"%s_newcfg"}`, prefix)
@@ -188,8 +189,8 @@ func TestPostModConfigCreatesLog(t *testing.T) {
 func TestPatchModConfigCreatesLog(t *testing.T) {
 	prefix := uniquePrefix("ModCfgLogE")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -211,17 +212,17 @@ func TestPatchModConfigCreatesLog(t *testing.T) {
 func TestPatchModConfigProtectedSetsCreatedby(t *testing.T) {
 	prefix := uniquePrefix("ModCfgProt")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	// Create config owned by someone else (unprotected, so modID can modify).
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	cfgID := createTestModConfig(t, prefix+"_cfg", otherID)
 
 	// Assign it to a group modID moderates so they can see it.
 	db := database.DBConn
-	CreateTestMembership(t, otherID, groupID, "Moderator")
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?", cfgID, otherID, groupID)
 
 	// Set protected=1 — should also set createdby to the caller.
@@ -238,7 +239,7 @@ func TestPatchModConfigProtectedSetsCreatedby(t *testing.T) {
 
 func TestDeleteModConfigCreatesLog(t *testing.T) {
 	prefix := uniquePrefix("ModCfgLogD")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", adminID)
@@ -258,8 +259,8 @@ func TestDeleteModConfigCreatesLog(t *testing.T) {
 func TestPostModConfigCopyBulkops(t *testing.T) {
 	prefix := uniquePrefix("ModCfgBulk")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a source config with bulkops.
@@ -300,8 +301,8 @@ func TestPostModConfigCopyBulkops(t *testing.T) {
 func TestPostModConfigCopyPreservesSubjregAndFromname(t *testing.T) {
 	prefix := uniquePrefix("ModCfgCopyFields")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	srcCfgID := createTestModConfig(t, prefix+"_src", modID)
@@ -332,8 +333,8 @@ func TestPostModConfigCopyPreservesSubjregAndFromname(t *testing.T) {
 func TestPostModConfigSimpleCreateReturnsValidID(t *testing.T) {
 	prefix := uniquePrefix("ModCfgIDRace")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"name":"%s_cfg"}`, prefix)
@@ -357,7 +358,7 @@ func TestPostModConfigSimpleCreateReturnsValidID(t *testing.T) {
 
 func TestGetModConfigV2Path(t *testing.T) {
 	prefix := uniquePrefix("ModCfgV2P")
-	modID := CreateTestUser(t, prefix+"_mod", "Admin")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, modID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/apiv2/modtools/modconfig?id=0&jwt=%s", token), nil)
@@ -368,8 +369,8 @@ func TestGetModConfigV2Path(t *testing.T) {
 func TestModConfigReturnsAndCopiesStdmsgReplybody(t *testing.T) {
 	prefix := uniquePrefix("ModCfgReplybody")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	srcCfgID := createTestModConfig(t, prefix+"_src", modID)

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -37,10 +38,10 @@ func TestDiscourseSSO_ValidFlow(t *testing.T) {
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
 	// Create a moderator user on a Freegle group.
-	userID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	email := prefix + "_mod@test.com"
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 
 	// Create a session.
 	sessionID, _ := CreateTestSession(t, userID)
@@ -162,9 +163,9 @@ func TestDiscourseSSO_MemberOnly_ShowsNotModError(t *testing.T) {
 	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	sessionID, _ := CreateTestSession(t, userID)
 
 	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))
@@ -178,9 +179,9 @@ func TestDiscourseSSO_StaleModeratorSystemrole_ShowsNotModError(t *testing.T) {
 	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
-	userID := CreateTestUser(t, prefix, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	sessionID, _ := CreateTestSession(t, userID)
 
 	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))
@@ -194,9 +195,9 @@ func TestDiscourseSSO_OwnerMembershipWithUserSystemrole_ShowsNotModError(t *test
 	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Owner")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_OWNER)
 	sessionID, _ := CreateTestSession(t, userID)
 
 	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))
@@ -209,9 +210,9 @@ func TestDiscourseSSO_Owner_SignsIn(t *testing.T) {
 	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
-	userID := CreateTestUser(t, prefix, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Owner")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_OWNER)
 	sessionID, _ := CreateTestSession(t, userID)
 
 	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))

@@ -21,6 +21,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	newsfeedpkg "github.com/freegle/iznik-server-go/newsfeed"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -50,8 +51,8 @@ func insertChitchatHold(t *testing.T, nfID uint64) {
 func TestMessageLockdownheldTrueWithUnresolvedHold(t *testing.T) {
 	prefix := uniquePrefix("ld_held_msg")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, posterID)
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
@@ -71,8 +72,8 @@ func TestMessageLockdownheldTrueWithUnresolvedHold(t *testing.T) {
 func TestMessageLockdownheldFalseWhenNoHold(t *testing.T) {
 	prefix := uniquePrefix("ld_held_msg_none")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, posterID)
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
@@ -89,8 +90,8 @@ func TestMessageLockdownheldFalseWhenNoHold(t *testing.T) {
 func TestMessageLockdownheldFalseWhenOutcomeSet(t *testing.T) {
 	prefix := uniquePrefix("ld_held_msg_resolved")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, posterID)
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
@@ -113,10 +114,10 @@ func TestMessageLockdownheldFalseWhenOutcomeSet(t *testing.T) {
 func TestListMessagesLockdownheldTrueWithUnresolvedHold(t *testing.T) {
 	prefix := uniquePrefix("ld_held_list")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
@@ -194,7 +195,7 @@ func TestNewsfeedFeedSummaryLockdownheldTrueForModWhenHeldAndHidden(t *testing.T
 	db.Exec("UPDATE newsfeed SET hidden = NOW() WHERE id = ?", nfID)
 	insertChitchatHold(t, nfID)
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET systemrole = 'Moderator' WHERE id = ?", modID)
 	_, modToken := CreateTestSession(t, modID)
 
