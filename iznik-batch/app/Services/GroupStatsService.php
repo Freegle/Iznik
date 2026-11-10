@@ -27,7 +27,6 @@ class GroupStatsService
 
     public function updateGroupStats(bool $dryRun = false): array
     {
-        $repostsFixed = $this->fixRepostSettings($dryRun);
         $polyindexFixed = $this->fixPolyindex($dryRun);
         $activityUpdated = $this->updateActivityAndFunding($dryRun);
         $lastModeratedUpdated = $this->updateLastModerated($dryRun);
@@ -35,10 +34,9 @@ class GroupStatsService
         $modCountsUpdated = $this->updateActiveOwnerModCounts($dryRun);
         $statsOutcomesUpdated = $this->updateStatsOutcomes($dryRun);
 
-        Log::info("GroupStats: reposts={$repostsFixed}, polyindex={$polyindexFixed}, outcomes={$statsOutcomesUpdated}");
+        Log::info("GroupStats: polyindex={$polyindexFixed}, outcomes={$statsOutcomesUpdated}");
 
         return [
-            'reposts_fixed' => $repostsFixed,
             'polyindex_fixed' => $polyindexFixed,
             'activity_updated' => $activityUpdated,
             'last_moderated_updated' => $lastModeratedUpdated,
@@ -46,40 +44,6 @@ class GroupStatsService
             'mod_counts_updated' => $modCountsUpdated,
             'stats_outcomes_updated' => $statsOutcomesUpdated,
         ];
-    }
-
-    private function fixRepostSettings(bool $dryRun = false): int
-    {
-        $groups = DB::table('groups')->select('id', 'nameshort', 'settings')->get();
-        $count = 0;
-
-        foreach ($groups as $group) {
-            if (!$group->settings) {
-                continue;
-            }
-
-            $settings = json_decode($group->settings, true);
-            if (!isset($settings['reposts'])) {
-                continue;
-            }
-
-            $changed = false;
-            foreach ($settings['reposts'] as $key => $val) {
-                if (!is_int($val)) {
-                    $settings['reposts'][$key] = (int) $val;
-                    $changed = true;
-                }
-            }
-
-            if ($changed) {
-                if (!$dryRun) {
-                    DB::table('groups')->where('id', $group->id)->update(['settings' => json_encode($settings)]);
-                }
-                $count++;
-            }
-        }
-
-        return $count;
     }
 
     private function fixPolyindex(bool $dryRun = false): int

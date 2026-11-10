@@ -7,6 +7,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Services\ChaseUpService;
+use App\Services\RepostSettings;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
@@ -216,7 +217,7 @@ class ChaseUpServiceTest extends TestCase
 
     public function test_skips_message_not_at_max_reposts(): void
     {
-        // Only 2 autoreposts, max is 5 — canChaseup should return false.
+        // Only 2 autoreposts, max is 3 — canChaseup should return false.
         $data = $this->createChaseCandidate(autoreposts: 2);
 
         $stats = $this->service->process();
@@ -633,8 +634,65 @@ class ChaseUpServiceTest extends TestCase
         $this->assertEquals([
             'offer' => 3,
             'wanted' => 7,
-            'max' => 5,
+            'max' => 3,
             'chaseups' => 5,
-        ], ChaseUpService::DEFAULT_REPOSTS);
+        ], RepostSettings::FALLBACK);
+    }
+
+    private function setSystemReposts(array $values): void
+    {
+        DB::table('config')->updateOrInsert(['key' => 'reposts'], ['value' => json_encode($values)]);
+    }
+
+    public function test_a_community_own_repost_setting_is_ignored(): void
+    {
+        $group = $this->createTestGroup();
+
+        // This community asks for ten reposts before a chase-up. The system value of three applies.
+        DB::table('groups')->where('id', $group->id)->update([
+            'settings' => json_encode(['reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 10, 'chaseups' => 5]]),
+        ]);
+
+        $this->createChaseCandidate(group: $group, autoreposts: 4);
+
+        $this->assertEquals(1, $this->service->process()['chased']);
+    }
+
+    public function test_the_system_row_sets_how_many_reposts_come_before_a_chaseup(): void
+    {
+        $data = $this->createChaseCandidate(autoreposts: 3);
+
+        $this->setSystemReposts(['offer' => 3, 'wanted' => 7, 'max' => 6, 'chaseups' => 5]);
+        $this->assertEquals(0, $this->service->process()['chased'], 'three reposts is not yet six');
+
+        $this->setSystemReposts(['offer' => 3, 'wanted' => 7, 'max' => 3, 'chaseups' => 5]);
+        $this->assertEquals(1, $this->service->process()['chased']);
+        $this->assertNotNull(DB::table('messages_groups')->where('msgid', $data['message']->id)->value('lastchaseup'));
+    }
+
+    public function test_the_system_row_sets_the_days_between_chaseups(): void
+    {
+        $data = $this->createChaseCandidate();
+        DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->update(['lastchaseup' => now()->subDays(6)]);
+
+        $this->setSystemReposts(['offer' => 3, 'wanted' => 7, 'max' => 3, 'chaseups' => 10]);
+        $this->assertEquals(0, $this->service->process()['chased'], 'six days is inside a ten day gap');
+
+        $this->setSystemReposts(['offer' => 3, 'wanted' => 7, 'max' => 3, 'chaseups' => 5]);
+        $this->assertEquals(1, $this->service->process()['chased'], 'six days is past a five day gap');
+    }
+
+    public function test_a_missing_row_falls_back_to_the_built_in_values_and_warns(): void
+    {
+        DB::table('config')->where('key', 'reposts')->delete();
+        Log::spy();
+
+        $this->createChaseCandidate();
+
+        $this->assertEquals(1, $this->service->process()['chased']);
+
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message) => str_contains($message, 'no `reposts` row'))->atLeast()->once();
     }
 }
