@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -159,7 +160,7 @@ func TestPostMatchesReachFilteredForOwner(t *testing.T) {
 
 	prefix := uniquePrefix("postmatchesreach")
 	groupID := CreateTestGroup(t, prefix)
-	posterOut := CreateTestUser(t, prefix+"po", "Member")
+	posterOut := CreateTestUser(t, prefix+"po", utils.SYSTEMROLE_USER)
 	// Out-of-reach candidate needs a real message row (rippling_reach FK).
 	outReachID := CreateTestMessage(t, posterOut, groupID, "out of reach wanted", 51.5, -0.1)
 

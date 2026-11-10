@@ -15,7 +15,7 @@ import (
 // GET returns a friendly 200 confirmation page.
 func TestRelevantOffValidKey(t *testing.T) {
 	prefix := uniquePrefix("relevantoff")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("UPDATE users SET relevantallowed = 1 WHERE id = ?", userID)
 	key := fmt.Sprintf("relkey%v", userID)
@@ -35,7 +35,7 @@ func TestRelevantOffValidKey(t *testing.T) {
 // TestRelevantOffBadKey: a wrong key is rejected (403) and the setting is unchanged.
 func TestRelevantOffBadKey(t *testing.T) {
 	prefix := uniquePrefix("relevantoffbad")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("UPDATE users SET relevantallowed = 1 WHERE id = ?", userID)
 	db.Exec("INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, ?, ?, ?)",

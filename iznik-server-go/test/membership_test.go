@@ -925,7 +925,7 @@ func TestPatchMembershipsOwnerPromotesMemberToModerator(t *testing.T) {
 /*
 V1 parity (User::updateSystemRole, legacy V1 PHP implementation).
 A per-group Member→Moderator/Owner promotion must propagate to users.systemrole
-so the frontend crown gate (ModLogUser.vue's `systemrole !== 'User'`) renders
+so the frontend crown gate (ModLogUser.vue's check that systemrole is not the plain user role) renders
 correctly. Without this, a Trainee mod showed the crown on the members page
 (per-group role read) but the plain User icon in the group logs (global
 systemrole read) — Discourse #9481 post 545.

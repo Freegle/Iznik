@@ -206,7 +206,7 @@ func TestCreateUserAvatarNoAuth(t *testing.T) {
 // avatar for any user (bypasses the ownership check).
 func TestCreateUserAvatarAdminCanSetForOther(t *testing.T) {
 	prefix := uniquePrefix("AvatarAdmin")
-	adminID := CreateTestUser(t, prefix+"Admin", utils.SYSTEMROLE_ADMIN)
+	adminID := CreateTestUser(t, prefix+"Admin", utils.SYSTEMROLE_ADMIN) // role-literal-ok: part of a name prefix
 	targetID := CreateTestUser(t, prefix+"Target", utils.SYSTEMROLE_USER)
 	_, adminToken := CreateTestSession(t, adminID)
 

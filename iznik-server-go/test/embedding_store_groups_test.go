@@ -5,6 +5,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,7 +44,7 @@ func TestStoreLoadReadsEveryApprovedGroup(t *testing.T) {
 	originGroup := CreateTestGroup(t, prefix+"_origin")
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
 	otherGroup := CreateTestGroup(t, prefix+"_other")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	vec := unitVec(4.1)
 	msgID := createOpenTestMessageWithEmbedding(t, userID, originGroup, "Rippled "+prefix, 51.5, -0.1, vec)
@@ -68,7 +69,7 @@ func TestStoreLoadSkipsPendingAndDeletedGroups(t *testing.T) {
 	originGroup := CreateTestGroup(t, prefix+"_origin")
 	pendingGroup := CreateTestGroup(t, prefix+"_pending")
 	deletedGroup := CreateTestGroup(t, prefix+"_deleted")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	vec := unitVec(6.4)
 	msgID := createOpenTestMessageWithEmbedding(t, userID, originGroup, "Filtered "+prefix, 51.5, -0.1, vec)
@@ -95,7 +96,7 @@ func TestStoreRefreshPicksUpNewlyRippledGroup(t *testing.T) {
 	prefix := uniquePrefix("storegroupsrefresh")
 	originGroup := CreateTestGroup(t, prefix+"_origin")
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	vec := unitVec(7.2)
 	msgID := createOpenTestMessageWithEmbedding(t, userID, originGroup, "Ripples later "+prefix, 51.5, -0.1, vec)
@@ -124,7 +125,7 @@ func TestStoreRefreshDropsWithdrawnGroup(t *testing.T) {
 	prefix := uniquePrefix("storegroupswithdraw")
 	originGroup := CreateTestGroup(t, prefix+"_origin")
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	vec := unitVec(2.6)
 	msgID := createOpenTestMessageWithEmbedding(t, userID, originGroup, "Withdrawn "+prefix, 51.5, -0.1, vec)

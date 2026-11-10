@@ -91,7 +91,7 @@ func TestAppleLoginNewUser(t *testing.T) {
 	os.Setenv("APPLE_JWKS_URL", jwksServer.URL)
 	defer os.Unsetenv("APPLE_JWKS_URL")
 
-	resp := postAppleSession(identityToken, appleUID, email, "Apple", "User")
+	resp := postAppleSession(identityToken, appleUID, email, "Apple", "User") // role-literal-ok: last name, not a role
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result map[string]interface{}
@@ -327,7 +327,7 @@ func TestAppleLoginTNUser(t *testing.T) {
 	os.Setenv("APPLE_JWKS_URL", jwksServer.URL)
 	defer os.Unsetenv("APPLE_JWKS_URL")
 
-	resp := postAppleSession(identityToken, appleUID, email, "TN", "User")
+	resp := postAppleSession(identityToken, appleUID, email, "TN", "User") // role-literal-ok: last name, not a role
 	assert.Equal(t, 403, resp.StatusCode)
 
 	var result map[string]interface{}
