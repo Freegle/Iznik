@@ -41,7 +41,7 @@ func TestDonorFlagVisibleToSupportWithoutDonationList(t *testing.T) {
 	nonDonorID := CreateTestUser(t, prefix+"_nondonor", utils.SYSTEMROLE_USER)
 
 	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	u := getUserAs(t, donorID, supportToken)
@@ -91,7 +91,7 @@ func TestSupportCanTurnOffDonationAsksForMember(t *testing.T) {
 	db.Exec(`UPDATE users SET settings = '{"notificationmails":true,"somecustom":"keep"}' WHERE id = ?`, memberID)
 
 	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	payload := map[string]interface{}{

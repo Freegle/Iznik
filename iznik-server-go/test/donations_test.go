@@ -241,7 +241,7 @@ func TestBulkUploadDonations(t *testing.T) {
 	db := database.DBConn
 
 	// Make user an admin.
-	db.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", userID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_ADMIN, userID)
 
 	body := `{"donations":[
 		{"date":"2026-01-15","donor_name":"Alice Test","email":"alice@test.com","program":"PayPalGivingFund","amount":25.00,"transaction_id":"PPGF-TEST-001"},
@@ -297,7 +297,7 @@ func TestBulkUploadDonationsSkipsInvalid(t *testing.T) {
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
-	db.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", userID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_ADMIN, userID)
 
 	body := `{"donations":[
 		{"date":"2026-01-15","donor_name":"Negative","email":"neg@test.com","program":"PayPalGivingFund","amount":-5.00,"transaction_id":"PPGF-NEG-001"},

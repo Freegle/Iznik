@@ -127,7 +127,7 @@ func TestLapsedOptOutReadsAsOffAndRestartsWhenTurnedOnAgain(t *testing.T) {
 	_, token := CreateTestSession(t, memberID)
 
 	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	lapsed := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)

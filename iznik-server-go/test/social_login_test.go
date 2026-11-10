@@ -496,8 +496,8 @@ func TestSocialMatchOrCreateTNUser(t *testing.T) {
 	// earlier run before claiming it. 12346 keeps this distinct from the
 	// membership partner test, which uses 12345.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12346)
-	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('Test', ?, ?, 'User', 12346)",
-		prefix, fullname)
+	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('Test', ?, ?, ?, 12346)",
+		prefix, fullname, utils.SYSTEMROLE_USER)
 
 	var userID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)

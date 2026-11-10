@@ -29,7 +29,7 @@ func TestForgetWritesGroupLeftLog(t *testing.T) {
 	prefix := uniquePrefix("forget-left")
 	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Approved')", userID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", userID, groupID, utils.ROLE_MEMBER)
 
 	token := getToken(t, userID)
 	req := httptest.NewRequest("POST", "/api/session?jwt="+token, strings.NewReader(`{"action":"Forget"}`))
@@ -61,8 +61,8 @@ func TestLimboUserWritesGroupLeftLogPerGroup(t *testing.T) {
 	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	group1 := CreateTestGroup(t, prefix+"a")
 	group2 := CreateTestGroup(t, prefix+"b")
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Approved')", userID, group1)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Approved')", userID, group2)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", userID, group1, utils.ROLE_MEMBER)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", userID, group2, utils.ROLE_MEMBER)
 
 	token := getToken(t, userID)
 	req := httptest.NewRequest("DELETE", "/api/user?jwt="+token, nil)

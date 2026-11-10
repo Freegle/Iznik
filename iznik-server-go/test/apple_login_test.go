@@ -91,7 +91,7 @@ func TestAppleLoginNewUser(t *testing.T) {
 	os.Setenv("APPLE_JWKS_URL", jwksServer.URL)
 	defer os.Unsetenv("APPLE_JWKS_URL")
 
-	resp := postAppleSession(identityToken, appleUID, email, "Apple", "User")
+	resp := postAppleSession(identityToken, appleUID, email, "Apple", "User") // role-literal-ok: last name, not a role
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result map[string]interface{}
@@ -304,8 +304,8 @@ func TestAppleLoginTNUser(t *testing.T) {
 	// tnuserid is UNIQUE in production, so release it from any user left by an
 	// earlier run before claiming it.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 99999)
-	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('TN', ?, ?, 'User', 99999)",
-		prefix, fullname)
+	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('TN', ?, ?, ?, 99999)",
+		prefix, fullname, utils.SYSTEMROLE_USER)
 
 	var userID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)
@@ -327,7 +327,7 @@ func TestAppleLoginTNUser(t *testing.T) {
 	os.Setenv("APPLE_JWKS_URL", jwksServer.URL)
 	defer os.Unsetenv("APPLE_JWKS_URL")
 
-	resp := postAppleSession(identityToken, appleUID, email, "TN", "User")
+	resp := postAppleSession(identityToken, appleUID, email, "TN", "User") // role-literal-ok: last name, not a role
 	assert.Equal(t, 403, resp.StatusCode)
 
 	var result map[string]interface{}

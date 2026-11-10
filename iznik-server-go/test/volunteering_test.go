@@ -681,7 +681,7 @@ func TestVolunteeringCreateNoGroupAdminAllowed(t *testing.T) {
 	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, adminID)
 	db := database.DBConn
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", adminID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, adminID)
 
 	// Admin/support can create without a group.
 	body := `{"title":"Test Vol","location":"Edinburgh","description":"A test volunteering opportunity"}`

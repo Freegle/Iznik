@@ -348,7 +348,7 @@ func TestLockdownRefusesPatchMembershipsRole(t *testing.T) {
 	restore := modsHeld()
 	defer restore()
 
-	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Moderator")
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, utils.ROLE_MODERATOR)
 	assertLockdownRefused(t, resp)
 }
 

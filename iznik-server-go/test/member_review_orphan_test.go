@@ -32,7 +32,7 @@ func TestMemberReviewOrphanCountVsListing(t *testing.T) {
 	// reviewrequestedat flag remains on their membership row.
 	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, collection, reviewrequestedat) "+
-		"VALUES (?, ?, 'Member', 'Approved', NOW())", targetID, groupID)
+		"VALUES (?, ?, ?, 'Approved', NOW())", targetID, groupID, utils.ROLE_MEMBER)
 
 	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
 	db.Exec("DELETE FROM users_emails WHERE userid = ?", targetID)

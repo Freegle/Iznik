@@ -125,7 +125,7 @@ func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
 	// Group B: the support user belongs to this group (not group A).
 	groupB := CreateTestGroup(t, prefix+"_b")
 	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	CreateTestMembership(t, supportID, groupB, utils.ROLE_MEMBER)
 	_, supportToken := CreateTestSession(t, supportID)
 

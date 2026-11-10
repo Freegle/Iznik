@@ -5403,7 +5403,7 @@ func TestApproveMessageQueuesFreebieAlertsAdd(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Add mod as moderator of the group.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Moderator', 'Approved')", modID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", modID, groupID, utils.ROLE_MODERATOR)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
 
 	// Create a pending Offer message.
@@ -5441,7 +5441,7 @@ func TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Add mod as moderator of the group.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Moderator', 'Approved')", modID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", modID, groupID, utils.ROLE_MODERATOR)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
 
 	// Create a pending Offer and mark it as a clearance via messages_bulk_items.

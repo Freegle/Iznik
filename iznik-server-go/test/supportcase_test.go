@@ -347,7 +347,7 @@ func TestSupportCaseReferrerViewLacksFirstPass(t *testing.T) {
 	msgs := m["messages"].([]interface{})
 	assert.Len(t, msgs, 1)
 	msg := msgs[0].(map[string]interface{})
-	assert.Equal(t, "Support", msg["role"])
+	assert.Equal(t, "Support", msg["role"]) // role-literal-ok: support case message role
 	assert.Equal(t, "Support says hello", msg["body"])
 	assert.Equal(t, "No", msg["draftused"], "whether a draft was used is first pass information")
 	for _, banned := range []string{"handledby", "brief", "classification", "firstpass_status"} {
@@ -525,7 +525,7 @@ func TestSupportCaseMessageRoles(t *testing.T) {
 	assert.Equal(t, 200, status)
 	id := scMap(t, raw)["id"].(float64)
 	role, draft, uid := roleOf(id)
-	assert.Equal(t, "Support", role)
+	assert.Equal(t, "Support", role) // role-literal-ok: support case message role
 	assert.Equal(t, "Edited", draft)
 	assert.Equal(t, supportID, uid)
 	assert.Equal(t, int64(1), taskFor(id))
@@ -555,7 +555,7 @@ func TestSupportCaseMessageRoles(t *testing.T) {
 	_, raw = scCall(t, "GET", fmt.Sprintf("/api/supportcases/%d", caseid), sToken, nil)
 	msgs := scMap(t, raw)["messages"].([]interface{})
 	assert.Len(t, msgs, 3)
-	assert.Equal(t, "Support", msgs[0].(map[string]interface{})["role"])
+	assert.Equal(t, "Support", msgs[0].(map[string]interface{})["role"]) // role-literal-ok: support case message role
 	assert.Equal(t, "Edited", msgs[0].(map[string]interface{})["draftused"])
 	assert.Equal(t, "Referrer", msgs[1].(map[string]interface{})["role"])
 	assert.NotEmpty(t, msgs[1].(map[string]interface{})["displayname"])
@@ -580,7 +580,7 @@ func TestSupportCaseSupportUserWhoIsTheReferrerPostsAsReferrer(t *testing.T) {
 	_, s2 := scSupport(t, "scself_s2")
 	_, raw = scCall(t, "POST", fmt.Sprintf("/api/supportcases/%d/messages", caseid), s2, map[string]interface{}{"body": "reply"})
 	database.DBConn.Raw("SELECT role FROM support_case_messages WHERE id = ?", uint64(scMap(t, raw)["id"].(float64))).Row().Scan(&role)
-	assert.Equal(t, "Support", role)
+	assert.Equal(t, "Support", role) // role-literal-ok: support case message role
 	_ = supportID
 }
 

@@ -180,7 +180,7 @@ func TestLostPasswordDeletedUser(t *testing.T) {
 	// Create a deleted user with email.
 	db := database.DBConn
 	fullname := fmt.Sprintf("Test User %s", prefix)
-	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, deleted) VALUES ('Test', ?, ?, 'User', NOW())", prefix, fullname)
+	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, deleted) VALUES ('Test', ?, ?, ?, NOW())", prefix, fullname, utils.SYSTEMROLE_USER)
 	var userID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)
 	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", userID, email)
@@ -2425,14 +2425,14 @@ func TestWorkCountHousekeepingAdminOnly(t *testing.T) {
 
 	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, supportID, groupID, utils.ROLE_MODERATOR)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	_, supTok := CreateTestSession(t, supportID)
 	assert.Equal(t, float64(0), getSessionWork(t, supTok)["housekeeping"].(float64),
 		"Support must not get the housekeeping count (Admin-only)")
 
 	adminID := CreateTestUser(t, prefix+"_adm", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, adminID, groupID, utils.ROLE_MODERATOR)
-	db.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", adminID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_ADMIN, adminID)
 	_, admTok := CreateTestSession(t, adminID)
 	assert.GreaterOrEqual(t, getSessionWork(t, admTok)["housekeeping"].(float64), float64(1),
 		"Admin must get the housekeeping count")
@@ -2454,7 +2454,7 @@ func TestWorkCountSpammerPendingAddRequiresSpamAdmin(t *testing.T) {
 	// Support user WITHOUT SpamAdmin permission → 0.
 	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, supportID, groupID, utils.ROLE_MODERATOR)
-	db.Exec("UPDATE users SET systemrole = 'Support', permissions = NULL WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ?, permissions = NULL WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	_, supTok := CreateTestSession(t, supportID)
 	assert.Equal(t, float64(0), getSessionWork(t, supTok)["spammerpendingadd"].(float64),
 		"Support without SpamAdmin permission must not get spammerpendingadd")
@@ -2482,10 +2482,10 @@ func TestWorkCountSpamMembersReFlaggedAfterRecentReview(t *testing.T) {
 
 	spamUserID := CreateTestUser(t, prefix+"_spam", utils.SYSTEMROLE_USER)
 	db.Exec(`INSERT INTO memberships (userid, groupid, role, collection, reviewedat, reviewrequestedat)
-		VALUES (?, ?, 'Member', 'Approved',
+		VALUES (?, ?, ?, 'Approved',
 		DATE_SUB(NOW(), INTERVAL 5 DAY),
 		NOW())`,
-		spamUserID, groupID)
+		spamUserID, groupID, utils.ROLE_MEMBER)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", spamUserID, groupID)
 
 	work := getSessionWork(t, token)
@@ -2963,7 +2963,7 @@ func TestWorkCountSpamMembersHeldIsBlueAndReviewedIsNeither(t *testing.T) {
 
 	spamUserID := CreateTestUser(t, prefix+"_spam", utils.SYSTEMROLE_USER)
 	db.Exec(`INSERT INTO memberships (userid, groupid, role, collection, reviewrequestedat)
-		VALUES (?, ?, 'Member', 'Approved', NOW())`, spamUserID, groupID)
+		VALUES (?, ?, ?, 'Approved', NOW())`, spamUserID, groupID, utils.ROLE_MEMBER)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", spamUserID, groupID)
 
 	flagged := getSessionWork(t, token)
@@ -3844,7 +3844,7 @@ func TestGetSessionInventsNameFromEmail(t *testing.T) {
 		localPart := fmt.Sprintf("sp%d", time.Now().UnixNano()%100000000)
 
 		// Create a user with empty fullname and no first/last name.
-		db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('', 'User')")
+		db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('', ?)", utils.SYSTEMROLE_USER)
 		var userID uint64
 		db.Raw("SELECT id FROM users ORDER BY id DESC LIMIT 1").Scan(&userID)
 

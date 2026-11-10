@@ -192,7 +192,7 @@ func TestGetGroup_BatchFetchWithAuth(t *testing.T) {
 	var groups []group.Group
 	json2.Unmarshal(rsp(resp), &groups)
 	assert.Equal(t, 2, len(groups))
-	assert.Equal(t, "Member", groups[0].Myrole)
+	assert.Equal(t, utils.ROLE_MEMBER, groups[0].Myrole)
 	assert.Equal(t, "Non-member", groups[1].Myrole)
 }
 

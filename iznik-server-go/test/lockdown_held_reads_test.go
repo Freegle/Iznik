@@ -196,7 +196,7 @@ func TestNewsfeedFeedSummaryLockdownheldTrueForModWhenHeldAndHidden(t *testing.T
 	insertChitchatHold(t, nfID)
 
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
-	db.Exec("UPDATE users SET systemrole = 'Moderator' WHERE id = ?", modID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_MODERATOR, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	resp, err := getApp().Test(httptest.NewRequest("GET",

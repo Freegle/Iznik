@@ -66,7 +66,7 @@ func TestCreateChatMessage_ReplyJoinsGroup(t *testing.T) {
 		"MAX(emailfrequency) AS emailfrequency FROM memberships WHERE userid = ? AND groupid = ?",
 		replierID, groupID).Scan(&m)
 	assert.Equal(t, 1, m.Cnt, "replying to a post joins the replier to its group (Discourse #9969)")
-	assert.Equal(t, "Member", m.Role)
+	assert.Equal(t, utils.ROLE_MEMBER, m.Role)
 	assert.Equal(t, "Approved", m.Collection)
 	assert.Equal(t, 24, m.Emailfrequency,
 		"joined with the normal-join default email frequency (daily), not FREQUENCY_NEVER")

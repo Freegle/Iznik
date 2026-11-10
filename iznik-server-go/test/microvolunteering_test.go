@@ -28,7 +28,7 @@ func TestGetMicrovolunteering_NoChallenge(t *testing.T) {
 
 	// Create a simple test user
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User1', 'User')")
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User1', ?)", utils.SYSTEMROLE_USER)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User1' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -63,7 +63,7 @@ func TestGetMicrovolunteering_DeclinedUser(t *testing.T) {
 
 	// Create a test user with Declined trust level
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User3', 'User', ?)", microvolunteering.TrustDeclined)
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User3', ?, ?)", utils.SYSTEMROLE_USER, microvolunteering.TrustDeclined)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User3' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -87,7 +87,7 @@ func TestGetMicrovolunteering_ExcludedUser(t *testing.T) {
 
 	// Create a test user with Excluded trust level
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User4', 'User', ?)", microvolunteering.TrustExcluded)
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User4', ?, ?)", utils.SYSTEMROLE_USER, microvolunteering.TrustExcluded)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User4' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -111,7 +111,7 @@ func TestGetMicrovolunteering_InviteChallenge(t *testing.T) {
 
 	// Create a test user
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User5', 'User')")
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User5', ?)", utils.SYSTEMROLE_USER)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User5' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -139,7 +139,7 @@ func TestGetMicrovolunteering_CheckMessagePending(t *testing.T) {
 
 	// Create a test user with Moderate trust level
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User6', 'User', ?)", microvolunteering.TrustModerate)
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User6', ?, ?)", utils.SYSTEMROLE_USER, microvolunteering.TrustModerate)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User6' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -149,7 +149,7 @@ func TestGetMicrovolunteering_CheckMessagePending(t *testing.T) {
 
 	// Create another user to be the message sender
 	var senderID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'Sender1', 'User')")
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'Sender1', ?)", utils.SYSTEMROLE_USER)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'Sender1' ORDER BY id DESC LIMIT 1").Scan(&senderID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", senderID)
 
@@ -196,7 +196,7 @@ func TestGetMicrovolunteering_CheckMessageApproved(t *testing.T) {
 
 	// Create a test user (any trust level for approved messages)
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User7', 'User')")
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User7', ?)", utils.SYSTEMROLE_USER)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User7' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -206,7 +206,7 @@ func TestGetMicrovolunteering_CheckMessageApproved(t *testing.T) {
 
 	// Create another user to be the message sender
 	var senderID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'Sender2', 'User')")
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'Sender2', ?)", utils.SYSTEMROLE_USER)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'Sender2' ORDER BY id DESC LIMIT 1").Scan(&senderID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", senderID)
 
@@ -259,7 +259,7 @@ func TestGetMicrovolunteering_PhotoRotateChallenge(t *testing.T) {
 
 	// Create a test user
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User8', 'User')")
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User8', ?)", utils.SYSTEMROLE_USER)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User8' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -269,7 +269,7 @@ func TestGetMicrovolunteering_PhotoRotateChallenge(t *testing.T) {
 
 	// Create another user to be the message sender
 	var senderID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'Sender3', 'User')")
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'Sender3', ?)", utils.SYSTEMROLE_USER)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'Sender3' ORDER BY id DESC LIMIT 1").Scan(&senderID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", senderID)
 
