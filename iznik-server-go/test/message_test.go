@@ -6168,6 +6168,7 @@ func TestListMessagesMT_FilterChecked(t *testing.T) {
 	// not mod-approved posts.
 	prefix := uniquePrefix("lstmt_checked")
 	db := database.DBConn
+	clearPostModerationEnv(t)
 
 	groupID := CreateTestGroup(t, prefix)
 	// The Check queue exists only on communities in the post-moderation trial.
@@ -6236,6 +6237,7 @@ func TestListMessagesMT_MarkChecked(t *testing.T) {
 	// from the checked oversight queue.
 	prefix := uniquePrefix("lstmt_markchk")
 	db := database.DBConn
+	clearPostModerationEnv(t)
 
 	groupID := CreateTestGroup(t, prefix)
 	// The Check queue exists only on communities in the post-moderation trial.

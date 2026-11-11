@@ -3337,6 +3337,7 @@ func TestGetUserFetchMT_MembershipsReturned(t *testing.T) {
 func TestGetUserMembershipsPostingStatus(t *testing.T) {
 	prefix := uniquePrefix("fetchmt_ps")
 	db := database.DBConn
+	clearPostModerationEnv(t)
 
 	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
