@@ -654,6 +654,27 @@ func TestMergeByModeratorRefusesAdminOrSupportAccount(t *testing.T) {
 	assert.Equal(t, utils.SYSTEMROLE_MODERATOR, role, "the moderator is not raised to Admin")
 }
 
+// Support may merge Support and ordinary accounts but cannot reach Admin by merging an Admin
+// account into its own.
+func TestMergeBySupportRefusesAdminAccount(t *testing.T) {
+	prefix := uniquePrefix("merge_sup_adm")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
+	_, supportToken := CreateTestSession(t, supportID)
+	adminAccount := CreateTestUser(t, prefix+"_adm", utils.SYSTEMROLE_ADMIN)
+	plain := CreateTestUser(t, prefix+"_plain", utils.SYSTEMROLE_USER)
+
+	assert.Equal(t, 403, mergeUsers(t, supportToken, adminAccount, supportID))
+	assert.Equal(t, 403, mergeUsers(t, supportToken, supportID, adminAccount))
+	assert.True(t, userExists(adminAccount))
+	assert.True(t, userExists(supportID))
+
+	var role string
+	database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", supportID).Scan(&role)
+	assert.Equal(t, utils.SYSTEMROLE_SUPPORT, role, "Support is not raised to Admin")
+
+	assert.Equal(t, 200, mergeUsers(t, supportToken, plain, supportID), "Support still merges an ordinary account")
+}
+
 func TestMergeByModeratorStillMergesOrdinaryAccounts(t *testing.T) {
 	prefix := uniquePrefix("merge_mod_ok")
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
