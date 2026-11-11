@@ -11,6 +11,7 @@ import {
   thrownByThirdParty,
 } from '~/composables/useSuppressException'
 import { onTraceChange, getTraceId, getSessionId } from '~/composables/useTrace'
+import { applyApiFailurePolicy } from '~/composables/useApiFailurePolicy'
 import {
   useClientLog,
   setRouteNameProvider,
@@ -168,6 +169,12 @@ export default defineNuxtPlugin((nuxtApp) => {
             return null
           }
 
+          // A failed API call is only worth an issue under the rules in useApiFailurePolicy, however
+          // it reached here (the Vue handler, an unhandled rejection or a component's own capture).
+          if (!applyApiFailurePolicy(event, hint)) {
+            return null
+          }
+
           // Freestar ftUtils.js null-property errors (NUXT3-CES
           // getPlacementPosition, NUXT3-D2H getInnerDimensions). The stack-based
           // match in suppressException() below misses events where the original
@@ -184,7 +191,7 @@ export default defineNuxtPlugin((nuxtApp) => {
           }
 
           // In modtools, 401 means session expired during a long mod session.
-          // BaseAPI already clears auth state and the login modal appears.
+          // The next session check (fetchUser) clears auth and puts up the login modal.
           // Any of the 600+ store calls can hit this; suppress globally here
           // rather than adding try/catch to every caller.
           // On the main Freegle site, 401 is unexpected and should still be reported.

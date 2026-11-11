@@ -678,16 +678,15 @@ describe('auth store', () => {
   // user existed and their JWT signature was valid.
   //
   // At the store boundary this surfaces as saveAndGet rejecting, with
-  // BaseAPI having already wiped auth (simulated here by clearing the
-  // auth state as BaseAPI's 401 path does).
+  // the auth state having been cleared (simulated here by clearing it).
   describe('forgot-password PATCH /session 401 repro', () => {
     it('saveAndGet rejects and leaves auth wiped when PATCH /session returns 401', async () => {
       // User just landed via ?u=X&k=KEY link; u/k login set fresh auth.
       store.setAuth('jwt-from-u-k-login', 'persistent-from-u-k-login')
 
       // Simulate the production scenario: the server returns 401 for the
-      // PATCH. BaseAPI's real implementation would wipe auth before the
-      // error propagates up to the store — emulate that here.
+      // PATCH. Emulate the auth state being cleared before the error
+      // propagates up to the store.
       mockSave.mockImplementation(() => {
         store.setAuth(null, null)
         store.setUser(null)

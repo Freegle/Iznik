@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   captureException: vi.fn(),
   setErrorDetails: vi.fn(),
   suppressException: vi.fn(() => false),
+  warn: vi.fn(),
 }))
 
 vi.mock('@sentry/browser', () => ({
@@ -14,6 +15,9 @@ vi.mock('@sentry/browser', () => ({
 vi.mock('@/api/BaseAPI', () => import('~/api/APIErrors'))
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => ({ setErrorDetails: mocks.setErrorDetails }),
+}))
+vi.mock('~/composables/useClientLog', () => ({
+  warn: (...args) => mocks.warn(...args),
 }))
 vi.mock('~/composables/useSuppressException', () => ({
   suppressException: mocks.suppressException,
@@ -44,8 +48,21 @@ describe('something-went-wrong plugin', () => {
     return nuxtApp.vueApp.config.errorHandler
   }
 
-  const refusal = () =>
-    new APIError({ request: {}, response: { status: 401 } }, 'refused')
+  // A call that is our bug (400), made by a signed-in member.
+  const badRequest = () =>
+    new APIError(
+      {
+        request: { method: 'POST', path: '/x?loggedInAs=1&requestid=2' },
+        response: { status: 400 },
+      },
+      'bad'
+    )
+
+  const refusal = (path = '/chat?loggedInAs=1&requestid=2') =>
+    new APIError(
+      { request: { method: 'GET', path }, response: { status: 401 } },
+      'refused'
+    )
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -65,11 +82,105 @@ describe('something-went-wrong plugin', () => {
     ['no component', null],
   ])('shows the notice and reports an API error from %s', async (_n, vm) => {
     const handler = await load()
-    const err = refusal()
+    const err = badRequest()
     expect(handler(err, vm, 'component event handler')).toBe(true)
     expect(mocks.setErrorDetails).toHaveBeenCalledWith(err)
     expect(mocks.captureException).toHaveBeenCalledWith(err)
     expect(nuxtHandler).not.toHaveBeenCalled()
+  })
+
+  it('shows the notice for a refusal to a signed-in member, but does not report it', async () => {
+    const handler = await load()
+    const err = refusal()
+    expect(handler(err, {}, 'x')).toBe(true)
+    expect(mocks.setErrorDetails).toHaveBeenCalledWith(err)
+    expect(mocks.captureException).not.toHaveBeenCalled()
+    expect(mocks.warn).toHaveBeenCalledWith(
+      'API failure not sent to Sentry',
+      expect.objectContaining({ api_status: 401, api_path: '/chat' })
+    )
+  })
+
+  it('shows nothing for a signed-out visitor whose read was refused', async () => {
+    const handler = await load()
+    expect(handler(refusal('/chat?requestid=2'), {}, 'x')).toBe(true)
+    expect(mocks.setErrorDetails).not.toHaveBeenCalled()
+    expect(mocks.captureException).not.toHaveBeenCalled()
+  })
+
+  it('still shows the notice when a signed-out visitor write was refused', async () => {
+    const handler = await load()
+    const err = new APIError(
+      {
+        request: { method: 'POST', path: '/message?requestid=2' },
+        response: { status: 401 },
+      },
+      'refused'
+    )
+    expect(handler(err, {}, 'x')).toBe(true)
+    expect(mocks.setErrorDetails).toHaveBeenCalledWith(err)
+  })
+
+  it('does not report again an error BaseAPI already sent', async () => {
+    const handler = await load()
+    const err = badRequest()
+    err.failureHandled = true
+    err.sentryReported = true
+    handler(err, {}, 'x')
+    expect(mocks.captureException).not.toHaveBeenCalled()
+  })
+
+  describe('unhandled rejections', () => {
+    let listener
+
+    beforeEach(async () => {
+      window.addEventListener.mockImplementation((name, cb) => {
+        if (name === 'unhandledrejection') listener = cb
+      })
+      await load()
+    })
+
+    it('reports an Error', () => {
+      const err = new Error('boom')
+      listener({ reason: err })
+      expect(mocks.captureException).toHaveBeenCalledWith(err)
+    })
+
+    it('reports an API error that is our bug, and not one that is an answer', () => {
+      const bad = badRequest()
+      listener({ reason: bad })
+      expect(mocks.captureException).toHaveBeenCalledWith(bad)
+
+      mocks.captureException.mockClear()
+      listener({ reason: refusal() })
+      expect(mocks.captureException).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['an empty object', {}, 'Object', []],
+      ['an Event', new Event('error'), 'Event', ['isTrusted']],
+      [
+        'a CustomEvent',
+        new CustomEvent('x', { detail: 1 }),
+        'CustomEvent',
+        ['isTrusted'],
+      ],
+    ])(
+      'describes %s in the client log and keeps it out of Sentry',
+      (_n, reason, ctor, keys) => {
+        listener({ reason })
+        expect(mocks.captureException).not.toHaveBeenCalled()
+        expect(mocks.warn).toHaveBeenCalledWith(
+          'Unhandled rejection that is not an Error',
+          expect.objectContaining({
+            event_type: 'unhandled_rejection_non_error',
+            reason_type: 'object',
+            reason_constructor: ctor,
+            reason_keys: expect.any(Array),
+          })
+        )
+      }
+    )
   })
 
   it('passes other errors to the Nuxt handler while hydrating', async () => {
