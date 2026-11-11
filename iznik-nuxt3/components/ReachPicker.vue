@@ -1,3 +1,6 @@
+// The slider takes the density cap for a place, unless the poster has set it
+themselves. async function adoptCap(at) { try { const r = await
+apiInstance.town.fetchNear( at.lat, at.lng,
 <template>
   <div class="reach-picker">
     <p v-if="online" class="text-muted small mb-0">
@@ -45,7 +48,7 @@
         left-label="Nearer"
         right-label="Further"
         aria-label="How far away people see it"
-        @change="emitValue"
+        @change="sliderMoved"
       />
       <NearbyTowns
         v-if="centre"
@@ -136,6 +139,15 @@ const minutes = ref(
   props.modelValue.reachminutes || BROWSE_MINUTES_FALLBACK_MAX
 )
 
+// Set once the poster has moved the slider (or an existing item came with a drive time), so a
+// new place does not overwrite a choice they made.
+const touched = ref(!!props.modelValue.reachminutes)
+
+function sliderMoved() {
+  touched.value = true
+  emitValue()
+}
+
 function emitValue() {
   emit('update:modelValue', {
     ...props.modelValue,
@@ -153,6 +165,7 @@ function choosePlace(pc) {
       lng: pc.lng,
       reachminutes: minutes.value,
     })
+    if (!touched.value) adoptCap({ lat: pc.lat, lng: pc.lng })
   }
 }
 
@@ -166,6 +179,9 @@ function useMyLocation() {
     lng: me.value?.lng ?? null,
     reachminutes: minutes.value,
   })
+  if (!touched.value && me.value?.lat != null && me.value?.lng != null) {
+    adoptCap({ lat: me.value.lat, lng: me.value.lng })
+  }
 }
 
 // Name a chosen centre we did not just pick here (an existing item), so the poster can
@@ -181,14 +197,13 @@ async function nameCentre() {
   }
 }
 
-// With no drive time chosen yet, start at the cap for the centre: how far a post from
-// there reaches. /town/near reports it whatever minutes it is asked about.
-async function adoptDefault() {
-  if (props.modelValue.reachminutes || !centre.value) return
+// Start the slider at the cap for a place: how far a post from there reaches. /town/near
+// reports it whatever minutes it is asked about.
+async function adoptCap(at) {
   try {
     const r = await apiInstance.town.fetchNear(
-      centre.value.lat,
-      centre.value.lng,
+      at.lat,
+      at.lng,
       BROWSE_MINUTES_FALLBACK_MAX
     )
     if (typeof r?.cap_minutes === 'number' && r.cap_minutes > 0) {
@@ -201,6 +216,12 @@ async function adoptDefault() {
     // Keep the flat default; the server applies the real cap if nothing is sent.
   }
   emitValue()
+}
+
+// With no drive time chosen yet, start at the cap for the centre.
+async function adoptDefault() {
+  if (props.modelValue.reachminutes || !centre.value) return
+  await adoptCap(centre.value)
 }
 
 watch(

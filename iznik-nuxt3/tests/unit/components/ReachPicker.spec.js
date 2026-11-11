@@ -97,6 +97,55 @@ describe('ReachPicker', () => {
     expect(last).toMatchObject({ lat: 52.2, lng: 0.12, reachminutes: 15 })
   })
 
+  it('takes the reach cap of a newly chosen place', async () => {
+    const wrapper = mountPicker({ lat: null, lng: null, reachminutes: null })
+    await flushPromises()
+    mockFetchNear.mockClear()
+    mockFetchNear.mockResolvedValue({ cap_minutes: 12 })
+
+    await wrapper.find('button').trigger('click')
+    wrapper
+      .findComponent('.postcode')
+      .vm.$emit('selected', { name: 'CB1 1AA', lat: 52.2, lng: 0.12 })
+    await flushPromises()
+
+    expect(mockFetchNear).toHaveBeenCalledWith(52.2, 0.12, 30)
+    const last = wrapper.emitted('update:modelValue').at(-1)[0]
+    expect(last.reachminutes).toBe(12)
+  })
+
+  it('keeps the drive time the poster set when they change the place', async () => {
+    const wrapper = mountPicker({ lat: null, lng: null, reachminutes: null })
+    await flushPromises()
+    wrapper.findComponent('.range').vm.$emit('change')
+    mockFetchNear.mockClear()
+
+    await wrapper.find('button').trigger('click')
+    wrapper
+      .findComponent('.postcode')
+      .vm.$emit('selected', { name: 'CB1 1AA', lat: 52.2, lng: 0.12 })
+    await flushPromises()
+
+    expect(mockFetchNear).not.toHaveBeenCalled()
+  })
+
+  it('takes the cap of the first place chosen when the poster has no location', async () => {
+    mockMe.value = {}
+    const wrapper = mountPicker({ lat: null, lng: null, reachminutes: null })
+    await flushPromises()
+    expect(mockFetchNear).not.toHaveBeenCalled()
+    mockFetchNear.mockResolvedValue({ cap_minutes: 17 })
+
+    await wrapper.find('button').trigger('click')
+    wrapper
+      .findComponent('.postcode')
+      .vm.$emit('selected', { name: 'CB1 1AA', lat: 52.2, lng: 0.12 })
+    await flushPromises()
+
+    expect(mockFetchNear).toHaveBeenCalledWith(52.2, 0.12, 30)
+    expect(wrapper.emitted('update:modelValue').at(-1)[0].reachminutes).toBe(17)
+  })
+
   // Sent explicitly so an existing item moves back, rather than null meaning "unchanged".
   it('moves the centre back to the poster', async () => {
     const wrapper = mountPicker({ lat: 55.95, lng: -3.19, reachminutes: 15 })
