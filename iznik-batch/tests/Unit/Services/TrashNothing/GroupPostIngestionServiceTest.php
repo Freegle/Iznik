@@ -7,6 +7,7 @@ use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
+use App\Models\UserEmail;
 use App\Services\ContentCheckService;
 use App\Services\ItemService;
 use App\Services\LokiService;
@@ -404,7 +405,7 @@ class GroupPostIngestionServiceTest extends TestCase
         DB::table('users')->insert([
             'id'         => $tnId,
             'fullname'   => 'Decoy who merely holds the number',
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'added'      => now(),
         ]);
         $this->assertTrue(DB::table('users')->where('id', $tnId)->exists(), 'Pre-condition: a Freegle account holds the TN id');
@@ -521,8 +522,8 @@ class GroupPostIngestionServiceTest extends TestCase
 
     public function test_creates_post_for_non_member_of_resolved_group(): void
     {
-        // The group here is resolved from the post's own coordinates
-        // (Location::groupsNear), not from membership, so the poster is
+        // When the member chose no community, the group here comes from the post's
+        // own coordinates (Location::groupsNear), not from membership, so the poster is
         // frequently not a member of the resolved group — that must still
         // succeed, using the same 'DEFAULT' posting status a brand-new
         // member would get, rather than being skipped. Like any unmoderated
@@ -1003,6 +1004,69 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame(GroupPostIngestionService::SOURCEHEADER, $message->sourceheader);
         $this->assertStringStartsWith('TN-', (string) $message->sourceheader);
         $this->assertStringContainsString('X-Trash-Nothing-Source: API', $message->message);
+    }
+
+    /**
+     * Ingest one post from $user on a fresh group they belong to, and return the message.
+     */
+    private function ingestOnePostFrom(User $user): Message
+    {
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $postId = 'tn-from-' . uniqid();
+        $this->makeService(dryRun: false)->ingest($this->makePost(['post_id' => $postId, 'user_id' => $user->tnuserid]), $group);
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message);
+
+        return $message;
+    }
+
+    /**
+     * A post the TN API brought in has the member's TrashNothing address as its sender, as
+     * one TN emailed to the group does. ModTools reads the sender to say a post came "via
+     * TrashNothing" rather than "via Email", and TN's partner key acts as the owner only of
+     * posts whose sender is in TN's domain.
+     */
+    public function test_live_records_the_members_tn_address_as_the_sender(): void
+    {
+        $address = 'tricia.hayes' . uniqid() . '-g298' . User::TN_EMAIL_SUFFIX;
+        $user = $this->createTnUser(['lastlocation' => $this->createTestLocation(), 'email_preferred' => $address]);
+
+        $message = $this->ingestOnePostFrom($user);
+
+        $this->assertSame($address, $message->fromaddr);
+        $this->assertSame($address, $message->envelopefrom);
+        $this->assertStringContainsString("<{$address}>", $message->message);
+
+        $history = DB::table('messages_history')->where('msgid', $message->id)->first();
+        $this->assertSame($address, $history->fromaddr);
+        $this->assertSame($address, $history->envelopefrom);
+    }
+
+    public function test_the_sender_is_the_newest_tn_address_when_the_preferred_email_is_not_one(): void
+    {
+        $user = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+        $username = 'tricia.hayes' . uniqid();
+        foreach (['-g298', '-g1733'] as $alias) {
+            UserEmail::create(['userid' => $user->id, 'email' => $username . $alias . User::TN_EMAIL_SUFFIX, 'preferred' => 0, 'added' => now()]);
+        }
+
+        $message = $this->ingestOnePostFrom($user);
+
+        $this->assertSame($username . '-g1733' . User::TN_EMAIL_SUFFIX, $message->fromaddr);
+    }
+
+    public function test_a_member_with_no_tn_address_posts_with_no_sender_address(): void
+    {
+        $user = $this->createTnUser(['lastlocation' => $this->createTestLocation()]);
+
+        $message = $this->ingestOnePostFrom($user);
+
+        $this->assertNull($message->fromaddr);
+        $this->assertNull($message->envelopefrom);
+        $this->assertStringContainsString('<noreply@trashnothing.com>', $message->message);
     }
 
     // -------------------------------------------------------------------------

@@ -130,9 +130,6 @@ class User extends Model implements Auditable
 
     // Group membership roles.
     public const ROLE_NONMEMBER = 'Non-member';
-    public const ROLE_MEMBER = 'Member';
-    public const ROLE_MODERATOR = 'Moderator';
-    public const ROLE_OWNER = 'Owner';
 
     // System-wide roles.
     public const SYSTEMROLE_USER = 'User';
@@ -349,7 +346,7 @@ class User extends Model implements Auditable
      */
     public function isNameExempt(): bool
     {
-        if (in_array($this->systemrole, ['Moderator', 'Support', 'Admin'], TRUE)) {
+        if (in_array($this->systemrole, [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN], TRUE)) {
             return TRUE;
         }
         return $this->isModerator() || $this->isOfficialFreegleUser();
@@ -496,12 +493,26 @@ class User extends Model implements Auditable
     }
 
     /**
+     * The member's TrashNothing address: the preferred email when it is one, otherwise the
+     * newest. Most members hold several, one per group TN has mailed for them
+     * ("tricia.hayes-g298@user.trashnothing.com"). NULL when they hold none.
+     */
+    public function tnAddress(): ?string
+    {
+        return $this->emails()
+            ->where('email', 'LIKE', '%' . self::TN_EMAIL_SUFFIX)
+            ->orderByDesc('preferred')
+            ->orderByDesc('id')
+            ->value('email');
+    }
+
+    /**
      * Check if user is a moderator of any group.
      */
     public function isModerator(): bool
     {
         return $this->memberships()
-            ->whereIn('role', ['Moderator', 'Owner'])
+            ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->exists();
     }
 
@@ -512,7 +523,7 @@ class User extends Model implements Auditable
     {
         return $this->memberships()
             ->where('groupid', $groupId)
-            ->whereIn('role', ['Moderator', 'Owner'])
+            ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->exists();
     }
 
@@ -1355,16 +1366,16 @@ class User extends Model implements Auditable
     {
         $role = self::ROLE_NONMEMBER;
 
-        if ($role1 === self::ROLE_MEMBER || $role2 === self::ROLE_MEMBER) {
-            $role = self::ROLE_MEMBER;
+        if ($role1 === Membership::ROLE_MEMBER || $role2 === Membership::ROLE_MEMBER) {
+            $role = Membership::ROLE_MEMBER;
         }
 
-        if ($role1 === self::ROLE_MODERATOR || $role2 === self::ROLE_MODERATOR) {
-            $role = self::ROLE_MODERATOR;
+        if ($role1 === Membership::ROLE_MODERATOR || $role2 === Membership::ROLE_MODERATOR) {
+            $role = Membership::ROLE_MODERATOR;
         }
 
-        if ($role1 === self::ROLE_OWNER || $role2 === self::ROLE_OWNER) {
-            $role = self::ROLE_OWNER;
+        if ($role1 === Membership::ROLE_OWNER || $role2 === Membership::ROLE_OWNER) {
+            $role = Membership::ROLE_OWNER;
         }
 
         return $role;
@@ -2281,7 +2292,7 @@ class User extends Model implements Auditable
         $ret = [];
 
         foreach ($this->memberships()->get() as $membership) {
-            if ($membership->role === self::ROLE_OWNER || $membership->role === self::ROLE_MODERATOR) {
+            if ($membership->role === Membership::ROLE_OWNER || $membership->role === Membership::ROLE_MODERATOR) {
                 if (!$activeOnly || $this->activeModForGroup($membership->groupid)) {
                     $ret[] = $membership->groupid;
                 }
@@ -2366,7 +2377,7 @@ class User extends Model implements Auditable
 
         $settings = $membership->settings ?? [];
 
-        if (!empty($settings) && !$configId && in_array($membership->role, [self::ROLE_OWNER, self::ROLE_MODERATOR])) {
+        if (!empty($settings) && !$configId && in_array($membership->role, [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])) {
             $settings['configid'] = $membership->configid ?? ModConfig::getForGroup($this->id, $groupId);
         }
 
@@ -2412,7 +2423,7 @@ class User extends Model implements Auditable
             ->where('memberships.userid', $this->id);
 
         if ($modOnly) {
-            $query->whereIn('memberships.role', [self::ROLE_MODERATOR, self::ROLE_OWNER]);
+            $query->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
         }
 
         if ($groupType) {
@@ -2466,7 +2477,7 @@ class User extends Model implements Auditable
 
             $one['role'] = $row->role;
             $one['collection'] = $row->collection;
-            $amod = ($one['role'] === self::ROLE_MODERATOR || $one['role'] === self::ROLE_OWNER);
+            $amod = ($one['role'] === Membership::ROLE_MODERATOR || $one['role'] === Membership::ROLE_OWNER);
             $one['configid'] = $row->configid;
 
             if ($amod && !$one['configid']) {

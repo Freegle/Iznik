@@ -138,6 +138,7 @@ import OurUploader from '~/components/OurUploader'
 import OurToggle from '~/components/OurToggle'
 import SupporterInfo from '~/components/SupporterInfo'
 import { useLockdownNotice } from '~/composables/useLockdownNotice'
+import { SYSTEMROLE_USER } from '~/constants'
 
 const emit = defineEmits([
   'update',
@@ -169,7 +170,7 @@ const showSupporter = computed(() => {
 
 const eligibleSupporter = computed(() => {
   if (!me.value) return false
-  const isMod = me.value.systemrole && me.value.systemrole !== 'User'
+  const isMod = me.value.systemrole && me.value.systemrole !== SYSTEMROLE_USER
   const hasRecentDonation =
     me.value.donated &&
     new Date(me.value.donated) >

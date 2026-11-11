@@ -4,6 +4,11 @@ import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useTeamStore } from '~/stores/team'
 import { donationAsksPaused } from '~/composables/useDonationAsks'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 let fetchingPromise = null
 // A single coalesced "trailing" fetch for forceServer callers that arrive while a fetch is
@@ -191,20 +196,25 @@ export function useMe() {
   const mod = computed(() => {
     return (
       me.value &&
-      (me.value.systemrole === 'Moderator' ||
-        me.value.systemrole === 'Support' ||
-        me.value.systemrole === 'Admin')
+      (me.value.systemrole === SYSTEMROLE_MODERATOR ||
+        me.value.systemrole === SYSTEMROLE_SUPPORT ||
+        me.value.systemrole === SYSTEMROLE_ADMIN)
     )
   })
 
-  const support = computed(() => me.value && me.value.systemrole === 'Support')
+  const support = computed(
+    () => me.value && me.value.systemrole === SYSTEMROLE_SUPPORT
+  )
 
-  const admin = computed(() => me.value && me.value.systemrole === 'Admin')
+  const admin = computed(
+    () => me.value && me.value.systemrole === SYSTEMROLE_ADMIN
+  )
 
   const supportOrAdmin = computed(() => {
     return (
       me.value &&
-      (me.value.systemrole === 'Support' || me.value.systemrole === 'Admin')
+      (me.value.systemrole === SYSTEMROLE_SUPPORT ||
+        me.value.systemrole === SYSTEMROLE_ADMIN)
     )
   })
 

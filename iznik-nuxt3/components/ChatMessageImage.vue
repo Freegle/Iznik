@@ -21,6 +21,7 @@
       :modifiers="chatmessage.image.externalmods"
       alt="Chat Photo"
       :width="200"
+      class="clickme"
       @click="zoom = true"
     />
     <b-img

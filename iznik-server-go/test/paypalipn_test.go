@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,7 +25,7 @@ func TestPayPalIPN_ValidCharge(t *testing.T) {
 	prefix := uniquePrefix("paypalipn")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 	txnID := "PAY_" + prefix
 
@@ -80,7 +81,7 @@ func TestPayPalIPN_MatchByEmail(t *testing.T) {
 	prefix := uniquePrefix("paypalemail")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 	txnID := "PAY_" + prefix
 
@@ -187,7 +188,7 @@ func TestPayPalIPN_RecurringVsOneOff(t *testing.T) {
 	prefix := uniquePrefix("paypalrecur")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 	txnID := "PAY_" + prefix
 
@@ -227,7 +228,7 @@ func TestPayPalIPN_OneOffBelowThresholdNoThankYou(t *testing.T) {
 	prefix := uniquePrefix("paypalsmall")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 	txnID := "PAY_" + prefix
 
@@ -265,7 +266,7 @@ func TestPayPalIPN_MatchByPriorDonation(t *testing.T) {
 	prefix := uniquePrefix("paypalprior")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	// PayPal email that is NOT registered on the account.
 	payerEmail := prefix + "_paypal@external.com"
 	priorTxn := "PRIOR_" + prefix
@@ -348,7 +349,7 @@ func TestPayPalIPN_MatchByCanon(t *testing.T) {
 	prefix := uniquePrefix("paypalcanon")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 
 	// Register a canonicalised email; the incoming payer is a dotted variant
 	// that is NOT an exact match but shares the same canon.
@@ -408,7 +409,7 @@ func TestPayPalIPN_ResendOfRecordedTransactionIsAcknowledged(t *testing.T) {
 	prefix := uniquePrefix("paypalresend")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 	txnID := "PAY_" + prefix
 

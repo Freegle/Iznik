@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-25
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -47,11 +47,7 @@ you when: either when the post is due to reach your area, or, if it is never goi
 spread quite that far, when it stops spreading and your reply goes anyway. It shows as
 "waiting to send" until it has gone.
 
-Freegle may ask you in the chat whether you still want the item before passing your reply on. For a child car seat it always asks, and tells you what to check first: that you know the seat's history, that it has never been in an accident, that it carries the E mark, and how long its maker says it lasts.
-It asks when the photo suggests the item may be damaged or not working, or is too big or heavy
-to collect without a car or van. While Freegle tests this, about half of the people who reply
-to such an offer are asked, and the rest are not. The question is addressed to you by name, as
-"@your name".
+When you reply to an offer of a child car seat, Freegle asks you in the chat whether you still want it before passing your reply on, and tells you what to check first: that you know the seat's history, that it has never been in an accident, that it carries the E mark, and how long its maker says it lasts. The question is addressed to you by name, as "@your name".
 
 Tap **Yes, send my reply** and it goes. The person offering sees the question and your answer
 with it. Tap **No, don't send it** and they see none of it. Only the two buttons answer. Anything
@@ -115,7 +111,8 @@ TAKEN. You do not need to do anything, though a thank-you in the chat is always 
 - **Only legal items.** If something cannot legally be given away, it is not for Freegle.
 - **Some items come with safety guidance.** Things like car seats, cycle helmets and cot
   mattresses can be freegled, but check the guidance a moderator may attach to the post,
-  and use your judgement.
+  and use your judgement. When you post a WANTED for one, a note under the name box says
+  what to ask about, such as a car seat's make, model and age.
 - **Do not use auto-responders.** Automatically replying to lots of posts looks like spam
   and can get your account removed. Going away? Pause your Freegle emails in Settings
   instead.

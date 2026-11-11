@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-06
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -338,9 +338,13 @@ when reading any coverage report:
   the post to whichever unrelated account holds it. A TN user Freegle has never met is not
   skipped, unlike the email path, which drops the post as `Post from unknown user`:
   `TnUserProvisioner` asks TN who they are and creates them (below).
-- **Group placement is by coordinates**, via `Location::groupsNear()` on the
-  post's own lat/lng — never TN's `group_id`, which is TN's internal ID and
-  drifts from Freegle's boundaries.
+- **The member chooses the community.** TN's out-of-spec `freegle_group_ids` lists the
+  Freegle communities the member picked for this post, and the post goes on one of them:
+  the one whose area contains it, otherwise the one whose centre is nearest, wherever the
+  post is (`PostSyncer::placement()`). A chosen community that is not published is passed
+  over. Only a post that names none is placed by its own lat/lng, via
+  `Location::groupsNear()`, on the local community. TN's `group_id` is never used: it is
+  TN's internal ID and drifts from Freegle's boundaries.
 - **Crossposts collapse.** TN gives every per-group copy of a post its own post
   id and emails each one, so the email path creates N messages for an item
   crossposted to N groups. The API path ingests only the source post (empty
@@ -377,9 +381,10 @@ when reading any coverage report:
   still agree, and leaves a subject that already has the right bracket alone.
 - **One TN post is one message.** The API path's idempotency guard
   (`GroupPostIngestionService::existingMessage()`) matches the TN post id on any
-  group. A post on the line between two groups can resolve to either on different
-  reads, and the sync reads each post more than once, so a check scoped to the
-  resolved group would place it twice.
+  group. A post can resolve to a different group on a later read (one on the line
+  between two groups, or a member who changes the communities they chose), and the sync
+  reads each post more than once, so a check scoped to the resolved group would place it
+  twice.
 - **Deletion is final.** The same guard counts a *deleted*
   message as already ingested, unlike the email path's `findLiveTnMessage()`,
   which skips deleted ones. Deleting is a decision — a moderator, the member, or
@@ -397,10 +402,18 @@ when reading any coverage report:
   TN invoice on `sourceheader LIKE 'TN-%'`, `LoveJunkService` attributes the post's
   source by it, and `ProcessBackgroundTasksCommand` uses it to skip creating
   freebie alerts for TN posts, which TN syndicates itself.
+- **The sender is the member's TN address**, as on a post TN emails to the group:
+  `fromaddr` and `envelopefrom` on the message and its `messages_history` row, and the
+  From line of the synthesized message, come from `User::tnAddress()` (the preferred email
+  when it is a TN address, otherwise the newest one). `MessageHistory.vue` says "via
+  TrashNothing" only when `fromaddr` is a TN address, and `FindPartnerOwnerForMessage` lets
+  TN's partner key act as the owner only of a post whose sender is in TN's domain. Posts
+  ingested before this had no sender; `tn:backfill-post-senders` fills them in. A member with
+  no TN address at all posts with none.
 
 **Routing matches the email path**, including approval. A post from an unmoderated
 poster (`ourPostingStatus` `DEFAULT`/`UNMODERATED`, which is also the fallback used
-when the poster isn't a member of the group its coordinates resolved to) is *not*
+when the poster isn't a member of the group the post went on) is *not*
 approved on arrival: it lands Pending, and `messages:contentcheck` promotes it
 within a minute if clean, or holds it for a moderator if a concern keyword or
 content rule matches. `GroupPostIngestionService` deliberately does not notify mods
@@ -557,15 +570,20 @@ That is a deliberate difference, like the others above.
 
 ### Posts nobody chose: unaddressed TN posts
 
-Because the API path picks the group from the post's coordinates, a TN poster
-frequently ends up on a Freegle community they never asked for. TN's out-of-spec
-`freegle_group_ids` field lists the Freegle groups chosen for **this post** that the poster
-has consented to posting to (per post, not a list of their memberships), and
-`PostSyncer::processPost()` compares the resolved group against it, storing the answer
-as `messages_groups.mod_messaging_allowed` (default-deny for TN posts, table default 1
-for everything else). A post with 0 there is **unaddressed**: nobody on Freegle has any
-standing to moderate it in the usual sense, because the person behind it has not joined
-Freegle at all.
+TN's out-of-spec `freegle_group_ids` field lists the Freegle groups chosen for **this post**
+that the poster has consented to posting to (per post, not a list of their memberships: a member of two
+communities who posts to one gets only that one, checked against TN on 2026-11-08).
+`PostSyncer::placement()` puts a post that names any on one of them, and stores
+`messages_groups.mod_messaging_allowed = 1`. A post that names none is placed by its
+coordinates on the local community, which the poster never asked for, and stores 0
+(default-deny for TN posts, table default 1 for everything else). A post with 0 there is
+**unaddressed**: nobody on Freegle has any standing to moderate it in the usual sense,
+because the person behind it did not choose that community for it.
+
+The choice is the member's, made on TN for each post. Their memberships play no part in
+placing it: a member of one community who posts from inside another's area, naming their
+own, goes on their own; one who names none goes on the local community, unaddressed, even
+if they are a member there (decided 2026-11-08, Discourse 10315).
 
 The rule is read off the **origin** row (`rippled_in = 0`). The rippling engine inserts
 its copies without the column, so they take the table default and would otherwise make
@@ -809,11 +827,13 @@ reports anything that was missed. A post ingestion skips for a reason it notes a
 sort out, such as a TN username another member's account holds, is tried again on each run and
 reported as "skipped by ingestion, needs a person", never as a failed backfill.
 
-The out-of-boundary verdict comes from the **live** post's coordinates, which are
-the ones `PostSyncer::processPost()` would have placed it from. The archived
-email's `X-Trash-Nothing-Post-Coordinates` header is only allowed to skip the
-lookup when it names coordinates that resolve to no group — a post the email path
-would itself have dropped as an unknown group. A header that is missing or
+The out-of-boundary verdict asks `PostSyncer::placement()` the question ingestion asks,
+with the **live** post's coordinates and `freegle_group_ids`, so a post that names a
+community is never unplaceable. The archived email's
+`X-Trash-Nothing-Post-Coordinates` header is only allowed to skip the lookup when the
+email was not sent to one of our communities and the header names coordinates that resolve
+to no group. An email sent to a community is the member's choice of it, and ingestion
+places the post there wherever it is. A header that is missing or
 unparseable establishes nothing and must never be read as "unplaceable": that
 would file a real coverage gap in a bucket the report labels expected.
 

@@ -600,8 +600,9 @@ otherwise each copy would carry the same item further on its own account. Once t
 copies have been merged into a single post, it ripples normally. A TrashNothing item
 posted to one community ripples straight away, exactly like a member's post.
 
-TrashNothing posts now arrive as a single post per item, placed on the community whose
-area contains the item, so new items never start out as several copies and ripple straight
+TrashNothing posts now arrive as a single post per item, placed on the community the
+member chose on TrashNothing, or on the community whose area contains the item if they chose
+none, so new items never start out as several copies and ripple straight
 away. The exception only still applies to older items that already exist as several copies,
 until those are merged. On your own community, TrashNothing posts behave exactly as they
 always have, and replies to them follow the same reach rules as everything else.

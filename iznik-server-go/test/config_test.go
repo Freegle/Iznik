@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/config"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
 	"testing"
@@ -29,7 +30,7 @@ func TestConcernKeywords_Unauthorized(t *testing.T) {
 	assert.Equal(t, 401, resp.StatusCode)
 
 	prefix := uniquePrefix("ckauth")
-	regularUserID := CreateTestUser(t, prefix, "User")
+	regularUserID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, regularToken := CreateTestSession(t, regularUserID)
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/config/admin/concern_keywords?jwt="+regularToken, nil))
 	assert.Equal(t, 403, resp.StatusCode)
@@ -37,7 +38,7 @@ func TestConcernKeywords_Unauthorized(t *testing.T) {
 
 func TestConcernKeywords_List(t *testing.T) {
 	prefix := uniquePrefix("cklist")
-	supportUserID := CreateTestUser(t, prefix, "Support")
+	supportUserID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportUserID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/config/admin/concern_keywords?jwt="+token, nil))
@@ -50,7 +51,7 @@ func TestConcernKeywords_List(t *testing.T) {
 
 func TestConcernKeywords_Create(t *testing.T) {
 	prefix := uniquePrefix("ckcreate")
-	supportUserID := CreateTestUser(t, prefix, "Support")
+	supportUserID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportUserID)
 
 	kwReq := config.CreateConcernKeywordRequest{
@@ -86,7 +87,7 @@ func TestConcernKeywords_Create(t *testing.T) {
 // group-scoped block only concerns that group's queue; neither queues anything.
 func TestConcernKeywords_BlockKeywordQueuesBackfill(t *testing.T) {
 	prefix := uniquePrefix("ckblock")
-	supportUserID := CreateTestUser(t, prefix, "Support")
+	supportUserID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportUserID)
 
 	create := func(name, action, scope string) config.ConcernKeyword {
@@ -137,7 +138,7 @@ func TestConcernKeywords_BlockKeywordQueuesBackfill(t *testing.T) {
 
 func TestConcernKeywords_CreateValidation(t *testing.T) {
 	prefix := uniquePrefix("ckvalid")
-	supportUserID := CreateTestUser(t, prefix, "Support")
+	supportUserID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportUserID)
 
 	kwReq := config.CreateConcernKeywordRequest{
@@ -152,7 +153,7 @@ func TestConcernKeywords_CreateValidation(t *testing.T) {
 
 func TestConcernKeywords_Delete(t *testing.T) {
 	prefix := uniquePrefix("ckdelete")
-	supportUserID := CreateTestUser(t, prefix, "Support")
+	supportUserID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportUserID)
 
 	kw := config.ConcernKeyword{

@@ -1757,6 +1757,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Auto-split of multi-item posts
+    |--------------------------------------------------------------------------
+    |
+    | A new native OFFER that lists several separate things becomes a multi-item post: the
+    | text splitter lists the items, the photo splitter gives each photo to the item it shows
+    | and crops photos of several items. docs/developers/reference/auto-split.md.
+    |
+    | mode: "off" does nothing, "shadow" records what it would do in messages_autosplit
+    | without changing the post, "on" splits. Anything else is off. The model is pinned,
+    | because the prompts were tuned and backtested on it: a "latest" alias would change the
+    | answers underneath.
+    |
+    */
+    'autosplit' => [
+        'mode' => EnvSetting::env('AUTOSPLIT_MODE', 'off'),
+        'gemini_api_key' => EnvSetting::env('GOOGLE_GEMINI_API_KEY', ''),
+        'model' => EnvSetting::env('AUTOSPLIT_MODEL', 'gemini-3.8-flash'),
+        // Posts older than this when the job first sees them are left alone.
+        'window_minutes' => (int) EnvSetting::env('AUTOSPLIT_WINDOW_MINUTES', 120),
+        // Photos looked at per post; the rest stay shared post photos.
+        'max_photos' => (int) EnvSetting::env('AUTOSPLIT_MAX_PHOTOS', 8),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | EEE (Electrical and Electronic Equipment) Identification
     |--------------------------------------------------------------------------
     |
@@ -1864,6 +1889,35 @@ return [
         'variant_popularity_ratio'   => EnvSetting::env('ELECTRICALS_VARIANT_POPULARITY_RATIO', 3),
         'variant_min_popular_count'  => EnvSetting::env('ELECTRICALS_VARIANT_MIN_POPULAR_COUNT', 10),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Support case first pass
+    |--------------------------------------------------------------------------
+    |
+    | When a moderator refers a chat to Support, support:first-pass runs one bounded AI pass over
+    | the member's data and writes a brief, which the referral mail carries. The helper's address
+    | and shared secret are the UX helper's (freegle.ux.prompts). Off unless
+    | SUPPORT_FIRST_PASS_ENABLED is 1 or true; while off, the referral mail goes out without a brief.
+    |
+    | timeout: the helper's own deadline is 480 seconds (FIRST_PASS_DEADLINE_MS); this wait is 30 longer.
+    | per_referrer_per_day: model passes one moderator may use a day, so one person cannot spend the pool.
+    | max_age_minutes: a case still waiting this long gets the plain mail and is never run late.
+    | run_minutes: one support:first-pass run stops claiming new cases after this long.
+    |
+    */
+    'support' => [
+        'first_pass' => [
+            'enabled' => EnvSetting::flag(EnvSetting::env('SUPPORT_FIRST_PASS_ENABLED', false)),
+            'timeout' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_TIMEOUT', 510),
+            'per_referrer_per_day' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_PER_REFERRER_PER_DAY', 10),
+            'max_age_minutes' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_MAX_AGE_MINUTES', 60),
+            'run_minutes' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_RUN_MINUTES', 10),
+            // Where the batch fetches chat images from, the way the Go API builds them.
+            'uploads_url' => EnvSetting::env('UPLOADS', 'https://uploads.ilovefreegle.org:8080/'),
+        ],
+    ],
+
 
     /*
     |--------------------------------------------------------------------------
@@ -2014,10 +2068,10 @@ return [
         'sources' => [
             'email_click' => \App\Services\Ux\Sources\EmailClickSource::class,
             'active_after' => \App\Services\Ux\Sources\ActiveAfterSource::class,
-            'confirm_reply' => \App\Services\Ux\Sources\ConfirmReplySource::class,
             'interested_reply' => \App\Services\Ux\Sources\InterestedReplySource::class,
             'familiar_reply' => \App\Services\Ux\Sources\FamiliarReplySource::class,
             'hosting_ad_click' => \App\Services\Ux\Sources\HostingAdClickSource::class,
+            'confirm_reply_post' => \App\Services\Ux\Sources\ConfirmReplyPostSource::class,
         ],
     ],
 

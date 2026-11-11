@@ -420,6 +420,36 @@ class UxRollupServiceTest extends TestCase
         $this->assertEquals([100, 1.0], [$this->healthFor('event:session_start')->expected, $this->healthFor('event:session_start')->ratio]);
     }
 
+    public function test_health_compares_a_day_with_the_same_weekday_so_a_busy_sunday_is_not_an_alarm(): void
+    {
+        // Every Thursday runs 30% above the other days, as Sundays do on live. Against the median of the
+        // last fortnight a normal Thursday read 1.3; against the Thursdays before it, it reads 1.0.
+        $this->lokiMatrix('/sum\(count_over_time\(\{[^}]*event_type="page_view"\} \[1d\]/', [[[], 1300]]);
+        for ($i = 1; $i <= 28; $i++) {
+            $day = Carbon::parse(self::DAY)->subDays($i);
+            $this->healthRow('event:page_view', $day->toDateString(), $day->isThursday() ? 1300 : 1000);
+        }
+
+        $this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC'));
+
+        $this->assertEquals([1300, 1.0], [$this->healthFor('event:page_view')->expected, $this->healthFor('event:page_view')->ratio]);
+    }
+
+    public function test_health_uses_the_fortnight_until_there_are_three_of_the_same_weekday(): void
+    {
+        // One earlier Thursday since the change point: under three, so the fortnight median is used.
+        config()->set('freegle.ux.health_change_points', ['event:impressions' => '2026-02-21']);
+        $this->lokiMatrix('/sum\(count_over_time\(\{[^}]*event_type="impressions"\} \[1d\]/', [[[], 1000]]);
+        for ($i = 1; $i <= 12; $i++) {
+            $day = Carbon::parse(self::DAY)->subDays($i);
+            $this->healthRow('event:impressions', $day->toDateString(), $day->isThursday() ? 2000 : 1000);
+        }
+
+        $this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC'));
+
+        $this->assertEquals([1000, 1.0], [$this->healthFor('event:impressions')->expected, $this->healthFor('event:impressions')->ratio]);
+    }
+
     public function test_sample_sessions_are_capped_per_step_and_old_ones_deleted(): void
     {
         config()->set('freegle.ux.sample_per_step', 2);

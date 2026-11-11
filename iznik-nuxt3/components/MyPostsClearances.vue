@@ -40,6 +40,7 @@
 import { computed } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { distinctInterestedUsers } from '~/composables/useClearance'
+import { isClearance } from '~/composables/useAutoSplit'
 
 const props = defineProps({
   // The user's posts (message summaries from myposts). The full message — with
@@ -72,13 +73,15 @@ const clearances = computed(() =>
         id: p.id,
         subject: full?.subject || p.subject,
         bulkcount,
+        // An automatically split post has items too, but is not a clearance.
+        clearance: isClearance(full),
         available,
         interested: full?.bulkitems
           ? distinctInterestedUsers(full.bulkitems)
           : 0,
       }
     })
-    .filter((c) => c.bulkcount > 0)
+    .filter((c) => c.clearance)
 )
 </script>
 

@@ -567,34 +567,21 @@ export const useAuthStore = defineStore('auth', {
         }
 
         if (import.meta.client) {
-          // Sync marketing consent from local storage to user profile if needed
+          // The server holds marketing consent. The login box can only give it, and only when the
+          // member ticked it; withdrawing is done in Settings.
           const miscStore = useMiscStore()
 
-          if (miscStore.marketingConsent !== undefined) {
-            const localConsent = !!miscStore.marketingConsent
-            console.log(
-              'Local marketing consent',
-              localConsent,
-              'User marketing consent',
-              me.marketingconsent
-            )
-
-            if (me.marketingconsent !== localConsent) {
-              try {
-                await this.$api.session.save({
-                  marketingconsent: localConsent,
-                })
-
-                me.marketingconsent = localConsent
-                console.log("Sync'd marketing consent")
-              } catch (e) {
-                console.log('Failed to sync marketing consent', e)
+          if (miscStore.marketingConsentTicked) {
+            try {
+              if (!me.marketingconsent) {
+                await this.$api.session.save({ marketingconsent: true })
+                me.marketingconsent = true
               }
-            } else {
-              console.log("Marketing consent already sync'd")
+
+              miscStore.setMarketingConsentTicked(false)
+            } catch (e) {
+              console.log('Failed to save marketing consent', e)
             }
-          } else {
-            console.log('No local marketing consent to sync')
           }
         }
       } else if (!serverError) {

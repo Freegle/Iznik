@@ -13,6 +13,12 @@ func TestIsChildCarSeat(t *testing.T) {
 		"OFFER: ISOFIX base only",
 		"OFFER: Infant carrier",
 		"OFFER: Child car safety seat",
+		"OFFER: Children’s car seats (BS35)",
+		"OFFER: Booster seats for car (G74)",
+		"OFFER: Cybex Aton B2 car seat & ISO fix (HP3)",
+		// A seat as well as a cover is still a seat.
+		"OFFER: Car seat and seat cover",
+		"OFFER: Car seat with rain cover",
 	}
 	for _, s := range yes {
 		if !isChildCarSeat(s) {
@@ -26,6 +32,13 @@ func TestIsChildCarSeat(t *testing.T) {
 		"OFFER: Seat pads x4",
 		"OFFER: Child's bike",
 		"",
+		// Live subjects the plain substring test caught (Discourse 9939/73).
+		"OFFER: Child carrier bag (BN1)",
+		"WANTED: Child carrier backpack (S41)",
+		"OFFER: Two car seat covers (SE26)",
+		"OFFER: Dog-Hammock Type Car Seat Cover (CT2)",
+		"OFFER: Joie black baby car seat cover (HP2)",
+		"WANTED: Dog car seat and baby play gym (AL3)",
 	}
 	for _, s := range no {
 		if isChildCarSeat(s) {

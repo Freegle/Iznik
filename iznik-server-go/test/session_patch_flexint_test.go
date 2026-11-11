@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +39,7 @@ func patchSession(t *testing.T, token string, payload map[string]interface{}) ma
 
 func TestPatchSessionRelevantallowedNumber(t *testing.T) {
 	prefix := uniquePrefix("sess_relnum")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	result := patchSession(t, token, map[string]interface{}{
@@ -54,7 +55,7 @@ func TestPatchSessionRelevantallowedNumber(t *testing.T) {
 
 func TestPatchSessionRelevantallowedZeroNumber(t *testing.T) {
 	prefix := uniquePrefix("sess_relnum0")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// First set to 1.
@@ -78,7 +79,7 @@ func TestPatchSessionRelevantallowedZeroNumber(t *testing.T) {
 
 func TestPatchSessionRelevantallowedStringOne(t *testing.T) {
 	prefix := uniquePrefix("sess_relstr1")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	result := patchSession(t, token, map[string]interface{}{
@@ -94,7 +95,7 @@ func TestPatchSessionRelevantallowedStringOne(t *testing.T) {
 
 func TestPatchSessionRelevantallowedStringZero(t *testing.T) {
 	prefix := uniquePrefix("sess_relstr0")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Prime to 1 first.
@@ -120,7 +121,7 @@ func TestPatchSessionRelevantallowedStringZero(t *testing.T) {
 // {relevantallowed: true|false}. PHP V1 coerced naturally; V2 must too.
 func TestPatchSessionRelevantallowedBoolTrue(t *testing.T) {
 	prefix := uniquePrefix("sess_relbtrue")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -138,7 +139,7 @@ func TestPatchSessionRelevantallowedBoolTrue(t *testing.T) {
 
 func TestPatchSessionRelevantallowedBoolFalse(t *testing.T) {
 	prefix := uniquePrefix("sess_relbfalse")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -160,7 +161,7 @@ func TestPatchSessionRelevantallowedBoolFalse(t *testing.T) {
 
 func TestPatchSessionNewslettersallowedNumber(t *testing.T) {
 	prefix := uniquePrefix("sess_nlnum")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	result := patchSession(t, token, map[string]interface{}{
@@ -180,7 +181,7 @@ func TestPatchSessionNewslettersallowedNumber(t *testing.T) {
 
 func TestPatchSessionNewslettersallowedStringOne(t *testing.T) {
 	prefix := uniquePrefix("sess_nlstr")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	result := patchSession(t, token, map[string]interface{}{
@@ -196,7 +197,7 @@ func TestPatchSessionNewslettersallowedStringOne(t *testing.T) {
 
 func TestPatchSessionNewslettersallowedStringZero(t *testing.T) {
 	prefix := uniquePrefix("sess_nlstr0")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	patchSession(t, token, map[string]interface{}{"newslettersallowed": 1})
@@ -218,7 +219,7 @@ func TestPatchSessionNewslettersallowedStringZero(t *testing.T) {
 
 func TestPatchSessionMarketingconsentTrue(t *testing.T) {
 	prefix := uniquePrefix("sess_mktrue")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	result := patchSession(t, token, map[string]interface{}{
@@ -234,7 +235,7 @@ func TestPatchSessionMarketingconsentTrue(t *testing.T) {
 
 func TestPatchSessionMarketingconsentFalse(t *testing.T) {
 	prefix := uniquePrefix("sess_mkfalse")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Set to true first.
@@ -258,7 +259,7 @@ func TestPatchSessionMarketingconsentFalse(t *testing.T) {
 // FlexBool must accept the integer form.
 func TestPatchSessionMarketingconsentNumberOne(t *testing.T) {
 	prefix := uniquePrefix("sess_mknum1")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	result := patchSession(t, token, map[string]interface{}{
@@ -274,7 +275,7 @@ func TestPatchSessionMarketingconsentNumberOne(t *testing.T) {
 
 func TestPatchSessionMarketingconsentNumberZero(t *testing.T) {
 	prefix := uniquePrefix("sess_mknum0")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Set to true first, then clear via numeric 0.
@@ -294,7 +295,7 @@ func TestPatchSessionMarketingconsentNumberZero(t *testing.T) {
 // marketingconsent sent as a string ("1") — HTML form / select robustness.
 func TestPatchSessionMarketingconsentStringOne(t *testing.T) {
 	prefix := uniquePrefix("sess_mkstr1")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	result := patchSession(t, token, map[string]interface{}{
@@ -314,7 +315,7 @@ func TestPatchSessionMarketingconsentStringOne(t *testing.T) {
 
 func TestPatchSessionAboutme(t *testing.T) {
 	prefix := uniquePrefix("sess_aboutme")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	result := patchSession(t, token, map[string]interface{}{
@@ -341,7 +342,7 @@ func TestPatchSessionAboutme(t *testing.T) {
 
 func TestPatchSessionAllFlexIntFieldsTogether(t *testing.T) {
 	prefix := uniquePrefix("sess_flexall")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Send all FlexInt fields as strings (the way a browser <select> would).

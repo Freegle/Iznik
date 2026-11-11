@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func TestAuth(t *testing.T) {
@@ -36,7 +37,7 @@ func TestAuth(t *testing.T) {
 func TestPersistent(t *testing.T) {
 	// Create a user and session for this test
 	prefix := uniquePrefix("persistent")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, _ := CreateTestSession(t, userID)
 
 	// Create the old-style persistent token used by the PHP API
@@ -106,7 +107,7 @@ func TestValidJWTInvalidUser(t *testing.T) {
 	// Create a real user and token, then delete the user so the JWT points
 	// to a non-existent user. The middleware's post-check verifies the
 	// user+session still exists in DB and returns 401 when it doesn't.
-	uid := CreateTestUser(t, uniquePrefix("invaliduser"), "User")
+	uid := CreateTestUser(t, uniquePrefix("invaliduser"), utils.SYSTEMROLE_USER)
 	token := getToken(t, uid)
 
 	db := database.DBConn
@@ -130,7 +131,7 @@ func TestValidJWTInvalidUser(t *testing.T) {
 // the next authenticated call 401s.
 func TestPatchSessionWithPurgedSessionReturns401(t *testing.T) {
 	prefix := uniquePrefix("purged_session")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -156,7 +157,7 @@ func TestPatchSessionWithPurgedSessionReturns401(t *testing.T) {
 // for the same user exists.
 func TestForgotPasswordStaleJWTReturns401(t *testing.T) {
 	prefix := uniquePrefix("forgotpass_stale")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// 1. User's previous device session (JWT still in localStorage).
 	oldSessionID, oldJWT := CreateTestSession(t, userID)
@@ -190,7 +191,7 @@ func TestForgotPasswordStaleJWTReturns401(t *testing.T) {
 // premise of (series, token).
 func TestCreateSessionAndJWTSeriesIsNumericAndUnique(t *testing.T) {
 	prefix := uniquePrefix("series_numeric")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 
@@ -226,7 +227,7 @@ func TestCreateSessionAndJWTSeriesIsNumericAndUnique(t *testing.T) {
 // cron purge_sessions (31-day cutoff) from deleting active sessions.
 func TestSessionLastactiveUpdatedWhenOld(t *testing.T) {
 	prefix := uniquePrefix("lastactive_old")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -246,7 +247,7 @@ func TestSessionLastactiveUpdatedWhenOld(t *testing.T) {
 // hammering the DB on every API call.
 func TestSessionLastactiveNotUpdatedWhenRecent(t *testing.T) {
 	prefix := uniquePrefix("lastactive_recent")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -269,17 +270,17 @@ func TestHasPermission(t *testing.T) {
 	db := database.DBConn
 
 	// User with no permissions
-	userID := CreateTestUser(t, prefix+"_none", "User")
+	userID := CreateTestUser(t, prefix+"_none", utils.SYSTEMROLE_USER)
 	assert.False(t, auth.HasPermission(userID, auth.PERM_GIFTAID))
 
 	// User with GiftAid permission
-	userGiftAid := CreateTestUser(t, prefix+"_ga", "User")
+	userGiftAid := CreateTestUser(t, prefix+"_ga", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", userGiftAid)
 	assert.True(t, auth.HasPermission(userGiftAid, auth.PERM_GIFTAID))
 	assert.False(t, auth.HasPermission(userGiftAid, auth.PERM_NEWSLETTER))
 
 	// User with multiple permissions
-	userMulti := CreateTestUser(t, prefix+"_multi", "User")
+	userMulti := CreateTestUser(t, prefix+"_multi", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET permissions = 'Newsletter,GiftAid,SpamAdmin' WHERE id = ?", userMulti)
 	assert.True(t, auth.HasPermission(userMulti, auth.PERM_GIFTAID))
 	assert.True(t, auth.HasPermission(userMulti, auth.PERM_NEWSLETTER))

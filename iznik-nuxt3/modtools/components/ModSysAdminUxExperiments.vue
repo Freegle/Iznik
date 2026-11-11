@@ -165,13 +165,15 @@ import {
   estateOf,
   orderExperiments,
 } from '~/modtools/composables/useUxExperimentRead'
+import { verdictOf } from '~/modtools/composables/useUxVerdict'
 import ModSysAdminUxExperimentRow from '~/modtools/components/ModSysAdminUxExperimentRow.vue'
 import ModSysAdminUxExperimentDetail from '~/modtools/components/ModSysAdminUxExperimentDetail.vue'
 import ModSysAdminUxExperimentForm from '~/modtools/components/ModSysAdminUxExperimentForm.vue'
 
 const props = defineProps({
   // The view from useUxView: ux_flow is view.flow, and the section's own keys are view.extra.exp
-  // (an experiment's id, or new) and view.extra.estate (finished; Active is the default and has no value).
+  // (an experiment's id, or new) and view.extra.estate (waiting, active or finished; where the section
+  // opens has no value).
   view: { type: Object, required: true },
 })
 const emit = defineEmits(['navigate'])
@@ -211,14 +213,17 @@ const actions = useUxExperimentActions(store, () => all.value)
 const flowFilter = computed(() =>
   FLOW_ORDER.includes(props.view.flow) ? props.view.flow : ''
 )
-// Two pills. Active is the running and not started ones and is what the page opens on; Finished is
-// the rest. Addresses made when the pills were All, Running and Not started (estate=running, draft or
-// all) still land on Active.
-const estate = computed(() =>
-  props.view.extra?.estate === 'finished' ? 'finished' : 'active'
-)
-const inEstate = (e, key) =>
-  key === 'finished' ? estateOf(e) === 'finished' : estateOf(e) !== 'finished'
+// The pills. Waiting for you is the finished ones with a verdict nobody has acted on, the ones behind
+// the red number on the tab (useUxVerdict). It is drawn only when there are some, and then it is where
+// the section opens, so the red number leads to what it counts. Active is the running and not started
+// ones and is where the section opens otherwise; Finished is the rest. Addresses made when the pills were
+// All, Running and Not started (estate=running, draft or all) land where the section opens.
+const inEstate = (e, key) => {
+  if (key === 'waiting') return !!verdictOf(e)
+  return key === 'finished'
+    ? estateOf(e) === 'finished'
+    : estateOf(e) !== 'finished'
+}
 
 const runningCount = computed(() => Number(data.value?.running_count) || 0)
 const maxRunning = computed(() => Number(data.value?.max_running) || 0)
@@ -254,12 +259,28 @@ const triedHere = computed(() =>
   byFunnel.value.some((e) => estateOf(e) !== 'draft')
 )
 
+const waitingCount = computed(
+  () => byFunnel.value.filter((e) => inEstate(e, 'waiting')).length
+)
+// Where the section opens with no pill in the address. A link that opens one experiment and names no pill
+// keeps Active, as it always has, and draws the experiment in its own place if Active leaves it out.
+const opensOn = computed(() => (waitingCount.value ? 'waiting' : 'active'))
+const estate = computed(() => {
+  const asked = props.view.extra?.estate
+  if (asked === 'finished' || asked === 'active') return asked
+  if (asked === 'waiting' && waitingCount.value) return 'waiting'
+  return openId.value === null ? opensOn.value : 'active'
+})
+
 const chips = computed(() => {
   const count = (key) => byFunnel.value.filter((e) => inEstate(e, key)).length
   return [
+    { key: 'waiting', label: 'Waiting for you' },
     { key: 'active', label: 'Active' },
     { key: 'finished', label: 'Finished' },
-  ].map((c) => ({ ...c, count: count(c.key) }))
+  ]
+    .map((c) => ({ ...c, count: count(c.key) }))
+    .filter((c) => c.key !== 'waiting' || c.count > 0)
 })
 
 const visible = computed(() =>
@@ -327,7 +348,7 @@ function chooseFunnel(value) {
 }
 function chooseEstate(key) {
   emit('navigate', {
-    estate: key === 'active' ? undefined : key,
+    estate: key === opensOn.value ? undefined : key,
     exp: undefined,
   })
 }

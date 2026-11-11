@@ -17,6 +17,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	flog "github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -115,7 +116,7 @@ func IsModerator(userID uint64) bool {
 	var n int64
 	db.Table("memberships").
 		Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
-		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
+		Where("memberships.userid = ? AND memberships.role IN (?, ?) AND `groups`.type = 'Freegle'", userID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).
 		Count(&n)
 	return n > 0
 }

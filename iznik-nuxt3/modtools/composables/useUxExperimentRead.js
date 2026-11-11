@@ -501,6 +501,40 @@ export function exposureLines(exp) {
   return exposed || counted ? { exposed, counted } : null
 }
 
+/**
+ * The figures a source shows for information only, from the read's detail (ExposureSource::information in the
+ * batch): a share per version that the decision never weighs, such as the share of posters who had no reply
+ * passed on, which confirm-reply-post raises on purpose. One line each, in the words of the result text: "For
+ * information only, not used to decide: <label> was 16.1% with the change and 2.4% without." A version with
+ * nobody counted yet reads "unknown". Empty when there are none.
+ */
+export function informationLines(exp) {
+  const info = exp?.result?.detail?.information
+  if (!info || typeof info !== 'object') return []
+  const share = (a) =>
+    isNumber(a?.n) && isNumber(a?.base) && a.base > 0
+      ? `${((a.n / a.base) * 100).toFixed(1)}%`
+      : 'unknown'
+  const lines = []
+  for (const figure of Object.values(info)) {
+    const by = figure?.arms
+    if (typeof figure?.label !== 'string' || !by || typeof by !== 'object')
+      continue
+    const arms = armOrder(
+      Object.keys(by).filter((a) => by[a] && typeof by[a] === 'object')
+    )
+    if (!arms.length) continue
+    const values =
+      arms.length === 2 && arms[0] === 'control'
+        ? `${share(by[arms[1]])} with the change and ${share(by.control)} without`
+        : arms.map((a) => `${a} ${share(by[a])}`).join(', ')
+    lines.push(
+      `For information only, not used to decide: ${figure.label} was ${values}.`
+    )
+  }
+  return lines
+}
+
 // ----------------------------------------------------------------------------------------- the order
 
 // Running first, then not started, then finished.

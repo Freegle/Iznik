@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,7 +18,7 @@ func TestHousekeeperNotifySuccess(t *testing.T) {
 	db := database.DBConn
 
 	// Create an admin user and session.
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	body := []byte(`{
@@ -74,7 +75,7 @@ func TestHousekeeperNotifyForbiddenNonAdmin(t *testing.T) {
 	db := database.DBConn
 
 	// Create a regular (non-admin) user.
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := []byte(`{
@@ -104,7 +105,7 @@ func TestHousekeeperNotifyFailureQueued(t *testing.T) {
 	db := database.DBConn
 
 	// Create an admin user and session.
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	// Extension reports a failure — should still be queued for notification.
@@ -136,7 +137,7 @@ func TestHousekeeperNotifyBadRequest(t *testing.T) {
 	prefix := uniquePrefix("hkbadreq")
 
 	// Create an admin user.
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	// Missing required "task" and "status" fields.
@@ -158,7 +159,7 @@ func TestHousekeeperNotifyUpsertsRegistry(t *testing.T) {
 	prefix := uniquePrefix("hkreg")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	body := []byte(`{
@@ -215,7 +216,7 @@ func TestHousekeeperNotifyUpdatesLastRun(t *testing.T) {
 	prefix := uniquePrefix("hklast")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	body := []byte(`{
@@ -249,7 +250,7 @@ func TestListTasksReturnsAll(t *testing.T) {
 	prefix := uniquePrefix("hklist")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	// Seed two tasks.
@@ -292,7 +293,7 @@ func TestListTasksRequiresAdminOrSupport(t *testing.T) {
 	assert.Equal(t, 401, resp.StatusCode)
 
 	// Regular user → 403.
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req = httptest.NewRequest("GET", "/api/housekeeper/tasks?jwt="+token, nil)
@@ -301,7 +302,7 @@ func TestListTasksRequiresAdminOrSupport(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 
 	// Support user → 200.
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	req = httptest.NewRequest("GET", "/api/housekeeper/tasks?jwt="+supportToken, nil)
@@ -313,7 +314,7 @@ func TestListTasksRequiresAdminOrSupport(t *testing.T) {
 func TestListCronJobsReturnsData(t *testing.T) {
 	prefix := uniquePrefix("hkcron")
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
@@ -346,7 +347,7 @@ func TestListCronJobsRequiresAdminOrSupport(t *testing.T) {
 	assert.Equal(t, 401, resp.StatusCode)
 
 	// Regular user → 403.
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req = httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
@@ -359,7 +360,7 @@ func TestListCronJobsIncludesLastRunData(t *testing.T) {
 	prefix := uniquePrefix("hkcronrun")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	// Seed a cron_job_status row matching a known cron job command.
@@ -402,9 +403,9 @@ func TestSessionWorkIncludesHousekeeping(t *testing.T) {
 	db := database.DBConn
 
 	// Create an admin user with a group membership (needed for work counts).
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	// Insert a failed, enabled housekeeper task.
@@ -439,9 +440,9 @@ func TestSessionWorkIncludesHousekeeping(t *testing.T) {
 func TestCodeDeployedIsListedAndActive(t *testing.T) {
 	// Code Deployed replaces the retired deploy:watch row and counts as an active job.
 	prefix := uniquePrefix("deployw")
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
@@ -470,9 +471,9 @@ func TestCodeDeployedIsListedAndActive(t *testing.T) {
 // migrations appear in the SysAdmin cron registry as active jobs.
 func TestFinalV1CronMigrationsRegistered(t *testing.T) {
 	prefix := uniquePrefix("v1cron")
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
@@ -511,9 +512,9 @@ func TestFinalV1CronMigrationsRegistered(t *testing.T) {
 // without one slot's row standing for another whose name it starts with.
 func TestHostMaintenanceJobsShowRecordedRuns(t *testing.T) {
 	prefix := uniquePrefix("hostmaint")
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -557,9 +558,9 @@ func TestHostMaintenanceJobsShowRecordedRuns(t *testing.T) {
 func TestSessionWorkCronJobsCountsFailedNeverRunAndOverdue(t *testing.T) {
 	prefix := uniquePrefix("wccron")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)

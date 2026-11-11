@@ -27,6 +27,201 @@
  "host": "api.ilovefreegle.org",
  "basePath": "/api",
  "paths": {
+  "/supportcases": {
+   "get": {
+    "security": [
+     {
+      "BearerAuth": [
+       "[]"
+      ]
+     }
+    ],
+    "description": "Returns the chats moderators have referred to Support, newest first. Filter with status=Waiting|Open|Handled|All (Waiting is the open cases whose finished first pass or latest referrer message has no Support reply after it) or chatid; page back with before=<id>. Each row says whether it is waiting for Support. Support/Admin only; anyone else gets 404.",
+    "tags": [
+     "supportcase"
+    ],
+    "summary": "List support cases",
+    "operationId": "listSupportCases",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   },
+   "patch": {
+    "security": [
+     {
+      "BearerAuth": [
+       "[]"
+      ]
+     }
+    ],
+    "description": "Support/Admin only; anyone else gets 404. Reopening answers 409 when another case for the same chat and referrer is already open.",
+    "tags": [
+     "supportcase"
+    ],
+    "summary": "Mark a support case Handled or Open",
+    "operationId": "patchSupportCase",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "409": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
+  "/supportcases/{id}": {
+   "get": {
+    "security": [
+     {
+      "BearerAuth": [
+       "[]"
+      ]
+     }
+    ],
+    "description": "Support and Admin get the full case with the first pass. The moderator who referred it, while they can still see the chat, gets only its status, their reason and the thread. Anyone else gets 404.",
+    "tags": [
+     "supportcase"
+    ],
+    "summary": "Get a support case",
+    "operationId": "getSupportCase",
+    "parameters": [
+     {
+      "type": "integer",
+      "format": "int64",
+      "x-go-name": "ID",
+      "description": "Case ID",
+      "name": "id",
+      "in": "path",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
+  "/supportcases/{id}/messages": {
+   "post": {
+    "security": [
+     {
+      "BearerAuth": [
+       "[]"
+      ]
+     }
+    ],
+    "description": "Adds to the thread between Support and the referring moderator. A referrer posting to a Handled case reopens it.",
+    "tags": [
+     "supportcase"
+    ],
+    "summary": "Reply on a support case",
+    "operationId": "postSupportCaseMessage",
+    "parameters": [
+     {
+      "type": "integer",
+      "format": "int64",
+      "x-go-name": "ID",
+      "description": "Case ID",
+      "name": "id",
+      "in": "path",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/genericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "404": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "409": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
+  "/user/hostingad": {
+   "get": {
+    "security": [
+     {
+      "BearerAuth": [
+       "[]"
+      ]
+     }
+    ],
+    "description": "Decides once, for the logged-in member, whether the Krystal hosting ad modal is shown: their email\ndomain must host a WordPress site not on Krystal, and the server experiment krystal-hosting-ad\ngives the arm. Both arms are recorded as an exposure.",
+    "tags": [
+     "user"
+    ],
+    "summary": "Whether to show the Krystal hosting ad",
+    "operationId": "getHostingAd",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   },
+   "post": {
+    "security": [
+     {
+      "BearerAuth": [
+       "[]"
+      ]
+     }
+    ],
+    "description": "Writes the time of the member's first click through to Krystal (\"click\") or first dismissal\n(\"dismiss\") on their krystal-hosting-ad exposure row.",
+    "tags": [
+     "user"
+    ],
+    "summary": "Record what the member did with the hosting ad",
+    "operationId": "postHostingAd",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    }
+   }
+  },
   "/abtest": {
    "get": {
     "description": "Returns the best-performing variant for a test UID using epsilon-greedy bandit",
@@ -9130,6 +9325,53 @@
     "responses": {
      "200": {
       "$ref": "#/responses/successResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/user/hostingad": {
+   "get": {
+    "description": "Decides once, for the logged-in member, whether the Krystal hosting ad modal is shown: their email\ndomain must host a WordPress site not on Krystal, and the server experiment krystal-hosting-ad\ngives the arm. Both arms are recorded as an exposure.",
+    "tags": [
+     "user"
+    ],
+    "summary": "Whether to show the Krystal hosting ad",
+    "operationId": "getHostingAd",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "401": {
+      "$ref": "#/responses/errorResponse"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "post": {
+    "description": "Writes the time of the member's first click through to Krystal (\"click\") or first dismissal\n(\"dismiss\") on their krystal-hosting-ad exposure row.",
+    "tags": [
+     "user"
+    ],
+    "summary": "Record what the member did with the hosting ad",
+    "operationId": "postHostingAd",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/successResponse"
+     },
+     "400": {
+      "$ref": "#/responses/errorResponse"
      },
      "401": {
       "$ref": "#/responses/errorResponse"

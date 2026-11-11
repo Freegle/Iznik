@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +39,7 @@ func TestFindByTNIdOrEmailByTNId(t *testing.T) {
 	prefix := uniquePrefix("partner_findtn")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	// tnuserid is UNIQUE in production, so release it from any user left by an
 	// earlier run before claiming it.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77777)
@@ -53,7 +54,7 @@ func TestFindByTNIdOrEmailByEmail(t *testing.T) {
 	db := database.DBConn
 
 	email := prefix + "@test.com"
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", userID, email)
 
 	found := user.FindByTNIdOrEmail(db, 0, email)
@@ -117,8 +118,8 @@ func TestFindTNCandidatesTwinAccounts(t *testing.T) {
 	prefix := uniquePrefix("partner_twins")
 	db := database.DBConn
 
-	tnTwin := CreateTestUser(t, prefix+"_tn", "User")
-	emailTwin := CreateTestUser(t, prefix+"_em", "User")
+	tnTwin := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
+	emailTwin := CreateTestUser(t, prefix+"_em", utils.SYSTEMROLE_USER)
 	// tnuserid is UNIQUE in production - release it from earlier runs.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66666)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66666, tnTwin)
@@ -147,8 +148,8 @@ func TestPartnerPromiseActsOnATNPostOnAnAccountWithNoTNId(t *testing.T) {
 		prefix+"_partner", partnerKey, "test.com")
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	tnTwin := CreateTestUser(t, prefix+"_tn", "User")
-	emailTwin := CreateTestUser(t, prefix+"_em", "User")
+	tnTwin := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
+	emailTwin := CreateTestUser(t, prefix+"_em", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66667)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66667, tnTwin)
 	email := prefix + "-g2@test.com"
@@ -188,7 +189,7 @@ func TestEnsurePartnerIdentifiersAttachesNewAlias(t *testing.T) {
 	prefix := uniquePrefix("partner_ensure")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66668)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66668, userID)
 
@@ -222,14 +223,14 @@ func TestPartnerPromiseActsOnATNPostOnAnotherAccountWithNoTNId(t *testing.T) {
 
 	// The account TN's identifiers resolve to: it holds BOTH the tnuserid stamp
 	// and the alias TN sends, so nothing about the request looks diverged.
-	stamped := CreateTestUser(t, prefix+"_stamped", "User")
+	stamped := CreateTestUser(t, prefix+"_stamped", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66670)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66670, stamped)
 	sentAlias := prefix + "-g4707@test.com"
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", stamped, sentAlias)
 
 	// An account with no TN id that owns the post TN is acting on.
-	sibling := CreateTestUser(t, prefix+"_sibling", "User")
+	sibling := CreateTestUser(t, prefix+"_sibling", utils.SYSTEMROLE_USER)
 	siblingAlias := "other" + prefix + "-g1586@test.com"
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", sibling, siblingAlias)
 
@@ -372,8 +373,8 @@ func TestPartnerJoinMovesAliasHeldByAnotherTNMember(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	reports := recordTNAliasReports(t)
 
-	member := CreateTestUser(t, prefix+"_m", "User")
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	member := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	stampTN(member, 66701)
 	stampTN(holder, 66702)
 	alias := prefix + "-g7@test.com"
@@ -405,8 +406,8 @@ func TestPartnerJoinNeverMergesAnAccountWithNoTNId(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "user.trashnothing.com")
 	reports := recordTNAliasReports(t)
 
-	member := CreateTestUser(t, prefix+"_m", "User")
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	member := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	stampTN(member, 66703)
 	alias := prefix + "-g7" + domain
 	giveTNAddress(member, prefix+"-g1"+domain)
@@ -428,7 +429,7 @@ func TestPartnerJoinGivesAnUnknownTNMemberTheirOwnAccount(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	reports := recordTNAliasReports(t)
 
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	stampTN(holder, 66705)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66706)
 	alias := prefix + "-g7@test.com"
@@ -454,7 +455,7 @@ func TestPartnerLeaveByAnUnknownTNMemberRemovesNobody(t *testing.T) {
 	db := database.DBConn
 	key := insertTestPartnerKey(t, prefix, "test.com")
 
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	stampTN(holder, 66712)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66713)
 	alias := prefix + "-g7@test.com"
@@ -476,7 +477,7 @@ func TestPartnerCallWithoutTNIdMovesNothing(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	reports := recordTNAliasReports(t)
 
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	stampTN(holder, 66707)
 	alias := prefix + "-g7@test.com"
 	giveTNAddress(holder, alias)
@@ -498,8 +499,8 @@ func TestPartnerPromiseReachesAPostAfterItsAliasMoved(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	recordTNAliasReports(t)
 
-	member := CreateTestUser(t, prefix+"_m", "User")
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	member := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	stampTN(member, 66708)
 	alias := prefix + "-g7@test.com"
 	giveTNAddress(holder, alias)
@@ -528,8 +529,8 @@ func TestPartnerPromiseDoesNotReachAPostOnAnotherTNMembersAccount(t *testing.T) 
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	recordTNAliasReports(t)
 
-	member := CreateTestUser(t, prefix+"_s", "User")
-	other := CreateTestUser(t, prefix+"_o", "User")
+	member := CreateTestUser(t, prefix+"_s", utils.SYSTEMROLE_USER)
+	other := CreateTestUser(t, prefix+"_o", utils.SYSTEMROLE_USER)
 	stampTN(member, 66710)
 	stampTN(other, 66711)
 	alias := prefix + "-g4707@test.com"
@@ -556,8 +557,8 @@ func TestPartnerPromiseNeedsATNIdInTheCallToActOnATNPost(t *testing.T) {
 	db := database.DBConn
 	key := insertTestPartnerKey(t, prefix, "test.com")
 
-	caller := CreateTestUser(t, prefix+"_c", "User")
-	owner := CreateTestUser(t, prefix+"_o", "User")
+	caller := CreateTestUser(t, prefix+"_c", utils.SYSTEMROLE_USER)
+	owner := CreateTestUser(t, prefix+"_o", utils.SYSTEMROLE_USER)
 	stampTN(caller, 66715)
 	alias := prefix + "-g7@test.com"
 	giveTNAddress(caller, alias)
@@ -570,7 +571,7 @@ func TestPartnerPromiseNeedsATNIdInTheCallToActOnATNPost(t *testing.T) {
 	assert.Equal(t, 403, partnerPromise(t, key, 0, alias, 505050))
 
 	// No id in the call and none on the account must not count as a match.
-	unstamped := CreateTestUser(t, prefix+"_u", "User")
+	unstamped := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	unstampedAlias := "un" + prefix + "-g8@test.com"
 	giveTNAddress(unstamped, unstampedAlias)
 	assert.Equal(t, 403, partnerPromise(t, key, 0, unstampedAlias, 505050))
@@ -582,8 +583,8 @@ func TestPartnerPromiseDoesNotReachAPostThatIsNotTNs(t *testing.T) {
 	db := database.DBConn
 	key := insertTestPartnerKey(t, prefix, "test.com")
 
-	member := CreateTestUser(t, prefix+"_m", "User")
-	owner := CreateTestUser(t, prefix+"_o", "User")
+	member := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	owner := CreateTestUser(t, prefix+"_o", utils.SYSTEMROLE_USER)
 	stampTN(member, 66714)
 	alias := prefix + "-g7@test.com"
 	giveTNAddress(member, alias)
@@ -604,7 +605,7 @@ func TestFindTNCandidatesNeverPicksAnAccountByAddressForANamedMember(t *testing.
 	prefix := uniquePrefix("partner_noaddr")
 	db := database.DBConn
 
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	alias := prefix + "-g7@test.com"
 	giveTNAddress(holder, alias)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66716)
@@ -621,7 +622,7 @@ func TestPartnerJoinNeverStampsAnAccountFoundByItsAddress(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	reports := recordTNAliasReports(t)
 
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	alias := prefix + "-g7@test.com"
 	giveTNAddress(holder, alias)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66717)
@@ -648,7 +649,7 @@ func TestPartnerPromiseByAnUnknownTNMemberReachesTheirPost(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	recordTNAliasReports(t)
 
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	alias := prefix + "-g7@test.com"
 	giveTNAddress(holder, alias)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66718)
@@ -675,7 +676,7 @@ func TestPartnerCallOnTNsDomainMustNameATNId(t *testing.T) {
 	prefix := uniquePrefix("partner_needid")
 	key := insertTestPartnerKey(t, prefix, "user.trashnothing.com")
 
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	stampTN(holder, 66719)
 	alias := prefix + "-g7@user.trashnothing.com"
 	giveTNAddress(holder, alias)
@@ -699,7 +700,7 @@ func TestPartnerKeyAloneActsOnATNPostWithNoAddress(t *testing.T) {
 	db := database.DBConn
 	key := insertTestPartnerKey(t, prefix, "user.trashnothing.com")
 
-	owner := CreateTestUser(t, prefix+"_o", "User")
+	owner := CreateTestUser(t, prefix+"_o", utils.SYSTEMROLE_USER)
 	stampTN(owner, 66720)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, owner, groupID, prefix+" subject", 51.5, -0.1)
@@ -725,7 +726,7 @@ func TestPartnerJoinTakesAnAddressFromADeletedAccount(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	reports := recordTNAliasReports(t)
 
-	member := CreateTestUser(t, prefix+"_m", "User")
+	member := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
 	stampTN(member, 66721)
 	deleted := CreateDeletedTestUser(t, prefix+"_d")
 	alias := prefix + "-g7@test.com"
@@ -822,7 +823,7 @@ func TestPartnerActionIsRefusedWhileADeletedAccountHoldsTheTNId(t *testing.T) {
 
 	deleted := CreateDeletedTestUser(t, prefix+"_d")
 	stampTN(deleted, 66725)
-	holder := CreateTestUser(t, prefix+"_h", "User")
+	holder := CreateTestUser(t, prefix+"_h", utils.SYSTEMROLE_USER)
 	localpart := fmt.Sprintf("heldact%d", deleted)
 	alias := localpart + "-g7@test.com"
 	giveTNAddress(holder, alias)

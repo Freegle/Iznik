@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Services\AutoSplit\AutoSplitService;
 use App\Helpers\MailHelper;
 use App\Mail\Message\ChaseUp as ChaseUpMail;
 use App\Mail\Message\ChaseUpPromised;
@@ -153,6 +154,8 @@ class ChaseUpService
                         'outcome' => Message::OUTCOME_TAKEN,
                         'timestamp' => now(),
                     ]);
+                    // An automatically split post's items went with it.
+                    AutoSplitService::markItemsGone((int) $intended->msgid);
                     $count++;
                     break;
 

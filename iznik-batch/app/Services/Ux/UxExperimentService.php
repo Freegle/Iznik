@@ -1707,6 +1707,7 @@ class UxExperimentService
         } elseif ($read['guardrails']) {
             $text .= 'Guardrails: nothing worse. ';
         }
+        $text .= $this->information($read, $best);
         if ($p['share_off'] ?? false) {
             $text .= $w
                 ? "Warning: {$p['observed_share']}% of the {$w['who']} counted were on the change but about ".round((float) $p['expected_share']).'% were expected, so the two rates cannot be compared. '
@@ -1777,7 +1778,30 @@ class UxExperimentService
                 : $this->measure($exp, $p['variant_rate']).' against '.$this->measureRate($exp, $p['control_rate'])).' ('.$this->points($p['diff_points']).'); ';
         }
 
-        return $out.'probability the change is better: '.$this->prob($p['p_better']).'.';
+        return $out.'probability the change is better: '.$this->prob($p['p_better']).'.'
+            .rtrim(' '.$this->information($read, $arm));
+    }
+
+    /**
+     * The figures a source shows for information only (ExposureSource::information), for one arm against control:
+     * "For information only, not used to decide: <label> was 50.0% with the change and 0.0% without. ". Nothing here
+     * is weighed by decide(); an arm with nobody counted reads "unknown".
+     */
+    private function information(array $read, string $arm): string
+    {
+        $text = '';
+        foreach ((array) ($read['detail']['information'] ?? []) as $figure) {
+            $share = function (?array $a): ?float {
+                $base = (int) ($a['base'] ?? 0);
+
+                return $base > 0 ? ((int) ($a['n'] ?? 0)) / $base : null;
+            };
+            $text .= 'For information only, not used to decide: '.$figure['label'].' was '
+                .$this->pct($share($figure['arms'][$arm] ?? null), true).' with the change and '
+                .$this->pct($share($figure['arms'][self::CONTROL] ?? null), true).' without. ';
+        }
+
+        return $text;
     }
 
     /**

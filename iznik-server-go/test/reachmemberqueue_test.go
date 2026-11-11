@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +34,7 @@ func clearQueue(userid uint64) {
 
 func TestReachQueue_JoiningAGroupQueuesTheMember(t *testing.T) {
 	prefix := uniquePrefix("rq_join")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	clearQueue(userID)
@@ -53,10 +54,10 @@ func TestReachQueue_JoiningAGroupQueuesTheMember(t *testing.T) {
 
 func TestReachQueue_SwitchingToImmediateQueuesTheMember(t *testing.T) {
 	prefix := uniquePrefix("rq_freq")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	clearQueue(userID)
 	defer clearQueue(userID)
 
@@ -83,7 +84,7 @@ func TestReachQueue_SwitchingToImmediateQueuesTheMember(t *testing.T) {
 func TestReachQueue_ChangingPostcodeQueuesTheMember(t *testing.T) {
 	prefix := uniquePrefix("rq_move")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	clearQueue(userID)
 	defer clearQueue(userID)

@@ -66,6 +66,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useModGroupStore } from '@/stores/modgroup'
+import { ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
   name: {
@@ -139,7 +140,7 @@ const mounted = ref(false)
 
 const group = computed(() => modGroupStore.get(props.groupid))
 
-const readonly = computed(() => group.value?.myrole !== 'Owner')
+const readonly = computed(() => group.value?.myrole !== ROLE_OWNER)
 
 // A control is non-editable if the user lacks the role OR it's been forced
 // read-only via the `disabled` prop.

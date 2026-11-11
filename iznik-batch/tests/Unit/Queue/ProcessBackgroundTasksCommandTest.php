@@ -55,7 +55,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Owner']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_OWNER]);
 
         // Insert a task simulating what Go would insert.
         DB::table('background_tasks')->insert([
@@ -194,7 +194,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
 
         $mod = $this->createTestUser(['fullname' => 'Jane Smith', 'lastaccess' => now()]);
         $group = $this->createTestGroup();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         DB::table('background_tasks')->insert([
             'task_type' => 'email_admin_test',
@@ -1760,7 +1760,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $mod = $this->createTestUser(['fullname' => 'Sending Mod']);
         $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
 
-        $this->createMembership($otherMod, $group, ['role' => 'Moderator']);
+        $this->createMembership($otherMod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         DB::table('background_tasks')->insert([
             'task_type' => 'email_mod_stdmsg',
@@ -2480,7 +2480,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $poster = $this->createTestUser();
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'BCC Test Mod']);
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Create a mod_config with ccrejectto = Specific.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2564,7 +2564,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $member = $this->createTestUser();
         $memberEmail = $this->createTestUserEmail($member, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'BCC Me Mod']);
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Create a mod_config with ccfollmembto = Me.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2632,7 +2632,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $poster = $this->createTestUser();
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'No BCC Mod']);
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Config with all CC set to Nobody.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2702,7 +2702,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $poster = $this->createTestUser();
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'Subst Mod']);
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Config with $groupname in the BCC address.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2776,8 +2776,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $modWithConfig = $this->createTestUser(['fullname' => 'Configured Mod']);
         $modWithoutConfig = $this->createTestUser(['fullname' => 'New Mod']);
-        $this->createMembership($modWithConfig, $group, ['role' => 'Owner']);
-        $this->createMembership($modWithoutConfig, $group, ['role' => 'Moderator']);
+        $this->createMembership($modWithConfig, $group, ['role' => Membership::ROLE_OWNER]);
+        $this->createMembership($modWithoutConfig, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Only modWithConfig has a config.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -3026,6 +3026,66 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->artisan('mail:spool:process')->assertSuccessful();
 
         \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_freebie_alerts_add_sends_an_automatically_split_post_without_its_crops(): void
+    {
+        // Bulk items made by the auto-splitter do not make a clearance: the post goes to the
+        // partners like any Offer. Its item crops stay behind, or the photo they were cut
+        // from would arrive several times over.
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject'  => 'OFFER: Sofa and two chairs',
+            'textbody' => 'A sofa and two kitchen chairs.',
+            'type'     => 'Offer',
+            'lat'      => 52.5,
+            'lng'      => -1.8,
+            'date'     => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgId,
+            'groupid'    => $group->id,
+            'collection' => 'Approved',
+            'arrival'    => now(),
+        ]);
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $msgId, 'position' => 0, 'name' => 'Sofa', 'quantity' => 1, 'condition' => 'Unknown'],
+            ['msgid' => $msgId, 'position' => 1, 'name' => 'Chairs', 'quantity' => 2, 'condition' => 'Unknown'],
+        ]);
+        DB::table('messages_autosplit')->insert(['msgid' => $msgId, 'state' => 'Split', 'kind' => 'several_items']);
+        $photo = DB::table('messages_attachments')->insertGetId(['msgid' => $msgId, 'externaluid' => 'freegletusd-both', 'externalmods' => '{}', 'contenttype' => 'image/jpeg']);
+        $crop = DB::table('messages_attachments')->insertGetId(['msgid' => $msgId, 'externaluid' => 'freegletusd-both', 'externalmods' => '{"cx":1,"cy":2,"cw":300,"ch":200,"fw":800,"fh":600,"precrop":true}', 'contenttype' => 'image/jpeg']);
+
+        DB::table('background_tasks')->insert([
+            'task_type'  => 'freebie_alerts_add',
+            'data'       => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => 'test-key-123']);
+        config(['freegle.freebie_alerts.api_url' => 'https://api.freebiealerts.app']);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'api.freebiealerts.app/freegle/post/create' => \Illuminate\Support\Facades\Http::response(['success' => true], 200),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep'          => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        \Illuminate\Support\Facades\Http::assertSent(function ($request) use ($photo, $crop) {
+            return str_contains($request->url(), '/freegle/post/create')
+                && str_contains($request['images'], "timg_{$photo}.jpg")
+                && ! str_contains($request['images'], "timg_{$crop}.jpg");
+        });
     }
 
     public function test_freebie_alerts_add_skips_clearance_posts(): void

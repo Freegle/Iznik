@@ -330,6 +330,10 @@ type Message struct {
 	// exposed so list/summary views can flag a bulk offer cheaply.
 	BulkItems []BulkItem `json:"bulkitems,omitempty" gorm:"-"`
 	Bulkcount int        `json:"bulkcount,omitempty" gorm:"-"`
+	// Autosplit is true when the item list was made by the auto-splitter from an
+	// ordinary member's post, not by a clearance: the post gets the item list and
+	// none of the clearance extras. docs/developers/reference/auto-split.md.
+	Autosplit bool `json:"autosplit,omitempty" gorm:"-"`
 	// Bulkslots are the offerer-defined collection windows a replier picks from.
 	Bulkslots []string `json:"bulkslots,omitempty" gorm:"-"`
 	// Accessinstructions is the offerer's private note (address / gate code /
@@ -702,7 +706,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
 				// (no mod exemption), matching the #927 count-surface gates.
 				//
-				// A reply held for its sender's answer (the confirm-reply question) is gated the same way and
+				// A reply held for its sender's answer (the car seat question) is gated the same way and
 				// for the same reason: it is left unprocessed, which every surface that reads
 				// processingsuccessful already skips, and this list does not. utils.ReplyHeldByQuestionSQL
 				// is the gate every count of replies shares. It is out while its question is unanswered,
@@ -1080,6 +1084,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				canSeeInterest := message.Fromuser == myid || isGroupMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 				message.Bulkcount = len(message.BulkItems)
+				if message.Bulkcount > 0 {
+					message.Autosplit = isAutoSplit(db, message.ID)
+				}
+				// Crops are shown with their items, not again among the post's photos.
+				message.MessageAttachments = withoutCrops(message.MessageAttachments)
 
 				// Part gone: somebody has taken some. Read from the takers rather than
 				// from availablenow, which an ordinary post no longer maintains.
@@ -2761,12 +2770,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Notify freebiealerts.app about newly approved Offer posts.
-	// Clearance/bulk-offer posts are excluded — the concierge manages their
-	// fulfilment directly and freebiealerts.app is not the right channel for them.
+	// Clearances are excluded — the concierge manages their fulfilment directly and
+	// freebiealerts.app is not the right channel for them. An automatically split post
+	// is an ordinary Offer and goes.
 	var approvedMsgType string
 	db.Table("messages").Select("type").Where("id = ?", req.ID).Scan(&approvedMsgType)
 	var isClearance int64
-	db.Table("messages_bulk_items").Where("msgid = ?", req.ID).Count(&isClearance)
+	db.Table("messages").Where("messages.id = ?", req.ID).Where(utils.IsClearanceSQL("messages.id")).Count(&isClearance)
 	if approvedMsgType == "Offer" && isClearance == 0 {
 		if err := queue.QueueTask(queue.TaskFreebieAlertsAdd, map[string]interface{}{
 			"msgid": req.ID,
@@ -4499,8 +4509,11 @@ var errLockdownResponded = errors.New("lockdown: response already written")
 func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, fromPartner bool) error {
 	db := database.DBConn
 
-	// Editing a clearance (bulk offer) is gated on the Clearance permission.
-	if req.Bulkitems != nil && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+	// Editing a clearance (bulk offer) is gated on the Clearance permission. The item
+	// list of an automatic split is the poster's to edit; who may edit the post at all
+	// is checked below.
+	splitPost := isAutoSplit(db, req.ID)
+	if req.Bulkitems != nil && !splitPost && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
 		return fiber.NewError(fiber.StatusForbidden, "You do not have permission to edit a clearance")
 	}
 
@@ -4516,6 +4529,16 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 	if !isOwner && !isMod {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
+	}
+
+	// An automatic split's items can only be taken off the list or recounted; the
+	// list written is built from the post's own items (splitItemsEdit).
+	if req.Bulkitems != nil && splitPost {
+		items, err := splitItemsEdit(db, req.ID, req.Bulkitems)
+		if err != nil {
+			return err
+		}
+		req.Bulkitems = items
 	}
 
 	// Section 11.3 of the lockdown plan: a moderator editing someone else's post is
@@ -4535,6 +4558,18 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// which arrive from TN as the owner, are untouched.
 	if isMod && !isOwner && modmessaging.PostIsUnaddressed(db, req.ID) {
 		return fiber.NewError(fiber.StatusForbidden, "This post can't be edited - the poster didn't choose this community")
+	}
+
+	// Only an OFFER is ever split. A split post changed to a WANTED, by its poster or a
+	// moderator, is first put back as it was written, so a WANTED never has an item list,
+	// Mark TAKEN on its items, or "Which would you like?" in its reply box. Any item list
+	// sent with the change goes with the split.
+	if splitPost && req.Type != nil && *req.Type != utils.OFFER {
+		if err := undoAutoSplit(db, req.ID); err != nil && !errors.Is(err, errAlreadyUndone) {
+			return fiber.NewError(fiber.StatusInternalServerError, "Could not undo the split")
+		}
+		splitPost = false
+		req.Bulkitems = nil
 	}
 
 	// Get old values for edit tracking.
@@ -4826,8 +4861,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 				db.Table("messages_attachments").Where("id = ?", attid).
 					Updates(map[string]interface{}{"msgid": req.ID, "primary": primary})
 			}
-			// Delete any attachments not in the new list.
-			db.Table("messages_attachments").Where("msgid = ? AND id NOT IN (?)", req.ID, req.Attachments).Delete(nil)
+			// Delete any attachments not in the new list. The list never holds an
+			// auto-split item crop, which is kept while its photo is.
+			keep := keepCropsOfKeptPhotos(db, req.ID, req.Attachments)
+			db.Table("messages_attachments").Where("msgid = ? AND id NOT IN (?)", req.ID, keep).Delete(nil)
 		} else {
 			// Empty array — remove all attachments.
 			// Identical golden to
@@ -5042,15 +5079,23 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		// 9d1cfd7098bc (PutMessageAs); converted together per gate (h).
 		db.Table("messages").Where("id = ?", req.ID).
 			Updates(map[string]interface{}{"availableinitially": total, "availablenow": total})
-		if req.Textbody == nil {
-			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
-				// Identical golden to
-				// 9beaa0265ff1 (PutMessageAs); converted together per gate (h).
-				db.Table("messages").Where("id = ?", req.ID).
-					Updates(map[string]interface{}{"textbody": summary, "message": summary})
+		if splitPost {
+			// The poster's own description stays; a removed item takes its crops with
+			// it; items already marked gone stay gone in the count. No photo links to
+			// fetch: a split item's photos are the post's own.
+			deleteOrphanCrops(db, req.ID)
+			recomputeBulkAvailableNow(db, req.ID)
+		} else {
+			if req.Textbody == nil {
+				if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
+					// Identical golden to
+					// 9beaa0265ff1 (PutMessageAs); converted together per gate (h).
+					db.Table("messages").Where("id = ?", req.ID).
+						Updates(map[string]interface{}{"textbody": summary, "message": summary})
+				}
 			}
+			go ingestBulkItemPhotos(db, req.ID)
 		}
-		go ingestBulkItemPhotos(db, req.ID)
 	}
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, req.ID, req.Bulkslots)
@@ -5997,9 +6042,11 @@ type PostMessageRequest struct {
 	// Only the offerer may pass another user's id — e.g. to record a replier's
 	// verbally-expressed interest against the structured catalogue.
 	Interestuserid *uint64 `json:"interestuserid"`
-	// Bulk-offer interest state change (action "BulkInterestState").
+	// Bulk-offer interest state change (action "BulkInterestState"), and the item
+	// marked gone or back on offer (action "BulkItemAvailable").
 	Bulkitemid *uint64 `json:"bulkitemid"`
 	State      *string `json:"state"`
+	Available  *bool   `json:"available"`
 	// Optional structured terms attached to a promise (action "Promise"). Stored
 	// as JSON on messages_promises.terms and returned on the message's promises;
 	// omit it and nothing changes. Deployments that turn a promise into a formal
@@ -6334,6 +6381,10 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 		return handleBulkInterestState(c, myid, req)
 	case "BulkEditLink":
 		return handleBulkEditLink(c, myid, req)
+	case "BulkItemAvailable":
+		return handleBulkItemAvailable(c, myid, req)
+	case "AutoSplitUndo":
+		return handleAutoSplitUndo(c, myid, req)
 	case "Report":
 		return handleReport(c, myid, req)
 	default:
@@ -6723,6 +6774,11 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		db.Table("messages_by").Create(map[string]interface{}{
 			"msgid": req.ID, "userid": *req.Userid, "count": availNow,
 		})
+	}
+
+	// An automatic split marked Taken as a whole: its items went with it.
+	if req.Outcome == utils.OUTCOME_TAKEN {
+		markSplitItemsGone(db, req.ID)
 	}
 
 	// Mark successful in spatial index so that:

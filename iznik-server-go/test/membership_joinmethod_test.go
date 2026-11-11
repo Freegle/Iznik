@@ -20,6 +20,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 // TestJoinMethodManual verifies that manual=true records 'Manual' in logs.text.
@@ -27,7 +28,7 @@ func TestJoinMethodManual(t *testing.T) {
 	prefix := uniquePrefix("jm_manual")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 
@@ -57,7 +58,7 @@ func TestJoinMethodAuto(t *testing.T) {
 	prefix := uniquePrefix("jm_auto")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 
@@ -87,7 +88,7 @@ func TestJoinMethodOmitted(t *testing.T) {
 	prefix := uniquePrefix("jm_omit")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 
@@ -117,13 +118,13 @@ func TestJoinMethodHistoryReturnsText(t *testing.T) {
 	db := database.DBConn
 
 	// Create a mod who can view membership history.
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create target user and join with manual=true.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, memberToken := CreateTestSession(t, memberID)
 
 	manualTrue := true

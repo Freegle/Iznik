@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\TrashNothing;
 
+use App\Models\User;
 use App\Console\Commands\TrashNothing\TNParityCheckCommand;
 use App\Models\Group;
 use App\Models\Membership;
@@ -330,7 +331,7 @@ class TNParityCheckCommandTest extends TestCase
             // The fixture posts carry $id as TN's user_id; the API path resolves it via tnuserid.
             'tnuserid' => $id,
             'fullname' => 'TN Parity Command User '.$id,
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'added' => now(),
             'lastlocation' => $this->fakeLocationId,
         ]);

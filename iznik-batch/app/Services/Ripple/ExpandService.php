@@ -2410,7 +2410,7 @@ class ExpandService
                 $added = DB::table('memberships')->insertOrIgnore([[
                     'userid' => $posterId,
                     'groupid' => $t->groupid,
-                    'role' => 'Member',
+                    'role' => Membership::ROLE_MEMBER,
                     'collection' => 'Approved',
                     'emailfrequency' => $emailfrequency,
                     'eventsallowed' => $eventsallowed,

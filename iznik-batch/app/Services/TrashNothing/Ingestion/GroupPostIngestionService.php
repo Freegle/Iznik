@@ -262,7 +262,8 @@ class GroupPostIngestionService
         // Note this uses `group_id` purely as a HAS-IT/HASN'T-IT flag. Its
         // value is still never used for placement (resolved decision #7: it is
         // TN's own opaque internal id, which drifts out of step with Freegle
-        // group boundaries) — PostSyncer resolves the group from the post's own
+        // group boundaries). PostSyncer places the post on a community the member chose in
+        // freegle_group_ids, or failing that from the post's own
         // coordinates via Location::groupsNear().
         //
         // REPOSTS are unaffected and deliberately not de-duplicated, matching
@@ -365,9 +366,9 @@ class GroupPostIngestionService
             $user->save();
         }
 
-        // No membership gate: the group here was chosen for the post (via
-        // Location::groupsNear() on its own coordinates), not supplied by a member
-        // posting to a group they belong to, so the poster is frequently not an
+        // No membership gate: when the member named no community on TN, the group
+        // here comes from the post's own coordinates (Location::groupsNear()), not
+        // from a group they belong to, so the poster is frequently not an
         // Approved member of the resolved group — that's expected, not an error.
         // If a membership does exist, its ourPostingStatus still applies (matches
         // the email path for genuine members), and a blank one is MODERATED as it is
@@ -793,6 +794,11 @@ class GroupPostIngestionService
 
             $fromName = $user->fullname ?? $user->firstname ?? null;
 
+            // The member's TN address is the sender, as it is on a post TN emails to the
+            // group: ModTools reads it to say the post came via TrashNothing, and TN's
+            // partner key acts as the owner only of posts whose sender is in TN's domain.
+            $fromAddr = $user->tnAddress();
+
             // TN's own post date, however it arrived. The OpenAPI client hands
             // us a DateTime; an array-shaped post (fixtures, --local-testing,
             // the backfill path) carries the same value as an ISO-8601 string,
@@ -804,7 +810,7 @@ class GroupPostIngestionService
             // re-parses messages.message still recovers the key fields.
             $dateStr = ($postedAt ?? now())->format('D, d M Y H:i:s +0000');
             $groupEmail = $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-            $rfc822 = $this->synthesizeRfc822($fromName, $groupEmail, $subject, $dateStr, $messageid, $postId, $lat, $lng, $content);
+            $rfc822 = $this->synthesizeRfc822($fromName, $fromAddr, $groupEmail, $subject, $dateStr, $messageid, $postId, $lat, $lng, $content);
 
             $msgData = [
                 'date'            => $postedAt !== null ? $postedAt->format('Y-m-d H:i:s') : now(),
@@ -812,10 +818,10 @@ class GroupPostIngestionService
                 'sourceheader'    => self::SOURCEHEADER,
                 'message'         => $rfc822,
                 'fromuser'        => $user->id,
-                'envelopefrom'    => null,
+                'envelopefrom'    => $fromAddr,
                 'envelopeto'      => $groupEmail,
                 'fromname'        => $fromName,
-                'fromaddr'        => null,
+                'fromaddr'        => $fromAddr,
                 'replyto'         => null,
                 'fromip'          => null,
                 'fromcountry'     => null,
@@ -885,10 +891,10 @@ class GroupPostIngestionService
                     'groupid'       => $group->id,
                     'source'        => Message::SOURCE_EMAIL,
                     'fromuser'      => $user->id,
-                    'envelopefrom'  => null,
+                    'envelopefrom'  => $fromAddr,
                     'envelopeto'    => $groupEmail,
                     'fromname'      => $fromName,
-                    'fromaddr'      => null,
+                    'fromaddr'      => $fromAddr,
                     'fromip'        => null,
                     'subject'       => $subject,
                     'prunedsubject' => $prunedSubject,
@@ -981,9 +987,10 @@ class GroupPostIngestionService
      * deleted, or null if we have never ingested it. Lowest id wins, so the
      * answer is stable if an older duplicate somehow survives.
      *
-     * ANY GROUP, because a source post is one post. Its group comes from its
-     * coordinates (Location::groupsNear()), and a post on the line between two
-     * groups can resolve to either on different reads. The sync's windows
+     * ANY GROUP, because a source post is one post, and its group can differ
+     * between reads: a post that names no community is placed by its coordinates
+     * (Location::groupsNear()), so one on the line between two groups can resolve
+     * to either, and a member can change the communities they chose on TN. The sync's windows
      * overlap, so it reads a post more than once, and a check scoped to the
      * group would make a second message on the neighbour.
      *
@@ -1271,11 +1278,23 @@ class GroupPostIngestionService
     }
 
     /**
+     * The From line of the blob synthesizeRfc822() writes: the member's TN address, or TN's
+     * noreply address for a member who has none. tn:backfill-post-senders writes it too.
+     */
+    public static function fromHeader(?string $fromName, ?string $fromAddr): string
+    {
+        $address = $fromAddr ?? 'noreply@trashnothing.com';
+
+        return 'From: ' . ($fromName ? "{$fromName} <{$address}>" : $address);
+    }
+
+    /**
      * Synthesize a minimal RFC822 message blob so any code that re-parses
      * messages.message can still recover the key fields.
      */
     private function synthesizeRfc822(
         ?string $fromName,
+        ?string $fromAddr,
         string $groupEmail,
         string $subject,
         string $date,
@@ -1285,11 +1304,10 @@ class GroupPostIngestionService
         mixed $lng,
         string $body,
     ): string {
-        $from = $fromName ? "{$fromName} <noreply@trashnothing.com>" : 'noreply@trashnothing.com';
         $coords = ($lat !== null && $lng !== null) ? "{$lat},{$lng}" : '';
 
         return implode("\r\n", [
-            "From: {$from}",
+            self::fromHeader($fromName, $fromAddr),
             "To: {$groupEmail}",
             "Subject: {$subject}",
             "Date: {$date}",

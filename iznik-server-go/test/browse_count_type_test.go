@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,9 +25,9 @@ func countFor(t *testing.T, token string, query string) float64 {
 func TestMyGroupsCountHonoursTypeFilter(t *testing.T) {
 	prefix := uniquePrefix("countmygroupstype")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix+"_u", "User")
+	userID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
 	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, group)
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.browseView', 'mygroups') WHERE id = ?", userID)

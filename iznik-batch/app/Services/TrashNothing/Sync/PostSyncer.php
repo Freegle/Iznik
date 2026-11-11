@@ -264,7 +264,7 @@ class PostSyncer
 
         // tn_group_id, not group_id: this is TN's OWN group id (empty on a
         // source post, set on a per-group copy), which is never used to place
-        // the post — see findGroupByLocation() below. The email path's [POST]
+        // the post: see placement() below. The email path's [POST]
         // line carries a `group_id=` that is the resolved FREEGLE group id, so
         // reusing that name here would put two different things under one
         // label in a stream the two paths are meant to be read side by side.
@@ -275,12 +275,18 @@ class PostSyncer
         // entry carries the same subject text as a successful one.
         $subject = strtoupper((string) $type) . ': ' . $title;
 
-        // Resolve the Freegle group purely from the post's own lat/lng — the group TN thinks
-        // a post belongs to (group_id) is just where the member happened to post it, which
-        // drifts out of step with Freegle's group boundaries, so it is never used to place a
-        // post. Location::groupsNear() is the same polygon-containment-then-nearest-centroid
-        // logic used for member group boundaries (see Location::groupsNear() and the Go port
-        // in iznik-server-go/location/location.go).
+        // The member chooses the community on TrashNothing. TN's out-of-spec
+        // freegle_group_ids field (see the FREEGLE LOCAL MODIFICATION note on the Post model)
+        // lists the Freegle communities the member picked for this post, and the post goes on
+        // one of them (placement()). Only a post that names none is placed by its own lat/lng,
+        // on the local community, and that one is unaddressed: its poster never chose it, so
+        // messages_groups.mod_messaging_allowed is 0 (Discourse 10315). TN's own group_id is
+        // never used: it is where the member happened to post on TN, which drifts out of step
+        // with Freegle's group boundaries.
+        //
+        // A missing field (e.g. a non-FD API key) is no choice at all, so every post would be
+        // placed by location and unaddressed; it is reported. An empty list is the member's
+        // choice and is not.
         if ($lat === null || $lng === null) {
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=no-coordinates tn_group_id=' . $groupId . ' post_id=' . $postId);
             // No group resolved, so no group context — which matches the shape
@@ -293,7 +299,11 @@ class PostSyncer
             return $maxDate;
         }
 
-        $group = $this->findGroupByLocation((float) $lat, (float) $lng);
+        if (($post['freegle_group_ids'] ?? null) === null) {
+            $this->reportMissingConsentField($postId);
+        }
+
+        [$group, $moderatorMessagingAllowed] = self::placement((float) $lat, (float) $lng, self::chosenGroupIds($post));
         if ($group === null) {
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=not-in-any-group-bounds lat=' . $lat . ' lng=' . $lng . ' post_id=' . $postId);
             // The closest analogue to the email path's "Post to unknown group"
@@ -308,32 +318,10 @@ class PostSyncer
             return $maxDate;
         }
 
-        // TN also returns an out-of-spec `freegle_group_ids` field (see the FREEGLE LOCAL
-        // MODIFICATION note on the Post model) — the Freegle groups the poster has allowed
-        // moderator messages from. Both array (fixture) and Post object post shapes support
-        // ArrayAccess, so this works for either without a getter on the model.
-        //
-        // Unlike messages_groups.mod_messaging_allowed's table-wide default (allowed,
-        // for ordinary Freegle posts), every TN post is disallowed by default: TN
-        // posters haven't consented to mod contact unless the resolved group is
-        // explicitly present in freegle_group_ids. A missing/empty field (e.g. a
-        // non-FD API key) means no consent was given, so it stays disallowed. An
-        // empty list is a poster's choice; a missing field is not, so it is reported.
-        //
-        // Ids are normalized before the strict comparison: the live path deserializes them
-        // as int[], but fixtures are raw JSON that can carry them as strings, and a strict
-        // in_array() against a string id would silently read as "no consent".
-        $freegleGroupIds = $post['freegle_group_ids'] ?? null;
-        if ($freegleGroupIds === null) {
-            $this->reportMissingConsentField($postId);
-        }
-        $freegleGroupIds           = array_map('intval', is_array($freegleGroupIds) ? $freegleGroupIds : []);
-        $moderatorMessagingAllowed = in_array((int) $group->id, $freegleGroupIds, true);
-
         // Own trace tag (not [POST-RESULT]/[POST-SKIP]/[WRITE]) — EmailApiParityTest diffs
         // those tags line-for-line against the email path, which has no equivalent of this
         // API-only field.
-        Log::info('TN-SYNC-TRACE [POST-META] post_id=' . $postId . ' moderator_messaging_allowed=' . ($moderatorMessagingAllowed ? 'true' : 'false'));
+        Log::info('TN-SYNC-TRACE [POST-META] post_id=' . $postId . ' group_id=' . $group->id . ' placed=' . ($moderatorMessagingAllowed ? 'chosen' : 'location') . ' moderator_messaging_allowed=' . ($moderatorMessagingAllowed ? 'true' : 'false'));
 
         try {
             $result = $this->ingestionService->ingest($post, $group, $moderatorMessagingAllowed);
@@ -463,8 +451,9 @@ class PostSyncer
         }
 
         $entry = $this->loki->logIngestedPost(
-            // No SMTP envelope on this path; mirrors the null/synthesized values
-            // createMessage() writes to messages.envelopefrom/fromaddr.
+            // No SMTP envelope on this path. createMessage() records the member's TN
+            // address as the sender on the message, but this entry is written whether
+            // or not a message was made, so it keeps both empty.
             envelopeFrom: '',
             envelopeTo: $group !== null
                 ? $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org')
@@ -546,7 +535,7 @@ class PostSyncer
      *
      * The backfill entry point for tn:verify-email-coverage (section S.5 rail
      * 1): rather than reimplementing ingestion, it reuses processPost() whole,
-     * so coordinate-based group resolution, freegle_group_ids consent handling,
+     * so group placement (placement()), freegle_group_ids consent handling,
      * duplicate suppression and the exactly-one-Loki-entry-per-post invariant
      * all behave identically to a normal sync. The only difference is the
      * `backfill` marker added to the routed entry (see logRoutedPost()), so the
@@ -576,13 +565,54 @@ class PostSyncer
     }
 
     /**
-     * Resolve the Freegle group whose area contains this post's coordinates.
+     * The community a TN post goes on, and whether the member chose it.
+     *
+     * A post that names communities goes on one of them: the one whose area contains it,
+     * or failing that the one whose centre is nearest. Wherever the post is, even outside
+     * every community's area, because the member chose it. A chosen community that is not
+     * published is passed over. A post that names none (or none we can use) goes on the
+     * local community by Location::groupsNear(), not chosen, or nowhere when no community
+     * is near enough.
+     *
+     * Public and static so tn:verify-email-coverage (CoverageVerifier) asks the same
+     * question ingestion does.
+     *
+     * @param  int[]  $chosenIds  the post's freegle_group_ids (chosenGroupIds())
+     * @return array{0: Group|null, 1: bool}
      */
-    private function findGroupByLocation(float $lat, float $lng): ?Group
+    public static function placement(float $lat, float $lng, array $chosenIds): array
     {
+        if (!empty($chosenIds)) {
+            // keep-raw: ST_Contains/ST_GeomFromText/haversine() have no builder method.
+            $chosen = Group::query()
+                ->whereIn('id', $chosenIds)
+                ->where('publish', 1)
+                ->orderByRaw('ST_Contains(polyindex, ST_GeomFromText(?, ?)) DESC', ["POINT($lng $lat)", config('freegle.srid', 3857)])
+                ->orderByRaw('COALESCE(haversine(lat, lng, ?, ?), 999999) ASC', [$lat, $lng])
+                ->first();
+
+            if ($chosen !== null) {
+                return [$chosen, true];
+            }
+        }
+
         $groupIds = Location::groupsNear($lat, $lng, limit: 1);
 
-        return empty($groupIds) ? null : Group::find($groupIds[0]);
+        return [empty($groupIds) ? null : Group::find($groupIds[0]), false];
+    }
+
+    /**
+     * The Freegle community ids a post names in freegle_group_ids, as ints. Both post shapes
+     * (the deserialized Post and the array fixtures use) support ArrayAccess. Fixtures are raw
+     * JSON that can carry the ids as strings, which would otherwise never match an id.
+     *
+     * @return int[]
+     */
+    public static function chosenGroupIds(mixed $post): array
+    {
+        $ids = (is_array($post) || $post instanceof \ArrayAccess) ? ($post['freegle_group_ids'] ?? null) : null;
+
+        return array_values(array_filter(array_map('intval', is_array($ids) ? $ids : [])));
     }
 
     private function throttle(): void

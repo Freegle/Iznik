@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-05
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
@@ -10,6 +10,9 @@ covers:
   - iznik-nuxt3/components/MessageOwnActions.vue
   - iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php
   - iznik-nuxt3/components/PhotoUploader.vue
+  - iznik-nuxt3/components/PostItem.vue
+  - iznik-nuxt3/components/PostItemWarning.vue
+  - iznik-nuxt3/composables/useItemWarnings.js
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-post-flow.spec.js
   - iznik-nuxt3/tests/e2e/test-bulk-offer-flow.spec.js
@@ -30,6 +33,10 @@ reply, you pick someone, and they collect. This guide walks through the whole th
    short description. A description that is only numbers or symbols, like "24", does not
    count, and the form says so. You can add one or more **photos**. On the app you can take a photo
    there and then, and Freegle can suggest a name from the picture.
+   Some items get a note under the name box as you type: for a child car seat it asks you to
+   say the make, model and age and that it has never been in a crash, and there are notes for
+   cycle helmets, knives, upholstered furniture, things that must be sealed and in date, and
+   plants that cannot be given away. The notes are the same on a computer, a phone and the app.
    Tap a photo in the strip underneath to see it large, and the rotate button turns it
    the right way up. The first photo is the main one; drag a photo onto the big one to make
    it the main photo.
@@ -70,11 +77,31 @@ If you are clearing a house, office or garage, use the **bulk clearance** post
 post, instead of making dozens of separate ones. You can then manage who gets what from a
 single dashboard.
 
+## Posts of several things
+
+If one OFFER lists several separate things ("sofa, bed and two chairs"), Freegle lists them as
+separate items a minute or two after you post, and puts each photo with the thing it shows. People
+can then say which item they want, and you can mark each one TAKEN as it goes. You will see "We've
+listed this as N items" on the post in My Posts:
+
+- **Mark TAKEN** on an item when it has gone. If you press it by mistake, **Undo TAKEN** puts it
+  back. When the last one is TAKEN, you are asked to mark the post TAKEN as usual.
+- **Edit items** to change how many there are, or take an item off the list. To change the
+  names, use **Undo** and edit your post.
+- **Undo** to put the post back exactly as you wrote it. It will not be split again.
+
+Things that belong together, such as a dining set, a box of toys, or a drill and its bits, are
+left as one post. So is anything Freegle is not sure about. A WANTED is never split, and if you
+change a split OFFER to a WANTED, it goes back to one post.
+
 ## Replies and choosing someone
 
 When people are interested they reply, and each reply starts a private **chat** with you.
 You will get a notification and can see all your posts and their replies under **My
 Posts** (`/myposts`).
+
+In My Posts, tap a post's title to read what you wrote, and tap it again to close it. Your post's own page
+always shows it.
 
 From My Posts, or from the post itself, you can:
 

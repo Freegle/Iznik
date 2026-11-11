@@ -78,3 +78,10 @@ test('the review pass asks for claims to be traced to evidence, removed if unsup
   assert.ok(!hasSuggestedReply('Nothing to send.'))
   assert.ok(!hasSuggestedReply(null))
 })
+
+test('the prompt asks for independent checks in the same turn', () => {
+  // Each turn is a round trip the volunteer waits for; live runs made 10 to 89 tool calls, nearly all one per turn.
+  const p = systemPrompt(1, CODEBASE)
+  assert.match(p, /Run independent checks together/)
+  assert.match(p, /in the same turn/)
+})

@@ -188,6 +188,14 @@ which carries `_ckyStore._categories` with a `cookies` list per slug; `other` is
 uncategorised group. `CookieYesPublishedBanner` reads it. The scan results are fine for
 scan age and page counts, and as a log line.
 
+## A copied photo hash makes a post look repeated
+
+The content check counts how many posts used a photo's `hash` in the last day and flags a post
+over the limit. A derived `messages_attachments` row that copies the original's hash (an
+auto-split crop, a duplicate made for any other reason) adds to that count for the member's own
+single photo. A post with one group photo cut into three crops is four of the five allowed, with
+nothing in the logs. Leave `hash` empty on any row that is not a new upload.
+
 ## A schema check on the read connection can miss a table you just created
 
 `DB::select`/`selectOne` go to the read node, and DDL done a moment earlier on the write node
@@ -241,6 +249,18 @@ Group only by labels with a fixed set of values: capture the arm only from the e
 names, and rewrite a free label to fixed words with `label_format` (`UxExperimentService::MAX_ARMS` and
 `SERIES_PER_ARM_AND_FLOW` keep the total under the limit).
 
+## A range query reads the window ending at a step boundary, not at the end you gave
+
+`query_range` rounds its start **down to a multiple of the step**, counted from 1970. With a 7-day step
+the evaluation lands on a Thursday at 00:00 UTC, so `count_over_time(... [7d])` asked for "the week to
+Monday" read Thursday to Thursday and gave a plausible, wrong count (`ux:weekly-report`, November 2026).
+Use a one-day step with the start equal to the end at a midnight, as `UxRollupService::metricOrThrow`
+and `WeeklyReportCommand::frictionDetail` do, and read the last point.
+
+The 500-series cap above also applies **inside** a query: `count(sum by (session_id) (...))` returns one
+series, and is still refused once more than 500 sessions match. Treat that refusal as "more than 500"
+(`lastMetricStatus` 400 with "maximum of series") rather than as Loki being down.
+
 ## Look the experiment arm up before the content is built
 
 A mail or push that varies by an experiment arm (`UxArm::for`) is wrong in four ways that look like a
@@ -272,10 +292,13 @@ Keep the arm name out of links, headers and `email_type`, which other code match
 
 ## Anything that holds a chat message and releases it later must be admitted by its release time
 
-`ChatNotificationService::getUnmailedMessages` selects replies by `chat_messages.date` inside a 24 hour look-back. A reply
+`ChatNotificationService::getUnmailedMessages` selects replies by `chat_messages.date` inside a look-back (4 hours as scheduled, `--since`). A reply
 held for longer is outside it when it is released, so the poster is never emailed, with no error. It admits a released
 rippling hold by `rippling_held_replies.releasedat`, a released lockdown hold by `lockdown_holds.releasedat`, and a reply
-confirmed by its sender by `chat_prompts.answered_at`. A new way to hold a chat message needs its own line in that list and
+confirmed by its sender by `chat_prompts.answered_at`. A reply held for chat review is admitted by the time of its
+`Chat`/`Approved` log row, whose text ("Chat message N approved", `approveChatMessage` in Go) is matched exactly; that one
+was missed until 2026-11-10, and replies a moderator approved more than four hours after they were written were never mailed.
+A new way to hold a chat message needs its own line in that list and
 a test like `test_released_reply_older_than_window_is_delivered_by_releasedat`.
 
 ## `processingsuccessful = 1` does not mean the poster gets the message

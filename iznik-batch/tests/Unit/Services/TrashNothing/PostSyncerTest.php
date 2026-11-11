@@ -11,18 +11,18 @@ use App\Services\TrashNothing\Ingestion\TnUserProvisioner;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use OpenAPI\Client\Model\GetAllPosts200Response;
 use OpenAPI\Client\ObjectSerializer;
 use Tests\TestCase;
 
 /**
- * Tests PostSyncer's group resolution: it must pick the Freegle group whose
- * area contains the post's own lat/lng, not the group_id TN happens to report
- * (which is just wherever the member posted from and drifts from Freegle's
- * group boundaries). group_id is never used to resolve a group — a post with
- * no coordinates, or coordinates outside every group's bounds, is skipped
- * rather than falling back to it.
+ * Tests PostSyncer's group resolution. The member chooses the community on
+ * TrashNothing: a post naming Freegle communities in freegle_group_ids goes on one
+ * of them. Only a post naming none is placed by its own lat/lng. TN's group_id is
+ * never used: a post with no coordinates, or one that names no community and lies
+ * outside every group's bounds, is skipped rather than falling back to it.
  */
 class PostSyncerTest extends TestCase
 {
@@ -248,25 +248,119 @@ class PostSyncerTest extends TestCase
         ]));
     }
 
-    public function test_mod_messaging_allowed_false_when_resolved_group_not_in_freegle_group_ids(): void
+    /**
+     * Expects exactly one ingest() call, on $groupId, with $chosen as its consent flag.
+     */
+    private function expectIngestOn(GroupPostIngestionService $spy, int $groupId, bool $chosen): void
     {
-        // TN explicitly told us which groups the poster consented to — resolved
-        // group isn't among them, so messaging is disallowed.
-        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
-        $other = $this->createTestGroup(['lat' => -10.0, 'lng' => 100.0]);
-
-        $syncer = $this->makeSyncer();
-        $spy    = $this->injectIngestionSpy($syncer);
-
         $spy->expects($this->once())
             ->method('ingest')
-            ->with($this->anything(), $this->anything(), false)
+            ->with(
+                $this->anything(),
+                $this->callback(fn (Group $group) => $group->id === $groupId),
+                $chosen,
+            )
             ->willReturn('approved');
+    }
+
+    public function test_a_post_goes_on_the_community_the_member_chose_not_the_one_it_is_in(): void
+    {
+        // The member chooses the community on TrashNothing (Discourse 10315). A member of
+        // one community posted from home, home sits inside a neighbouring community's area,
+        // and the post went on the neighbour: its moderators could not edit it or write to
+        // the member, and the member's own community never had it.
+        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+        $chosen = $this->createTestGroup(['lat' => 10.2, 'lng' => 10.2]);
+
+        $syncer = $this->makeSyncer();
+        $this->expectIngestOn($this->injectIngestionSpy($syncer), $chosen->id, true);
 
         $this->callProcessPost($syncer, $this->makePost([
             'latitude'          => 10.0,
             'longitude'         => 10.0,
-            'freegle_group_ids' => [$other->id],
+            'freegle_group_ids' => [$chosen->id],
+        ]));
+    }
+
+    public function test_of_several_chosen_communities_the_post_goes_on_the_one_it_is_in(): void
+    {
+        // The containing community's centre is further away than the other's, so this
+        // only passes if being inside the area beats being near the centre.
+        $containing = $this->createTestGroup([
+            'lat'       => 10.4,
+            'lng'       => 10.4,
+            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((9.9 9.9, 10.5 9.9, 10.5 10.5, 9.9 10.5, 9.9 9.9))', " . config('freegle.srid') . ')'),
+        ]);
+        $nearer = $this->createTestGroup(['lat' => 10.1, 'lng' => 10.1]);
+
+        $syncer = $this->makeSyncer();
+        $this->expectIngestOn($this->injectIngestionSpy($syncer), $containing->id, true);
+
+        $this->callProcessPost($syncer, $this->makePost([
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
+            'freegle_group_ids' => [$nearer->id, $containing->id],
+        ]));
+    }
+
+    public function test_of_several_chosen_communities_none_containing_the_post_it_goes_on_the_nearest(): void
+    {
+        $far  = $this->createTestGroup(['lat' => 10.5, 'lng' => 10.5]);
+        $near = $this->createTestGroup(['lat' => 10.1, 'lng' => 10.1]);
+
+        $syncer = $this->makeSyncer();
+        $this->expectIngestOn($this->injectIngestionSpy($syncer), $near->id, true);
+
+        $this->callProcessPost($syncer, $this->makePost([
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
+            'freegle_group_ids' => [$far->id, $near->id],
+        ]));
+    }
+
+    public function test_a_chosen_community_is_honoured_outside_every_community_area(): void
+    {
+        // Nowhere near any community (middle of the Atlantic): with no choice this post is
+        // dropped (see the out-of-bounds test above), but the member named one.
+        $chosen = $this->createTestGroup(['lat' => 51.5074, 'lng' => -0.1278]);
+
+        $syncer = $this->makeSyncer();
+        $this->expectIngestOn($this->injectIngestionSpy($syncer), $chosen->id, true);
+
+        $this->callProcessPost($syncer, $this->makePost([
+            'latitude'          => 35.0,
+            'longitude'         => -40.0,
+            'freegle_group_ids' => [$chosen->id],
+        ]));
+    }
+
+    public function test_a_chosen_community_that_is_not_published_is_passed_over(): void
+    {
+        $local = $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+        $gone  = $this->createTestGroup(['lat' => 10.2, 'lng' => 10.2, 'publish' => 0]);
+
+        $syncer = $this->makeSyncer();
+        $this->expectIngestOn($this->injectIngestionSpy($syncer), $local->id, false);
+
+        $this->callProcessPost($syncer, $this->makePost([
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
+            'freegle_group_ids' => [$gone->id],
+        ]));
+    }
+
+    public function test_a_post_naming_no_community_goes_on_the_local_one(): void
+    {
+        $local = $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+        $this->createTestGroup(['lat' => 10.2, 'lng' => 10.2]);
+
+        $syncer = $this->makeSyncer();
+        $this->expectIngestOn($this->injectIngestionSpy($syncer), $local->id, false);
+
+        $this->callProcessPost($syncer, $this->makePost([
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
+            'freegle_group_ids' => [],
         ]));
     }
 

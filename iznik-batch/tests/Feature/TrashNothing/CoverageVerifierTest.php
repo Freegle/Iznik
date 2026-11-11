@@ -150,6 +150,67 @@ class CoverageVerifierTest extends TestCase
         $this->assertSame(['tn-oob'], $result[CoverageVerifier::UNPLACEABLE]);
     }
 
+    public function test_an_email_to_a_community_outside_every_boundary_is_still_asked_about(): void
+    {
+        // TN emailed it to a community, so the member chose that community, and the API
+        // path puts a post on its chosen community wherever the post is. Its coordinates
+        // alone no longer say it was dropped.
+        $chosen = $this->createTestGroup(['lat' => 51.5074, 'lng' => -0.1278]);
+
+        $syncer = $this->syncerReturning([
+            'tn-chosen-oob' => $this->lookup([
+                'lat'  => 35.0,
+                'lng'  => -40.0,
+                'post' => ['post_id' => 'tn-chosen-oob', 'freegle_group_ids' => [$chosen->id]],
+            ]),
+        ]);
+
+        $result = $this->verify([
+            'tn-chosen-oob' => $this->inventoryEntry('tn-chosen-oob', [
+                'lat'         => 35.0,
+                'lng'         => -40.0,
+                'envelope_to' => $chosen->nameshort . '@' . config('freegle.mail.group_domain'),
+            ]),
+        ], $syncer);
+
+        $this->assertSame([], $result[CoverageVerifier::UNPLACEABLE]);
+        $this->assertArrayHasKey('tn-chosen-oob', $result[CoverageVerifier::GENUINE]);
+    }
+
+    public function test_a_live_post_outside_every_boundary_that_names_no_community_is_expected_absent(): void
+    {
+        // The other side of the test above: with no community named, the post is placed by
+        // where it is, and nowhere is near enough.
+        $this->createTestGroup(['lat' => 51.5074, 'lng' => -0.1278]);
+
+        $syncer = $this->syncerReturning([
+            'tn-unchosen-oob' => $this->lookup([
+                'lat'  => 35.0,
+                'lng'  => -40.0,
+                'post' => ['post_id' => 'tn-unchosen-oob', 'freegle_group_ids' => []],
+            ]),
+        ]);
+
+        $result = $this->verify([
+            'tn-unchosen-oob' => $this->inventoryEntry('tn-unchosen-oob', ['lat' => null, 'lng' => null]),
+        ], $syncer);
+
+        $this->assertSame(['tn-unchosen-oob'], $result[CoverageVerifier::UNPLACEABLE]);
+    }
+
+    public function test_an_email_with_no_usable_address_is_judged_by_its_coordinates(): void
+    {
+        // No address names a community, so nothing was chosen, and coordinates outside every
+        // boundary still mean the post was dropped.
+        $this->createTestGroup(['lat' => 51.5074, 'lng' => -0.1278]);
+
+        $result = $this->verify([
+            'tn-noaddr' => $this->inventoryEntry('tn-noaddr', ['lat' => 35.0, 'lng' => -40.0, 'envelope_to' => '']),
+        ], $this->syncerThatMustNotBeAsked());
+
+        $this->assertSame(['tn-noaddr'], $result[CoverageVerifier::UNPLACEABLE]);
+    }
+
     public function test_a_post_the_live_api_never_mapped_is_expected_absent(): void
     {
         // TN's own latitude/longitude are nullable ("may be null if a post

@@ -416,9 +416,9 @@ class ChatRoomModelTest extends TestCase
         $nonMod = $this->createTestUser();
         $group = $this->createTestGroup();
 
-        Membership::create(['userid' => $mod->id, 'groupid' => $group->id, 'role' => 'Moderator', 'added' => now()]);
-        Membership::create(['userid' => $owner->id, 'groupid' => $group->id, 'role' => 'Owner', 'added' => now()]);
-        Membership::create(['userid' => $nonMod->id, 'groupid' => $group->id, 'role' => 'Member', 'added' => now()]);
+        Membership::create(['userid' => $mod->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MODERATOR, 'added' => now()]);
+        Membership::create(['userid' => $owner->id, 'groupid' => $group->id, 'role' => Membership::ROLE_OWNER, 'added' => now()]);
+        Membership::create(['userid' => $nonMod->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MEMBER, 'added' => now()]);
 
         $chat = ChatRoom::getOrCreateUser2Mod($member->id, $group->id);
 
@@ -438,7 +438,7 @@ class ChatRoomModelTest extends TestCase
         $chat = ChatRoom::getOrCreateUser2Mod($member->id, $group->id);
 
         // Now add a mod membership and call again.
-        Membership::create(['userid' => $mod->id, 'groupid' => $group->id, 'role' => 'Moderator', 'added' => now()]);
+        Membership::create(['userid' => $mod->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MODERATOR, 'added' => now()]);
         $chat2 = ChatRoom::getOrCreateUser2Mod($member->id, $group->id);
 
         $this->assertEquals($chat->id, $chat2->id);

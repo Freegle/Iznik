@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const mockMe = { value: null }
 const mockSupportOrAdmin = { value: false }
@@ -153,9 +154,9 @@ describe('useModMe groups', () => {
   })
 
   it.each([
-    ['Moderator', true],
-    ['Owner', true],
-    ['Member', false],
+    [ROLE_MODERATOR, true],
+    [ROLE_OWNER, true],
+    [ROLE_MEMBER, false],
     [null, false],
   ])('amAModOn is %s => %s', async (role, expected) => {
     globalThis.__mockAuthStore.member = vi.fn(() => role)

@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"io"
 	"net/http/httptest"
 	url2 "net/url"
 	"os"
@@ -99,10 +100,10 @@ func TestListChatsDefaultIncludesUser2Mod(t *testing.T) {
 
 	// Create a member and a mod on a group.
 	memberID, memberToken := CreateFullTestUser(t, prefix+"_member")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, memberID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
 	// Create a User2Mod chat with a message.
 	chatID, err := chat.GetOrCreateUser2ModChat(db, memberID, groupID)
@@ -139,11 +140,11 @@ func TestFreegleHidesModeratorUser2ModChats(t *testing.T) {
 	db := database.DBConn
 
 	// Create a member and a mod on a group.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, memberID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
 	// Create a User2Mod chat from the member (not the mod) with a message.
 	chatID, err := chat.GetOrCreateUser2ModChat(db, memberID, groupID)
@@ -196,9 +197,9 @@ func TestKeepChatIncludesOldChat(t *testing.T) {
 	prefix := uniquePrefix("keepChat")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// Create a User2User chat and backdate it to 90 days ago (past the 31-day cutoff).
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -247,9 +248,9 @@ func TestGroupChatIconUsesNewestImage(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_m", "User")
+	memberID := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
 	_, memberToken := CreateTestSession(t, memberID)
-	CreateTestMembership(t, memberID, groupID, "Member")
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
 	// Insert two images for the same group. Auto-increment guarantees img2ID > img1ID.
 	var img1ID, img2ID uint64
@@ -301,9 +302,9 @@ func TestModToolsChatNameUsesFirstLastWhenFullnameNull(t *testing.T) {
 	var memberID uint64
 	db.Exec(
 		"INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
-			"VALUES (?, ?, NULL, 'User', NULL, ?)",
+			"VALUES (?, ?, NULL, ?, NULL, ?)",
 		prefix+"First", prefix+"Last",
-		`{"mylocation":{"lat":51.5,"lng":-0.1}}`,
+		utils.SYSTEMROLE_USER, `{"mylocation":{"lat":51.5,"lng":-0.1}}`,
 	)
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&memberID)
 	if memberID == 0 {
@@ -312,12 +313,12 @@ func TestModToolsChatNameUsesFirstLastWhenFullnameNull(t *testing.T) {
 	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", memberID, prefix+"@test.com")
 
 	// Create a mod with a full name and token.
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	groupID := CreateTestGroup(t, prefix+"_grp")
-	CreateTestMembership(t, memberID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
 	// Create a User2Mod chat (member → group mods).
 	chatID, err := chat.GetOrCreateUser2ModChat(db, memberID, groupID)
@@ -375,8 +376,8 @@ func TestCreateChatMessage(t *testing.T) {
 	// Create a mod user with a User2Mod chat for testing
 	prefix := uniquePrefix("chatmsg")
 	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	chatid := CreateTestChatRoom(t, modUserID, nil, &groupID, "User2Mod")
 	CreateTestChatMessage(t, chatid, modUserID, "Initial message")
 	_, token := CreateTestSession(t, modUserID)
@@ -423,13 +424,13 @@ func TestCreateChatMessageModnote(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	// Create a User2User chat between user1 and user2.
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -479,8 +480,8 @@ func TestCreateChatMessageLoveJunk(t *testing.T) {
 	// Create test data for LoveJunk integration test
 	prefix := uniquePrefix("lovejunk")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Create a message with spaces in subject (required for LoveJunk)
 	msgID := CreateTestMessage(t, userID, groupID, "Test Offer Item", 55.9533, -3.1883)
@@ -610,8 +611,8 @@ func TestCreateChatMessageLoveJunkWithProfileUrl(t *testing.T) {
 
 	prefix := uniquePrefix("ljprofile")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, "Test Offer Profile", 55.9533, -3.1883)
 
 	ljuserid := uint64(time.Now().UnixNano())
@@ -658,8 +659,8 @@ func TestCreateChatMessageLoveJunkWithImageid(t *testing.T) {
 
 	prefix := uniquePrefix("ljimage")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, "Test Offer Image", 55.9533, -3.1883)
 
 	// Create a chat_images row to link.
@@ -719,8 +720,8 @@ func TestPatchChatMessageReplyExpected(t *testing.T) {
 
 	// Create two users with a User2User chat
 	prefix := uniquePrefix("patchmsg")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	msgID := CreateTestChatMessage(t, chatID, user1ID, "Test message for RSVP")
 	_, token := CreateTestSession(t, user1ID)
@@ -760,8 +761,8 @@ func TestPatchChatMessageReplyExpected(t *testing.T) {
 func TestPatchChatMessageNotYourMessage(t *testing.T) {
 	// Create two users with a User2User chat
 	prefix := uniquePrefix("patchnoturs")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	msgID := CreateTestChatMessage(t, chatID, user1ID, "User1's message")
 
@@ -781,7 +782,7 @@ func TestPatchChatMessageNotYourMessage(t *testing.T) {
 
 func TestPatchChatMessageNotFound(t *testing.T) {
 	prefix := uniquePrefix("patchnf")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	payload := map[string]interface{}{
@@ -807,8 +808,8 @@ func TestDeleteChatMessage(t *testing.T) {
 
 	// Create two users with a User2User chat
 	prefix := uniquePrefix("delmsg")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	msgID := CreateTestChatMessage(t, chatID, user1ID, "Message to delete")
 	_, token := CreateTestSession(t, user1ID)
@@ -829,8 +830,8 @@ func TestDeleteChatMessage(t *testing.T) {
 func TestDeleteChatMessageNotYours(t *testing.T) {
 	// Create two users with a User2User chat
 	prefix := uniquePrefix("delnoturs")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	msgID := CreateTestChatMessage(t, chatID, user1ID, "User1's message")
 
@@ -843,7 +844,7 @@ func TestDeleteChatMessageNotYours(t *testing.T) {
 
 func TestDeleteChatMessageNotFound(t *testing.T) {
 	prefix := uniquePrefix("delnf")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	request := httptest.NewRequest("DELETE", fmt.Sprintf("/api/chatmessages?id=999999999&jwt=%s", token), nil)
@@ -853,7 +854,7 @@ func TestDeleteChatMessageNotFound(t *testing.T) {
 
 func TestDeleteChatMessageMissingId(t *testing.T) {
 	prefix := uniquePrefix("delmissid")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	request := httptest.NewRequest("DELETE", "/api/chatmessages?jwt="+token, nil)
@@ -866,8 +867,8 @@ func TestDeleteChatMessageWithImage(t *testing.T) {
 
 	// Create two users with a User2User chat
 	prefix := uniquePrefix("delimgmsg")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	msgID := CreateTestChatMessage(t, chatID, user1ID, "Message with image")
 
@@ -908,8 +909,8 @@ func TestUserBanned(t *testing.T) {
 	// Create test user and group for ban test
 	prefix := uniquePrefix("banned")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Create a ban
 	var ban user.UserBanned
@@ -933,8 +934,8 @@ func TestPostChatRoomNudge(t *testing.T) {
 	prefix := uniquePrefix("nudge")
 
 	// Create two users and a User2User chat
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatMessage(t, chatid, user1ID, "Hello")
 	_, token := CreateTestSession(t, user1ID)
@@ -969,9 +970,9 @@ func TestPostChatRoomNudgeNotMember(t *testing.T) {
 	prefix := uniquePrefix("nudgenm")
 
 	// Create chat between user1 and user2, but try to nudge as user3
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	user3ID := CreateTestUser(t, prefix+"_u3", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	user3ID := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token3 := CreateTestSession(t, user3ID)
 
@@ -986,8 +987,8 @@ func TestPostChatRoomNudgeNotMember(t *testing.T) {
 func TestPostChatRoomTyping(t *testing.T) {
 	prefix := uniquePrefix("typing")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -1023,8 +1024,8 @@ func TestPostChatRoomTyping(t *testing.T) {
 func TestPostChatRoomRosterUpdate(t *testing.T) {
 	prefix := uniquePrefix("roster")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	msgid := CreateTestChatMessage(t, chatid, user2ID, "Hello from user2")
 	_, token := CreateTestSession(t, user1ID)
@@ -1048,8 +1049,8 @@ func TestPostChatRoomRosterUpdate(t *testing.T) {
 func TestPostChatRoomHideChat(t *testing.T) {
 	prefix := uniquePrefix("hide")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -1081,8 +1082,8 @@ func TestPostChatRoomHideChat(t *testing.T) {
 func TestPostChatRoomBlockChat(t *testing.T) {
 	prefix := uniquePrefix("block")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -1118,9 +1119,9 @@ func TestPostChatRoomRosterUpdateNonMember(t *testing.T) {
 	prefix := uniquePrefix("rosternm")
 
 	// Create chat between user1 and user2
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	user3ID := CreateTestUser(t, prefix+"_u3", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	user3ID := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token3 := CreateTestSession(t, user3ID)
 
@@ -1140,8 +1141,8 @@ func TestPostChatRoomRosterUpdateNonMember(t *testing.T) {
 func TestPostChatRoomUnhide(t *testing.T) {
 	prefix := uniquePrefix("unhide")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -1178,8 +1179,8 @@ func TestPostChatRoomDoubleNudge(t *testing.T) {
 	// Second nudge should be idempotent (returns existing nudge ID).
 	prefix := uniquePrefix("nudge_dbl")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatMessage(t, chatid, user2ID, "Hello")
 	_, token := CreateTestSession(t, user1ID)
@@ -1211,8 +1212,8 @@ func TestPostChatRoomHideAlreadyHidden(t *testing.T) {
 	// Hiding an already-hidden chat should be idempotent.
 	prefix := uniquePrefix("hide_dbl")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -1238,8 +1239,8 @@ func TestPostChatRoomBlockThenClose(t *testing.T) {
 	prefix := uniquePrefix("blk_cls")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -1302,8 +1303,8 @@ func TestPostChatRoomMarkReadKeepsBlocked(t *testing.T) {
 	prefix := uniquePrefix("blk_read")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	msgid := CreateTestChatMessage(t, chatid, user2ID, "hello")
 	_, token := CreateTestSession(t, user1ID)
@@ -1345,9 +1346,9 @@ func TestPostChatRoomBlockRenegesPromises(t *testing.T) {
 	prefix := uniquePrefix("blk_renege")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	blockedID := CreateTestUser(t, prefix+"_blocked", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	blockedID := CreateTestUser(t, prefix+"_blocked", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	promisedMsg := CreateTestMessage(t, ownerID, groupID, prefix+" promised item", 52.5, -1.8)
 	otherMsg := CreateTestMessage(t, ownerID, groupID, prefix+" other item", 52.5, -1.8)
@@ -1382,7 +1383,7 @@ func TestPostChatRoomBlockRenegesPromises(t *testing.T) {
 func TestPostChatRoomNonExistentChat(t *testing.T) {
 	prefix := uniquePrefix("chat_ne")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	// Roster update on non-existent chat.
@@ -1402,7 +1403,7 @@ func TestPostChatRoomNonExistentChat(t *testing.T) {
 func TestPostChatRoomEmptyBody(t *testing.T) {
 	prefix := uniquePrefix("chat_empty")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer([]byte("{}")))
@@ -1416,7 +1417,7 @@ func TestPostChatRoomEmptyBody(t *testing.T) {
 func TestPostChatRoomTypingNonExistentChat(t *testing.T) {
 	prefix := uniquePrefix("type_ne")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	// Typing on non-existent chat should return not found.
@@ -1435,8 +1436,8 @@ func TestPostChatRoomTypingNonExistentChat(t *testing.T) {
 func TestPutChatRoom(t *testing.T) {
 	prefix := uniquePrefix("putchat")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	// Create a new chat room.
@@ -1472,8 +1473,8 @@ func TestPutChatRoom(t *testing.T) {
 func TestPutChatRoomAlreadyExists(t *testing.T) {
 	prefix := uniquePrefix("putchat_exists")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	existingChatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -1494,8 +1495,8 @@ func TestPutChatRoomAlreadyExists(t *testing.T) {
 func TestPutChatRoomAlreadyExistsReversed(t *testing.T) {
 	prefix := uniquePrefix("putchat_rev")
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token2 := CreateTestSession(t, user2ID)
 
 	existingChatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -1515,7 +1516,7 @@ func TestPutChatRoomAlreadyExistsReversed(t *testing.T) {
 
 func TestPutChatRoomSelf(t *testing.T) {
 	prefix := uniquePrefix("putchat_self")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	payload := map[string]interface{}{"userid": user1ID}
@@ -1537,8 +1538,8 @@ func TestPutChatRoomNotLoggedIn(t *testing.T) {
 
 func TestPutChatRoomConcurrent(t *testing.T) {
 	prefix := uniquePrefix("putchat_conc")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	done := make(chan uint64, 2)
@@ -1579,7 +1580,7 @@ func TestPutChatRoomConcurrent(t *testing.T) {
 
 func TestPutChatRoomMissingUserid(t *testing.T) {
 	prefix := uniquePrefix("putchat_noid")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	payload := map[string]interface{}{}
@@ -1592,7 +1593,7 @@ func TestPutChatRoomMissingUserid(t *testing.T) {
 
 func TestPutChatRoomInvalidBody(t *testing.T) {
 	prefix := uniquePrefix("putchat_bad")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	request := httptest.NewRequest("PUT", "/api/chat/rooms?jwt="+token, bytes.NewBuffer([]byte("not json")))
@@ -1604,8 +1605,8 @@ func TestPutChatRoomInvalidBody(t *testing.T) {
 func TestPutChatRoomUpdateRosterUnblocks(t *testing.T) {
 	prefix := uniquePrefix("putchat_roster")
 	db := database.DBConn
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -1639,8 +1640,8 @@ func TestPutChatRoomUpdateRosterUnblocks(t *testing.T) {
 func TestPutChatRoomWithoutUpdateRosterDoesNotUnblock(t *testing.T) {
 	prefix := uniquePrefix("putchat_noroster")
 	db := database.DBConn
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -1668,9 +1669,9 @@ func TestPutChatRoomWithoutUpdateRosterDoesNotUnblock(t *testing.T) {
 func TestAllSeen(t *testing.T) {
 	prefix := uniquePrefix("allseen")
 	db := database.DBConn
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	user3ID := CreateTestUser(t, prefix+"_u3", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	user3ID := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	chat1ID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -1725,7 +1726,7 @@ func TestAllSeenNotLoggedIn(t *testing.T) {
 
 func TestAllSeenNoChats(t *testing.T) {
 	prefix := uniquePrefix("allseen_empty")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	payload := map[string]interface{}{"action": "AllSeen"}
@@ -1749,13 +1750,13 @@ func TestAllSeenModtoolsScopedToModChats(t *testing.T) {
 	// (no roster row), and an unread personal User2User chat.
 	modID, _, groupID, u2mChatID, token := setupModChatData(t, prefix)
 
-	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
-	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	mod2ID := CreateTestUser(t, prefix+"_mod2", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, mod2ID, groupID, utils.ROLE_MODERATOR)
 	m2mChatID := CreateTestChatRoom(t, mod2ID, &modID, &groupID, "Mod2Mod")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'Mod chat msg', NOW(), 1, 0, 0)",
 		m2mChatID, mod2ID)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	personalChatID := CreateTestChatRoom(t, modID, &otherID, nil, "User2User")
 	personalMsgID := CreateTestChatMessage(t, personalChatID, otherID, "Unread personal message")
 
@@ -1796,14 +1797,14 @@ func TestAllSeenFDDoesNotTouchModChats(t *testing.T) {
 	// User2User chat, including one with no roster row yet.
 	modID, _, _, u2mChatID, token := setupModChatData(t, prefix)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	personalChatID := CreateTestChatRoom(t, modID, &otherID, nil, "User2User")
 	CreateTestChatMessage(t, personalChatID, otherID, "Unread personal message")
 	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0", personalChatID, modID)
 
 	// A second personal chat where the recipient has no roster row at all (the
 	// state a brand-new incoming conversation is in).
-	other2ID := CreateTestUser(t, prefix+"_other2", "User")
+	other2ID := CreateTestUser(t, prefix+"_other2", utils.SYSTEMROLE_USER)
 	noRosterChatID := CreateTestChatRoom(t, modID, &other2ID, nil, "User2User")
 	CreateTestChatMessage(t, noRosterChatID, other2ID, "Unread in rosterless chat")
 	db.Exec("DELETE FROM chat_roster WHERE chatid = ? AND userid = ?", noRosterChatID, modID)
@@ -1840,8 +1841,8 @@ func TestAllSeenFDDoesNotTouchModChats(t *testing.T) {
 func TestReferToSupport(t *testing.T) {
 	prefix := uniquePrefix("refersupport")
 	db := database.DBConn
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_MODERATOR)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatMessage(t, chatid, user1ID, "Hello")
 	_, token := CreateTestSession(t, user1ID)
@@ -1858,16 +1859,50 @@ func TestReferToSupport(t *testing.T) {
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Equal(t, "Success", result["status"])
 
+	// A new referral is a case row, not a background task: the case is the queue for the first pass.
+	caseid := uint64(result["caseid"].(float64))
+	assert.Greater(t, caseid, uint64(0))
+	t.Cleanup(func() { cleanupSupportCase(caseid) })
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ?", chatid).Scan(&taskCount)
-	assert.Greater(t, taskCount, int64(0))
+	assert.Equal(t, int64(0), taskCount)
+
+	var status, fp string
+	var referrer, member uint64
+	db.Raw("SELECT status, firstpass_status, referrerid, userid FROM support_cases WHERE id = ?", caseid).Row().Scan(&status, &fp, &referrer, &member)
+	assert.Equal(t, "Open", status)
+	assert.Equal(t, "Pending", fp)
+	assert.Equal(t, user1ID, referrer)
+	assert.Equal(t, user2ID, member, "a member-to-member chat is about the other participant")
+}
+
+// A plain member who is a participant may not open a case: each one spends a model pass.
+func TestReferToSupportPlainMemberParticipantRefused(t *testing.T) {
+	prefix := uniquePrefix("refersupport_plain")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReferToSupport"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "Only moderators can refer a chat to Support")
+
+	var cases int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM support_cases WHERE chatid = ?", chatid).Scan(&cases)
+	assert.Equal(t, int64(0), cases)
 }
 
 func TestReferToSupportNotMember(t *testing.T) {
 	prefix := uniquePrefix("refersupport_nm")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	user3ID := CreateTestUser(t, prefix+"_u3", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	user3ID := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token3 := CreateTestSession(t, user3ID)
 
@@ -1885,11 +1920,11 @@ func TestReferToSupportNotMember(t *testing.T) {
 func TestReferToSupportByGroupModerator(t *testing.T) {
 	prefix := uniquePrefix("refersupport_mod")
 	db := database.DBConn
-	memberID := CreateTestUser(t, prefix+"_m", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	memberID := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, memberID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	chatid := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
 	CreateTestChatMessage(t, chatid, memberID, "Hello mods")
 	_, token := CreateTestSession(t, modID)
@@ -1901,20 +1936,26 @@ func TestReferToSupportByGroupModerator(t *testing.T) {
 	resp, _ := getApp().Test(request)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
-	var taskCount int64
-	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ? AND JSON_EXTRACT(data, '$.userid') = ?", chatid, modID).Scan(&taskCount)
-	assert.Equal(t, int64(1), taskCount, "the referral must be queued under the moderator who asked")
+	var out map[string]interface{}
+	json2.NewDecoder(resp.Body).Decode(&out)
+	caseid := uint64(out["caseid"].(float64))
+	t.Cleanup(func() { cleanupSupportCase(caseid) })
+
+	var referrer, member uint64
+	db.Raw("SELECT referrerid, userid FROM support_cases WHERE id = ?", caseid).Row().Scan(&referrer, &member)
+	assert.Equal(t, modID, referrer, "the referral must be recorded under the moderator who asked")
+	assert.Equal(t, memberID, member)
 }
 
 // A moderator of some other community, whose members are not in this chat, still may not.
 func TestReferToSupportByUnrelatedModerator(t *testing.T) {
 	prefix := uniquePrefix("refersupport_other")
-	memberID := CreateTestUser(t, prefix+"_m", "User")
-	otherModID := CreateTestUser(t, prefix+"_om", "Moderator")
+	memberID := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	otherModID := CreateTestUser(t, prefix+"_om", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
 	otherGroupID := CreateTestGroup(t, prefix+"_other")
-	CreateTestMembership(t, memberID, groupID, "Member")
-	CreateTestMembership(t, otherModID, otherGroupID, "Moderator")
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherModID, otherGroupID, utils.ROLE_MODERATOR)
 	chatid := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
 	_, token := CreateTestSession(t, otherModID)
 
@@ -1937,7 +1978,7 @@ func TestReferToSupportNotLoggedIn(t *testing.T) {
 
 func TestReferToSupportNonExistentChat(t *testing.T) {
 	prefix := uniquePrefix("refersupport_ne")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	payload := map[string]interface{}{"id": 999999999, "action": "ReferToSupport"}
@@ -1950,7 +1991,7 @@ func TestReferToSupportNonExistentChat(t *testing.T) {
 
 func TestReferToSupportMissingChatID(t *testing.T) {
 	prefix := uniquePrefix("refersupport_noid")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	payload := map[string]interface{}{"action": "ReferToSupport"}
@@ -1963,11 +2004,11 @@ func TestReferToSupportMissingChatID(t *testing.T) {
 
 // Helper to set up a moderator with a group and User2Mod chat containing messages.
 func setupModChatData(t *testing.T, prefix string) (modID uint64, userID uint64, groupID uint64, chatID uint64, token string) {
-	modID = CreateTestUser(t, prefix+"_mod", "Moderator")
-	userID = CreateTestUser(t, prefix+"_user", "User")
+	modID = CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	userID = CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	groupID = CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	chatID = CreateTestChatRoom(t, userID, nil, &groupID, "User2Mod")
 
@@ -2051,7 +2092,7 @@ func TestFetchChatMTPermissionDenied(t *testing.T) {
 	_, _, _, chatID, _ := setupModChatData(t, prefix)
 
 	// Create a different user who is NOT a moderator of the group.
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d?jwt=%s", chatID, otherToken), nil)
@@ -2084,11 +2125,11 @@ func TestListChatsMT(t *testing.T) {
 
 func TestListChatsMTMod2Mod(t *testing.T) {
 	prefix := uniquePrefix("ListM2M")
-	mod1ID := CreateTestUser(t, prefix+"_mod1", "Moderator")
-	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
+	mod1ID := CreateTestUser(t, prefix+"_mod1", utils.SYSTEMROLE_MODERATOR)
+	mod2ID := CreateTestUser(t, prefix+"_mod2", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, mod1ID, groupID, "Moderator")
-	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	CreateTestMembership(t, mod1ID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, mod2ID, groupID, utils.ROLE_MODERATOR)
 
 	chatID := CreateTestChatRoom(t, mod1ID, &mod2ID, &groupID, "Mod2Mod")
 
@@ -2127,11 +2168,11 @@ func TestListChatsMTMod2Mod(t *testing.T) {
 // silent since 2020 and its owner could not reach it at all).
 func TestListChatsMTMod2ModOldAndEmpty(t *testing.T) {
 	prefix := uniquePrefix("ListM2MOld")
-	mod1ID := CreateTestUser(t, prefix+"_mod1", "Moderator")
-	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
+	mod1ID := CreateTestUser(t, prefix+"_mod1", utils.SYSTEMROLE_MODERATOR)
+	mod2ID := CreateTestUser(t, prefix+"_mod2", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, mod1ID, groupID, "Moderator")
-	CreateTestMembership(t, mod2ID, groupID, "Owner")
+	CreateTestMembership(t, mod1ID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, mod2ID, groupID, utils.ROLE_OWNER)
 
 	chatID := CreateTestChatRoom(t, mod1ID, &mod2ID, &groupID, "Mod2Mod")
 
@@ -2158,7 +2199,7 @@ func TestListChatsMTMod2ModOldAndEmpty(t *testing.T) {
 
 func TestListChatsMTEmpty(t *testing.T) {
 	prefix := uniquePrefix("ListEmpty")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// User has no moderator memberships, so should get empty list.
@@ -2195,7 +2236,7 @@ func TestReviewChatMessages(t *testing.T) {
 	_ = modID
 
 	// Create a User2User chat between users where one is in the mod's group.
-	user2ID := CreateTestUser(t, prefix+"_user2", "User")
+	user2ID := CreateTestUser(t, prefix+"_user2", utils.SYSTEMROLE_USER)
 	u2uChatID := CreateTestChatRoom(t, userID, &user2ID, nil, "User2User")
 
 	db := database.DBConn
@@ -2236,7 +2277,7 @@ func TestReviewChatMessagesWithImage(t *testing.T) {
 	_ = modID
 
 	// Create a User2User chat with an Image-type message pending review.
-	user2ID := CreateTestUser(t, prefix+"_user2", "User")
+	user2ID := CreateTestUser(t, prefix+"_user2", utils.SYSTEMROLE_USER)
 	u2uChatID := CreateTestChatRoom(t, userID, &user2ID, nil, "User2User")
 
 	db := database.DBConn
@@ -2281,7 +2322,7 @@ func TestReviewChatMessagesWithImage(t *testing.T) {
 
 func TestReviewChatMessagesNotModerator(t *testing.T) {
 	prefix := uniquePrefix("ReviewNonMod")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Non-moderator should get empty list.
@@ -2305,14 +2346,14 @@ func TestReviewChatMessagesSenderOnlyExcluded(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 	otherGroupID := CreateTestGroup(t, prefix+"_other")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	recipientID := CreateTestUser(t, prefix+"_recip", "User")
-	CreateTestMembership(t, senderID, groupID, "Member")         // sender in mod's group
-	CreateTestMembership(t, recipientID, otherGroupID, "Member") // recipient in different group
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+	recipientID := CreateTestUser(t, prefix+"_recip", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, senderID, groupID, utils.ROLE_MEMBER)         // sender in mod's group
+	CreateTestMembership(t, recipientID, otherGroupID, utils.ROLE_MEMBER) // recipient in different group
 
 	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'Spam from group member', NOW(), 1, 1, 0)",
@@ -2341,13 +2382,13 @@ func TestReviewChatMessagesOrphanRecipient(t *testing.T) {
 	prefix := uniquePrefix("ReviewOrphan")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	orphanID := CreateTestUser(t, prefix+"_orphan", "User")
-	CreateTestMembership(t, senderID, groupID, "Member") // sender in mod's group
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+	orphanID := CreateTestUser(t, prefix+"_orphan", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, senderID, groupID, utils.ROLE_MEMBER) // sender in mod's group
 	// orphanID has NO memberships
 
 	chatID := CreateTestChatRoom(t, senderID, &orphanID, nil, "User2User")
@@ -2396,7 +2437,7 @@ func TestChatMessagesForRoomPermissionDenied(t *testing.T) {
 	prefix := uniquePrefix("RoomPerm")
 	_, _, _, chatID, _ := setupModChatData(t, prefix)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chatmessages?roomid=%d&jwt=%s", chatID, otherToken), nil)
@@ -2419,8 +2460,8 @@ func TestGetChatRoomsMTByIdParam(t *testing.T) {
 	prefix := uniquePrefix("ChatRoomsMTById")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	// Create a User2User chat.
@@ -2467,19 +2508,19 @@ func TestReviewChatOwnGroupFirst(t *testing.T) {
 	// Set wider group to have widerchatreview enabled.
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", widerGroupID)
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, ownGroupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, ownGroupID, utils.ROLE_MODERATOR)
 	// Mod must also be on a group with widerchatreview enabled to see wider messages.
 	widerModGroupID := CreateTestGroup(t, prefix+"_wmod")
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.widerchatreview', 1) WHERE id = ?", widerModGroupID)
-	CreateTestMembership(t, modID, widerModGroupID, "Moderator")
+	CreateTestMembership(t, modID, widerModGroupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a wider review message (recipient on wider group, not mod's group).
-	widerSender := CreateTestUser(t, prefix+"_wsender", "User")
-	CreateTestMembership(t, widerSender, widerGroupID, "Member")
-	widerRecipient := CreateTestUser(t, prefix+"_wrecip", "User")
-	CreateTestMembership(t, widerRecipient, widerGroupID, "Member")
+	widerSender := CreateTestUser(t, prefix+"_wsender", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, widerSender, widerGroupID, utils.ROLE_MEMBER)
+	widerRecipient := CreateTestUser(t, prefix+"_wrecip", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, widerRecipient, widerGroupID, utils.ROLE_MEMBER)
 	widerChatID := CreateTestChatRoom(t, widerSender, &widerRecipient, nil, "User2User")
 	widerMsgID := CreateTestChatMessage(t, widerChatID, widerSender, "Wider spam")
 	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 1, reviewrejected = 0, reportreason = 'Spam' WHERE id = ?", widerMsgID)
@@ -2490,10 +2531,10 @@ func TestReviewChatOwnGroupFirst(t *testing.T) {
 	})
 
 	// Create an own-group message (recipient on mod's group).
-	ownSender := CreateTestUser(t, prefix+"_osender", "User")
-	CreateTestMembership(t, ownSender, ownGroupID, "Member")
-	ownRecipient := CreateTestUser(t, prefix+"_orecip", "User")
-	CreateTestMembership(t, ownRecipient, ownGroupID, "Member")
+	ownSender := CreateTestUser(t, prefix+"_osender", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownSender, ownGroupID, utils.ROLE_MEMBER)
+	ownRecipient := CreateTestUser(t, prefix+"_orecip", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownRecipient, ownGroupID, utils.ROLE_MEMBER)
 	ownChatID := CreateTestChatRoom(t, ownSender, &ownRecipient, nil, "User2User")
 	ownMsgID := CreateTestChatMessage(t, ownChatID, ownSender, "Own group spam")
 	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 1, reviewrejected = 0, reportreason = 'Spam' WHERE id = ?", ownMsgID)
@@ -2539,17 +2580,17 @@ func TestReviewChatMessagesNoDuplicates(t *testing.T) {
 	group1ID := CreateTestGroup(t, prefix+"_g1")
 	group2ID := CreateTestGroup(t, prefix+"_g2")
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, group1ID, "Moderator")
-	CreateTestMembership(t, modID, group2ID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, group1ID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, group2ID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Sender on group1, recipient on BOTH groups → query could produce duplicates.
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	CreateTestMembership(t, senderID, group1ID, "Member")
-	recipientID := CreateTestUser(t, prefix+"_recipient", "User")
-	CreateTestMembership(t, recipientID, group1ID, "Member")
-	CreateTestMembership(t, recipientID, group2ID, "Member")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, senderID, group1ID, utils.ROLE_MEMBER)
+	recipientID := CreateTestUser(t, prefix+"_recipient", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, recipientID, group1ID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, recipientID, group2ID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
 	msgID := CreateTestChatMessage(t, chatID, senderID, "Possible spam")
@@ -2608,7 +2649,7 @@ func TestModReplyToUser2ModChatNotMod(t *testing.T) {
 	prefix := uniquePrefix("ModReplyNon")
 	_, _, _, chatID, _ := setupModChatData(t, prefix)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	payload := `{"message":"I am not a mod"}`
@@ -2628,15 +2669,15 @@ func TestGetChatMessagesModAccess(t *testing.T) {
 
 	// Create a regular user who starts a User2Mod chat.
 	db := database.DBConn
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	chatID := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
 	msgID := CreateTestChatMessage(t, chatID, memberID, "Help please")
 	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 0, reviewrejected = 0 WHERE id = ?", msgID)
 
 	// Create a moderator who is NOT user1 or user2 of this chat.
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// The mod should be able to read messages via the /chat/:id/message endpoint.
@@ -2649,7 +2690,7 @@ func TestGetChatMessagesModAccess(t *testing.T) {
 	assert.GreaterOrEqual(t, len(messages), 1)
 
 	// A random non-mod user should NOT be able to read.
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 	req2 := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, otherToken), nil)
 	resp2, _ := getApp().Test(req2)
@@ -2662,14 +2703,14 @@ func TestGetChatMessagesAdminAccess(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	chatID := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
 	msgID := CreateTestChatMessage(t, chatID, memberID, "Help please")
 	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 0, reviewrejected = 0 WHERE id = ?", msgID)
 
 	// Create an admin user (not on this group).
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, adminToken), nil)
@@ -2690,10 +2731,10 @@ func TestModSeesReviewMessagesInChat(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create two regular users in the same group with a User2User chat.
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 
 	// Create a normal approved message.
@@ -2705,8 +2746,8 @@ func TestModSeesReviewMessagesInChat(t *testing.T) {
 	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 1, reviewrejected = 0, reportreason = 'Spam' WHERE id = ?", reviewMsgID)
 
 	// Create a moderator for the group (NOT a participant in this chat).
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Mod should see BOTH messages (normal + review).
@@ -2760,8 +2801,8 @@ func TestModSeesReviewMessagesInUser2ModChat(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	chatID := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
 
 	// Normal message from member.
@@ -2773,8 +2814,8 @@ func TestModSeesReviewMessagesInUser2ModChat(t *testing.T) {
 	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 1, reviewrejected = 0, reportreason = 'Spam' WHERE id = ?", reviewMsgID)
 
 	// Mod is NOT user1 or user2 but moderates the group.
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, modToken), nil)
@@ -2865,11 +2906,11 @@ func TestFetchSingleChatSnippet(t *testing.T) {
 func TestListChatsMTMod2ModName(t *testing.T) {
 	// Verify Mod2Mod chats get the correct "GroupName Mods" name.
 	prefix := uniquePrefix("M2MName")
-	mod1ID := CreateTestUser(t, prefix+"_mod1", "Moderator")
-	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
+	mod1ID := CreateTestUser(t, prefix+"_mod1", utils.SYSTEMROLE_MODERATOR)
+	mod2ID := CreateTestUser(t, prefix+"_mod2", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, mod1ID, groupID, "Moderator")
-	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	CreateTestMembership(t, mod1ID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, mod2ID, groupID, utils.ROLE_MODERATOR)
 
 	chatID := CreateTestChatRoom(t, mod1ID, &mod2ID, &groupID, "Mod2Mod")
 
@@ -2932,11 +2973,11 @@ func TestCompletedSnippetOfferNoMessage(t *testing.T) {
 	// When a Completed chat message references an Offer and has no message text,
 	// the snippet should say "Item is no longer available" (not "Item marked as TAKEN").
 	prefix := uniquePrefix("CompSnip")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_grp")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	// Create an Offer message using the test helper.
 	msgID := CreateTestMessage(t, user1ID, groupID, prefix+" Offer item", 51.5, -0.1)
@@ -2973,11 +3014,11 @@ func TestCompletedSnippetOfferNoMessage(t *testing.T) {
 func TestCompletedSnippetWithMessage(t *testing.T) {
 	// When a Completed message has user-provided text, snippet should show that text.
 	prefix := uniquePrefix("CompSnipMsg")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_grp")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, user1ID, groupID, prefix+" Offer item", 51.5, -0.1)
 
@@ -3084,11 +3125,11 @@ func TestListChatsMTSearchByDisplayName(t *testing.T) {
 func TestUnseenCountMTBackupModExcluded(t *testing.T) {
 	// Backup mods (active:0 in membership settings) should NOT see unseen counts for those groups.
 	prefix := uniquePrefix("BackupMod")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Set the mod as a backup mod on this group (active:0).
 	db := database.DBConn
@@ -3116,11 +3157,11 @@ func TestUnseenCountMTBackupModExcluded(t *testing.T) {
 func TestUnseenCountMTActiveModIncluded(t *testing.T) {
 	// Active mods (active:1 or no settings) SHOULD see unseen counts.
 	prefix := uniquePrefix("ActiveMod")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Set the mod as active (explicit active:1).
 	db := database.DBConn
@@ -3148,11 +3189,11 @@ func TestUnseenCountMTActiveModIncluded(t *testing.T) {
 func TestUnseenCountMTAllSpamChatExcluded(t *testing.T) {
 	// Mod2Mod chats where all messages are invalid (all spam) should be excluded.
 	prefix := uniquePrefix("AllSpamMod")
-	mod1ID := CreateTestUser(t, prefix+"_mod1", "Moderator")
-	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
+	mod1ID := CreateTestUser(t, prefix+"_mod1", utils.SYSTEMROLE_MODERATOR)
+	mod2ID := CreateTestUser(t, prefix+"_mod2", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, mod1ID, groupID, "Moderator")
-	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	CreateTestMembership(t, mod1ID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, mod2ID, groupID, utils.ROLE_MODERATOR)
 
 	chatID := CreateTestChatRoom(t, mod1ID, &mod2ID, &groupID, "Mod2Mod")
 
@@ -3178,11 +3219,11 @@ func TestUnseenCountMTAllSpamChatExcluded(t *testing.T) {
 func TestListChatsMTSearchMod2Mod(t *testing.T) {
 	// Verify that search works for Mod2Mod chats.
 	prefix := uniquePrefix("SearchM2M")
-	mod1ID := CreateTestUser(t, prefix+"_mod1", "Moderator")
-	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
+	mod1ID := CreateTestUser(t, prefix+"_mod1", utils.SYSTEMROLE_MODERATOR)
+	mod2ID := CreateTestUser(t, prefix+"_mod2", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, mod1ID, groupID, "Moderator")
-	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	CreateTestMembership(t, mod1ID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, mod2ID, groupID, utils.ROLE_MODERATOR)
 
 	chatID := CreateTestChatRoom(t, mod1ID, &mod2ID, &groupID, "Mod2Mod")
 
@@ -3213,13 +3254,13 @@ func TestFetchUser2UserChatAsGroupMod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'Test msg', NOW(), 1, 0, 0)",
@@ -3244,18 +3285,18 @@ func TestFetchUser2UserChatDeniedNonMod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'Test msg', NOW(), 1, 0, 0)",
 		chatID, user1ID)
 
 	// Create a non-mod user on the same group.
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d?jwt=%s", chatID, otherToken), nil)
@@ -3271,10 +3312,10 @@ func TestGetChatNameUser2Mod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
 	// Create User2Mod chat room (member → group volunteers).
 	chatID := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
@@ -3329,8 +3370,8 @@ func TestPutChatRoomUser2Mod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, memberID)
 
 	payload := map[string]interface{}{
@@ -3380,12 +3421,12 @@ func TestPutChatRoomUser2ModModOpensMemberChat(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create a member and a moderator.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, memberToken := CreateTestSession(t, memberID)
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Step 1: Member creates a User2Mod chat with the group.
@@ -3437,11 +3478,11 @@ func TestPutChatRoomUser2ModModOpensMemberChatNotMod(t *testing.T) {
 
 	groupID := CreateTestGroup(t, prefix)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	// Non-mod sends userid — should be ignored, returns their own chat.
@@ -3474,7 +3515,7 @@ func TestPutChatRoomUser2ModAllowsNonMember(t *testing.T) {
 	prefix := uniquePrefix("putchat_u2m_nomem")
 
 	groupID := CreateTestGroup(t, prefix)
-	nonMemberID := CreateTestUser(t, prefix+"_nomem", "User")
+	nonMemberID := CreateTestUser(t, prefix+"_nomem", utils.SYSTEMROLE_USER)
 	// Deliberately NOT creating a membership.
 	_, token := CreateTestSession(t, nonMemberID)
 
@@ -3496,8 +3537,8 @@ func TestChatIconUsesProfileSetPath(t *testing.T) {
 	prefix := uniquePrefix("chaticon")
 
 	// Create two users.
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// Give user2 a profile image with a freegletusd- externaluid (the only kind now).
 	// This triggers the delivery-service URL path in ProfileSetPath.
@@ -3568,11 +3609,11 @@ func TestListForUserFindsUser2UserAsUser2(t *testing.T) {
 	prefix := uniquePrefix("ListU2U_u2")
 	db := database.DBConn
 
-	userA := CreateTestUser(t, prefix+"_userA", "User")
-	userB := CreateTestUser(t, prefix+"_userB", "User")
+	userA := CreateTestUser(t, prefix+"_userA", utils.SYSTEMROLE_USER)
+	userB := CreateTestUser(t, prefix+"_userB", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userA, groupID, "Member")
-	CreateTestMembership(t, userB, groupID, "Member")
+	CreateTestMembership(t, userA, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userB, groupID, utils.ROLE_MEMBER)
 
 	// User B creates a User2User chat with User A (B=user1, A=user2).
 	chatID := CreateTestChatRoom(t, userB, &userA, nil, "User2User")
@@ -3606,11 +3647,11 @@ func TestChatSearchReturnsSearchFlag(t *testing.T) {
 	prefix := uniquePrefix("SearchFlag")
 	db := database.DBConn
 
-	userA := CreateTestUser(t, prefix+"_userA", "User")
-	userB := CreateTestUser(t, prefix+"_userB", "User")
+	userA := CreateTestUser(t, prefix+"_userA", utils.SYSTEMROLE_USER)
+	userB := CreateTestUser(t, prefix+"_userB", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userA, groupID, "Member")
-	CreateTestMembership(t, userB, groupID, "Member")
+	CreateTestMembership(t, userA, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userB, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, userA, &userB, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'I have a wonderful xylophone for you', NOW(), 1, 0, 0)",
@@ -3647,12 +3688,12 @@ func TestGetOrCreateUser2ModChat(t *testing.T) {
 	prefix := uniquePrefix("U2MCreate")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
 	// First call should create.
 	chatID1, err := chat.GetOrCreateUser2ModChat(db, userID, groupID)
@@ -3686,17 +3727,17 @@ func TestGetOrCreateUser2ModChatAddsRosterForExistingChat(t *testing.T) {
 	prefix := uniquePrefix("U2MRoster")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_group")
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Create the chat before any mods exist on the group.
 	chatID1, err := chat.GetOrCreateUser2ModChat(db, userID, groupID)
 	assert.NoError(t, err)
 
 	// Now add a moderator and call again — should add them to roster.
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
 	chatID2, err := chat.GetOrCreateUser2ModChat(db, userID, groupID)
 	assert.NoError(t, err)
@@ -3720,9 +3761,9 @@ func TestUnseenCountExcludesOldMessages(t *testing.T) {
 	prefix := uniquePrefix("unseenOld")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// Create a User2User chat with a recent latestmessage so it appears in the list.
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -3779,9 +3820,9 @@ func TestCreateChatMessageReopensClosedChat(t *testing.T) {
 	prefix := uniquePrefix("chatreopn")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// Create a User2User chat.
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -3821,9 +3862,9 @@ func TestCreateChatMessageDoesNotReopenBlockedChat(t *testing.T) {
 	prefix := uniquePrefix("chatblkd")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// Create a User2User chat.
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -3858,12 +3899,12 @@ func TestCreateChatMessageReopensClosedUser2ModChat(t *testing.T) {
 	prefix := uniquePrefix("chatreomod")
 	db := database.DBConn
 
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modUserID)
 
-	userID := CreateTestUser(t, prefix+"_usr", "User")
+	userID := CreateTestUser(t, prefix+"_usr", utils.SYSTEMROLE_USER)
 
 	// Create a User2Mod chat.
 	chatID := CreateTestChatRoom(t, userID, nil, &groupID, "User2Mod")
@@ -3907,9 +3948,9 @@ func TestClosedChatHiddenFromUserChatList(t *testing.T) {
 	prefix := uniquePrefix("notifClosed")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'hello', NOW(), 0, 0, 1)",
@@ -3958,9 +3999,9 @@ func TestBlockedChatHiddenFromUserChatList(t *testing.T) {
 	prefix := uniquePrefix("notifBlocked")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'hello', NOW(), 0, 0, 1)",
@@ -3997,9 +4038,9 @@ func TestClosedChatVisibleWithIncludeClosed(t *testing.T) {
 	prefix := uniquePrefix("notifInclCl")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'hello', NOW(), 0, 0, 1)",
@@ -4050,9 +4091,9 @@ func TestOnlySenderClosedChatRecipientStillSees(t *testing.T) {
 	prefix := uniquePrefix("notifPerUser")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, user2Token := CreateTestSession(t, user2ID)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -4103,9 +4144,9 @@ func TestBothUsersClosedNeitherSeeChat(t *testing.T) {
 	prefix := uniquePrefix("notifBothCl")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, user2Token := CreateTestSession(t, user2ID)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -4159,9 +4200,9 @@ func TestNullRosterStatusShowsChat(t *testing.T) {
 	prefix := uniquePrefix("notifNull")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'hey', NOW(), 0, 0, 1)",
@@ -4197,13 +4238,13 @@ func TestUser2ModClosedByMemberHiddenFromMember(t *testing.T) {
 	prefix := uniquePrefix("notifU2MClosed")
 	db := database.DBConn
 
-	memberID := CreateTestUser(t, prefix+"_mbr", "User")
+	memberID := CreateTestUser(t, prefix+"_mbr", utils.SYSTEMROLE_USER)
 	_, memberToken := CreateTestSession(t, memberID)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, memberID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
 	chatID, err := chat.GetOrCreateUser2ModChat(db, memberID, groupID)
 	assert.NoError(t, err)
@@ -4257,13 +4298,13 @@ func TestMTUnseenCountExcludesClosedModChat(t *testing.T) {
 	prefix := uniquePrefix("notifMTClosed")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
-	memberID := CreateTestUser(t, prefix+"_mbr", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_mbr", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
 	chatID, err := chat.GetOrCreateUser2ModChat(db, memberID, groupID)
 	assert.NoError(t, err)
@@ -4312,9 +4353,9 @@ func TestClosedChatUnseenIsHiddenNotZeroed(t *testing.T) {
 	prefix := uniquePrefix("notifUnseenCl")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'message from u2', NOW(), 0, 0, 1)",
@@ -4394,10 +4435,10 @@ func TestGetChats_Success(t *testing.T) {
 // TestGetChats_UnseenFiltering tests that unseen message count respects the 31-day window.
 func TestGetChats_UnseenFiltering(t *testing.T) {
 	prefix := uniquePrefix("UnseenFilter")
-	user1ActualID := CreateTestUser(t, prefix+"_user1", "User")
+	user1ActualID := CreateTestUser(t, prefix+"_user1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ActualID)
 	user1ID := user1ActualID
-	user2ID := CreateTestUser(t, prefix+"_user2", "User")
+	user2ID := CreateTestUser(t, prefix+"_user2", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	// Create a User2User chat
@@ -4468,10 +4509,10 @@ func TestGetChats_Pagination(t *testing.T) {
 // TestGetChats_CompletedChats tests handling of completed/closed chats.
 func TestGetChats_CompletedChats(t *testing.T) {
 	prefix := uniquePrefix("Completed")
-	user1ActualID := CreateTestUser(t, prefix+"_user1", "User")
+	user1ActualID := CreateTestUser(t, prefix+"_user1", utils.SYSTEMROLE_USER)
 	_, user1Token := CreateTestSession(t, user1ActualID)
 	user1ID := user1ActualID
-	user2ID := CreateTestUser(t, prefix+"_user2", "User")
+	user2ID := CreateTestUser(t, prefix+"_user2", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	// Create a User2User chat
@@ -4539,7 +4580,7 @@ func TestGetChats_EdgeCases(t *testing.T) {
 	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode, "Invalid JWT should return 401")
 
 	// Test 3: Valid authentication returns 200 even with no chats
-	userActualID := CreateTestUser(t, prefix+"_user", "User")
+	userActualID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userActualID)
 	userID := userActualID
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+token, nil))
@@ -4555,7 +4596,7 @@ func TestGetChats_EdgeCases(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode, "Invalid since parameter should be handled gracefully")
 
 	// Test 5: Chat with deleted user
-	user2ID := CreateTestUser(t, prefix+"_user2", "User")
+	user2ID := CreateTestUser(t, prefix+"_user2", utils.SYSTEMROLE_USER)
 	CreateTestSession(t, user2ID)
 	chatID := CreateTestChatRoom(t, userID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'test', NOW(), 0, 0, 1)",
@@ -4595,8 +4636,8 @@ func TestGetChats_EdgeCases(t *testing.T) {
 func TestAllSeenOnlyAffectsCallerRoster(t *testing.T) {
 	prefix := uniquePrefix("allseen_iso")
 	db := database.DBConn
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, tokenU1 := CreateTestSession(t, user1ID)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -4635,8 +4676,8 @@ func TestAllSeenOnlyAffectsCallerRoster(t *testing.T) {
 func TestAllSeenIsolatedAcrossUsers(t *testing.T) {
 	prefix := uniquePrefix("allseen_xuser")
 	db := database.DBConn
-	userAID := CreateTestUser(t, prefix+"_a", "User")
-	userBID := CreateTestUser(t, prefix+"_b", "User")
+	userAID := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	userBID := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
 	_, tokenB := CreateTestSession(t, userBID)
 
 	chatID := CreateTestChatRoom(t, userAID, &userBID, nil, "User2User")
@@ -4678,10 +4719,10 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 	db := database.DBConn
 
 	// Create a fresh moderator with no pre-existing memberships.
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	// Member who will post messages into the mod's visible chats.
-	memberID := CreateTestUser(t, prefix+"_mbr", "User")
+	memberID := CreateTestUser(t, prefix+"_mbr", utils.SYSTEMROLE_USER)
 
 	// Create 100 groups and User2Mod chats that the moderator can see (via membership)
 	// but for which the moderator has NO chat_roster entry — simulating chats that
@@ -4690,8 +4731,8 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 	var chatIDs []uint64
 	for i := 0; i < numChats; i++ {
 		groupID := CreateTestGroup(t, fmt.Sprintf("%s_g%d", prefix, i))
-		CreateTestMembership(t, modID, groupID, "Moderator")
-		CreateTestMembership(t, memberID, groupID, "Member")
+		CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+		CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
 		// Insert the chat room without a roster entry for the moderator.
 		db.Exec(
@@ -4766,11 +4807,11 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 
 func TestCommonGroupsShared(t *testing.T) {
 	prefix := uniquePrefix("commongroups")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_g")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -4785,12 +4826,12 @@ func TestCommonGroupsShared(t *testing.T) {
 
 func TestCommonGroupsNone(t *testing.T) {
 	prefix := uniquePrefix("commongroupsnone")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	g1 := CreateTestGroup(t, prefix+"_g1")
 	g2 := CreateTestGroup(t, prefix+"_g2")
-	CreateTestMembership(t, user1ID, g1, "Member")
-	CreateTestMembership(t, user2ID, g2, "Member")
+	CreateTestMembership(t, user1ID, g1, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, g2, utils.ROLE_MEMBER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -4804,9 +4845,9 @@ func TestCommonGroupsNone(t *testing.T) {
 
 func TestCommonGroupsNotMember(t *testing.T) {
 	prefix := uniquePrefix("commongroupsnm")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	outsiderID := CreateTestUser(t, prefix+"_out", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	outsiderID := CreateTestUser(t, prefix+"_out", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, outsiderID)
 
@@ -4822,8 +4863,8 @@ func TestCommonGroupsNotMember(t *testing.T) {
 func TestReportNoGroup(t *testing.T) {
 	prefix := uniquePrefix("reportnogroup")
 	db := database.DBConn
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatMessage(t, chatid, user2ID, "Want a girlfriend?")
 	_, token := CreateTestSession(t, user1ID)
@@ -4844,11 +4885,11 @@ func TestReportNoGroup(t *testing.T) {
 
 func TestReportNoGroupRejectedWhenCommonGroup(t *testing.T) {
 	prefix := uniquePrefix("reportnogroupcg")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_g")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -4862,9 +4903,9 @@ func TestReportNoGroupRejectedWhenCommonGroup(t *testing.T) {
 
 func TestReportNoGroupNotMember(t *testing.T) {
 	prefix := uniquePrefix("reportnogroupnm")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	outsiderID := CreateTestUser(t, prefix+"_out", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	outsiderID := CreateTestUser(t, prefix+"_out", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, outsiderID)
 
@@ -4883,7 +4924,7 @@ func TestCommonGroupsNotLoggedIn(t *testing.T) {
 
 func TestCommonGroupsChatNotFound(t *testing.T) {
 	prefix := uniquePrefix("commongroupsnf")
-	uid := CreateTestUser(t, prefix+"_u", "User")
+	uid := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, uid)
 	resp, _ := getApp().Test(httptest.NewRequest("GET",
 		"/api/chat/999999999/commongroups?jwt="+token, nil))
@@ -4892,8 +4933,8 @@ func TestCommonGroupsChatNotFound(t *testing.T) {
 
 func TestReportNoGroupMissingReason(t *testing.T) {
 	prefix := uniquePrefix("reportnogroupmr")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -4907,7 +4948,7 @@ func TestReportNoGroupMissingReason(t *testing.T) {
 
 func TestReportNoGroupChatNotFound(t *testing.T) {
 	prefix := uniquePrefix("reportnogroupnf")
-	uid := CreateTestUser(t, prefix+"_u", "User")
+	uid := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, uid)
 
 	payload := map[string]interface{}{"id": 999999999, "action": "ReportNoGroup", "reason": "Spam"}
@@ -4947,8 +4988,8 @@ func newUnattachedChatImage(t *testing.T) uint64 {
 func TestCreateChatMessageImageLinksImage(t *testing.T) {
 	prefix := uniquePrefix("chatimg")
 	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	chatid := CreateTestChatRoom(t, modUserID, nil, &groupID, "User2Mod")
 	_, token := CreateTestSession(t, modUserID)
 	imageID := newUnattachedChatImage(t)
@@ -4966,8 +5007,8 @@ func TestCreateChatMessageImageLinksImage(t *testing.T) {
 func TestCreateChatMessageImageDoesNotExist(t *testing.T) {
 	prefix := uniquePrefix("chatimgmiss")
 	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	chatid := CreateTestChatRoom(t, modUserID, nil, &groupID, "User2Mod")
 	_, token := CreateTestSession(t, modUserID)
 
@@ -4987,8 +5028,8 @@ func TestCreateChatMessageImageDoesNotExist(t *testing.T) {
 func TestCreateChatMessageImageAlreadyUsed(t *testing.T) {
 	prefix := uniquePrefix("chatimgdup")
 	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	chatid := CreateTestChatRoom(t, modUserID, nil, &groupID, "User2Mod")
 	_, token := CreateTestSession(t, modUserID)
 	imageID := newUnattachedChatImage(t)
@@ -5017,8 +5058,8 @@ func TestCreateChatMessageImageAlreadyUsed(t *testing.T) {
 func TestCreateChatMessageImageConcurrentSendsOnlyOneWins(t *testing.T) {
 	prefix := uniquePrefix("chatimgrace")
 	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	chatid := CreateTestChatRoom(t, modUserID, nil, &groupID, "User2Mod")
 	_, token := CreateTestSession(t, modUserID)
 	imageID := newUnattachedChatImage(t)
@@ -5056,8 +5097,8 @@ func TestCreateChatMessageLoveJunkImageDoesNotExist(t *testing.T) {
 
 	prefix := uniquePrefix("ljimgmiss")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, "Test Offer Image", 55.9533, -3.1883)
 
 	ljuserid := uint64(time.Now().UnixNano())
@@ -5112,8 +5153,8 @@ func chatNameFor(t *testing.T, token string, chatID uint64) (listName string, on
 // that name next to a profile saying "A freegler" (Discourse 10173/52).
 func TestChatNameUsesTheSanitisedDisplayName(t *testing.T) {
 	prefix := uniquePrefix("ChatSanName")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	scamID := CreateTestUser(t, prefix+"_scam", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	scamID := CreateTestUser(t, prefix+"_scam", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("UPDATE users SET fullname = 'ilovefreegle', firstname = NULL, lastname = NULL WHERE id = ?", scamID)
 	chatID := CreateTestChatRoom(t, viewerID, &scamID, nil, "User2User")
@@ -5127,9 +5168,9 @@ func TestChatNameUsesTheSanitisedDisplayName(t *testing.T) {
 // An ordinary name and an exempt volunteer's name pass through unchanged.
 func TestChatNameKeepsOrdinaryAndExemptNames(t *testing.T) {
 	prefix := uniquePrefix("ChatKeepName")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	plainID := CreateTestUser(t, prefix+"_plain", "User")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	plainID := CreateTestUser(t, prefix+"_plain", utils.SYSTEMROLE_USER)
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	db := database.DBConn
 	db.Exec("UPDATE users SET fullname = 'Jo Bloggs' WHERE id = ?", plainID)
 	db.Exec("UPDATE users SET fullname = 'Freegle Support' WHERE id = ?", supportID)
@@ -5153,9 +5194,9 @@ func TestPostChatRoomMarkReadKeepsHiddenMod2Mod(t *testing.T) {
 	prefix := uniquePrefix("hide_m2m")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	chatid := CreateTestChatRoom(t, modID, nil, &groupID, "Mod2Mod")
 	msgid := CreateTestChatMessage(t, chatid, modID, "hello")
 	_, token := CreateTestSession(t, modID)

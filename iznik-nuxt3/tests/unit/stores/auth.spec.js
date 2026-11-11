@@ -16,6 +16,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useAuthStore } from '~/stores/auth.js'
 import { abortAllPendingRequests } from '~/api/BaseAPI'
 import { flowCalls, resetFlowCalls } from '../helpers/flowTelemetryMock'
+import { ROLE_MEMBER, ROLE_OWNER } from '~/constants'
 
 const mockLogin = vi.fn()
 const mockLogout = vi.fn()
@@ -149,7 +150,10 @@ const mockMiscStore = {
   modtools: false,
   source: null,
   setAppOutOfDate: mockSetAppOutOfDate,
-  marketingConsent: undefined,
+  marketingConsentTicked: false,
+  setMarketingConsentTicked(value) {
+    this.marketingConsentTicked = value
+  },
 }
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
@@ -192,7 +196,7 @@ describe('auth store', () => {
     Object.assign(mockMiscStore, {
       modtools: false,
       source: null,
-      marketingConsent: undefined,
+      marketingConsentTicked: false,
     })
     mockCompose.pendingSubmit = null
     store = useAuthStore()
@@ -1051,17 +1055,17 @@ describe('auth store', () => {
       store.setAuth('valid-jwt', 'valid-persistent')
       mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
 
-      await store.setGroup({ groupid: 5, role: 'Member' })
+      await store.setGroup({ groupid: 5, role: ROLE_MEMBER })
 
       expect(mockUpdateMembership).toHaveBeenCalledWith({
         groupid: 5,
-        role: 'Member',
+        role: ROLE_MEMBER,
       })
       expect(mockFetchv2).toHaveBeenCalled()
     })
 
     it('setGroup skips the refetch when nofetch is set', async () => {
-      await store.setGroup({ groupid: 5, role: 'Member' }, true)
+      await store.setGroup({ groupid: 5, role: ROLE_MEMBER }, true)
 
       expect(mockUpdateMembership).toHaveBeenCalled()
       expect(mockFetchv2).not.toHaveBeenCalled()
@@ -1265,10 +1269,11 @@ describe('auth store', () => {
     })
   })
 
-  describe('fetchUser marketing consent sync', () => {
-    it('syncs local marketing consent to the profile when it differs', async () => {
+  // The server holds marketing consent. The login box only ever gives it, and only when ticked.
+  describe('fetchUser marketing consent from the login box', () => {
+    it('saves consent when the member ticked the box, then clears the tick', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
-      mockMiscStore.marketingConsent = true
+      mockMiscStore.marketingConsentTicked = true
       mockFetchv2.mockResolvedValue({
         me: { id: 1, marketingconsent: false },
         groups: [],
@@ -1279,11 +1284,28 @@ describe('auth store', () => {
 
       expect(mockSave).toHaveBeenCalledWith({ marketingconsent: true })
       expect(store.user.marketingconsent).toBe(true)
+      expect(mockMiscStore.marketingConsentTicked).toBe(false)
     })
 
-    it('does not resync when local consent already matches the profile', async () => {
+    it('leaves the profile alone when the box was not ticked', async () => {
+      for (const marketingconsent of [false, true]) {
+        store.setAuth('valid-jwt', 'valid-persistent')
+        mockMiscStore.marketingConsentTicked = false
+        mockFetchv2.mockResolvedValue({
+          me: { id: 1, marketingconsent },
+          groups: [],
+        })
+
+        await store.fetchUser()
+
+        expect(mockSave).not.toHaveBeenCalled()
+        expect(store.user.marketingconsent).toBe(marketingconsent)
+      }
+    })
+
+    it('does not save when the member has already agreed, and clears the tick', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
-      mockMiscStore.marketingConsent = true
+      mockMiscStore.marketingConsentTicked = true
       mockFetchv2.mockResolvedValue({
         me: { id: 1, marketingconsent: true },
         groups: [],
@@ -1292,11 +1314,12 @@ describe('auth store', () => {
       await store.fetchUser()
 
       expect(mockSave).not.toHaveBeenCalled()
+      expect(mockMiscStore.marketingConsentTicked).toBe(false)
     })
 
-    it('survives the consent-sync save failing', async () => {
+    it('keeps the tick when the save fails, so the next fetch tries again', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
-      mockMiscStore.marketingConsent = true
+      mockMiscStore.marketingConsentTicked = true
       mockFetchv2.mockResolvedValue({
         me: { id: 1, marketingconsent: false },
         groups: [],
@@ -1305,6 +1328,7 @@ describe('auth store', () => {
 
       await expect(store.fetchUser()).resolves.toBeDefined()
       expect(store.user.id).toBe(1)
+      expect(mockMiscStore.marketingConsentTicked).toBe(true)
     })
   })
 
@@ -1392,15 +1416,15 @@ describe('auth store', () => {
   describe('member getter', () => {
     it('returns the role for a group the user belongs to', () => {
       store.user = { id: 1 }
-      store.groups = [{ groupid: 10, role: 'Owner' }]
+      store.groups = [{ groupid: 10, role: ROLE_OWNER }]
 
-      expect(store.member(10)).toBe('Owner')
-      expect(store.member('10')).toBe('Owner')
+      expect(store.member(10)).toBe(ROLE_OWNER)
+      expect(store.member('10')).toBe(ROLE_OWNER)
     })
 
     it('returns false when the user does not belong to the group', () => {
       store.user = { id: 1 }
-      store.groups = [{ groupid: 10, role: 'Owner' }]
+      store.groups = [{ groupid: 10, role: ROLE_OWNER }]
 
       expect(store.member(20)).toBe(false)
     })

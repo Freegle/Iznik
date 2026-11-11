@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import ModMemberReview from '~/modtools/components/ModMemberReview.vue'
+import { SYSTEMROLE_ADMIN, SYSTEMROLE_USER } from '~/constants'
 
 // Mock stores
 const mockUserStore = {
@@ -72,7 +73,7 @@ describe('ModMemberReview', () => {
     ],
     profile: { turl: 'https://example.com/profile.jpg' },
     lastaccess: dayjs().subtract(10, 'days').toISOString(),
-    systemrole: 'User',
+    systemrole: SYSTEMROLE_USER,
     reviewreason: null,
     activedistance: 10,
     bouncing: false,
@@ -240,14 +241,14 @@ describe('ModMemberReview', () => {
   describe('notices and warnings', () => {
     it('shows system role notice when not User', () => {
       const wrapper = mountComponent({
-        user: createUser({ systemrole: 'Admin' }),
+        user: createUser({ systemrole: SYSTEMROLE_ADMIN }),
       })
       expect(wrapper.text()).toContain('role: Admin')
     })
 
     it('hides system role notice when User', () => {
       const wrapper = mountComponent({
-        user: createUser({ systemrole: 'User' }),
+        user: createUser({ systemrole: SYSTEMROLE_USER }),
       })
       expect(wrapper.text()).not.toContain('role: User')
     })

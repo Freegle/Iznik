@@ -1,7 +1,7 @@
 <template>
   <span v-if="user">
     <v-icon
-      v-if="user.systemrole && user.systemrole !== 'User'"
+      v-if="user.systemrole && user.systemrole !== SYSTEMROLE_USER"
       icon="crown"
       class="text-warning"
       title="Mod"
@@ -24,6 +24,7 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { useUserStore } from '~/stores/user'
+import { SYSTEMROLE_USER } from '~/constants'
 
 const userStore = useUserStore()
 

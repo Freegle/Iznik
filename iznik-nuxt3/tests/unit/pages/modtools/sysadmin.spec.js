@@ -1,16 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import Sysadmin from '~/modtools/pages/sysadmin/index.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Controllable route query so deep-link (?tab=...) behaviour can be exercised.
 const mockRouteQuery = { value: {} }
 // The signed-in system role. Admin by default: SysAdmin is for Admin only.
-const mockRole = { value: 'Admin' }
+const mockRole = { value: SYSTEMROLE_ADMIN }
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    admin: mockRole.value === 'Admin',
-    supportOrAdmin: ['Support', 'Admin'].includes(mockRole.value),
+    admin: mockRole.value === SYSTEMROLE_ADMIN,
+    supportOrAdmin: [SYSTEMROLE_SUPPORT, SYSTEMROLE_ADMIN].includes(
+      mockRole.value
+    ),
   }),
 }))
 
@@ -65,7 +72,7 @@ describe('sysadmin page tab grouping', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockRouteQuery.value = {}
-    mockRole.value = 'Admin'
+    mockRole.value = SYSTEMROLE_ADMIN
     mockWork.value = { emailout: 0, emailin: 0 }
   })
 
@@ -304,7 +311,7 @@ describe('sysadmin page tab grouping', () => {
     expect(wrapper.find('.notice').exists()).toBe(false)
   })
 
-  it.each(['Support', 'User'])(
+  it.each([SYSTEMROLE_SUPPORT, SYSTEMROLE_USER])(
     'shows %s the notice and no tabs',
     async (role) => {
       mockRole.value = role

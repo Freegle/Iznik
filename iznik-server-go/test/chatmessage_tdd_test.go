@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,12 +23,12 @@ func TestGetChatMessages_ModSeesDeletedUserMessages(t *testing.T) {
 	prefix := uniquePrefix("modviewdel")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	victimID := CreateTestUser(t, prefix+"_victim", "User")
-	phisherID := CreateTestUser(t, prefix+"_phisher", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	victimID := CreateTestUser(t, prefix+"_victim", utils.SYSTEMROLE_USER)
+	phisherID := CreateTestUser(t, prefix+"_phisher", utils.SYSTEMROLE_USER)
 
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, victimID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, victimID, groupID, utils.ROLE_MEMBER)
 	// phisher has no membership (already unsubscribed)
 
 	// User2User chat: victim initiated, phisher replied with scam
@@ -90,10 +91,10 @@ func TestGetChatMessages_HeldReplyHiddenFromPoster(t *testing.T) {
 		"lat DOUBLE NULL, lng DOUBLE NULL, status VARCHAR(20) DEFAULT 'held', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, replierID, groupID, utils.ROLE_MEMBER)
 
 	// The original post (messages.id) that the chat is about — required by the FK on rippling_held_replies.msgid.
 	postMsgID := CreateTestMessage(t, posterID, groupID, "OFFER: Test item (heldreply)", 51.5, -0.1)

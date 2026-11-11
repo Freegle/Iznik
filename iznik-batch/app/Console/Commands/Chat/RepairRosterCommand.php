@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Chat;
 
+use App\Models\Membership;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -85,7 +86,7 @@ class RepairRosterCommand extends Command
             // Ensure group mods are in the roster.
             $modIds = DB::table('memberships')
                 ->where('groupid', $row->groupid)
-                ->whereIn('role', ['Owner', 'Moderator'])
+                ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
                 ->pluck('userid');
 
             foreach ($modIds as $modId) {

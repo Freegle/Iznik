@@ -41,7 +41,7 @@ func TestPostIsUnaddressedOnlyForATNPostOnAGroupNobodyChose(t *testing.T) {
 	prefix := uniquePrefix("mmapost")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	ordinary := CreateTestMessage(t, poster, group, "OFFER: ordinary "+prefix, 51.5, -0.1)
 	assert.False(t, modmessaging.PostIsUnaddressed(db, ordinary),
@@ -88,7 +88,7 @@ func TestModsMayContactATrashNothingMemberOnlyThroughAMembershipTheyChose(t *tes
 	other := CreateTestGroup(t, prefix+"_c")
 
 	// The mixed poster: chose A, placed on B, with an addressed post on A.
-	tn := CreateTestUser(t, prefix+"_tn", "User")
+	tn := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
 	makeTrashNothing(tn)
 	CreateTestMembership(t, tn, chosen, utils.ROLE_MEMBER)
 	CreateTestMembership(t, tn, placed, utils.ROLE_MEMBER)
@@ -116,13 +116,13 @@ func TestModsMayContactATrashNothingMemberOnlyThroughAMembershipTheyChose(t *tes
 	assert.False(t, modmessaging.ModsMayContact(db, tn, chosen), "a TN member who has left can't be contacted")
 
 	// A TrashNothing address as the preferred email counts as a TN member too.
-	byEmail := CreateTestUser(t, prefix+"_tnemail", "User")
+	byEmail := CreateTestUser(t, prefix+"_tnemail", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", byEmail)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", byEmail, prefix+"-g1@user.trashnothing.com")
 	assert.False(t, modmessaging.ModsMayContact(db, byEmail, chosen))
 
 	// Anyone else is unaffected, member or not.
-	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
+	ordinary := CreateTestUser(t, prefix+"_ordinary", utils.SYSTEMROLE_USER)
 	assert.True(t, modmessaging.ModsMayContact(db, ordinary, chosen))
 	assert.True(t, modmessaging.ModsMayContact(db, 0, chosen), "no user id is not restricted")
 
@@ -148,7 +148,7 @@ func TestRemoveUnaddressedPostTakesItOffEveryGroupAndAudits(t *testing.T) {
 	db := database.DBConn
 	origin := CreateTestGroup(t, prefix+"_o")
 	rippled := CreateTestGroup(t, prefix+"_r")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msg := CreateTestMessage(t, poster, origin, "OFFER: remove "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
 	addRippledCopy(msg, rippled)
@@ -182,7 +182,7 @@ func TestRemoveUnaddressedPostIsIdempotentAndIgnoresAMissingId(t *testing.T) {
 	prefix := uniquePrefix("mmanoop")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msg := CreateTestMessage(t, poster, group, "OFFER: twice "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
 
@@ -208,9 +208,9 @@ func TestReportsRemoveAnUnaddressedPostAtQuorumInsteadOfPendingIt(t *testing.T) 
 	prefix := uniquePrefix("mmaq")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	first := CreateTestUser(t, prefix+"_r1", "User")
-	second := CreateTestUser(t, prefix+"_r2", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	first := CreateTestUser(t, prefix+"_r1", utils.SYSTEMROLE_USER)
+	second := CreateTestUser(t, prefix+"_r2", utils.SYSTEMROLE_USER)
 	msg := CreateTestMessage(t, poster, group, "OFFER: quorum "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
 	addReachRow(msg, "expanding")
@@ -240,9 +240,9 @@ func TestOneModsReportDoesNotRemoveAnUnaddressedPost(t *testing.T) {
 	prefix := uniquePrefix("mmamod")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	msg := CreateTestMessage(t, poster, group, "OFFER: modreport "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
 
@@ -259,9 +259,9 @@ func TestOrdinaryPostStillGoesToPendingAtQuorum(t *testing.T) {
 	prefix := uniquePrefix("mmaord")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	first := CreateTestUser(t, prefix+"_r1", "User")
-	second := CreateTestUser(t, prefix+"_r2", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	first := CreateTestUser(t, prefix+"_r1", utils.SYSTEMROLE_USER)
+	second := CreateTestUser(t, prefix+"_r2", utils.SYSTEMROLE_USER)
 	msg := CreateTestMessage(t, poster, group, "OFFER: ordinaryq "+prefix, 51.5, -0.1)
 
 	microvolunteering.RecordReportVerdict(db, first, msg, group, "spam")
@@ -291,8 +291,8 @@ func TestReportActionRecordsAVerdictWithoutTellingAnyModerator(t *testing.T) {
 	prefix := uniquePrefix("mmarep")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	reporter := CreateTestUser(t, prefix+"_reporter", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	reporter := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, reporter)
 	msg := CreateTestMessage(t, poster, group, "OFFER: reportaction "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
@@ -320,8 +320,8 @@ func TestReportActionRecordsAVerdictWithoutTellingAnyModerator(t *testing.T) {
 func TestReportActionRefusesAnOrdinaryPost(t *testing.T) {
 	prefix := uniquePrefix("mmarepord")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	reporter := CreateTestUser(t, prefix+"_reporter", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	reporter := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, reporter)
 	msg := CreateTestMessage(t, poster, group, "OFFER: reportord "+prefix, 51.5, -0.1)
 
@@ -338,9 +338,9 @@ func TestLegacyReportRouteWritesNoChatMessage(t *testing.T) {
 	prefix := uniquePrefix("mmaleg")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	reporter := CreateTestUser(t, prefix+"_reporter", "User")
-	CreateTestMembership(t, reporter, group, "Member")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	reporter := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, reporter, group, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, reporter)
 	msg := CreateTestMessage(t, poster, group, "OFFER: legacyreport "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
@@ -370,9 +370,9 @@ func TestLegacyReportRouteWritesNoChatMessage(t *testing.T) {
 func TestModeratorCannotReplyToOrEditAnUnaddressedPost(t *testing.T) {
 	prefix := uniquePrefix("mmaguard")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	msg := CreateTestMessage(t, poster, group, "OFFER: guard "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
@@ -413,26 +413,14 @@ func putUser2ModChat(t *testing.T, token string, groupid uint64, userid uint64) 
 	return resp.StatusCode, out.ID
 }
 
-func chatModsClosed(t *testing.T, token string, chatid uint64) bool {
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d?jwt=%s", chatid, token), nil)
-	resp, err := getApp().Test(req, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
-	var out struct {
-		Modsclosed bool `json:"modsclosed"`
-	}
-	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	return out.Modsclosed
-}
-
 func TestModeratorCannotOpenAChatToATrashNothingPlacement(t *testing.T) {
 	prefix := uniquePrefix("mmachat")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	makeTrashNothing(poster)
 	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
 	makePlacement(poster, group)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 
@@ -445,61 +433,45 @@ func TestModeratorCannotOpenAChatToATrashNothingPlacement(t *testing.T) {
 	assert.Equal(t, 200, status, "a TN member who chose this community can be chatted to")
 
 	// Someone who is not a TN member is unaffected, even with no membership.
-	stranger := CreateTestUser(t, prefix+"_stranger", "User")
+	stranger := CreateTestUser(t, prefix+"_stranger", utils.SYSTEMROLE_USER)
 	status, _ = putUser2ModChat(t, modToken, group, stranger)
 	assert.Equal(t, 200, status)
 }
 
-// The chat from before a TN member left closes to the community's moderators: they can
-// still open and read it, but not write in it, so an old chat can't get round the rule.
-// The member can still write in it.
-func TestAChatClosesToModeratorsWhenATrashNothingMemberLeaves(t *testing.T) {
-	prefix := uniquePrefix("mmaclosed")
+// A chat the member opened stays open to the community's moderators after a TrashNothing
+// member leaves a community they never chose: a chat that was opened to a moderator can
+// always be answered, and the member can still write too.
+func TestAModeratorCanAnswerAChatTheMemberOpenedAfterTheyLeave(t *testing.T) {
+	prefix := uniquePrefix("mmaopened")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	makeTrashNothing(poster)
 	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
 	_, posterToken := CreateTestSession(t, poster)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 
-	status, chatid := putUser2ModChat(t, modToken, group, poster)
+	// The member opens the chat themselves, as Contact does.
+	status, chatid := putUser2ModChat(t, posterToken, group, 0)
 	assert.Equal(t, 200, status)
 	assert.NotZero(t, chatid)
-	assert.Equal(t, 200, postChatMessageAs(t, modToken, chatid, "Hello from your volunteers "+prefix))
-
-	assert.False(t, chatModsClosed(t, modToken, chatid), "open while they are a member")
 
 	leaveGroup(poster, group)
 
-	assert.True(t, chatModsClosed(t, modToken, chatid), "ModTools is told the chat is closed")
-	assert.False(t, chatModsClosed(t, posterToken, chatid), "the member is not")
-
-	status, again := putUser2ModChat(t, modToken, group, poster)
-	assert.Equal(t, 200, status, "the existing chat is still handed back, so it can be read")
-	assert.Equal(t, chatid, again)
-	assert.Equal(t, 403, postChatMessageAs(t, modToken, chatid, "Are you still there? "+prefix),
-		"a moderator can't write in the old chat")
-	assert.Equal(t, 200, postChatMessageAs(t, posterToken, chatid, "I left, but here is a question "+prefix),
-		"the member can still write to the volunteers")
-
-	// The same for a non-TN member who leaves: nothing changes for them.
-	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
-	CreateTestMembership(t, ordinary, group, utils.ROLE_MEMBER)
-	status, ordChat := putUser2ModChat(t, modToken, group, ordinary)
-	assert.Equal(t, 200, status)
-	leaveGroup(ordinary, group)
-	assert.Equal(t, 200, postChatMessageAs(t, modToken, ordChat, "Still reachable "+prefix))
+	assert.Equal(t, 200, postChatMessageAs(t, modToken, chatid, "Hello from your volunteers "+prefix),
+		"the moderators can answer a chat that was opened to them")
+	assert.Equal(t, 200, postChatMessageAs(t, posterToken, chatid, "Thanks "+prefix),
+		"the member can still write")
 }
 
 func TestModeratorCannotMailATrashNothingMemberWhoLeft(t *testing.T) {
 	prefix := uniquePrefix("mmamail")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	makeTrashNothing(poster)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 
@@ -538,10 +510,10 @@ func TestModeratorCannotMailATrashNothingMemberWhoLeft(t *testing.T) {
 func TestModeratorCannotReplyAboutAPostToATrashNothingPosterWhoLeft(t *testing.T) {
 	prefix := uniquePrefix("mmareply")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	makeTrashNothing(poster)
 	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	msg := CreateTestMessage(t, poster, group, "OFFER: reply "+prefix, 51.5, -0.1)
@@ -582,22 +554,22 @@ func TestModeratorCannotReplyAboutAPostToATrashNothingPosterWhoLeft(t *testing.T
 func TestMembersListSaysWhoCannotBeContacted(t *testing.T) {
 	prefix := uniquePrefix("mmalist")
 	group := CreateTestGroup(t, prefix)
-	tnOnly := CreateTestUser(t, prefix+"_tnonly", "User")
+	tnOnly := CreateTestUser(t, prefix+"_tnonly", utils.SYSTEMROLE_USER)
 	makeTrashNothing(tnOnly)
 	CreateTestMembership(t, tnOnly, group, utils.ROLE_MEMBER)
 	makePlacement(tnOnly, group)
 	makeUnaddressed(CreateTestMessage(t, tnOnly, group, "OFFER: listtn "+prefix, 51.5, -0.1))
 
 	// A TN member who chose this community is an ordinary member here, whatever else.
-	tnChose := CreateTestUser(t, prefix+"_tnchose", "User")
+	tnChose := CreateTestUser(t, prefix+"_tnchose", utils.SYSTEMROLE_USER)
 	makeTrashNothing(tnChose)
 	CreateTestMembership(t, tnChose, group, utils.ROLE_MEMBER)
 
-	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
+	ordinary := CreateTestUser(t, prefix+"_ordinary", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, ordinary, group, utils.ROLE_MEMBER)
 	CreateTestMessage(t, ordinary, group, "OFFER: listord "+prefix, 51.5, -0.1)
 
-	mod := CreateTestUser(t, prefix+"_mod", "User")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 
@@ -630,9 +602,9 @@ func TestMembersListSaysWhoCannotBeContacted(t *testing.T) {
 func TestMessagePayloadSaysWhenAPostCannotBeRepliedTo(t *testing.T) {
 	prefix := uniquePrefix("mmapayload")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	msg := CreateTestMessage(t, poster, group, "OFFER: payload "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
@@ -657,8 +629,8 @@ func TestMessagePayloadSaysWhenAPostCannotBeRepliedTo(t *testing.T) {
 func TestReportActionRefusesAnonymousAndUnidentifiedReports(t *testing.T) {
 	prefix := uniquePrefix("mmarepguard")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	reporter := CreateTestUser(t, prefix+"_reporter", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	reporter := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, reporter)
 	msg := CreateTestMessage(t, poster, group, "OFFER: repguard "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
@@ -681,13 +653,13 @@ func TestMicrovolunteeringRejectQuorumRemovesAnUnaddressedPost(t *testing.T) {
 	prefix := uniquePrefix("mmamicro")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msg := CreateTestMessage(t, poster, group, "OFFER: micro "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
 
 	for i := 0; i < microvolunteering.ApprovalQuorum; i++ {
-		volunteer := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), "User")
-		CreateTestMembership(t, volunteer, group, "Member")
+		volunteer := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), utils.SYSTEMROLE_USER)
+		CreateTestMembership(t, volunteer, group, utils.ROLE_MEMBER)
 		_, token := CreateTestSession(t, volunteer)
 
 		body, _ := json.Marshal(map[string]interface{}{
@@ -716,22 +688,21 @@ func TestSupportMayContactATrashNothingMemberAnyCommunity(t *testing.T) {
 	prefix := uniquePrefix("mmasupport")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	makeTrashNothing(poster)
 	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
 	makePlacement(poster, group)
 
-	support := CreateTestUser(t, prefix+"_support", "User")
+	support := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, support)
 	_, supportToken := CreateTestSession(t, support)
 
 	assert.True(t, modmessaging.MayContact(db, support, poster, group))
-	assert.False(t, modmessaging.MayContact(db, CreateTestUser(t, prefix+"_other", "User"), poster, group))
+	assert.False(t, modmessaging.MayContact(db, CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER), poster, group))
 
 	status, chatid := putUser2ModChat(t, supportToken, group, poster)
 	assert.Equal(t, 200, status, "Support can start a chat with a placed TN member")
 	assert.Equal(t, 200, postChatMessageAs(t, supportToken, chatid, "From Support "+prefix))
-	assert.False(t, chatModsClosed(t, supportToken, chatid), "and ModTools shows them the reply box")
 }
 
 // A moderator adding a note to a chat between two members speaks for no one community, so
@@ -742,12 +713,12 @@ func TestChatReviewNoteToATrashNothingMemberNeedsACommunityTheyChose(t *testing.
 	chosen := CreateTestGroup(t, prefix+"_a")
 	placed := CreateTestGroup(t, prefix+"_b")
 
-	tn := CreateTestUser(t, prefix+"_tn", "User")
+	tn := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
 	makeTrashNothing(tn)
 	CreateTestMembership(t, tn, chosen, utils.ROLE_MEMBER)
 	CreateTestMembership(t, tn, placed, utils.ROLE_MEMBER)
 	makePlacement(tn, placed)
-	other := CreateTestUser(t, prefix+"_other", "User")
+	other := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, other, placed, utils.ROLE_MEMBER)
 	chatid := CreateTestChatRoom(t, tn, &other, nil, utils.CHAT_TYPE_USER2USER)
 
@@ -760,12 +731,12 @@ func TestChatReviewNoteToATrashNothingMemberNeedsACommunityTheyChose(t *testing.
 		return resp.StatusCode
 	}
 
-	placedMod := CreateTestUser(t, prefix+"_bmod", "User")
+	placedMod := CreateTestUser(t, prefix+"_bmod", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, placedMod, placed, utils.ROLE_MODERATOR)
 	_, placedToken := CreateTestSession(t, placedMod)
 	assert.Equal(t, 403, note(placedToken), "the placement community's moderators can't")
 
-	chosenMod := CreateTestUser(t, prefix+"_amod", "User")
+	chosenMod := CreateTestUser(t, prefix+"_amod", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, chosenMod, chosen, utils.ROLE_MODERATOR)
 	_, chosenToken := CreateTestSession(t, chosenMod)
 	assert.Equal(t, 200, note(chosenToken), "the chosen community's moderators can")
@@ -781,14 +752,14 @@ func TestRemovingATrashNothingMemberStillSendsTheNote(t *testing.T) {
 	prefix := uniquePrefix("mmaremove")
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
-	member := CreateTestUser(t, prefix+"_member", "User")
+	member := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	makeTrashNothing(member)
 	CreateTestMembership(t, member, group, utils.ROLE_MEMBER)
-	placed := CreateTestUser(t, prefix+"_placed", "User")
+	placed := CreateTestUser(t, prefix+"_placed", utils.SYSTEMROLE_USER)
 	makeTrashNothing(placed)
 	CreateTestMembership(t, placed, group, utils.ROLE_MEMBER)
 	makePlacement(placed, group)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 

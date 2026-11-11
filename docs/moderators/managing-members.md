@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -12,6 +12,8 @@ covers:
   - iznik-nuxt3/modtools/stores/spammer.js
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
   - iznik-nuxt3/modtools/components/ModSupportUser.vue
+  - iznik-nuxt3/modtools/components/ModChatFooter.vue
+  - iznik-nuxt3/modtools/pages/support/cases/[[id]].vue
   - iznik-batch/app/Services/ChatProcessService.php
   - iznik-batch/app/Console/Commands/User/DetectRelatedAccountsCommand.php
   # cross-stack behaviour tests (change when the behaviour changes)
@@ -180,9 +182,8 @@ Some chats are held because a post has not yet rippled out to the member who rep
 Those release automatically; you do not need to do anything. See
 [./rippling-out.md](./rippling-out.md).
 
-When the photo on an OFFER suggests the item is damaged, or needs a car or van to collect,
-Freegle may ask the person replying whether they still want it before their reply is passed
-on. While this is being tested, only some people are asked. Only they see the question until
+When someone replies to an OFFER of a child car seat, Freegle asks them what to check and
+whether they still want it before their reply is passed on. Only they see the question until
 they answer. After a Yes the person offering sees the question and the answer with the reply.
 A reply they said no to, or never answered within three days, is not delivered, and the message
 shows why when you look at it. If their reply is held for your review, the question is held
@@ -265,11 +266,11 @@ anything on yours.
 
 ### Contacting Trash Nothing members
 
-- **Only while they're a member.** Once a Trash Nothing member leaves your community, you can't
-  contact them any more, even in a chat you had with them before. You can still open and read
-  that chat; ModTools says it is closed and doesn't offer a reply box. They can still write to
-  you. A **Chat** button for a Trash Nothing member you can't contact says so instead of opening
-  a chat.
+- **A chat they opened stays open to you.** If a Trash Nothing member writes to your volunteers,
+  by email or with the Contact button, that chat is open to every moderator on your community,
+  and you can reply in it even after they leave. A new chat is different: once a Trash Nothing
+  member leaves, you can't start one with them. A **Chat** button for a Trash Nothing member you
+  can't contact says so instead of opening a chat.
 - **The same goes for notes in chat review.** You can add a note to a chat between two members
   only if any Trash Nothing member in it has chosen a community you moderate.
 - **Removing them still sends your message.** If you remove a Trash Nothing member of your
@@ -286,6 +287,29 @@ anything on yours.
   community is in your member list, and you can ban them or hold their chat as for anyone.
   Replying doesn't change a placement, though: only choosing your community on Trash Nothing
   does.
+
+## Refer a chat to Support
+
+If a chat needs more help than you can give, refer it to Support.
+
+1. Open the member's chat and press **Refer to Support**.
+2. If you like, say what you need help with in the box. It is optional, but it helps.
+3. Confirm. You will see a link to your case.
+
+Support will look at the chat and reply in the case. You also get an email to say there is a reply. Open
+the case from the link and reply there. Replying to the email does not reach Support.
+
+The case shows its status, what you asked and the replies. Support's own notes, including the AI's, are
+for Support only, and you will not see them. Nothing is sent to the member. If they need to be told
+something, Support will tell you and you can tell them.
+
+If you refer the same chat again while the case is open, your new note is added to the same case.
+
+For Support volunteers: referred chats are on the **Cases** tab of Support Tools. The red number on the
+Support menu item and on that tab is the cases waiting for a reply from Support. A case stops counting
+when Support replies, and counts again if the moderator writes back. When the AI helper has written a
+reply, it is already in the reply box, marked as a suggestion: check it, change what you need, then send.
+It goes to the moderator, not the member.
 
 ## Banning and removing
 
@@ -309,8 +333,8 @@ neighbour. It does **not**
 stop them writing to your volunteers, by email or with the Contact button on your community
 page, and that is deliberate: it is how someone appeals a ban. Their message arrives in
 their chat with your volunteers, which every moderator on the community can see. A Trash
-Nothing member you have banned is no longer a member, so you can read what they send but
-can't reply in that chat.
+Nothing member you have banned is no longer a member, but a chat they opened stays open to
+you, so you can read it and reply in it.
 
 The **spammer list** is the stronger measure. Someone on it is banned everywhere, and
 nothing they send reaches us at all: their email is dropped, the volunteers address

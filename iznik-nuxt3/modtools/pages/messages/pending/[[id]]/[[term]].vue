@@ -105,6 +105,7 @@ import { useMessageStore } from '@/stores/message'
 import { useMiscStore } from '@/stores/misc'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
+import { ROLE_OWNER } from '~/constants'
 
 const authStore = useAuthStore()
 const messageStore = useMessageStore()
@@ -245,7 +246,7 @@ const rulesGroup = computed(() => {
 
     if (
       groupItem.type === 'Freegle' &&
-      mygroup?.role === 'Owner' &&
+      mygroup?.role === ROLE_OWNER &&
       groupItem.publish &&
       (!groupItem.rules || (missingRules && missingRules.length))
     ) {

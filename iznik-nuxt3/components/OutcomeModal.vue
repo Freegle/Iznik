@@ -249,6 +249,7 @@ import { useAuthStore } from '~/stores/auth'
 import NoticeMessage from '~/components/NoticeMessage'
 import { useOurModal } from '~/composables/useOurModal'
 import { FlowName, useFlowTelemetry } from '~/composables/useFlowTelemetry'
+import { isAutoSplit, isClearance } from '~/composables/useAutoSplit'
 
 // Unique per instance so label/for pairs never clash when the component renders twice.
 const formId = useId()
@@ -301,12 +302,15 @@ const message = computed(() => {
 // Bulk clearance offers still count items out one by one. Ordinary posts do
 // not: we ask who took some and whether any are left, and never make the
 // member reconcile numbers.
-const isBulk = computed(() => (message.value?.bulkcount ?? 0) > 0)
+const isBulk = computed(() => isClearance(message.value))
 
+// An automatically split post is marked taken like an ordinary one, but is not asked
+// whether any are left: its items are marked TAKEN one by one in My Posts.
 const showSplitChoice = computed(
   () =>
     props.type === 'Taken' &&
     !isBulk.value &&
+    !isAutoSplit(message.value) &&
     message.value.availableinitially > 1
 )
 

@@ -301,6 +301,29 @@ describe('ChatMessageInterested', () => {
     })
   })
 
+  describe('replies to posts with an item list', () => {
+    it('treats a reply to a clearance as an interest in its items', () => {
+      mockMessageStore.byId.mockReturnValue({
+        id: 50,
+        type: 'Offer',
+        bulkcount: 2,
+        bulkitems: [{}, {}],
+      })
+      expect(createWrapper().vm.isBulk).toBe(true)
+    })
+
+    it('shows a reply to an automatically split post as written', () => {
+      mockMessageStore.byId.mockReturnValue({
+        id: 50,
+        type: 'Offer',
+        bulkcount: 2,
+        bulkitems: [{}, {}],
+        autosplit: true,
+      })
+      expect(createWrapper().vm.isBulk).toBe(false)
+    })
+  })
+
   describe('promise/outcome buttons for offers', () => {
     beforeEach(() => {
       mockChatmessage.value.userid = 2

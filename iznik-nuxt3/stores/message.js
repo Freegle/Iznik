@@ -12,6 +12,7 @@ import {
   prewarmRoadDistances,
   roadAnswersVersion,
 } from '~/composables/useDriveDistance'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
@@ -429,6 +430,22 @@ export const useMessageStore = defineStore('message', {
       )
       const message = await this.fetch(id, true)
       this.list[id] = message
+      return data
+    },
+    // Owner/mod: mark one item TAKEN or undo that, then refetch.
+    async bulkItemAvailable(id, bulkitemid, available) {
+      const data = await api(this.config).message.bulkItemAvailable(
+        id,
+        bulkitemid,
+        available
+      )
+      this.list[id] = await this.fetch(id, true)
+      return data
+    },
+    // Owner/mod: undo an automatic split, then refetch.
+    async autoSplitUndo(id) {
+      const data = await api(this.config).message.autoSplitUndo(id)
+      this.list[id] = await this.fetch(id, true)
       return data
     },
     // Offerer/mod: change the state of one interest row, then refetch.
@@ -861,7 +878,7 @@ export const useMessageStore = defineStore('message', {
       const authStore = useAuthStore()
       const moderates = (g) =>
         typeof authStore?.member !== 'function' ||
-        ['Moderator', 'Owner'].includes(authStore.member(g.groupid))
+        [ROLE_MODERATOR, ROLE_OWNER].includes(authStore.member(g.groupid))
       const myid = parseInt(authStore?.user?.id)
       const leftAlone = (g) => {
         if (!severalCommunities) return false

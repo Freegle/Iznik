@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import QrPage from '~/pages/qr.vue'
 import { createFreegleQr } from '~/composables/useFreegleQr'
+import { SYSTEMROLE_MODERATOR, SYSTEMROLE_USER } from '~/constants'
 
 // useMe drives the access gate: `mod` is true for Moderator/Support/Admin.
 const mockMe = ref(null)
@@ -60,7 +61,7 @@ describe('qr page access gate', () => {
   })
 
   it('shows the generator to a mod (or above)', async () => {
-    mockMe.value = { id: 1, systemrole: 'Moderator' }
+    mockMe.value = { id: 1, systemrole: SYSTEMROLE_MODERATOR }
     mockMod.value = true
 
     const wrapper = mountPage()
@@ -72,7 +73,7 @@ describe('qr page access gate', () => {
   })
 
   it('blocks a logged-in non-mod with a volunteers-only message', () => {
-    mockMe.value = { id: 2, systemrole: 'User' }
+    mockMe.value = { id: 2, systemrole: SYSTEMROLE_USER }
     mockMod.value = false
 
     const wrapper = mountPage()
@@ -96,7 +97,7 @@ describe('qr page access gate', () => {
   })
 
   it('does not build a QR code for a non-mod', () => {
-    mockMe.value = { id: 3, systemrole: 'User' }
+    mockMe.value = { id: 3, systemrole: SYSTEMROLE_USER }
     mockMod.value = false
 
     mountPage()

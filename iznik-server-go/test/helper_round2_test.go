@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -134,7 +135,7 @@ func TestGetHelperEscalatedListsAcrossClearances(t *testing.T) {
 	assert.True(t, found, "the escalated replier should appear in the queue")
 
 	// A user without the Clearance permission is forbidden.
-	strangerToken := getToken(t, CreateTestUser(t, uniquePrefix("helpescqstranger"), "User"))
+	strangerToken := getToken(t, CreateTestUser(t, uniquePrefix("helpescqstranger"), utils.SYSTEMROLE_USER))
 	resp, err = getApp().Test(httptest.NewRequest("GET", "/api/helper/escalated?jwt="+strangerToken, nil), 10000)
 	require.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode)

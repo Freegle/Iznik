@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\ClearanceSql;
 use App\Models\BackgroundTask;
 use App\Models\Message;
 use App\Models\MessageGroup;
@@ -587,9 +588,9 @@ class ContentCheckService
                             'contentcheck_reasons'    => null,
                         ], $refreshArrival ? ['arrival' => now()] : []));
 
-                    // Clearance/bulk-offer posts are excluded from freebiealerts.app.
-                    if ($row->msgtype === Message::TYPE_OFFER &&
-                        !DB::table('messages_bulk_items')->where('msgid', $row->msgid)->exists()) {
+                    // Clearances are excluded from freebiealerts.app; an automatically split
+                    // post is an ordinary Offer and is not.
+                    if ($row->msgtype === Message::TYPE_OFFER && !ClearanceSql::isClearance((int) $row->msgid)) {
                         DB::table('background_tasks')->insert([
                             'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
                             'data'      => json_encode(['msgid' => (int) $row->msgid]),
@@ -781,8 +782,8 @@ class ContentCheckService
             // No membership row at all. On every Freegle-native path a post only exists
             // because a member posted to their own group, so a missing membership is
             // unexpected and stays moderated. A TrashNothing API post is different by
-            // design: GroupPostIngestionService places it on the group its coordinates
-            // resolve to (Location::groupsNear()), not one the poster chose, so the
+            // design: when the poster chose no community on TN, it goes on the group its
+            // coordinates resolve to (Location::groupsNear()), so the
             // poster frequently isn't a member and ingestion falls back to the same
             // 'DEFAULT' a brand-new member gets. Calling that moderated would strand
             // every non-member TN post in the mod queue, because these posts now arrive

@@ -1,15 +1,6 @@
 <template>
   <div class="cont bg-white">
     <div>
-      <notice-message
-        v-if="chat?.modsclosed && !otheruser?.deleted"
-        variant="info"
-        class="mb-2"
-        data-test="chat-mods-closed"
-      >
-        This Trash Nothing member isn't in this community any more, so you can
-        read this chat but you can't reply.
-      </notice-message>
       <notice-message v-if="otheruser?.deleted" variant="info" class="mb-2">
         This member has deleted their account, so you can't chat to them.
       </notice-message>
@@ -69,7 +60,7 @@
           <v-icon icon="times-circle" scale="1.5" />
         </b-button>
       </div>
-      <div v-if="!otheruser?.deleted && !chat?.modsclosed">
+      <div v-if="!otheruser?.deleted">
         <div v-if="uploading" class="bg-white">
           <OurUploader
             v-model="currentAtts"
@@ -217,7 +208,6 @@
           </b-button>
         </span>
         <SpinButton
-          v-if="!chat?.modsclosed"
           size="md"
           variant="primary"
           class="float-end ms-2 me-2"
@@ -229,7 +219,6 @@
           @handle="send"
         />
         <b-button
-          v-if="!chat?.modsclosed"
           v-b-tooltip="'Upload a photo'"
           variant="secondary"
           class="float-end"
@@ -352,7 +341,7 @@
           />
           <div class="mobtext text--smallest">Nudge</div>
         </div>
-        <div v-if="!chat?.modsclosed" class="" @click="photoAdd">
+        <div class="" @click="photoAdd">
           <v-icon
             scale="2"
             icon="camera"
@@ -362,7 +351,6 @@
           <div class="mobtext text--smallest">Photo</div>
         </div>
         <SpinButton
-          v-if="!chat?.modsclosed"
           variant="primary"
           size="md"
           label="Send"
@@ -420,8 +408,15 @@
       class="mt-1"
       data-test="refer-sent"
     >
-      Referred to Support. They will look at the chat and get back to you by
-      email.
+      Referred to Support. They will look at the chat and get back to you here
+      and by email.
+      <nuxt-link
+        v-if="referCaseId"
+        :to="'/support/cases/' + referCaseId"
+        data-test="refer-case-link"
+      >
+        See the case
+      </nuxt-link>
     </NoticeMessage>
     <NoticeMessage
       v-else-if="referResult === 'failed'"
@@ -435,10 +430,24 @@
     <ConfirmModal
       v-if="showConfirmModal"
       title="Refer this chat to Support?"
-      message="The Support volunteers will have a look at the chat and get back to you by email."
       @confirm="referToSupport"
       @hidden="showConfirmModal = false"
-    />
+    >
+      <p>
+        The Support volunteers will have a look at the chat and get back to you.
+      </p>
+      <label for="refer-reason" class="form-label">
+        What do you need help with? (optional)
+      </label>
+      <b-form-textarea
+        id="refer-reason"
+        v-model="referReason"
+        rows="3"
+        maxlength="2000"
+        autocapitalize="none"
+        data-test="refer-reason"
+      />
+    </ConfirmModal>
     <ModSpammerReport
       v-if="showSpamModal && chat.user1"
       :userid="chat.user1"
@@ -956,10 +965,18 @@ const spamReport = () => {
 // 'sent' or 'failed' after a referral, so the moderator knows whether Support will see it.
 // Nothing was shown before, and a refused request looked exactly like a sent one.
 const referResult = ref(null)
+const referReason = ref('')
+const referCaseId = ref(null)
 const referToSupport = async () => {
   referResult.value = null
+  referCaseId.value = null
   try {
-    await $api.chat.referToSupport(props.id)
+    const ret = await $api.chat.referToSupport(
+      props.id,
+      referReason.value.trim().slice(0, 2000)
+    )
+    referCaseId.value = ret?.caseid || null
+    referReason.value = ''
     referResult.value = 'sent'
   } catch (e) {
     referResult.value = 'failed'

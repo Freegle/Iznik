@@ -25,7 +25,6 @@ class UxExperimentBoundaryTest extends TestCase
         'app/Services/Ux/ExposureSource.php',
         'app/Services/Ux/Sources/EmailClickSource.php',
         'app/Services/Ux/Sources/ActiveAfterSource.php',
-        'app/Services/Ux/Sources/ConfirmReplySource.php',
         'app/Models/UxExperimentExposure.php',
         'config/ux_switches.php',
         'app/Console/Commands/Ux/ExperimentCommand.php',
@@ -54,6 +53,6 @@ class UxExperimentBoundaryTest extends TestCase
             }
         }
 
-        $this->assertCount(16, $read);
+        $this->assertCount(15, $read);
     }
 }

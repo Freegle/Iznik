@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -42,8 +43,8 @@ func attachImage(t *testing.T, token string, body string) *http.Response {
 func TestLockdownRefusesImageAttachToHeldMessage(t *testing.T) {
 	prefix := uniquePrefix("ld_img_msg")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, groupID, "Held image test "+prefix, 55.9533, -3.1883)
 
@@ -63,8 +64,8 @@ func TestLockdownRefusesImageAttachToHeldMessage(t *testing.T) {
 func TestLockdownRefusesImageAttachToHeldCommunityEvent(t *testing.T) {
 	prefix := uniquePrefix("ld_img_ce")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, ownerID)
 	eventID := CreateTestCommunityEvent(t, ownerID, groupID)
 
@@ -84,8 +85,8 @@ func TestLockdownRefusesImageAttachToHeldCommunityEvent(t *testing.T) {
 func TestLockdownRefusesImageAttachToHeldVolunteering(t *testing.T) {
 	prefix := uniquePrefix("ld_img_vol")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, ownerID)
 	volID := CreateTestVolunteering(t, ownerID, groupID)
 
@@ -104,7 +105,7 @@ func TestLockdownRefusesImageAttachToHeldVolunteering(t *testing.T) {
 
 func TestLockdownRefusesImageAttachToHeldStory(t *testing.T) {
 	prefix := uniquePrefix("ld_img_story")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, ownerID)
 	storyID := CreateTestStory(t, ownerID, prefix+" headline", "A test story", false, true)
 
@@ -123,7 +124,7 @@ func TestLockdownRefusesImageAttachToHeldStory(t *testing.T) {
 
 func TestLockdownRefusesImageAttachToHeldNewsfeed(t *testing.T) {
 	prefix := uniquePrefix("ld_img_nf")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, ownerID)
 	nfID := CreateTestNewsfeed(t, ownerID, 52.2, -0.1, "Held image test "+prefix)
 
@@ -147,8 +148,8 @@ func TestLockdownRefusesImageAttachToHeldNewsfeed(t *testing.T) {
 func TestLockdownAllowsImageRotateWhilePostsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_img_rotate")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, groupID, "Rotate held test "+prefix, 55.9533, -3.1883)
 

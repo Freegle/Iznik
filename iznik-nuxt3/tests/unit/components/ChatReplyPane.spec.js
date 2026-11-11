@@ -693,6 +693,43 @@ describe('ChatReplyPane', () => {
     })
   })
 
+  describe('a post split into items', () => {
+    const split = (type) => ({
+      ...mockMessage,
+      type,
+      autosplit: true,
+      bulkcount: 2,
+      bulkitems: [
+        { id: 1, name: 'Sofa', quantity: 1, available: true },
+        { id: 2, name: 'Lamp', quantity: 1, available: false },
+      ],
+    })
+
+    afterEach(() => {
+      mockReplyStateMachine.replyText.value = ''
+    })
+
+    it('asks which items on an OFFER, and writes the choice as the first line', async () => {
+      mockMessageStore.byId.mockReturnValue(split('Offer'))
+      const wrapper = await createWrapper()
+      const choice = wrapper.find('[data-testid="reply-item-choice"]')
+      expect(choice.exists()).toBe(true)
+      expect(choice.text()).toContain('Which would you like?')
+      // An item already TAKEN is not offered.
+      expect(wrapper.find('[data-testid="reply-item-2"]').exists()).toBe(false)
+      await wrapper.find('[data-testid="reply-item-1"]').trigger('click')
+      expect(mockReplyStateMachine.replyText.value).toBe("I'd like: Sofa")
+    })
+
+    it('never asks on a WANTED', async () => {
+      mockMessageStore.byId.mockReturnValue(split('Wanted'))
+      const wrapper = await createWrapper()
+      expect(wrapper.find('[data-testid="reply-item-choice"]').exists()).toBe(
+        false
+      )
+    })
+  })
+
   describe('state machine integration', () => {
     it('calls setRefs on mount', async () => {
       await createWrapper()

@@ -15,13 +15,17 @@
       </p>
       <p class="gloss text-muted mt-1 mb-0">{{ gloss }}</p>
     </template>
+    <ul v-if="information.length" class="information list-unstyled mt-1 mb-0">
+      <li v-for="line in information" :key="line">{{ line }}</li>
+    </ul>
   </section>
 </template>
 
 <script setup>
 // What an experiment decided on the server (mail, push, server code) adds to its details: the text each
-// version shows, how long members are reached and when it is decided, and how many have been exposed and
-// counted. It draws nothing for an experiment that changes the site, which has none of this. The words
+// version shows, how long members are reached and when it is decided, how many have been exposed and
+// counted, and any figure its source shows for information only. It draws nothing for an experiment that
+// changes the site, which has none of this. The words
 // are worked out in useUxExperimentRead; this only draws them.
 import { computed } from 'vue'
 import { flowTitle } from '~/modtools/composables/useUxFlows'
@@ -29,6 +33,7 @@ import {
   channelWord,
   copyLines,
   exposureLines,
+  informationLines,
   servingLine,
   windowWord,
 } from '~/modtools/composables/useUxExperimentRead'
@@ -43,6 +48,7 @@ const funnel = computed(() => flowTitle(props.experiment.flow))
 const copy = computed(() => copyLines(props.experiment))
 const serving = computed(() => servingLine(props.experiment))
 const exposure = computed(() => exposureLines(props.experiment))
+const information = computed(() => informationLines(props.experiment))
 
 // Why there are two numbers. A member is counted only once they have had the whole window to act. The words fit
 // mail, push and server code alike, so they say "reached" and not "sent".

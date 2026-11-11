@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import ChatMessageModMail from '~/components/ChatMessageModMail.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 const {
   mockChat,
@@ -11,7 +17,8 @@ const {
   mockMe,
   mockMyid,
   mockRealMe,
-} = vi.hoisted(() => {
+} = await vi.hoisted(async () => {
+  const { SYSTEMROLE_USER } = await import('~/constants')
   const { ref } = require('vue')
   return {
     mockChat: ref({
@@ -37,7 +44,7 @@ const {
     }),
     mockMe: ref({ id: 1, displayname: 'Current User' }),
     mockMyid: ref(1),
-    mockRealMe: ref({ id: 1, systemrole: 'User' }),
+    mockRealMe: ref({ id: 1, systemrole: SYSTEMROLE_USER }),
   }
 })
 
@@ -110,7 +117,7 @@ describe('ChatMessageModMail', () => {
     }
     mockMe.value = { id: 1, displayname: 'Current User' }
     mockMyid.value = 1
-    mockRealMe.value = { id: 1, systemrole: 'User' }
+    mockRealMe.value = { id: 1, systemrole: SYSTEMROLE_USER }
   })
 
   async function createWrapper(props = {}) {
@@ -266,26 +273,26 @@ describe('ChatMessageModMail', () => {
 
   describe('moderator identification', () => {
     it('hides sender id for regular users', async () => {
-      mockRealMe.value = { id: 1, systemrole: 'User' }
+      mockRealMe.value = { id: 1, systemrole: SYSTEMROLE_USER }
       const wrapper = await createWrapper()
       expect(wrapper.find('.v-icon[data-icon="hashtag"]').exists()).toBe(false)
     })
 
     it('shows sender id for moderators', async () => {
-      mockRealMe.value = { id: 1, systemrole: 'Moderator' }
+      mockRealMe.value = { id: 1, systemrole: SYSTEMROLE_MODERATOR }
       const wrapper = await createWrapper()
       expect(wrapper.find('.v-icon[data-icon="hashtag"]').exists()).toBe(true)
       expect(wrapper.text()).toContain('Sent by')
     })
 
     it('shows sender id for support', async () => {
-      mockRealMe.value = { id: 1, systemrole: 'Support' }
+      mockRealMe.value = { id: 1, systemrole: SYSTEMROLE_SUPPORT }
       const wrapper = await createWrapper()
       expect(wrapper.find('.v-icon[data-icon="hashtag"]').exists()).toBe(true)
     })
 
     it('shows sender id for admins', async () => {
-      mockRealMe.value = { id: 1, systemrole: 'Admin' }
+      mockRealMe.value = { id: 1, systemrole: SYSTEMROLE_ADMIN }
       const wrapper = await createWrapper()
       expect(wrapper.find('.v-icon[data-icon="hashtag"]').exists()).toBe(true)
     })
@@ -418,28 +425,28 @@ describe('ChatMessageModMail', () => {
     })
 
     it('computes realMod as true for Moderator', async () => {
-      mockRealMe.value = { systemrole: 'Moderator' }
+      mockRealMe.value = { systemrole: SYSTEMROLE_MODERATOR }
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(ChatMessageModMail)
       expect(comp.vm.realMod).toBe(true)
     })
 
     it('computes realMod as true for Support', async () => {
-      mockRealMe.value = { systemrole: 'Support' }
+      mockRealMe.value = { systemrole: SYSTEMROLE_SUPPORT }
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(ChatMessageModMail)
       expect(comp.vm.realMod).toBe(true)
     })
 
     it('computes realMod as true for Admin', async () => {
-      mockRealMe.value = { systemrole: 'Admin' }
+      mockRealMe.value = { systemrole: SYSTEMROLE_ADMIN }
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(ChatMessageModMail)
       expect(comp.vm.realMod).toBe(true)
     })
 
     it('computes realMod as false for User', async () => {
-      mockRealMe.value = { systemrole: 'User' }
+      mockRealMe.value = { systemrole: SYSTEMROLE_USER }
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(ChatMessageModMail)
       expect(comp.vm.realMod).toBe(false)

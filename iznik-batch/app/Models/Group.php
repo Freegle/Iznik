@@ -238,7 +238,7 @@ class Group extends Model implements Auditable
      */
     public function moderators(): HasMany
     {
-        return $this->memberships()->whereIn('role', ['Moderator', 'Owner']);
+        return $this->memberships()->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
     }
 
     /**
@@ -451,12 +451,12 @@ class Group extends Model implements Auditable
             ->join('users as u1', function ($join) {
                 $join->on('users_related.user1', '=', 'u1.id')
                     ->whereNull('u1.deleted')
-                    ->where('u1.systemrole', 'User');
+                    ->where('u1.systemrole', User::SYSTEMROLE_USER);
             })
             ->join('users as u2', function ($join) {
                 $join->on('users_related.user2', '=', 'u2.id')
                     ->whereNull('u2.deleted')
-                    ->where('u2.systemrole', 'User');
+                    ->where('u2.systemrole', User::SYSTEMROLE_USER);
             })
             ->whereColumn('users_related.user1', '<', 'users_related.user2')
             ->where('users_related.notified', 0)
@@ -476,12 +476,12 @@ class Group extends Model implements Auditable
             ->join('users as u3', function ($join) {
                 $join->on('users_related.user2', '=', 'u3.id')
                     ->whereNull('u3.deleted')
-                    ->where('u3.systemrole', 'User');
+                    ->where('u3.systemrole', User::SYSTEMROLE_USER);
             })
             ->join('users as u4', function ($join) {
                 $join->on('users_related.user1', '=', 'u4.id')
                     ->whereNull('u4.deleted')
-                    ->where('u4.systemrole', 'User');
+                    ->where('u4.systemrole', User::SYSTEMROLE_USER);
             })
             ->whereColumn('users_related.user1', '<', 'users_related.user2')
             ->where('users_related.notified', 0)

@@ -619,6 +619,46 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertFalse($present(), 'a release older than the window is not re-selected');
     }
 
+    public function test_reply_approved_after_window_is_delivered_by_approval_time(): void
+    {
+        // A reply held for chat review and approved by a moderator hours later keeps its old date, so the look-back
+        // window keyed on chat_messages.date never saw it once approved and the poster was never mailed. It is admitted
+        // by the time of the approval's log row, which approveChatMessage (Go) writes.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+        $msg = $this->createTestChatMessage($room, $sender, ['date' => now()->subDays(3), 'reviewrequired' => 1]);
+
+        $present = function () use ($room, $msg): bool {
+            $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+            $method->setAccessible(true);
+            $rows = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false);
+
+            return $rows->contains(fn ($r) => (int) $r->id === (int) $msg->id);
+        };
+
+        $this->assertFalse($present(), 'a reply still held for review is not selectable');
+
+        DB::table('chat_messages')->where('id', $msg->id)->update(['reviewrequired' => 0, 'reviewedby' => $recipient->id]);
+        $this->assertFalse($present(), 'approved with no recent approval row: outside the window, as before');
+
+        $logId = (int) DB::table('logs')->insertGetId([
+            'timestamp' => now()->subMinutes(5),
+            'type' => 'Chat',
+            'subtype' => 'Approved',
+            'user' => $sender->id,
+            'byuser' => $recipient->id,
+            'text' => "Chat message {$msg->id} approved",
+        ]);
+        $this->assertTrue($present(), 'approved within the window is delivered despite an old date');
+
+        DB::table('logs')->where('id', $logId)->update(['timestamp' => now()->subDays(2)]);
+        $this->assertFalse($present(), 'an approval older than the window is not re-selected');
+
+        DB::table('logs')->where('id', $logId)->update(['timestamp' => now()->subMinutes(5), 'text' => "Chat message {$msg->id}1 approved"]);
+        $this->assertFalse($present(), 'another message\'s approval does not admit this one');
+    }
+
     public function test_notify_by_email_skips_deleted_messages(): void
     {
         $sender = $this->createTestUser();
@@ -995,14 +1035,14 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $moderator1->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
         Membership::create([
             'userid' => $moderator2->id,
             'groupid' => $group->id,
-            'role' => 'Owner',
+            'role' => Membership::ROLE_OWNER,
             'added' => now(),
         ]);
 
@@ -1054,7 +1094,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $moderator->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
@@ -1099,7 +1139,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $moderator->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
@@ -1156,7 +1196,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $activeMod->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => null,
         ]);
@@ -1165,7 +1205,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $backupMod->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => ['active' => false],
         ]);
@@ -1222,7 +1262,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $activeMod->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => ['active' => true],
         ]);
@@ -1271,7 +1311,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
                 'settings' => null, // Active by default.
             ]);
@@ -1349,7 +1389,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $activeMod1->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => null,
         ]);
@@ -1358,7 +1398,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $activeMod2->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => ['active' => true],
         ]);
@@ -1367,7 +1407,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $backupMod->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
             'settings' => ['active' => false],
         ]);
@@ -1438,14 +1478,14 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $mod1->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
         Membership::create([
             'userid' => $mod2->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 
@@ -1497,7 +1537,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -1561,7 +1601,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -1613,7 +1653,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -1659,7 +1699,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -1703,7 +1743,7 @@ class ChatNotificationServiceTest extends TestCase
             Membership::create([
                 'userid' => $mod->id,
                 'groupid' => $group->id,
-                'role' => 'Moderator',
+                'role' => Membership::ROLE_MODERATOR,
                 'added' => now(),
             ]);
         }
@@ -2026,7 +2066,7 @@ class ChatNotificationServiceTest extends TestCase
         Membership::create([
             'userid' => $moderator->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'added' => now(),
         ]);
 

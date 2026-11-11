@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-27
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -33,6 +33,11 @@ flowchart LR
    New raw SQL is kept out by the `.claude/check-raw-sql.sh` hook while editing and by the
    `check-raw-sql` CircleCI job, which runs the same script in `--diff origin/master` mode
    over the branch. A line marked `// keep-raw: <reason>` is allowed.
+   A role (User, Moderator, Support, Admin, Member, Owner) written as a string is refused by
+   `.claude/check-role-literals.sh`, as an editor hook and as the `check-role-literals` job,
+   which runs it in `--all` mode over the whole tree, so a role literal anywhere fails it, not only
+   one the branch adds. A line marked `role-literal-ok: <reason>`
+   is allowed.
    The `check-ux-cleanups` job fails a UX cleanup note (`iznik-batch/config/ux_cleanups.php`) that is
    malformed or names an experiment switch that still exists.
    Four checks run as **background steps** so they overlap the container build and the

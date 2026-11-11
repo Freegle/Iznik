@@ -10,6 +10,7 @@ import {
 import { shallowMount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import ModStdMessageModal from '~/modtools/components/ModStdMessageModal.vue'
+import ModStdMessageSegments from '~/modtools/components/ModStdMessageSegments.vue'
 
 // Store original console.warn to restore after each test
 // The global setup throws on Vue warnings, but this component uses template refs on stubs
@@ -58,6 +59,7 @@ const mockMemberStore = {
   reply: vi.fn(),
   delete: vi.fn(),
   get: vi.fn(),
+  updateMembership: vi.fn(),
 }
 
 const mockUserStore = {
@@ -283,10 +285,17 @@ describe('ModStdMessageModal', () => {
               '<textarea :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
             props: ['modelValue', 'rows', 'maxRows', 'placeholder'],
           },
+          // The real editor, so the tests see the boxes and buttons a moderator does.
+          ModStdMessageSegments,
         },
       },
     })
   }
+
+  // The laid-out editor for the post text (or the message, for actions other
+  // than Edit and Message).
+  const postEditor = (wrapper) =>
+    wrapper.findAllComponents(ModStdMessageSegments)[0]
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -311,6 +320,7 @@ describe('ModStdMessageModal', () => {
     mockMessageStore.patch.mockResolvedValue({})
     mockMemberStore.reply.mockResolvedValue({})
     mockMemberStore.delete.mockResolvedValue({})
+    mockMemberStore.updateMembership.mockResolvedValue({})
     mockUserStore.edit.mockResolvedValue({})
   })
 
@@ -544,6 +554,95 @@ describe('ModStdMessageModal', () => {
     })
   })
 
+  // Discourse 10321: the poster left the community a minute after posting, and
+  // "Approve and unmod" failed on the membership change, which stopped the approve.
+  describe('a poster who is not a member of the community', () => {
+    const unmodApprove = () =>
+      createStdmsg({
+        action: 'Approve',
+        body: 'Thanks for your post, it has been approved and will go out shortly.',
+        newmodstatus: 'DEFAULT',
+        newdelstatus: 'DIGEST',
+      })
+
+    const posterWith = (memberships) =>
+      createMessage({ fromuser: { ...createMessage().fromuser, memberships } })
+
+    it('approves without trying to change a membership they do not have', async () => {
+      const wrapper = mountComponent(
+        {},
+        { message: posterWith(null), stdmsgData: unmodApprove() }
+      )
+      await wrapper.vm.fillin()
+      await wrapper.vm.process()
+
+      expect(mockMemberStore.updateMembership).not.toHaveBeenCalled()
+      expect(mockMessageStore.approve).toHaveBeenCalledTimes(1)
+      expect(mockHide).toHaveBeenCalled()
+    })
+
+    it('says there is no membership to change', async () => {
+      const wrapper = mountComponent(
+        {},
+        { message: posterWith([{ groupid: 999 }]), stdmsgData: unmodApprove() }
+      )
+      await wrapper.vm.fillin()
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('is not a member of this community')
+      expect(wrapper.text()).not.toContain('Change moderation status to')
+      expect(wrapper.text()).not.toContain('Change email frequency to')
+    })
+
+    it('still changes the settings of a poster who is a member', async () => {
+      const wrapper = mountComponent(
+        {},
+        { message: posterWith([{ groupid: 123 }]), stdmsgData: unmodApprove() }
+      )
+      await wrapper.vm.fillin()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('is not a member of this community')
+
+      await wrapper.vm.process()
+
+      expect(mockMemberStore.updateMembership).toHaveBeenCalledWith({
+        userid: 456,
+        groupid: 123,
+        ourPostingStatus: 'DEFAULT',
+      })
+      expect(mockMemberStore.updateMembership).toHaveBeenCalledWith({
+        userid: 456,
+        groupid: 123,
+        emailfrequency: 24,
+      })
+      expect(mockMessageStore.approve).toHaveBeenCalledTimes(1)
+    })
+
+    it('approves when the server says they are not a member', async () => {
+      // Their memberships are not loaded here, so only the server knows.
+      mockMemberStore.updateMembership.mockRejectedValue({
+        response: { status: 404 },
+      })
+      const wrapper = mountComponent({}, { stdmsgData: unmodApprove() })
+      await wrapper.vm.fillin()
+      await wrapper.vm.process()
+
+      expect(mockMemberStore.updateMembership).toHaveBeenCalled()
+      expect(mockMessageStore.approve).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not approve when the change fails for another reason', async () => {
+      mockMemberStore.updateMembership.mockRejectedValue({
+        response: { status: 500 },
+      })
+      const wrapper = mountComponent({}, { stdmsgData: unmodApprove() })
+      await wrapper.vm.fillin()
+
+      await expect(wrapper.vm.process()).rejects.toBeTruthy()
+      expect(mockMessageStore.approve).not.toHaveBeenCalled()
+    })
+  })
+
   describe('props', () => {
     it('accepts stdmsgid prop and resolves from store', () => {
       const stdmsgData = createStdmsg({ action: 'Reject' })
@@ -725,11 +824,11 @@ describe('ModStdMessageModal', () => {
       expect(wrapper.vm.blockedSegments).toHaveLength(3)
 
       const [first, second] = optionalIndexes(wrapper)
-      wrapper.vm.decideOptional(first, false)
+      postEditor(wrapper).vm.decideOptional(first, false)
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.blockedSegments).toHaveLength(2)
 
-      wrapper.vm.decideOptional(second, true)
+      postEditor(wrapper).vm.decideOptional(second, true)
       await wrapper.vm.$nextTick()
       // The wording keeps up, rather than still asking for the optionals once
       // they have both been decided.
@@ -754,8 +853,8 @@ describe('ModStdMessageModal', () => {
         'Please could you add the size to your post.'
 
       const [first, second] = optionalIndexes(wrapper)
-      wrapper.vm.decideOptional(first, false)
-      wrapper.vm.decideOptional(second, false)
+      postEditor(wrapper).vm.decideOptional(first, false)
+      postEditor(wrapper).vm.decideOptional(second, false)
       await wrapper.vm.$nextTick()
 
       // Kept wording is still an editable box, not fixed text.
@@ -764,7 +863,7 @@ describe('ModStdMessageModal', () => {
       wrapper.vm.segments[first].content =
         'You can edit your post on your My Posts page.'
       // Keep used to be final - you could only undo a Remove.
-      wrapper.vm.decideOptional(second, true)
+      postEditor(wrapper).vm.decideOptional(second, true)
 
       await wrapper.vm.process()
 
@@ -794,19 +893,21 @@ describe('ModStdMessageModal', () => {
       wrapper.vm.segments.find((s) => s.type === 'editthis').value =
         'Please could you add the size to your post.'
       optionalIndexes(wrapper).forEach((i) =>
-        wrapper.vm.decideOptional(i, false)
+        postEditor(wrapper).vm.decideOptional(i, false)
       )
 
       const gaps = wrapper.vm.segments
-        .map((seg, i) => (wrapper.vm.isGap(seg) ? i : -1))
+        .map((seg, i) => (postEditor(wrapper).vm.isGap(seg) ? i : -1))
         .filter((i) => i >= 0)
       expect(gaps.length).toBeGreaterThan(0)
-      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gaps[0]])).toBe(
-        false
-      )
+      expect(
+        postEditor(wrapper).vm.isParagraphGap(wrapper.vm.segments[gaps[0]])
+      ).toBe(false)
 
-      gaps.forEach((i) => wrapper.vm.toggleGap(i))
-      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gaps[0]])).toBe(true)
+      gaps.forEach((i) => postEditor(wrapper).vm.toggleGap(i))
+      expect(
+        postEditor(wrapper).vm.isParagraphGap(wrapper.vm.segments[gaps[0]])
+      ).toBe(true)
 
       await wrapper.vm.process()
 
@@ -828,7 +929,9 @@ describe('ModStdMessageModal', () => {
 
       // The single space between the two optionals is wording, not paragraph
       // spacing, so it must not become a blank-line control.
-      expect(wrapper.vm.segments.some((s) => wrapper.vm.isGap(s))).toBe(false)
+      expect(
+        wrapper.vm.segments.some((s) => postEditor(wrapper).vm.isGap(s))
+      ).toBe(false)
       expect(wrapper.find('.seg-gap-toggle').exists()).toBe(false)
     })
 
@@ -836,11 +939,17 @@ describe('ModStdMessageModal', () => {
       const wrapper = mountComponent({}, { stdmsgData: optionalsStdmsg() })
       await wrapper.vm.fillin()
 
-      const gap = wrapper.vm.segments.findIndex((seg) => wrapper.vm.isGap(seg))
-      wrapper.vm.toggleGap(gap)
-      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gap])).toBe(true)
-      wrapper.vm.toggleGap(gap)
-      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gap])).toBe(false)
+      const gap = wrapper.vm.segments.findIndex((seg) =>
+        postEditor(wrapper).vm.isGap(seg)
+      )
+      postEditor(wrapper).vm.toggleGap(gap)
+      expect(
+        postEditor(wrapper).vm.isParagraphGap(wrapper.vm.segments[gap])
+      ).toBe(true)
+      postEditor(wrapper).vm.toggleGap(gap)
+      expect(
+        postEditor(wrapper).vm.isParagraphGap(wrapper.vm.segments[gap])
+      ).toBe(false)
     })
   })
 
@@ -1095,6 +1204,136 @@ describe('ModStdMessageModal', () => {
 
       expect(mockMessageStore.patch).not.toHaveBeenCalled()
       expect(wrapper.vm.directiveWarning).toContain('message to the poster')
+    })
+
+    // Reported 2026-11-09: an <optional> bit worked in the post text but not in the
+    // message to the poster, which showed the raw tags in a plain box.
+    describe('optional and fill-in bits in the message to the poster', () => {
+      const optionalReply = () =>
+        knivesStdmsg({
+          replybody:
+            'Hello $membername, we have added a note to your post.\n\n' +
+            '<optional>Firewood must be dry and untreated.</optional>\n\n' +
+            'Thanks.',
+        })
+
+      const replySection = (wrapper) =>
+        wrapper.find('[data-test="stdmsg-reply-section"]')
+
+      const clickInReply = async (wrapper, label) => {
+        const button = replySection(wrapper)
+          .findAll('button')
+          .find((b) => b.text() === label)
+        expect(button).toBeDefined()
+        await button.trigger('click')
+      }
+
+      it('offers Keep and Remove rather than showing the tags', async () => {
+        const wrapper = mountComponent({}, { stdmsgData: optionalReply() })
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        const section = replySection(wrapper)
+        expect(section.find('.seg-optional-undecided').exists()).toBe(true)
+        expect(section.find('[data-test="stdmsg-reply-body"]').exists()).toBe(
+          false
+        )
+        expect(section.html()).not.toContain('&lt;optional&gt;')
+      })
+
+      it('refuses to send until the optional bit is kept or removed', async () => {
+        const wrapper = mountComponent({}, { stdmsgData: optionalReply() })
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        const callback = vi.fn()
+        await wrapper.vm.process(callback)
+        await flushPromises()
+
+        expect(mockMessageStore.patch).not.toHaveBeenCalled()
+        expect(wrapper.vm.directiveWarning).toContain('Nothing has been saved')
+        expect(wrapper.vm.directiveWarning).toContain('Keep or Remove')
+        expect(wrapper.vm.directiveWarning).toContain('message to the poster')
+        expect(replySection(wrapper).find('.seg-blocked').exists()).toBe(true)
+        expect(callback).toHaveBeenCalled()
+      })
+
+      it('sends kept wording without its tags', async () => {
+        const wrapper = mountComponent({}, { stdmsgData: optionalReply() })
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        await clickInReply(wrapper, 'Keep')
+        await wrapper.vm.process()
+
+        expect(mockMessageStore.patch).toHaveBeenCalledTimes(1)
+        expect(mockMessageStore.patch.mock.calls[0][0].replybody).toBe(
+          'Hello Test User, we have added a note to your post.\n\n' +
+            'Firewood must be dry and untreated.\n\n' +
+            'Thanks.'
+        )
+      })
+
+      it('leaves out a removed optional bit', async () => {
+        const wrapper = mountComponent({}, { stdmsgData: optionalReply() })
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        await clickInReply(wrapper, 'Remove')
+        await wrapper.vm.process()
+
+        expect(mockMessageStore.patch.mock.calls[0][0].replybody).toBe(
+          'Hello Test User, we have added a note to your post.\n\nThanks.'
+        )
+      })
+
+      it('sends a filled-in box in place of its placeholder', async () => {
+        const wrapper = mountComponent(
+          {},
+          {
+            stdmsgData: knivesStdmsg({
+              replybody: 'We added a note. <editthis>Say why</editthis>',
+            }),
+          }
+        )
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        const box = replySection(wrapper).find('textarea.seg-editthis')
+        expect(box.exists()).toBe(true)
+        await box.setValue('Knives must be handed over in person.')
+        await wrapper.vm.process()
+
+        expect(mockMessageStore.patch.mock.calls[0][0].replybody).toBe(
+          'We added a note. Knives must be handed over in person.'
+        )
+      })
+
+      it('handles optional bits in the post and the message separately', async () => {
+        const wrapper = mountComponent(
+          {},
+          {
+            stdmsgData: knivesStdmsg({
+              body: '<optional>Collection in person only.</optional>',
+              replybody: optionalReply().replybody,
+            }),
+          }
+        )
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        // Deciding the message's optional leaves the post's one outstanding.
+        await clickInReply(wrapper, 'Keep')
+        await wrapper.vm.process(vi.fn())
+        await flushPromises()
+
+        expect(mockMessageStore.patch).not.toHaveBeenCalled()
+        expect(wrapper.vm.directiveWarning).not.toContain(
+          'message to the poster'
+        )
+        expect(replySection(wrapper).find('.seg-blocked').exists()).toBe(false)
+        expect(wrapper.find('.seg-blocked').exists()).toBe(true)
+      })
     })
 
     it('shows the server refusal and keeps the modal open', async () => {

@@ -8,14 +8,15 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	flog "github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestGetLogsMessages(t *testing.T) {
 	prefix := uniquePrefix("LogsMsg")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Owner")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a log entry.
@@ -37,8 +38,8 @@ func TestGetLogsMessages(t *testing.T) {
 func TestGetLogsMemberships(t *testing.T) {
 	prefix := uniquePrefix("LogsMem")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Owner")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -57,8 +58,8 @@ func TestGetLogsMemberships(t *testing.T) {
 func TestGetLogsNotModerator(t *testing.T) {
 	prefix := uniquePrefix("LogsNoMod")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=messages&groupid=%d&jwt=%s", groupID, token), nil)
@@ -83,8 +84,8 @@ func TestGetLogsNotLoggedIn(t *testing.T) {
 func TestGetLogsPagination(t *testing.T) {
 	prefix := uniquePrefix("LogsPag")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Owner")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -119,10 +120,10 @@ func TestGetLogsModmailsonly(t *testing.T) {
 	// V1 includes: Message (Rejected, Deleted, Replied) and User (Mailed, Rejected, Deleted).
 	prefix := uniquePrefix("LogsModmail")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
-	CreateTestMembership(t, userID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -223,10 +224,10 @@ func TestGetLogsUserReturnsAllTypes(t *testing.T) {
 	// but excludes User/Created and User/Merged subtypes.
 	prefix := uniquePrefix("LogsUserAll")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	targetUserID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
-	CreateTestMembership(t, targetUserID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	targetUserID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
+	CreateTestMembership(t, targetUserID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -332,10 +333,10 @@ func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
 	// displays to show what was actually sent in the modmail.
 	prefix := uniquePrefix("LogsModmailText")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
-	CreateTestMembership(t, userID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -383,10 +384,10 @@ func TestGetLogsMsgsubjectHistoricalIsPreserved(t *testing.T) {
 	// not the current (post-edit) subject. Uses messages_edits to reconstruct history.
 	prefix := uniquePrefix("LogsHistSubj")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
-	CreateTestMembership(t, userID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn

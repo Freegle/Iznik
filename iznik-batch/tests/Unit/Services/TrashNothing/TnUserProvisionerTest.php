@@ -191,7 +191,7 @@ class TnUserProvisionerTest extends TestCase
         $this->assertSame(User::tnDisplayName($username), $row->fullname);
         $this->assertSame('Pat', $row->firstname);
         $this->assertSame('Rity', $row->lastname);
-        $this->assertSame('User', $row->systemrole);
+        $this->assertSame(User::SYSTEMROLE_USER, $row->systemrole);
         $this->assertNotNull($row->added);
         $this->assertNotNull($row->lastaccess);
         $this->assertSame($tnId, (int) $row->tnuserid);

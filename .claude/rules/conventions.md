@@ -125,6 +125,18 @@ What a TrashNothing membership never does is become ordinary because of somethin
 on Freegle (replying, moving into the area, a moderator adding them): only choosing the
 community through TrashNothing makes it ordinary, and only an ordinary one can be contacted.
 
+## A TrashNothing post goes on the community the member chose on TrashNothing
+
+The member picks the community for each post on TrashNothing, and the posts API sends that
+choice as `freegle_group_ids`. A post that names a community goes on it, wherever the post is:
+the one whose area contains the post when it names several, otherwise the nearest
+(`PostSyncer::placement()`). Only a post that names none is placed by location, on the local
+community, and it is unaddressed.
+
+Do not decide either from memberships. A member of the local community who named none has still
+not chosen it for this post, and a membership elsewhere may be nowhere near where the post is
+(decided 2026-11-08, Discourse 10315).
+
 ## UX telemetry does not ask members why they gave up
 
 The UX telemetry plan proposed a one-tap "why did you stop?" card shown after a member abandons
@@ -161,6 +173,18 @@ holds the allowlist and the named exceptions, each with a reason. The CI job
 `add-to-calendar-button` (Elastic License) is kept deliberately: it is tuned for the app,
 the web and different handsets, and `NOTICE` grants an AGPL section 7 permission for it. Do
 not replace it with a hand-built button to tidy the licence.
+
+## Bulk items do not make a clearance
+
+A post with `messages_bulk_items` rows is either a clearance or an ordinary member's post that the
+auto-splitter turned into an item list (a `messages_autosplit` row in state `Split`). Only a
+clearance gets the clearance extras: left out of freebie alerts, partner feeds and LoveJunk,
+"Register interest" instead of a reply, the Clearances card in My Posts, per-person counts when
+marked taken. For those, ask `ClearanceSql` (batch), `utils.IsClearanceSQL` (Go) or
+`isClearance` (frontend), never "has bulk items". Keep asking about bulk items where the point is
+the item list itself: display, per-item photos, the digest's count and the per-item stats. A check
+written the old way gives a split post the clearance behaviour, with no error, and only once the
+splitter is switched on. See `docs/developers/reference/auto-split.md`.
 
 ## See also
 

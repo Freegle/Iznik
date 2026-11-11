@@ -43,10 +43,10 @@
     </b-card-header>
     <b-card-body v-if="expanded" class="p-1">
       <ModBouncing v-if="user.bouncing" :userid="user.id" class="mb-2" />
-      <NoticeMessage v-if="user.systemrole === 'Admin'" class="mb-2">
+      <NoticeMessage v-if="user.systemrole === SYSTEMROLE_ADMIN" class="mb-2">
         This user has admin rights.
       </NoticeMessage>
-      <NoticeMessage v-if="user.systemrole === 'Support'" class="mb-2">
+      <NoticeMessage v-if="user.systemrole === SYSTEMROLE_SUPPORT" class="mb-2">
         This user has support rights.
       </NoticeMessage>
       <ModSpammer v-if="user.spammer" class="mb-2" :userid="user.id" />
@@ -636,6 +636,7 @@ import ExternalLink from '~/components/ExternalLink'
 import api from '~/api'
 import { formatDonationAsksUntil } from '~/composables/useDonationAsks'
 import { usePreferredEmail } from '~/modtools/composables/usePreferredEmail'
+import { SYSTEMROLE_ADMIN, SYSTEMROLE_SUPPORT } from '~/constants'
 
 const SHOW = 3
 
@@ -694,7 +695,7 @@ let passwordCallback = null
 const preferredemail = usePreferredEmail(user)
 
 const admin = computed(() => {
-  return user.value && user.value.systemrole === 'Admin'
+  return user.value && user.value.systemrole === SYSTEMROLE_ADMIN
 })
 
 const freegleMemberships = computed(() => {

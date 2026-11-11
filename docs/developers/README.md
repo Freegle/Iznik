@@ -80,6 +80,7 @@ Read these directly; the pages above link into them rather than copy them:
 | New posts from people you have chatted with (experiment) | [./reference/familiar-posts-email.md](./reference/familiar-posts-email.md) |
 | AI item images | [./reference/ai-item-images.md](./reference/ai-item-images.md) |
 | The cleaned item of a post | [./reference/message-items.md](./reference/message-items.md) |
+| Posts of several items become item lists (auto-split) | [./reference/auto-split.md](./reference/auto-split.md) |
 | Getting a first reply in | [./reference/first-reply.md](./reference/first-reply.md) |
 | Unsubscribing from email (List-Unsubscribe) | [./reference/unsubscribe.md](./reference/unsubscribe.md) |
 | Mail deferrals and suppression | [./reference/mail-deferrals.md](./reference/mail-deferrals.md) |
@@ -92,6 +93,7 @@ Read these directly; the pages above link into them rather than copy them:
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
+| Support cases and the first pass on a referral | [./reference/support-cases.md](./reference/support-cases.md) |
 | Contacting a community's volunteers (alerts) | [./reference/contact-group-alerts.md](./reference/contact-group-alerts.md) |
 | CookieYes watchdog (cookie banner checks) | [./reference/cookieyes-watchdog.md](./reference/cookieyes-watchdog.md) |
 | Google housekeeping (Search Console and Ads weekly checks) | [./reference/google-housekeeping.md](./reference/google-housekeeping.md) |

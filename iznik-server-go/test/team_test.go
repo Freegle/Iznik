@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -76,7 +77,7 @@ func TestGetTeamVolunteers(t *testing.T) {
 
 func TestPostTeam(t *testing.T) {
 	prefix := uniquePrefix("TeamPost")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	body := fmt.Sprintf(`{"name":"%s_newteam","description":"A new team"}`, prefix)
@@ -93,7 +94,7 @@ func TestPostTeam(t *testing.T) {
 
 func TestPostTeamNotAdmin(t *testing.T) {
 	prefix := uniquePrefix("TeamPostNA")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"name":"ShouldFail","description":"Nope"}`
@@ -109,11 +110,11 @@ func TestPostTeamNotAdmin(t *testing.T) {
 
 func TestPatchTeamAddMember(t *testing.T) {
 	prefix := uniquePrefix("TeamPatch")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	teamID := createTestTeam(t, prefix+"_team")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(`{"id":%d,"action":"Add","userid":%d,"description":"Board member"}`, teamID, memberID)
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/team?jwt=%s", token), strings.NewReader(body))
@@ -138,11 +139,11 @@ func TestPatchTeamAddMemberStringUserid(t *testing.T) {
 	// (e.g. "123"), not a number. $patchv2 JSON-encodes that straight into
 	// the request body, so the API must accept userid as a JSON string.
 	prefix := uniquePrefix("TeamPatchStr")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	teamID := createTestTeam(t, prefix+"_team")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(`{"id":"%d","action":"Add","userid":"%d"}`, teamID, memberID)
 	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/team?jwt=%s", token), strings.NewReader(body))
@@ -162,11 +163,11 @@ func TestPatchTeamAddMemberStringUserid(t *testing.T) {
 
 func TestPatchTeamRemoveMember(t *testing.T) {
 	prefix := uniquePrefix("TeamRemove")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	teamID := createTestTeam(t, prefix+"_team")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	db.Exec("INSERT INTO teams_members (userid, teamid) VALUES (?, ?)", memberID, teamID)
@@ -188,7 +189,7 @@ func TestPatchTeamRemoveMember(t *testing.T) {
 
 func TestDeleteTeam(t *testing.T) {
 	prefix := uniquePrefix("TeamDel")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	teamID := createTestTeam(t, prefix+"_team")
@@ -209,7 +210,7 @@ func TestDeleteTeam(t *testing.T) {
 
 func TestDeleteTeamNotAdmin(t *testing.T) {
 	prefix := uniquePrefix("TeamDelNA")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	teamID := createTestTeam(t, prefix+"_team")

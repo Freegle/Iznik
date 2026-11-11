@@ -739,13 +739,10 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
-	// A User2Mod chat closes to the community's moderators once its member is a
-	// TrashNothing member without a membership here they chose (modmessaging.MayContact),
-	// typically because they have left. The member can still write; the moderators can't.
-	//
 	// A moderator writing into a chat between two members (a note from chat review) speaks
 	// for no one community, so each TrashNothing member in it must have chosen one the
-	// moderator moderates.
+	// moderator moderates. A User2Mod chat is never closed to its moderators here: a chat
+	// that was opened to them can always be answered.
 	var writeRoom struct {
 		User1    uint64
 		User2    uint64
@@ -754,10 +751,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	}
 	db.Table("chat_rooms").Select("COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid, chattype").
 		Where("id = ?", id).Scan(&writeRoom)
-	if writeRoom.Chattype == utils.CHAT_TYPE_USER2MOD && writeRoom.User1 != myid &&
-		!modmessaging.MayContact(db, myid, writeRoom.User1, writeRoom.Groupid) {
-		return fiber.NewError(fiber.StatusForbidden, "This member isn't in this community any more, so the chat is closed")
-	}
 	if writeRoom.Chattype == utils.CHAT_TYPE_USER2USER && writeRoom.User1 != myid && writeRoom.User2 != myid &&
 		(!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User1) ||
 			!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User2)) {
@@ -951,17 +944,15 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
-	// A reply to an offer that looks damaged, or too big to carry, waits while the replier is asked whether they
-	// still want it (replyconfirm.go), if their arm of the experiment confirm-reply is ask. That is decided here,
-	// before the reply is written, so that the reply and what holds it are written together: chats:process-incoming
-	// takes any committed unprocessed reply, whatever its age, and a reply committed before its hold would be
-	// delivered by a run that landed between the two. A reply held by rippling is outside the experiment: the
-	// question would be shown to the poster before the reply. A reply made in the app is outside the experiment
-	// too, since UX experiments are not run in the app, but a child car seat is asked about there as well: that
-	// question is policy, not an experiment (replyconfirm.go).
+	// A reply to an offer of a child car seat waits while the replier is asked to check the seat and whether they still
+	// want it, and so does a reply to an offer that looks damaged or too big to carry from a poster in the arm "ask" of
+	// the experiment confirm-reply-post (replyconfirm.go). That is decided here, before the reply is written, so that the reply and what holds it
+	// are written together: chats:process-incoming takes any committed unprocessed reply, whatever its age, and a reply
+	// committed before its hold would be delivered by a run that landed between the two. A reply held by rippling is not
+	// asked about: the question would be shown to the poster before the reply.
 	var confirm *replyConfirmPlan
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
-		confirm = planReplyConfirm(db, id, *payload.Refmsgid, myid, utils.RequestFromApp(c))
+		confirm = planReplyConfirm(db, id, *payload.Refmsgid, myid)
 	}
 
 	// We can see this chat room.  Create a chat message, but flagged as needing processing.  That means it
@@ -986,8 +977,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 
 		if confirm != nil && confirm.asks() {
-			// In a savepoint of its own: a hold that cannot be written leaves the reply as it would have been without
-			// the experiment, not a reply that failed.
+			// In a savepoint of its own: a hold that cannot be written leaves the reply as it would have been with
+			// no question, not a reply that failed.
 			if err := tx.Transaction(func(inner *gorm.DB) error { return confirm.hold(inner, payload.ID) }); err != nil {
 				stdlog.Printf("Could not ask replier %d to confirm reply %d in chat %d: %v", myid, payload.ID, id, err)
 			}
@@ -1044,9 +1035,9 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		})
 	}
 
-	// A reply that is not asked about (control, and any arm this code has no meaning for) is counted all the same.
+	// A reply to an eligible offer that is not asked about (control, a replier asked before) still counts the poster.
 	if confirm != nil && !confirm.asks() {
-		confirm.record(db, newid)
+		confirm.record(db)
 	}
 
 	// The question reaches the replier by push and email, as any chat message does.
@@ -2167,7 +2158,7 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 		stdlog.Printf("Failed to approve chat message %d: %v", msgID, result.Error)
 	}
 
-	// A reply that waited for its sender's answer (confirm-reply) and was then held for review has its question
+	// A reply that waited for its sender's answer (the car seat question) and was then held for review has its question
 	// hidden from the poster. It is shown with the reply.
 	revealQuestionOfApprovedReply(db, msgID)
 
@@ -2176,6 +2167,8 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	// identical twin in rejectChatMessage (b8fc832d50a0): a half-converted
 	// pair renumbers the survivor's site ID, so gate (h) refuses the split
 	// state.
+	// The batch chat mailer reads this row, by this exact text, to mail a reply approved after its look-back window
+	// (ChatNotificationService::getUnmailedMessages). Change the text there too.
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log.LOG_TYPE_CHAT,

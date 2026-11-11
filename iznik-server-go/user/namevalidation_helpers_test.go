@@ -3,31 +3,32 @@ package user
 import (
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 // ── IsExemptBySystemroleAndMod ────────────────────────────────────────────────
 
 func TestIsExemptBySystemroleAndMod_ModeratorRole(t *testing.T) {
-	assert.True(t, IsExemptBySystemroleAndMod("Moderator", false))
+	assert.True(t, IsExemptBySystemroleAndMod(utils.SYSTEMROLE_MODERATOR, false))
 }
 
 func TestIsExemptBySystemroleAndMod_SupportRole(t *testing.T) {
-	assert.True(t, IsExemptBySystemroleAndMod("Support", false))
+	assert.True(t, IsExemptBySystemroleAndMod(utils.SYSTEMROLE_SUPPORT, false))
 }
 
 func TestIsExemptBySystemroleAndMod_AdminRole(t *testing.T) {
-	assert.True(t, IsExemptBySystemroleAndMod("Admin", false))
+	assert.True(t, IsExemptBySystemroleAndMod(utils.SYSTEMROLE_ADMIN, false))
 }
 
 func TestIsExemptBySystemroleAndMod_UserRoleWithGroupMod(t *testing.T) {
 	// Ordinary user who is a group moderator is exempt.
-	assert.True(t, IsExemptBySystemroleAndMod("User", true))
+	assert.True(t, IsExemptBySystemroleAndMod(utils.SYSTEMROLE_USER, true))
 }
 
 func TestIsExemptBySystemroleAndMod_UserRoleNotMod(t *testing.T) {
 	// Ordinary user who is not a group moderator is NOT exempt.
-	assert.False(t, IsExemptBySystemroleAndMod("User", false))
+	assert.False(t, IsExemptBySystemroleAndMod(utils.SYSTEMROLE_USER, false))
 }
 
 func TestIsExemptBySystemroleAndMod_EmptyRoleNotMod(t *testing.T) {

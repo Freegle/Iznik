@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	stdlog "log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,11 +19,11 @@ import (
 
 // Confirming a reply before the poster gets it.
 //
-// eee:classify-new reads each new OFFER's photo and records whether the item looks damaged and
-// roughly how big and heavy it is (messages_eee). When someone replies to an offer that looks
-// damaged, or that looks like it needs a car to collect, Freegle asks them in the chat whether
-// they still want it, and the reply waits for the answer. That saves the poster a reply from
-// someone who would have backed out on seeing the item, or on finding it would not fit in a bag.
+// When someone replies to an OFFER of a child car seat, Freegle asks them in the chat to check the seat
+// before they accept it, and whether they still want it, and the reply waits for the answer (Discourse
+// 9939). A seat that has been in a crash, or is past the life its maker gave it, can look fine and fail,
+// and most people do not know that. The wording is the moderators'. It is policy, asked of everyone, in
+// the app as on the website.
 //
 // The question is an ordinary Prompt message (see chatprompt.go), @-addressed to and asked only
 // of the replier: chat_prompts.userid says who may answer it. It is written already processed
@@ -48,14 +49,12 @@ import (
 // TrashNothing members are left out on both sides: their replies and posts travel through
 // TrashNothing, where nobody would see the question.
 //
-// It is the experiment confirm-reply, so only repliers whose arm is ask are asked; the others
-// are counted and left alone.
-//
-// A child car seat is asked about whatever the experiment is doing (Discourse 9939). A seat that has
-// been in a crash, or is past the life its maker gave it, can look fine and fail, and most people do
-// not know that. The question tells the replier what to check before they accept one, with the
-// wording the moderators settled on, and the reply waits for their answer in the same way. That is
-// policy, not an experiment: it has no arm, writes no exposure, and is asked in the app too.
+// The same question is also the experiment confirm-reply-post, for offers that look damaged, or too big to carry
+// home, from the photo check (messages_eee). The POSTER is in an arm: in "ask", every replier to the poster's
+// eligible offers is asked whether they still want it before the reply is passed on; in "control" nothing changes.
+// Both arms write one exposure row per poster and post (subject "post"), and the batch counts each poster once, on
+// their first, by what the poster saw: ConfirmReplyPostSource. docs/developers/reference/ux-experiments.md,
+// "Confirming a reply, judged per poster". A child car seat is asked about as policy and is not in the experiment.
 
 // questionAskedOfMeSQL is true for a chat message that is a reply question still open and asked of the member given by
 // its one placeholder. The question is written unsuccessful, so that nothing delivers it to the poster, and the member it
@@ -66,6 +65,9 @@ const questionAskedOfMeSQL = "EXISTS (SELECT 1 FROM chat_prompts cpq WHERE cpq.c
 
 // replyConfirmExpiryDays is how long the question stays answerable before the reply is dropped.
 const replyConfirmExpiryDays = 3
+
+// confirmReplyPost is the experiment's name, as the switch list and the batch know it.
+const confirmReplyPost = "confirm-reply-post"
 
 type replyConfirmEee struct {
 	ID            uint64  `gorm:"column:id"`
@@ -109,21 +111,63 @@ func replyConfirmQuestion(name string, damaged bool, needsCar bool) string {
 	return "@" + name + ", before we pass your reply on: " + concern + " Do you still want it?"
 }
 
+// replyConfirmStratum is why a post is in the experiment: the exposure's stratum.
+func replyConfirmStratum(damaged bool, needsCar bool) string {
+	switch {
+	case damaged && needsCar:
+		return "both"
+	case damaged:
+		return "damaged"
+	default:
+		return "car"
+	}
+}
+
 var replyConfirmOptions = []PromptOption{
 	{Value: "yes", Label: "Yes, send my reply", Variant: "primary"},
 	{Value: "no", Label: "No, don't send it", Variant: "secondary"},
 }
 
-// childCarSeatTerms are the words in an offer's subject that mean it is a child car seat. Kept in step
-// with the "Car seats" entry in iznik-nuxt3/components/PostItem.vue, which shows the poster a note
-// under the box for the same words.
+// childCarSeatTerms are the words in an offer's subject that mean it is a child car seat, and
+// childCarSeatExclusions are phrases that are not one: a cover, or a seat for a dog. Kept in step with
+// the "Car seats" entry in iznik-nuxt3/composables/useItemWarnings.js, which shows the poster a note
+// under the item box for the same words, matched the same way.
 var childCarSeatTerms = []string{"car seat", "carseat", "child car", "booster seat", "isofix", "infant carrier"}
 
-// isChildCarSeat says whether a post's subject is offering a child car seat.
+var childCarSeatExclusions = []string{
+	"seat cover", "dog car seat", "dog booster seat", "dog seat", "pet car seat", "pet booster seat", "pet seat",
+}
+
+// wordPattern matches a phrase that ends where a word ends, allowing a plural in -s or -es, so that
+// "child car" does not match "child carrier".
+func wordPattern(phrase string) *regexp.Regexp {
+	return regexp.MustCompile(regexp.QuoteMeta(phrase) + `(?:e?s)?\b`)
+}
+
+var (
+	childCarSeatTermPatterns      = wordPatterns(childCarSeatTerms)
+	childCarSeatExclusionPatterns = wordPatterns(childCarSeatExclusions)
+)
+
+func wordPatterns(phrases []string) []*regexp.Regexp {
+	ret := make([]*regexp.Regexp, len(phrases))
+	for i, p := range phrases {
+		ret[i] = wordPattern(p)
+	}
+
+	return ret
+}
+
+// isChildCarSeat says whether a post's subject is offering a child car seat. The exclusions are taken out
+// first, so that "car seat and seat cover" is still a seat and "car seat cover" is not.
 func isChildCarSeat(subject string) bool {
 	lower := strings.ToLower(subject)
-	for _, term := range childCarSeatTerms {
-		if strings.Contains(lower, term) {
+	for _, re := range childCarSeatExclusionPatterns {
+		lower = re.ReplaceAllString(lower, " ")
+	}
+
+	for _, re := range childCarSeatTermPatterns {
+		if re.MatchString(lower) {
 			return true
 		}
 	}
@@ -142,55 +186,41 @@ func childCarSeatQuestion(name string) string {
 		"proceeding. Do you still want it?"
 }
 
-// replyConfirmStratum is why a reply is in the experiment: the exposure's stratum.
-func replyConfirmStratum(damaged bool, needsCar bool) string {
-	switch {
-	case damaged && needsCar:
-		return "both"
-	case damaged:
-		return "damaged"
-	default:
-		return "car"
-	}
-}
-
-// replyConfirmPlan is what the experiment decided about a reply before the reply was written.
+// replyConfirmPlan is what was decided about a reply before the reply was written: whether its replier is asked,
+// and, for the experiment, the poster's arm and exposure.
 type replyConfirmPlan struct {
-	// experiment is the experiment the reply is in, and empty when it is asked as policy (a child car
-	// seat), in which case no exposure is written.
+	// experiment is confirm-reply-post, or empty for the car seat question, which writes no exposure.
 	experiment string
 	arm        string
-	freegleID  uint64
-	chatid     uint64
-	msgid      uint64
-	replier    uint64
-	question   string
-	stratum    string
-	detail     map[string]any
+	// ask says the reply is held and its replier asked.
+	ask       bool
+	freegleID uint64
+	chatid    uint64
+	msgid     uint64
+	replier   uint64
+	poster    uint64
+	question  string
+	stratum   string
+	detail    map[string]any
 	// questionID is the chat message that asks, set once the hold has been written.
 	questionID uint64
 }
 
 // asks says whether the reply is held and its replier asked.
 func (p *replyConfirmPlan) asks() bool {
-	return p.arm == "ask"
+	return p.ask
 }
 
-// planReplyConfirm is the experiment confirm-reply (docs/developers/reference/ux-experiments.md,
-// "Confirming a reply before it is passed on"). Half of the repliers to an eligible offer are in the arm
-// "ask": their reply is held and they are asked whether they still want the item. The other half are
-// "control": nothing changes for them. Both arms leave one exposure row. With no arm (switch off,
-// experiment not running, entry malformed or expired) it does nothing at all.
+// planReplyConfirm decides whether a reply is held and its replier asked: a reply to an OFFER of a child car
+// seat (policy), or, in the experiment confirm-reply-post, a reply to an offer that looks damaged or too big to carry
+// from a poster in the arm "ask". Either way only in the chat with the poster, while the offer is still open, once
+// per replier and post. A reply to an eligible offer from a poster in "control" is not asked, and its plan only writes
+// the poster's exposure (record).
 //
-// It only decides, and writes nothing, so that it can run before the reply is written: the hold is written in
-// the transaction of the reply (hold), because the batch takes any committed unprocessed reply. It returns nil for a
-// reply that is outside the experiment, and everything that makes a reply ineligible comes before the plan is made,
-// so an exposure always means "this reply was eligible".
-//
-// A child car seat is asked about outside the experiment: whatever the arm, and from the app too, which the
-// experiment leaves out (fromApp). The post is read first so that a reply to anything else, with no experiment
-// running, costs one read and nothing more.
-func planReplyConfirm(db *gorm.DB, chatid uint64, msgid uint64, replier uint64, fromApp bool) *replyConfirmPlan {
+// It only decides, and writes nothing, so that it can run before the reply is written: the hold is written in the
+// transaction of the reply (hold), because the batch takes any committed unprocessed reply. It returns nil for a reply
+// that is not asked about. The post is read first, so a reply to anything else costs one read and nothing more.
+func planReplyConfirm(db *gorm.DB, chatid uint64, msgid uint64, replier uint64) *replyConfirmPlan {
 	var post struct {
 		Type             string
 		Subject          string
@@ -205,20 +235,15 @@ func planReplyConfirm(db *gorm.DB, chatid uint64, msgid uint64, replier uint64, 
 		return nil
 	}
 
+	// The car seat question is policy and comes first. Otherwise the poster's arm decides, and with no arm (switch off,
+	// experiment not running, entry malformed or expired) nothing else is read.
 	carSeat := isChildCarSeat(post.Subject)
-
 	arm := ""
-	experiment := ""
 	if !carSeat {
-		if fromApp {
-			return nil
-		}
-
-		arm = ux.ExperimentArm(db, replier, "confirm-reply")
+		arm = ux.ExperimentArm(db, post.Fromuser, "confirm-reply-post")
 		if arm == "" {
 			return nil
 		}
-		experiment = "confirm-reply"
 	}
 
 	freegleID := firstreply.SystemUserID(db)
@@ -227,7 +252,7 @@ func planReplyConfirm(db *gorm.DB, chatid uint64, msgid uint64, replier uint64, 
 	}
 
 	// An offer that has already been taken, withdrawn or has expired has nothing left to ask about: the reply goes
-	// through as it does outside the experiment, and the exposure is not written.
+	// through as any other does.
 	var outcomes int64
 	db.Table("messages_outcomes").Where("msgid = ?", msgid).Count(&outcomes)
 	if outcomes > 0 {
@@ -254,51 +279,19 @@ func planReplyConfirm(db *gorm.DB, chatid uint64, msgid uint64, replier uint64, 
 	}
 
 	if carSeat {
-		// Asked once per replier and post: a second reply after a no, or after the question ran out, goes
-		// through. There is no exposure row to go by, so the question itself is the record. Read on the
-		// primary, as below.
-		var asked int64
-		if err := db.Clauses(dbresolver.Write).Table("chat_prompts").
-			Where("kind = ? AND userid = ? AND msgid = ?", utils.PROMPT_KIND_CONFIRM_REPLY, replier, msgid).
-			Count(&asked).Error; err != nil {
-			stdlog.Printf("Could not check for an earlier car seat question for replier %d on post %d: %v", replier, msgid, err)
-
+		if askedBefore(db, replier, msgid) {
 			return nil
 		}
-		if asked > 0 {
-			return nil
-		}
-
-		stratum := "carseat"
 
 		return &replyConfirmPlan{
-			arm:       "ask",
+			ask:       true,
 			freegleID: freegleID,
 			chatid:    chatid,
 			msgid:     msgid,
 			replier:   replier,
+			poster:    post.Fromuser,
 			question:  childCarSeatQuestion(memberName(db, replier)),
-			stratum:   stratum,
 		}
-	}
-
-	// One row per replier and post, whichever arm: a second reply to the same post is not a second
-	// unit. This also stops a second question. Read on the primary, because the first reply may be
-	// seconds old (.claude/rules/go-api-traps.md, "Reads and writes go to different servers"). A read
-	// that fails leaves the reply alone, in both arms: carrying on would ask a repeat replier a second
-	// question and write a second row (the unique key includes the reply id).
-	var exposed int64
-	if err := db.Clauses(dbresolver.Write).Table("ux_experiment_exposures x").
-		Joins("INNER JOIN chat_messages cm ON cm.id = x.subject_id").
-		Where("x.experiment = ? AND x.subject_type = ? AND x.userid = ? AND cm.refmsgid = ?",
-			experiment, "reply", replier, msgid).
-		Count(&exposed).Error; err != nil {
-		stdlog.Printf("Could not check for an earlier confirm-reply exposure for replier %d on post %d: %v", replier, msgid, err)
-
-		return nil
-	}
-	if exposed > 0 {
-		return nil
 	}
 
 	// The newest classification wins: the post may have been reclassified since.
@@ -317,45 +310,62 @@ func planReplyConfirm(db *gorm.DB, chatid uint64, msgid uint64, replier uint64, 
 	}
 
 	plan := &replyConfirmPlan{
-		experiment: experiment,
+		experiment: confirmReplyPost,
 		arm:        arm,
 		freegleID:  freegleID,
 		chatid:     chatid,
 		msgid:      msgid,
 		replier:    replier,
+		poster:     post.Fromuser,
 		stratum:    replyConfirmStratum(eee.damaged(), needsCar),
 		detail:     map[string]any{"eee_id": eee.ID, "deliverypossible": post.Deliverypossible},
 	}
-	if plan.asks() {
+	if arm == "ask" && !askedBefore(db, replier, msgid) {
+		plan.ask = true
 		plan.question = replyConfirmQuestion(memberName(db, replier), eee.damaged(), needsCar)
 	}
 
 	return plan
 }
 
-// record writes the exposure of a reply that is not asked about: control, and any arm this code has no meaning for.
-// The reply goes through as it always did. RecordExposure logs a failure, and the reply carries on whatever happens
-// to the row.
-func (p *replyConfirmPlan) record(db *gorm.DB, replyid uint64) {
+// askedBefore says whether this replier has been asked about this post already: a second reply after a no, or after
+// the question ran out, goes through. Read on the primary, because the first reply may be seconds old
+// (.claude/rules/go-api-traps.md, "Reads and writes go to different servers"). A read that fails is taken as asked,
+// which leaves the reply alone rather than risk asking twice.
+func askedBefore(db *gorm.DB, replier uint64, msgid uint64) bool {
+	var asked int64
+	if err := db.Clauses(dbresolver.Write).Table("chat_prompts").
+		Where("kind = ? AND userid = ? AND msgid = ?", utils.PROMPT_KIND_CONFIRM_REPLY, replier, msgid).
+		Count(&asked).Error; err != nil {
+		stdlog.Printf("Could not check for an earlier reply question for replier %d on post %d: %v", replier, msgid, err)
+
+		return true
+	}
+
+	return asked > 0
+}
+
+// record writes the poster's exposure for a reply that is not asked about: control, a replier asked before, and any
+// arm this code has no meaning for. The reply goes through as it always did. The row is the poster and the post, so a
+// second reply adds nothing (the unique key), and RecordExposure logs a failure: the reply carries on whatever happens.
+func (p *replyConfirmPlan) record(db *gorm.DB) {
 	if p.experiment == "" {
 		return
 	}
 
-	_ = ux.RecordExposure(db, p.experiment, p.arm, p.replier, "reply", replyid, &p.stratum, p.detail)
+	_ = ux.RecordExposure(db, p.experiment, p.arm, p.poster, "post", p.msgid, &p.stratum, p.detail)
 }
 
-// hold writes what holds the reply: its exposure, the question that asks about it, and the row that names the
-// reply. It runs in the transaction that writes the reply, so the reply is never committed without its hold. The
+// hold writes what holds the reply: the question that asks about it, and the row that names the reply. It runs in the transaction that writes the reply, so the reply is never committed without its hold. The
 // batch takes any committed unprocessed reply, whatever its age, and a reply committed before its hold would be
 // delivered by a run that landed between the two, to a poster whose replier is then asked whether they still want it.
 func (p *replyConfirmPlan) hold(tx *gorm.DB, replyid uint64) error {
 	options, _ := json.Marshal(replyConfirmOptions)
 
-	// First, so that a row which cannot be written leaves no hold and no question: the reply then
-	// goes through exactly as it would have in control. A question asked as policy has no experiment
-	// and writes no row.
+	// First, so that a row which cannot be written leaves no hold and no question: the reply then goes through exactly
+	// as it would have in control. The car seat question has no experiment and writes no row.
 	if p.experiment != "" {
-		if err := ux.RecordExposure(tx, p.experiment, p.arm, p.replier, "reply", replyid, &p.stratum, p.detail); err != nil {
+		if err := ux.RecordExposure(tx, p.experiment, p.arm, p.poster, "post", p.msgid, &p.stratum, p.detail); err != nil {
 			return err
 		}
 	}

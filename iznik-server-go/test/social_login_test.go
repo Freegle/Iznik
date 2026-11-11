@@ -16,6 +16,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
 )
@@ -88,7 +89,7 @@ func TestGoogleLoginNewUser(t *testing.T) {
 func TestGoogleLoginExistingUserByEmail(t *testing.T) {
 	prefix := uniquePrefix("google-email")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	clientID := "test-google-client-id"
 
 	server := newGoogleMockServer("google-uid-"+prefix, email, "Test", prefix, "Test "+prefix, clientID, 200)
@@ -121,7 +122,7 @@ func TestGoogleLoginExistingUserByEmail(t *testing.T) {
 
 func TestGoogleLoginExistingUserByGoogleUID(t *testing.T) {
 	prefix := uniquePrefix("google-uid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	clientID := "test-google-client-id"
 	uid := "google-uid-" + prefix
 
@@ -237,7 +238,7 @@ func TestFacebookLoginNewUser(t *testing.T) {
 func TestFacebookLoginExistingUserByEmail(t *testing.T) {
 	prefix := uniquePrefix("fb-email")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	fbID := "fb-uid-" + prefix
 
 	server := newFacebookMockServer(fbID, email, "Test", prefix, "Test "+prefix, 200)
@@ -267,7 +268,7 @@ func TestFacebookLoginExistingUserByEmail(t *testing.T) {
 
 func TestFacebookLoginExistingUserByFBUID(t *testing.T) {
 	prefix := uniquePrefix("fb-uid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	fbID := "fb-uid-" + prefix
 
 	db := database.DBConn
@@ -428,7 +429,7 @@ func TestSocialMatchOrCreateNewUser(t *testing.T) {
 func TestSocialMatchOrCreateExistingEmail(t *testing.T) {
 	prefix := uniquePrefix("social-email")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	clientID := "test-social-client-id"
 	server := newGoogleMockServer("social-uid-"+prefix, email, "Test", prefix, "Test "+prefix, clientID, 200)
@@ -456,7 +457,7 @@ func TestSocialMatchOrCreateExistingEmail(t *testing.T) {
 
 func TestSocialMatchOrCreateExistingLogin(t *testing.T) {
 	prefix := uniquePrefix("social-login")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	uid := "social-uid-" + prefix
 
 	db := database.DBConn
@@ -495,8 +496,8 @@ func TestSocialMatchOrCreateTNUser(t *testing.T) {
 	// earlier run before claiming it. 12346 keeps this distinct from the
 	// membership partner test, which uses 12345.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12346)
-	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('Test', ?, ?, 'User', 12346)",
-		prefix, fullname)
+	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('Test', ?, ?, ?, 12346)",
+		prefix, fullname, utils.SYSTEMROLE_USER)
 
 	var userID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)
@@ -761,7 +762,7 @@ func TestGoogleLoginDoesNotOverwriteExistingAvatar(t *testing.T) {
 
 	// Create a user with an existing custom avatar.
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_images (userid, url, `default`, contenttype) VALUES (?, ?, 0, 'image/jpeg')",
 		userID, existingAvatarURL)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated) VALUES (?, ?, 0, NOW())",
@@ -802,7 +803,7 @@ func TestFacebookLoginDoesNotOverwriteExistingAvatar(t *testing.T) {
 
 	// Create a user with an existing custom avatar.
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_images (userid, url, `default`, contenttype) VALUES (?, ?, 0, 'image/jpeg')",
 		userID, existingAvatarURL)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated) VALUES (?, ?, 0, NOW())",

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import dayjs from 'dayjs'
 import ModChatReview from '~/modtools/components/ModChatReview.vue'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // plans/active/2026-09-27-lockdown-switch.md section 11.3: while the mods
 // surface is held, the Go API allows only a bare Approve on a chat review
@@ -167,7 +168,7 @@ describe('ModChatReview', () => {
       redactChat: mockRedactChat,
     }
     globalThis.__mockAuthStore = {
-      groups: [{ groupid: 789, role: 'Moderator', active: 1 }],
+      groups: [{ groupid: 789, role: ROLE_MODERATOR, active: 1 }],
     }
   })
 
@@ -467,7 +468,7 @@ describe('ModChatReview', () => {
   describe('isActiveMod — backup mod buttons', () => {
     it('shows all action buttons for backup mod (active=0, role=Moderator)', () => {
       globalThis.__mockAuthStore = {
-        groups: [{ groupid: 789, role: 'Moderator', active: 0 }],
+        groups: [{ groupid: 789, role: ROLE_MODERATOR, active: 0 }],
       }
       const wrapper = mountComponent({ widerchatreview: false, held: null })
       const buttons = wrapper.findAll('.spin-button')
@@ -488,7 +489,7 @@ describe('ModChatReview', () => {
 
     it('shows all action buttons for backup owner (active=0, role=Owner)', () => {
       globalThis.__mockAuthStore = {
-        groups: [{ groupid: 789, role: 'Owner', active: 0 }],
+        groups: [{ groupid: 789, role: ROLE_OWNER, active: 0 }],
       }
       const wrapper = mountComponent({ widerchatreview: false, held: null })
       const buttons = wrapper.findAll('.spin-button')
@@ -502,7 +503,7 @@ describe('ModChatReview', () => {
 
     it('hides mod buttons when user is not a member of the group', () => {
       globalThis.__mockAuthStore = {
-        groups: [{ groupid: 999, role: 'Moderator', active: 1 }],
+        groups: [{ groupid: 999, role: ROLE_MODERATOR, active: 1 }],
       }
       const wrapper = mountComponent({ widerchatreview: false, held: null })
       const buttons = wrapper.findAll('.spin-button')

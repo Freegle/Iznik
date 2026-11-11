@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-11-03
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
   - iznik-nuxt3/modtools/components/ModMessage*.vue
   - iznik-nuxt3/modtools/components/ModStdMessageModal.vue
+  - iznik-nuxt3/modtools/components/ModStdMessageSegments.vue
   - iznik-nuxt3/modtools/utils/stdMessageDirectives.js
   - iznik-nuxt3/modtools/composables/multiGroupModeration.js
   # cross-stack behaviour tests (change when the behaviour changes)
@@ -145,6 +146,10 @@ ModTools tells you *why* a post needs a look, right on the post:
   as several separate posts, until those are merged into one. See
   [TrashNothing posts](rippling-out.md#trashnothing-posts).
 - **Bulk clearance** posts show an item count and a "see how members see it" preview.
+- A post that says **Split automatically into N items** is an ordinary member's post that
+  listed several things, which Freegle has listed separately so people can say which they want.
+  It is moderated like any other post, and the member can undo the split. Only OFFERs are split.
+  If you change one to a WANTED, the split is undone and it goes back to one post.
 
 ## Standard messages
 
@@ -157,6 +162,11 @@ situation (approve, reject, hold, and so on). You configure your sets under Sett
   between "autosend" and "edit first" for a session.
 
 Keep them friendly and personal. A short human note lands far better than a corporate one.
+
+A standard message can also change the member's email frequency or moderation status on
+your community, for example to approve a post and unmoderate the poster. If the poster is
+not a member any more, perhaps because they left after posting, there is nothing to change.
+The message box says so, and the approve, reply or delete still goes ahead.
 
 The member gets a standard message once, by email. It also goes into their chat with the
 volunteers, so the other moderators can see what was said. Whether they are emailed a copy
@@ -199,8 +209,9 @@ that goes into the post, at the top or the bottom. A second box, **Message to po
 holds what the poster is sent. The subject prefix and suffix apply to that message.
 
 When you use it, you see what the post will read and the message to the poster, and you
-can change either before you click **Save Edit and Send**. The post is changed and the
-message is sent together. If the poster can't be messaged from your community, for example
+can change either before you click **Save Edit and Send**. Both can use
+[fill-in boxes and optional bits](#fill-in-boxes-and-optional-bits), and each is laid out
+the same way. The post is changed and the message is sent together. If the poster can't be messaged from your community, for example
 on a post that rippled in, nothing is changed, and you are told why. On those posts the
 button isn't offered, though a plain **Edit** still is.
 
@@ -235,7 +246,8 @@ you must write yourself each time) or `<optional>...</optional>` (something that
 applies sometimes). You add those tags when you write the message under Settings.
 
 When a message uses either of them, sending it opens the message laid out in order rather
-than as one block of text:
+than as one block of text. For **Edit and Message** this applies to the text added to the
+post and to the message to the poster alike:
 
 - An **`<editthis>`** part is a highlighted box. Fill it in before you send.
 - An **`<optional>`** part comes with **Keep** and **Remove**. You must choose one, and you
@@ -314,7 +326,8 @@ the moderator who did it when it was a moderator rather than a members' review.
 ## Posts from Trash Nothing that nobody chose
 
 Some posts arrive from Trash Nothing without the person choosing a Freegle community at
-all - we match them to a community from where they are. Those posts carry a warning saying
+all - we match them to a community from where they are. A post where they did choose one
+goes on that community, even when they post from inside another community's area. Those posts carry a warning saying
 so, worded for where the post has got to: on one waiting in **Pending** it says approve or
 delete is the whole of it, and on one already **live** it says what happens if members
 report it. They behave differently from an ordinary post, because the person behind them

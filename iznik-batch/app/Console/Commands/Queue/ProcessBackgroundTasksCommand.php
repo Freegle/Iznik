@@ -2,12 +2,15 @@
 
 namespace App\Console\Commands\Queue;
 
+use App\Services\AutoSplit\Crops;
+use App\Support\ClearanceSql;
 use App\Console\Commands\Mail\SendAdminCommand;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Charity\CharitySignupMail;
 use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
+use App\Mail\Chat\SupportCaseMessageMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
 use App\Mail\Session\ForgotPasswordMail;
@@ -296,6 +299,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_EMAIL_MERGE             => $this->handleEmailMerge($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_VERIFY            => $this->handleEmailVerify($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_REFER_TO_SUPPORT        => $this->handleReferToSupport($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_SUPPORT_CASE_MESSAGE    => $this->handleSupportCaseMessage($data, $spooler),
             BackgroundTask::TASK_MESSAGE_OUTCOME         => $this->handleMessageOutcome($data),
             BackgroundTask::TASK_MESSAGE_PROMISED        => $this->handleMessagePromised($data),
             BackgroundTask::TASK_FREEBIE_ALERTS_ADD      => $this->handleFreebieAlertsAdd($data),
@@ -1418,6 +1422,68 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
+     * Tell the other side of a support case about a new message in its ModTools thread.
+     *
+     * A Support message goes to the referring moderator; a Referrer message goes to the support
+     * address. The author is never mailed their own message, and nothing from the first pass is
+     * included. Replies are made in ModTools, so a missing case or message is logged and dropped.
+     */
+    protected function handleSupportCaseMessage(array $data, EmailSpoolerService $spooler): void
+    {
+        $caseId = (int) ($data['caseid'] ?? 0);
+        $messageId = (int) ($data['messageid'] ?? 0);
+
+        if ($caseId === 0 || $messageId === 0) {
+            throw new \RuntimeException('support_case_message requires caseid and messageid');
+        }
+
+        $message = DB::table('support_case_messages')->where('id', $messageId)->where('caseid', $caseId)->first();
+        $case = DB::table('support_cases')->where('id', $caseId)->first();
+
+        if (! $message || ! $case) {
+            Log::warning('Support case message not found', ['case_id' => $caseId, 'message_id' => $messageId]);
+            return;
+        }
+
+        $author = $message->userid ? User::find($message->userid) : null;
+        $authorEmails = $author
+            ? DB::table('users_emails')->where('userid', $author->id)->pluck('email')->map(fn ($e) => strtolower((string) $e))->all()
+            : [];
+
+        if ($message->role === 'Support') { // role-literal-ok: support case message role
+            $referrer = $case->referrerid ? User::find($case->referrerid) : null;
+            $email = $referrer?->email_preferred;
+
+            if (! $referrer || ! $email || (int) $referrer->id === (int) $message->userid) {
+                return;
+            }
+
+            $recipients = [$email];
+        } else {
+            $supportAddr = (string) config('freegle.mail.support_addr', 'support@ilovefreegle.org');
+            $recipients = array_values(array_filter(
+                array_map('trim', explode(',', $supportAddr)),
+                fn ($r) => $r !== '' && ! in_array(strtolower($r), $authorEmails, true)
+            ));
+        }
+
+        if (! $recipients) {
+            return;
+        }
+
+        $mail = new SupportCaseMessageMail(
+            caseId: $caseId,
+            role: (string) $message->role,
+            authorName: $author ? ($author->fullname ?: 'Someone') : 'Someone',
+            body: (string) $message->body,
+        );
+
+        $spooler->spool($mail, $recipients);
+
+        Log::info('Sent support case message email', ['case_id' => $caseId, 'message_id' => $messageId]);
+    }
+
+    /**
      * Handle refer-to-support — sends a plain text email to the support team.
      *
      * V1 parity: ChatRoom::referToSupport() lines 2266-2284.
@@ -1427,6 +1493,11 @@ class ProcessBackgroundTasksCommand extends Command
         EmailSpoolerService $spooler,
         bool $shouldSpool
     ): void {
+        // A support case is mailed by support:first-pass, with its brief; this is only the legacy task.
+        if (! empty($data['caseid'])) {
+            return;
+        }
+
         $chatId = (int) ($data['chatid'] ?? 0);
         $userId = (int) ($data['userid'] ?? 0);
 
@@ -1892,9 +1963,9 @@ class ProcessBackgroundTasksCommand extends Command
             return null;
         }
 
-        // Defense-in-depth: skip clearance/bulk-offer posts even if somehow enqueued.
-        $isClearance = DB::table('messages_bulk_items')->where('msgid', $msgId)->exists();
-        if ($isClearance) {
+        // Defense-in-depth: skip clearances even if somehow enqueued. An automatically split
+        // post is an ordinary Offer and goes to the partners.
+        if (ClearanceSql::isClearance((int) $msgId)) {
             Log::info('Skipping freebie_alerts_add for clearance post', ['msgid' => $msgId]);
             return null;
         }
@@ -1920,7 +1991,8 @@ class ProcessBackgroundTasksCommand extends Command
         // Build image list from message attachments.
         // Same pattern as digest emails: externalurl if set, otherwise {images.domain}/timg_{id}.jpg.
         $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-        $attachments = DB::table('messages_attachments')->where('msgid', $msgId)->get();
+        // The post's own photos: an auto-split item crop would repeat the photo it was cut from.
+        $attachments = Crops::exclude(DB::table('messages_attachments')->where('msgid', $msgId))->get();
         $images = $attachments->map(function ($att) use ($imagesDomain) {
             return ! empty($att->externalurl)
                 ? $att->externalurl

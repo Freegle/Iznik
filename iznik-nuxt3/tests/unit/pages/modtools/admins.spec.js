@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import AdminsPage from '~/modtools/pages/admins.vue'
+import { ROLE_MODERATOR } from '~/constants'
 
 // Create mock stores
 const mockAdminsStore = {
@@ -16,7 +17,7 @@ const mockModGroupStore = {
   get: vi.fn().mockReturnValue({
     id: 1,
     type: 'Freegle',
-    role: 'Moderator',
+    role: ROLE_MODERATOR,
     work: { pendingadmins: 3 },
   }),
 }
@@ -76,8 +77,8 @@ vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: ref({ email: 'mod@example.com' }),
     myGroups: ref([
-      { id: 1, role: 'Moderator' },
-      { id: 2, role: 'Moderator' },
+      { id: 1, role: ROLE_MODERATOR },
+      { id: 2, role: ROLE_MODERATOR },
     ]),
     supportOrAdmin: ref(false),
   }),

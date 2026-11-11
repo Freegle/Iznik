@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,7 +28,7 @@ func mergeUsers(t *testing.T, adminToken string, id1, id2 uint64) int {
 // mergeAdminSetup creates an Admin user and returns (adminID, adminToken).
 func mergeAdminSetup(t *testing.T, prefix string) (uint64, string) {
 	t.Helper()
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 	return adminID, token
 }
@@ -39,8 +40,8 @@ func TestMergeEmailsTransferred(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ?", id1).Scan(&count)
@@ -61,8 +62,8 @@ func TestMergeEmailPreferredWinsForId2(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	db.Exec("UPDATE users_emails SET preferred = 1 WHERE userid = ?", id1)
 	db.Exec("UPDATE users_emails SET preferred = 1 WHERE userid = ?", id2)
@@ -84,17 +85,17 @@ func TestMergeMembershipTransferred(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, id1, groupID, "Member")
+	CreateTestMembership(t, id1, groupID, utils.ROLE_MEMBER)
 
 	status := mergeUsers(t, adminToken, id1, id2)
 	assert.Equal(t, 200, status, "merge request should succeed")
 
 	var role string
 	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&role)
-	assert.Equal(t, "Member", role, "id2 should inherit id1's membership")
+	assert.Equal(t, utils.ROLE_MEMBER, role, "id2 should inherit id1's membership")
 
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ?", id1).Scan(&count)
@@ -106,18 +107,18 @@ func TestMergeMembershipRoleTakesMax(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, id1, groupID, "Moderator")
-	CreateTestMembership(t, id2, groupID, "Member")
+	CreateTestMembership(t, id1, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, id2, groupID, utils.ROLE_MEMBER)
 
 	status := mergeUsers(t, adminToken, id1, id2)
 	assert.Equal(t, 200, status, "merge request should succeed")
 
 	var role string
 	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", id2, groupID).Scan(&role)
-	assert.Equal(t, "Moderator", role, "merged user should have the higher role")
+	assert.Equal(t, utils.ROLE_MODERATOR, role, "merged user should have the higher role")
 }
 
 func TestMergeMembershipConflictTakesOlderDate(t *testing.T) {
@@ -125,12 +126,12 @@ func TestMergeMembershipConflictTakesOlderDate(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
-	db.Exec(fmt.Sprintf("INSERT INTO memberships (userid, groupid, role, added) VALUES (%d, %d, 'Member', '2013-01-01 00:00:00')", id1, groupID))
-	db.Exec(fmt.Sprintf("INSERT INTO memberships (userid, groupid, role, added) VALUES (%d, %d, 'Member', NOW())", id2, groupID))
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added) VALUES (?, ?, ?, '2013-01-01 00:00:00')", id1, groupID, utils.ROLE_MEMBER)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added) VALUES (?, ?, ?, NOW())", id2, groupID, utils.ROLE_MEMBER)
 
 	status := mergeUsers(t, adminToken, id1, id2)
 	assert.Equal(t, 200, status, "merge request should succeed")
@@ -148,14 +149,14 @@ func TestMergeMembershipConflictTakesTheOlderOriginAndTheLowerImplicit(t *testin
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'manual', 0, 0)", id1, groupID)
+		"VALUES (?, ?, ?, '2013-01-01 00:00:00', 'manual', 0, 0)", id1, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', NOW(), 'rippled', 1, 1)", id2, groupID)
+		"VALUES (?, ?, ?, NOW(), 'rippled', 1, 1)", id2, groupID, utils.ROLE_MEMBER)
 
 	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
 
@@ -177,14 +178,14 @@ func TestMergeMembershipConflictLogsAPlacementMadeOrdinary(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'tn_unaddressed', 1, 0)", id1, groupID)
+		"VALUES (?, ?, ?, '2013-01-01 00:00:00', 'tn_unaddressed', 1, 0)", id1, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', NOW(), 'manual', 0, 0)", id2, groupID)
+		"VALUES (?, ?, ?, NOW(), 'manual', 0, 0)", id2, groupID, utils.ROLE_MEMBER)
 
 	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
 
@@ -217,14 +218,14 @@ func TestMergeMembershipConflictOfARippleJoinAndATNPlacementIsATNPlacement(t *te
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', NOW(), 'tn_unaddressed', 1, 0)", id1, groupID)
+		"VALUES (?, ?, ?, NOW(), 'tn_unaddressed', 1, 0)", id1, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID)
+		"VALUES (?, ?, ?, '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID, utils.ROLE_MEMBER)
 
 	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
 
@@ -243,14 +244,14 @@ func TestMergeMembershipConflictOfTwoRippleJoinsIsARippleJoin(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', NOW(), 'rippled', 1, 1)", id1, groupID)
+		"VALUES (?, ?, ?, NOW(), 'rippled', 1, 1)", id1, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, added, added_origin, implicit, rippled) "+
-		"VALUES (?, ?, 'Member', '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID)
+		"VALUES (?, ?, ?, '2013-01-01 00:00:00', 'rippled', 1, 1)", id2, groupID, utils.ROLE_MEMBER)
 
 	assert.Equal(t, 200, mergeUsers(t, adminToken, id1, id2))
 
@@ -272,8 +273,8 @@ func TestMergeMessagesTransferred(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, id1, groupID, "Test offer", 55.9533, -3.1883)
 
@@ -289,8 +290,8 @@ func TestMergeMessagesHistoryTransferred(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	db.Exec("INSERT INTO messages_history (fromuser, msgid, arrival) VALUES (?, NULL, NOW())", id1)
 
@@ -309,8 +310,8 @@ func TestMergeLogsTransferred(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	db.Exec("INSERT INTO logs (user, byuser, type, subtype, timestamp) VALUES (?, ?, 'User', 'Created', NOW())", id1, id1)
 
@@ -330,9 +331,9 @@ func TestMergeChatRoomSimpleTransfer(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	user3 := CreateTestUser(t, prefix+"_u3", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	user3 := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 
 	roomID := CreateTestChatRoom(t, id1, &user3, nil, "User2User")
 
@@ -349,9 +350,9 @@ func TestMergeChatRoomDeduplicated(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	user3 := CreateTestUser(t, prefix+"_u3", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	user3 := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 
 	room1 := CreateTestChatRoom(t, id1, &user3, nil, "User2User")
 	CreateTestChatMessage(t, room1, id1, "Hello from id1 a")
@@ -377,9 +378,9 @@ func TestMergeChatRosterTransferred(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	user3 := CreateTestUser(t, prefix+"_u3", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	user3 := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 	room := CreateTestChatRoom(t, id1, &user3, nil, "User2User")
 	db.Exec("INSERT INTO chat_roster (chatid, userid, lastmsgseen) VALUES (?, ?, 0)", room, id1)
 
@@ -395,8 +396,8 @@ func TestMergeSessionsTransferred(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	id1SessionID, _ := CreateTestSession(t, id1)
 
 	mergeUsers(t, adminToken, id1, id2)
@@ -411,8 +412,8 @@ func TestMergeLoginsTransferred(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Facebook', ?)", id1, prefix+"_fb")
 
 	mergeUsers(t, adminToken, id1, id2)
@@ -430,8 +431,8 @@ func TestMergeUserAttributeNameFromId1(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET fullname = 'Alice Smith', firstname = 'Alice', lastname = 'Smith' WHERE id = ?", id1)
 	db.Exec("UPDATE users SET fullname = NULL, firstname = NULL, lastname = NULL WHERE id = ?", id2)
 
@@ -452,8 +453,8 @@ func TestMergeUserAttributeId2NamePreserved(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET fullname = 'Old Name' WHERE id = ?", id1)
 	db.Exec("UPDATE users SET fullname = 'Alice Smith' WHERE id = ?", id2)
 
@@ -469,14 +470,14 @@ func TestMergeSystemroleTakesMax(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "Support")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_SUPPORT)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	mergeUsers(t, adminToken, id1, id2)
 
 	var role string
 	db.Raw("SELECT systemrole FROM users WHERE id = ?", id2).Scan(&role)
-	assert.Equal(t, "Support", role, "id2 should have the higher systemrole after merge")
+	assert.Equal(t, utils.SYSTEMROLE_SUPPORT, role, "id2 should have the higher systemrole after merge")
 }
 
 func TestMergeAddedDateTakesOldest(t *testing.T) {
@@ -484,8 +485,8 @@ func TestMergeAddedDateTakesOldest(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET added = '2010-01-01 00:00:00' WHERE id = ?", id1)
 	db.Exec("UPDATE users SET added = '2020-01-01 00:00:00' WHERE id = ?", id2)
 
@@ -501,8 +502,8 @@ func TestMergeDonationsTransferred(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_donations (userid, type, Payer, PayerDisplayName, GrossAmount, source) VALUES (?, 'Stripe', 'Test', 'Test', 10.00, 'Stripe')", id1)
 
 	mergeUsers(t, adminToken, id1, id2)
@@ -520,13 +521,13 @@ func TestMergeBansHandled(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	bannerID := CreateTestUser(t, prefix+"_banner", "Admin")
+	bannerID := CreateTestUser(t, prefix+"_banner", utils.SYSTEMROLE_ADMIN)
 
 	db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?)", id1, groupID, bannerID)
-	CreateTestMembership(t, id2, groupID, "Member")
+	CreateTestMembership(t, id2, groupID, utils.ROLE_MEMBER)
 
 	mergeUsers(t, adminToken, id1, id2)
 
@@ -546,12 +547,12 @@ func TestMergeKeepsBanDates(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	other := CreateTestUser(t, prefix+"_other", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	other := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	group2ID := CreateTestGroup(t, prefix+"_g2")
-	bannerID := CreateTestUser(t, prefix+"_banner", "Admin")
+	bannerID := CreateTestUser(t, prefix+"_banner", utils.SYSTEMROLE_ADMIN)
 
 	db.Exec("INSERT INTO users_banned (userid, groupid, byuser, date) VALUES (?, ?, ?, '2020-03-04 05:06:07')", id1, groupID, bannerID)
 	db.Exec("INSERT INTO users_banned (userid, groupid, byuser, date) VALUES (?, ?, ?, '2021-08-09 10:11:12')", other, group2ID, id1)
@@ -572,8 +573,8 @@ func TestMergeGiftaidBestPeriodKept(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'Past4YearsAndFuture', 'Alice', '1 Main St')", id1)
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'Declined', 'Alice', '1 Main St')", id2)
@@ -594,8 +595,8 @@ func TestMergeMergeLogEntries(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	mergeUsers(t, adminToken, id1, id2)
 
@@ -628,8 +629,8 @@ func TestMergeRefusesFreegleWithTrashNothingByID(t *testing.T) {
 	prefix := uniquePrefix("merge_fd_tn")
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	fd := CreateTestUser(t, prefix+"_fd", "User")
-	tn := CreateTestUser(t, prefix+"_tn", "User")
+	fd := CreateTestUser(t, prefix+"_fd", utils.SYSTEMROLE_USER)
+	tn := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
 	stampTN(tn, 991001)
 
 	assert.Equal(t, 400, mergeUsers(t, adminToken, fd, tn))
@@ -645,8 +646,8 @@ func TestMergeRefusesFreegleWithTrashNothingPreferredEmail(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	fd := CreateTestUser(t, prefix+"_fd", "User")
-	tn := CreateTestUser(t, prefix+"_tn", "User")
+	fd := CreateTestUser(t, prefix+"_fd", utils.SYSTEMROLE_USER)
+	tn := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", tn)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", tn, prefix+"-g1@user.trashnothing.com")
 
@@ -659,8 +660,8 @@ func TestMergeRefusesTwoDifferentTrashNothingMembers(t *testing.T) {
 	prefix := uniquePrefix("merge_tn_tn")
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	a := CreateTestUser(t, prefix+"_a", "User")
-	b := CreateTestUser(t, prefix+"_b", "User")
+	a := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	b := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
 	stampTN(a, 991002)
 	stampTN(b, 991003)
 
@@ -683,8 +684,8 @@ func TestMergeAllowsTrashNothingTwinWithoutStamp(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	stamped := CreateTestUser(t, prefix+"_s", "User")
-	twin := CreateTestUser(t, prefix+"_t", "User")
+	stamped := CreateTestUser(t, prefix+"_s", utils.SYSTEMROLE_USER)
+	twin := CreateTestUser(t, prefix+"_t", utils.SYSTEMROLE_USER)
 	stampTN(stamped, 991004)
 	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", twin)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", twin, prefix+"-g2@user.trashnothing.com")
@@ -704,8 +705,8 @@ func TestMergeRefusesTwoTrashNothingUsernames(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	a := CreateTestUser(t, prefix+"_a", "User")
-	b := CreateTestUser(t, prefix+"_b", "User")
+	a := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	b := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
 	stampTN(a, 991006)
 	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid IN (?, ?)", a, b)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", a, "one"+prefix+"-g1@user.trashnothing.com")
@@ -726,8 +727,8 @@ func TestMergeAllowsOneTrashNothingUsernameOnBoth(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	a := CreateTestUser(t, prefix+"_a", "User")
-	b := CreateTestUser(t, prefix+"_b", "User")
+	a := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	b := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
 	stampTN(a, 991007)
 	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid IN (?, ?)", a, b)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", a, prefix+"-g1@user.trashnothing.com")
@@ -743,8 +744,8 @@ func TestMergeUxPromptResponsesTransferred(t *testing.T) {
 	prefix := uniquePrefix("merge_uxresp")
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	cleanup := func() {
 		db.Exec("DELETE r FROM ux_prompt_responses r INNER JOIN ux_prompts p ON p.id = r.prompt_id WHERE p.question LIKE ?", prefix+"%")
@@ -785,8 +786,8 @@ func TestMergeChatRoomUser2ModDeduplicated(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	room1 := CreateTestChatRoom(t, id1, nil, &groupID, "User2Mod")
@@ -817,8 +818,8 @@ func TestMergeChatRoomBetweenThePairIsDeleted(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	direct := CreateTestChatRoom(t, id1, &id2, nil, "User2User")
 	CreateTestChatMessage(t, direct, id1, "talking to my other account")
@@ -842,9 +843,9 @@ func TestMergeChatRoomDuplicateCarriesRosterAndReferences(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
-	user3 := CreateTestUser(t, prefix+"_u3", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	user3 := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	room1 := CreateTestChatRoom(t, id1, &user3, nil, "User2User")
@@ -878,8 +879,8 @@ func TestMergeRefusedWhenEitherAccountOptsOut(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.canmerge', false) WHERE id = ?", id2)
 
 	assert.Equal(t, 400, mergeUsers(t, adminToken, id1, id2))
@@ -887,7 +888,7 @@ func TestMergeRefusedWhenEitherAccountOptsOut(t *testing.T) {
 	assert.True(t, userExists(id2))
 
 	// The other way round too.
-	id3 := CreateTestUser(t, prefix+"_u3", "User")
+	id3 := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 	assert.Equal(t, 400, mergeUsers(t, adminToken, id2, id3))
 	assert.True(t, userExists(id2))
 }
@@ -899,8 +900,8 @@ func TestMergeYahooidFillsBlankOnKeptAccount(t *testing.T) {
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
-	id1 := CreateTestUser(t, prefix+"_u1", "User")
-	id2 := CreateTestUser(t, prefix+"_u2", "User")
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	yahooid := fmt.Sprintf("y%d", id1)
 	db.Exec("UPDATE users SET yahooid = ? WHERE id = ?", yahooid, id1)
 	db.Exec("UPDATE users SET yahooid = NULL WHERE id = ?", id2)
