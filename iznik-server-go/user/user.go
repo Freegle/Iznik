@@ -2711,6 +2711,20 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
+	// A merge keeps the higher systemrole and deletes the other account for good, so a
+	// moderator may not use it on a Support or Admin account: that would raise a moderator to
+	// Admin, or destroy an admin account, by choosing the pair. Only Admin and Support may
+	// merge those.
+	if !auth.IsAdminOrSupport(myid) {
+		var privileged int64
+		db.Table("users").
+			Where("id IN (?, ?) AND systemrole IN (?, ?)", req.ID1, req.ID2, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN).
+			Count(&privileged)
+		if privileged > 0 {
+			return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
+		}
+	}
+
 	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
 	// with a Freegle account, whoever asks (.claude/rules/conventions.md). ModTools refuses this
 	// too, but only by looking at the email typed in, so a merge by id went straight through.

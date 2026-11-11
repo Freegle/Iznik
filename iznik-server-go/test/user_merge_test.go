@@ -630,3 +630,38 @@ func TestMergeYahooidFillsBlankOnKeptAccount(t *testing.T) {
 	db.Raw("SELECT COALESCE(yahooid, '') FROM users WHERE id = ?", id2).Scan(&got)
 	assert.Equal(t, yahooid, got, "the kept account should take the discarded account's yahooid")
 }
+
+// A moderator cannot use a merge to take over or destroy a Support or Admin account: the merge
+// keeps the higher systemrole and deletes the other account for good.
+func TestMergeByModeratorRefusesAdminOrSupportAccount(t *testing.T) {
+	prefix := uniquePrefix("merge_mod_priv")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+	adminAccount := CreateTestUser(t, prefix+"_adm", utils.SYSTEMROLE_ADMIN)
+	supportAccount := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
+	plain := CreateTestUser(t, prefix+"_plain", utils.SYSTEMROLE_USER)
+
+	assert.Equal(t, 403, mergeUsers(t, modToken, adminAccount, modID), "the admin account is not merged into the moderator")
+	assert.Equal(t, 403, mergeUsers(t, modToken, modID, adminAccount))
+	assert.Equal(t, 403, mergeUsers(t, modToken, supportAccount, plain))
+	assert.Equal(t, 403, mergeUsers(t, modToken, plain, supportAccount))
+	assert.True(t, userExists(adminAccount))
+	assert.True(t, userExists(supportAccount))
+	assert.True(t, userExists(modID))
+
+	var role string
+	database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", modID).Scan(&role)
+	assert.Equal(t, utils.SYSTEMROLE_MODERATOR, role, "the moderator is not raised to Admin")
+}
+
+func TestMergeByModeratorStillMergesOrdinaryAccounts(t *testing.T) {
+	prefix := uniquePrefix("merge_mod_ok")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+	id1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	id2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+
+	assert.Equal(t, 200, mergeUsers(t, modToken, id1, id2))
+	assert.False(t, userExists(id1))
+	assert.True(t, userExists(id2))
+}
