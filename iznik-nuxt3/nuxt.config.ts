@@ -6,6 +6,7 @@ import { sentryVitePlugin } from '@sentry/vite-plugin'
 import config from './config'
 import { branding } from './branding.config'
 import { componentNameTransform } from './build-plugins/componentNameTransform'
+import { leafletSingleInstance } from './build-plugins/leafletSingleInstance'
 
 // Cached, brand-aware page-title string used in both `app.head.title` and
 // the og:title / twitter:title meta tags so they stay in lockstep.
@@ -564,6 +565,8 @@ export default defineNuxtConfig({
       },
     },
     plugins: [
+      // One Leaflet: see build-plugins/leafletSingleInstance.js.
+      leafletSingleInstance(),
       // Polyfills-only mode of @vitejs/plugin-legacy (renderLegacyChunks:
       // false): no ES5/SystemJS legacy chunks — those targets are broken
       // upstream anyway (vitejs/vite#21951: the polyfills-legacy bootstrap

@@ -149,7 +149,11 @@ async function ready() {
   mapObject.value = map.value.leafletObject
   if (import.meta.client && mapObject.value) {
     try {
+      // The geocoder's own copy of Leaflet (if a build lets one through) assigns window.L to
+      // itself on load; put the pinned one back so later maps and our bounds share one copy.
+      const pinnedLeaflet = window.L
       const { Geocoder, geocoders } = await import('leaflet-control-geocoder')
+      if (pinnedLeaflet) window.L = pinnedLeaflet
 
       new Geocoder({
         placeholder: 'Search for a place...',
