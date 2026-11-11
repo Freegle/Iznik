@@ -33,7 +33,9 @@ Real-text turns joined by a single space, each turn prefixed with a speaker tag:
   TAKER; for a Wanted the replier is the GIVER. (Agent A resolves roles from post type + owner.)
 - **Only real-text turns** appear (`Default`, `Interested`, text-bearing `Image` captions).
 - PII is normalised to placeholder tokens, preserving the *signal* without the data:
-  `<ADDRESS>`, `<POSTCODE>`, `<PHONE>`, `<EMAIL>`, `<URL>`. Emoji are kept (they carry signal).
+  `<ADDRESS>`, `<POSTCODE>`, `<PHONE>`, `<EMAIL>`, `<URL>`, and `<NAME>` for a name straight after a
+  greeting or title. Emoji are kept (they carry signal). Other names and free text are NOT removed,
+  so the CSV is still member chat: see "Handling the dataset".
 - Newlines/CRs collapsed to spaces.
 
 ## Charset / encoding (both agents)
@@ -65,6 +67,26 @@ mojibake.
   the ±band guards against approximate event timestamps.
 - A room with **no** `Promised` event: every window is `label = 0`, `promise_turn = -1`.
 - Window length default = 8 real-text turns (the last ≤8 turns up to and including `j`).
+
+## Which rooms and messages are used
+
+- Only messages the members saw: deleted, review-rejected and held-for-review messages are dropped.
+- A room is skipped when it refers to more than one post (roles and the promise belong to one
+  post), when it refers to none, or when the post's owner is not one of the room's two members.
+- Rows within a room are written newest end turn first. Consumers must not assume ascending
+  order: `Evaluator::timingOffsets()` sorts by `end_turn` itself.
+- `--negatives-per-room` keeps the negatives nearest the promise, or an even sample when the room
+  has no promise. `--window` must be at least 1, `--tolerance` at least 0.
+
+## Handling the dataset
+
+The CSV is personal data. The normaliser does not remove names other than after a greeting or
+title, so a span is still member chat text.
+
+- Keep it on the batch host, owner-readable only (the extract command writes mode 0600).
+- Copy it only to hosts you control, and delete it from them after training.
+- Never commit it or attach it to a pull request. The trained model and `report.json` hold
+  fragments of the same text and follow the same rules.
 
 ## File ownership
 

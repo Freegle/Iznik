@@ -10,6 +10,19 @@ This session built the **pragmatic §5.2 baseline** (linear classifier over TF-I
 n-grams). **You are invited to explore the other options in parallel** off the same dataset
 contract — see "Open alternatives" at the bottom.
 
+## Status update
+
+The linear baseline described here ended near chance once its CSV corruption was fixed. The
+detector that worked is a fine-tuned `microsoft/deberta-v3-base` classifying whole conversations.
+That work is Python and lives in `promise-dst/`: `train_finetune.py` and `eval_finetune.py`, plus
+the earlier probes (`zeroshot_probe.py`, `ollama_probe.py`, `finetune_encoder.py`). It trains on a
+temporary GPU host. Decision 1 below applies to the extraction and baseline code in `iznik-batch`;
+the Python scripts are an exception to it and to the "no Python for data work" convention. The
+PHP extraction pipeline is what produces their training data.
+
+The trained model and the datasets are not in git. The dataset is member chat text, see "Handling
+the dataset" below.
+
 ## What the task is (from the spec)
 
 - Target = **promise made** (committed), NOT *taken/honoured* (taken is unreliable from text — it
@@ -23,7 +36,7 @@ contract — see "Open alternatives" at the bottom.
 
 ## Decisions locked this session (with the user)
 
-1. **PHP** (not Python), in **`iznik-batch`** (Laravel 12) as **artisan commands**. Go only if
+1. **PHP** (not Python; see the Status update for the `promise-dst` exception), in **`iznik-batch`** (Laravel 12) as **artisan commands**. Go only if
    inline <1s inference ever demands it (would live in `iznik-server-go`).
 2. **Rubix ML** (`rubix/ml ^2.5`) — the only new dependency; no ML lib existed. Native PHP CSV
    (`fputcsv`/`fgetcsv`), Laravel DB layer — no other new deps.
@@ -178,3 +191,18 @@ Whatever you build, evaluate it the **same way** (this session's `Evaluator` con
 PR-AUC, timing offsets, vs the keyword baseline, split by conversation) so the tracks are
 comparable. Keep PII out of any committed artefact (normalise at extraction; the raw chat samples
 were deliberately not persisted this session).
+
+## Handling the dataset
+
+The CSV from `promise:extract` is personal data. The normaliser masks emails, links, phone
+numbers, postcodes, street addresses, what3words triples and a name straight after a greeting or
+title. It does not remove other names or free text, so a normalised span is still member chat.
+
+- Keep the CSV on the batch host, readable by its owner only (the command writes it mode 0600).
+- Copy it only to hosts you control, for example a temporary GPU host, and delete it from there
+  after training.
+- Never commit it, attach it to a pull request or upload it anywhere. `storage/promise/.gitignore`
+  keeps it out of git. The trained model and `report.json` hold fragments of the same text and
+  follow the same rules.
+- Which messages enter the dataset: deleted, review-rejected and held messages are left out, and a
+  room that refers to more than one post is skipped.
