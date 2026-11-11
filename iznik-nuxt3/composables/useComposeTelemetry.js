@@ -7,6 +7,7 @@
  */
 import { watch } from 'vue'
 import { useComposeStore } from '~/stores/compose'
+import { composeMessageList } from '~/composables/composeMessageList'
 import {
   ChangeKind,
   FlowName,
@@ -27,7 +28,7 @@ export function watchComposeFields(type) {
   const flow = useFlowTelemetry(flowName)
 
   const message = () =>
-    (store.messages || []).find((m) => m && m.type === type && !m.submitted)
+    composeMessageList(store).find((m) => m && m.type === type && !m.submitted)
 
   // Each value is read together with the draft it came from. On submit, markSubmitted flags the
   // draft and empties it, so the unsubmitted draft disappears and every field reads as cleared
@@ -36,15 +37,20 @@ export function watchComposeFields(type) {
   // The getter builds a new object each time, so the watcher fires on any re-read; only a real
   // change of value counts.
   const changedInSameDraft = (now, before) =>
-    now !== null &&
-    before !== null &&
+    now != null &&
+    before != null &&
     now.draft === before.draft &&
     now.value !== before.value
   const watchDraft = (getter, onChange) => {
     watch(
       () => {
-        const m = message()
-        return m ? { draft: m.id, value: getter(m) } : null
+        try {
+          const m = message()
+          return m ? { draft: m.id, value: getter(m) } : null
+        } catch (e) {
+          // Telemetry reads must never throw into the page.
+          return null
+        }
       },
       (now, before) => {
         if (changedInSameDraft(now, before)) onChange(now.value, before.value)

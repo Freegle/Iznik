@@ -3,6 +3,7 @@ import { shallowMount, flushPromises } from '@vue/test-utils'
 import { ref, defineComponent } from 'vue'
 import LoginModal from '~/components/LoginModal.vue'
 import { SocialLogin } from '@capgo/capacitor-social-login'
+import { action } from '~/composables/useClientLog'
 import * as Sentry from '@sentry/browser'
 import { LoginError, SignUpError } from '~/api/APIErrors'
 
@@ -64,6 +65,7 @@ const {
   }
 })
 
+vi.mock('~/composables/useClientLog', () => ({ action: vi.fn() }))
 vi.mock('~/composables/useLoginTelemetry', () => ({
   useLoginTelemetry: (refs) => {
     mockLoginTele.used(refs)
@@ -253,6 +255,7 @@ vi.mock('@capgo/capacitor-social-login', () => ({
 vi.mock('@sentry/browser', () => ({
   captureException: vi.fn(),
   captureMessage: vi.fn(),
+  addBreadcrumb: vi.fn(),
 }))
 
 // Mock Apple sign in
@@ -1104,6 +1107,53 @@ describe('LoginModal', () => {
           }),
         })
       )
+    })
+
+    it.each([
+      'Login cancelled',
+      'Google Sign-In cancelled by user',
+      'The user canceled the sign-in flow.',
+    ])('does not report a member backing out: %s', async (message) => {
+      mockIsiOS.value = true
+      SocialLogin.login.mockRejectedValue(new Error(message))
+
+      await clickFacebook()
+
+      expect(Sentry.captureException).not.toHaveBeenCalled()
+      expect(action).not.toHaveBeenCalled()
+    })
+
+    it('counts a phone with no Apple ID or Google account in the logs, with a breadcrumb, not as an error', async () => {
+      mockIsiOS.value = true
+      SocialLogin.login.mockRejectedValue(new Error('No credentials available'))
+
+      await clickFacebook()
+
+      expect(Sentry.captureException).not.toHaveBeenCalled()
+      expect(Sentry.addBreadcrumb).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: 'social-login',
+          data: { provider: 'facebook', platform: 'ios-app' },
+        })
+      )
+      expect(action).toHaveBeenCalledWith(
+        'social_login_device_unavailable',
+        expect.objectContaining({
+          provider: 'facebook',
+          platform: 'ios-app',
+        })
+      )
+    })
+
+    it('still reports a request that was cancelled, which is not the member backing out', async () => {
+      mockIsiOS.value = true
+      SocialLogin.login.mockRejectedValue(
+        new Error('The request was cancelled')
+      )
+
+      await clickFacebook()
+
+      expect(Sentry.captureException).toHaveBeenCalled()
     })
 
     it('reports a login that returns no token at all', async () => {

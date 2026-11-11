@@ -58,6 +58,8 @@ import SupportLink from '~/components/SupportLink'
 import ExternalLink from '~/components/ExternalLink'
 import { useError } from '#imports'
 import { useMiscStore } from '~/stores/misc'
+import { action } from '~/composables/useClientLog'
+import { isPageNotFound } from '~/composables/useErrorPage'
 
 const error = useError()
 const maintenance = error?.value?.message === 'Maintenance error'
@@ -85,6 +87,16 @@ onMounted(async () => {
   // original error.
   try {
     if (!error?.value || maintenance || importError) return
+
+    if (isPageNotFound(error.value)) {
+      // An address with no page is an answer, not a fault: someone followed a stale link. Count it in the logs, with
+      // the address and where they came from, so a link of ours that has gone wrong still shows up.
+      action('page_not_found', {
+        path: window.location?.pathname,
+        referrer: document.referrer || null,
+      })
+      return
+    }
     const Sentry = await import('@sentry/browser')
     const e = error.value
     const synth = new Error(e.message || 'Unknown error')

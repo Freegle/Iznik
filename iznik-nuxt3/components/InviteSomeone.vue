@@ -19,7 +19,7 @@
       />
       <b-list-group horizontal class="flex-wrap">
         <b-list-group-item>
-          <ShareNetwork
+          <ShareLink
             network="facebook"
             :url="url"
             :title="title"
@@ -30,10 +30,10 @@
             <b-button variant="secondary" class="mt-1 facebook">
               <v-icon :icon="['fab', 'facebook']" /> Facebook
             </b-button>
-          </ShareNetwork>
+          </ShareLink>
         </b-list-group-item>
         <b-list-group-item>
-          <ShareNetwork
+          <ShareLink
             network="twitter"
             :url="url"
             :title="title"
@@ -44,10 +44,10 @@
             <b-button variant="secondary" class="mt-1 twitter">
               <v-icon :icon="['fab', 'twitter']" /> X
             </b-button>
-          </ShareNetwork>
+          </ShareLink>
         </b-list-group-item>
         <b-list-group-item>
-          <ShareNetwork
+          <ShareLink
             network="whatsapp"
             :url="url"
             :title="title"
@@ -58,10 +58,10 @@
             <b-button variant="secondary" class="mt-1 whatsapp">
               <v-icon :icon="['fab', 'whatsapp']" /> Whatsapp
             </b-button>
-          </ShareNetwork>
+          </ShareLink>
         </b-list-group-item>
         <b-list-group-item>
-          <ShareNetwork
+          <ShareLink
             network="email"
             url=""
             :title="title"
@@ -72,7 +72,7 @@
             <b-button variant="secondary" class="mt-1 gmail">
               <v-icon icon="envelope" /> Email
             </b-button>
-          </ShareNetwork>
+          </ShareLink>
         </b-list-group-item>
       </b-list-group>
     </div>
@@ -80,7 +80,6 @@
 </template>
 <script setup>
 import { ref, onMounted } from 'vue'
-import VueSocialSharing from 'vue-social-sharing'
 import { Share } from '@capacitor/share'
 import { useNuxtApp } from '#imports'
 import { useRuntimeConfig } from '#app'
@@ -100,10 +99,6 @@ defineProps({
 })
 
 const emit = defineEmits(['invited'])
-
-// We install this plugin here rather than from the plugins folder to reduce page load side in the mainline case.
-const nuxtApp = useNuxtApp()
-nuxtApp.vueApp.use(VueSocialSharing)
 
 const runtimeConfig = useRuntimeConfig()
 const url = runtimeConfig.public.USER_SITE

@@ -211,6 +211,12 @@ describe('useFlowRoutes', () => {
       vi.setSystemTime(NOW)
     })
 
+    it('is null when the persisted messages are not an array', () => {
+      expect(draftAgeFromStore({ messages: { 0: {} } }, 'Offer')).toBeNull()
+      expect(draftAgeFromStore({ messages: 'x' }, 'Offer')).toBeNull()
+      expect(draftAgeFromStore(null, 'Offer')).toBeNull()
+    })
+
     it('is null with no message of the type', () => {
       expect(draftAgeFromStore(storeWith(), 'Offer')).toBeNull()
       expect(
