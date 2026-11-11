@@ -75,3 +75,45 @@ func TestBanMemberRefusesBadTargets(t *testing.T) {
 
 	assert.Equal(t, fiber.StatusOK, banMemberStatus(t, adminToken, otherModID), "an admin can ban a moderator")
 }
+
+// The related filter returns the pairs the Related Members page needs, in the shape it reads:
+// {id, user1, user2, reason}. A pair needs a login on both sides.
+func TestListMembersRelatedReturnsPairs(t *testing.T) {
+	prefix := uniquePrefix("memrel")
+	db := database.DBConn
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+	a := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	b := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
+	lo, hi := a, b
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?), (?, 'Native', ?)", a, prefix+"a", b, prefix+"b")
+	db.Exec("INSERT INTO users_related (user1, user2, notified, reason) VALUES (?, ?, 0, 'Same device')", lo, hi)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET", "/api/modtools/members?filter=related&jwt="+modToken, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	var body struct {
+		Members []struct {
+			ID     uint64  `json:"id"`
+			User1  uint64  `json:"user1"`
+			User2  uint64  `json:"user2"`
+			Reason *string `json:"reason"`
+		} `json:"members"`
+	}
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	found := false
+	for _, m := range body.Members {
+		if m.User1 == lo && m.User2 == hi {
+			found = true
+			assert.NotZero(t, m.ID)
+			if assert.NotNil(t, m.Reason) {
+				assert.Equal(t, "Same device", *m.Reason)
+			}
+		}
+	}
+	assert.True(t, found, "the pair is listed")
+}

@@ -24,6 +24,15 @@ type MemberSummary struct {
 	Flagreason  *string   `json:"flagreason,omitempty"`
 }
 
+// RelatedPair is a row of the filter=related list: two accounts that may be one person. The id
+// is the users_related row, which the ModTools card uses to ask or ignore.
+type RelatedPair struct {
+	ID     uint64  `json:"id"`
+	User1  uint64  `json:"user1"`
+	User2  uint64  `json:"user2"`
+	Reason *string `json:"reason,omitempty"`
+}
+
 // displaynameExpr is the standard "look up another member's name by id"
 // SQL expression, matching the precedent used repeatedly in dashboard.go
 // and team.go. It deliberately doesn't use user.GetUserById's heavier,
@@ -36,7 +45,7 @@ const displaynameExpr = "COALESCE(fullname, firstname, lastname, 'Unknown')"
 // @Summary List members for ModTools
 // @Tags member
 // @Produce json
-// @Param filter query string false "new|flagged|banned|search"
+// @Param filter query string false "new|flagged|banned|search|related"
 // @Param q query string false "Search term (filter=search only)"
 // @Param since query integer false "Hours to look back (new/flagged only)"
 // @Success 200 {object} map[string]interface{}
@@ -63,6 +72,10 @@ func ListMembers(c *fiber.Ctx) error {
 	}
 
 	cutoff := time.Now().Add(-time.Duration(sinceHours) * time.Hour)
+
+	if filter == "related" {
+		return listRelated(c, db)
+	}
 
 	q := db.Table("users").
 		Select("id, " + displaynameExpr + " AS displayname, added, reviewreason AS flagreason")
@@ -363,4 +376,35 @@ func ClearFlag(c *fiber.Ctx) error {
 	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// listRelated is the filter=related list: pairs of ordinary accounts nobody has dealt with yet.
+// It uses the same terms as the relatedmembers work count in the session, so the badge and the
+// list agree: a pair across the TrashNothing line is left out because the merge would be
+// refused, and both accounts must have a login.
+func listRelated(c *fiber.Ctx, db *gorm.DB) error {
+	mergeable := user.MergeableSidesSQL("u1", "u2")
+
+	var pairs []RelatedPair
+	if err := db.Table("users_related ur").
+		Select("ur.id, ur.user1, ur.user2, ur.reason").
+		Joins("INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ?", utils.SYSTEMROLE_USER).
+		Joins("INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ?", utils.SYSTEMROLE_USER).
+		Where("ur.user1 < ur.user2 AND ur.notified = 0 AND " + mergeable + " " +
+			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 " +
+			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0").
+		Order("ur.id DESC").
+		Limit(200).
+		Scan(&pairs).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Database error listing related members")
+	}
+
+	if pairs == nil {
+		pairs = make([]RelatedPair, 0)
+	}
+
+	return c.JSON(fiber.Map{
+		"members": pairs,
+		"ratings": make([]interface{}, 0),
+	})
 }
