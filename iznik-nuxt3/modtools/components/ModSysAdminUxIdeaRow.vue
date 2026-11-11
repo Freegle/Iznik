@@ -229,8 +229,10 @@ function goExperiment(e) {
     grid-template-columns: 1.25rem 5.5rem 6.5rem 7rem minmax(0, 1fr) 6.5rem;
   }
 
-  // Two lines below 768 pixels: the chips, then the title.
+  // Two lines below 768 pixels: the chips, then the title. The chips sit closer together, and
+  // the status wraps inside its own column if the row is still too narrow for it.
   @media (max-width: 767.98px) {
+    column-gap: 0.5rem;
     grid-template-columns: 1.25rem auto auto minmax(0, 1fr);
     grid-template-areas:
       'caret score type status'
@@ -262,6 +264,10 @@ function goExperiment(e) {
     .status {
       grid-area: status;
       justify-self: start;
+      min-width: 0;
+      max-width: 100%;
+      white-space: normal;
+      text-align: left;
     }
   }
 }

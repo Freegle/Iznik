@@ -382,15 +382,17 @@ test.describe('ModTools SysAdmin UX tab: Ideas', () => {
     await loginViaModTools(page, testEnv.mod.email)
     await serveIdeas(page)
 
-    // Tied to a member problem: its title. No link, because the What members say section is not in
-    // this tab yet.
+    // Tied to a member problem: its title, and a link to it in the What members say section.
     await open(page, 'ux_flow=give&ux_idea=3')
     const problem = section(page).locator('.ux-idea-detail .problem')
     await expect(problem).toBeVisible({ timeout: timeouts.ui.appearance })
     await expect(problem.locator('.problem-title')).toHaveText(
       'Photo uploads keep failing'
     )
-    await expect(problem.locator('.problem-link')).toHaveCount(0)
+    await expect(problem.locator('.problem-link')).toHaveAttribute(
+      'href',
+      /ux_section=members/
+    )
 
     // Not tied: the title the generator gave the problem it found.
     await open(page, 'ux_flow=give&ux_idea=5')
@@ -410,7 +412,7 @@ test.describe('ModTools SysAdmin UX tab: Ideas', () => {
     )
   })
 
-  test('shows the experiment an idea became, with no link when that section is not there', async ({
+  test('shows the experiment an idea became, with a link to it', async ({
     page,
     testEnv,
   }) => {
@@ -426,7 +428,10 @@ test.describe('ModTools SysAdmin UX tab: Ideas', () => {
     await expect(experiment.locator('.experiment-status')).toHaveText(
       'Not started'
     )
-    await expect(experiment.locator('.experiment-link')).toHaveCount(0)
+    await expect(experiment.locator('.experiment-link')).toHaveAttribute(
+      'href',
+      /ux_section=experiments/
+    )
     await expect(rows(page).locator('.status')).toHaveText(['Queued'])
   })
 
