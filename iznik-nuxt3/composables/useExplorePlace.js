@@ -9,8 +9,10 @@ export function explorePlaceLocation(place) {
   }
 }
 
-// The place from a route param, or null when it cannot be read. A link that was encoded twice
-// on its way to us (some mail clients and chat apps do) arrives as "%7B..." and is decoded once more.
+// The place from a route param, or null when it cannot be read. The router has already decoded the
+// param once, so a link that was encoded twice on its way to us (some mail clients and chat apps do)
+// arrives as "%7B..."; one that was encoded three times needs a second decode. Up to two more
+// decodes are tried.
 export function parseExplorePlace(param) {
   if (!param || typeof param !== 'string') {
     return null
@@ -18,7 +20,7 @@ export function parseExplorePlace(param) {
 
   let text = param
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const place = JSON.parse(text)
       return place && typeof place === 'object' ? place : null

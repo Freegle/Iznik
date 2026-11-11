@@ -32,7 +32,7 @@ describe('shareLink', () => {
       'https://api.whatsapp.com/send?text=OFFER%3A%20Sofa%20(Town)%0D%0Ahttps%3A%2F%2Fwww.ilovefreegle.org%2Fmessage%2F1%0D%0AA%20brown%20sofa%20%26%20two%20chairs'
     )
     expect(shareLink({ network: 'email', ...item, url: '' })).toBe(
-      'mailto:?subject=OFFER%3A%20Sofa%20(Town)&body=%0D%0A%0D%0AA%20brown%20sofa%20%26%20two%20chairs'
+      'mailto:?subject=OFFER%3A%20Sofa%20(Town)&body=%0D%0AA%20brown%20sofa%20%26%20two%20chairs'
     )
   })
 
