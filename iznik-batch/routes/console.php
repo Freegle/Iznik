@@ -97,6 +97,34 @@ Schedule::command('images:object-store-check --report')
     ->appendOutputTo(cronLog('images:object-store-check'))
     ->runInBackground();
 
+// =============================================================================
+// AZURE ARCHIVE COPY (docs/ops/runbooks/azure-archive-migration.md)
+// =============================================================================
+// Copies V1's archived images off Azure inside the free egress. The copy is
+// inert until AZURE_ARCHIVE_ENABLED, and even then fetches nothing unless the
+// read-only Azure app shows room under the ceiling. The status check watches
+// the Azure bill from the moment that app is set up, copy or no copy.
+Schedule::command('azure-archive:copy')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping(60)
+    ->when(fn () => (bool) config('freegle.azure_archive.enabled', false))
+    ->appendOutputTo(cronLog('azure-archive:copy'))
+    ->runInBackground();
+
+Schedule::command('azure-archive:status --report')
+    ->hourlyAt(23)
+    ->withoutOverlapping(30)
+    ->when(fn () => \App\Services\AzureArchive\AzureClient::fromConfig()->configured())
+    ->appendOutputTo(cronLog('azure-archive:status'))
+    ->runInBackground();
+
+Schedule::command('azure-archive:check-serving --report')
+    ->dailyAt('06:40')
+    ->withoutOverlapping(30)
+    ->when(fn () => (bool) config('freegle.azure_archive.enabled', false))
+    ->appendOutputTo(cronLog('azure-archive:check-serving'))
+    ->runInBackground();
+
 // Record the deployed Laravel commit so /api/version reports the live build
 // (the monitor-fsm "verified-live" reply gate compares it against merged PRs).
 // Lightweight (just a config upsert) — safe to run frequently; deploy:watch is

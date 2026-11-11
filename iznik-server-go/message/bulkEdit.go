@@ -140,7 +140,6 @@ func bulkEditItems(db *gorm.DB, msgid uint64) []BulkEditItem {
 	}
 
 	imageDomain := os.Getenv("IMAGE_DOMAIN")
-	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
 
 	items := make([]BulkEditItem, 0, len(rows))
 	for _, r := range rows {
@@ -157,7 +156,7 @@ func bulkEditItems(db *gorm.DB, msgid uint64) []BulkEditItem {
 			if a.Externaluid != "" {
 				it.Photo = misc.GetImageDeliveryUrl(a.Externaluid, a.Externalmods)
 			} else if a.Archived > 0 {
-				it.Photo = "https://" + archiveDomain + "/timg_" + strconv.FormatUint(a.ID, 10) + ".jpg"
+				_, it.Photo = misc.ArchivedImageUrls("img", a.ID)
 			} else {
 				it.Photo = "https://" + imageDomain + "/timg_" + strconv.FormatUint(a.ID, 10) + ".jpg"
 			}

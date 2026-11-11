@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-19
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 ---
 
@@ -42,6 +42,13 @@ being brought into the same Compose stack as batch processing, one step at a tim
 Uploaded photos go to a local spool and on to an S3-compatible object store within a
 minute or two. [The runbook](images-to-object-storage.md) covers how reads are answered,
 the bucket check, and what happens if the bucket is unreachable.
+
+## Archived images off Azure
+
+The photos V1 archived to Azure are copied into our bucket a little at a time, never faster
+than Azure's free monthly transfer allows, measured from Azure's own figures. Any charge stops
+the copy until a person looks. [The runbook](azure-archive-migration.md) covers setting it up,
+watching it, and closing the account at the end.
 
 ## Deployment spend optimisation
 

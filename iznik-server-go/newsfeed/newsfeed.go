@@ -848,10 +848,11 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 					PathThumb:    misc.GetImageDeliveryUrl(newsfeed.Imageuid, string(newsfeed.Imagemods)),
 				}
 			} else if newsfeed.Imagearchived {
+				path, thumb := misc.ArchivedImageUrls("fimg", newsfeed.Imageid)
 				newsfeed.Image = &NewsImage{
 					ID:        newsfeed.Imageid,
-					Path:      "https://" + os.Getenv("IMAGE_ARCHIVED_DOMAIN") + "/fimg_" + strconv.FormatUint(newsfeed.Imageid, 10) + ".jpg",
-					PathThumb: "https://" + os.Getenv("IMAGE_ARCHIVED_DOMAIN") + "/tfimg_" + strconv.FormatUint(newsfeed.Imageid, 10) + ".jpg",
+					Path:      path,
+					PathThumb: thumb,
 				}
 			} else {
 				newsfeed.Image = &NewsImage{

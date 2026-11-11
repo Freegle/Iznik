@@ -38,8 +38,7 @@ func ProfileSetPath(profileid uint64, url string, externaluid string, externalmo
 		}
 	} else if archived > 0 {
 		// Archived.
-		profile.Path = "https://" + os.Getenv("IMAGE_ARCHIVED_DOMAIN") + "/uimg_" + strconv.FormatUint(profileid, 10) + ".jpg"
-		profile.Paththumb = "https://" + os.Getenv("IMAGE_ARCHIVED_DOMAIN") + "/tuimg_" + strconv.FormatUint(profileid, 10) + ".jpg"
+		profile.Path, profile.Paththumb = misc.ArchivedImageUrls("uimg", profileid)
 		profile.Ours = true
 	} else {
 		// Still in DB.

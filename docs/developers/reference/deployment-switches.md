@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
@@ -61,6 +61,7 @@ variables like every other Freegle setting.
 | `google.search_console_enabled` | `GOOGLE_SEARCH_CONSOLE_CHECK_ENABLED` | `true` | Off, the weekly `google:search-console-check` is not scheduled. See [google-housekeeping.md](google-housekeeping.md). |
 | `google.ads_enabled` | `GOOGLE_ADS_CHECK_ENABLED` | `true` | Off, the weekly `google:ads-check` is not scheduled. See [google-housekeeping.md](google-housekeeping.md). |
 | `image_store.enabled` | `IMAGE_STORE_ENABLED` | `false` | On, `images:push-spool` runs every minute, moving completed tusd uploads from the local spool to the `images` S3 disk. Off, uploads stay in the spool and are served from there, which is how a deployment without a bucket runs. Turn on only after `images:object-store-check` passes; see [the runbook](../../ops/runbooks/images-to-object-storage.md). |
+| `azure_archive.enabled` | `AZURE_ARCHIVE_ENABLED` | `false` | On, `azure-archive:copy` runs every 15 minutes, copying V1's archived images from Azure into the images bucket, but only as far as the free Azure egress allows, which it reads from Azure with the `AZURE_ARCHIVE_TENANT_ID` app. Freegle-only: a deployment has no Azure archive and leaves it off. The hourly `azure-archive:status --report` runs whenever that app is set up, copy or no copy. See [the runbook](../../ops/runbooks/azure-archive-migration.md). |
 | `backup.drain.enabled` | `BACKUP_DRAIN_ENABLED` | `false` | Holds batch work off while the nightly database backup runs. Off ships as a no-op. See below. |
 | `backup.drain.start` | `BACKUP_DRAIN_START` | `03:50` | When the hold starts, `HH:MM` in the app timezone. Anything that is not a valid `HH:MM` leaves the drain off rather than holding the schedule back for ever. |
 | `backup.drain.minutes` | `BACKUP_DRAIN_MINUTES` | `45` | How long the hold lasts. Zero or negative leaves it off, on the same reasoning. |

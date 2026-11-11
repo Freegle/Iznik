@@ -72,8 +72,10 @@ RUN cp /tmp/mjml.so "$(php-config --extension-dir)/mjml.so" \
 # openssh-client is for monitor:scheduled-outcomes' host health checks
 # (App\Monitoring\SshHostCommandRunner probes each host over ssh, exactly as
 # V1's status cron did).
+# libjpeg-turbo-progs (jpegtran, djpeg) is for azure-archive:copy, which stores
+# each archived image losslessly optimised and checks the pixels are unchanged.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends osmium-tool openssh-client \
+    && apt-get install -y --no-install-recommends osmium-tool openssh-client libjpeg-turbo-progs \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI — lets Community News research run on a Claude SUBSCRIPTION

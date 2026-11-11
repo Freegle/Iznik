@@ -19,7 +19,7 @@ are done before the window, not during it.
 | [Automated review inside the no-communities experiment (thought experiment)](automated-review-with-no-communities.md) | draft | 6 | 4 (A: 1-2, B: 3-4, 7, C: 5, D: 6-6a) | 2026-10-28 |
 | [Infrastructure: one VM per stream](infrastructure.md) | draft, scripts proven | 4 | 2 (A: 1-2, 4-5, 7, B: 3, 6) | 2026-10-28 |
 | [Discourse reply bot and the single channel for reports](discourse-reply-bot.md) | draft | 6 | 3 (A: 1, 5, B: 2-3b, 6, C: 4) | 2026-10-28 |
-| [Move the archived images off Azure](azure-archive-migration.md) | draft | 5 | 2 (A: 1-2, 5, B: 2a, 3-4) | 2026-10-28 |
+| [Move the archived images off Azure](azure-archive-migration.md) | running | 1 | 1 | 2026-11-11 |
 | [Support helper runs first on a referral](support-helper-flow-through.md) | draft | 7 | 4 (A: 1-1a, 4, B: 2, 6, C: 3-3a, D: 5) | 2026-10-28 |
 | [A command log in front of the database](command-log-availability.md) | draft | 4 | 4 (A: 1, 3, 5, B: 2, 7, C: 4, D: 6) | 2026-10-28 |
 | [User backup index and self-service restore](user-backup-self-service.md) | draft | 3 | 3 (A: 1, 5, B: 2-3, C: 4) | 2026-10-28 |

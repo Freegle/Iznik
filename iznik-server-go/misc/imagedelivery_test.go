@@ -20,14 +20,41 @@ func TestBuildChatImageUrlLiveDomain(t *testing.T) {
 }
 
 func TestBuildChatImageUrlArchivedDomain(t *testing.T) {
-	// archived > 0 → IMAGE_ARCHIVED_DOMAIN instead of IMAGE_DOMAIN.
-	orig := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
-	os.Setenv("IMAGE_ARCHIVED_DOMAIN", "archive.example.com")
-	defer os.Setenv("IMAGE_ARCHIVED_DOMAIN", orig)
+	// archived > 0: the full image from IMAGE_ARCHIVED_DOMAIN, and the thumbnail made from it by
+	// the delivery resizer, because the tmimg_ thumbnail blobs are not copied off Azure.
+	t.Setenv("IMAGE_ARCHIVED_DOMAIN", "archive.example.com")
+	t.Setenv("IMAGE_DELIVERY", "https://delivery.test")
 
 	full, thumb := BuildChatImageUrl(99, "", "", 1)
 	assert.Equal(t, "https://archive.example.com/mimg_99.jpg", full)
-	assert.Equal(t, "https://archive.example.com/tmimg_99.jpg", thumb)
+	assert.Equal(t, "https://delivery.test?w=250&h=250&url=https%3A%2F%2Farchive.example.com%2Fmimg_99.jpg", thumb)
+}
+
+func TestArchivedImageUrlsStillOnAzureUseV1Thumbnails(t *testing.T) {
+	// Until the address is switched to our archive, nothing about members' Azure traffic changes.
+	t.Setenv("IMAGE_ARCHIVED_DOMAIN", "freegle.blob.core.windows.net/images")
+	t.Setenv("IMAGE_DELIVERY", "https://delivery.test")
+
+	full, thumb := ArchivedImageUrls("img", 7)
+	assert.Equal(t, "https://freegle.blob.core.windows.net/images/img_7.jpg", full)
+	assert.Equal(t, "https://freegle.blob.core.windows.net/images/timg_7.jpg", thumb)
+
+	full, thumb = BuildChatImageUrl(8, "", "", 1)
+	assert.Equal(t, "https://freegle.blob.core.windows.net/images/mimg_8.jpg", full)
+	assert.Equal(t, "https://freegle.blob.core.windows.net/images/tmimg_8.jpg", thumb)
+}
+
+func TestArchivedImageUrlsWithAPathInTheDomain(t *testing.T) {
+	// Production serves the archive from a path on an existing host.
+	t.Setenv("IMAGE_ARCHIVED_DOMAIN", "images.example.com/archive")
+	t.Setenv("IMAGE_DELIVERY", "https://delivery.test")
+
+	for prefix, want := range map[string]string{"img": "img_5.jpg", "fimg": "fimg_5.jpg", "uimg": "uimg_5.jpg"} {
+		full, thumb := ArchivedImageUrls(prefix, 5)
+		assert.Equal(t, "https://images.example.com/archive/"+want, full)
+		assert.Equal(t, "https://delivery.test?w=250&h=250&url=https%3A%2F%2Fimages.example.com%2Farchive%2F"+want, thumb)
+		assert.NotContains(t, thumb, "/t"+want, "no link to a V1 thumbnail blob")
+	}
 }
 
 func TestBuildChatImageUrlExternalDelivery(t *testing.T) {

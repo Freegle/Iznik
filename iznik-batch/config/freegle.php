@@ -657,8 +657,10 @@ return [
     'images' => [
         // Image domain for user profile images
         'domain' => EnvSetting::env('FREEGLE_IMAGES_DOMAIN', 'https://images.ilovefreegle.org'),
-        // Domain for legacy archived images (Azure blob storage)
-        'archived_domain' => EnvSetting::env('FREEGLE_IMAGES_ARCHIVED_DOMAIN', 'https://freegle.blob.core.windows.net'),
+        // Where images V1 archived are served from: Azure's container until the cut-over, then
+        // https://images.ilovefreegle.org/archive (docs/ops/runbooks/azure-archive-migration.md).
+        // The Go API reads IMAGE_ARCHIVED_DOMAIN, without the scheme; the two must name the same place.
+        'archived_domain' => EnvSetting::env('FREEGLE_IMAGES_ARCHIVED_DOMAIN', 'https://freegle.blob.core.windows.net/images'),
 
         // Base URLs for source images
         'welcome1' => EnvSetting::env('FREEGLE_WELCOME_IMAGE1', 'https://www.ilovefreegle.org/images/welcome1.jpg'),
@@ -707,6 +709,51 @@ return [
         'push_limit' => (int) EnvSetting::env('IMAGE_STORE_PUSH_LIMIT', 500),
         // An upload that never reaches its declared length is deleted after this.
         'abandon_hours' => (int) EnvSetting::env('IMAGE_STORE_ABANDON_HOURS', 24),
+    ],
+
+    // Copy of V1's archived images off Azure into the images bucket, paced to the free egress
+    // (docs/ops/runbooks/azure-archive-migration.md). Nothing is fetched unless `enabled` is on AND
+    // the read-only Azure app below can show Azure's own egress and cost figures.
+    'azure_archive' => [
+        // Only true or 1 turns it on.
+        'enabled' => EnvSetting::flag(EnvSetting::env('AZURE_ARCHIVE_ENABLED', false)),
+        // Where the blobs are read from: the public container, no key needed.
+        'source_url' => EnvSetting::env('AZURE_ARCHIVE_SOURCE_URL', 'https://freegle.blob.core.windows.net/images'),
+        // Key prefix in the images bucket.
+        'key_prefix' => EnvSetting::env('AZURE_ARCHIVE_KEY_PREFIX', 'archive/'),
+        // The read-only app registration: Monitoring Reader on the storage account, Cost
+        // Management Reader and Billing Reader on the subscription.
+        'tenant_id' => EnvSetting::env('AZURE_ARCHIVE_TENANT_ID', ''),
+        'client_id' => EnvSetting::env('AZURE_ARCHIVE_CLIENT_ID', ''),
+        'client_secret' => EnvSetting::env('AZURE_ARCHIVE_CLIENT_SECRET', ''),
+        'subscription_id' => EnvSetting::env('AZURE_ARCHIVE_SUBSCRIPTION_ID', ''),
+        // Full resource id of the storage account. Blank: found by name in the subscription.
+        'storage_account_id' => EnvSetting::env('AZURE_ARCHIVE_STORAGE_ACCOUNT_ID', ''),
+        'storage_account_name' => EnvSetting::env('AZURE_ARCHIVE_STORAGE_ACCOUNT_NAME', 'freegle'),
+        // Azure's free internet egress is 100 GB a month. Any trailing 31 days of egress, members'
+        // views included, is kept under this, so every billing month is too, whatever day it
+        // starts on. The gap to 100 is the margin for error.
+        'ceiling_gb' => (float) EnvSetting::env('AZURE_ARCHIVE_CEILING_GB', 80),
+        // Members' own views are assumed to grow by this factor when reserving room for them.
+        'site_growth' => (float) EnvSetting::env('AZURE_ARCHIVE_SITE_GROWTH', 1.25),
+        // Most one run may fetch, so a run stays short and the figures are re-read often.
+        'run_max_mb' => (int) EnvSetting::env('AZURE_ARCHIVE_RUN_MAX_MB', 1024),
+        // Longest one run may take, well inside the copy command's hour-long lock.
+        'run_max_minutes' => (int) EnvSetting::env('AZURE_ARCHIVE_RUN_MAX_MINUTES', 40),
+        // Azure's metrics are refused as stale when their newest point is older than this.
+        'metrics_max_age_minutes' => (int) EnvSetting::env('AZURE_ARCHIVE_METRICS_MAX_AGE_MINUTES', 180),
+        // Our own fetches this recent are added on top of Azure's figure, which may not have them yet.
+        'metrics_lag_minutes' => (int) EnvSetting::env('AZURE_ARCHIVE_METRICS_LAG_MINUTES', 120),
+        // The cost check can only be skipped by setting this false on purpose: some offers do not
+        // support Cost Management. Then the bill must be read in the portal instead.
+        // Turning it off also turns off the stop on a bandwidth charge, because the charge cannot be
+        // seen. Only false or 0 turns it off.
+        'require_cost_check' => \App\Services\AzureArchive\ArchiveSwitch::onUnlessFalse(EnvSetting::env('AZURE_ARCHIVE_REQUIRE_COST_CHECK', true)),
+        // Store the lossless jpegtran optimisation when it is smaller and decodes to the same pixels.
+        'optimise' => \App\Services\AzureArchive\ArchiveSwitch::onUnlessFalse(EnvSetting::env('AZURE_ARCHIVE_OPTIMISE', true)),
+        // The public address the archived images are served from (the frontend-nginx chain), used
+        // by azure-archive:check-serving. Blank: the check is skipped.
+        'serving_url' => EnvSetting::env('AZURE_ARCHIVE_SERVING_URL', 'https://images.ilovefreegle.org/archive'),
     ],
 
     // TUS uploader for AI-generated images
