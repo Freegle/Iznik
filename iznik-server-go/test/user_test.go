@@ -5652,3 +5652,43 @@ func TestPutUserConcurrentSignupsMakeOneAccount(t *testing.T) {
 		assert.Equal(t, float64(winner), ids[i], "every answer points at the one account")
 	}
 }
+
+// An address row with no account (userid NULL) must not block a signup for that address for
+// ever: the signup takes the row over.
+func TestPutUserTakesOverAnAddressWithNoAccount(t *testing.T) {
+	prefix := uniquePrefix("putorphan")
+	email := fmt.Sprintf("%s@test.com", prefix)
+	db := database.DBConn
+
+	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (NULL, ?, ?)", email, email)
+	t.Cleanup(func() {
+		db.Exec("DELETE ul FROM users_logins ul JOIN users u ON u.id = ul.userid WHERE u.lastname = ?", prefix)
+		db.Exec("DELETE FROM users_emails WHERE email = ?", email)
+		db.Exec("DELETE FROM users WHERE lastname = ?", prefix)
+	})
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"email":     email,
+		"password":  "testpass123",
+		"firstname": "Orphan",
+		"lastname":  prefix,
+	})
+	req := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(payload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	id, _ := result["id"].(float64)
+	assert.NotZero(t, id)
+
+	var rows int64
+	db.Table("users_emails").Where("email = ?", email).Count(&rows)
+	assert.Equal(t, int64(1), rows, "the existing row is taken over, not duplicated")
+
+	var owner uint64
+	db.Raw("SELECT COALESCE(userid, 0) FROM users_emails WHERE email = ?", email).Scan(&owner)
+	assert.Equal(t, uint64(id), owner)
+}

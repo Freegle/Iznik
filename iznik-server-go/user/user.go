@@ -35,6 +35,7 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/plugin/dbresolver"
 )
 
 type Aboutme struct {
@@ -2228,10 +2229,14 @@ type UserDeleteRequest struct {
 var errNoNewUserID = errors.New("no id returned for the new user")
 
 // isDuplicateEmail is true when err is MySQL's duplicate entry error (1062) on the address
-// column of users_emails.
+// key of users_emails. MySQL 8 names the key "users_emails.email"; MySQL 5.7, Percona and
+// MariaDB name it just "email".
 func isDuplicateEmail(err error) bool {
 	var me *mysql.MySQLError
-	return errors.As(err, &me) && me.Number == 1062 && strings.Contains(me.Message, "users_emails")
+	if !errors.As(err, &me) || me.Number != 1062 {
+		return false
+	}
+	return strings.Contains(me.Message, "for key 'email'") || strings.Contains(me.Message, "for key 'users_emails.email'")
 }
 
 // PutUser creates a new user (signup).
@@ -2355,6 +2360,22 @@ func PutUser(c *fiber.Ctx) error {
 		}
 		newUserID = uint64(newUserIDInt)
 
+		// An address row can exist with no account (userid NULL). Take it over rather than
+		// inserting beside it, which would fail on the unique address for ever.
+		claim := tx.Table("users_emails").Where("email = ? AND userid IS NULL", email).Updates(map[string]interface{}{
+			"userid":    newUserID,
+			"preferred": gorm.Expr("1"),
+			"validated": gorm.Expr("NOW()"),
+			"canon":     canon,
+			"backwards": reverseString(canon),
+		})
+		if claim.Error != nil {
+			return claim.Error
+		}
+		if claim.RowsAffected > 0 {
+			return nil
+		}
+
 		return tx.Table("users_emails").Create(map[string]interface{}{
 			"userid":    newUserID,
 			"email":     email,
@@ -2369,7 +2390,8 @@ func PutUser(c *fiber.Ctx) error {
 			// Someone signed up with this address a moment ago. Answer as if we had found
 			// them in the first place.
 			var winner uint64
-			db.Table("users_emails").Select("COALESCE(userid, 0)").Where("email = ?", email).Limit(1).Scan(&winner)
+			// From the write node: a replica may not have the winner's row yet.
+			db.Clauses(dbresolver.Write).Table("users_emails").Select("COALESCE(userid, 0)").Where("email = ?", email).Limit(1).Scan(&winner)
 			if winner > 0 {
 				return respondExisting(winner)
 			}
