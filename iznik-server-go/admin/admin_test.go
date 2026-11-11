@@ -4,7 +4,9 @@ package admin
 // These tests exercise only pre-DB validation paths (auth guard, body
 // parsing, required-field checks). database.DBConn is nil in this context;
 // any path that reaches a DB call would panic, so tests never supply a
-// combination of inputs (e.g. a non-zero groupid) that would reach one.
+// combination of inputs (e.g. a non-zero groupid) that would reach one. The
+// moderator write handlers first consult the lockdown gate, which adminApp
+// sets to the empty state so that it does not read the database.
 
 import (
 	"io"
@@ -15,13 +17,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 )
 
 const adminTestSecret = "admin_test_jwt_secret"
 
-func adminApp() *fiber.App {
+func adminApp(t *testing.T) *fiber.App {
+	t.Helper()
+	// The mod gate reads the lockdown state. An empty state means no hold, so it never reads the
+	// database.
+	t.Cleanup(lockdown.SetTestState(lockdown.State{}))
+
 	app := fiber.New(fiber.Config{
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
@@ -72,7 +80,7 @@ func newAdminRequest(t *testing.T, method, target, body string, authed bool) *ht
 }
 
 func TestGetAdmin_Unauthenticated(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "GET", "/admin/1", "", false)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -84,7 +92,7 @@ func TestGetAdmin_Unauthenticated(t *testing.T) {
 }
 
 func TestGetAdmin_InvalidID(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "GET", "/admin/not-a-number", "", true)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -96,7 +104,7 @@ func TestGetAdmin_InvalidID(t *testing.T) {
 }
 
 func TestListAdmins_Unauthenticated(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "GET", "/admin", "", false)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -108,7 +116,7 @@ func TestListAdmins_Unauthenticated(t *testing.T) {
 }
 
 func TestPostAdmin_Unauthenticated(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "POST", "/admin", "", false)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -120,7 +128,7 @@ func TestPostAdmin_Unauthenticated(t *testing.T) {
 }
 
 func TestPostAdmin_InvalidBody(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "POST", "/admin", "{not json", true)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -132,7 +140,7 @@ func TestPostAdmin_InvalidBody(t *testing.T) {
 }
 
 func TestPostAdmin_HoldMissingID(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "POST", "/admin", `{"action":"Hold","id":0}`, true)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -144,7 +152,7 @@ func TestPostAdmin_HoldMissingID(t *testing.T) {
 }
 
 func TestPostAdmin_ReleaseMissingID(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "POST", "/admin", `{"action":"Release","id":0}`, true)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -156,7 +164,7 @@ func TestPostAdmin_ReleaseMissingID(t *testing.T) {
 }
 
 func TestPatchAdmin_Unauthenticated(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "PATCH", "/admin", "", false)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -168,7 +176,7 @@ func TestPatchAdmin_Unauthenticated(t *testing.T) {
 }
 
 func TestPatchAdmin_InvalidBody(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "PATCH", "/admin", "{not json", true)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -180,7 +188,7 @@ func TestPatchAdmin_InvalidBody(t *testing.T) {
 }
 
 func TestPatchAdmin_MissingID(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "PATCH", "/admin", `{}`, true)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -192,7 +200,7 @@ func TestPatchAdmin_MissingID(t *testing.T) {
 }
 
 func TestDeleteAdmin_Unauthenticated(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "DELETE", "/admin", "", false)
 	resp, err := app.Test(req)
 	if err != nil {
@@ -204,7 +212,7 @@ func TestDeleteAdmin_Unauthenticated(t *testing.T) {
 }
 
 func TestDeleteAdmin_MissingID(t *testing.T) {
-	app := adminApp()
+	app := adminApp(t)
 	req := newAdminRequest(t, "DELETE", "/admin", "", true)
 	resp, err := app.Test(req)
 	if err != nil {
