@@ -122,6 +122,71 @@ class PiiNormaliserTest extends TestCase
         }
     }
 
+    public function test_trashnothing_email_is_replaced_whole()
+    {
+        $result = $this->normaliser->normalise('mail jo.bloggs@user.trashnothing.com ok');
+        $this->assertStringContainsString('<EMAIL>', $result);
+        $this->assertStringNotContainsString('bloggs', $result);
+        $this->assertStringNotContainsString('trashnothing', $result);
+
+        $result = $this->normaliser->normalise('or x@mail.trashnothing.com');
+        $this->assertStringNotContainsString('x@', $result);
+    }
+
+    public function test_phone_with_three_groups_is_fully_redacted()
+    {
+        foreach (['call 07123 456 789 pls', 'call 07700-900-123 pls', 'call 07700 900000 pls', 'call 07700900000 pls'] as $input) {
+            $result = $this->normaliser->normalise($input);
+            $this->assertStringContainsString('<PHONE>', $result);
+            $this->assertDoesNotMatchRegularExpression('/\d{3}/', $result, "'$input' leaked digits: $result");
+        }
+    }
+
+    public function test_lowercase_street_address_is_redacted()
+    {
+        foreach (['I live at 12 elm road', 'flat 3 oakwood lane', 'it is 7 mill lane'] as $input) {
+            $result = $this->normaliser->normalise($input);
+            $this->assertStringContainsString('<ADDRESS>', $result, "'$input' should be redacted");
+            $this->assertDoesNotMatchRegularExpression('/\d/', $result, "'$input' leaked a number: $result");
+        }
+    }
+
+    public function test_lowercase_durations_are_not_redacted_as_address()
+    {
+        foreach (['it is a 20 min drive', 'about 5 minutes walk', '3 chairs in the park'] as $input) {
+            $this->assertStringNotContainsString('<ADDRESS>', $this->normaliser->normalise($input), $input);
+        }
+    }
+
+    public function test_links_without_a_scheme_are_redacted()
+    {
+        $result = $this->normaliser->normalise('find me at www.facebook.com/john.smith.123 or example.com/profile/x');
+        $this->assertStringNotContainsString('facebook', $result);
+        $this->assertStringNotContainsString('smith', $result);
+        $this->assertStringNotContainsString('profile', $result);
+    }
+
+    public function test_what3words_is_redacted()
+    {
+        $result = $this->normaliser->normalise('meet at ///filled.count.soap ok');
+        $this->assertStringContainsString('<ADDRESS>', $result);
+        $this->assertStringNotContainsString('filled', $result);
+    }
+
+    public function test_greeting_and_title_names_are_redacted()
+    {
+        $result = $this->normaliser->normalise('Hi Sarah Jones, thanks. Mrs Patel will collect.');
+        $this->assertStringNotContainsString('Sarah', $result);
+        $this->assertStringNotContainsString('Jones', $result);
+        $this->assertStringNotContainsString('Patel', $result);
+        $this->assertStringContainsString('<NAME>', $result);
+    }
+
+    public function test_greeting_followed_by_a_common_word_is_kept()
+    {
+        $this->assertEquals('Hi there, are you free?', $this->normaliser->normalise('Hi there, are you free?'));
+        $this->assertEquals('Hello again', $this->normaliser->normalise('Hello again'));
+    }
     public function test_preserve_emoji()
     {
         $input = 'Great item 🎉 very happy 😊';
