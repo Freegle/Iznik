@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -45,8 +46,8 @@ func TestPatchSpammerCannotHoldAsAnotherUser(t *testing.T) {
 	prefix := uniquePrefix("spam_holdas")
 	modID, token := createSpamAdminUser(t, prefix)
 
-	impersonated := CreateTestUser(t, prefix+"_other", "User")
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	impersonated := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Suspicious")
 
 	body := fmt.Sprintf(`{"id":%d,"collection":"PendingAdd","reason":"Suspicious","heldby":%d}`,
@@ -65,7 +66,7 @@ func TestPatchSpammerBlockedWhenHeldByAnotherMod(t *testing.T) {
 	_, tokenA := createSpamAdminUser(t, prefix+"a")
 	modB, tokenB := createSpamAdminUser(t, prefix+"b")
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Suspicious")
 
 	// Mod A holds it.

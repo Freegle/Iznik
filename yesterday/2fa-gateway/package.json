@@ -1,5 +1,6 @@
 {
   "name": "yesterday-2fa-gateway",
+  "license": "AGPL-3.0-or-later",
   "version": "1.0.0",
   "description": "2FA authentication gateway for Yesterday backup system",
   "main": "server.js",

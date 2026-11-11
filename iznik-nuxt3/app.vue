@@ -111,7 +111,6 @@
 </template>
 <script setup>
 import { useNavbarVisibility } from './composables/useNavbarVisibility'
-import { useNoticeboardStore } from './stores/noticeboard'
 import { useAuthStore } from './stores/auth'
 import { useMessageStore } from './stores/message'
 import { useUserStore } from './stores/user'
@@ -224,7 +223,6 @@ const teamStore = useTeamStore()
 const donationStore = useDonationStore()
 const giftAidStore = useGiftAidStore()
 const authorityStore = useAuthorityStore()
-const noticeboardStore = useNoticeboardStore()
 const mobileStore = useMobileStore()
 const statsStore = useStatsStore()
 const microVolunteeringStore = useMicroVolunteeringStore()
@@ -256,7 +254,6 @@ teamStore.init(runtimeConfig)
 donationStore.init(runtimeConfig)
 giftAidStore.init(runtimeConfig)
 authorityStore.init(runtimeConfig)
-noticeboardStore.init(runtimeConfig)
 mobileStore.init(runtimeConfig)
 statsStore.init(runtimeConfig)
 microVolunteeringStore.init(runtimeConfig)

@@ -67,6 +67,10 @@ func isPublicConfigKey(key string) bool {
 	switch key {
 	case "ads_enabled":
 		return true
+	case "ux_experiments":
+		// The running UX experiments' arm ranges, written by the batch (UxExperimentService)
+		// and read by every client at boot. Names and bucket ranges only, nothing per member.
+		return true
 	}
 	return strings.HasPrefix(key, "app_fd_version_") || strings.HasPrefix(key, "app_mt_version_")
 }
@@ -142,4 +146,3 @@ func PatchAdminConfig(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
-

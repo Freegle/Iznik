@@ -124,6 +124,20 @@ describe('SpinButton', () => {
 
       expect(wrapper.find('.v-icon').attributes('data-icon')).toBe('check')
     })
+
+    it('stops spinning without the tick when told the action failed', async () => {
+      const wrapper = createWrapper({
+        iconName: 'heart',
+        doneIcon: 'check',
+        minimumSpinTime: 100,
+      })
+
+      await wrapper.find('button').trigger('click')
+      wrapper.emitted('handle')[0][0](false)
+      await vi.advanceTimersByTimeAsync(200)
+
+      expect(wrapper.find('.v-icon').attributes('data-icon')).toBe('heart')
+    })
   })
 
   describe('loading state', () => {

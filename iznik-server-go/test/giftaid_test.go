@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/donations"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -86,7 +87,7 @@ func TestGetGiftAid_Success(t *testing.T) {
 func TestGetGiftAid_RevokedSessionDenied(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("giftaidrevoke")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, token := CreateTestSession(t, userID)
 
 	db.Exec("DELETE FROM giftaid WHERE userid = ?", userID)
@@ -193,7 +194,7 @@ func TestGetGiftAid_AllPeriodTypes(t *testing.T) {
 
 func TestSetGiftAid(t *testing.T) {
 	prefix := uniquePrefix("ga_set")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"period":"This","fullname":"Test User","homeaddress":"123 Test Street, Edinburgh"}`
@@ -215,7 +216,7 @@ func TestSetGiftAid(t *testing.T) {
 
 func TestSetGiftAidDeclined(t *testing.T) {
 	prefix := uniquePrefix("ga_dec")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Declined period should work without fullname/homeaddress
@@ -246,7 +247,7 @@ func TestSetGiftAidUnauthorized(t *testing.T) {
 
 func TestSetGiftAidMissingParams(t *testing.T) {
 	prefix := uniquePrefix("ga_miss")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Missing period
@@ -280,7 +281,7 @@ func TestSetGiftAidMissingParams(t *testing.T) {
 
 func TestSetGiftAidWithFirstnameLastname(t *testing.T) {
 	prefix := uniquePrefix("ga_fnln")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -321,7 +322,7 @@ func TestSetGiftAidWithFirstnameLastname(t *testing.T) {
 
 func TestSetGiftAidFirstnameLastnameStoredAlongsideFullname(t *testing.T) {
 	prefix := uniquePrefix("ga_both")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -349,10 +350,10 @@ func TestSetGiftAidFirstnameLastnameStoredAlongsideFullname(t *testing.T) {
 
 func TestEditGiftAidFirstnameLastname(t *testing.T) {
 	prefix := uniquePrefix("ga_editfnln")
-	adminID := CreateTestUser(t, prefix, "Admin")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'This', 'Old Name', '1 Road')", userID)
 
@@ -381,11 +382,11 @@ func TestEditGiftAidFirstnameLastname(t *testing.T) {
 
 func TestEditGiftAid(t *testing.T) {
 	prefix := uniquePrefix("ga_edit")
-	adminID := CreateTestUser(t, prefix, "Admin")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Create a giftaid record first
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'This', 'Original Name', '123 Original St')", userID)
 
@@ -411,11 +412,11 @@ func TestEditGiftAid(t *testing.T) {
 
 func TestEditGiftAidClearField(t *testing.T) {
 	prefix := uniquePrefix("ga_clear")
-	adminID := CreateTestUser(t, prefix, "Admin")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Create a giftaid record with a populated fullname.
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress, postcode) VALUES (?, 'This', 'Has Name', '123 Street', 'EH1 1AA')", userID)
 
@@ -443,7 +444,7 @@ func TestEditGiftAidClearField(t *testing.T) {
 
 func TestEditGiftAidNotAdmin(t *testing.T) {
 	prefix := uniquePrefix("ga_editna")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"id":1,"fullname":"Hacked"}`
@@ -455,7 +456,7 @@ func TestEditGiftAidNotAdmin(t *testing.T) {
 
 func TestDeleteGiftAid(t *testing.T) {
 	prefix := uniquePrefix("ga_del")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a giftaid record first
@@ -483,11 +484,11 @@ func TestDeleteGiftAidUnauthorized(t *testing.T) {
 
 func TestListGiftAid(t *testing.T) {
 	prefix := uniquePrefix("ga_list")
-	adminID := CreateTestUser(t, prefix, "Admin")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Create a giftaid record that needs review (not declined, not reviewed, not deleted)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'This', 'List Test User', '456 List St')", userID)
 
@@ -505,7 +506,7 @@ func TestListGiftAid(t *testing.T) {
 
 func TestListGiftAidNotAdmin(t *testing.T) {
 	prefix := uniquePrefix("ga_listna")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/giftaid?all=true&jwt="+token, nil)
@@ -515,11 +516,11 @@ func TestListGiftAidNotAdmin(t *testing.T) {
 
 func TestSearchGiftAid(t *testing.T) {
 	prefix := uniquePrefix("ga_search")
-	adminID := CreateTestUser(t, prefix, "Admin")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Create a giftaid record to search for
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	searchableName := "UniqueSearchName_" + prefix
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'This', ?, '789 Search St')", userID, searchableName)
@@ -546,7 +547,7 @@ func TestSearchGiftAid(t *testing.T) {
 // has checked yet.
 func TestSetGiftAidRefreshesTimestampAndClearsReviewed(t *testing.T) {
 	prefix := uniquePrefix("ga_refresh")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -592,10 +593,10 @@ func TestSetGiftAidRefreshesTimestampAndClearsReviewed(t *testing.T) {
 // dated 2021 because the upsert only touched period/name/address/deleted.
 func TestSetGiftAidDeclineThenRedeclareRejoinsQueueWithCurrentDate(t *testing.T) {
 	prefix := uniquePrefix("ga_redeclare")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn

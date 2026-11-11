@@ -5,6 +5,7 @@ import (
 	"fmt"
 	changespkg "github.com/freegle/iznik-server-go/changes"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"net/http/httptest"
@@ -151,7 +152,7 @@ func TestChangesMessageOutcome(t *testing.T) {
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
 	// Create a test user and message.
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
 	msgID := CreateTestMessage(t, userID, "OFFER: "+prefix+" test item", 55.95, -3.19)
@@ -196,10 +197,10 @@ func TestChangesRatings(t *testing.T) {
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
 	// Create two test users.
-	raterID := CreateTestUser(t, prefix+"_rater", "User")
+	raterID := CreateTestUser(t, prefix+"_rater", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", raterID)
 
-	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
+	rateeID := CreateTestUser(t, prefix+"_ratee", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", rateeID)
 
 	// Create a rating.
@@ -239,7 +240,7 @@ func TestChangesUserLastUpdatedNotEmpty(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
 	// Set lastupdated to NOW so it appears in results.
@@ -280,7 +281,7 @@ func TestChangesUserChangeHasModifiedType(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
 	db.Exec("UPDATE users SET lastupdated = NOW() WHERE id = ?", userID)
@@ -318,7 +319,7 @@ func TestChangesUserDeleted(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// The user is gone entirely — as they would be after a purge. The tombstone
 	// is the only thing left, and it must still produce a change.
@@ -361,7 +362,7 @@ func TestChangesUserDeletedRespectsSince(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
 	db.Exec("INSERT INTO users_deletions (userid, timestamp, type, reason) VALUES (?, DATE_SUB(NOW(), INTERVAL 2 DAY), 'Forgotten', 'Test')", userID)
@@ -416,10 +417,10 @@ func TestChangesRatingHasIdAndTnRatingId(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	raterID := CreateTestUser(t, prefix+"_rater", "User")
+	raterID := CreateTestUser(t, prefix+"_rater", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", raterID)
 
-	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
+	rateeID := CreateTestUser(t, prefix+"_ratee", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", rateeID)
 
 	db.Exec("INSERT INTO ratings (rater, ratee, rating, timestamp, visible, tn_rating_id) VALUES (?, ?, 'Up', NOW(), 1, 12345)", raterID, rateeID)
@@ -481,10 +482,10 @@ func TestChangesRatingCommentField(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	raterID := CreateTestUser(t, prefix+"_rater", "User")
+	raterID := CreateTestUser(t, prefix+"_rater", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", raterID)
 
-	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
+	rateeID := CreateTestUser(t, prefix+"_ratee", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", rateeID)
 
 	// Create a rating with a comment (text field).
@@ -528,10 +529,10 @@ func TestChangesRatingReasonField(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	raterID := CreateTestUser(t, prefix+"_rater", "User")
+	raterID := CreateTestUser(t, prefix+"_rater", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", raterID)
 
-	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
+	rateeID := CreateTestUser(t, prefix+"_ratee", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", rateeID)
 
 	// Create a rating with a reason.
@@ -574,10 +575,10 @@ func TestChangesRatingAllFieldsPresent(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	raterID := CreateTestUser(t, prefix+"_rater", "User")
+	raterID := CreateTestUser(t, prefix+"_rater", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", raterID)
 
-	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
+	rateeID := CreateTestUser(t, prefix+"_ratee", utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", rateeID)
 
 	// Create a fully-populated rating.
@@ -631,7 +632,7 @@ func TestChangesUserLastUpdatedNullHandling(t *testing.T) {
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
 	// Create user with explicit NULL lastupdated.
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
 	// Set lastupdated to NOW to include in results.

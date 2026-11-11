@@ -11,6 +11,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,7 +19,7 @@ func TestSearchByMsgID_FindsThePostAndLabelsItAnIDMatch(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("searchByID")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, "OFFER: Deckchair "+prefix, 53.0, -2.0)
 
 	results := message.SearchByMsgID(db, msgID)

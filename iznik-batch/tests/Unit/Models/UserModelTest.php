@@ -164,6 +164,69 @@ class UserModelTest extends TestCase
         $this->assertEquals('Bob Smith', User::removeTNGroup('Bob Smith-g12345'));
     }
 
+    public function test_tn_display_name_prettifies_a_username(): void
+    {
+        $this->assertEquals('Tricia Hayes', User::tnDisplayName('tricia.hayes'));
+        $this->assertEquals('Bob Smith', User::tnDisplayName('bob_smith'));
+        $this->assertEquals('Mary-Jane', User::tnDisplayName('mary-jane'));
+        $this->assertEquals("O'Brien", User::tnDisplayName("o'brien"));
+        $this->assertEquals('X2y Z', User::tnDisplayName('x2y.z'));
+        $this->assertEquals('Élise Dupont', User::tnDisplayName('élise.dupont'));
+        $this->assertEquals('ALREADY Up', User::tnDisplayName('ALREADY.up'));
+    }
+
+    public function test_tn_email_for_username(): void
+    {
+        $this->assertEquals('tricia.hayes@user.trashnothing.com', User::tnEmailForUsername('tricia.hayes'));
+    }
+
+    public function test_tn_username_from_email_handles_bare_and_alias(): void
+    {
+        $this->assertEquals('tricia.hayes', User::tnUsernameFromEmail('tricia.hayes@user.trashnothing.com'));
+        $this->assertEquals('tricia.hayes', User::tnUsernameFromEmail('tricia.hayes-g298@user.trashnothing.com'));
+        $this->assertEquals('tricia.hayes', User::tnUsernameFromEmail(' Tricia.Hayes-G298@User.TrashNothing.com '));
+    }
+
+    public function test_tn_username_from_email_keeps_hyphens_in_username(): void
+    {
+        $this->assertEquals('mary-jane', User::tnUsernameFromEmail('mary-jane@user.trashnothing.com'));
+        $this->assertEquals('mary-grace', User::tnUsernameFromEmail('mary-grace@user.trashnothing.com'));
+        $this->assertEquals('bibiana-gomes', User::tnUsernameFromEmail('bibiana-gomes-g4840@user.trashnothing.com'));
+        $this->assertEquals('bibiana', User::tnUsernameFromEmail('bibiana@user.trashnothing.com'));
+        // Only the last -g<digits> is the group suffix.
+        $this->assertEquals('ann-g12', User::tnUsernameFromEmail('ann-g12-g34@user.trashnothing.com'));
+    }
+
+    public function test_tn_username_from_email_rejects_non_tn_addresses(): void
+    {
+        $this->assertNull(User::tnUsernameFromEmail('tricia.hayes@gmail.com'));
+        $this->assertNull(User::tnUsernameFromEmail('tricia@user.trashnothing.com.evil.com'));
+        $this->assertNull(User::tnUsernameFromEmail('tricia@trashnothing.com'));
+        $this->assertNull(User::tnUsernameFromEmail('@user.trashnothing.com'));
+    }
+
+    public function test_a_plain_freegle_member_is_not_a_trashnothing_account(): void
+    {
+        $user = $this->createTestUser();
+
+        $this->assertFalse($user->isTrashNothingAccount());
+    }
+
+    public function test_a_tnuserid_stamp_makes_a_trashnothing_account(): void
+    {
+        $user = $this->createTestUser(['tnuserid' => random_int(900000000, 999999999)]);
+
+        $this->assertTrue($user->isTrashNothingAccount());
+    }
+
+    public function test_a_trashnothing_preferred_address_alone_makes_a_trashnothing_account(): void
+    {
+        $user = $this->createTestUser(['email_preferred' => 'someone' . random_int(100000, 999999) . '@user.trashnothing.com']);
+
+        $this->assertNull($user->tnuserid);
+        $this->assertTrue($user->isTrashNothingAccount(), 'the preferred address is enough');
+    }
+
     public function test_remove_tn_group_preserves_name_without_suffix(): void
     {
         $this->assertEquals('Alice', User::removeTNGroup('Alice'));

@@ -83,6 +83,11 @@ import {
   useChatMessageBase,
 } from '~/composables/useChat'
 import { useRouter } from '#imports'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const props = defineProps({
   chatid: {
@@ -130,9 +135,9 @@ const realMod = computed(() => {
   // Show "(Sent by #...)" to moderators, support, and admins
   return (
     realMe.value &&
-    (realMe.value.systemrole === 'Moderator' ||
-      realMe.value.systemrole === 'Support' ||
-      realMe.value.systemrole === 'Admin')
+    (realMe.value.systemrole === SYSTEMROLE_MODERATOR ||
+      realMe.value.systemrole === SYSTEMROLE_SUPPORT ||
+      realMe.value.systemrole === SYSTEMROLE_ADMIN)
   )
 })
 

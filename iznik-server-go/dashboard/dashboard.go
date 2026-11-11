@@ -3,7 +3,6 @@ package dashboard
 import (
 	"context"
 	json2 "encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -162,7 +161,7 @@ func getComponent(comp string, groupIDs []uint64, startQ, endQ string, systemwid
 	case "RecentCounts":
 		compute = func() interface{} { return getRecentCounts(groupIDs, startQ, endQ) }
 	case "PopularPosts":
-		compute = func() interface{} { return getPopularPosts(groupIDs, startQ, endQ, systemwide) }
+		compute = func() interface{} { return getPopularPosts(startQ, endQ) }
 	case "UsersPosting":
 		if !isMod {
 			return nil
@@ -258,103 +257,6 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 	result["newmessages"] = newmessages
 	result["newmembers"] = newmembers
 
-	return result
-}
-
-func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []map[string]interface{} {
-	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
-	defer cancel()
-	db := database.DBConn.WithContext(ctx)
-
-	type PostRow struct {
-		Views   int
-		ID      uint64
-		Subject string
-	}
-
-	// Last of the dashboard components converted to the bounded windowed walk
-	// (see dashboardWindowDays): the single statement version computed the
-	// correlated views COUNT for EVERY post the whole date range matched
-	// before its ORDER BY views LIMIT 5 could apply — ~30s on a systemwide
-	// year range, the longest dashboard statement left after cc54e65c0.
-	// A post has exactly one arrival, so each window's top 5 is a superset
-	// candidate of the global top 5: run the same query per window and merge.
-	var posts []PostRow
-
-	if systemwide {
-		// Systemwide skips the messages_groups join entirely (all groups are
-		// included) and keeps its historical 90-day cap on the range.
-		start, err1 := time.Parse("2006-01-02", startQ)
-		end, err2 := time.Parse("2006-01-02", endQ)
-		capStart := startQ
-		if err1 == nil && err2 == nil {
-			maxWindow := end.AddDate(0, 0, -90)
-			if start.Before(maxWindow) {
-				capStart = maxWindow.Format("2006-01-02")
-			}
-		}
-
-		for _, win := range arrivalWindows(capStart, endQ) {
-			arrivalCmp := "<"
-			if win.LastInclusive {
-				arrivalCmp = "<="
-			}
-			var winPosts []PostRow
-			// Correlated subquery on messages_likes rather than a JOIN, to
-			// avoid scanning the 73M+ row table (unchanged from the replaced
-			// statement).
-			db.Table("messages m").
-				Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, m.id, m.subject", utils.MESSAGE_LIKES_VIEW).
-				Where("m.arrival >= ? AND m.arrival "+arrivalCmp+" ? AND m.deleted IS NULL", win.Start, win.End).
-				Order("views DESC").
-				Limit(5).
-				Scan(&winPosts)
-			posts = append(posts, winPosts...)
-		}
-	}
-
-	// Merge the per-window top-5s: dedup by id (a crossposted origin row can
-	// straddle windows), sort by views desc with id as a deterministic
-	// tie-break, keep 5 — replicating the replaced ORDER BY views DESC LIMIT 5.
-	seen := make(map[uint64]struct{}, len(posts))
-	merged := posts[:0]
-	for _, p := range posts {
-		if _, dup := seen[p.ID]; dup {
-			continue
-		}
-		seen[p.ID] = struct{}{}
-		merged = append(merged, p)
-	}
-	sort.Slice(merged, func(i, j int) bool {
-		if merged[i].Views != merged[j].Views {
-			return merged[i].Views > merged[j].Views
-		}
-		return merged[i].ID < merged[j].ID
-	})
-	if len(merged) > 5 {
-		merged = merged[:5]
-	}
-	posts = merged
-
-	userSite := os.Getenv("USER_SITE")
-	if userSite == "" {
-		userSite = "www.ilovefreegle.org"
-	}
-
-	result := make([]map[string]interface{}, len(posts))
-	for i, p := range posts {
-		// Get reply count.
-		var replies int
-		db.Table("chat_messages").Select("COUNT(*)").Where("refmsgid = ?", p.ID).Scan(&replies)
-
-		result[i] = map[string]interface{}{
-			"views":   p.Views,
-			"id":      p.ID,
-			"subject": p.Subject,
-			"replies": replies,
-			"url":     fmt.Sprintf("https://%s/message/%d", userSite, p.ID),
-		}
-	}
 	return result
 }
 
@@ -716,12 +618,9 @@ func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 		Having("lastactive IS NOT NULL").
 		Scan(&mods)
 
-	// One row per person, most recent first. The query is one row per membership, so a
-	// moderator of several communities came back once per community, each with that
-	// community's own time, in whatever order the scan returned; the page then showed the
-	// first ten of those. Collapsing here keeps the per-membership subquery above, which the
-	// lastapproved index answers with one seek each, and sorts a few hundred rows in memory
-	// rather than asking the database to filesort a derived column.
+	// One row per person, most recent first. The query is one row per moderator; collapsing by
+	// user here keeps that true whatever the scan returns, and sorts a few hundred rows in
+	// memory rather than asking the database to filesort a derived column.
 	latest := make(map[uint64]string, len(mods))
 	order := make([]uint64, 0, len(mods))
 	for _, m := range mods {

@@ -39,6 +39,10 @@ describe('useStdMsgs composable', () => {
       expect(icon({ action: 'Edit' })).toBe('pen')
     })
 
+    it('returns pen for Edit and Message action', () => {
+      expect(icon({ action: 'Edit and Message' })).toBe('pen')
+    })
+
     it('returns pause for Hold Message action', () => {
       expect(icon({ action: 'Hold Message' })).toBe('pause')
     })
@@ -87,6 +91,10 @@ describe('useStdMsgs composable', () => {
 
     it('returns primary for Edit action', () => {
       expect(variant({ action: 'Edit' })).toBe('primary')
+    })
+
+    it('returns primary for Edit and Message action', () => {
+      expect(variant({ action: 'Edit and Message' })).toBe('primary')
     })
 
     // Hold used to be amber like the rejects, so in an alphabetically sorted

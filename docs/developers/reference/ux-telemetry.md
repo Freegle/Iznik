@@ -1,11 +1,11 @@
 ---
-last_reviewed: 2026-10-18
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useFlowTelemetry.js
-  - iznik-nuxt3/composables/useExperiment.js
   - iznik-nuxt3/composables/useFlowRoutes.js
   - iznik-nuxt3/composables/useComposeTelemetry.js
+  - iznik-nuxt3/composables/useGivePhotoTelemetry.js
   - iznik-nuxt3/composables/useLoginTelemetry.js
   - iznik-nuxt3/composables/useSettingsTelemetry.js
   - iznik-nuxt3/plugins/flowTelemetry.client.js
@@ -17,16 +17,16 @@ covers:
   - iznik-batch/app/Console/Commands/Ux/RollupDailyCommand.php
   - iznik-batch/app/Console/Commands/Ux/WeeklyReportCommand.php
   - iznik-batch/database/migrations/2026_10_12_000001_create_ux_telemetry_tables.php
+  - iznik-batch/database/migrations/2026_10_21_000001_create_ux_flow_signal_daily_table.php
   - iznik-server-go/ux/ux.go
-  - iznik-nuxt3/modtools/components/ModSysAdminUx.vue
-  - iznik-nuxt3/tests/e2e/test-modtools-sysadmin-ux.spec.js
+  - iznik-server-go/ux/rollups.go
 ---
 
 # UX telemetry
 
 How we find where members get stuck, go back, change their minds, give up, or never find a
 feature. The rationale and the alternatives considered are in
-`plans/2026-10-11-ux-pain-point-instrumentation.md`; this page is the contract the code is held to.
+a plan removed on 2026-10-28 once phases 0 to 5 shipped (git history at `3e65b6af25`, `plans/2026-10-11-ux-pain-point-instrumentation.md`); this page is the contract the code is held to.
 
 ```mermaid
 flowchart LR
@@ -52,6 +52,12 @@ flowchart LR
 
 `page_view` also carries `page_id` and the modal context, like interaction events do.
 
+Every **flow** event also carries two fields frozen when its flow started, `start_logged_in` (whether
+the member was signed in then) and `started_ms` (when, in epoch milliseconds). `logged_in` itself is
+read at send time, so it changes mid-flow when a member signs in as part of Give, Ask or Reply, and
+is wrong for grouping the start and the completion of one flow. The experiment read groups by
+`start_logged_in` and cuts by `started_ms` ([The hourly tick](ux-experiments.md#the-hourly-tick)).
+
 ## 2. Flow events
 
 Emitted only through `composables/useFlowTelemetry.js`, which owns the names as exported
@@ -70,6 +76,8 @@ constants (`FlowName`, `FlowEvent`). Each is a `/clientlog` entry with **`event_
 | `dwell_ms` | On `step_complete`, `step_back`, `flow_abandon`: ms since the matching `step_enter`. On `flow_complete`: ms since `flow_start` |
 | `variant` | The member's experiment arms as `name:arm` joined by `,`, sorted; `''` when none. Frozen at `flow_start`: every event of an instance carries the same value, even if logging in at the end changes the id the arm is computed from |
 | `entry` | On `flow_start` only |
+| `start_logged_in` | `true` / `false`: whether the member was signed in when the flow started. Frozen at `flow_start`, so every event of an instance carries the same value, unlike `logged_in`, which is read at send time. The experiment read groups by it |
+| `started_ms` | When the flow started, in epoch milliseconds. Frozen at `flow_start`. The experiment read counts only flows that started at least `settle_minutes` before the end of its window, and cuts on this |
 
 **Events** (`FlowEvent`):
 
@@ -165,14 +173,16 @@ a minute.
 
 ## 4. Experiments
 
-`composables/useExperiment.js`: `useExperiment(name)` returns the member's arm for a configured
-experiment. Assignment is `crc32(<id>|<name>) % 100`, the same function as
-`iznik-batch/app/Support/ExperimentBucket.php`, where `<id>` is the user id when logged in and the
-client `session_id` otherwise. Experiments and arm ranges come from runtime config
-`public.UX_EXPERIMENTS` (JSON, `{"name": {"control": [0, 49], "b": [50, 99]}}`), empty by
-default. Every flow event carries the arms in `variant`, so the funnel splits by arm with no
-per-experiment recording code. Use fixed ratios with a control arm; the epsilon-greedy bandit in
-`abtest` is for choosing between asks, not for measuring a change.
+Every flow event carries the member's arms in `variant` as `name:arm` pairs, so the funnel splits by
+arm with no per-experiment recording code. How a member gets an arm, and how an experiment is run, read
+and decided, is on its own page: [UX experiments](ux-experiments.md).
+
+Posts with a photo get more replies, so a change to the give flow can raise completion and lower the
+share of offers with a photo. `useGivePhotoTelemetry.js` measures that: each posted OFFER sends one
+`give_posted` client log (`event_type="give_posted"`) with `photos` (the member's own photos, not an AI
+illustration), `with_photo` and `variant`, the same arm string the flow events carry. The engine's own
+guardrails do not read it. A reviewer of a give experiment reads the share with `with_photo` true for
+each arm from Loki, beside the funnel's completion.
 
 ## 5. Rollup tables
 
@@ -190,24 +200,47 @@ Schema in the migration above.
 | `ux_flow_daily` | flow events | `entered` counts `step_enter` with `first_visit`; `reentered` the rest. `completed`, `backed`, `abandoned` and `help_sought` count once per visit, so rates over them divide by `entered + reentered` |
 | `ux_flow_outcome_daily` | flow events | per flow |
 | `ux_field_daily` | `field_revisit`, `validation_failed`, `choice_switched` | per field |
+| `ux_flow_signal_daily` | `step_enter`, `step_back`, `help_sought`, the three field events, `flow_complete` | Separate visits (flow instances) with each sign of second thoughts, and how many of them also sent `flow_complete`: signal `reached` (entered the step, the base), `backed`, `help`, and `field` (with the field). Loki joins on `flow_instance_id` in one query (`and on (flow_instance_id)`), so no raw line is paged. A visit that goes back on one day and finishes after midnight UTC counts as not finished, a small undercount that is the same for every row. The same visit can split in two where `logged_in` changes at the step. Rows exist only from the day the table was added. The job skips the table, with a warning, when it does not exist yet |
 | `ux_component_daily` | `interaction`, `impressions` | impressions scaled by `1/sample_rate`; dead click = click with `interactive=false` |
 | `ux_feature_adoption_daily` | `page_view` for the routes in `config('freegle.ux.features')`, `users.lastaccess` | |
 | `ux_search_daily` | `source="vector_search"` lines, `browse_scroll_depth` | `re_searched_60s` is a floor: only logged-in searches can be linked |
 | `ux_regret_daily` | MySQL | `withdrawn_24h`, `duplicate_10m`, `promise_reneged`, `reply_after_taken`; `base` is the denominator |
-| `ux_telemetry_health_daily` | all of the above | `flow_start:<flow>` against the flow's entry `page_view`s, for the flows that start when their page opens. Reply starts on typing and settings at the first save, so a visit that only looks sends nothing, and both are left out. The routes in `ux.flow_entry_routes` are matched exactly (a Loki label regex matches anywhere in the value, so unanchored "give" counted every give page); `event:<type>` against the trailing 14-day median of raw line counts, so a change in sampling or in how often a line is sent reads as a fall or a rise until the median catches up, about a week (impressions and some interactions went to 10% of sessions on 13 October 2026, and their ratios read 0.35 and 0.76 that day) |
+| `ux_telemetry_health_daily` | all of the above | `flow_start:<flow>` against the flow's entry `page_view`s, for the flows that start when their page opens. Reply starts on typing and settings at the first save, so a visit that only looks sends nothing, and both are left out. The routes in `ux.flow_entry_routes` are matched exactly (a Loki label regex matches anywhere in the value, so unanchored "give" counted every give page); `event:<type>` against the median of the same weekday in the metric's last 4 weeks once there are 3 of them (traffic has a weekly shape: Sundays run 10 to 35% above the median of all days, which read as an alarm), else the median of its own last 14 days, using only days on or after its change point in `ux.health_change_points` (the first full day it was collected as it is now: scroll and impressions went to 10% of sessions, and flow lines began, in mid-October 2026) and only days with something recorded. Under 7 such days the row has no expected value and no ratio, which reads as "not enough history" and raises no alarm. Add a line to `health_change_points` when a sample rate or the lines a client sends changes |
 | `ux_sample_sessions` | `flow_abandon` | up to 20 per (flow, step); deleted after 8 days |
 
 ## 6. Read API
 
 All Support/Admin only, `start` and `end` as `YYYY-MM-DD` (default the last 7 days), and each
-also returns the same figures for the preceding period of equal length as `previous`.
+also returns the same figures for the preceding period of equal length as `previous`. The funnels
+answer gives that period's own dates as `previous.start` and `previous.end`, so a client prints them
+from the server and never works them out.
+
+Every one of the eight rollup reads takes `device` (`web`, `app`, `mobile`, `tablet`, `desktop`,
+`app-ios` or `app-android`) and `signed_in` (`1` or `0`), checked once against that list. A bad
+value is a 400. `web` is mobile, tablet and desktop, and `app` is the two apps. A row with no
+device recorded is counted under no device value, so it is in the figures only when no device is
+asked for. Only some tables can be cut, and every answer says what it did: `filters` holds what was
+applied (an empty string means not applied or not asked), and `ignored` lists the filters asked for
+that this read does not apply (always an array).
+
+| Read | Table | `device` | `signed_in` |
+|---|---|---|---|
+| `funnels` | `ux_flow_daily` | cut | cut |
+| `outcomes` | `ux_flow_outcome_daily` | cut | ignored |
+| `fields` | `ux_field_daily` | cut | ignored |
+| `friction` | `ux_component_daily` | cut | ignored |
+| `adoption`, `regret`, `search`, `health` | their own tables | ignored | ignored |
+
+`logged_in` in the rollup is the state when each event was sent, not when the visit began, so the
+outcomes (started, finished) cannot be cut by it: a signed-in rate of finished over started could pass
+100 percent. The cache key carries both filters (`serve()`). The code is `ux/filters.go`.
 
 | Route | Returns |
 |---|---|
-| `GET /modtools/ux/funnels?flow=` | per flow and step: entered, reentered, visits (their sum, the denominator for rates), completed, backed, abandoned, revisits, validation_failures, help_sought, dwell p50/p90; `by` breakdown on `device_class`, `logged_in`, `variant` |
+| `GET /modtools/ux/funnels?flow=` | per flow and step: entered, reentered, visits (their sum, the denominator for rates), completed, backed, abandoned, revisits, validation_failures, help_sought, dwell p50/p90; `by` breakdown on `device_class`, `logged_in`, `variant`; and, from `ux_flow_signal_daily` and for the current period only, `reached`, `backed_then` and `help_then`, each `{people, finished}` (separate visits, and how many finished the funnel), left out when there are none |
 | `GET /modtools/ux/outcomes` | per flow: started, submitted, submit_ok, submit_failed, completed, abandoned, resumed |
-| `GET /modtools/ux/fields?flow=` | per field: revisits, validation_failures, choice_switches |
-| `GET /modtools/ux/friction` | top 20 (page, component) by rage, dead, repeated intent, sorted by change against previous |
+| `GET /modtools/ux/fields?flow=` | per field: revisits, validation_failures, choice_switches; and, for the current period, `reached` (the step's `{people, finished}`) and `then` (visits with trouble on this field, and how many finished), left out when there are none. Signed in is ignored, as for the rest of this read |
+| `GET /modtools/ux/friction` | top 20 (page, component) by how many trouble clicks (rage, dead, repeated intent) changed against the previous period, either way. Each device is compared with itself, only where it had 20 clicks in both periods and the component 50 over those devices (`compared`); `effect` is the trouble clicks less what last period's rates give at this period's clicks. A component with nothing to compare with has all its trouble clicks as `effect` |
 | `GET /modtools/ux/adoption` | per feature: using_users / active_users |
 | `GET /modtools/ux/regret` | per signal, per day |
 | `GET /modtools/ux/search` | per day |
@@ -216,9 +249,22 @@ also returns the same figures for the preceding period of equal length as `previ
 
 ## 7. Where to look
 
-The **UX** sub-tab of ModTools SysAdmin, with Data health first. `ux:weekly-report` mails the five
-largest week-on-week changes to `config('freegle.ux.report_to')` every Monday.
+The **UX** sub-tab of ModTools SysAdmin. It is a row of sections: Overview (the Data health row and
+one row for each funnel), Funnels (one funnel at a time) and Pages and features. What each shows, the
+address keys, the filters and how to read Biggest loss are on its own page. `ux:weekly-report` mails
+the five week-on-week changes that touched the most events to `config('freegle.ux.report_to')` every Monday. A table whose week has fewer than 7 rollup days is not compared; the mail says how many days each week has. Event-metric alarms are only listed once they have the 7-day like-for-like baseline above.
 
-`tests/e2e/test-ux-telemetry.spec.js` holds the flows to the event contract in section 2, and
-`tests/e2e/test-modtools-sysadmin-ux.spec.js` checks that the tab loads every panel from the read
-API without an error.
+| Part of the mail | What it says |
+|---|---|
+| TELEMETRY CHANGED | each health row outside 0.7 to 1.3, and whether events rose or fell |
+| WHO IS COUNTED CHANGED | a device class whose clicks moved by half or more from at least 1,000, flagged as new when it had under 100. An app release that starts sending telemetry is the usual cause (the iOS app, early November 2026) |
+| FIVE LARGEST CHANGES | step conversion, click friction and regret, each compared device by device on devices with 20 events in both weeks and 50 in all, ranked by the events the change touched at this week's volume. Each lists its devices, any device new this week, and a link to the place on the tab for the same week (`ux_period=custom`) |
+| Under a friction change | from Loki: how many people clicked it ("more than 500" when that is over Loki's series cap, and then there is no two-person check), whether two of them made half the clicks or more (then the change is theirs, not everyone's), and the three elements with the most trouble clicks, by tag and the first 40 characters of their label. Loki not answering is said, not skipped |
+
+- [The SysAdmin UX tab](ux-sysadmin-tab.md): the sections, the address, the filters, Biggest loss.
+- [UX experiments](ux-experiments.md): how a change is shown to some members, read every hour and
+  decided within a day.
+- [Member surveys](ux-member-surveys.md): the questions microvolunteers are asked, the card, and the coder that groups what they write into problems.
+
+`tests/e2e/test-ux-telemetry.spec.js` holds the flows to the event contract in section 2. The browser
+test of the tab itself is described on the page above.

@@ -8,6 +8,7 @@ use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\Message;
 use Illuminate\Mail\Mailables\Address;
+use Illuminate\Support\Carbon;
 use Illuminate\Mail\Mailables\Envelope;
 
 class AutoRepostWarning extends MjmlMailable implements DescribesMemberContent
@@ -29,6 +30,7 @@ class AutoRepostWarning extends MjmlMailable implements DescribesMemberContent
         public string $userName,
         public string $userEmail,
         public ?int $groupId = null,
+        public ?string $repostDate = null,
     ) {
         parent::__construct();
 
@@ -55,6 +57,7 @@ class AutoRepostWarning extends MjmlMailable implements DescribesMemberContent
                 'messageSubject' => $this->messageSubject,
                 'outcomeType' => $outcomeType,
                 'isOffer' => $isOffer,
+                'repostWhen' => $this->repostWhen(),
                 'completedUrl' => $this->trackedUrl(
                     "{$userSite}/mypost/{$this->messageId}/completed",
                     'completed_button',
@@ -78,6 +81,23 @@ class AutoRepostWarning extends MjmlMailable implements DescribesMemberContent
                 'email' => $this->userEmail,
             ], $this->getTrackingData()))
             ->applyLogging('AutoRepostWarning');
+    }
+
+    /**
+     * The day the repost is due, in plain words ("on Friday 31 October"), or "soon"
+     * when the date is not known.
+     */
+    protected function repostWhen(): string
+    {
+        if (!$this->repostDate) {
+            return 'soon';
+        }
+
+        try {
+            return 'on ' . Carbon::parse($this->repostDate)->format('l j F');
+        } catch (\Throwable) {
+            return 'soon';
+        }
     }
 
     public function envelope(): Envelope

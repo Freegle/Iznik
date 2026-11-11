@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Services\AutoSplit\AutoSplitService;
 use App\Helpers\MailHelper;
 use App\Mail\Message\ChaseUp as ChaseUpMail;
 use App\Mail\Message\ChaseUpPromised;
 use App\Mail\Traits\FeatureFlags;
+use App\Models\ChatMessage;
 use App\Models\Message;
 use App\Models\Notification;
 use App\Models\User;
@@ -150,6 +152,8 @@ class ChaseUpService
                         'outcome' => Message::OUTCOME_TAKEN,
                         'timestamp' => now(),
                     ]);
+                    // An automatically split post's items went with it.
+                    AutoSplitService::markItemsGone((int) $intended->msgid);
                     $count++;
                     break;
 
@@ -413,11 +417,21 @@ class ChaseUpService
             }
 
             // V1: find last reply time in chat.
+            // A ModMail is not a reply from a member (AutoRepostService::hasRecentReply
+            // excludes it too), and a rippling-held reply has not reached the poster yet
+            // (notifyLanguishing excludes it); once released it counts as normal.
             $lastReplyDate = DB::table('chat_messages')
                 ->whereIn('chatid', function ($q) use ($msg) {
                     $q->select('chatid')
                         ->from('chat_messages')
-                        ->where('refmsgid', $msg->msgid);
+                        ->where('refmsgid', $msg->msgid)
+                        ->where('type', '!=', ChatMessage::TYPE_MODMAIL);
+                })
+                ->where('type', '!=', ChatMessage::TYPE_MODMAIL)
+                ->whereNotExists(function ($q) {
+                    $q->from('rippling_held_replies as cmr')
+                        ->whereColumn('cmr.chatmsgid', 'chat_messages.id')
+                        ->where('cmr.status', '<>', 'released');
                 })
                 ->max('date');
 
@@ -465,6 +479,7 @@ class ChaseUpService
                         userId: $msg->fromuser,
                         userName: $user->displayname,
                         userEmail: $user->email_preferred,
+                        promisedTo: $this->promiseeName($msg->msgid),
                     )
                     : new ChaseUpMail(
                         messageId: $msg->msgid,
@@ -646,4 +661,24 @@ class ChaseUpService
             ->exists();
     }
 
+    /**
+     * Display name of the member the post was most recently promised to, or null when
+     * there is no promise or no name can be found.
+     */
+    protected function promiseeName(int $msgid): ?string
+    {
+        $userid = DB::table('messages_promises')
+            ->where('msgid', $msgid)
+            ->orderByDesc('promisedat')
+            ->orderByDesc('id')
+            ->value('userid');
+
+        if (!$userid) {
+            return null;
+        }
+
+        $name = trim((string) User::find($userid)?->displayname);
+
+        return $name !== '' ? $name : null;
+    }
 }

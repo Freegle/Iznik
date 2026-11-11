@@ -397,6 +397,8 @@ Peak disk usage: ~100GB (only the final volume, no temp copies)
 
 Note: The script automatically copies `yesterday/docker-compose.override.yml` to configure all containers to use production image delivery and TUS uploader services, so restored backups display the correct images.
 
+The root `docker-compose.override.yml` is what compose reads, and it is only ever a copy. `update-scripts.sh` (cron, 05:45) brings `yesterday/docker-compose.override.yml` from master every morning and copies it into place, keeping the previous copy in `/root` and putting it back if `docker compose config` rejects the new one. A change for this VM goes in the file in git: an edit to the root copy is replaced the next morning. `test-update-scripts.sh` covers this.
+
 ### 8. Authentication Setup
 
 The Yesterday backup UI is protected by password + 2FA (TOTP) authentication with permission-based access control.

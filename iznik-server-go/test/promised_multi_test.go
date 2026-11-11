@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -37,7 +38,7 @@ func promisedFixture(t *testing.T, prefix string) (msgID uint64, posterID uint64
 
 func promiseTo(t *testing.T, msgID uint64, prefix string) {
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO messages_promises (msgid, userid) VALUES (?, ?)", msgID, userID)
 }
 

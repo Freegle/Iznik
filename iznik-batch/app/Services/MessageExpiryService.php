@@ -101,8 +101,13 @@ class MessageExpiryService
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
             ->whereRaw('messages.deadline < CURDATE()')
+            ->whereNull('messages.deleted')
             // A post that is not live on the site cannot expire off it.
             ->where('messages.collection', 'Approved')
+            // A deleted poster gets no mail and has nothing to extend or mark.
+            ->whereExists(fn ($q) => $q->from('users')
+                ->whereColumn('users.id', 'messages.fromuser')
+                ->whereNull('users.deleted'))
             ->orderBy('messages.id')
             ->pluck('messages.id')
             ->all();

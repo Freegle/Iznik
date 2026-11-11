@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +16,7 @@ import (
 func TestBoundsOwnPostFlaggedMine(t *testing.T) {
 	prefix := uniquePrefix("bounds_mine")
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
-	otherID := CreateTestUser(t, prefix+"_other", "Other")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	own := CreateTestMessage(t, viewerID, prefix+" my own offer", 51.5, -0.1)
 	rival := CreateTestMessage(t, otherID, prefix+" someone else's offer", 51.5, -0.1)

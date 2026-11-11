@@ -39,7 +39,7 @@ func TestFindByTNIdOrEmailByTNId(t *testing.T) {
 	prefix := uniquePrefix("partner_findtn")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	// tnuserid is UNIQUE in production, so release it from any user left by an
 	// earlier run before claiming it.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77777)
@@ -54,7 +54,7 @@ func TestFindByTNIdOrEmailByEmail(t *testing.T) {
 	db := database.DBConn
 
 	email := prefix + "@test.com"
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", userID, email)
 
 	found := user.FindByTNIdOrEmail(db, 0, email)
@@ -118,8 +118,8 @@ func TestFindTNCandidatesTwinAccounts(t *testing.T) {
 	prefix := uniquePrefix("partner_twins")
 	db := database.DBConn
 
-	tnTwin := CreateTestUser(t, prefix+"_tn", "User")
-	emailTwin := CreateTestUser(t, prefix+"_em", "User")
+	tnTwin := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
+	emailTwin := CreateTestUser(t, prefix+"_em", utils.SYSTEMROLE_USER)
 	// tnuserid is UNIQUE in production - release it from earlier runs.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66666)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66666, tnTwin)
@@ -148,8 +148,8 @@ func TestPartnerPromiseHealsTwinAccounts(t *testing.T) {
 		prefix+"_partner", partnerKey, "test.com")
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	tnTwin := CreateTestUser(t, prefix+"_tn", "User")
-	emailTwin := CreateTestUser(t, prefix+"_em", "User")
+	tnTwin := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
+	emailTwin := CreateTestUser(t, prefix+"_em", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66667)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66667, tnTwin)
 	email := prefix + "-g2@test.com"
@@ -195,7 +195,7 @@ func TestEnsurePartnerIdentifiersAttachesNewAlias(t *testing.T) {
 	prefix := uniquePrefix("partner_ensure")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66668)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66668, userID)
 
@@ -207,7 +207,7 @@ func TestEnsurePartnerIdentifiersAttachesNewAlias(t *testing.T) {
 	assert.Equal(t, userID, owner, "the new alias must be attached to the resolved account")
 
 	// And the symmetric case: an email-resolved account with no stamp gets it.
-	other := CreateTestUser(t, prefix+"_other", "User")
+	other := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66669)
 	user.EnsurePartnerIdentifiers(db, other, 66669, "")
 	var stamped uint64
@@ -256,21 +256,21 @@ func TestFindTNSiblingsScopedToUsernameAndDomain(t *testing.T) {
 	prefix := uniquePrefix("partner_scope")
 	db := database.DBConn
 
-	mine := CreateTestUser(t, prefix+"_mine", "User")
+	mine := CreateTestUser(t, prefix+"_mine", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", mine, prefix+"-g1@test.com")
 
-	sib := CreateTestUser(t, prefix+"_sib", "User")
+	sib := CreateTestUser(t, prefix+"_sib", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", sib, prefix+"-g2@test.com")
 
 	// The shape that actually bites: a LONGER username whose own alias still
 	// matches the shorter one's "<username>-g%" narrowing, because the % runs on
 	// past the end of the name. iznik-batch merged two unrelated members this way
 	// on 2026-09-13, so the exact-username test is load-bearing, not belt and braces.
-	longer := CreateTestUser(t, prefix+"_longer", "User")
+	longer := CreateTestUser(t, prefix+"_longer", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", longer, prefix+"-gomes-g3@test.com")
 
 	// Right username, wrong domain - outside the partner's reach.
-	otherDomain := CreateTestUser(t, prefix+"_other", "User")
+	otherDomain := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", otherDomain, prefix+"-g4@elsewhere.com")
 
 	got := user.FindTNSiblings(db, prefix+"-g1@test.com")
@@ -315,4 +315,38 @@ func TestCreatePartnerUserStoresV1CanonAndBackwards(t *testing.T) {
 	// A second alias of the same member must reduce to the same canon, which is
 	// what stops it minting another account.
 	assert.Equal(t, wantCanon, user.CanonicalizePartnerEmail(prefix+"-g1586@user.trashnothing.com"))
+}
+
+// A bare <username>@user.trashnothing.com address is the same TrashNothing member as their
+// per-group aliases: iznik-batch creates new TN posters with one. It finds their alias
+// accounts, they find it, and it canonicalises as PHP's canonMail does, so a canon lookup
+// on either side finds the other's rows.
+func TestBareTrashNothingAddressIsTheSameMember(t *testing.T) {
+	prefix := uniquePrefix("partner_bare")
+	db := database.DBConn
+	domain := "@user.trashnothing.com"
+
+	bare := CreateTestUser(t, prefix+"_bare", utils.SYSTEMROLE_USER)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", bare, prefix+domain)
+	alias := CreateTestUser(t, prefix+"_alias", utils.SYSTEMROLE_USER)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", alias, prefix+"-g7"+domain)
+	longer := CreateTestUser(t, prefix+"_longer", utils.SYSTEMROLE_USER)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", longer, prefix+"x"+domain)
+
+	fromBare := user.FindTNSiblings(db, prefix+domain)
+	assert.Contains(t, fromBare, alias, "the bare address finds the member's alias account")
+	assert.NotContains(t, fromBare, longer, "a different username is a different member")
+	assert.NotContains(t, fromBare, bare)
+
+	fromAlias := user.FindTNSiblings(db, prefix+"-g7"+domain)
+	assert.Contains(t, fromAlias, bare, "an alias finds the member's bare-address account")
+
+	// The same canon as an alias of the same member, and as PHP's canonMail: dots in
+	// the username kept, the domain's dots dropped.
+	assert.Equal(t, prefix+"@usertrashnothingcom", user.CanonicalizePartnerEmail(prefix+domain))
+	assert.Equal(t, "mary.jane@usertrashnothingcom", user.CanonicalizePartnerEmail("mary.jane@user.trashnothing.com"))
+
+	// A bare address on any other domain is an ordinary address.
+	assert.Empty(t, user.FindTNSiblings(db, prefix+"@test.com"))
+	assert.Equal(t, user.CanonicalizeEmail("mary.jane@test.com"), user.CanonicalizePartnerEmail("mary.jane@test.com"))
 }

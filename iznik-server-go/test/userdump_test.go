@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	_ "modernc.org/sqlite"
 )
@@ -84,8 +85,8 @@ func parseFrames(t *testing.T, body []byte) (progress []map[string]interface{}, 
 // Returns the target user id.
 func seedDumpTarget(t *testing.T, prefix string) uint64 {
 	db := database.DBConn
-	target := CreateTestUser(t, prefix+"_target", "User")
-	other := CreateTestUser(t, prefix+"_other", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	other := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	CreateTestMessage(t, target, "DumpTest Offer Sofa", 55.9533, -3.1883)
 
 	chatID := CreateTestChatRoom(t, target, &other, "User2User")
@@ -103,7 +104,7 @@ func TestUserDumpUnauthorized(t *testing.T) {
 
 func TestUserDumpForbidden(t *testing.T) {
 	prefix := uniquePrefix("dumpforbid")
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, uid)
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/user/%d/dump?jwt=%s", uid, token), nil))
 	assert.Equal(t, 403, resp.StatusCode)
@@ -111,7 +112,7 @@ func TestUserDumpForbidden(t *testing.T) {
 
 func TestUserDumpNotFound(t *testing.T) {
 	prefix := uniquePrefix("dumpnf")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/user/999999999/dump?jwt=%s", token), nil))
 	assert.Equal(t, 404, resp.StatusCode)
@@ -119,7 +120,7 @@ func TestUserDumpNotFound(t *testing.T) {
 
 func TestUserDumpApiKeyBypass(t *testing.T) {
 	prefix := uniquePrefix("dumpkey")
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	old := os.Getenv("USERDUMP_API_KEY")
 	os.Setenv("USERDUMP_API_KEY", "s3cret-dump-key")
@@ -144,9 +145,56 @@ func TestUserDumpApiKeyBypass(t *testing.T) {
 	assert.Equal(t, 401, resp3.StatusCode)
 }
 
+func TestUserDumpInternalKeyHeaderOnly(t *testing.T) {
+	prefix := uniquePrefix("dumpinternal")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+
+	oldInternal := os.Getenv("USERDUMP_INTERNAL_KEY")
+	oldAPI := os.Getenv("USERDUMP_API_KEY")
+	os.Setenv("USERDUMP_INTERNAL_KEY", "internal-dump-key")
+	os.Setenv("USERDUMP_API_KEY", "partner-dump-key")
+	defer os.Setenv("USERDUMP_INTERNAL_KEY", oldInternal)
+	defer os.Setenv("USERDUMP_API_KEY", oldAPI)
+	url := fmt.Sprintf("/api/modtools/user/%d/dump?format=raw&include=db", target)
+
+	// The header works, with or without a case header, and the dump is the real thing.
+	req := httptest.NewRequest("GET", url, nil)
+	req.Header.Set("X-Dump-Key", "internal-dump-key")
+	req.Header.Set("X-Freegle-Case", "123")
+	resp, _ := getApp().Test(req, 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, 1, tableRowCount(t, writeTempDB(t, rsp(resp)), "users"))
+
+	// A forged case header cannot break the log line, and is still accepted.
+	req = httptest.NewRequest("GET", url, nil)
+	req.Header.Set("X-Dump-Key", "internal-dump-key")
+	req.Header.Set("X-Freegle-Case", "12\nFAKE")
+	resp, _ = getApp().Test(req, 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The internal key in the query string is refused: it must never appear in a URL.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", url+"&key=internal-dump-key", nil))
+	assert.Equal(t, 401, resp.StatusCode)
+
+	// A wrong header is refused, and the partner's key still works both ways.
+	req = httptest.NewRequest("GET", url, nil)
+	req.Header.Set("X-Dump-Key", "wrong")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+	resp, _ = getApp().Test(httptest.NewRequest("GET", url+"&key=partner-dump-key", nil), 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// With no internal key configured the header gets nothing.
+	os.Setenv("USERDUMP_INTERNAL_KEY", "")
+	req = httptest.NewRequest("GET", url, nil)
+	req.Header.Set("X-Dump-Key", "")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
 func TestUserDumpRawBuildsSqlite(t *testing.T) {
 	prefix := uniquePrefix("dumpraw")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
 	target := seedDumpTarget(t, prefix)
 
@@ -175,7 +223,7 @@ func TestUserDumpRawBuildsSqlite(t *testing.T) {
 
 func TestUserDumpFramedProtocol(t *testing.T) {
 	prefix := uniquePrefix("dumpframed")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
 	target := seedDumpTarget(t, prefix)
 
@@ -210,9 +258,9 @@ func TestUserDumpFramedProtocol(t *testing.T) {
 
 func TestUserDumpRedactsSecrets(t *testing.T) {
 	prefix := uniquePrefix("dumpredact")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	database.DBConn.Exec(
 		"INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, 'Native', ?, ?)",
@@ -233,9 +281,9 @@ func TestUserDumpRedactsSecrets(t *testing.T) {
 
 func TestUserDumpLokiViaFakeServer(t *testing.T) {
 	prefix := uniquePrefix("dumploki")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -263,9 +311,9 @@ func TestUserDumpLokiViaFakeServer(t *testing.T) {
 
 func TestUserDumpLokiErrorBecomesWarning(t *testing.T) {
 	prefix := uniquePrefix("dumplokierr")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
@@ -288,9 +336,9 @@ func TestUserDumpLokiErrorBecomesWarning(t *testing.T) {
 
 func TestUserDumpSentryViaFakeServer(t *testing.T) {
 	prefix := uniquePrefix("dumpsentry")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -314,9 +362,9 @@ func TestUserDumpSentryViaFakeServer(t *testing.T) {
 
 func TestUserDumpSentryNoTokenWarns(t *testing.T) {
 	prefix := uniquePrefix("dumpsentrynotok")
-	sup := CreateTestUser(t, prefix+"_sup", "Support")
+	sup := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, sup)
-	target := CreateTestUser(t, prefix+"_target", "User")
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	oldTok := os.Getenv("SENTRY_AUTH_TOKEN")
 	os.Setenv("SENTRY_AUTH_TOKEN", "")

@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
-
 )
 
 const testDiscourseSecret = "test_discourse_secret_123"
@@ -38,7 +38,7 @@ func TestDiscourseSSO_ValidFlow(t *testing.T) {
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
 	// A moderator is a national role; no group or membership is involved.
-	userID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	email := prefix + "_mod@test.com"
 
 	// Create a session.
@@ -162,7 +162,7 @@ func TestDiscourseSSO_MemberOnly_ShowsNotModError(t *testing.T) {
 	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, _ := CreateTestSession(t, userID)
 
 	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))
@@ -176,7 +176,7 @@ func TestDiscourseSSO_OwnerMembershipWithUserSystemrole_ShowsNotModError(t *test
 	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, _ := CreateTestSession(t, userID)
 
 	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))
@@ -189,7 +189,7 @@ func TestDiscourseSSO_Owner_SignsIn(t *testing.T) {
 	os.Setenv("DISCOURSE_SECRET", testDiscourseSecret)
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
-	userID := CreateTestUser(t, prefix, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	sessionID, _ := CreateTestSession(t, userID)
 
 	location := ssoRequestWithCookie(t, ssoCookieFor(t, sessionID))

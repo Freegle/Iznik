@@ -24,12 +24,14 @@
           replies, so that they feel good about your organisation (and
           Freegle!).
         </p>
-        <p>
-          Freegle is free to use, but not free to run. If you can,
-          <strong>please donate &pound;1</strong> to keep us running - but
-          anything you can give is very welcome.
-        </p>
-        <donation-button />
+        <template v-if="askForDonations">
+          <p>
+            Freegle is free to use, but not free to run. If you can,
+            <strong>please donate &pound;1</strong> to keep us running - but
+            anything you can give is very welcome.
+          </p>
+          <donation-button />
+        </template>
       </div>
       <div v-else-if="volunteering">
         <div v-if="!editing" class="view-mode">
@@ -207,7 +209,15 @@
               v-model="currentAtts"
               class="bg-white"
               type="Volunteering"
+              @uploading="photoUploading = $event"
+              @upload-failed="photoFailed = $event"
             />
+            <p v-if="photoUploading" class="text-muted mt-1">
+              Your photo is uploading. You can save when it has finished.
+            </p>
+            <p v-if="photoFailed" class="text-danger fw-bold mt-1">
+              Your photo did not upload. Please add it again.
+            </p>
 
             <b-form-group
               ref="volunteering__description"
@@ -338,6 +348,9 @@
       </div>
     </template>
     <template #footer>
+      <p v-if="saveError" class="text-danger fw-bold w-100 mb-2" role="alert">
+        {{ saveError }}
+      </p>
       <div class="modal-actions">
         <template v-if="added">
           <b-button variant="secondary" @click="hide"> Close </b-button>
@@ -479,6 +492,12 @@ const form = ref(null)
 // Data properties
 const cacheBust = ref(Date.now())
 const showDeleteConfirm = ref(false)
+const saveError = ref(null)
+const photoUploading = ref(false)
+const photoFailed = ref(false)
+// Set once the create has returned an id, so a retry after a partial failure
+// finishes the job rather than creating a second opportunity.
+const createdId = ref(null)
 const description = ref(null)
 const currentAtts = ref([])
 const mods = ref({})
@@ -489,7 +508,7 @@ const { modal, hide } = useOurModal()
 const editing = ref(props.startEdit)
 const added = ref(false)
 
-const { supportOrAdmin } = useMe()
+const { supportOrAdmin, askForDonations } = useMe()
 
 // Initialize data from props
 if (props.id) {
@@ -537,7 +556,7 @@ const user = computed(() => {
 })
 
 const uploadingPhoto = computed(() => {
-  return composeStore?.uploading
+  return composeStore?.uploading || photoUploading.value
 })
 
 const isExisting = computed(() => {
@@ -587,6 +606,9 @@ watch(
   currentAtts,
   (newVal) => {
     if (newVal?.length) {
+      // The photo has arrived; the uploader goes away so will not say so itself.
+      photoUploading.value = false
+      photoFailed.value = false
       volunteering.value.image = {
         id: newVal[0].id,
         imageuid: newVal[0].ouruid,
@@ -652,18 +674,34 @@ async function doDelete() {
   hide()
 }
 
-async function saveIt(callback) {
+const SAVE_FAILED =
+  'Sorry, your opportunity was not saved. Your details are still here. Please check your connection and try again.'
+const SAVE_PARTIAL =
+  'Your opportunity was created, but its photo or dates did not all save. Please try again.'
+
+// Does the save and says whether it all worked.  Throws if a request fails.
+async function doSave() {
+  if (photoUploading.value || uploadingPhoto.value) {
+    saveError.value =
+      'Your photo is still uploading. Please wait for it to finish, then try again.'
+    return false
+  }
+
+  if (photoFailed.value) {
+    saveError.value = 'Your photo did not upload. Please add it again.'
+    return false
+  }
+
   const validate = await form.value.validate()
 
   if (!validate.valid) {
-    callback()
-    return
+    return false
   }
 
   if (isExisting.value) {
     const { id } = volunteering.value
 
-    // Save the WIP volop before we start making changes, otherwise the saves will update the store and hence
+    // Save the WIP opportunity before we start making changes, otherwise the saves will update the store and hence
     // what we're looking at.
     const wip = JSON.parse(JSON.stringify(volunteering.value))
     let shouldUpdatePhoto = null
@@ -685,32 +723,58 @@ async function saveIt(callback) {
     await volunteeringStore.save(wip)
 
     added.value = true
-  } else {
-    // This is an add.  First create it to get the id.
-    const dates = volunteering.value.dates
-    const photoid = volunteering.value.image
-      ? volunteering.value.image.id
-      : null
-
-    const id = await volunteeringStore.add(volunteering.value)
-
-    if (id) {
-      if (photoid) {
-        await volunteeringStore.setPhoto(id, photoid)
-      }
-
-      if (dates && dates.length) {
-        await volunteeringStore.setDates({
-          id,
-          olddates: [],
-          newdates: dates,
-        })
-      }
-
-      added.value = true
-    }
+    return true
   }
-  callback()
+
+  // This is an add.  First create it to get the id.  If an earlier attempt
+  // created it but a later step failed, carry on from there.
+  const dates = volunteering.value.dates
+  const photoid = volunteering.value.image ? volunteering.value.image.id : null
+
+  let id = createdId.value
+
+  if (!id) {
+    id = await volunteeringStore.add(volunteering.value)
+
+    if (!id) {
+      // The request came back without an id, so nothing was created.
+      saveError.value = SAVE_FAILED
+      return false
+    }
+
+    createdId.value = id
+  }
+
+  if (photoid) {
+    await volunteeringStore.setPhoto(id, photoid)
+  }
+
+  if (dates && dates.length) {
+    await volunteeringStore.setDates({
+      id,
+      olddates: [],
+      newdates: dates,
+    })
+  }
+
+  added.value = true
+  return true
+}
+
+// Only the green tick when it really saved.  Otherwise leave the form open with
+// what the member typed, and say what went wrong.
+async function saveIt(callback) {
+  saveError.value = null
+  let ok = false
+
+  try {
+    ok = await doSave()
+  } catch (e) {
+    console.error('Save opportunity failed', e)
+    saveError.value = createdId.value ? SAVE_PARTIAL : SAVE_FAILED
+  }
+
+  callback(ok)
 }
 
 async function dontSave() {

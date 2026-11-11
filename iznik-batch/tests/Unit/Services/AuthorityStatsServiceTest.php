@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Services\AuthorityStatsService;
+use App\Services\CPIService;
 use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\SeedsAuthorityStats;
@@ -42,8 +43,9 @@ class AuthorityStatsServiceTest extends TestCase
     {
         $this->assertSame(93.4, ReuseBenefit::getCPI(2011));
         $this->assertSame(133.9, ReuseBenefit::getCPI(2024));
-        $this->assertSame(93.4, ReuseBenefit::getCPI(2000), 'clamps below the range');
-        $this->assertSame(133.9, ReuseBenefit::getCPI(2100), 'clamps above the range');
+        // The table runs from 2003 (fly-tipping costs) to 2025.
+        $this->assertSame(75.5, ReuseBenefit::getCPI(2000), 'clamps below the range');
+        $this->assertSame(138.4, ReuseBenefit::getCPI(2100), 'clamps above the range');
 
         $this->assertSame(711.0, ReuseBenefit::getBenefitPerTonne(2011));
         $this->assertSame(1019.0, ReuseBenefit::getBenefitPerTonne(2024));
@@ -84,7 +86,9 @@ class AuthorityStatsServiceTest extends TestCase
         $this->assertSame('Test Authority (B)', $report['name']);
         $this->assertSame(2, $report['quarter']);
         $this->assertSame(0.51, $report['co2PerTonne']);
-        $this->assertSame(ReuseBenefit::getBenefitPerTonne(), $report['benefitPerTonne']);
+        $cpi = app(CPIService::class)->getCPIData();
+        $this->assertSame(ReuseBenefit::getBenefitPerTonne(null, $cpi), $report['benefitPerTonne']);
+        $this->assertSame(ReuseBenefit::getFlyTipSavingPerItem(null, $cpi), $report['flyTipPerItem']);
 
         // Monthly totals for the area: members living inside it at each month end (one
         // joined in May, one left in June), and the one gift completed inside it in June.
@@ -100,5 +104,23 @@ class AuthorityStatsServiceTest extends TestCase
     public function test_compute_report_returns_null_for_unknown_authority(): void
     {
         $this->assertNull($this->service->computeReport(987654321, $this->quarterStart));
+    }
+
+    public function test_report_prices_from_the_cpi_config_row(): void
+    {
+        // The config row is refreshed monthly from ONS, so the report follows it
+        // rather than the hardcoded table.
+        DB::table('config')->updateOrInsert(
+            ['key' => CPIService::CONFIG_KEY],
+            ['value' => json_encode(['data' => [2011 => 50.0, 2025 => 100.0]])]
+        );
+
+        $service = new AuthorityStatsService();
+
+        // Every year after 2025 is priced at 2025.
+        $this->assertSame(1422.0, $service->getBenefitPerTonne());
+        // A fly-tip costs 29 x 100 / 77.5 (the 2003-06 average), and each gift saves 1.95% of that.
+        $base = (75.5 + 76.5 + 78.1 + 79.9) / 4;
+        $this->assertEqualsWithDelta(0.0195 * 29 * 100.0 / $base, $service->getFlyTipSavingPerItem(), 1e-9);
     }
 }

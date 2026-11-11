@@ -116,7 +116,10 @@ export default class ChatAPI extends BaseAPI {
     return this.$postv2('/chatrooms', { id: chatid, action: 'Typing' })
   }
 
-  referToSupport(chatid) {
-    return this.$postv2('/chatrooms', { id: chatid, action: 'ReferToSupport' })
+  // Resolves with { ret, status, caseid }.
+  referToSupport(chatid, reason) {
+    const data = { id: chatid, action: 'ReferToSupport' }
+    if (reason) data.reason = reason
+    return this.$postv2('/chatrooms', data)
   }
 }

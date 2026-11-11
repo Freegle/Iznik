@@ -642,7 +642,7 @@ describe('ModAdmin', () => {
       const newsletter = mountComponent({ open: true }, { essential: 0 })
       await newsletter.vm.$nextTick()
       expect(newsletter.text()).toContain(
-        "sent to all members who haven't opted out."
+        'sent to all members who have said yes to Freegle updates.'
       )
     })
 
@@ -684,7 +684,7 @@ describe('ModAdmin', () => {
       expect(wrapper.text()).toContain(
         'Newsletter - will be sent to all members'
       )
-      expect(wrapper.text()).toContain("who haven't opted out")
+      expect(wrapper.text()).toContain('who have said yes to Freegle updates')
 
       await wrapper.vm.save()
       expect(mockAdminsStore.edit.mock.calls[0][0].essential).toBe(false)

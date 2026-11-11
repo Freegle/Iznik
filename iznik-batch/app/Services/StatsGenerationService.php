@@ -274,8 +274,11 @@ class StatsGenerationService
             ->where('date', '<', $next)
             ->where('type', ChatMessage::TYPE_INTERESTED)
             // A rejected reply (moderator reject, or dropped by a block keyword) was never
-            // delivered and is not a reply.
+            // delivered and is not a reply. Nor is one held for its sender's answer, or that
+            // the sender or the post withdrew.
             ->where('reviewrejected', 0)
+            // keep-raw: the shared correlated EXISTS of ChatMessage::heldByQuestionSql, which the builder cannot state as one reusable condition.
+            ->whereRaw('NOT '.ChatMessage::heldByQuestionSql('chat_messages'))
             ->whereNotExists(function ($q) {
                 $q->from('messages_bulk_items')
                     ->whereColumn('messages_bulk_items.msgid', 'chat_messages.refmsgid');
@@ -301,6 +304,8 @@ class StatsGenerationService
             // A rejected reply (moderator reject, or dropped by a block keyword) was never
             // delivered and is not a reply.
             ->where('reviewrejected', 0)
+            // keep-raw: the shared correlated EXISTS of ChatMessage::heldByQuestionSql, which the builder cannot state as one reusable condition.
+            ->whereRaw('NOT '.ChatMessage::heldByQuestionSql('chat_messages'))
             ->whereExists(function ($q) {
                 $q->from('messages_bulk_items')
                     ->whereColumn('messages_bulk_items.msgid', 'chat_messages.refmsgid');

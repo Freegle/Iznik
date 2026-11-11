@@ -168,6 +168,27 @@ const PROMPT_KIND_DEADLINE = "deadline"
 const PROMPT_KIND_VIEWS = "views"
 const PROMPT_KIND_PHOTO = "photo"
 
+// PROMPT_KIND_CONFIRM_REPLY asks a replier, and only them, whether they still want an offer
+// that looks damaged or too big to carry. Their reply waits for the answer - see
+// chat/replyconfirm.go.
+const PROMPT_KIND_CONFIRM_REPLY = "confirm_reply"
+
+// ReplyHeldByQuestionSQL is a SQL condition that is true for a chat message, aliased m, that a reply confirmation
+// (PROMPT_KIND_CONFIRM_REPLY) is holding or has refused: the reply the question names, and what its sender wrote in that chat
+// while the question was open. Such a message is not a reply the poster has, so every count of replies puts NOT in front
+// of it. A yes releases them, so only a question still open, or answered other than yes, holds them. The dates bound the
+// further messages to the time the question was open, with 2 seconds of slack because MySQL rounds the Go clock up to the
+// next second: what the sender writes after a no, or after the three days, is an
+// ordinary message. It has no placeholders. The batch has a twin, ChatMessage::heldByQuestionSql; keep the two the same.
+func ReplyHeldByQuestionSQL(m string) string {
+	state := "(cpr.answered_at IS NULL OR cpr.answer <> 'yes')"
+
+	return "(EXISTS (SELECT 1 FROM chat_prompts cpr WHERE cpr.heldchatmsgid = " + m + ".id AND cpr.kind = '" + PROMPT_KIND_CONFIRM_REPLY + "' AND " + state + ")" +
+		" OR EXISTS (SELECT 1 FROM chat_prompts cpr INNER JOIN chat_messages cph ON cph.id = cpr.heldchatmsgid" +
+		" WHERE cpr.userid = " + m + ".userid AND cpr.kind = '" + PROMPT_KIND_CONFIRM_REPLY + "' AND cph.chatid = " + m + ".chatid AND cph.id < " + m + ".id AND " + state +
+		" AND " + m + ".date <= COALESCE(cpr.answered_at, cpr.expires_at, '9999-01-01 00:00:00') + INTERVAL 2 SECOND))"
+}
+
 const NEWSFEED_TYPE_ALERT = "Alert"
 const NEWSFEED_TYPE_COMMUNITY_EVENT = "CommunityEvent"
 const NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY = "VolunteerOpportunity"
@@ -454,4 +475,16 @@ func TidyName(name string) string {
 	}
 
 	return name
+}
+
+// IsClearanceSQL is a SQL condition, true when the post whose id is m (a column or a
+// placeholder-free expression) is a clearance. A clearance is an Offer with
+// messages_bulk_items rows, but so is a post the auto-splitter turned into an item list,
+// and that one is an ordinary member's Offer: it stays in freebie alerts and partner feeds
+// and gets none of the clearance extras. So "has bulk items" no longer means "is a
+// clearance"; this does. Its batch twin is App\Support\ClearanceSql.
+// docs/developers/reference/auto-split.md.
+func IsClearanceSQL(m string) string {
+	return "(EXISTS (SELECT 1 FROM messages_bulk_items cbi WHERE cbi.msgid = " + m + ")" +
+		" AND NOT EXISTS (SELECT 1 FROM messages_autosplit cas WHERE cas.msgid = " + m + " AND cas.state = 'Split'))"
 }

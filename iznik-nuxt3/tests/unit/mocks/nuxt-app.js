@@ -42,6 +42,20 @@ export function setResponseStatus(...args) {
     globalThis.__testSetResponseStatus(...args)
 }
 
+// Sets an SSR response header; a no-op ref here. Tests can spy via globalThis.
+export function useResponseHeader(name) {
+  const header = {
+    set value(v) {
+      if (typeof globalThis.__testSetResponseHeader === 'function')
+        globalThis.__testSetResponseHeader(name, v)
+    },
+    get value() {
+      return undefined
+    },
+  }
+  return header
+}
+
 // Default mock for useRouter - tests override via vi.mock('#imports') or globalThis
 export function useRouter() {
   if (typeof globalThis.__testUseRouter === 'function')

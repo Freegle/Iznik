@@ -9,7 +9,7 @@
   },
   "keywords": ["backup", "restore", "freegle"],
   "author": "Freegle",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "dependencies": {
     "express": "^4.18.2"
   },

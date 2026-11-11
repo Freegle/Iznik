@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\ClearanceSql;
 use App\Services\Electricals\ItemClusterService;
 use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
@@ -256,7 +257,7 @@ class ElectricalsStatsService
                LEFT JOIN items i ON i.id = mi.itemid
                WHERE mo.timestamp >= ? AND mo.timestamp < ?
                  AND mo.outcome IN (?, ?)
-                 AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bxi WHERE bxi.msgid = mo.msgid)
+                 AND NOT ' . ClearanceSql::condition('mo.msgid') . '
              ) sub',
             [$averageWeight, $model, $from, $to, 'Taken', 'Received']
         );

@@ -16,11 +16,13 @@ import (
 	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/supportcase/casestore"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/plugin/dbresolver"
 )
 
 const chatActiveLimitMT = 365
@@ -406,6 +408,7 @@ func PutChatRoom(c *fiber.Ctx) error {
 			chatUserID, utils.CHAT_TYPE_USER2MOD).Limit(1).Scan(&existingID)
 
 		if existingID > 0 {
+			ensureRosterRow(db, existingID, chatUserID)
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingID})
 		}
 
@@ -706,7 +709,7 @@ func PostChatRoom(c *fiber.Ctx) error {
 	case "Typing":
 		return handleTyping(c, db, myid, req.ID)
 	case "ReferToSupport":
-		return handleReferToSupport(c, db, myid, req.ID)
+		return handleReferToSupport(c, db, myid, req.ID, req.Reason)
 	default:
 		if req.ID == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
@@ -1049,6 +1052,9 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 	// We hide the "-gxxx" part of names, which will almost always be for TN members.
 	tnre := regexp.MustCompile(utils.TN_REGEXP)
 
+	// The Freegle account is looked up once for the whole list. 0 means the account does not exist yet, so no chat is flagged.
+	freegleID := firstreply.SystemUserID(db)
+
 	for ix, chat := range chats {
 		if chat.Chattype == utils.CHAT_TYPE_USER2MOD {
 			if chat.Otheruid == myid {
@@ -1075,6 +1081,13 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				} else {
 					chats[ix].Name = chat.Firstname + " " + chat.Lastname
 				}
+
+				// The same rewrite the profile shows (Discourse 9587): a non-volunteer whose
+				// name trades on the Freegle brand is "A freegler". Only a suspicious name pays
+				// for the exemption lookup.
+				if user.SanitizeDisplayName(chats[ix].Name, false) != chats[ix].Name {
+					chats[ix].Name = user.SanitizeDisplayName(chats[ix].Name, nameExempt(db, chat.Otheruid))
+				}
 			} else {
 				chats[ix].Name = "Deleted User #" + strconv.FormatUint(chat.Otheruid, 10)
 			}
@@ -1082,7 +1095,10 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			chats[ix].Name = tnre.ReplaceAllString(chats[ix].Name, "$1")
 		}
 
-		if freegleID := firstreply.SystemUserID(db); freegleID > 0 && chat.Otheruid == freegleID {
+		// Independent of chat type: Freegle talks to members in an ordinary
+		// User2User room, so the only way the client can tell it apart from a
+		// person is by who is on the other side.
+		if freegleID > 0 && chat.Otheruid == freegleID {
 			chats[ix].Systemchat = true
 		}
 	}
@@ -1120,7 +1136,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 				// Rippling held-reply gate: a reply held because the post hasn't yet rippled to the
 				// replier's area (rippling_held_replies, status <> 'released') must not inflate the
 				// poster's unseen badge — mirrors the FetchChatMessages delivery gate. Param-free.
-				"  " + statusq + "), 0) AND chatid = chat_rooms.id AND userid != ? AND chat_messages.date >= ? AND (" + deliverableSQL("") + " AND processingsuccessful = 1) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')) AS unseen, " +
+				"  " + statusq + "), 0) AND chatid = chat_rooms.id AND userid != ? AND chat_messages.date >= ? AND (" + deliverableSQL("") + " AND (processingsuccessful = 1 OR " + questionAskedOfMeSQL + ")) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')) AS unseen, " +
 				"(SELECT COUNT(*) AS count FROM chat_messages WHERE chatid = chat_rooms.id AND replyexpected = 1 AND" +
 				"  replyreceived = 0 AND userid != ? AND chat_messages.date >= ? AND chat_rooms.chattype = ? AND processingsuccessful = 1) AS replyexpected, " +
 				"i1.id AS u1imageid, " +
@@ -1152,7 +1168,8 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			// The extra trailing myid feeds the hasvisiblemsg "own messages always count"
 			// check; it sits between the lastmsgseen and lastmsg-join placeholders, all of
 			// which are myid, so appending one more keeps every placeholder correctly bound.
-			res := db.Raw(sql, myid, myid, unseenSince, myid, start, utils.CHAT_TYPE_USER2USER, myid, myid, myid, myid, myid)
+			// keep-raw: the chat list is one hand-built query with correlated subqueries for the unseen count, the snippet and the visible-message test.
+			res := db.Raw(sql, myid, myid, unseenSince, myid, myid, start, utils.CHAT_TYPE_USER2USER, myid, myid, myid, myid, myid)
 			res.Scan(&chats2)
 		}()
 
@@ -1581,9 +1598,20 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 		}).Create(map[string]interface{}{
 			"chatid": req.ID, "userid": myid, "status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
 		})
+	} else if req.Status == "" {
+		// Mark-as-read carries no status and must not change one: the open chat
+		// pane sends it straight after a Hide, and defaulting it to Online
+		// undid the hide, so the chat never left the list. Only the first
+		// roster row for a chat takes the default.
+		db.Table("chat_roster").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"lastip": ip, "date": gorm.Expr("NOW()"),
+			}),
+		}).Create(map[string]interface{}{
+			"chatid": req.ID, "userid": myid, "status": status, "lastip": ip, "date": gorm.Expr("NOW()"),
+		})
 	} else {
-		// Closed, Away, Offline, or the implicit Online of a mark-as-read:
-		// never overwrite BLOCKED.
+		// Closed, Away or Offline: never overwrite BLOCKED.
 		db.Table("chat_roster").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"status": gorm.Expr("IF(status = ?, status, ?)", utils.CHAT_STATUS_BLOCKED, status),
@@ -1627,9 +1655,9 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 		Where("chatid = ? AND userid != ? "+
 			"AND id > COALESCE((SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?), 0) "+
 			"AND chat_messages.date >= ? "+
-			"AND "+deliverableSQL("")+" AND processingsuccessful = 1 "+
+			"AND "+deliverableSQL("")+" AND (processingsuccessful = 1 OR "+questionAskedOfMeSQL+") "+
 			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')",
-			req.ID, myid, req.ID, myid, activeSince).
+			req.ID, myid, req.ID, myid, activeSince, myid).
 		Count(&unseen)
 
 	if roster == nil {
@@ -1645,38 +1673,159 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 	})
 }
 
-func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
+// maxReferReasonRunes caps the free text a moderator can attach to a referral. It is cut, not refused,
+// so a long paste still refers the chat.
+const maxReferReasonRunes = 2000
+
+// repeatReferWindowSeconds is how long after a case opens an identical second referral counts as a
+// double-click rather than a deliberate nudge.
+const repeatReferWindowSeconds = 120
+
+// referMember chooses the member a referral is about. A chat with a member-to-mods side has one
+// (user1); a member-to-member chat has the participant who is not the referrer; a chat between
+// moderators, or one the referrer is not part of, has none.
+func referMember(chattype string, user1, user2, referrer uint64) *uint64 {
+	switch chattype {
+	case utils.CHAT_TYPE_USER2MOD:
+		if user1 > 0 {
+			return &user1
+		}
+	case utils.CHAT_TYPE_USER2USER:
+		if user1 == referrer && user2 > 0 {
+			return &user2
+		}
+		if user2 == referrer && user1 > 0 {
+			return &user1
+		}
+	}
+	return nil
+}
+
+func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64, reason string) error {
 	if chatid == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Chat ID required")
 	}
 
-	// Verify user is a member of this chat.
-	var room ChatRoom
-	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", chatid).Scan(&room)
+	var room struct {
+		ID       uint64 `gorm:"column:id"`
+		Chattype string `gorm:"column:chattype"`
+		User1    uint64 `gorm:"column:user1"`
+		User2    uint64 `gorm:"column:user2"`
+	}
+	if res := db.Table("chat_rooms").Select("id, chattype, COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2").Where("id = ?", chatid).Scan(&room); res.Error != nil {
+		stdlog.Printf("[ReferToSupport] chat lookup failed for chat %d by %d: %v", chatid, myid, res.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")
+	}
 	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
 	}
 
-	// Anyone who may see the chat may refer it: its participants, the moderators of its
-	// community, and moderators reviewing a chat between their members. The button lives
-	// in ModTools on a member-to-mods chat, where the moderator is never a participant -
-	// a participants-only check refused every moderator with a 403 (Discourse 10199).
+	// Only a moderator who may see the chat can refer it. Moderators are a national pool, so any
+	// moderator may see any chat. The button lives in ModTools on a member-to-mods chat, where the
+	// moderator is never a participant - a participants-only check refused every moderator with
+	// a 403 (Discourse 10199). Each referral spends a model pass, so a plain member may not open one.
 	if !canSeeChatRoom(myid, room.User1, room.User2) {
 		return fiber.NewError(fiber.StatusForbidden, "You can't see this chat")
 	}
+	if !auth.IsSystemMod(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only moderators can refer a chat to Support")
+	}
+	if room.Chattype == utils.CHAT_TYPE_GROUP {
+		return fiber.NewError(fiber.StatusBadRequest, "A group chat can't be referred to Support")
+	}
 
-	// Queue sending a support referral email. The batch sends it; if the queue write
-	// fails the moderator must hear about it rather than be told it worked.
-	result := db.Table("background_tasks").Create(map[string]interface{}{
-		"task_type": "refer_to_support",
-		"data":      gorm.Expr("JSON_OBJECT('chatid', ?, 'userid', ?)", chatid, myid),
-	})
-	if result.Error != nil {
-		stdlog.Printf("[ReferToSupport] queue write failed for chat %d by %d: %v", chatid, myid, result.Error)
+	reason = strings.TrimSpace(reason)
+	if r := []rune(reason); len(r) > maxReferReasonRunes {
+		reason = string(r[:maxReferReasonRunes])
+	}
+	var reasonPtr *string
+	if reason != "" {
+		reasonPtr = &reason
+	}
+
+	member := referMember(room.Chattype, room.User1, room.User2, myid)
+	openKey := casestore.OpenKey(chatid, myid)
+
+	// The case row is the work queue for the first pass, so no background task is queued for a
+	// new referral. A second referral of the same chat by the same moderator while the case is
+	// open finds the existing case through the unique open_key.
+	var caseid uint64
+	var lastErr error
+	for attempt := 0; attempt < 2 && caseid == 0; attempt++ {
+		lastErr = db.Transaction(func(tx *gorm.DB) error {
+			var err error
+			caseid, err = casestore.CreateCase(tx, &casestore.Case{
+				Chatid:          chatid,
+				Userid:          member,
+				Referrerid:      myid,
+				Source:          "Referral",
+				Reason:          reasonPtr,
+				Status:          "Open",
+				FirstpassStatus: "Pending",
+				OpenKey:         openKey,
+			})
+			return err
+		})
+		if lastErr == nil {
+			break
+		}
+		caseid = 0
+		if !casestore.IsDuplicateKey(lastErr) {
+			break
+		}
+
+		var existing uint64
+		var existingReason *string
+		var ageSeconds int64
+		if err := db.Clauses(dbresolver.Write).Table("support_cases").Select("id, reason, TIMESTAMPDIFF(SECOND, created_at, NOW())").
+			Where("open_key = ?", openKey).Row().Scan(&existing, &existingReason, &ageSeconds); err != nil || existing == 0 {
+			// Handled between our insert and our look: go round and create a fresh case.
+			continue
+		}
+
+		// A double-click lands here within moments with the same reason: it is the same referral, so
+		// it adds no message and mails Support nothing.
+		if ageSeconds < repeatReferWindowSeconds && (reason == "" || (existingReason != nil && *existingReason == reason)) {
+			caseid = existing
+			lastErr = nil
+			break
+		}
+
+		body := "Referred again"
+		if reason != "" {
+			body += ": " + reason
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			_, err := casestore.AddMessage(tx, existing, myid, "Referrer", body, "No")
+			if err != nil {
+				return err
+			}
+			// While the first pass has not run it reads support_cases.reason, so a new reason
+			// replaces the old one there. After it has run the brief stands and the message carries it.
+			if reason != "" {
+				return tx.Table("support_cases").Where("id = ? AND firstpass_status = ?", existing, "Pending").Update("reason", reason).Error
+			}
+			return nil
+		}); err != nil {
+			stdlog.Printf("[ReferToSupport] repeat referral write failed for chat %d by %d: %v", chatid, myid, err)
+			return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")
+		}
+		caseid = existing
+		lastErr = nil
+	}
+
+	if lastErr != nil || caseid == 0 {
+		stdlog.Printf("[ReferToSupport] case write failed for chat %d by %d: %v", chatid, myid, lastErr)
 		return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")
 	}
 
-	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "caseid": caseid})
+}
+
+// CanSeeChatRoom is canSeeChatRoom for other packages (a support case may be read only by someone who
+// can still see its chat).
+func CanSeeChatRoom(myid uint64, user1, user2 uint64) bool {
+	return canSeeChatRoom(myid, user1, user2)
 }
 
 func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error {
@@ -1939,4 +2088,24 @@ func ChatRoomListFrom(idlist string) string {
 		" FROM chat_messages WHERE chatid IN " + idlist + " AND (" + deliverableSQL("") + " AND (processingsuccessful = 1 OR chat_messages.userid = ?) AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') OR userid = ?)) " +
 		"  SELECT * FROM cm WHERE rn = 1) rcm ON rcm.chatid = chat_rooms.id " +
 		"WHERE chat_rooms.id IN " + idlist
+}
+
+// nameExempt is whether a member keeps a name that trades on the Freegle brand: a moderator,
+// Support or Admin (moderators are a national pool, so the system role decides), or one of
+// Freegle's own mailboxes. The same test the profile makes.
+func nameExempt(db *gorm.DB, userid uint64) bool {
+	var systemrole string
+	db.Table("users").Select("COALESCE(systemrole, '')").Where("id = ?", userid).Scan(&systemrole)
+	return user.IsExemptBySystemrole(systemrole) || user.IsOfficialFreegleUser(db, userid)
+}
+
+// ensureRosterRow gives a chat participant a roster row if they have none. The
+// chat mailer only emails people on the roster and marking a chat read only
+// updates an existing row, so a participant without one never hears a reply.
+// Old account merges moved rooms without their rows; opening or writing in a
+// room puts the participant back. An existing row is left exactly as it is.
+func ensureRosterRow(db *gorm.DB, chatID uint64, userID uint64) {
+	db.Table("chat_roster").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"chatid": chatID, "userid": userID, "status": utils.CHAT_STATUS_ONLINE,
+	})
 }

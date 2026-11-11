@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-10
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -11,8 +11,17 @@ covers:
   - iznik-batch/app/Services/UnifiedDigestService.php
   - iznik-batch/app/Services/TrashNothing/Ingestion/**
   - iznik-batch/app/Services/TrashNothing/Sync/**
+  - iznik-batch/app/Services/TrashNothing/SharedAccountSplitter.php
+  - iznik-batch/app/Services/TnMembershipBackfillService.php
+  - iznik-batch/app/Console/Commands/Membership/BackfillTnCommand.php
   - iznik-server-go/modmessaging/**
+  - iznik-server-go/membership/membership.go
+  - iznik-server-go/story/story.go
+  - iznik-batch/app/Services/MembershipsProcessingService.php
+  - iznik-batch/app/Services/BirthdayService.php
+  - iznik-batch/app/Services/ReengageContentService.php
   - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
+  - iznik-batch/app/Support/TrashNothingSignOff.php
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
   - iznik-server-go/user/partner.go
@@ -60,26 +69,58 @@ When processing TN messages, the system:
 
 ### Email Canonicalization
 
-To prevent duplicate user accounts when the same TN user posts through multiple TN areas:
-1. Strip `-g{id}` suffix: `john-g123@user.trashnothing.com` → `john@user.trashnothing.com`
+To prevent duplicate user accounts when the same TN user posts through multiple TN areas,
+`User::canonMail()` reduces an address to the canon that `users_emails.canon` holds and
+the email path's `findUserByEmail` falls back to:
+1. Strip a per-group `-g{digits}` suffix, and only that: `john-g123@user.trashnothing.com` → `john@user.trashnothing.com`. A bare `john@user.trashnothing.com` and every alias of it share one canon, and a hyphenated username keeps its hyphen (`mary-jane@` is not `mary-g12@`).
 2. Strip plus addressing
 3. Remove dots (Gmail-style normalization)
+
+`IncomingMailService::canonicalizeEmail()` delegates to `canonMail()`, so the canon looked up
+cannot differ from the canon written. Go's `CanonicalizePartnerEmail` is not a copy of it: it
+treats a per-group alias and a bare `username@user.trashnothing.com` alike as a TN address
+(`user.TNIdentity`), strips the suffix, lowercases and removes the domain's dots, so every
+address of one member gets one canon. It lowercases, which `canonMail` does not, and it does not
+strip a `+` suffix, which `canonMail` does for any address. Nothing in this repository says
+whether a TN username can contain `+`; one that does would get a different canon in the two
+stacks. Any other address falls to Go's general `CanonicalizeEmail`, which gives `canonMail`'s answer. The rule used to strip everything after the last hyphen; rows written
+then keep their old canon until `users:backfill-email-canon` rewrites them, which is why a
+canon match alone is never taken as "same member" (see below). See
+[.claude/rules/mail-and-data.md](../../../.claude/rules/mail-and-data.md).
 
 ### Identifying the member behind an address
 
 A member's TN identity is the username in their per-area addresses - `bibiana` in
 `bibiana-g288@user.trashnothing.com` - and it is the whole of it, not a prefix of it.
-`tn:sync`'s duplicate check (`TNSyncCommand::mergeDuplicateTNUsers`) merges the accounts
-that share one, keeping the lowest `users_emails.id`.
+`tn:sync`'s duplicate check (`TNSyncCommand::flagDuplicateTNUsers`) finds the accounts that
+share one and flags each group for a person. It merges nothing.
 
 Per tick it reads only addresses added since the last run and probes for siblings of each
 with `LIKE '<username>-g%@user.trashnothing.com'`; one tick a day regroups the whole table
 instead, which is what catches a duplicate made by re-pointing an existing row. That
 `LIKE` is an index narrowing and not the test: its `%` runs on past the end of the
 username, so `bibiana-g%` also matches `bibiana-gomes-g4840@...`, a different member.
-Both passes decide on an exact username from `tnUsernameFromAddress()`. Merging two
-members into one account deletes one of them and re-points their mail, so the exact test
-is what stands between a longer username and being absorbed by its own prefix.
+Both passes decide on an exact username from `tnUsernameFromAddress()`, so a longer username
+is never grouped with its own prefix.
+`tnUsernameFromAddress()` strips only a `-g{digits}` suffix, so a bare `username@` address is
+its own group key and is not yet grouped with the aliases of the same username. The
+provisioner and the canon fallback in `findUserByEmail` keep the bare and alias forms on one
+account at creation time, so this only matters for twins that already exist.
+
+**A shared username is not a shared identity.** TN does not promise usernames are unique, and
+a released one can be retaken, so two accounts on one username may be two people. Merging on
+the username joined two members on one account more than once (the accounts that were split by
+hand in November 2026 were made that way). Only the same TN user id would prove two accounts are
+one member, and `users.tnuserid` is unique, so no two accounts can hold the same one. So every
+group is left alone and logged (`TN-SYNC-TRACE [MERGE-SKIP]`, Loki `tn-sync`/`user-merge-skip`)
+with its reason: `tnuserid-conflict` when the accounts hold different TN user ids, and
+`tnuserid-unproven` when fewer than two do. `User::merge` still refuses a merge of two different
+TN user ids and reports a `TnUserIdMergeConflict` to Sentry; passing `$forceMerge` proceeds but
+still reports it.
+
+The three helpers for reading an address are `User::tnUsernameFromEmail()` (bare or alias,
+lowercased, `NULL` for a non-TN address), `User::tnEmailForUsername()` and
+`User::tnDisplayName()` (`tricia.hayes` becomes `Tricia Hayes`, as Go's `CreatePartnerUser` makes it).
 
 ### Finding the addresses: not via the backwards column
 
@@ -109,29 +150,62 @@ production over 4.2M rows, `backwards` takes 3.3s and finds 94 of the 96, the ad
 and finds all 96. The per-tick pass pays neither, since its `id >` range narrows on the primary
 key first.
 
-### Reviewing the backlog before merging it
-
-Widening that filter exposes ~96 pairs of live member accounts at once, and `User::merge`
-deletes one of each, so merging them is gated:
+### Listing the groups
 
 ```bash
 php artisan tn:sync --report-duplicates
 ```
 
-is read-only. It always uses the wider filter, lists each candidate pair with its
-`tnuserid` and message count, flags pairs whose accounts carry **two different tnuserids**
-(a member who re-registered on TN, or a username released and retaken by somebody else -
-only a person can tell which), moves no cursor and merges nothing.
-
-The sync itself keeps the old, narrow filter until
-`FREEGLE_TN_MERGE_LEGACY_DUPLICATES=true`. Until then its behaviour is exactly what it was,
-so duplicates created from now on are still merged and the reviewed backlog waits.
+is read-only. It lists each group of accounts sharing a username with each account's
+`tnuserid` and message count, calls out groups whose accounts carry **two different
+tnuserids** (a member who re-registered on TN, or a username released and retaken by somebody
+else - only a person can tell which), and moves no cursor.
 
 **Key functions**:
 - `User::isTN()` - Check if user is from TN
 - `User::findByTNId($id)` - Look up user by TN ID
 - the TN username helper that strips the `-gxxx` suffix from display names
+- `users:fix-tn-names` (daily) - Names a member who has no name from the group alias they came in on. It leaves alone any member whose name is already `User::tnDisplayName()` of one of their usernames
 - `User::canonMail($email)` - Normalize TN email addresses
+- `User::tnUsernameFromEmail($email)` - The TN username behind a bare or per-group address
+
+### Splitting an account that holds two members
+
+When one Freegle account turns out to hold two Trash Nothing members (two usernames, and TN's
+API gives the second one a different TN user id), `tn:split-shared-account` moves the second
+member out onto a new account with their TN user id:
+
+```bash
+php artisan tn:split-shared-account <freegle-user-id> <tn-username> <tn-user-id>          # report only
+php artisan tn:split-shared-account <freegle-user-id> <tn-username> <tn-user-id> --commit # write it
+```
+
+Without `--commit` it writes nothing and prints, per table, how many rows would move and on
+what evidence, plus the chats it cannot attribute and why. It prints ids and counts only.
+`SharedAccountSplitter` holds the rules:
+
+- An address moves when it carries the username; a post moves when one of those addresses sent it.
+- A member's alias stands for a Freegle community when its posts went there, or when it first
+  reached us within `SAME_MOMENT_SECONDS` of the account joining that community (TN added both
+  at once). A membership moves when only the moved member's aliases stand for its community, is
+  copied (dated when their alias for it first reached us) when both members' do, and stays
+  otherwise. Membership history moves on the same join-time match.
+- A chat moves when only the moved member could have written in it: the account's own post
+  in it was theirs, and every message the account wrote came after their alias for the post's
+  community first reached us and before the other member had one. A chat both could have
+  written in, or that nothing ties to either, is **undecided** and stays; name it in
+  `--move-chats=` to move it after looking.
+- Promises, collections and reneges about posts in moved chats move with them, and ratings,
+  arrangements and expected replies with people the account now only chats with as the moved
+  member. Logs move when they are about a moved post, or are a community log for a moved or
+  copied membership at the moved alias's time. Other logs stay.
+
+`--commit` does it in one transaction of single-row updates, each re-asserting the current
+owner, so a row that has changed since the report aborts the whole split. Before committing it
+writes the SQL that undoes it (under `storage/app/tn-splits/`, or `--rollback-file=`) and logs
+`User`/`Split` on both accounts. A second run finds nothing to move. It refuses an account that
+does not hold the username, a TN user id another account holds, the account's own TN user id,
+and an account whose only TN username it is.
 
 ## Integration Mechanisms
 
@@ -181,9 +255,16 @@ TN sends photo links as URLs like `https://trashnothing.com/pics/{id}`. Freegle:
 3. Stores photos in Freegle's image system
 4. Replaces TN URLs with local attachments
 
-### API Synchronization (Daily Cron)
+### API Synchronization (`tn:sync`, every ten seconds)
 
-The `tn_sync.php` cron job runs daily to synchronize:
+`tn:sync` runs every ten seconds (`routes/console.php`), so a post reaches Freegle seconds after
+it is posted on TN. The command's own lock (`PreventsOverlapping`) keeps runs one at a time: a run
+that starts while another is going exits at once. The scheduler's `withoutOverlapping()` is not
+used for it, because under `FlockEventMutex` its lock is held by `schedule:run` for the whole
+minute and would skip every repeat. A run takes three to five seconds, mostly its three
+requests, which `TrashNothingRateLimiter` spaces 750ms apart; that is about a sixth of the two
+requests a second TN allows a key. TN can also call the "kick" API for an immediate run. Each
+run synchronizes:
 
 #### Ratings API
 ```
@@ -199,9 +280,51 @@ https://trashnothing.com/fd/api/user-changes?key={TNKEY}&page={page}&per_page=10
 Syncs:
 - Reply time statistics
 - About me text
-- Username changes
+- Username changes: the old username is read from the member's preferred TN address, not
+  from `fullname`, which is a display name. Every address of the old username, bare and
+  per-group alias, moves to the new one with its suffix and preferred flag kept. If another
+  member already holds one of the new addresses, or the new username does not make a valid
+  address, nothing changes. Every later change event for the member repeats the username, so
+  the rename is logged each time and reported to Sentry once per member per day.
 - Location updates
 - Account removal notifications
+
+**Which account a change is about.** Each change carries TN's id for the member (`tn_user_id`)
+and, where TN knows it, ours (`fd_user_id`). TN learns our id only when it adds the member
+through the partner API, so a member the posts API provisioned has changes with no `fd_user_id`;
+those are matched on `users.tnuserid`, or the member's removal and renames would never reach us.
+When the account TN names holds a different TN user id, the change belongs to another TN member
+sharing that account, and is skipped (Loki `tn-sync`/`user-change-skip`, reason
+`tn-user-id-mismatch`) rather than forgetting or renaming the wrong person. An account with no TN
+user id is given the change's, unless another account already holds it, which is skipped as
+`tn-user-id-held-elsewhere` for a person to look at. See `UserChangesSyncer::resolveMember`.
+
+**A feed that cannot be read holds the stored date, for an hour.** `tn:sync` stores one date for
+ratings, user changes and posts: the latest any of them saw. When a page of the ratings or the
+user changes feed fails (any answer that is not a 2xx), the syncer stops there and says so
+(`fetchFailed()`), and the command leaves the stored date where it was, whatever the other feeds
+saw. The changes behind the failed page were not read, and the order of the feed is TN's, so
+nothing says how far it got. The next run reads the window again, and what the run did apply is
+applied again. The run still exits successfully and the posts sync still runs, so while a feed
+is down each run re-reads the posts since the old date and logs the ones already ingested as
+`duplicate`. A request that throws (a network error) already ended the run before the date was
+stored.
+
+The hold is bounded, because a feed that never recovers would otherwise make every run read a
+longer window for ever, with nothing to say so. The hold is timed from its first run, in the
+cache (`FEED_HOLD_SINCE_KEY`, cleared by a run that reads every feed). Sentry hears when it has
+lasted 15 minutes (`FEED_HOLD_ALERT_MINUTES`). After an hour (`FEED_HOLD_MAX_MINUTES`) the hold is
+given up: the date moves on to what the other feeds saw, or to the end of the window
+when they saw nothing, Sentry hears again, and what the failed feed held back in that time is
+lost. A post sync that has stalled still holds the date, as before.
+
+Reading a window again must not undo a newer change with an older one. The date of the latest
+username and the latest location applied to each member is kept in the cache for a day
+(`UserChangesSyncer`), and a change older than that is skipped, so two renames or two moves in
+one window are applied once each and not again on every read, which would have flipped the
+member between the two, deleting and creating an address, or writing a `PostcodeChange` log row,
+each time. The same change coming round again is applied as before and finds nothing to change. A
+dry run keeps no date.
 
 **TN is the master for a TN member's location.** A change row's `location` sets
 `users.lastlocation` to the nearest postcode. `settings.mylocation` is read before
@@ -212,12 +335,17 @@ account was linked to TN, so every reader ignores it when `tnuserid` is set:
   `ResolveOnBehalfPosting` and the visualise map. The session's own location is left
   alone, as TN members do not log in.
 - Batch: `User::chosenLatLng()` for code holding a user, and `AND <alias>.tnuserid IS NULL`
-  in the SQL "mylocation else lastlocation" expressions (digests, Community News,
+  in the SQL "mylocation else lastlocation" expressions (digests,
   first-reply match mail, the approximate-location map).
 
 The sync also removes the setting when TN sends a location, so the stale data goes as
 members are active. For the same reason a TN post (either path) only writes `lastlocation` when it is
 empty: the post's coordinates are where the item is, not where the member is.
+
+When the sync moves `lastlocation` it writes a `User`/`PostcodeChange` log row with the
+postcode name, the same row a postcode change in Settings writes, so moderators see a TN
+member's moves in their logs. The nightly reach reconcile reads those rows and queues the
+member for reach mail; the digest code skips TN members, so nothing is sent to them.
 
 Each change row carries the member's *current* state, not the state at that row's
 `date`, so re-reading old rows from the feed cannot show what a past sync received;
@@ -588,12 +716,13 @@ The following one-off maintenance scripts existed in the legacy V1 PHP implement
 
 **Current State**: Creation is handled - `EnsurePartnerIdentifiers` attaches a member's new
 per-group alias to the account they already have, which stopped new duplicates on
-2026-08-11. What remains is the backlog created before that, which merges once
-`FREEGLE_TN_MERGE_LEGACY_DUPLICATES` is set (see "Reviewing the backlog before merging it").
-
-**Improvement**: Retire the flag once the backlog is cleared. The Go partner path meanwhile
-acts as whichever of a member's accounts owns the post rather than refusing the action, so a
+2026-08-11. What remains is the backlog created before that. `tn:sync` flags those groups
+and merges none (see "Identifying the member behind an address"), because nothing we hold
+proves two accounts on one username are one member. The Go partner path meanwhile acts as
+whichever of a member's accounts owns the post rather than refusing the action, so a
 duplicate that slips through is no longer member-visible.
+
+**Improvement**: A TN user id for every account, so a group can be proved one member or two.
 
 ### 8. Error Handling for TN API Failures
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,8 +37,8 @@ func getHelper(t *testing.T, token string, msgid uint64) (int, map[string]interf
 // helperFixture creates an owner, a clearance message with one item, and a replier
 // who has expressed interest. Returns ids + the owner token.
 func helperFixture(t *testing.T, prefix string) (ownerID, replierID, msgID, itemID uint64, ownerToken string) {
-	ownerID = CreateTestUser(t, prefix+"_owner", "User")
-	replierID = CreateTestUser(t, prefix+"_replier", "User")
+	ownerID = CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	replierID = CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	msgID = CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	itemID = addBulkItem(t, msgID, "Office desk", 4, "Good")
 	db := database.DBConn
@@ -70,7 +71,7 @@ func TestHelperEnsureBatchAndGet(t *testing.T) {
 	assert.Equal(t, float64(msgID), batch["msgid"])
 
 	// A stranger cannot read or write.
-	strangerID := CreateTestUser(t, uniquePrefix("helpstranger"), "User")
+	strangerID := CreateTestUser(t, uniquePrefix("helpstranger"), utils.SYSTEMROLE_USER)
 	strangerToken := getToken(t, strangerID)
 	code, _ = getHelper(t, strangerToken, msgID)
 	assert.Equal(t, 403, code)

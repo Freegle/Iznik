@@ -191,6 +191,65 @@ describe('ChatButton', () => {
     })
   })
 
+  describe('reply with a photo', () => {
+    beforeEach(() => {
+      mockChatStore.send.mockReset().mockResolvedValue({})
+    })
+
+    it('sends the photo as a second message after the reply text', async () => {
+      const wrapper = createWrapper({ userid: 2 })
+      await wrapper.vm.openChat(
+        null,
+        'Interested',
+        42,
+        false,
+        true,
+        'browse',
+        777
+      )
+      expect(mockChatStore.send).toHaveBeenNthCalledWith(
+        1,
+        456,
+        'Interested',
+        null,
+        null,
+        42,
+        false,
+        'browse'
+      )
+      expect(mockChatStore.send).toHaveBeenNthCalledWith(
+        2,
+        456,
+        null,
+        null,
+        777
+      )
+    })
+
+    it('sends only the text when there is no photo', async () => {
+      const wrapper = createWrapper({ userid: 2 })
+      await wrapper.vm.openChat(null, 'Interested', 42, false, true, 'browse')
+      expect(mockChatStore.send).toHaveBeenCalledTimes(1)
+    })
+
+    it('still completes the reply if the photo fails to send', async () => {
+      mockChatStore.send
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new Error('photo failed'))
+      const wrapper = createWrapper({ userid: 2 })
+      await wrapper.vm.openChat(
+        null,
+        'Interested',
+        42,
+        false,
+        true,
+        'browse',
+        777
+      )
+      expect(wrapper.emitted('sent')).toBeTruthy()
+    })
+  })
+
   describe('new tab support (Control+click, Cmd+click, middle-click)', () => {
     it('calls exposed openChat method with flag for new tab when handler invoked', () => {
       const wrapper = createWrapper({ userid: 2 })

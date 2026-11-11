@@ -3,9 +3,6 @@
 namespace Tests\Unit\Services;
 
 use App\Models\ChatMessage;
-use App\Models\Group;
-use App\Models\Membership;
-use App\Models\MessageGroup;
 use App\Models\ChatRoom;
 use App\Models\Message;
 use App\Models\User;
@@ -903,6 +900,49 @@ class PushNotificationServiceTest extends TestCase
 
         $this->assertNotContains($sender->id, $result['fd'],
             'Sender must never push to themselves (V1 $excludeuser)');
+    }
+
+    /** A reply question from Freegle in a chat between a replier and a poster. */
+    private function replyQuestion(int $processingsuccessful, array $prompt = []): array
+    {
+        $replier = $this->createTestUser();
+        $poster = $this->createTestUser();
+        $freegle = $this->createTestUser();
+
+        $post = $this->createTestMessage($poster);
+        $room = $this->createTestChatRoom($replier, $poster);
+        $reply = $this->createTestChatMessage($room, $replier, [
+            'type' => 'Interested', 'refmsgid' => $post->id, 'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+        $question = $this->createTestChatMessage($room, $freegle, [
+            'type' => 'Prompt', 'refmsgid' => $post->id, 'processingrequired' => 0, 'processingsuccessful' => $processingsuccessful,
+        ]);
+        DB::table('chat_prompts')->insert($prompt + [
+            'chatmsgid' => $question->id, 'msgid' => $post->id, 'msgids' => json_encode([$post->id]), 'userid' => $replier->id,
+            'heldchatmsgid' => $reply->id, 'kind' => 'confirm_reply', 'options' => '[]',
+            'created_at' => now(), 'expires_at' => now()->addDays(3),
+        ]);
+
+        return [$question, $replier, $poster];
+    }
+
+    public function test_a_reply_question_the_poster_has_not_been_shown_is_pushed_to_the_replier_only(): void
+    {
+        [$question, $replier] = $this->replyQuestion(0);
+
+        $result = $this->service->getChatMessageRecipients($question->id);
+
+        $this->assertEquals([$replier->id], $result['fd'], 'the replier it was asked of, and not the poster');
+        $this->assertEquals([], $result['mt']);
+    }
+
+    public function test_a_reply_question_delivered_with_its_reply_is_pushed_to_the_poster_too(): void
+    {
+        [$question, $replier, $poster] = $this->replyQuestion(1);
+
+        $result = $this->service->getChatMessageRecipients($question->id);
+
+        $this->assertEqualsCanonicalizing([$replier->id, $poster->id], $result['fd'], 'a question both can see is for both, as any chat message is');
     }
 
     public function test_u2m_returns_user1_in_fd_and_active_mods_in_mt(): void

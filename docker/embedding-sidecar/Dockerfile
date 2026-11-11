@@ -2,6 +2,10 @@ FROM node:20-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json .
+# onnxruntime-node's postinstall downloads the CUDA provider from nuget by default.
+# The sidecar is CPU-only, and a nuget miss ("Failed to find specific package versions
+# for Microsoft.ML.OnnxRuntime.Gpu.Linux") failed all 8 retries and broke CI on PR 1928.
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 # npm's --fetch-retries only retries individual package fetches; a mid-stream
 # ECONNRESET (connection reset by the registry/proxy on a build VM) still aborts
 # the whole command. Retry the entire install at the shell level to survive it,

@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/location"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
@@ -55,7 +56,7 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 					ljuser.Ljuserid = &ljuserid
 					ljuser.Lastaccess = time.Now()
 					ljuser.Added = time.Now()
-					ljuser.Systemrole = "User"
+					ljuser.Systemrole = utils.SYSTEMROLE_USER
 					db.Omit("Spammer", "Chatmodstatus", "Newsfeedmodstatus", "Tnuserid").Create(&ljuser)
 
 					if ljuser.ID == 0 {

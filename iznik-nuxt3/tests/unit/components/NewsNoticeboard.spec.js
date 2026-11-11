@@ -13,7 +13,6 @@ const mockNewsfeed = {
     description: 'A description',
     lat: 51.5074,
     lng: -0.1278,
-    photo: 'photo123',
   }),
 }
 
@@ -209,22 +208,6 @@ describe('NewsNoticeboard', () => {
     it('renders marker at noticeboard location', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.l-marker').exists()).toBe(true)
-    })
-  })
-
-  describe('photo handling', () => {
-    it('renders b-img when photo exists', async () => {
-      const wrapper = await createWrapper()
-      expect(wrapper.find('.noticeboard__photo').exists()).toBe(true)
-    })
-
-    it('does not render photo section when no photo', async () => {
-      mockNewsfeedStore.byId.mockReturnValue({
-        ...mockNewsfeed,
-        message: JSON.stringify({ name: 'Test', lat: 51, lng: 0 }),
-      })
-      const wrapper = await createWrapper()
-      expect(wrapper.find('.noticeboard__photo').exists()).toBe(false)
     })
   })
 

@@ -233,7 +233,11 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 		// deliverableSQL drops the reviewrequired = 0 test under the warn-not-hold experiment,
 		// so a held message reaches the recipient (tagged Sensitive below) instead of a
 		// moderator's queue.
-		reviewFilter = "(userid = ? OR (" + deliverableSQL("") + " AND processingsuccessful = 1 " +
+		//
+		// A prompt asked of one member (chat_prompts.userid) is written unsuccessful so that
+		// nothing delivers it to the other; the member it was asked of sees it here.
+		reviewFilter = "(userid = ? OR EXISTS (SELECT 1 FROM chat_prompts cpr WHERE cpr.chatmsgid = chat_messages.id AND cpr.userid = ?) " +
+			"OR (" + deliverableSQL("") + " AND processingsuccessful = 1 " +
 			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')))"
 	}
 
@@ -254,6 +258,7 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 	whereArgs := []interface{}{chatID, userID}
 
 	if !modAccess {
+		whereArgs = append(whereArgs, userID)
 		whereSQL += " AND (users.deleted IS NULL OR users.id = ?)"
 		whereArgs = append(whereArgs, userID)
 	}
@@ -816,6 +821,17 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// A reply to an offer of a child car seat waits while the replier is asked to check the seat and whether they still
+	// want it, and so does a reply to an offer that looks damaged or too big to carry from a poster in the arm "ask" of
+	// the experiment confirm-reply-post (replyconfirm.go). That is decided here, before the reply is written, so that the reply and what holds it
+	// are written together: chats:process-incoming takes any committed unprocessed reply, whatever its age, and a reply
+	// committed before its hold would be delivered by a run that landed between the two. A reply held by rippling is not
+	// asked about: the question would be shown to the poster before the reply.
+	var confirm *replyConfirmPlan
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
+		confirm = planReplyConfirm(db, id, *payload.Refmsgid, myid)
+	}
+
 	// We can see this chat room.  Create a chat message, but flagged as needing processing.  That means it
 	// will only show up to the user who sent it until it is fully processed.
 	payload.Userid = myid
@@ -832,7 +848,17 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 		if payload.Imageid != nil {
 			// This also stops the image being purged in purge_chats.
-			return linkChatImage(tx, *payload.Imageid, payload.ID)
+			if err := linkChatImage(tx, *payload.Imageid, payload.ID); err != nil {
+				return err
+			}
+		}
+
+		if confirm != nil && confirm.asks() {
+			// In a savepoint of its own: a hold that cannot be written leaves the reply as it would have been with
+			// no question, not a reply that failed.
+			if err := tx.Transaction(func(inner *gorm.DB) error { return confirm.hold(inner, payload.ID) }); err != nil {
+				stdlog.Printf("Could not ask replier %d to confirm reply %d in chat %d: %v", myid, payload.ID, id, err)
+			}
 		}
 
 		return nil
@@ -886,6 +912,16 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		})
 	}
 
+	// A reply to an eligible offer that is not asked about (control, a replier asked before) still counts the poster.
+	if confirm != nil && !confirm.asks() {
+		confirm.record(db)
+	}
+
+	// The question reaches the replier by push and email, as any chat message does.
+	if confirm != nil && confirm.asks() {
+		confirm.notify()
+	}
+
 	// Rippling reply attribution (sysadmin KPI): for a genuine Interested reply, snapshot the
 	// evidence for HOW the replier came to see the post, and the derived attribution channel.
 	// Scoped to User2User: a refmsgid message in a User2Mod room is a report of the post, not
@@ -905,11 +941,24 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, payload.Message)
 	}
 
+	// The sender is a participant, so must be on the roster to be emailed the
+	// reply. A moderator writing into a members' chat is not a participant.
+	var participants struct {
+		Chattype string
+		User1    uint64
+		User2    uint64
+	}
+	db.Table("chat_rooms").Select("chattype, COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2").Where("id = ?", id).Scan(&participants)
+	if myid == participants.User1 ||
+		(participants.Chattype == utils.CHAT_TYPE_USER2USER && myid == participants.User2) {
+		ensureRosterRow(db, id, myid)
+	}
+
 	// If anyone has closed this chat, reopen it so it reappears in their list.
-	// Blocked chats are left as-is.  Only applies to User2User and User2Mod chats.
+	// Blocked chats are left as-is.  Applies to User2User, User2Mod and Mod2Mod chats.
 	result := db.Table("chat_roster").
-		Where("chatid = ? AND status = ? AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?))",
-			id, utils.CHAT_STATUS_CLOSED, id, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD).
+		Where("chatid = ? AND status = ? AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?, ?))",
+			id, utils.CHAT_STATUS_CLOSED, id, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_MOD2MOD).
 		Update("status", utils.CHAT_STATUS_OFFLINE)
 
 	if result.Error != nil {
@@ -1639,11 +1688,17 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 		stdlog.Printf("Failed to approve chat message %d: %v", msgID, result.Error)
 	}
 
+	// A reply that waited for its sender's answer (the car seat question) and was then held for review has its question
+	// hidden from the poster. It is shown with the reply.
+	revealQuestionOfApprovedReply(db, msgID)
+
 	// Log the approve action
 	// Converted together with its
 	// identical twin in rejectChatMessage (b8fc832d50a0): a half-converted
 	// pair renumbers the survivor's site ID, so gate (h) refuses the split
 	// state.
+	// The batch chat mailer reads this row, by this exact text, to mail a reply approved after its look-back window
+	// (ChatNotificationService::getUnmailedMessages). Change the text there too.
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log.LOG_TYPE_CHAT,

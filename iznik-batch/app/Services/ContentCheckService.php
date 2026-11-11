@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\ClearanceSql;
 use App\Models\BackgroundTask;
 use App\Models\Message;
 use App\Services\Judgement\Judge;
@@ -654,9 +655,9 @@ class ContentCheckService
                             'contentcheck_reasons'    => empty($waitReasons) ? null : json_encode($waitReasons),
                         ], $refreshArrival ? ['arrival' => now()] : []));
 
-                    // Clearance/bulk-offer posts are excluded from freebiealerts.app.
-                    if ($row->msgtype === Message::TYPE_OFFER &&
-                        !DB::table('messages_bulk_items')->where('msgid', $row->msgid)->exists()) {
+                    // Clearances are excluded from freebiealerts.app; an automatically split
+                    // post is an ordinary Offer and is not.
+                    if ($row->msgtype === Message::TYPE_OFFER && !ClearanceSql::isClearance((int) $row->msgid)) {
                         DB::table('background_tasks')->insert([
                             'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
                             'data'      => json_encode(['msgid' => (int) $row->msgid]),

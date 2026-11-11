@@ -98,7 +98,8 @@ const openChat = async (
   firstmsgid,
   openInNewTab,
   noNavigate = false,
-  replySource = null
+  replySource = null,
+  firstimageid = null
 ) => {
   emit('click')
   console.log('Open chat', firstmessage, firstmsgid, props.userid)
@@ -145,6 +146,21 @@ const openChat = async (
             message_id: firstmsgid,
           })
           throw e
+        }
+
+        if (firstimageid) {
+          // The photo goes as its own message after the text, as it would if it
+          // were added from the chat. The reply has already reached them, so a
+          // failure here is logged rather than failing the reply.
+          try {
+            await chatStore.send(chatid, null, null, firstimageid)
+          } catch (e) {
+            action('chat_reply_photo_failed', {
+              error: e.message,
+              chat_id: chatid,
+              message_id: firstmsgid,
+            })
+          }
         }
 
         if (firstmsgid) {

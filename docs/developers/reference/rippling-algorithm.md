@@ -1,10 +1,12 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-10
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/tests/Unit/Services/Ripple/ResumedReachTest.php
   - iznik-batch/app/Console/Commands/Ripple/**
   - iznik-batch/app/Console/Commands/Browse/**
+  - iznik-batch/app/Services/MembershipOriginBackfillService.php
+  - iznik-batch/app/Console/Commands/Membership/BackfillOriginCommand.php
   - iznik-server-go/rippling/**
   - iznik-server-go/density/**
   - iznik-spatial-go/cellset/**
@@ -1145,7 +1147,7 @@ This section stays as the design record for the interim it served.
 
 `polygon` was byte-for-byte a function of (origin, tick), so posts from the same origin stored
 identical multi-hundred-KB blobs - measured 42% redundant across the table, which is the
-estate's binding disk constraint (design: `plans/2026-08-23-rippling-reach-polygon-dedup.md`).
+estate's binding disk constraint (design: `plans/2026-08-23-rippling-reach-polygon-dedup.md`, shipped in PR #1402 and removed from `plans/` on 2026-10-28; git history at `3e65b6af25`).
 Each distinct geometry is therefore stored once in `rippling_reach_geom`, keyed by the MD5 of
 its WKB, and reach rows point at it via nullable `polygon_hash` / `max_polygon_hash` columns
 (FK RESTRICT, so deleting a still-referenced geometry physically fails).
@@ -1181,7 +1183,7 @@ rather than a GEOMETRY.
 
 Sharing identical polygons (§9a) is one order of magnitude; the next is to stop storing a
 *vector tracing* of the reach at all and store the *membership grid* directly instead
-(plans/2026-08-24-rippling-reach-raster-storage.md). `polygon`/`max_polygon` are ~11k-vertex
+(the raster storage plan, shipped in PR #1406 and removed from `plans/` on 2026-10-28; git history at `3e65b6af25`). `polygon`/`max_polygon` are ~11k-vertex
 boundary tracings of an area the routing server itself computes as a grid fill and discards
 immediately after tracing (`iznik-routing-go`'s `buildIsochroneGrid`/`traceBoundary`); this
 stores that grid, RLE-compressed, on a fixed 0.0003-degree lattice (the same one the
@@ -1645,7 +1647,7 @@ The test has three qualifiers, all load-bearing, and it lives in one place -
   into* is not being local to it,
 - **joined before the post arrived** - the reply flow joins people to groups in order to reply, so
   a join made seconds ago is not evidence of anything,
-- **not a ripple-created join** (`memberships.rippled = 0`) - rippling auto-joins a poster to every
+- **not a ripple-created join or a TrashNothing placement** (`memberships.rippled = 0 AND implicit = 0`) - rippling auto-joins a poster to every
   group their post rippled into (§5), so a frequent poster accumulates memberships of distant
   groups purely as a side-effect of rippling. When one of those groups later hosts a post of its
   own, that member is only there to see it *because* of an earlier ripple.

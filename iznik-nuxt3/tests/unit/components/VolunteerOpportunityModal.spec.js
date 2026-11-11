@@ -9,6 +9,8 @@ const mockVolunteeringFetch = vi.fn()
 const mockVolunteeringAdd = vi.fn()
 const mockVolunteeringEdit = vi.fn()
 const mockVolunteeringDelete = vi.fn()
+const mockVolunteeringSetPhoto = vi.fn()
+const mockVolunteeringSetDates = vi.fn()
 
 vi.mock('~/stores/volunteering', () => ({
   useVolunteeringStore: () => ({
@@ -17,6 +19,8 @@ vi.mock('~/stores/volunteering', () => ({
     add: mockVolunteeringAdd,
     edit: mockVolunteeringEdit,
     delete: mockVolunteeringDelete,
+    setPhoto: mockVolunteeringSetPhoto,
+    setDates: mockVolunteeringSetDates,
   }),
 }))
 
@@ -63,9 +67,15 @@ vi.mock('~/composables/useOurModal', () => ({
   }),
 }))
 
+const { mockAskForDonations } = vi.hoisted(() => {
+  const { ref } = require('vue')
+  return { mockAskForDonations: ref(true) }
+})
+
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     supportOrAdmin: computed(() => false),
+    askForDonations: mockAskForDonations,
   }),
 }))
 
@@ -74,13 +84,6 @@ vi.mock('~/composables/useTwem', () => ({
 }))
 
 // Mock child components
-
-vi.mock('~/components/DonationButton', () => ({
-  default: {
-    name: 'DonationButton',
-    template: '<button class="donation-button">Donate</button>',
-  },
-}))
 
 vi.mock('~/components/UserName', () => ({
   default: {
@@ -174,6 +177,9 @@ describe('VolunteerOpportunityModal', () => {
     return mount(TestWrapper, {
       global: {
         stubs: {
+          DonationButton: {
+            template: '<button class="donation-button">Donate</button>',
+          },
           'b-modal': {
             template: `
               <div class="modal">
@@ -508,6 +514,103 @@ describe('VolunteerOpportunityModal', () => {
 
       expect(mockVolunteeringDelete).toHaveBeenCalledWith(123)
       expect(mockHide).toHaveBeenCalled()
+    })
+  })
+
+  describe('saving', () => {
+    async function openAdd() {
+      mockVolunteeringAdd.mockResolvedValue(123)
+      const wrapper = createWrapper({ startEdit: true }, null)
+      await flushPromises()
+      const vm = wrapper.findComponent(VolunteerOpportunityModal).vm
+      vm.form = { validate: async () => ({ valid: true }) }
+      return { wrapper, vm }
+    }
+
+    it('shows the success tick only when the create worked', async () => {
+      const { vm } = await openAdd()
+      const done = vi.fn()
+      await vm.saveIt(done)
+      expect(done).toHaveBeenCalledWith(true)
+    })
+
+    it('does not show success when the create returns no id', async () => {
+      const { wrapper, vm } = await openAdd()
+      mockVolunteeringAdd.mockResolvedValueOnce(undefined)
+      const done = vi.fn()
+      await vm.saveIt(done)
+      await wrapper.vm.$nextTick()
+      expect(done).toHaveBeenCalledWith(false)
+      expect(vm.added).toBe(false)
+      expect(wrapper.text()).toContain('was not saved')
+    })
+
+    it('does not show success when the create throws', async () => {
+      const { wrapper, vm } = await openAdd()
+      mockVolunteeringAdd.mockRejectedValueOnce(new Error('network'))
+      const done = vi.fn()
+      await vm.saveIt(done)
+      await wrapper.vm.$nextTick()
+      expect(done).toHaveBeenCalledWith(false)
+      expect(vm.added).toBe(false)
+      expect(wrapper.text()).toContain('was not saved')
+    })
+
+    it('does not save while the photo is still uploading', async () => {
+      const { wrapper, vm } = await openAdd()
+      vm.photoUploading = true
+      const done = vi.fn()
+      await vm.saveIt(done)
+      await wrapper.vm.$nextTick()
+      expect(mockVolunteeringAdd).not.toHaveBeenCalled()
+      expect(done).toHaveBeenCalledWith(false)
+      expect(wrapper.text()).toContain('still uploading')
+    })
+
+    it('does not save when the photo upload failed', async () => {
+      const { wrapper, vm } = await openAdd()
+      vm.photoFailed = true
+      const done = vi.fn()
+      await vm.saveIt(done)
+      await wrapper.vm.$nextTick()
+      expect(mockVolunteeringAdd).not.toHaveBeenCalled()
+      expect(done).toHaveBeenCalledWith(false)
+      expect(wrapper.text()).toContain('did not upload')
+    })
+
+    it('does not create a second opportunity when a retry follows a partial failure', async () => {
+      const { vm } = await openAdd()
+      vm.volunteering.image = { id: 5 }
+      mockVolunteeringSetPhoto.mockRejectedValueOnce(new Error('network'))
+      const first = vi.fn()
+      await vm.saveIt(first)
+      expect(first).toHaveBeenCalledWith(false)
+      // The error message re-renders the form, which resets the template ref.
+      vm.form = { validate: async () => ({ valid: true }) }
+      const second = vi.fn()
+      await vm.saveIt(second)
+      expect(second).toHaveBeenCalledWith(true)
+      expect(mockVolunteeringAdd).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('donation ask', () => {
+    it('asks for a donation once added', async () => {
+      mockAskForDonations.value = true
+      const wrapper = await createWrapper()
+      await flushPromises()
+      wrapper.findComponent(VolunteerOpportunityModal).vm.added = true
+      await flushPromises()
+      expect(wrapper.text()).toContain('please donate')
+    })
+
+    it('does not ask someone who has asked not to be asked to donate', async () => {
+      mockAskForDonations.value = false
+      const wrapper = await createWrapper()
+      await flushPromises()
+      wrapper.findComponent(VolunteerOpportunityModal).vm.added = true
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('please donate')
     })
   })
 })

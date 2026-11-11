@@ -59,7 +59,7 @@ func TestListAdmins(t *testing.T) {
 
 func TestListAdminsNotMod(t *testing.T) {
 	prefix := uniquePrefix("adm_listnm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	createTestAdmin(t, userID, "Admin "+prefix)
@@ -138,7 +138,7 @@ func TestCreateAdminUnauthorized(t *testing.T) {
 
 func TestGetAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_get")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, "Get Test "+prefix)

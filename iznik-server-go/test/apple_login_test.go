@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
 )
@@ -88,7 +89,7 @@ func TestAppleLoginNewUser(t *testing.T) {
 	os.Setenv("APPLE_JWKS_URL", jwksServer.URL)
 	defer os.Unsetenv("APPLE_JWKS_URL")
 
-	resp := postAppleSession(identityToken, appleUID, email, "Apple", "User")
+	resp := postAppleSession(identityToken, appleUID, email, "Apple", "User") // role-literal-ok: last name, not a role
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result map[string]interface{}
@@ -153,7 +154,7 @@ func TestAppleLoginExistingUserByEmail(t *testing.T) {
 	prefix := uniquePrefix("apple-email")
 	email := fmt.Sprintf("%s@test.com", prefix)
 	appleUID := "apple-uid-" + prefix
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	assert.NoError(t, err)
@@ -192,7 +193,7 @@ func TestAppleLoginExistingUserByEmail(t *testing.T) {
 // whose email address they know. The attacker's login must instead create a fresh, separate account.
 func TestAppleLoginClientEmailNotTrusted(t *testing.T) {
 	prefix := uniquePrefix("apple-cross")
-	victimID := CreateTestUser(t, prefix, "User")
+	victimID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	var victimEmail string
@@ -230,7 +231,7 @@ func TestAppleLoginClientEmailNotTrusted(t *testing.T) {
 func TestAppleLoginExistingUserByAppleUID(t *testing.T) {
 	prefix := uniquePrefix("apple-uid")
 	appleUID := "apple-uid-" + prefix
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Apple', ?)", userID, appleUID)
@@ -301,8 +302,8 @@ func TestAppleLoginTNUser(t *testing.T) {
 	// tnuserid is UNIQUE in production, so release it from any user left by an
 	// earlier run before claiming it.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 99999)
-	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('TN', ?, ?, 'User', 99999)",
-		prefix, fullname)
+	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, tnuserid) VALUES ('TN', ?, ?, ?, 99999)",
+		prefix, fullname, utils.SYSTEMROLE_USER)
 
 	var userID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)
@@ -324,7 +325,7 @@ func TestAppleLoginTNUser(t *testing.T) {
 	os.Setenv("APPLE_JWKS_URL", jwksServer.URL)
 	defer os.Unsetenv("APPLE_JWKS_URL")
 
-	resp := postAppleSession(identityToken, appleUID, email, "TN", "User")
+	resp := postAppleSession(identityToken, appleUID, email, "TN", "User") // role-literal-ok: last name, not a role
 	assert.Equal(t, 403, resp.StatusCode)
 
 	var result map[string]interface{}

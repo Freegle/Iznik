@@ -40,6 +40,8 @@ let mockDraftMessage = null
 let mockDraftCollect = null
 let mockDraftEmail = null
 let mockDraftAt = null
+let mockReplyImage = null
+let mockDraftImage = null
 
 vi.mock('~/stores/reply', () => ({
   useReplyStore: () => ({
@@ -87,6 +89,15 @@ vi.mock('~/stores/reply', () => ({
     },
     get draftAt() {
       return mockDraftAt
+    },
+    get draftImage() {
+      return mockDraftImage
+    },
+    get replyImage() {
+      return mockReplyImage
+    },
+    set replyImage(v) {
+      mockReplyImage = v
     },
     clearReply: mockClearReply,
     saveDraft: mockSaveDraft,
@@ -251,13 +262,18 @@ beforeEach(() => {
   mockDraftCollect = null
   mockDraftEmail = null
   mockDraftAt = null
-  mockSaveDraft.mockImplementation(({ msgId, message, collect, email }) => {
-    mockDraftMsgId = msgId
-    mockDraftMessage = message
-    mockDraftCollect = collect
-    mockDraftEmail = email
-    mockDraftAt = Date.now()
-  })
+  mockReplyImage = null
+  mockDraftImage = null
+  mockSaveDraft.mockImplementation(
+    ({ msgId, message, collect, email, image }) => {
+      mockDraftMsgId = msgId
+      mockDraftMessage = message
+      mockDraftCollect = collect
+      mockDraftEmail = email
+      mockDraftImage = image || null
+      mockDraftAt = Date.now()
+    }
+  )
   mockClearDraft.mockImplementation(() => {
     mockDraftMsgId = null
     mockDraftMessage = null
@@ -730,7 +746,35 @@ describe('draft persistence (typing survives close/reopen)', () => {
       message: 'Yes please',
       collect: 'Weekday evenings',
       email: 'someone@example.com',
+      image: null,
     })
+  })
+
+  it('persists a photo even before anything is typed', async () => {
+    const { result } = mountComposable()
+    result.initialize()
+
+    const image = { id: 321, paththumb: 'https://example.com/t.jpg' }
+    result.replyImage.value = image
+    await flushPromises()
+    vi.advanceTimersByTime(400)
+
+    expect(mockSaveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ msgId: MSG_ID, image })
+    )
+  })
+
+  it('restores a photo-only draft on reopen', () => {
+    const image = { id: 321, paththumb: 'https://example.com/t.jpg' }
+    mockDraftMsgId = MSG_ID
+    mockDraftImage = image
+    mockDraftAt = Date.now() - 60 * 1000
+
+    const { result } = mountComposable()
+    result.initialize()
+
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(result.replyImage.value).toEqual(image)
   })
 
   it('clears the draft when the user empties every field', async () => {
@@ -1943,6 +1987,21 @@ describe('helpers and lifecycle', () => {
       'Hello\r\n\r\nPossible collection times: Weekends'
     )
     expect(mockReplyingAt).toBeTruthy()
+  })
+
+  it('saveReplyToStore (via submit) keeps the photo for the send', async () => {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    const image = { id: 321, paththumb: 'https://example.com/t.jpg' }
+    result.replyImage.value = image
+    mockReplyToPostFn.mockResolvedValue(false)
+    await result.submit()
+    await flushPromises()
+    expect(mockReplyImage).toEqual(image)
   })
 
   it('submit with a form whose validate() throws falls back to COMPOSING', async () => {

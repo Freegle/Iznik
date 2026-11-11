@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
 	"testing"
@@ -39,8 +40,8 @@ func TestNotificationSeen(t *testing.T) {
 	prefix := uniquePrefix("notif_seen")
 
 	// Create user and get token
-	userID := CreateTestUser(t, prefix, "User")
-	fromUserID := CreateTestUser(t, prefix+"_from", "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	fromUserID := CreateTestUser(t, prefix+"_from", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a notification
@@ -70,7 +71,7 @@ func TestNotificationSeenUnauthorized(t *testing.T) {
 
 func TestNotificationSeenInvalidBody(t *testing.T) {
 	prefix := uniquePrefix("notif_invalid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Test with missing ID
@@ -85,8 +86,8 @@ func TestNotificationAllSeen(t *testing.T) {
 	prefix := uniquePrefix("notif_allseen")
 
 	// Create user and get token
-	userID := CreateTestUser(t, prefix, "User")
-	fromUserID := CreateTestUser(t, prefix+"_from", "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	fromUserID := CreateTestUser(t, prefix+"_from", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create multiple notifications

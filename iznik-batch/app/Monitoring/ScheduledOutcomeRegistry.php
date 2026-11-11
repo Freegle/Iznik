@@ -2,6 +2,7 @@
 
 namespace App\Monitoring;
 
+use App\Models\ChatMessage;
 use App\Models\Message;
 use App\Monitoring\Checks\BacklogCheck;
 use App\Monitoring\Checks\CallbackCheck;
@@ -205,6 +206,31 @@ class ScheduledOutcomeRegistry
                 ->describedAs('Go-API background task queue not backing up')
                 ->inCategory('cursor-staleness'),
 
+            // support:first-pass runs the AI first pass for each referred support case and is the
+            // only thing that mails the referral to Support. A case that has reached a final state
+            // and is still unmailed after 15 minutes means the mailer is stuck; a case still Pending
+            // or Running after 70 minutes means the pass is stuck (the command fails an aged Pending
+            // case after 60 and reaps a Running one after about 13).
+            (new BacklogCheck(
+                'support:first-pass',
+                'support_cases',
+                'created_at',
+                15,
+                fn ($q) => $q->whereIn('firstpass_status', ['Done', 'Failed', 'Skipped'])->whereNull('mailed_at'),
+            ))
+                ->describedAs('Support case referral mails not backing up')
+                ->inCategory('cursor-staleness'),
+
+            (new BacklogCheck(
+                'support:first-pass stuck',
+                'support_cases',
+                'created_at',
+                70,
+                fn ($q) => $q->whereIn('firstpass_status', ['Pending', 'Running']),
+            ))
+                ->describedAs('Support case first passes not stuck')
+                ->inCategory('cursor-staleness'),
+
             // ripple:expand (every minute) advances rippling_reach rows whose
             // next_expansion_at has come due. The failure mode this asserts
             // against is real and went unnoticed for days (2026-08-31): the
@@ -255,13 +281,18 @@ class ScheduledOutcomeRegistry
 
             // chats:process-incoming (every minute) clears processingrequired
             // on every visited chat message (success or fail). A row still
-            // flagged past $backlogMin = the chat processor is stuck.
+            // flagged past $backlogMin = the chat processor is stuck. A reply
+            // waiting for its sender to confirm it (chat_prompts.heldchatmsgid),
+            // and what the sender wrote after it while the question is open, are
+            // left flagged on purpose, so they are not backlog.
             (new BacklogCheck(
                 'chats:process-incoming',
                 'chat_messages',
                 'date',
                 $backlogMin,
-                fn ($q) => $q->where('processingrequired', 1),
+                fn ($q) => $q->where('processingrequired', 1)
+                    // keep-raw: the shared correlated EXISTS of ChatMessage::heldByQuestionSql, which two subqueries over chat_prompts and an OR make impossible to state with the builder.
+                    ->whereRaw('NOT '.ChatMessage::heldByQuestionSql('chat_messages', true)),
             ))
                 ->describedAs('Incoming chat-message processing queue not backing up')
                 ->inCategory('cursor-staleness'),

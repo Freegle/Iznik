@@ -81,13 +81,6 @@
     },
     "/address": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns all addresses for the authenticated user",
         "tags": [
           "address"
@@ -98,16 +91,14 @@
           "200": {
             "$ref": "#/responses/addressesResponse"
           }
-        }
-      },
-      "put": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "put": {
         "description": "Creates a new address for the authenticated user. Registered as PUT (the\nmethod-aware drift guard caught this documented as POST, which the server\nnever accepted).",
         "tags": [
           "address"
@@ -124,16 +115,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates an address for the authenticated user",
         "tags": [
           "address"
@@ -150,7 +139,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/address/{id}": {
@@ -181,13 +175,6 @@
         }
       },
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Deletes an address by ID",
         "tags": [
           "address"
@@ -211,18 +198,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/admin/ai-images/count": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns the count of AI images currently in the review queue.",
         "tags": [
           "ai-images"
@@ -239,18 +224,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/admin/ai-images/review": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns AI images that have been flagged by microvolunteers and need moderator review.",
         "tags": [
           "ai-images"
@@ -267,18 +250,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/admin/ai-images/{id}/accept": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Replaces the current AI image with the pending regenerated image.",
         "tags": [
           "ai-images"
@@ -311,18 +292,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/admin/ai-images/{id}/keep": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Clears the pending review state without changing the image. Use when the current image\nis acceptable or when every regeneration attempt is worse than the original.",
         "tags": [
           "ai-images"
@@ -352,18 +331,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/admin/ai-images/{id}/regenerate": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Generates a new AI image for the given item, optionally using a description override.",
         "tags": [
           "ai-images"
@@ -393,7 +370,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/admin/ai-images/{id}/suppress": {
@@ -773,13 +755,6 @@
     },
     "/chat": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns all chats for the authenticated user",
         "tags": [
           "chat"
@@ -790,7 +765,12 @@
           "200": {
             "$ref": "#/responses/chatsResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/chat/lovejunk": {
@@ -813,13 +793,6 @@
     },
     "/chat/rooms": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns chat rooms wrapped in {chatrooms: [...]} for ModTools compatibility",
         "tags": [
           "chat"
@@ -833,16 +806,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "put": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "put": {
         "description": "Creates a new User2User chat room with another user, or returns existing one",
         "tags": [
           "chat"
@@ -871,18 +842,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/chat/{id}": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns a single chat by ID",
         "tags": [
           "chat"
@@ -906,18 +875,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/chat/{id}/message": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns all messages for a specific chat room",
         "tags": [
           "chat"
@@ -947,16 +914,14 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Creates a new message in a chat room",
         "tags": [
           "chat"
@@ -993,18 +958,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/chat/{id}/message/{mid}/prompt": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Records the member's answer to a type='Prompt' chat message and applies it to\nthe posts the prompt covers. Only the member the prompt was sent to may\nanswer, and only once.",
         "tags": [
           "chat"
@@ -1037,18 +1000,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/chatmessages": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns review queue messages or messages from a specific chat room",
         "tags": [
           "chat"
@@ -1062,16 +1023,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Approve, reject, hold, release, or redact a chat message",
         "tags": [
           "chat"
@@ -1100,16 +1059,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Soft-deletes a chat message owned by the logged-in user",
         "tags": [
           "chat"
@@ -1133,16 +1090,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates a chat message (e.g. replyexpected flag)",
         "tags": [
           "chat"
@@ -1171,18 +1126,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/chatrooms": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns unseen count, single room, or list of chat rooms for moderator view",
         "tags": [
           "chat"
@@ -1228,16 +1181,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Handles roster updates, nudge messages, and typing indicators for chat rooms",
         "tags": [
           "chat"
@@ -1266,7 +1217,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/clientlog": {
@@ -1298,13 +1254,6 @@
     },
     "/comment": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns comments for moderated groups with pagination. Pass id for a single comment.",
         "tags": [
           "comment"
@@ -1332,16 +1281,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Moderators can add comments to users in their groups",
         "tags": [
           "comment"
@@ -1358,16 +1305,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Moderators can edit comments on users in their groups",
         "tags": [
           "comment"
@@ -1384,18 +1329,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/comment/{id}": {
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Moderators can delete comments on users in their groups",
         "tags": [
           "comment"
@@ -1419,7 +1362,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/communityevent": {
@@ -1437,13 +1385,6 @@
         }
       },
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Creates a new community event",
         "tags": [
           "communityevent"
@@ -1460,16 +1401,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates an existing community event",
         "tags": [
           "communityevent"
@@ -1486,7 +1425,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/communityevent/{id}": {
@@ -1517,13 +1461,6 @@
         }
       },
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Deletes a community event by ID",
         "tags": [
           "communityevent"
@@ -1547,18 +1484,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/config/admin": {
       "patch": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Updates admin configuration values (Support/Admin only)",
         "tags": [
           "config"
@@ -1578,7 +1513,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/config/{key}": {
@@ -1632,6 +1572,29 @@
             "$ref": "#/responses/genericResponse"
           }
         }
+      }
+    },
+    "/discourse/relink": {
+      "post": {
+        "description": "Support or Admin. Moves the Discourse account linked to an account merged into userid onto\nuserid, then updates its email and name. Merges and Discourse sign-in do this by themselves;\nthis is for merges from before they did.",
+        "tags": [
+          "sso"
+        ],
+        "summary": "Re-link a moderator's Discourse account after an account merge",
+        "operationId": "relinkDiscourse",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/discourse_sso": {
@@ -1700,13 +1663,6 @@
     },
     "/donations": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns donation target and raised amounts for the current month",
         "tags": [
           "donations"
@@ -1725,16 +1681,14 @@
           "200": {
             "$ref": "#/responses/genericResponse"
           }
-        }
-      },
-      "put": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "put": {
         "description": "Records an external bank transfer donation",
         "tags": [
           "donations"
@@ -1751,18 +1705,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/donations/bulk": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Imports a batch of donation records. Requires admin authentication.",
         "tags": [
           "donations"
@@ -1782,7 +1734,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/drivedistance": {
@@ -2004,13 +1961,6 @@
     },
     "/export": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns the GDPR data export for the authenticated user",
         "tags": [
           "export"
@@ -2024,16 +1974,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Initiates a GDPR data export for the authenticated user",
         "tags": [
           "export"
@@ -2047,18 +1995,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/giftaid": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns user's Gift Aid declaration. With all=true returns admin review list.",
         "tags": [
           "donations"
@@ -2072,16 +2018,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Creates or updates the user's Gift Aid declaration",
         "tags": [
           "donations"
@@ -2098,16 +2042,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Soft-deletes the user's Gift Aid declaration",
         "tags": [
           "donations"
@@ -2121,16 +2063,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Admin edits a Gift Aid record",
         "tags": [
           "donations"
@@ -2150,7 +2090,47 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/giftaid/record": {
+      "post": {
+        "description": "A Gift Aid volunteer records, for the donor, that they declined (outcome Declined) or that we asked again and heard nothing (outcome NoResponse).\nBody: { userid: \u003cint\u003e, outcome: \"Declined\" | \"NoResponse\" }",
+        "tags": [
+          "donations"
+        ],
+        "summary": "Record a donor's Gift Aid answer (admin)",
+        "operationId": "recordGiftAid",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "409": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/helper": {
@@ -2212,13 +2192,6 @@
     },
     "/housekeeper/cronjobs": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns the status of all tracked cron jobs.",
         "tags": [
           "housekeeper"
@@ -2235,18 +2208,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/housekeeper/notify": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Receives housekeeping task results from the Chrome extension and queues a background task for Laravel.",
         "tags": [
           "housekeeper"
@@ -2269,18 +2240,16 @@
           "500": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/housekeeper/tasks": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns all housekeeper tasks with their last run status and an overdue flag.",
         "tags": [
           "housekeeper"
@@ -2297,18 +2266,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/housekeeper/tasks/{key}/complete": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Records the completion of a housekeeper task by key.",
         "tags": [
           "housekeeper"
@@ -2337,7 +2304,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/illustration": {
@@ -2400,13 +2372,6 @@
         }
       },
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Registers an externally-uploaded image (via Tus) or rotates an existing image",
         "tags": [
           "image"
@@ -2435,18 +2400,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/isochrone/message": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns messages within the user's isochrone areas",
         "tags": [
           "isochrone"
@@ -2457,7 +2420,12 @@
           "200": {
             "$ref": "#/responses/messagesResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/item/impact": {
@@ -2853,13 +2821,6 @@
         }
       },
       "put": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Creates a new location",
         "tags": [
           "location"
@@ -2876,16 +2837,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Marks a location as excluded",
         "tags": [
           "location"
@@ -2902,16 +2861,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates an existing location",
         "tags": [
           "location"
@@ -2928,18 +2885,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/locations/kml": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Converts KML data to a location polygon",
         "tags": [
           "location"
@@ -2953,7 +2908,12 @@
           "400": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/lockdown": {
@@ -2971,13 +2931,6 @@
         }
       },
       "patch": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "press, surfaces, notice, liftall or close. Support/Admin only. Each writes a new\nrow and returns the new state.",
         "tags": [
           "lockdown"
@@ -3000,7 +2953,12 @@
           "409": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/memberships": {
@@ -3056,13 +3014,6 @@
     },
     "/merge": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns pending merge requests for moderator review",
         "tags": [
           "merge"
@@ -3076,16 +3027,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "put": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "put": {
         "description": "Creates a new merge request to combine two users",
         "tags": [
           "merge"
@@ -3102,16 +3051,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Approves or rejects a merge request",
         "tags": [
           "merge"
@@ -3128,16 +3075,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Deletes a merge request",
         "tags": [
           "merge"
@@ -3151,18 +3096,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/message": {
       "put": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Creates a new message (offer or wanted)",
         "tags": [
           "message"
@@ -3179,16 +3122,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View,\nApprove, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent,\nReply, JoinAndPost, Move, BackToPending, RejectToDraft, Report.\n\nWhen tnpostid is supplied instead of id, the action is applied to ALL Freegle messages\nsharing that TN post ID (a TN post can be submitted to multiple Freegle groups, each\nproducing a separate Freegle message row).",
         "tags": [
           "message"
@@ -3208,16 +3149,14 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates message fields. Supports partner authentication via query parameters\nas an alternative to JWT auth.",
         "tags": [
           "message"
@@ -3257,7 +3196,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/message/count": {
@@ -3322,6 +3266,21 @@
         "responses": {
           "200": {
             "$ref": "#/responses/messagesResponse"
+          }
+        }
+      }
+    },
+    "/message/interested": {
+      "get": {
+        "description": "Returns the posts the logged-in member has marked \"I'm interested\" in the last 30 days.",
+        "tags": [
+          "message"
+        ],
+        "summary": "List the member's \"I'm interested\" marks",
+        "operationId": "getMessageInterested",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
           }
         }
       }
@@ -3431,20 +3390,13 @@
         "operationId": "submitMessage",
         "responses": {
           "200": {
-            "description": " Success"
+            "description": "Success"
           }
         }
       }
     },
     "/message/tn/{tnpostid}": {
       "patch": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Updates ALL Freegle messages sharing the given Trash Nothing post ID. A single TN post\ncan be submitted to multiple Freegle groups, each producing a separate Freegle message\nrow — this endpoint updates every one of them in a single call. Used by partner\nintegrations where the Freegle message ID is not yet known (e.g. post held for moderation).",
         "tags": [
           "message"
@@ -3494,7 +3446,12 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/message/{ids}": {
@@ -3532,13 +3489,6 @@
     },
     "/message/{id}": {
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Deletes a message by ID",
         "tags": [
           "message"
@@ -3564,6 +3514,56 @@
           },
           "404": {
             "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/message/{id}/interested": {
+      "get": {
+        "description": "Returns whether \"I'm interested\" is offered on the post, and whether the member has marked it.",
+        "tags": [
+          "message"
+        ],
+        "summary": "Whether to offer \"I'm interested\" on a post",
+        "operationId": "getMessageInterestedState",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Message ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          }
+        }
+      },
+      "post": {
+        "description": "Mark a post as \"I'm interested\", or remove the mark",
+        "tags": [
+          "message"
+        ],
+        "operationId": "setMessageInterested",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Message ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
           }
         }
       }
@@ -3654,11 +3654,6 @@
     },
     "/messages/clearcount": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
         "description": "Marks the member's whole browse feed as cleared, without needing the client\nto enumerate posts. Moves one watermark rather than writing a view row per\npost. Requires authentication.",
         "tags": [
           "messages"
@@ -3672,7 +3667,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/messages/markseen": {
@@ -3692,13 +3692,6 @@
     },
     "/microvolunteering": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns a microvolunteering challenge for the authenticated user",
         "tags": [
           "microvolunteering"
@@ -3712,16 +3705,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Records the user's response to a micro-volunteering challenge",
         "tags": [
           "microvolunteering"
@@ -3738,16 +3729,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Allows a moderator to set feedback, score_positive, and score_negative on a microaction",
         "tags": [
           "microvolunteering"
@@ -3776,18 +3765,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/admin": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns admin records for groups moderated by the authenticated user",
         "tags": [
           "modtools"
@@ -3801,16 +3788,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Creates a new admin record (mod email)",
         "tags": [
           "modtools"
@@ -3827,16 +3812,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Deletes an admin record",
         "tags": [
           "modtools"
@@ -3850,16 +3833,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates an existing admin record",
         "tags": [
           "modtools"
@@ -3876,18 +3857,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/admin/{id}": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns a single admin record by ID",
         "tags": [
           "modtools"
@@ -3911,18 +3890,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/alert": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns all alerts (Admin/Support only)",
         "tags": [
           "modtools"
@@ -3936,16 +3913,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "put": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "put": {
         "description": "Creates a new alert (Admin/Support only)",
         "tags": [
           "modtools"
@@ -3962,7 +3937,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       },
       "post": {
         "description": "Records a click on an alert tracking entry. Public access (no auth required).\nBody: { action: \"clicked\", trackid: \u003cinteger\u003e }\nWhen action==\"clicked\" and trackid\u003e0, sets alerts_tracking.response=\"Clicked\".",
@@ -4008,11 +3988,6 @@
     },
     "/modtools/email/deferrals": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
         "description": "Support's view of a deferral episode: which providers have stopped accepting\nour mail, since when, and which members are affected. Support or Admin only.",
         "tags": [
           "modtools"
@@ -4026,18 +4001,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/email/stats": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns aggregate email statistics for Support/Admin users",
         "tags": [
           "modtools"
@@ -4074,18 +4047,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/email/stats/bytype": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns statistics for each email type for comparison charts",
         "tags": [
           "modtools"
@@ -4102,18 +4073,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/email/stats/clicks": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns the most clicked links, normalized to remove user-specific data",
         "tags": [
           "modtools"
@@ -4130,7 +4099,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/email/stats/digestpositions": {
@@ -4170,13 +4144,6 @@
     },
     "/modtools/email/stats/reengage": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns funnel (sent/opened/clicked/reengaged) counts overall and broken down by stage, experiment arm and journey segment",
         "tags": [
           "modtools"
@@ -4207,18 +4174,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/email/stats/timeseries": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns daily sent/opened/clicked/bounced counts for date range",
         "tags": [
           "modtools"
@@ -4235,18 +4200,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/email/user/{id}": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns email tracking records for a specific user (Support/Admin only)",
         "tags": [
           "modtools"
@@ -4273,18 +4236,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/lockdown": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Active, incidentid, surfaces, reason, notice and who started it.",
         "tags": [
           "lockdown"
@@ -4301,18 +4262,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/lockdown/held": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Chat messages, posts or ChitChat posts still held by the current lockdown, newest\nfirst, 50 per page. Support/Admin only.",
         "tags": [
           "lockdown"
@@ -4359,18 +4318,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/lockdown/history": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Last 50 rows of the lockdowns table, newest first. Support/Admin only.",
         "tags": [
           "lockdown"
@@ -4387,18 +4344,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/lockdown/stats": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Counts of what is held and released, the email queue, what leaked, and batch loop\nacknowledgements. Support/Admin only.",
         "tags": [
           "lockdown"
@@ -4415,18 +4370,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/logs": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns log entries for a user or group",
         "tags": [
           "modtools"
@@ -4440,7 +4393,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/members": {
@@ -4604,13 +4562,6 @@
     },
     "/modtools/modconfig": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns moderation configuration",
         "tags": [
           "modtools"
@@ -4624,16 +4575,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Creates a new moderation configuration",
         "tags": [
           "modtools"
@@ -4650,16 +4599,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Deletes a moderation configuration",
         "tags": [
           "modtools"
@@ -4673,16 +4620,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates an existing moderation configuration",
         "tags": [
           "modtools"
@@ -4699,7 +4644,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/outcomes": {
@@ -4776,13 +4726,6 @@
     },
     "/modtools/spammers": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns list of reported spammers for moderator review",
         "tags": [
           "modtools"
@@ -4796,16 +4739,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Reports a user as a spammer",
         "tags": [
           "modtools"
@@ -4822,16 +4763,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Removes a spammer report",
         "tags": [
           "modtools"
@@ -4845,16 +4784,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates a spammer report",
         "tags": [
           "modtools"
@@ -4871,7 +4808,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/spammers/export": {
@@ -4894,13 +4836,6 @@
     },
     "/modtools/stdmsg": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns standard messages for moderation",
         "tags": [
           "modtools"
@@ -4914,16 +4849,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Creates a new standard message",
         "tags": [
           "modtools"
@@ -4940,16 +4873,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Deletes a standard message",
         "tags": [
           "modtools"
@@ -4963,16 +4894,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates an existing standard message",
         "tags": [
           "modtools"
@@ -4989,18 +4918,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/systemlogs": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns system logs (moderator only)",
         "tags": [
           "systemlogs"
@@ -5017,18 +4944,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/systemlogs/counts": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns counts of logs grouped by subtype using Loki metric queries (moderator only)",
         "tags": [
           "systemlogs"
@@ -5045,7 +4970,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/user/{id}/dump": {
@@ -5077,14 +5007,7 @@
     },
     "/modtools/ux/adoption": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Per feature: using users over active users, with the previous period share.",
+        "description": "Per feature: using users over active users, with the previous period share. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
         "tags": [
           "modtools"
         ],
@@ -5102,6 +5025,18 @@
             "description": "End date (YYYY-MM-DD), default yesterday",
             "name": "end",
             "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+            "name": "device",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+            "name": "signed_in",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5117,19 +5052,125 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/modtools/ux/experiments": {
+      "get": {
+        "description": "Per funnel: running and past UX experiments, each with its status, its design, its result (the whole read while it runs and when it ends) and the paragraph of its newest read since the last start.",
+        "tags": [
+          "modtools"
+        ],
+        "summary": "UX experiments per funnel",
+        "operationId": "getUxExperiments",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Restrict to one flow",
+            "name": "flow",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Adds a draft UX experiment for a funnel. The body is flow, name, title, hypothesis, change, expected and optionally arms, design and pr_url. A pr_url must start with https://. The batch starts the draft on request, within the concurrency cap and the 24-hour end.",
+        "tags": [
+          "modtools"
+        ],
+        "summary": "Create a UX experiment",
+        "operationId": "createUxExperiment",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "409": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/modtools/ux/experiments/{id}": {
+      "patch": {
+        "description": "Queues a start, stop or close of a UX experiment for the batch, which applies the rules and rewrites the ux_experiments config key the clients read. The body is action (start, stop or close), reason and cleanup_pr. A cleanup_pr must start with https://.",
+        "tags": [
+          "modtools"
+        ],
+        "summary": "Start, stop or close a UX experiment",
+        "operationId": "actUxExperiment",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Experiment id",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/ux/fields": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Per form field: revisits, validation failures and choice switches, with the previous equal-length period.",
+        "description": "Per form field: revisits, validation failures and choice switches, with the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
         "tags": [
           "modtools"
         ],
@@ -5153,6 +5194,18 @@
             "description": "Restrict to one flow",
             "name": "flow",
             "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+            "name": "device",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+            "name": "signed_in",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5168,19 +5221,17 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/ux/friction": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "The 20 components whose rage clicks, dead clicks and repeated intent grew most against the previous equal-length period.",
+        "description": "The 20 components whose rage clicks, dead clicks and repeated intent grew most against the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
         "tags": [
           "modtools"
         ],
@@ -5198,6 +5249,18 @@
             "description": "End date (YYYY-MM-DD), default yesterday",
             "name": "end",
             "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+            "name": "device",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+            "name": "signed_in",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5213,19 +5276,17 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/ux/funnels": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Per flow and step: entered, completed, backed, abandoned, revisits, validation failures, help sought and dwell, split by device class, login state and experiment variant, with the previous equal-length period.",
+        "description": "Per flow and step: entered, completed, backed, abandoned, revisits, validation failures, help sought and dwell, split by device class, login state and experiment variant, with the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
         "tags": [
           "modtools"
         ],
@@ -5249,6 +5310,18 @@
             "description": "Restrict to one flow",
             "name": "flow",
             "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+            "name": "device",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Cut the step figures by sign-in. 1 for signed in, 0 for not signed in",
+            "name": "signed_in",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5264,19 +5337,17 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/ux/health": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Per metric per day: observed against expected, ok when the ratio is within 0.7 to 1.3.",
+        "description": "Per metric per day: observed against expected, ok when the ratio is within 0.7 to 1.3. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
         "tags": [
           "modtools"
         ],
@@ -5294,6 +5365,18 @@
             "description": "End date (YYYY-MM-DD), default yesterday",
             "name": "end",
             "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+            "name": "device",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+            "name": "signed_in",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5309,19 +5392,17 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/ux/outcomes": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Per flow: started, submitted, submit ok and failed, completed, abandoned and resumed, with the previous equal-length period.",
+        "description": "Per flow: started, submitted, submit ok and failed, completed, abandoned and resumed, with the previous equal-length period. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
         "tags": [
           "modtools"
         ],
@@ -5345,6 +5426,18 @@
             "description": "Restrict to one flow",
             "name": "flow",
             "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+            "name": "device",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+            "name": "signed_in",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5360,19 +5453,170 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/modtools/ux/problem-groups": {
+      "get": {
+        "description": "The headings member problems are filed under, each with how many problems and mentions it holds and its biggest problem, the largest first and Other last, with the number of answers that fitted no problem.",
+        "tags": [
+          "modtools"
+        ],
+        "summary": "What members say, by group",
+        "operationId": "getUxProblemGroups",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "A funnel key, or none for problems tied to no funnel; omitted means all",
+            "name": "flow",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Text to find in a title or description, at most 60 characters",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "The least number of mentions",
+            "name": "min",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/modtools/ux/problems": {
+      "get": {
+        "description": "The problems members raised, most mentioned first, each with its group, the quotes the batch checked, the fixes members suggested and how the follow-up ranked it. total counts every match before the limit is applied.",
+        "tags": [
+          "modtools"
+        ],
+        "summary": "Member problems",
+        "operationId": "getUxProblems",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "A group name",
+            "name": "group",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "A funnel key, or none for problems tied to no funnel; omitted means all",
+            "name": "flow",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Text to find in a title or description, at most 60 characters",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "The least number of mentions",
+            "name": "min",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "How many to return, 30 by default and at most 100",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/modtools/ux/questions": {
+      "get": {
+        "description": "The survey, awareness and open questions with what members chose per option, the ways out, skips and comments, and the share of right answers. The decoy figures show how readily members say yes to anything.",
+        "tags": [
+          "modtools"
+        ],
+        "summary": "Member questions",
+        "operationId": "getUxQuestions",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "One of survey, awareness or open",
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "One of open or closed",
+            "name": "status",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/ux/regret": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Per regret signal per day, with the previous period total.",
+        "description": "Per regret signal per day, with the previous period total. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
         "tags": [
           "modtools"
         ],
@@ -5390,6 +5634,18 @@
             "description": "End date (YYYY-MM-DD), default yesterday",
             "name": "end",
             "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+            "name": "device",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+            "name": "signed_in",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5405,18 +5661,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/ux/samples": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "The sampled abandoned sessions for a flow step on a date, each with its client timeline from Loki.",
         "tags": [
           "modtools"
@@ -5459,19 +5713,17 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/modtools/ux/search": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Per day: searches, zero results, re-searches within 60 seconds, browse sessions and scroll-outs.",
+        "description": "Per day: searches, zero results, re-searches within 60 seconds, browse sessions and scroll-outs. The answer has filters, which says what was applied, and ignored, which lists the requested filters this endpoint does not apply.",
         "tags": [
           "modtools"
         ],
@@ -5489,6 +5741,18 @@
             "description": "End date (YYYY-MM-DD), default yesterday",
             "name": "end",
             "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android",
+            "name": "device",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Not applied here, so the answer lists it in ignored. 1 or 0",
+            "name": "signed_in",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5504,7 +5768,38 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/modtools/ux/values": {
+      "get": {
+        "description": "What members said they value about Freegle, most mentioned first, at most 20, each with its checked quotes.",
+        "tags": [
+          "modtools"
+        ],
+        "summary": "What members value",
+        "operationId": "getUxValues",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/newsfeed": {
@@ -5522,13 +5817,6 @@
         }
       },
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Creates a new newsfeed post or performs actions (love, report, refer, etc.)",
         "tags": [
           "newsfeed"
@@ -5545,16 +5833,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Edits an existing newsfeed post",
         "tags": [
           "newsfeed"
@@ -5571,7 +5857,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/newsfeed/{id}": {
@@ -5602,13 +5893,6 @@
         }
       },
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Deletes a newsfeed item by ID",
         "tags": [
           "newsfeed"
@@ -5632,18 +5916,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/newsfeed/{id}/convertinfo": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Moderator-only. The postcode and community a post made for the member\nwould use, so the modal can show it before committing.",
         "tags": [
           "newsfeed"
@@ -5670,18 +5952,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/newsfeed/{id}/duplicate": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Moderator-only. Names one of the poster's own live posts when the ChitChat\nentry says the same thing, so it can be hidden.",
         "tags": [
           "newsfeed"
@@ -5708,7 +5988,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/newsfeedcount": {
@@ -5726,163 +6011,8 @@
         }
       }
     },
-    "/noticeboard": {
-      "get": {
-        "description": "Returns active noticeboards, optionally filtered by authority, or a single noticeboard by ID",
-        "tags": [
-          "noticeboard"
-        ],
-        "summary": "List or get noticeboards",
-        "operationId": "getNoticeboard",
-        "parameters": [
-          {
-            "type": "integer",
-            "description": "Noticeboard ID for single fetch",
-            "name": "id",
-            "in": "query"
-          },
-          {
-            "type": "integer",
-            "description": "Filter by authority ID",
-            "name": "authorityid",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/noticeboardsResponse"
-          }
-        }
-      },
-      "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Creates a new noticeboard (requires lat/lng) or performs an action on existing one",
-        "tags": [
-          "noticeboard"
-        ],
-        "summary": "Create noticeboard or perform action",
-        "operationId": "postNoticeboard",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/successResponse"
-          },
-          "400": {
-            "$ref": "#/responses/errorResponse"
-          },
-          "401": {
-            "$ref": "#/responses/errorResponse"
-          }
-        }
-      },
-      "patch": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Updates noticeboard fields and optionally links photo",
-        "tags": [
-          "noticeboard"
-        ],
-        "summary": "Update noticeboard",
-        "operationId": "patchNoticeboard",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/successResponse"
-          },
-          "400": {
-            "$ref": "#/responses/errorResponse"
-          },
-          "401": {
-            "$ref": "#/responses/errorResponse"
-          }
-        }
-      }
-    },
-    "/noticeboard/{id}": {
-      "get": {
-        "description": "Returns a single noticeboard with its checks and photo",
-        "tags": [
-          "noticeboard"
-        ],
-        "summary": "Get noticeboard by ID",
-        "operationId": "getNoticeboardSingle",
-        "parameters": [
-          {
-            "type": "integer",
-            "format": "int64",
-            "description": "Noticeboard ID",
-            "name": "id",
-            "in": "path",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/noticeboardItemResponse"
-          },
-          "400": {
-            "$ref": "#/responses/errorResponse"
-          },
-          "404": {
-            "$ref": "#/responses/errorResponse"
-          }
-        }
-      },
-      "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
-        "description": "Deletes a noticeboard by ID. Requires mod/admin role.",
-        "tags": [
-          "noticeboard"
-        ],
-        "summary": "Delete noticeboard",
-        "operationId": "deleteNoticeboard",
-        "parameters": [
-          {
-            "type": "integer",
-            "format": "int64",
-            "description": "Noticeboard ID",
-            "name": "id",
-            "in": "path",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/successResponse"
-          },
-          "401": {
-            "$ref": "#/responses/errorResponse"
-          },
-          "403": {
-            "$ref": "#/responses/errorResponse"
-          }
-        }
-      }
-    },
     "/notification": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns all notifications for the authenticated user",
         "tags": [
           "notification"
@@ -5896,18 +6026,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/notification/allseen": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Marks all notifications as seen for the user",
         "tags": [
           "notification"
@@ -5921,18 +6049,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/notification/count": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns count of unseen notifications",
         "tags": [
           "notification"
@@ -5943,18 +6069,16 @@
           "200": {
             "$ref": "#/responses/genericResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/notification/seen": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Marks a specific notification as seen",
         "tags": [
           "notification"
@@ -5968,7 +6092,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/online": {
@@ -5988,13 +6117,6 @@
     },
     "/partnership": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns every partnership (sponsorship deal with a local authority), the\ndeal running out soonest last. Partnerships team, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6011,16 +6133,14 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Creates a sponsorship deal with a local authority, and derives the groups it\ncovers from the authority's boundary. Partnerships team, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6040,18 +6160,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/partnership/statsfile/{id}": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Streams one rendered spreadsheet (xlsx) belonging to a completed statistics\ngeneration job. Partnerships team, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6080,18 +6198,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/partnership/statsjob": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns the recent quarterly-statistics generation runs with the files each\nproduced, which is what the page polls while a run is in progress.\nPartnerships team, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6108,16 +6224,14 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Queues a quarterly statistics spreadsheet generation run for one or more\nauthorities; the Laravel scheduler renders the spreadsheets asynchronously.\nPartnerships team, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6137,18 +6251,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/partnership/statsjob/{id}": {
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Discards a generation run and the spreadsheets it produced. Partnerships\nteam, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6174,18 +6286,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/partnership/summary": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Totals the partnership income and splits it by financial year, which is what\nthe page's headline figures and its income graph are drawn from. Partnerships\nteam, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6202,18 +6312,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/partnership/{id}": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns one partnership with the groups it covers, its financial-year split\nand its payments. Partnerships team, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6242,16 +6350,14 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Removes a partnership. Its sponsorship rows go too, so the council stops\nappearing on the member site straight away; years, payments and group links\ncascade in the schema. Partnerships team, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6277,16 +6383,14 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Changes a partnership and re-syncs its sponsorship rows, so editing the\ntagline, the link or the dates immediately changes what members see.\nPartnerships team, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6318,18 +6422,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/partnership/{id}/payment": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Records an invoice against a partnership. Partnerships team, Support or Admin\nonly.",
         "tags": [
           "partnerships"
@@ -6361,18 +6463,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/partnership/{id}/payment/{paymentid}": {
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Removes an invoice. Partnerships team, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6405,16 +6505,14 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Edits an invoice - most often to mark it paid. Partnerships team, Support or\nAdmin only.",
         "tags": [
           "partnerships"
@@ -6450,18 +6548,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/partnership/{id}/year": {
       "put": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Replaces the explicit financial-year split for a multi-year deal. Sending an\nempty list drops back to pro-rating the deal across its term. Partnerships\nteam, Support or Admin only.",
         "tags": [
           "partnerships"
@@ -6493,18 +6589,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/rippling/analytics": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "On-the-fly sysadmin rippling analytics KPIs: reply/take rates, trends and\nrippled-out-vs-home comparisons. Reads stratum, start and end query params\n(defaults to the last 30 days). Support/Admin only.",
         "tags": [
           "rippling"
@@ -6538,18 +6632,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/rippling/analytics/drivetime": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns a random sample of posts for the client to score serially against the\nrouting graph (step 1 of the 3-step drive-time analytics flow: sample, score,\naggregate - see /rippling/analytics/drivetime/score and\nrippling/analytics/drivetime/aggregate). Support/Admin only.",
         "tags": [
           "rippling"
@@ -6583,18 +6675,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/rippling/analytics/drivetime/aggregate": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Turns the client's accumulated observations into the drive-time stats\n(overall mean, rippled-only mean, per-day trend, reply-\u003etake bullseye). Pure\ncomputation - no routing calls. Support/Admin only.",
         "tags": [
           "rippling"
@@ -6608,18 +6698,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/rippling/analytics/drivetime/score": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Scores a chunk of the sample serially (one routing call per post) and returns\nthe observations. Called repeatedly by the client, one chunk after another, so\nno single request runs long enough to hit the gateway timeout. Support/Admin\nonly.",
         "tags": [
           "rippling"
@@ -6633,18 +6721,16 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/rippling/density": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Posts, reach budget asked for vs reached, audience, reply and taken counts,\nand held replies, per density band. Support/Admin only.",
         "tags": [
           "rippling"
@@ -6669,7 +6755,12 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/rippling/metrics": {
@@ -6730,13 +6821,6 @@
     },
     "/session": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns the current user session including user data, memberships, settings, deleted/forgotten timestamps",
         "tags": [
           "session"
@@ -6750,7 +6834,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       },
       "post": {
         "description": "Handles login (email/password, link key) and actions: LostPassword, Unsubscribe, Forget, Related.\nDeleted users can still log in to see the account recovery banner.",
@@ -6769,13 +6858,6 @@
         }
       },
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Logs out the current user by deleting their session",
         "tags": [
           "session"
@@ -6786,16 +6868,14 @@
           "200": {
             "$ref": "#/responses/successResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates user profile settings (name, about me, email, notifications, etc.)",
         "tags": [
           "session"
@@ -6812,7 +6892,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/shortlink": {
@@ -6844,13 +6929,6 @@
         }
       },
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Creates a new shortlink",
         "tags": [
           "shortlink"
@@ -6867,7 +6945,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/src": {
@@ -6927,13 +7010,6 @@
         }
       },
       "put": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Creates a new story",
         "tags": [
           "story"
@@ -6950,16 +7026,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates a story, typically for moderation review",
         "tags": [
           "story"
@@ -6976,18 +7050,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/story/like": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Likes a story",
         "tags": [
           "story"
@@ -7001,18 +7073,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/story/unlike": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Removes a like from a story",
         "tags": [
           "story"
@@ -7026,7 +7096,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/story/{id}": {
@@ -7057,13 +7132,6 @@
         }
       },
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Deletes a story by ID",
         "tags": [
           "story"
@@ -7087,7 +7155,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/stripecreateintent": {
@@ -7110,13 +7183,6 @@
     },
     "/stripecreatesubscription": {
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Creates a Stripe subscription for recurring monthly donation",
         "tags": [
           "donations"
@@ -7130,7 +7196,12 @@
           "400": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/stripeipn": {
@@ -7153,13 +7224,6 @@
     },
     "/supportai/runs": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns runs of the AI Support Helper most recent first, without transcripts. Page back with before=\u003cid\u003e; filter with rating=up|down|unrated. Support/Admin only.",
         "tags": [
           "supportai"
@@ -7176,16 +7240,14 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Stores one question put to the helper with its answer, transcript, usage and subscription quota before and after. The asking volunteer is taken from the JWT. Support/Admin only.",
         "tags": [
           "supportai"
@@ -7205,16 +7267,14 @@
           "403": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Sets a thumbs up (1) or down (-1) with an optional comment, or clears the rating (0). Support/Admin only.",
         "tags": [
           "supportai"
@@ -7237,18 +7297,16 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/supportai/runs/{id}": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns one run in full, transcript included. Support/Admin only.",
         "tags": [
           "supportai"
@@ -7282,18 +7340,234 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/supportcases": {
+      "get": {
+        "description": "Returns the chats moderators have referred to Support, newest first. Filter with status=Waiting|Open|Handled|All (Waiting is the open cases whose finished first pass or latest referrer message has no Support reply after it) or chatid; page back with before=\u003cid\u003e. Each row says whether it is waiting for Support. Support/Admin only; anyone else gets 404.",
+        "tags": [
+          "supportcase"
+        ],
+        "summary": "List support cases",
+        "operationId": "listSupportCases",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "description": "Support/Admin only; anyone else gets 404. Reopening answers 409 when another case for the same chat and referrer is already open.",
+        "tags": [
+          "supportcase"
+        ],
+        "summary": "Mark a support case Handled or Open",
+        "operationId": "patchSupportCase",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "409": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/supportcases/{id}": {
+      "get": {
+        "description": "Support and Admin get the full case with the first pass. The moderator who referred it, while they can still see the chat, gets only its status, their reason and the thread. Anyone else gets 404.",
+        "tags": [
+          "supportcase"
+        ],
+        "summary": "Get a support case",
+        "operationId": "getSupportCase",
+        "parameters": [
+          {
+            "type": "integer",
+            "format": "int64",
+            "x-go-name": "ID",
+            "description": "Case ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/supportcases/{id}/messages": {
+      "post": {
+        "description": "Adds to the thread between Support and the referring moderator. A referrer posting to a Handled case reopens it.",
+        "tags": [
+          "supportcase"
+        ],
+        "summary": "Reply on a support case",
+        "operationId": "postSupportCaseMessage",
+        "parameters": [
+          {
+            "type": "integer",
+            "format": "int64",
+            "x-go-name": "ID",
+            "description": "Case ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "409": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/sysadmin/paf": {
+      "get": {
+        "description": "Lists the latest Royal Mail address data (PAF) imports, newest first, with their progress. Admin only.",
+        "tags": [
+          "sysadmin"
+        ],
+        "summary": "List PAF address data imports",
+        "operationId": "listPafImports",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Queues a request to download and apply a PAF release, given the unlock key AFD emailed and optionally an archived edition such as Y26M08. One at a time. Admin only.",
+        "tags": [
+          "sysadmin"
+        ],
+        "summary": "Start a PAF address data import",
+        "operationId": "startPafImport",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "409": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/sysadmin/paf/latest": {
+      "get": {
+        "description": "The release at the top of AFD's site (its publication date and size), as the batch command paf:check-latest last found it, or why it could not. Admin only.",
+        "tags": [
+          "sysadmin"
+        ],
+        "summary": "The latest PAF release on the AFD site",
+        "operationId": "getPafLatest",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/team": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns team information",
         "tags": [
           "team"
@@ -7307,16 +7581,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Adds a member to a team",
         "tags": [
           "team"
@@ -7333,16 +7605,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Removes a member from a team",
         "tags": [
           "team"
@@ -7356,16 +7626,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates a team member",
         "tags": [
           "team"
@@ -7382,7 +7650,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/town/near": {
@@ -7425,13 +7698,6 @@
     },
     "/tryst": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns handover arrangements for the authenticated user",
         "tags": [
           "tryst"
@@ -7445,16 +7711,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "put": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "put": {
         "description": "Creates a new handover arrangement",
         "tags": [
           "tryst"
@@ -7471,16 +7735,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "post": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "post": {
         "description": "Performs actions on a tryst (confirm, decline, etc.)",
         "tags": [
           "tryst"
@@ -7497,16 +7759,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Deletes a handover arrangement",
         "tags": [
           "tryst"
@@ -7520,16 +7780,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates a handover arrangement",
         "tags": [
           "tryst"
@@ -7546,7 +7804,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/user": {
@@ -7567,13 +7830,6 @@
         }
       },
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Handles user actions: Rate, RatingReviewed, AddEmail, RemoveEmail, Engaged",
         "tags": [
           "user"
@@ -7590,16 +7846,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "delete": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "delete": {
         "description": "Deletes the authenticated user account",
         "tags": [
           "user"
@@ -7613,16 +7867,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates user fields",
         "tags": [
           "user"
@@ -7639,18 +7891,16 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/user/byemail/{email}": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns a user by email address",
         "tags": [
           "user"
@@ -7673,7 +7923,59 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/user/hostingad": {
+      "get": {
+        "description": "Decides once, for the logged-in member, whether the Krystal hosting ad modal is shown: their email\ndomain must host a WordPress site not on Krystal, and the server experiment krystal-hosting-ad\ngives the arm. Both arms are recorded as an exposure.",
+        "tags": [
+          "user"
+        ],
+        "summary": "Whether to show the Krystal hosting ad",
+        "operationId": "getHostingAd",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Writes the time of the member's first click through to Krystal (\"click\") or first dismissal\n(\"dismiss\") on their krystal-hosting-ad exposure row.",
+        "tags": [
+          "user"
+        ],
+        "summary": "Record what the member did with the hosting ad",
+        "operationId": "postHostingAd",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/user/relevantoff": {
@@ -7724,13 +8026,6 @@
     },
     "/user/search": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Searches users by name or email (moderator only)",
         "tags": [
           "user"
@@ -7744,7 +8039,35 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/user/unrated": {
+      "get": {
+        "description": "Lists the freeglers the logged-in member handed an item over with in the last 14 days (either\ndirection) and has not rated, newest first, one entry per person, at most five. Used by the\nrate-on-return experiment to ask on the next visit.",
+        "tags": [
+          "user"
+        ],
+        "summary": "People the member has handed over with and not rated",
+        "operationId": "getUnrated",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/user/unsubscribe": {
@@ -7823,13 +8146,6 @@
     },
     "/user/{id}": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns a single user by ID, or the current user if no ID",
         "tags": [
           "user"
@@ -7853,7 +8169,12 @@
           "404": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/user/{id}/bans": {
@@ -8064,13 +8385,6 @@
     },
     "/user/{id}/search": {
       "get": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Returns saved searches for a specific user",
         "tags": [
           "user"
@@ -8091,18 +8405,16 @@
           "200": {
             "$ref": "#/responses/genericResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/usersearch": {
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Soft-deletes a user search (sets deleted=1)",
         "tags": [
           "usersearch"
@@ -8125,7 +8437,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/version": {
@@ -8209,13 +8526,6 @@
         }
       },
       "post": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Creates a new volunteering opportunity",
         "tags": [
           "volunteering"
@@ -8232,16 +8542,14 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
-      },
-      "patch": {
+        },
         "security": [
           {
-            "BearerAuth": [
-              "[]"
-            ]
+            "BearerAuth": []
           }
-        ],
+        ]
+      },
+      "patch": {
         "description": "Updates an existing volunteering opportunity",
         "tags": [
           "volunteering"
@@ -8258,7 +8566,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/volunteering/{id}": {
@@ -8289,13 +8602,6 @@
         }
       },
       "delete": {
-        "security": [
-          {
-            "BearerAuth": [
-              "[]"
-            ]
-          }
-        ],
         "description": "Deletes a volunteering opportunity by ID",
         "tags": [
           "volunteering"
@@ -8319,7 +8625,12 @@
           "401": {
             "$ref": "#/responses/errorResponse"
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     }
   },
@@ -8661,6 +8972,10 @@
           "type": "string",
           "x-go-name": "Buildingname"
         },
+        "buildingnumber": {
+          "type": "string",
+          "x-go-name": "Buildingnumber"
+        },
         "departmentname": {
           "type": "string",
           "x-go-name": "Departmentname"
@@ -8779,10 +9094,25 @@
           "format": "uint64",
           "x-go-name": "ID"
         },
+        "lat": {
+          "type": "number",
+          "format": "double",
+          "x-go-name": "Lat"
+        },
+        "lng": {
+          "type": "number",
+          "format": "double",
+          "x-go-name": "Lng"
+        },
         "mjml": {
           "description": "Mjml is the optional MJML version of the body, used for the HTML part. Text stays the plain-text part.",
           "type": "string",
           "x-go-name": "Mjml"
+        },
+        "national": {
+          "description": "Who it goes to. National sends to every member and only Support or Admin may set it.\nOtherwise it goes to members within reachmiles of lat/lng, and with neither, to nobody.",
+          "type": "boolean",
+          "x-go-name": "National"
         },
         "parentid": {
           "type": "integer",
@@ -8792,6 +9122,16 @@
         "pending": {
           "type": "boolean",
           "x-go-name": "Pending"
+        },
+        "reachmiles": {
+          "type": "number",
+          "format": "double",
+          "x-go-name": "Reachmiles"
+        },
+        "reachminutes": {
+          "type": "integer",
+          "format": "int64",
+          "x-go-name": "Reachminutes"
         },
         "sendafter": {
           "type": "string",
@@ -9123,6 +9463,9 @@
         "url": {
           "type": "string",
           "x-go-name": "URL"
+        },
+        "uxprompt": {
+          "$ref": "#/definitions/UxPromptChallenge"
         }
       },
       "x-go-package": "github.com/freegle/iznik-server-go/microvolunteering"
@@ -9182,7 +9525,6 @@
       "type": "object",
       "properties": {
         "externalmods": {
-          "type": "object",
           "x-go-name": "Externalmods"
         },
         "externaluid": {
@@ -9344,6 +9686,10 @@
           "type": "boolean",
           "x-go-name": "Answered"
         },
+        "askedname": {
+          "type": "string",
+          "x-go-name": "Askedname"
+        },
         "expired": {
           "description": "Expired prompts still render (the conversation should not develop holes)\nbut stop offering their buttons.",
           "type": "boolean",
@@ -9368,6 +9714,12 @@
             "$ref": "#/definitions/PromptOption"
           },
           "x-go-name": "Options"
+        },
+        "userid": {
+          "description": "Userid and Askedname are set when the prompt was asked of one member in a\nchat between two, so the other member reads \"@name said\" rather than\n\"You said\" once it is answered.",
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "Userid"
         }
       },
       "x-go-package": "github.com/freegle/iznik-server-go/chat"
@@ -9526,57 +9878,13 @@
       },
       "x-go-package": "github.com/freegle/iznik-server-go/chat"
     },
-    "CheckItem": {
-      "type": "object",
-      "properties": {
-        "askedat": {
-          "type": "string",
-          "format": "date-time",
-          "x-go-name": "Askedat"
-        },
-        "checkedat": {
-          "type": "string",
-          "format": "date-time",
-          "x-go-name": "Checkedat"
-        },
-        "comments": {
-          "type": "string",
-          "x-go-name": "Comments"
-        },
-        "declined": {
-          "type": "boolean",
-          "x-go-name": "Declined"
-        },
-        "id": {
-          "type": "integer",
-          "format": "uint64",
-          "x-go-name": "ID"
-        },
-        "inactive": {
-          "type": "boolean",
-          "x-go-name": "Inactive"
-        },
-        "refreshed": {
-          "type": "boolean",
-          "x-go-name": "Refreshed"
-        },
-        "userid": {
-          "type": "integer",
-          "format": "uint64",
-          "x-go-name": "Userid"
-        }
-      },
-      "x-go-package": "github.com/freegle/iznik-server-go/noticeboard"
-    },
     "ClientLogRequest": {
       "type": "object",
       "title": "ClientLogRequest represents the request body for client logs.",
       "properties": {
         "logs": {
           "type": "array",
-          "items": {
-            "type": "object"
-          },
+          "items": {},
           "x-go-name": "Logs"
         }
       },
@@ -9889,7 +10197,6 @@
       "type": "object",
       "properties": {
         "externalmods": {
-          "type": "object",
           "x-go-name": "Externalmods"
         },
         "externaluid": {
@@ -10517,6 +10824,11 @@
           "format": "int64",
           "x-go-name": "Autoreposts"
         },
+        "autosplit": {
+          "description": "Autosplit is true when the item list was made by the auto-splitter from an\nordinary member's post, not by a clearance: the post gets the item list and\nnone of the clearance extras. docs/developers/reference/auto-split.md.",
+          "type": "boolean",
+          "x-go-name": "Autosplit"
+        },
         "availableinitially": {
           "type": "integer",
           "format": "uint64",
@@ -10564,7 +10876,6 @@
           "x-go-name": "ContentcheckCheckedAt"
         },
         "contentcheckreasons": {
-          "type": "object",
           "x-go-name": "ContentcheckReasons"
         },
         "date": {
@@ -10821,7 +11132,6 @@
           "x-go-name": "Bulkitemid"
         },
         "externalmods": {
-          "type": "object",
           "x-go-name": "Externalmods"
         },
         "externaluid": {
@@ -10983,7 +11293,6 @@
           "x-go-name": "Promisedat"
         },
         "terms": {
-          "type": "object",
           "x-go-name": "Terms"
         },
         "userid": {
@@ -11162,7 +11471,6 @@
       "type": "object",
       "properties": {
         "externalmods": {
-          "type": "object",
           "x-go-name": "Externalmods"
         },
         "externaluid": {
@@ -11400,90 +11708,6 @@
       },
       "x-go-package": "github.com/freegle/iznik-server-go/newsfeed"
     },
-    "NoticeboardItem": {
-      "type": "object",
-      "title": "NoticeboardItem is a flat V2 response. Client fetches user details separately via /user/:id.",
-      "properties": {
-        "active": {
-          "type": "boolean",
-          "x-go-name": "Active"
-        },
-        "added": {
-          "type": "string",
-          "format": "date-time",
-          "x-go-name": "Added"
-        },
-        "addedby": {
-          "type": "integer",
-          "format": "uint64",
-          "x-go-name": "Addedby"
-        },
-        "checks": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/CheckItem"
-          },
-          "x-go-name": "Checks"
-        },
-        "description": {
-          "type": "string",
-          "x-go-name": "Description"
-        },
-        "id": {
-          "type": "integer",
-          "format": "uint64",
-          "x-go-name": "ID"
-        },
-        "lastcheckedat": {
-          "type": "string",
-          "format": "date-time",
-          "x-go-name": "Lastcheckedat"
-        },
-        "lat": {
-          "type": "number",
-          "format": "double",
-          "x-go-name": "Lat"
-        },
-        "lng": {
-          "type": "number",
-          "format": "double",
-          "x-go-name": "Lng"
-        },
-        "name": {
-          "type": "string",
-          "x-go-name": "Name"
-        },
-        "photo": {
-          "$ref": "#/definitions/PhotoInfo"
-        }
-      },
-      "x-go-package": "github.com/freegle/iznik-server-go/noticeboard"
-    },
-    "NoticeboardListItem": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "integer",
-          "format": "uint64",
-          "x-go-name": "ID"
-        },
-        "lat": {
-          "type": "number",
-          "format": "double",
-          "x-go-name": "Lat"
-        },
-        "lng": {
-          "type": "number",
-          "format": "double",
-          "x-go-name": "Lng"
-        },
-        "name": {
-          "type": "string",
-          "x-go-name": "Name"
-        }
-      },
-      "x-go-package": "github.com/freegle/iznik-server-go/noticeboard"
-    },
     "Notification": {
       "type": "object",
       "properties": {
@@ -11620,25 +11844,6 @@
       },
       "x-go-package": "github.com/freegle/iznik-server-go/microvolunteering"
     },
-    "PhotoInfo": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "integer",
-          "format": "uint64",
-          "x-go-name": "ID"
-        },
-        "path": {
-          "type": "string",
-          "x-go-name": "Path"
-        },
-        "paththumb": {
-          "type": "string",
-          "x-go-name": "Paththumb"
-        }
-      },
-      "x-go-package": "github.com/freegle/iznik-server-go/noticeboard"
-    },
     "PostABTestRequest": {
       "type": "object",
       "properties": {
@@ -11671,7 +11876,7 @@
       "x-go-package": "github.com/freegle/iznik-server-go/abtest"
     },
     "PostRequest": {
-      "description": "The operation is determined by which fields are present:\nexternaluid present → create new attachment\nid + rotate present → rotate existing attachment",
+      "description": "The operation is determined by which fields are present:\n- externaluid present → create new attachment\n- id + rotate present → rotate existing attachment",
       "type": "object",
       "title": "PostRequest handles all POST /image operations.",
       "properties": {
@@ -11684,7 +11889,6 @@
           "x-go-name": "CommunityEvent"
         },
         "externalmods": {
-          "type": "object",
           "x-go-name": "ExternalMods"
         },
         "externaluid": {
@@ -11721,9 +11925,6 @@
           "type": "integer",
           "format": "uint64",
           "x-go-name": "Newsletter"
-        },
-        "noticeboard": {
-          "x-go-name": "Noticeboard"
         },
         "rotate": {
           "type": "integer",
@@ -12086,6 +12287,10 @@
           "format": "int64",
           "x-go-name": "Rarelyused"
         },
+        "replybody": {
+          "type": "string",
+          "x-go-name": "Replybody"
+        },
         "subjpref": {
           "type": "string",
           "x-go-name": "Subjpref"
@@ -12154,7 +12359,6 @@
       "type": "object",
       "properties": {
         "externalmods": {
-          "type": "object",
           "x-go-name": "Externalmods"
         },
         "externaluid": {
@@ -12336,6 +12540,10 @@
           },
           "x-go-name": "Donations"
         },
+        "donor": {
+          "type": "boolean",
+          "x-go-name": "Donor"
+        },
         "email": {
           "description": "Only returned for logged-in user.",
           "type": "string",
@@ -12472,6 +12680,14 @@
           "type": "boolean",
           "x-go-name": "Newslettersallowed"
         },
+        "nodonationasks": {
+          "type": "boolean",
+          "x-go-name": "NoDonationAsks"
+        },
+        "nodonationasksuntil": {
+          "type": "string",
+          "x-go-name": "NoDonationAsksUntil"
+        },
         "postingstatus": {
           "type": "string",
           "x-go-name": "Postingstatus"
@@ -12506,7 +12722,6 @@
           "x-go-name": "Reviewrequestedat"
         },
         "settings": {
-          "type": "object",
           "x-go-name": "Settings"
         },
         "showmod": {
@@ -12812,7 +13027,6 @@
       "type": "object",
       "properties": {
         "externalmods": {
-          "type": "object",
           "x-go-name": "Externalmods"
         },
         "externaluid": {
@@ -12842,6 +13056,85 @@
         }
       },
       "x-go-package": "github.com/freegle/iznik-server-go/user"
+    },
+    "UxPromptChallenge": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string",
+          "x-go-name": "Body"
+        },
+        "display": {
+          "description": "Display is, for a survey, the option keys to show and the order to show them in: at most\nsettings.show of them, picked so every option is shown about equally often. The client shows\nexactly these and returns them as shown. Absent for every other kind.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "x-go-name": "Display"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "ID"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UxPromptImage"
+          },
+          "x-go-name": "Images"
+        },
+        "kind": {
+          "type": "string",
+          "x-go-name": "Kind"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UxPromptOption"
+          },
+          "x-go-name": "Options"
+        },
+        "question": {
+          "type": "string",
+          "x-go-name": "Question"
+        },
+        "settings": {
+          "description": "Settings passes the prompt's presentation through: for a survey show, worst_label (the second\nquestion of the area survey) and none_label; randomise (show the options in a random order);\nfor an open question preset and placeholder; for an awareness question reveal and link. The\nkeys in uxServerOnlySettings are removed first. Always an object.",
+          "type": "object",
+          "additionalProperties": {},
+          "x-go-name": "Settings"
+        }
+      },
+      "x-go-package": "github.com/freegle/iznik-server-go/microvolunteering"
+    },
+    "UxPromptImage": {
+      "type": "object",
+      "properties": {
+        "caption": {
+          "type": "string",
+          "x-go-name": "Caption"
+        },
+        "url": {
+          "type": "string",
+          "x-go-name": "URL"
+        }
+      },
+      "x-go-package": "github.com/freegle/iznik-server-go/microvolunteering"
+    },
+    "UxPromptOption": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "x-go-name": "Key"
+        },
+        "label": {
+          "type": "string",
+          "x-go-name": "Label"
+        }
+      },
+      "x-go-package": "github.com/freegle/iznik-server-go/microvolunteering"
     },
     "VisualiseResult": {
       "type": "object",
@@ -13060,7 +13353,6 @@
       "type": "object",
       "properties": {
         "externalmods": {
-          "type": "object",
           "x-go-name": "Externalmods"
         },
         "externaluid": {
@@ -13096,13 +13388,13 @@
       }
     },
     "addressResponse": {
-      "description": "",
+      "description": "Get address by ID\n\nReturns a single address by ID",
       "schema": {
         "$ref": "#/definitions/Address"
       }
     },
     "addressesResponse": {
-      "description": "",
+      "description": "List addresses for user\n\nReturns all addresses for the authenticated user",
       "schema": {
         "type": "array",
         "items": {
@@ -13111,13 +13403,13 @@
       }
     },
     "adminResponse": {
-      "description": "",
+      "description": "Get admin by ID\n\nReturns a single admin record by ID",
       "schema": {
         "$ref": "#/definitions/Admin"
       }
     },
     "adminsResponse": {
-      "description": "",
+      "description": "List admins\n\nReturns admin records for groups moderated by the authenticated user",
       "schema": {
         "type": "array",
         "items": {
@@ -13160,13 +13452,13 @@
       }
     },
     "alertResponse": {
-      "description": "",
+      "description": "Get alert by ID\n\nReturns a single alert by ID (public access)",
       "schema": {
         "$ref": "#/definitions/Alert"
       }
     },
     "alertsResponse": {
-      "description": "",
+      "description": "List all alerts\n\nReturns all alerts (Admin/Support only)",
       "schema": {
         "type": "array",
         "items": {
@@ -13175,25 +13467,25 @@
       }
     },
     "ampChatResponse": {
-      "description": "",
+      "description": "Get chat messages for AMP email\n\nReturns the last 5 chat messages for the earlier conversation section in AMP emails",
       "schema": {
         "$ref": "#/definitions/AMPChatResponse"
       }
     },
     "ampReplyResponse": {
-      "description": "",
+      "description": "Post reply from AMP email\n\nSubmits an inline reply from AMP email using a one-time write token",
       "schema": {
         "$ref": "#/definitions/ReplyResponse"
       }
     },
     "authorityResponse": {
-      "description": "",
+      "description": "Get authority by ID\n\nReturns a single authority by ID with polygon, centre, and overlapping groups",
       "schema": {
         "$ref": "#/definitions/Authority"
       }
     },
     "authoritySearchResponse": {
-      "description": "",
+      "description": "Search authorities\n\nSearches authorities by name",
       "schema": {
         "type": "array",
         "items": {
@@ -13202,7 +13494,7 @@
       }
     },
     "changesResponse": {
-      "description": "",
+      "description": "Get changes since timestamp\n\nReturns message changes (deleted, edited, promised, reneged, outcomes, approved/reposted),\nuser changes and ratings since a given time. Requires partner key authentication.\n\nEach user change carries a type: Modified means the profile has changed and should be\nre-read; Deleted means the user has been forgotten or purged and their copy should be\nremoved, for which the id is all that is supplied.",
       "schema": {
         "$ref": "#/definitions/ChangesResponse"
       }
@@ -13221,7 +13513,7 @@
       }
     },
     "chatMessagesResponse": {
-      "description": "",
+      "description": "Get chat messages\n\nReturns all messages for a specific chat room",
       "schema": {
         "type": "array",
         "items": {
@@ -13230,7 +13522,7 @@
       }
     },
     "chatResponse": {
-      "description": "",
+      "description": "Get chat by ID\n\nReturns a single chat by ID",
       "schema": {
         "$ref": "#/definitions/ChatRoom"
       }
@@ -13258,7 +13550,7 @@
       }
     },
     "chatRoomsMTResponse": {
-      "description": "",
+      "description": "List chat rooms for moderator\n\nReturns chat rooms wrapped in {chatrooms: [...]} for ModTools compatibility",
       "schema": {
         "type": "object",
         "properties": {
@@ -13273,7 +13565,7 @@
       }
     },
     "chatsResponse": {
-      "description": "",
+      "description": "List chats for user\n\nReturns all chats for the authenticated user",
       "schema": {
         "type": "array",
         "items": {
@@ -13282,7 +13574,7 @@
       }
     },
     "commentsResponse": {
-      "description": "",
+      "description": "List or get comments\n\nReturns comments for moderated groups with pagination. Pass id for a single comment.",
       "schema": {
         "type": "array",
         "items": {
@@ -13291,13 +13583,13 @@
       }
     },
     "communityEventResponse": {
-      "description": "",
+      "description": "Get community event by ID\n\nReturns a single community event by ID",
       "schema": {
         "$ref": "#/definitions/CommunityEvent"
       }
     },
     "communityEventsResponse": {
-      "description": "",
+      "description": "List community events\n\nReturns all community events",
       "schema": {
         "type": "array",
         "items": {
@@ -13306,7 +13598,7 @@
       }
     },
     "configResponse": {
-      "description": "",
+      "description": "Get configuration\n\nReturns configuration by key",
       "schema": {
         "$ref": "#/definitions/ConfigItem"
       }
@@ -13327,13 +13619,13 @@
       }
     },
     "giftAidResponse": {
-      "description": "",
+      "description": "Get Gift Aid declaration\n\nReturns user's Gift Aid declaration. With all=true returns admin review list.",
       "schema": {
         "$ref": "#/definitions/GiftAid"
       }
     },
     "housekeeperTasksResponse": {
-      "description": "",
+      "description": "The one swagger:response of the 65 here that carried no type. The annotation\nhas to sit above a declaration; on its own it declares nothing, so the $ref\nfrom /housekeeper/tasks never resolved and the whole spec failed validation.\nhousekeeper.ListTasks returns a bare array of tasks, so that is what this says.",
       "schema": {
         "type": "array",
         "items": {
@@ -13342,19 +13634,19 @@
       }
     },
     "illustrationResponse": {
-      "description": "",
+      "description": "Get AI illustration for item\n\nReturns a cached AI-generated illustration for an item name. Returns ret=3 if not cached.",
       "schema": {
         "$ref": "#/definitions/IllustrationResult"
       }
     },
     "jobResponse": {
-      "description": "",
+      "description": "Get job by ID\n\nReturns a single job by ID",
       "schema": {
         "$ref": "#/definitions/Job"
       }
     },
     "jobsResponse": {
-      "description": "",
+      "description": "List jobs\n\nReturns all jobs",
       "schema": {
         "type": "array",
         "items": {
@@ -13363,19 +13655,19 @@
       }
     },
     "latestMessageResponse": {
-      "description": "",
+      "description": "Get latest message timestamp\n\nReturns the timestamp of the latest message",
       "schema": {
         "$ref": "#/definitions/LatestMessageResult"
       }
     },
     "locationResponse": {
-      "description": "",
+      "description": "Get location by latitude/longitude\n\nReturns location info for given coordinates",
       "schema": {
         "$ref": "#/definitions/Location"
       }
     },
     "locationsResponse": {
-      "description": "",
+      "description": "Location typeahead search\n\nReturns location suggestions for typeahead",
       "schema": {
         "type": "array",
         "items": {
@@ -13384,7 +13676,7 @@
       }
     },
     "messagesResponse": {
-      "description": "",
+      "description": "Get messages by ID\n\nReturns messages by ID (comma separated)",
       "schema": {
         "type": "array",
         "items": {
@@ -13393,25 +13685,25 @@
       }
     },
     "microvolunteeringResponse": {
-      "description": "",
+      "description": "Get microvolunteering challenge\n\nReturns a microvolunteering challenge for the authenticated user",
       "schema": {
         "$ref": "#/definitions/Challenge"
       }
     },
     "modConfigResponse": {
-      "description": "",
+      "description": "Get moderation config\n\nReturns moderation configuration",
       "schema": {
         "$ref": "#/definitions/ModConfig"
       }
     },
     "newsfeedItemResponse": {
-      "description": "",
+      "description": "Get newsfeed item by ID\n\nReturns a single newsfeed item by ID",
       "schema": {
         "$ref": "#/definitions/Newsfeed"
       }
     },
     "newsfeedResponse": {
-      "description": "",
+      "description": "Get newsfeed\n\nReturns newsfeed items",
       "schema": {
         "type": "array",
         "items": {
@@ -13422,23 +13714,8 @@
     "noContentResponse": {
       "description": "noContentResponse is the response for 204 No Content"
     },
-    "noticeboardItemResponse": {
-      "description": "",
-      "schema": {
-        "$ref": "#/definitions/NoticeboardItem"
-      }
-    },
-    "noticeboardsResponse": {
-      "description": "",
-      "schema": {
-        "type": "array",
-        "items": {
-          "$ref": "#/definitions/NoticeboardListItem"
-        }
-      }
-    },
     "notificationsResponse": {
-      "description": "",
+      "description": "List notifications\n\nReturns all notifications for the authenticated user",
       "schema": {
         "type": "array",
         "items": {
@@ -13447,13 +13724,13 @@
       }
     },
     "onlineResponse": {
-      "description": "",
+      "description": "Check online status\n\nReturns online status information",
       "schema": {
         "$ref": "#/definitions/OnlineResult"
       }
     },
     "shortlinksResponse": {
-      "description": "",
+      "description": "Get shortlinks\n\nReturns a single shortlink by ID or lists all shortlinks",
       "schema": {
         "type": "array",
         "items": {
@@ -13462,13 +13739,13 @@
       }
     },
     "stdMsgResponse": {
-      "description": "",
+      "description": "Get standard messages\n\nReturns standard messages for moderation",
       "schema": {
         "$ref": "#/definitions/StdMsg"
       }
     },
     "storiesResponse": {
-      "description": "",
+      "description": "List stories\n\nReturns all stories",
       "schema": {
         "type": "array",
         "items": {
@@ -13477,7 +13754,7 @@
       }
     },
     "storyResponse": {
-      "description": "",
+      "description": "Get story by ID\n\nReturns a single story by ID",
       "schema": {
         "$ref": "#/definitions/Story"
       }
@@ -13495,43 +13772,43 @@
       }
     },
     "systemLogCountsResponse": {
-      "description": "",
+      "description": "Get log counts by subtype\n\nReturns counts of logs grouped by subtype using Loki metric queries (moderator only)",
       "schema": {
         "$ref": "#/definitions/CountsResponse"
       }
     },
     "systemLogsResponse": {
-      "description": "",
+      "description": "Get system logs\n\nReturns system logs (moderator only)",
       "schema": {
         "$ref": "#/definitions/LogsResponse"
       }
     },
     "teamResponse": {
-      "description": "",
+      "description": "Get team\n\nReturns team information",
       "schema": {
         "$ref": "#/definitions/Team"
       }
     },
     "trystResponse": {
-      "description": "",
+      "description": "Get trysts\n\nReturns handover arrangements for the authenticated user",
       "schema": {
         "$ref": "#/definitions/Tryst"
       }
     },
     "userResponse": {
-      "description": "",
+      "description": "Get user by ID\n\nReturns a single user by ID, or the current user if no ID",
       "schema": {
         "$ref": "#/definitions/User"
       }
     },
     "visualiseResponse": {
-      "description": "",
+      "description": "Get visualisation data\n\nReturns items given/taken with locations and user icons for homepage map",
       "schema": {
         "$ref": "#/definitions/VisualiseResult"
       }
     },
     "volunteeringListResponse": {
-      "description": "",
+      "description": "List volunteering opportunities\n\nReturns all volunteering opportunities",
       "schema": {
         "type": "array",
         "items": {
@@ -13540,7 +13817,7 @@
       }
     },
     "volunteeringResponse": {
-      "description": "",
+      "description": "Get volunteering opportunity by ID\n\nReturns a single volunteering opportunity by ID",
       "schema": {
         "$ref": "#/definitions/Volunteering"
       }
@@ -13555,9 +13832,7 @@
   },
   "security": [
     {
-      "BearerAuth": [
-        "[]"
-      ]
+      "BearerAuth": []
     }
   ]
 }

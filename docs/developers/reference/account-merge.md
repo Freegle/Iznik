@@ -1,8 +1,9 @@
 ---
-last_reviewed: 2026-10-18
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
+  - iznik-server-go/sso/relink.go
   - iznik-server-go/test/user_merge_test.go
   - iznik-batch/app/Services/ChatMergedRoomRepairService.php
   - iznik-batch/app/Console/Commands/Chat/RepairMergedRoomsCommand.php
@@ -31,13 +32,13 @@ Everything runs in one transaction. In order:
 
 1. **Emails.** The kept account's preferred address stays preferred. The discarded account's
    addresses move across with their preferred flag cleared.
-2. **Memberships.** Where only one account is a member, the membership moves. Where both are,
-   the kept account takes the higher role and the older join date.
-3. **Posts, post history and membership history** move.
+2. **Memberships.** There are none: communities are gone, so the surviving account keeps its own
+   site-wide settings.
+3. **Posts and post history** move.
 4. **Existing log rows** about or by the discarded account are re-pointed at the kept one.
 5. **Chat rooms.** `mergeChatRooms` in `iznik-server-go/user/merge.go`. A room between the two
    accounts is deleted, because it would be a chat with oneself. Where both accounts have a room
-   with the same other person, or the same community's moderators, the two rooms are folded into
+   with the same other person, or the moderators, the two rooms are folded into
    one: messages, references to the room, roster rows and the latest-message time move, then the
    spare room is deleted. The rest are handed to the kept account. Roster rows follow.
 6. **Sessions and logins** move, so the member stays signed in.
@@ -45,9 +46,13 @@ Everything runs in one transaction. In order:
    from the discarded one. The higher system role and the older join date win.
 8. **About forty other tables** that reference a user: addresses, donations, images, stories,
    ratings, notifications, volunteering, events and so on. The list is in `MergeUsersTx`; the
-   V1 comment there says how it was found.
-9. **Bans** move, and the kept account is removed from any community it is now banned from.
-10. **Gift Aid.** The most generous declaration is kept.
+   V1 comment there says how it was found. One of them, `ux_experiment_exposures` (which experiment
+   arm a send used), is analytics, so it is moved only if the table exists: a merge must not depend
+   on it, and a row that clashes with one the kept account already has stays where it is.
+9. **Bans** move. A ban is one site-wide column on the user: if only the discarded account was
+   banned, the kept account inherits the ban.
+10. **Gift Aid.** The most generous declaration is kept. Every row in `giftaid_asks` (each time
+    the donor was asked and did not answer) moves to the kept account.
 11. **Two log rows** are written, type `User`, subtype `Merged`, text `Merged <discarded> into
     <kept>`, one against each account, with `byuser` set to whoever started the merge.
 
@@ -81,9 +86,6 @@ when you add a table to one, add it to the other. Compared on 2026-10-15, column
   address instead. The Go behaviour is deliberate: the kept account is the one the member, or
   the moderator, chose, and its address should not be displaced by a flag inherited from the
   other account.
-- **Membership settings** when both accounts are in the same community. PHP overwrites the kept
-  membership's `configid`, `settings` and `heldby` with the discarded one's. Go keeps the kept
-  membership's values and only fills blanks, for the same reason.
 - **Chat rooms.** PHP has the logic Go had before October 2026: a room between the two accounts
   is left as a chat with oneself, messages that refer to a folded room are not updated, and the
   other person's roster row is lost when rooms are folded.
@@ -94,6 +96,30 @@ when you add a table to one, add it to the other. Compared on 2026-10-15, column
 Everything else is the same: one transaction, deletion of the discarded account after commit,
 highest role and oldest join date, system role, join date, TrashNothing id, bans, the best Gift
 Aid declaration, the two log rows.
+
+## A moderator's Discourse account
+
+Discourse knows a moderator by their Freegle user id. A merge keeps one of the two accounts, and
+if the one that goes is the one Discourse was linked to, Discourse no longer knows the moderator.
+Their email and name stop updating, and their next sign-in would make them a new, empty Discourse
+account. This is not rare: the email-verify merge keeps the account the member is logged in as,
+which is often the new one.
+
+`sso.RelinkMerged` repairs it. It finds the Discourse account linked to an account merged into
+the kept one, using the merge log rows, which travel with the kept account. Then it links that
+Discourse account to the kept id with a `sync_sso` carrying the email Discourse already has, so
+Discourse matches it by email. A second `sync_sso` brings the email, name and avatar up to date.
+The moderator does not need to sign out of ModTools or Discourse.
+
+It runs in three places:
+
+- **After every merge** whose kept account is a moderator, in the background (`MergeUsersTx`).
+- **When a moderator signs in to Discourse**, before the sign-in is answered (`DiscourseSSO`), so a
+  merge from before this existed is repaired the next time they use Discourse.
+- **On request**, `POST /api/discourse/relink` with `{"userid": <kept id>}`, for Support and Admin.
+
+All three need `DISCOURSE_API`, `DISCOURSE_APIKEY` and `DISCOURSE_SECRET` in the Go API, and do
+nothing without them.
 
 ## Finding a merge afterwards
 

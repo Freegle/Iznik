@@ -9,8 +9,13 @@
  * State lives at module level, one instance per flow, so a flow that spans several pages (or a
  * store) shares one instance id.
  */
-import { action, flush } from '~/composables/useClientLog'
-import { experimentVariant } from '~/composables/useExperiment'
+import { action, flush, isSignedIn } from '~/composables/useClientLog'
+import {
+  experimentVariant,
+  useExperiment,
+  noteExposure,
+  armInVariant,
+} from '~/composables/useExperiment'
 
 export const FlowName = {
   GIVE: 'give',
@@ -102,6 +107,15 @@ function liveOrRevive(flow) {
   return idle
 }
 
+// Telemetry must never throw into a flow, whatever state the auth store is in.
+function signedInNow() {
+  try {
+    return !!isSignedIn()
+  } catch {
+    return false
+  }
+}
+
 function emit(inst, event, extra = {}) {
   // Only the browser has members; module state on the server would be shared between requests.
   if (typeof window === 'undefined') return
@@ -115,6 +129,11 @@ function emit(inst, event, extra = {}) {
     step: inst.step,
     step_seq: inst.stepSeq,
     variant: inst.variant,
+    // Frozen at flow_start and sent on every event, so the batch can read a flow by who was
+    // signed in when it BEGAN (signing in is often part of the flow) and count only flows that
+    // began early enough to have finished, whenever their events arrive.
+    start_logged_in: inst.startLoggedIn,
+    started_ms: inst.startedAt,
     ...extra,
   })
 }
@@ -170,6 +189,23 @@ function end(inst, reason) {
 export function getLiveFlowInstanceId() {
   const all = [...instances.values()]
   return all.length ? all.at(-1).id : null
+}
+
+/**
+ * The member's arm of an experiment for variant UI inside a flow. While an instance of the flow is
+ * live (or only idle-ended and still resumable) this is the arm frozen into it at flow_start, the
+ * same one every event of the instance is stamped with, so a step shown differently to the member
+ * is always counted in the arm that was shown. Signing in, a config refresh or the hourly bandit
+ * cannot change it halfway. With no instance it is the member's arm now (useExperiment).
+ *
+ * Reading it counts as an exposure, once per page view.
+ */
+export function flowArm(flowName, name) {
+  const inst = live(flowName) || dormant.get(flowName) || null
+  if (!inst) return useExperiment(name)
+  const arm = armInVariant(inst.variant, name)
+  noteExposure(name, arm)
+  return arm
 }
 
 /**
@@ -236,6 +272,7 @@ export function useFlowTelemetry(flowName) {
         id: uuid(),
         // Frozen now: logging in at the end of give/ask changes who the experiment sees.
         variant: experimentVariant(),
+        startLoggedIn: signedInNow(),
         flow: flowName,
         startedAt: now,
         step: null,

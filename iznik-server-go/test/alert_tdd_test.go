@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,7 +20,7 @@ func TestAlert_GetAlert_NotFound(t *testing.T) {
 
 func TestAlert_GetAlert_PublicAccess(t *testing.T) {
 	prefix := uniquePrefix("alert_public")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	db := database.DBConn
 
 	db.Exec("INSERT INTO alerts (createdby, subject, text, html, `from`, `to`, created) VALUES (?, ?, ?, ?, ?, 'Users', NOW())",
@@ -56,7 +57,7 @@ func TestAlert_ListAlerts_Unauthorized(t *testing.T) {
 
 func TestAlert_ListAlerts_Forbidden(t *testing.T) {
 	prefix := uniquePrefix("alert_regular_user")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/alert?jwt=%s", token), nil))
@@ -65,7 +66,7 @@ func TestAlert_ListAlerts_Forbidden(t *testing.T) {
 
 func TestAlert_ListAlerts_AdminAccess(t *testing.T) {
 	prefix := uniquePrefix("alert_admin_list")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -97,7 +98,7 @@ func TestAlert_CreateAlert_Unauthorized(t *testing.T) {
 
 func TestAlert_CreateAlert_Forbidden(t *testing.T) {
 	prefix := uniquePrefix("alert_regular_create")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"from":"admin@example.com","subject":"Test","text":"Body","html":"<p>Body</p>"}`
@@ -110,7 +111,7 @@ func TestAlert_CreateAlert_Forbidden(t *testing.T) {
 
 func TestAlert_CreateAlert_Success(t *testing.T) {
 	prefix := uniquePrefix("alert_create_success")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	body := fmt.Sprintf(`{"from":"admin@example.com","subject":"Test Alert %s","text":"Test body","html":"<p>Test body</p>"}`, prefix)
@@ -129,7 +130,7 @@ func TestAlert_CreateAlert_Success(t *testing.T) {
 
 func TestAlert_CreateAlert_DefaultTo(t *testing.T) {
 	prefix := uniquePrefix("alert_default_to")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	body := fmt.Sprintf(`{"from":"admin@example.com","subject":"Test %s","text":"Body"}`, prefix)
@@ -154,7 +155,7 @@ func TestAlert_CreateAlert_DefaultTo(t *testing.T) {
 
 func TestAlert_CreateAlert_DefaultHTML(t *testing.T) {
 	prefix := uniquePrefix("alert_default_html")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	body := fmt.Sprintf(`{"from":"admin@example.com","subject":"Test %s","text":"Line 1\nLine 2\nLine 3"}`, prefix)

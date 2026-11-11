@@ -94,6 +94,48 @@ give, ask or reply. It was declined on 2026-10-12 and will never be built. The t
 where members struggle; it does not interrupt them to ask. Do not add a prompt, survey or
 `ux_feedback` table to the flows for this.
 
+## An experiment counts a member once, on their first exposure
+
+When an experiment is decided on the server and counted from `ux_experiment_exposures`, each member is one
+count, on the first exposure of a type the source counts. The age test runs after that first one is
+chosen: a first exposure that is not yet old enough is not counted and is not replaced by a later one. Do
+not "fix" a low count by counting every exposure (a member mailed twice would count twice) or by taking
+the latest (a member's count would depend on when you looked). A web view writes no row, so
+mail-and-site experiments are measured from the first server exposure.
+
+## No experiment code in the app build
+
+An app release takes days to weeks, so a switch shipped in the app cannot be turned on or off quickly.
+Behaviour in the app that the server decides is fine: a push title, a push's timing or an email chosen on
+the server per member can be an experiment. `push-posts-title` was stopped on 2026-10-19 because the rule
+was misread as "no experiments that reach app members"; that was wrong. The rule is about where the
+switch lives, not who sees the result.
+
+## Every shipped dependency has an AGPL-compatible licence
+
+Freegle's code is AGPL-3.0-or-later (`NOTICE`). A package we ship must carry a licence
+that can be combined with that: permissive licences, MPL-2.0, LGPL, GPL-2.0-or-later and
+GPL-3.0 are fine; GPL-2.0-only, the Eclipse Public License and source-available licences
+(Elastic, BUSL, SSPL, FSL, Commons Clause) are not. `scripts/dependency-licences.json`
+holds the allowlist and the named exceptions, each with a reason. The CI job
+`check-licences` fails a branch that adds anything else, and the commit hook refuses it.
+
+`add-to-calendar-button` (Elastic License) is kept deliberately: it is tuned for the app,
+the web and different handsets, and `NOTICE` grants an AGPL section 7 permission for it. Do
+not replace it with a hand-built button to tidy the licence.
+
+## Bulk items do not make a clearance
+
+A post with `messages_bulk_items` rows is either a clearance or an ordinary member's post that the
+auto-splitter turned into an item list (a `messages_autosplit` row in state `Split`). Only a
+clearance gets the clearance extras: left out of freebie alerts, partner feeds and LoveJunk,
+"Register interest" instead of a reply, the Clearances card in My Posts, per-person counts when
+marked taken. For those, ask `ClearanceSql` (batch), `utils.IsClearanceSQL` (Go) or
+`isClearance` (frontend), never "has bulk items". Keep asking about bulk items where the point is
+the item list itself: display, per-item photos, the digest's count and the per-item stats. A check
+written the old way gives a split post the clearance behaviour, with no error, and only once the
+splitter is switched on. See `docs/developers/reference/auto-split.md`.
+
 ## See also
 
 - `docs/developers/reference/coding-standards.md` - the rest of the coding rules.

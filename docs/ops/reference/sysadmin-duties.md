@@ -102,8 +102,10 @@ real and fast monitoring channel.
 - Mail deferrals building up for one provider. The adaptive shaper reacts on its own,
   but nobody is notified that it did.
 - A warning-level outcome breach. Error-level ones raise a Sentry alert; warning-level
-  ones only colour the ModTools status dot amber, deliberately, so a machine that has
-  needed a reboot for a fortnight does not page somebody every ten minutes.
+  ones only colour the ModTools status dot amber, deliberately, so a monit service that
+  has been parked for a fortnight does not page somebody every ten minutes. Pending
+  patches and reboots are not on the dot at all: they are the `host-patch` rows on the
+  SysAdmin Cron Jobs tab, red only once they pass the host's limit.
 - A monit configuration that fails to load.
 - Certificates approaching expiry.
 - A single Galera node leaving the cluster.

@@ -93,6 +93,7 @@ vi.mock('~/composables/useMe', () => ({
     me: mockMe,
     myid: computed(() => mockMe.value?.id ?? null),
     myGroups: ref([]),
+    askForDonations: computed(() => !mockMe.value?.settings?.nodonationasks),
   }),
 }))
 
@@ -314,6 +315,23 @@ describe('myposts.vue loadMore', () => {
 
     expect(wrapper.find('.donation-ask-stub').exists()).toBe(true)
 
+    window.history.replaceState({}, '')
+  })
+
+  it('does not show the donation ask to someone who asked not to be asked', async () => {
+    window.history.replaceState({ type: 'Offer', ids: [8] }, '')
+    mockMessageStore.list = {
+      8: { id: 8, subject: 'table', lat: 55.9533, lng: -3.1883 },
+    }
+    mockMe.value = { ...mockMe.value, settings: { nodonationasks: true } }
+
+    const wrapper = mountComponent()
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('.donation-ask-stub').exists()).toBe(false)
+
+    mockMe.value = { ...mockMe.value, settings: {} }
     window.history.replaceState({}, '')
   })
 

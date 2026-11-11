@@ -59,9 +59,9 @@ func newsfeedAction(t *testing.T, token string, body map[string]interface{}) *ht
 
 func TestLockdownRefusesNewsfeedHide(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_hide")
-	userID := CreateTestUser(t, prefix+"_poster", "User")
+	userID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test hide "+prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	makeChitChatMod(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -79,9 +79,9 @@ func TestLockdownRefusesNewsfeedHide(t *testing.T) {
 
 func TestLockdownRefusesNewsfeedConvertedToPost(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_convpost")
-	userID := CreateTestUser(t, prefix+"_poster", "User")
+	userID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test convert "+prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	makeChitChatMod(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -100,7 +100,7 @@ func TestLockdownRefusesNewsfeedReferToActions(t *testing.T) {
 	for _, action := range []string{"ReferToWanted", "ReferToOffer", "ReferToTaken", "ReferToReceived"} {
 		t.Run(action, func(t *testing.T) {
 			prefix := uniquePrefix("ld_nf_" + action)
-			userID := CreateTestUser(t, prefix+"_poster", "User")
+			userID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 			nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test refer "+prefix)
 			_, token := CreateTestSession(t, userID)
 
@@ -132,7 +132,7 @@ func TestLockdownRefusesNewsfeedAttachToThread(t *testing.T) {
 
 func TestLockdownRefusesNewsfeedConvertToStory(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_story")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	nfID := CreateTestNewsfeed(t, posterID, 52.2, -0.1, "Test story "+prefix)

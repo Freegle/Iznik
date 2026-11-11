@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Services\CPIService;
+use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
@@ -273,5 +274,34 @@ class CPIServiceTest extends TestCase
         $currentYear = (int) date('Y');
         $latestYear = max(array_keys($result['data']));
         $this->assertGreaterThanOrEqual($currentYear - 2, $latestYear);
+    }
+
+    public function test_fetch_keeps_years_from_2003_for_the_fly_tipping_costs(): void
+    {
+        $response = $this->getSampleONSResponse();
+        array_unshift(
+            $response['years'],
+            ['year' => '2002', 'value' => '74.5'],
+            ['year' => '2003', 'value' => '75.5'],
+            ['year' => '2006', 'value' => '79.9'],
+        );
+        Http::fake([
+            CPIService::ONS_API_URL => Http::response($response, 200),
+        ]);
+
+        $result = $this->service->fetchAndStoreCPI();
+
+        $this->assertTrue($result['success']);
+        $this->assertEquals(75.5, $result['data'][2003]);
+        $this->assertEquals(79.9, $result['data'][2006]);
+        $this->assertArrayNotHasKey(2002, $result['data']);
+        $this->assertSame(2003, min(array_keys($result['data'])));
+    }
+
+    public function test_fallback_is_the_reuse_benefit_table(): void
+    {
+        $this->assertSame(ReuseBenefit::FALLBACK_CPI_DATA, CPIService::FALLBACK_CPI_DATA);
+        $this->assertEquals(75.5, CPIService::FALLBACK_CPI_DATA[2003]);
+        $this->assertEquals(138.4, CPIService::FALLBACK_CPI_DATA[2025]);
     }
 }

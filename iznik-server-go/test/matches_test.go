@@ -78,7 +78,7 @@ func TestMatchesNoLocation(t *testing.T) {
 
 func TestMatchesExcludesOwnPosts(t *testing.T) {
 	prefix := uniquePrefix("matchesown")
-	poster := CreateTestUser(t, prefix, "Member")
+	poster := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 	token := getToken(t, poster)
 
 	queryVec := makeTestVec(0.5)
@@ -111,7 +111,7 @@ func TestMatchesReachFilter(t *testing.T) {
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("matchesreach")
-	posterOut := CreateTestUser(t, prefix+"po", "Member")
+	posterOut := CreateTestUser(t, prefix+"po", "Member") // role-literal-ok: not a system role, see #2023
 	// Out-of-reach candidate needs a real message (rippling_reach FK to messages).
 	outID := CreateTestMessage(t, posterOut, "out of reach sofa", 51.5, -0.1)
 

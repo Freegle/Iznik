@@ -41,7 +41,10 @@
       </ul>
     </div>
     <ModYesterday
-      v-if="me.systemrole === 'Admin' || me.systemrole === 'Support'"
+      v-if="
+        me.systemrole === SYSTEMROLE_ADMIN ||
+        me.systemrole === SYSTEMROLE_SUPPORT
+      "
     />
     <!-- eslint-disable-next-line -->
     <p>Need any help moderating? Mail <ExternalLink href="mailto:mentors@ilovefreegle.org">mentors@ilovefreegle.org</ExternalLink>
@@ -353,6 +356,7 @@ import { useCommunityEventStore } from '~/stores/communityevent'
 import { useVolunteeringStore } from '~/stores/volunteering'
 import { useSpammerStore } from '~/modtools/stores/spammer'
 import api from '~/api'
+import { SYSTEMROLE_ADMIN, SYSTEMROLE_SUPPORT } from '~/constants'
 
 // Self-moderating rework: this page used to be a per-community dashboard
 // (groupid picker, date range, ActivityGraph, ModDashboard* stats

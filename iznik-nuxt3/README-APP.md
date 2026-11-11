@@ -143,6 +143,17 @@ Custom implementation using Freegle's fork:
   `settings.notifications.dailypostspush` (app-only toggle in Settings). Tapping opens `/browse`.
   Server side is `push:daily-posts` in iznik-batch, gated by `FREEGLE_POSTS_PUSH_ALLOWLIST`.
 
+#### A tap that started the app is not replayed
+
+Chat pushes carry a `notification` block (`forceVisible` in `PushNotificationService`), so
+Firebase shows them and a tap starts `MainActivity` with the message data as extras. Android
+keeps that intent with the task. Reopened from Recents after Android has killed the app, it
+hands that intent back marked `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`, and the push plugin read
+it as a new tap: a member's app opened on the same chat every time for days.
+`MainActivity.onCreate` swaps such an intent for a plain launcher one, unless it carries a
+`google.message_id` not yet delivered (ids are kept in SharedPreferences): after a kill a genuine
+new tap can carry the history flag too, and must get through. A new tap is unaffected. `tests/e2e/app/notifications.spec.js` covers Recents, the launcher and a new tap.
+
 #### Android backup and FCM tokens
 
 Android auto-backup must NOT restore Firebase's installation prefs: a restored
@@ -239,6 +250,11 @@ Mobile-specific Stripe implementation:
    - Check for available updates
    - Version comparison logic
    - Update prompts
+   - Server kill switch: when `GET /session` returns `ret:123` (build older
+     than `app_min_webversion`), `SomethingWentWrong.vue` covers the screen
+     with an "Update required" prompt whose "Update now" button opens the
+     app store. The login modal never opens while this is showing, because
+     signing in again cannot fix an out-of-date build.
 
 8. **Rate App**
    - Native rating prompts

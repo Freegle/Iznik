@@ -17,7 +17,7 @@ import (
 // replacing the old draft→image→JoinAndPost dance.
 func TestSubmitMessageSingleCall(t *testing.T) {
 	prefix := uniquePrefix("submit_single")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -84,7 +84,7 @@ func TestSubmitMessageSingleCall(t *testing.T) {
 // duplicate, so the message ends up with exactly one attachment for that uid.
 func TestSubmitMessageLinksExistingAttachment(t *testing.T) {
 	prefix := uniquePrefix("submit_link")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -130,7 +130,7 @@ func TestSubmitMessageLinksExistingAttachment(t *testing.T) {
 // messages_spatial so it shows on the public map immediately.
 func TestSubmitMessageApprovedForUnmoderatedMember(t *testing.T) {
 	prefix := uniquePrefix("submit_approved")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -172,7 +172,7 @@ func TestSubmitMessageApprovedForUnmoderatedMember(t *testing.T) {
 // MODERATED stays Pending.
 func TestSubmitMessageModeratedMemberStaysPending(t *testing.T) {
 	prefix := uniquePrefix("submit_modmember")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -217,7 +217,7 @@ func submitCollection(t *testing.T, token string, item string) (int, string) {
 // TestSubmitMessageNewMemberStaysPending: a member with no posting status yet is Pending.
 func TestSubmitMessageNewMemberStaysPending(t *testing.T) {
 	prefix := uniquePrefix("submit_newmember")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	database.DBConn.Exec("UPDATE users SET postingstatus = NULL WHERE id = ?", userID)
 
@@ -282,7 +282,7 @@ func TestSubmitMessageLockdownPostsHoldForcesPending(t *testing.T) {
 // submit records messages_ai_declined so the illustrations cron won't re-inject one.
 func TestSubmitMessageAiDeclined(t *testing.T) {
 	prefix := uniquePrefix("submit_aidecl")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -307,7 +307,7 @@ func TestSubmitMessageAiDeclined(t *testing.T) {
 // TestSubmitMessageValidation covers the input guards.
 func TestSubmitMessageValidation(t *testing.T) {
 	prefix := uniquePrefix("submit_valid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	cases := []struct {
@@ -382,7 +382,7 @@ func TestSubmitMessageExistingEmailLoggedOutRejected(t *testing.T) {
 // from browse/search-by-item (the Discourse 9832 "mixed up offers" class of bug).
 func TestSubmitMessageLinksNewItem(t *testing.T) {
 	prefix := uniquePrefix("submit_item")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	itemName := "Freshitem " + prefix // unique, does not pre-exist in items

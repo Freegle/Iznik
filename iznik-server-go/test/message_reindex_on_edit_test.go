@@ -7,9 +7,10 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/freegle/iznik-server-go/embedding"
 )
 
 // 9954: editing a message's subject must invalidate its search index. The vector embedding
@@ -23,7 +24,7 @@ func TestPatchMessageSubjectEditInvalidatesSearchIndexes(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reindexSubj")
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	msgID := CreateTestMessage(t, ownerID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
 
@@ -63,7 +64,7 @@ func TestPatchMessageBodyOnlyEditInvalidatesEmbedding(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reindexBody")
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	msgID := CreateTestMessage(t, ownerID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
 
@@ -102,7 +103,7 @@ func TestPatchMessageEditEvictsStaleInMemoryEmbedding(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("reindexEvict")
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	msgID := CreateTestMessage(t, ownerID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
 

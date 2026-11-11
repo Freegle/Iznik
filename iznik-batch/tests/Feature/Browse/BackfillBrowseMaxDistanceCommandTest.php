@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Browse;
 
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -76,7 +77,7 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
 
         $row = [
             'fullname' => 'Backfill Test '.uniqid(),
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'lastlocation' => $locationId,
             'settings' => json_encode($settings),
         ];

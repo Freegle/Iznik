@@ -16,8 +16,8 @@ import (
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
-	"github.com/stretchr/testify/assert"
 	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 // computeTestHMAC generates an HMAC-SHA256 signature for testing.
@@ -116,8 +116,8 @@ func TestAMPGetChatMessagesValidToken(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampget")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
 
 	// Create user-to-user chat
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
@@ -161,9 +161,9 @@ func TestAMPGetChatMessagesNotInChat(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampnotinchat")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	user3ID := CreateTestUser(t, prefix+"_3", "User") // Not in chat
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	user3ID := CreateTestUser(t, prefix+"_3", utils.SYSTEMROLE_USER) // Not in chat
 
 	// Create chat between user1 and user2
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
@@ -198,8 +198,8 @@ func TestAMPPostChatReplyValidToken(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampreplyvalid")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -243,8 +243,8 @@ func TestAMPPostChatReplyTokenCanBeReused(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampreplyreuse")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -290,8 +290,8 @@ func TestAMPPostChatReplyWithTracking(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampreplytrack")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -430,8 +430,8 @@ func TestAMPPostChatReplyExpiredToken(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampexpired")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -468,8 +468,8 @@ func TestAMPPostChatReplyEmptyMessage(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampreplyempty")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -506,8 +506,8 @@ func TestAMPPostChatReplyTokenMismatchChatID(t *testing.T) {
 
 	// Create test data
 	prefix := uniquePrefix("ampmismatch")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
 	user3ID := CreateTestUser(t, prefix+"_3", utils.SYSTEMROLE_USER)
 
 	// Create two different chats
@@ -580,8 +580,8 @@ func TestAMPPostChatReplyIsHeldForProcessing(t *testing.T) {
 	}
 
 	prefix := uniquePrefix("ampreplyheld")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)

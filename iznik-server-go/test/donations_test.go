@@ -8,8 +8,9 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetDonations(t *testing.T) {
@@ -37,7 +38,7 @@ func TestGetDonations(t *testing.T) {
 
 func TestAddDonationExternal(t *testing.T) {
 	prefix := uniquePrefix("AddDonation")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
@@ -45,7 +46,7 @@ func TestAddDonationExternal(t *testing.T) {
 	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", userID)
 
 	// Create the target user who receives the donation.
-	targetUserID := CreateTestUser(t, prefix+"Target", "User")
+	targetUserID := CreateTestUser(t, prefix+"Target", utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(`{"userid":%d,"amount":10.00,"date":"2026-01-15 12:00:00"}`, targetUserID)
 	req := httptest.NewRequest("PUT", "/api/donations?jwt="+token, strings.NewReader(body))
@@ -79,11 +80,11 @@ func TestAddDonationExternal(t *testing.T) {
 
 func TestAddDonationZeroAmount(t *testing.T) {
 	prefix := uniquePrefix("AddDonZero")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// No GiftAid permission needed for zero amount.
-	targetUserID := CreateTestUser(t, prefix+"Target", "User")
+	targetUserID := CreateTestUser(t, prefix+"Target", utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(`{"userid":%d,"amount":0,"date":"2026-01-15 12:00:00"}`, targetUserID)
 	req := httptest.NewRequest("PUT", "/api/donations?jwt="+token, strings.NewReader(body))
@@ -107,10 +108,10 @@ func TestAddDonationZeroAmount(t *testing.T) {
 
 func TestAddDonationNoPermission(t *testing.T) {
 	prefix := uniquePrefix("AddDonNoPerm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
-	targetUserID := CreateTestUser(t, prefix+"Target", "User")
+	targetUserID := CreateTestUser(t, prefix+"Target", utils.SYSTEMROLE_USER)
 
 	// Non-zero amount without GiftAid permission should be denied.
 	body := fmt.Sprintf(`{"userid":%d,"amount":25.00,"date":"2026-01-15 12:00:00"}`, targetUserID)
@@ -132,7 +133,7 @@ func TestAddDonationUnauthorized(t *testing.T) {
 
 func TestAddDonationMissingUserID(t *testing.T) {
 	prefix := uniquePrefix("AddDonNoUID")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"amount":10.00,"date":"2026-01-15 12:00:00"}`
@@ -145,7 +146,7 @@ func TestAddDonationMissingUserID(t *testing.T) {
 
 func TestAddDonationInvalidUserID(t *testing.T) {
 	prefix := uniquePrefix("AddDonBadUID")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
@@ -165,7 +166,7 @@ func TestAddDonationInvalidUserID(t *testing.T) {
 // gift-aid uploads for such donors (observed in production 2026-05-30).
 func TestAddDonationNullFullname(t *testing.T) {
 	prefix := uniquePrefix("AddDonNullName")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
@@ -173,7 +174,7 @@ func TestAddDonationNullFullname(t *testing.T) {
 	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", userID)
 
 	// Target donor exists with firstname/lastname but a NULL fullname.
-	targetUserID := CreateTestUser(t, prefix+"Target", "User")
+	targetUserID := CreateTestUser(t, prefix+"Target", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET fullname = NULL, firstname = 'Julie', lastname = 'Mac' WHERE id = ?", targetUserID)
 
 	body := fmt.Sprintf(`{"userid":%d,"amount":10.00,"date":"2026-05-18 12:00:00"}`, targetUserID)
@@ -197,12 +198,12 @@ func TestAddDonationNullFullname(t *testing.T) {
 
 func TestBulkUploadDonations(t *testing.T) {
 	prefix := uniquePrefix("BulkDon")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
 	// Make user an admin.
-	db.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", userID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_ADMIN, userID)
 
 	body := `{"donations":[
 		{"date":"2026-01-15","donor_name":"Alice Test","email":"alice@test.com","program":"PayPalGivingFund","amount":25.00,"transaction_id":"PPGF-TEST-001"},
@@ -254,11 +255,11 @@ func TestBulkUploadDonations(t *testing.T) {
 
 func TestBulkUploadDonationsSkipsInvalid(t *testing.T) {
 	prefix := uniquePrefix("BulkDonSkip")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
-	db.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", userID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_ADMIN, userID)
 
 	body := `{"donations":[
 		{"date":"2026-01-15","donor_name":"Negative","email":"neg@test.com","program":"PayPalGivingFund","amount":-5.00,"transaction_id":"PPGF-NEG-001"},
@@ -282,7 +283,7 @@ func TestBulkUploadDonationsSkipsInvalid(t *testing.T) {
 
 func TestBulkUploadDonationsRequiresAdmin(t *testing.T) {
 	prefix := uniquePrefix("BulkDonAuth")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"donations":[]}`
@@ -304,13 +305,13 @@ func TestBulkUploadDonationsUnauthorized(t *testing.T) {
 
 func TestAddDonationSkipsGiftAidNotifWhenExisting(t *testing.T) {
 	prefix := uniquePrefix("AddDonGAExist")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
 	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", userID)
 
-	targetUserID := CreateTestUser(t, prefix+"Target", "User")
+	targetUserID := CreateTestUser(t, prefix+"Target", utils.SYSTEMROLE_USER)
 
 	// Create a pre-existing giftaid record with period != 'This'.
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'Declined', 'Test', 'Test')", targetUserID)
@@ -335,7 +336,7 @@ func TestAddDonationSkipsGiftAidNotifWhenExisting(t *testing.T) {
 // Payer must always be the real external email when one is available.
 func TestAddDonationPayerUsesRealEmailNotAlias(t *testing.T) {
 	prefix := uniquePrefix("DonPayerAlias")
-	callerID := CreateTestUser(t, prefix+"Caller", "User")
+	callerID := CreateTestUser(t, prefix+"Caller", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, callerID)
 	db := database.DBConn
 
@@ -343,7 +344,7 @@ func TestAddDonationPayerUsesRealEmailNotAlias(t *testing.T) {
 	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", callerID)
 
 	// Create the donor WITHOUT any email row (CreateTestUser adds one; we'll replace it).
-	donorID := CreateTestUser(t, prefix+"Donor", "User")
+	donorID := CreateTestUser(t, prefix+"Donor", utils.SYSTEMROLE_USER)
 
 	// Remove the default email row added by CreateTestUser.
 	db.Exec("DELETE FROM users_emails WHERE userid = ?", donorID)
@@ -381,7 +382,7 @@ func TestAddDonationPayerUsesRealEmailNotAlias(t *testing.T) {
 // AddDonation must still succeed and store the alias in Payer (second-pass fallback).
 func TestAddDonationPayerFallsBackToAliasWhenNoRealEmail(t *testing.T) {
 	prefix := uniquePrefix("DonPayerFB")
-	callerID := CreateTestUser(t, prefix+"Caller", "User")
+	callerID := CreateTestUser(t, prefix+"Caller", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, callerID)
 	db := database.DBConn
 
@@ -389,7 +390,7 @@ func TestAddDonationPayerFallsBackToAliasWhenNoRealEmail(t *testing.T) {
 	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", callerID)
 
 	// Create donor whose ONLY email is the alias.
-	donorID := CreateTestUser(t, prefix+"Donor", "User")
+	donorID := CreateTestUser(t, prefix+"Donor", utils.SYSTEMROLE_USER)
 	db.Exec("DELETE FROM users_emails WHERE userid = ?", donorID)
 	aliasOnly := fmt.Sprintf("donor%d-%d@users.ilovefreegle.org", donorID, donorID)
 	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", donorID, aliasOnly)

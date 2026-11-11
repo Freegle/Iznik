@@ -7,11 +7,11 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/freegle/iznik-server-go/message"
 )
 
 // Trash Nothing is the master for a TN member's location. settings.mylocation on a TN
@@ -27,7 +27,7 @@ const staleTamesideSetting = `{"mylocation":{"id":5982012,"name":"M34 6PB","lat"
 func createUserWithStaleMylocation(t *testing.T, prefix string, tn bool) uint64 {
 	db := database.DBConn
 	setupLocationTestData()
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET lastlocation = ?, settings = ? WHERE id = ?", tnLocTNPostcode, staleTamesideSetting, uid)
 	if tn {
 		db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 900000000+uid, uid)

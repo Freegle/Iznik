@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import VolunteerOpportunity from '~/components/VolunteerOpportunity.vue'
@@ -161,10 +161,33 @@ describe('VolunteerOpportunity', () => {
   })
 
   describe('link behavior', () => {
+    const listRoute = globalThis.__testUseRoute
+
+    afterEach(() => {
+      globalThis.__testUseRoute = listRoute
+    })
+
     it('links to volunteering detail page', async () => {
       const wrapper = await createWrapper()
       const link = wrapper.find('a')
       expect(link.attributes('href')).toBe('/volunteering/1')
+    })
+
+    it('does not link the title on the page it would link to, where tapping it did nothing', async () => {
+      // 21 people on phones tapped the title of one opportunity again and again in a week of
+      // November 2026, because it was a link to the page they were already on.
+      globalThis.__testUseRoute = () => ({
+        params: { id: '1' },
+        query: {},
+        path: '/volunteering/1',
+        name: 'volunteering-id',
+        fullPath: '/volunteering/1',
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('a.volop-card__title').exists()).toBe(false)
+      expect(wrapper.find('.volop-card__title').text()).toBe(
+        'Community Garden Helper'
+      )
     })
   })
 

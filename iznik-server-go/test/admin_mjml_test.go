@@ -236,7 +236,7 @@ func TestAdminTestNeedsOneEmailAddress(t *testing.T) {
 
 func TestAdminTestNeedsModOfGroup(t *testing.T) {
 	prefix := uniquePrefix("adm_mjml_member")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	status, _ := sendAdminTest(t, token, map[string]interface{}{"subject": "S", "text": "T"}, "a@example.com")

@@ -58,6 +58,44 @@ describe('ModSysAdminDigestClicks', () => {
     mockEmailTrackingStore.digestPositionsLoading = false
     mockEmailTrackingStore.digestPositionsError = null
     mockEmailTrackingStore.hasDigestPositions = false
+    mockEmailTrackingStore.digestPositionsMissingDays = 0
+  })
+
+  describe('days not summarised yet', () => {
+    it('says nothing when every day is summarised', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.missing-days').exists()).toBe(false)
+    })
+
+    it('says nothing when the API does not report the field', () => {
+      mockEmailTrackingStore.digestPositionsMissingDays = undefined
+      const wrapper = mountComponent()
+      expect(wrapper.find('.missing-days').exists()).toBe(false)
+    })
+
+    it('says so plainly for one day', () => {
+      mockEmailTrackingStore.digestPositionsMissingDays = 1
+      const wrapper = mountComponent()
+      expect(wrapper.find('.missing-days').text()).toBe(
+        '1 day is not summarised yet, so it is left out. The summary is built nightly.'
+      )
+    })
+
+    it('says so plainly for several days, and still with no data', () => {
+      mockEmailTrackingStore.digestPositionsMissingDays = 4
+      const wrapper = mountComponent()
+      expect(wrapper.find('.missing-days').text()).toContain(
+        '4 days are not summarised yet, so they are left out.'
+      )
+      expect(wrapper.text()).toContain('No daily-digest click data available')
+    })
+
+    it('hides the line while loading', () => {
+      mockEmailTrackingStore.digestPositionsMissingDays = 2
+      mockEmailTrackingStore.digestPositionsLoading = true
+      const wrapper = mountComponent()
+      expect(wrapper.find('.missing-days').exists()).toBe(false)
+    })
   })
 
   describe('rendering', () => {

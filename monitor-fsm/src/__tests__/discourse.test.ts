@@ -42,13 +42,13 @@ describe('formatReplyRaw', () => {
       post: 10,
       topic: 9692,
       quote: 'iOS app not showing badge count',
-      body: 'AI Edward: possible fix applied, please retest and report back',
+      body: 'AIdward: possible fix applied, please retest and report back',
     })
     expect(raw).toBe(
       '[quote="Neville_Reid, post:10, topic:9692"]\n' +
         'iOS app not showing badge count\n' +
         '[/quote]\n\n' +
-        'AI Edward: possible fix applied, please retest and report back',
+        'AIdward: possible fix applied, please retest and report back',
     )
   })
 
@@ -97,7 +97,7 @@ describe('hasNonEmptyQuote (posting invariant)', () => {
 
   it('is false for a bare body with no quote block', async () => {
     const { hasNonEmptyQuote } = await import('../discourse')
-    expect(hasNonEmptyQuote('AI Edward: possible fix applied, please retest')).toBe(false)
+    expect(hasNonEmptyQuote('AIdward: possible fix applied, please retest')).toBe(false)
   })
 
   it('is false for an empty quote block', async () => {

@@ -114,4 +114,28 @@ class PafCommandsTest extends TestCase
             'buildingnumber' => 42,
         ]);
     }
+
+    public function test_load_skips_lines_without_a_udprn(): void
+    {
+        $postcode = 'OX3 7ZZ';
+        $postcodeId = DB::table('locations')->insertGetId([
+            'name' => $postcode,
+            'type' => 'Postcode',
+            'osm_place' => 0,
+            'osm_amenity' => 0,
+            'osm_shop' => 0,
+        ]);
+
+        // A postcode-directory line has as many columns as a PAF line, but a grid reference
+        // where the UDPRN goes.
+        $input = "{$this->tmpDir}/input.csv";
+        file_put_contents($input, "{$postcode},Yes,51.75,-1.20,454669,206326,0,SP546063,Oxfordshire,Oxford,Churchill,E07000178,SP546063,E,O,19\n");
+
+        $this->artisan("paf:load --input={$input}")
+            ->assertExitCode(0);
+        $this->artisan("paf:update --input={$input}")
+            ->assertExitCode(0);
+
+        $this->assertDatabaseMissing('paf_addresses', ['postcodeid' => $postcodeId]);
+    }
 }

@@ -2,8 +2,8 @@ package test
 
 import (
 	"bytes"
-	json2 "encoding/json"
 	"encoding/json"
+	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
@@ -102,7 +102,7 @@ func TestNewsfeed_V2Path(t *testing.T) {
 
 func TestNewsfeedLove(t *testing.T) {
 	prefix := uniquePrefix("nfwr_love")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test love "+prefix)
 
@@ -121,7 +121,7 @@ func TestNewsfeedLove(t *testing.T) {
 
 func TestNewsfeedUnlove(t *testing.T) {
 	prefix := uniquePrefix("nfwr_unlove")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test unlove "+prefix)
 
@@ -143,7 +143,7 @@ func TestNewsfeedUnlove(t *testing.T) {
 
 func TestNewsfeedSeen(t *testing.T) {
 	prefix := uniquePrefix("nfwr_seen")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test seen "+prefix)
 
@@ -162,7 +162,7 @@ func TestNewsfeedSeen(t *testing.T) {
 
 func TestNewsfeedSingleReturnsSeenWatermark(t *testing.T) {
 	prefix := uniquePrefix("nfwr_seenwm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test seen watermark "+prefix)
 
@@ -227,7 +227,7 @@ func TestNewsfeedSingleReturnsSeenWatermark(t *testing.T) {
 
 func TestNewsfeedSeenHigherIDGuard(t *testing.T) {
 	prefix := uniquePrefix("nfwr_seeng")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID1 := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test seen guard 1 "+prefix)
 	nfID2 := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test seen guard 2 "+prefix)
@@ -261,7 +261,7 @@ func TestNewsfeedSeenHigherIDGuard(t *testing.T) {
 
 func TestNewsfeedFollow(t *testing.T) {
 	prefix := uniquePrefix("nfwr_follow")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test follow "+prefix)
 
@@ -283,7 +283,7 @@ func TestNewsfeedFollow(t *testing.T) {
 
 func TestNewsfeedUnfollow(t *testing.T) {
 	prefix := uniquePrefix("nfwr_unfollow")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test unfollow "+prefix)
 
@@ -302,7 +302,7 @@ func TestNewsfeedUnfollow(t *testing.T) {
 
 func TestNewsfeedReport(t *testing.T) {
 	prefix := uniquePrefix("nfwr_report")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test report "+prefix)
 
@@ -333,7 +333,7 @@ func TestNewsfeedReportNoPreferredEmail(t *testing.T) {
 	// Regression: reporter with no preferred=1 email caused user_email to be empty,
 	// silently dropping the ChitChat support notification after 3 failed retries.
 	prefix := uniquePrefix("nfwr_npe")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test report no-preferred "+prefix)
 
@@ -364,7 +364,7 @@ func TestNewsfeedReportNoPreferredEmail(t *testing.T) {
 
 func TestNewsfeedHide(t *testing.T) {
 	prefix := uniquePrefix("nfwr_hide")
-	userID := CreateTestUser(t, prefix, "Admin")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test hide "+prefix)
 
@@ -383,7 +383,7 @@ func TestNewsfeedHide(t *testing.T) {
 
 func TestNewsfeedUnhide(t *testing.T) {
 	prefix := uniquePrefix("nfwr_unhide")
-	userID := CreateTestUser(t, prefix, "Admin")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test unhide "+prefix)
 
@@ -405,7 +405,7 @@ func TestNewsfeedUnhide(t *testing.T) {
 
 func TestNewsfeedEdit(t *testing.T) {
 	prefix := uniquePrefix("nfwr_edit")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test edit "+prefix)
 
@@ -432,8 +432,8 @@ func TestNewsfeedEditUnauthorized(t *testing.T) {
 
 func TestNewsfeedEditNonOwner(t *testing.T) {
 	prefix := uniquePrefix("nfwr_edno")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 	nfID := CreateTestNewsfeed(t, ownerID, 52.2, -0.1, "Test edit noown "+prefix)
 
@@ -446,7 +446,7 @@ func TestNewsfeedEditNonOwner(t *testing.T) {
 
 func TestNewsfeedDelete(t *testing.T) {
 	prefix := uniquePrefix("nfwr_del")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test delete "+prefix)
 
@@ -467,8 +467,8 @@ func TestNewsfeedDeleteUnauthorized(t *testing.T) {
 
 func TestNewsfeedDeleteNonOwner(t *testing.T) {
 	prefix := uniquePrefix("nfwr_dno")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 	nfID := CreateTestNewsfeed(t, ownerID, 52.2, -0.1, "Test del noown "+prefix)
 
@@ -487,7 +487,7 @@ func TestNewsfeedPostUnauthorized(t *testing.T) {
 func TestNewsfeedHidePermissionDenied(t *testing.T) {
 	prefix := uniquePrefix("nfwr_hdeny")
 	// Regular Moderator should NOT be able to hide - requires Admin/Support or ChitChat team
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, userID)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test hide deny "+prefix)
@@ -501,7 +501,7 @@ func TestNewsfeedHidePermissionDenied(t *testing.T) {
 
 func TestNewsfeedHideChitChatTeam(t *testing.T) {
 	prefix := uniquePrefix("nfwr_hteam")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test hide team "+prefix)
 
@@ -529,7 +529,7 @@ func TestNewsfeedHideChitChatTeam(t *testing.T) {
 
 func TestNewsfeedCreatePost(t *testing.T) {
 	prefix := uniquePrefix("nfwr_creat")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// User needs a location for post creation
@@ -554,9 +554,53 @@ func TestNewsfeedCreatePost(t *testing.T) {
 	assert.NotZero(t, nfID)
 }
 
+func TestNewsfeedCreatePostAfterDeletingSameText(t *testing.T) {
+	// Support reference SR-CB4ZR: a member deleted their chitchat post, then
+	// posted the same wording again. The duplicate check saw the soft-deleted
+	// row as their most recent post and returned its id without inserting, so
+	// the new post never appeared.
+	prefix := uniquePrefix("nfwr_redel")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("INSERT INTO locations (name, lat, lng, type) VALUES (?, 52.2, -0.1, 'Polygon')", "TestLoc_"+prefix)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "TestLoc_"+prefix).Scan(&locID)
+	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", locID, userID)
+
+	message := "Have you got old reel to reel tapes " + prefix
+	body := fmt.Sprintf(`{"message":%q}`, message)
+
+	post := func() uint64 {
+		req := httptest.NewRequest("POST", "/api/newsfeed?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+		var result map[string]interface{}
+		json2.Unmarshal(rsp(resp), &result)
+		return uint64(result["id"].(float64))
+	}
+
+	firstID := post()
+	assert.NotZero(t, firstID)
+
+	// Delete it, as the member did.
+	resp, _ := getApp().Test(httptest.NewRequest("DELETE", fmt.Sprintf("/api/newsfeed/%d?jwt=%s", firstID, token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	secondID := post()
+	assert.NotZero(t, secondID)
+	assert.NotEqual(t, firstID, secondID, "posting the same text after deleting must create a new post, not return the deleted one")
+
+	var deleted *string
+	db.Raw("SELECT deleted FROM newsfeed WHERE id = ?", secondID).Scan(&deleted)
+	assert.Nil(t, deleted, "the new post must be live")
+}
+
 func TestNewsfeedCreateReply(t *testing.T) {
 	prefix := uniquePrefix("nfwr_reply")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Thread head "+prefix)
 
@@ -576,8 +620,8 @@ func TestNewsfeedCreateReply(t *testing.T) {
 
 func TestNewsfeedReplyNotifiesThreadContributors(t *testing.T) {
 	prefix := uniquePrefix("nfwr_rnotif")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	_, replierToken := CreateTestSession(t, replierID)
 
 	// Owner creates a thread
@@ -606,8 +650,8 @@ func TestNewsfeedReplyNotifiesThreadContributors(t *testing.T) {
 
 func TestNewsfeedLoveNotification(t *testing.T) {
 	prefix := uniquePrefix("nfwr_loven")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	loverID := CreateTestUser(t, prefix+"_lover", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	loverID := CreateTestUser(t, prefix+"_lover", utils.SYSTEMROLE_USER)
 	_, loverToken := CreateTestSession(t, loverID)
 	nfID := CreateTestNewsfeed(t, ownerID, 52.2, -0.1, "Test love notif "+prefix)
 
@@ -627,9 +671,9 @@ func TestNewsfeedLoveNotification(t *testing.T) {
 
 func TestNewsfeedLoveCommentNotification(t *testing.T) {
 	prefix := uniquePrefix("nfwr_lovecn")
-	postOwnerID := CreateTestUser(t, prefix+"_post", "User")
-	replyOwnerID := CreateTestUser(t, prefix+"_reply", "User")
-	loverID := CreateTestUser(t, prefix+"_lover", "User")
+	postOwnerID := CreateTestUser(t, prefix+"_post", utils.SYSTEMROLE_USER)
+	replyOwnerID := CreateTestUser(t, prefix+"_reply", utils.SYSTEMROLE_USER)
+	loverID := CreateTestUser(t, prefix+"_lover", utils.SYSTEMROLE_USER)
 	_, loverToken := CreateTestSession(t, loverID)
 
 	// Create a top-level post and a reply to it
@@ -665,7 +709,7 @@ func TestNewsfeedLoveCommentNotification(t *testing.T) {
 
 func TestNewsfeedUnknownAction(t *testing.T) {
 	prefix := uniquePrefix("nfwr_unkact")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"id":1,"action":"InvalidAction"}`
@@ -680,7 +724,7 @@ func TestNewsfeedUnknownAction(t *testing.T) {
 func TestNewsfeedSeenZeroID(t *testing.T) {
 	// Seen with ID=0 should not corrupt newsfeed_users table.
 	prefix := uniquePrefix("nfwr_seen0")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"id":0,"action":"Seen"}`
@@ -725,7 +769,7 @@ func TestNewsfeedDoubleLove(t *testing.T) {
 
 func TestNewsfeedEmptyBody(t *testing.T) {
 	prefix := uniquePrefix("nfwr_empty")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("POST", "/api/newsfeed?jwt="+token, bytes.NewBufferString("{}"))
@@ -738,7 +782,7 @@ func TestNewsfeedEmptyBody(t *testing.T) {
 func TestNewsfeedLoveNonExistent(t *testing.T) {
 	// Love a non-existent newsfeed item should handle gracefully.
 	prefix := uniquePrefix("nfwr_luv_ne")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"id":999999999,"action":"Love"}`
@@ -752,12 +796,12 @@ func TestNewsfeedLoveNonExistent(t *testing.T) {
 func TestConvertToStory(t *testing.T) {
 	prefix := uniquePrefix("nf_c2s")
 	// Create a moderator user
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a newsfeed entry by another user
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	nfID := CreateTestNewsfeed(t, posterID, 52.2, -0.1, "My freegle story "+prefix)
 
 	body := fmt.Sprintf(`{"id":%d,"action":"ConvertToStory"}`, nfID)
@@ -787,7 +831,7 @@ func TestConvertToStory(t *testing.T) {
 func TestConvertToStoryNotMod(t *testing.T) {
 	prefix := uniquePrefix("nf_c2s_nm")
 	// Create a regular (non-mod) user
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Regular user story "+prefix)
 
@@ -812,7 +856,7 @@ func TestConvertToStoryUnauthorized(t *testing.T) {
 // all appeared; the fix caps them at NEWSFEED_EVENTS_PER_FEED (20).
 func TestFeedEventFloodDoesNotDisplaceMessages(t *testing.T) {
 	prefix := uniquePrefix("evflood")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	lat := 55.9533
@@ -861,7 +905,7 @@ func TestFeedEventsSortedByProximity(t *testing.T) {
 	prefix := uniquePrefix("evprox")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// User is near Edinburgh: lat=55.95, lng=-3.20

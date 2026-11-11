@@ -265,7 +265,7 @@ describe('Database Helpers', () => {
         post: 4,
         username: 'edward',
         quote: 'original report',
-        body: 'AI Edward: possible fix applied, please retest and report back',
+        body: 'AIdward: possible fix applied, please retest and report back',
         prNumber: 999,
         prUrl: 'https://github.com/Freegle/Iznik/pull/999',
       })
@@ -286,7 +286,7 @@ describe('Database Helpers', () => {
     it('acts as a dedup record so queueDiscourseDraft skips an already-posted bug', () => {
       recordPostedReply(testDb, {
         topic: 501, post: 5, username: 'alice', quote: 'q',
-        body: 'AI Edward: possible fix applied, please retest and report back',
+        body: 'AIdward: possible fix applied, please retest and report back',
       })
       // A subsequent queue attempt for the same topic/post should not add a
       // pending draft — but note the auto-poster's own guard checks ANY existing

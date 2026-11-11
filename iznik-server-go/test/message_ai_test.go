@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,11 +18,11 @@ func TestMessagePatch_BadAIImageForceReject(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("badaiimg")
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, "Test item "+prefix, 55.0, -1.0)
 
 	aiName := "badai-" + prefix
@@ -59,11 +60,11 @@ func TestMessagePatch_NormalAIDeletionVote(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("normalaidel")
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, "Test item "+prefix, 55.0, -1.0)
 
 	aiName := "normalai-" + prefix

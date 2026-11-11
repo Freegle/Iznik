@@ -418,11 +418,12 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, Describes
         $jobsUrl = $this->trackedUrl($this->userSite.'/jobs', 'jobs_view_more', 'jobs_view_more');
         // Our own Stripe donate page (Apple Pay / Google Pay / PayPal / card)
         // rather than the PayPal-only shortlink. See DonateLinkService.
-        $donateUrl = $this->trackedUrl(
+        // Null for a donor who asked not to be asked, which drops every donate element.
+        $donateUrl = $this->user->wantsDonationAsks() ? $this->trackedUrl(
             app(DonateLinkService::class)->url($this->user, app(DonateLinkService::class)->defaultAmount(), 'digest'),
             'donate',
             'donate'
-        );
+        ) : NULL;
         $donateMarksUrl = config('freegle.images.paymethods');
 
         // Footer heading is no longer per-group: reach is geographic

@@ -30,7 +30,6 @@
   </div>
 </template>
 <script setup>
-import { useNoticeboardStore } from '~/stores/noticeboard'
 import { useAuthStore } from '~/stores/auth'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
@@ -111,7 +110,6 @@ const teamStore = useTeamStore()
 const donationStore = useDonationStore()
 const giftAidStore = useGiftAidStore()
 const authorityStore = useAuthorityStore()
-const noticeboardStore = useNoticeboardStore()
 const statsStore = useStatsStore()
 const microVolunteeringStore = useMicroVolunteeringStore()
 const imageStore = useImageStore()
@@ -151,7 +149,6 @@ teamStore.init(runtimeConfig)
 donationStore.init(runtimeConfig)
 giftAidStore.init(runtimeConfig)
 authorityStore.init(runtimeConfig)
-noticeboardStore.init(runtimeConfig)
 statsStore.init(runtimeConfig)
 microVolunteeringStore.init(runtimeConfig)
 imageStore.init(runtimeConfig)

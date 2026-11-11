@@ -54,12 +54,24 @@ trait FakesUxLoki
         });
     }
 
-    /** When LogQL matches $pattern, answer with these series: [[labels, value], ...]. */
+    /**
+     * When LogQL matches $pattern, answer with these series: [[labels, value], ...]. A value may be
+     * a number (one point) or [unix seconds => number] (one point per hour, for a query that is
+     * read by the hour).
+     */
     protected function lokiMatrix(string $pattern, array $series): void
     {
         $result = [];
         foreach ($series as [$labels, $value]) {
-            $result[] = ['metric' => $labels, 'values' => [[1_700_000_000, (string) $value]]];
+            $points = [];
+            if (is_array($value)) {
+                foreach ($value as $ts => $v) {
+                    $points[] = [$ts, (string) $v];
+                }
+            } else {
+                $points[] = [1_700_000_000, (string) $value];
+            }
+            $result[] = ['metric' => $labels, 'values' => $points];
         }
 
         array_unshift($this->lokiRules, [$pattern, ['status' => 'success', 'data' => ['resultType' => 'matrix', 'result' => $result]]]);

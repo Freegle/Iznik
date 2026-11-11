@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\User;
 
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -86,6 +87,122 @@ class FixTNNamesCommandTest extends TestCase
             DB::table('users')->where('id', $userId)->value('fullname'),
             'a member whose row holds the canon form must still be found'
         );
+    }
+
+    /**
+     * A member named from the TN username "mary-jane" has the display
+     * name "Mary-Jane" and the bare address mary-jane@user.trashnothing.com. The command
+     * used to take everything before the last hyphen of that address, which gave "mary",
+     * and it ran daily, so the right name was undone each night.
+     */
+    public function test_leaves_a_provisioned_hyphenated_display_name_alone(): void
+    {
+        $username = 'mary-jane' . random_int(100000, 999999);
+        $userId = DB::table('users')->insertGetId([
+            'firstname' => null,
+            'lastname' => null,
+            'fullname' => User::tnDisplayName($username),
+            'added' => now(),
+        ]);
+        $email = User::tnEmailForUsername($username);
+        DB::table('users_emails')->insert([
+            'userid' => $userId,
+            'email' => $email,
+            'canon' => User::canonMail($email),
+            'backwards' => strrev($email),
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertSame(User::tnDisplayName($username), DB::table('users')->where('id', $userId)->value('fullname'));
+    }
+
+    /**
+     * The same member once they also hold a per-group alias of the username: the alias
+     * row is a candidate too, and stripping its suffix must not undo the display name.
+     */
+    public function test_leaves_a_provisioned_display_name_alone_when_an_alias_row_exists(): void
+    {
+        $username = 'mary-jane' . random_int(100000, 999999);
+        $userId = DB::table('users')->insertGetId([
+            'firstname' => null,
+            'lastname' => null,
+            'fullname' => User::tnDisplayName($username),
+            'added' => now(),
+        ]);
+        foreach ([[$username . '@user.trashnothing.com', 1], [$username . '-g4707@user.trashnothing.com', 0]] as [$email, $preferred]) {
+            DB::table('users_emails')->insert([
+                'userid' => $userId,
+                'email' => $email,
+                'canon' => User::canonMail($email),
+                'backwards' => strrev($email),
+                'preferred' => $preferred,
+                'added' => now(),
+            ]);
+        }
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertSame(User::tnDisplayName($username), DB::table('users')->where('id', $userId)->value('fullname'));
+    }
+
+    /**
+     * A bare address has no group suffix to strip, so nothing can be read off it by
+     * dropping a hyphenated tail. "mary-jane" must never become "mary", whatever the
+     * fullname holds.
+     */
+    public function test_never_derives_a_name_from_a_bare_address(): void
+    {
+        $username = 'mary-jane' . random_int(100000, 999999);
+        $userId = DB::table('users')->insertGetId([
+            'firstname' => null,
+            'lastname' => null,
+            'fullname' => 'Mary-Jane Stale-Name',
+            'added' => now(),
+        ]);
+        $email = User::tnEmailForUsername($username);
+        DB::table('users_emails')->insert([
+            'userid' => $userId,
+            'email' => $email,
+            'canon' => User::canonMail($email),
+            'backwards' => strrev($email),
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertSame('Mary-Jane Stale-Name', DB::table('users')->where('id', $userId)->value('fullname'));
+    }
+
+    /**
+     * The group suffix on a hyphenated username is still stripped from an alias, so a
+     * member created from the email path with no name still gets the whole username.
+     */
+    public function test_fixes_a_hyphenated_username_from_its_alias(): void
+    {
+        $username = 'mary-jane' . random_int(100000, 999999);
+        $userId = DB::table('users')->insertGetId([
+            'firstname' => null,
+            'lastname' => null,
+            'fullname' => null,
+            'added' => now(),
+        ]);
+        $email = $username . '-g4707@user.trashnothing.com';
+        DB::table('users_emails')->insert([
+            'userid' => $userId,
+            'email' => $email,
+            'canon' => User::canonMail($email),
+            'backwards' => strrev($email),
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        $this->artisan('users:fix-tn-names')->assertExitCode(0);
+
+        $this->assertSame($username, DB::table('users')->where('id', $userId)->value('fullname'));
     }
 
     public function test_smoke_no_tn_users(): void

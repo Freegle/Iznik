@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -23,7 +24,7 @@ func TestCommentGetSingleUnauthorized(t *testing.T) {
 
 func TestCommentGetSingleNotFound(t *testing.T) {
 	prefix := uniquePrefix("cmget_nf")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -34,7 +35,7 @@ func TestCommentGetSingleNotFound(t *testing.T) {
 
 func TestCommentGetListEmpty(t *testing.T) {
 	prefix := uniquePrefix("cmget_empty")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Regular user (not moderator) should get empty list
@@ -63,8 +64,8 @@ func TestCommentCreateUnauthorized(t *testing.T) {
 
 func TestCommentCreateBySupport(t *testing.T) {
 	prefix := uniquePrefix("cmwr_support")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	// Support can add comment without a group

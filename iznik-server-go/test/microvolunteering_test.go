@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 
 )
@@ -28,7 +29,7 @@ func TestGetMicrovolunteering_DeclinedUser(t *testing.T) {
 
 	// Create a test user with Declined trust level
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User3', 'User', ?)", microvolunteering.TrustDeclined)
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User3', ?, ?)", utils.SYSTEMROLE_USER, microvolunteering.TrustDeclined)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User3' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -52,7 +53,7 @@ func TestGetMicrovolunteering_ExcludedUser(t *testing.T) {
 
 	// Create a test user with Excluded trust level
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User4', 'User', ?)", microvolunteering.TrustExcluded)
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES ('MVTest', 'User4', ?, ?)", utils.SYSTEMROLE_USER, microvolunteering.TrustExcluded)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User4' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -76,7 +77,7 @@ func TestGetMicrovolunteering_InviteChallenge(t *testing.T) {
 
 	// Create a test user
 	var userID uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User5', 'User')")
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole) VALUES ('MVTest', 'User5', ?)", utils.SYSTEMROLE_USER)
 	db.Raw("SELECT id FROM users WHERE firstname = 'MVTest' AND lastname = 'User5' ORDER BY id DESC LIMIT 1").Scan(&userID)
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
@@ -103,11 +104,11 @@ func TestMicroVolunteeringResponseCheckMessage(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("mv_checkmsg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message from a different user
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, senderID, "Test MV Check "+prefix, 55.9533, -3.1883)
 
 	body := fmt.Sprintf(`{"msgid":%d,"response":"Approve","comments":"Looks good"}`, msgID)
@@ -134,7 +135,7 @@ func TestMicroVolunteeringResponseCheckMessage(t *testing.T) {
 // group member cannot cast a verdict on their OWN post (fromuser != voter).
 func TestMicroVolunteeringResponseCheckMessageOwnMessageDenied(t *testing.T) {
 	prefix := uniquePrefix("mv_ownmsg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, "Test MV Own "+prefix, 55.9533, -3.1883)
 
@@ -151,7 +152,7 @@ func TestMicroVolunteeringResponseCheckMessageOwnMessageDenied(t *testing.T) {
 // photo, so responding to it must succeed (not be a false-positive 403).
 func TestMicroVolunteeringResponsePhotoRotateOwnPhotoAllowed(t *testing.T) {
 	prefix := uniquePrefix("mv_photo_own")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, "Test MV Photo Own "+prefix, 55.9533, -3.1883)
 	photoID := CreateTestAttachment(t, msgID)
@@ -171,11 +172,11 @@ func TestMicroVolunteeringResponsePhotoRotate(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("mv_photo")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message with an attachment
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, senderID, "Test Photo "+prefix, 55.9533, -3.1883)
 	photoID := CreateTestAttachment(t, msgID)
 
@@ -201,7 +202,7 @@ func TestMicroVolunteeringResponseInvite(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("mv_invite")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"invite":true,"response":"Yes"}`
@@ -235,7 +236,7 @@ func TestMicroVolunteeringResponseUnauthorized(t *testing.T) {
 
 func TestMicroVolunteeringResponseInvalidParams(t *testing.T) {
 	prefix := uniquePrefix("mv_invalid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Send empty body - no valid parameters
@@ -256,12 +257,12 @@ func TestModFeedbackAsMod(t *testing.T) {
 	db := database.DBConn
 
 	// Create a mod user with system role that passes IsSystemMod.
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a microaction to provide feedback on.
-	regularID := CreateTestUser(t, prefix+"_user", "User")
+	regularID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO microactions (userid, actiontype, result, timestamp, score_negative) VALUES (?, 'CheckMessage', 'Approve', NOW(), 0)", regularID)
 	var actionID uint64
 	db.Raw("SELECT id FROM microactions WHERE userid = ? ORDER BY id DESC LIMIT 1", regularID).Scan(&actionID)
@@ -287,7 +288,7 @@ func TestModFeedbackAsMod(t *testing.T) {
 func TestModFeedbackAsRegularUserFails(t *testing.T) {
 	prefix := uniquePrefix("mv_modfb_no")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"id":1,"feedback":"Should fail"}`
@@ -313,9 +314,9 @@ func TestListMicroActions(t *testing.T) {
 	prefix := uniquePrefix("MicroList")
 	db := database.DBConn
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -361,7 +362,7 @@ func TestGetMicrovolunteering_EEELabel_RestrictsToClassifiedItems(t *testing.T) 
 	db := database.DBConn
 	prefix := uniquePrefix("mv_eee_classified")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Suppress Invite challenge so EEELabel can win the dispatch.

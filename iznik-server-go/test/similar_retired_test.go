@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,7 +15,7 @@ import (
 // client still asking for them gets a 404 rather than a quiet [].
 func TestSimilarPostsRouteRetired(t *testing.T) {
 	prefix := uniquePrefix("simret")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, "OFFER: Retired strip", 55.9533, -3.1883)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/"+fmt.Sprint(msgID)+"/similar", nil))
@@ -23,7 +24,7 @@ func TestSimilarPostsRouteRetired(t *testing.T) {
 
 func TestRecommendationsStatsRouteRetired(t *testing.T) {
 	prefix := uniquePrefix("recret")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	token := getToken(t, supportID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/recommendations/stats?jwt="+token, nil))

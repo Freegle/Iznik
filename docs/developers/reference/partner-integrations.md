@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Console/Commands/Integrations
@@ -7,6 +7,7 @@ covers:
   - iznik-batch/app/Services/WhatJobsService.php
   - iznik-batch/app/Services/LoveJunkService.php
   - iznik-server-go/queue/queue.go
+  - iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php
 ---
 
 # Partner integrations
@@ -53,6 +54,9 @@ posting, replying or member email, because a change that works for a Freegle mem
 easily break for a TrashNothing one - their posts and replies arrive by **email**, not
 through our website.
 
+A promise made on TrashNothing reaches us naming nobody, so the "promised to someone else"
+notice to other repliers is not sent for it (`handleMessagePromised`).
+
 Config: `freegle.trashnothing_domain`, `freegle.trashnothing.api_base_url`.
 
 ## LoveJunk
@@ -63,6 +67,9 @@ collection quote.
 
 - Command: `integrations:sync-lovejunk`
 - Config: `freegle.lovejunk.api`, `freegle.lovejunk.secret`
+- Clearances are not sent: LoveJunk takes one item per post. A post Freegle split into items
+  automatically is sent as the one post it was written as, with the member's own photos and not
+  the per-item crops ([auto-split.md](auto-split.md)).
 - The syndication path is described in [trashnothing.md](trashnothing.md), since TN
   brokered it.
 
@@ -88,11 +95,25 @@ processed by the batch tier. Config: `freegle.freebie_alerts.api_url`
 is skipped, and one partner failing does not stop the other getting the post.
 
 What is sent: Offers only, approved, with a location, no outcome yet, not clearances, and not
-posts that came from TrashNothing (TN feeds both partners itself). The create body is `id`,
+posts that came from TrashNothing (TN feeds both partners itself). A post Freegle split into
+items automatically is not a clearance and is sent like any Offer, without the per-item crops
+of its photos ([auto-split.md](auto-split.md)). The create body is `id`,
 `title`, `description`, `latitude`, `longitude`, `images` (comma-separated URLs) and
 `created_at`. Delete has no body. Create is an upsert on their side and a delete for an unknown
-id succeeds, so a repeat is harmless. Failures are logged and not retried; a failed create also
-goes to Sentry. Edits after a post goes live are not pushed.
+id succeeds, so a repeat is harmless. Edits after a post goes live are not pushed.
+
+A timeout, connection failure, 408, 429 or 5xx from a partner is retried for that partner alone:
+a new task row carrying `feed`, `first_failed_at`, `retries` and `alerted`, with `created_at` set
+to when it falls due (the queue only takes rows that are due). The delay doubles from a minute to
+a cap of half an hour. Partner outages are usually short, so each failure is a warning until it
+has gone on for an hour, then one error to the log and Sentry, and another when it is given up
+after a day. Any other refusal means our request is wrong, so it goes to Sentry at once and is
+not retried; a 404 on a delete means they never had the post.
+
+A retry can fall due after the post has changed. A retried create works out what to send when it
+runs, so a post taken, withdrawn or deleted in the meantime sends nothing. A retried delete is
+skipped if the post is live again, since a fresh create has gone out since. A first delete is not
+checked, because it is queued as the post goes and the change may not be readable yet.
 
 Because removal is a queued task, a post that has gone can briefly still be advertised
 elsewhere. That is expected; if it persists, look at whether the queue is being drained.
@@ -129,7 +150,12 @@ A job-listing feed, shown on Freegle as a small revenue stream (see
 - Command: `integrations:sync-whatjobs`, service `WhatJobsService`
 - Config: `freegle.whatjobs.feed1`, `feed2`; geocoding via `freegle.geocoder`
 - Monitoring: `freegle.monitoring.whatjobs_max_age_hours` (24) alerts if `jobs.seenat`
-  stops advancing
+  stops advancing, which proves the sync ran. It stays quiet when WhatJobs stops publishing,
+  because the sync still rebuilds from the old file. `integrations:check-whatjobs-freshness`
+  (hourly) covers that: it fails when the newest job is more than
+  `freegle.whatjobs.max_feed_age_hours` (48) old, which turns the SysAdmin Cron Jobs tab red, and
+  its message gives the date WhatJobs last changed the feed. The feed stopped on 20 October 2026
+  and nobody noticed for days.
 - A feed file that will not open is logged as a warning and skipped, so one bad feed
   does not stop the other one
 

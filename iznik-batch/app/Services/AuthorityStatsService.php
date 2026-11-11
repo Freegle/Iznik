@@ -87,10 +87,24 @@ class AuthorityStatsService
         return (int) ceil((int) date('n', strtotime($quarterStart)) / 3);
     }
 
+    /** CPI series for this run: the config row, read once, or the fallback. */
+    private ?array $cpiData = null;
+
+    private function cpiData(): array
+    {
+        return $this->cpiData ??= app(CPIService::class)->getCPIData();
+    }
+
     /** Benefit of reuse per tonne in GBP, at current-year prices. */
     public function getBenefitPerTonne(): float
     {
-        return ReuseBenefit::getBenefitPerTonne();
+        return ReuseBenefit::getBenefitPerTonne(null, $this->cpiData());
+    }
+
+    /** Fly-tipping clear-up cost avoided per item given away, in GBP, at current-year prices. */
+    public function getFlyTipSavingPerItem(): float
+    {
+        return ReuseBenefit::getFlyTipSavingPerItem(null, $this->cpiData());
     }
 
     /** tCO2eq saved per tonne reused. */
@@ -103,12 +117,12 @@ class AuthorityStatsService
      * Everything the report needs for one authority, as plain arrays.
      *
      * Weights are raw kilograms; the command applies the WRAP CO2/benefit
-     * conversions when rendering.
+     * conversions, and the fly-tipping saving on the gifts, when rendering.
      *
      * @return array{
      *   name:string, quarter:int, year:string,
      *   months:array<int, array{start:string,end:string,formatted:string}>,
-     *   benefitPerTonne:float, co2PerTonne:float,
+     *   benefitPerTonne:float, co2PerTonne:float, flyTipPerItem:float,
      *   totals:array<int, array{members:int, weight:float, outcomes:float}>,
      *   stories:array<int, array{headline:string, story:string}>,
      *   postcodes:array<string, array{Offer:int,Wanted:int,Searches:int,Outcomes:int,Weight:float}>
@@ -142,6 +156,7 @@ class AuthorityStatsService
             'months' => $months,
             'benefitPerTonne' => $this->getBenefitPerTonne(),
             'co2PerTonne' => $this->getCo2PerTonne(),
+            'flyTipPerItem' => $this->getFlyTipSavingPerItem(),
             'totals' => $totals,
             'stories' => $this->getStories($authorityId, 10),
             'postcodes' => $this->getByAuthority([$authorityId], $months[0]['start'], $months[2]['end']),

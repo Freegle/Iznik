@@ -10,7 +10,7 @@
 #               bulk2-internal | docker   (the names are configurable)
 #   freegle-maint scheduled <slot>
 #       What the systemd timers call. <slot>: db | arbitrator | mail | docker | lb.
-#       The db slot picks the data node by week (MAINT_DB_ROTATION). Live only
+#       The db slot picks the data node patched least recently. Live only
 #       for hosts listed in MAINT_LIVE_HOSTS; otherwise a dry run.
 #   freegle-maint resume          at boot, after a Docker-host reboot (systemd)
 #   freegle-maint status          lock, pause, failure marker, recent runs
@@ -52,14 +52,42 @@ profile_of() {
   echo unknown
 }
 
+last_ok_epoch() {  # <host> -> when it last finished a live run, 0 if never
+  local f="$MAINT_STATE_DIR/last-ok-$1" t=""
+  [ -f "$f" ] && t=$(date -u -d "$(cat "$f")" +%s 2>/dev/null)
+  echo "${t:-0}"
+}
+
+# The db slot when the other data node was patched live too recently: nothing is due
+# this week, which is the schedule working, not a failure. Recorded as a success that
+# says when the node becomes due; no run starts and no alert is sent.
+db_slot_not_due() {  # <chosen node>
+  local other n since
+  for n in $MAINT_DB_NODES; do [ "$n" != "$1" ] && other=$n; done
+  since=$(( $(date -u +%s) - $(last_ok_epoch "$other") ))
+  [ "$since" -lt $(( MAINT_DB_MIN_DAYS_BETWEEN_NODES * 86400 )) ] || return 1
+  cron_record "freegle-maint db" success \
+    "Not due: $other was patched $(( since / 86400 )) days ago and the data nodes are at least $MAINT_DB_MIN_DAYS_BETWEEN_NODES days apart; $1 is next." < /dev/null
+  echo "db slot not due: $other patched $(( since / 3600 )) hours ago; $1 is next"
+}
+
 slot_host() {
   case "$1" in
     db)
-      # Alternate the data nodes by week, so each is done every other week and the
-      # two never fall in the same week. Weeks counted from the epoch, not ISO
-      # weeks, so a 53-week year does not repeat a node.
+      # The data node patched live least recently, so a slot that was skipped, failed
+      # or caught up by hand on another day is made up the next week instead of
+      # waiting a further fortnight. A node never patched live counts as oldest. A tie
+      # (neither stamped yet) goes by the week from the epoch, so dry runs still
+      # alternate and a 53-week year does not repeat a node.
       local -a nodes; read -r -a nodes <<< "$MAINT_DB_ROTATION"
-      echo "${nodes[$(( $(date -u +%s) / 604800 % ${#nodes[@]} ))]}";;
+      local week=${nodes[$(( $(date -u +%s) / 604800 % ${#nodes[@]} ))]} n t pick="" best=""
+      for n in "${nodes[@]}"; do
+        t=$(last_ok_epoch "$n")
+        if [ -z "$best" ] || [ "$t" -lt "$best" ] || { [ "$t" -eq "$best" ] && [ "$n" = "$week" ]; }; then
+          best=$t; pick=$n
+        fi
+      done
+      echo "$pick";;
     arbitrator) echo "$MAINT_ARBITRATOR";;
     mail) echo "$MAINT_MAIL_HOST";;
     lb) echo "$MAINT_LB_HOST";;
@@ -161,6 +189,7 @@ case "$cmd" in
     host=$(slot_host "$1"); [ -n "$host" ] || usage 64
     SLOT=$1
     cron_rollout
+    [ "$SLOT" = db ] && db_slot_not_due "$host" && exit 0
     if is_live_host "$host" || { [ "$host" = docker ] && is_live_host local; }; then DRY=false; else DRY=true; fi
     start_run "$host";;
   resume)

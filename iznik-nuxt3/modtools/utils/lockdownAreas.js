@@ -37,7 +37,7 @@ export const LOCKDOWN_AREAS = [
   },
   {
     key: 'events',
-    label: 'Events, volunteering, noticeboards and stories',
+    label: 'Events, volunteering and stories',
     kind: 'events',
     description: 'New ones wait for approval; edits are refused.',
   },

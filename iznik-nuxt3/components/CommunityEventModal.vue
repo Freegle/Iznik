@@ -17,12 +17,14 @@
           One of our volunteers will check over your event, and then we'll
           publicise it to other freeglers.
         </p>
-        <p>
-          Freegle is free to use, but not free to run. If you can,
-          <strong>please donate &pound;1</strong> to keep us running - but
-          anything you can give is very welcome.
-        </p>
-        <donation-button />
+        <template v-if="askForDonations">
+          <p>
+            Freegle is free to use, but not free to run. If you can,
+            <strong>please donate &pound;1</strong> to keep us running - but
+            anything you can give is very welcome.
+          </p>
+          <donation-button />
+        </template>
       </div>
       <div v-else-if="event">
         <div v-if="!editing" class="view-mode">
@@ -198,7 +200,15 @@
               v-model="currentAtts"
               class="bg-white"
               type="CommunityEvent"
+              @uploading="photoUploading = $event"
+              @upload-failed="photoFailed = $event"
             />
+            <p v-if="photoUploading" class="text-muted mt-1">
+              Your photo is uploading. You can save when it has finished.
+            </p>
+            <p v-if="photoFailed" class="text-danger fw-bold mt-1">
+              Your photo did not upload. Please add it again.
+            </p>
 
             <b-form-group
               ref="eventEdit__description"
@@ -308,6 +318,9 @@
       </div>
     </template>
     <template #footer>
+      <p v-if="saveError" class="text-danger fw-bold w-100 mb-2" role="alert">
+        {{ saveError }}
+      </p>
       <div class="modal-actions">
         <template v-if="added">
           <b-button variant="secondary" @click="hide"> Close </b-button>
@@ -427,6 +440,12 @@ const oldPhoto = ref(null)
 const editing = ref(props.startEdit)
 const added = ref(false)
 const cacheBust = ref(Date.now())
+const saveError = ref(null)
+const photoUploading = ref(false)
+const photoFailed = ref(false)
+// Set once the create has returned an id, so a retry after a partial failure
+// finishes the job rather than creating a second event.
+const createdId = ref(null)
 const showDateError = ref(false)
 const description = ref(null)
 const currentAtts = ref([])
@@ -436,7 +455,7 @@ const image = ref(null)
 // Modal handling
 const { modal, hide } = useOurModal()
 
-const { supportOrAdmin } = useMe()
+const { supportOrAdmin, askForDonations } = useMe()
 
 // Helper function to create initial event
 // Reactive, so a child writing into it through v-model (ReachPicker) sees its own change.
@@ -515,7 +534,7 @@ const user = computed(() => {
 })
 
 const uploadingPhoto = computed(() => {
-  return composeStore?.uploading
+  return composeStore?.uploading || photoUploading.value
 })
 
 const isExisting = computed(() => {
@@ -569,26 +588,42 @@ async function deleteIt() {
   hide()
 }
 
-async function saveIt(callback) {
+const SAVE_FAILED =
+  'Sorry, your event was not saved. Your details are still here. Please check your connection and try again.'
+const SAVE_PARTIAL =
+  'Your event was created, but its photo or dates did not all save. Please try again.'
+
+// Does the save and says whether it all worked.  Throws if a request fails.
+async function doSave() {
+  if (photoUploading.value || uploadingPhoto.value) {
+    saveError.value =
+      'Your photo is still uploading. Please wait for it to finish, then try again.'
+    return false
+  }
+
+  if (photoFailed.value) {
+    saveError.value = 'Your photo did not upload. Please add it again.'
+    return false
+  }
+
   const validate = await form.value.validate()
 
   if (event.value.dates?.length) {
     for (const date of event.value.dates) {
       if (!date.start || !date.end || !date.starttime || !date.endtime) {
         showDateError.value = true
-        callback()
-        return
+        return false
       }
     }
 
     showDateError.value = false
   } else {
     showDateError.value = true
+    return false
   }
 
   if (!validate.valid) {
-    callback()
-    return
+    return false
   }
 
   if (isExisting.value) {
@@ -616,30 +651,58 @@ async function saveIt(callback) {
     await communityEventStore.save(wip)
 
     added.value = true
-  } else {
-    // This is an add.  First create it to get the id.
-    const dates = event.value.dates
-    const photoid = event.value.image ? event.value.image.id : null
-
-    const id = await communityEventStore.add(event.value)
-
-    if (id) {
-      if (photoid) {
-        await communityEventStore.setPhoto(id, photoid)
-      }
-
-      if (dates && dates.length) {
-        await communityEventStore.setDates({
-          id,
-          olddates: [],
-          newdates: dates,
-        })
-      }
-
-      added.value = true
-    }
+    return true
   }
-  callback()
+
+  // This is an add.  First create it to get the id.  If an earlier attempt
+  // created it but a later step failed, carry on from there.
+  const dates = event.value.dates
+  const photoid = event.value.image ? event.value.image.id : null
+
+  let id = createdId.value
+
+  if (!id) {
+    id = await communityEventStore.add(event.value)
+
+    if (!id) {
+      // The request came back without an id, so nothing was created.
+      saveError.value = SAVE_FAILED
+      return false
+    }
+
+    createdId.value = id
+  }
+
+  if (photoid) {
+    await communityEventStore.setPhoto(id, photoid)
+  }
+
+  if (dates && dates.length) {
+    await communityEventStore.setDates({
+      id,
+      olddates: [],
+      newdates: dates,
+    })
+  }
+
+  added.value = true
+  return true
+}
+
+// Only the green tick when it really saved.  Otherwise leave the form open with
+// what the member typed, and say what went wrong.
+async function saveIt(callback) {
+  saveError.value = null
+  let ok = false
+
+  try {
+    ok = await doSave()
+  } catch (e) {
+    console.error('Save event failed', e)
+    saveError.value = createdId.value ? SAVE_PARTIAL : SAVE_FAILED
+  }
+
+  callback(ok)
 }
 
 async function dontSave() {
@@ -715,6 +778,9 @@ watch(
   currentAtts,
   (newVal) => {
     if (newVal?.length) {
+      // The photo has arrived; the uploader goes away so will not say so itself.
+      photoUploading.value = false
+      photoFailed.value = false
       event.value.image = {
         id: newVal[0].id,
         imageuid: newVal[0].ouruid,

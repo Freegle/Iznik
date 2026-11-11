@@ -39,7 +39,7 @@ func TestLockdownForcesPutMessagePendingWhenPostsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_msg_putpending")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Unmoderated (DEFAULT) member - without a hold this would go straight to Approved.
@@ -82,7 +82,7 @@ func TestLockdownForcesPutMessagePendingWhenPostsHeld(t *testing.T) {
 
 func TestLockdownRefusesModeratorEditOfOthersPost(t *testing.T) {
 	prefix := uniquePrefix("ld_msg_modedit")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	msgID := CreateTestMessage(t, posterID, prefix+" offer", 52.5, -1.8)
@@ -106,7 +106,7 @@ func TestLockdownForcesReviewOnOwnEditWhenPostsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_msg_ownedit_review")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Unmoderated (DEFAULT) member with a live post: without a hold the edit needs no

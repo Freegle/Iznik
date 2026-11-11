@@ -118,7 +118,7 @@ func TestPostShortlinkNotLoggedIn(t *testing.T) {
 
 func TestPostShortlinkNotModerator(t *testing.T) {
 	prefix := uniquePrefix("ShortlinkNonMod")
-	uID := CreateTestUser(t, prefix+"_u", "User")
+	uID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, uID)
 	body := fmt.Sprintf(`{"name":"%s_x","url":"https://example.com/%s"}`, prefix, prefix)
 	req := httptest.NewRequest("POST", "/api/shortlink?jwt="+token, strings.NewReader(body))

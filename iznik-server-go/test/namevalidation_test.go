@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,7 +15,7 @@ import (
 // for non-moderator users with misleading display names (Discourse #9587).
 func TestSuspiciousNameRewrittenInUserFetch(t *testing.T) {
 	prefix := uniquePrefix("suspname")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	db.Exec("UPDATE users SET fullname = ? WHERE id = ?",
@@ -37,7 +38,7 @@ func TestSuspiciousNameRewrittenInUserFetch(t *testing.T) {
 // Freegle-themed emails and display names legitimately.
 func TestSuspiciousNameKeptForModerator(t *testing.T) {
 	prefix := uniquePrefix("suspmod")
-	userID := CreateTestUser(t, prefix, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 
 	db := database.DBConn
 	db.Exec("UPDATE users SET fullname = ? WHERE id = ?",

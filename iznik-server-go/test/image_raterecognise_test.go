@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestImageRateRecognise(t *testing.T) {
 	prefix := uniquePrefix("img_rr")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a message and attachment
 	msgID := CreateTestMessage(t, userID, "Rate recognise test "+prefix, 55.9533, -3.1883)

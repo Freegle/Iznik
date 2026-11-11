@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-
 )
 
 // Unit guard for the id-readback guarantee the read/write-split fixes depend on
@@ -71,7 +71,7 @@ func TestInsertIdReadBackFromWriteResult(t *testing.T) {
 // (LastInsertId) is the only reliable way under the read/write split.
 func TestCreateAddressReturnsItsOwnId(t *testing.T) {
 	db := database.DBConn
-	userID := CreateTestUser(t, uniquePrefix("addr-ownid"), "User")
+	userID := CreateTestUser(t, uniquePrefix("addr-ownid"), utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	var pafID uint64
@@ -189,7 +189,7 @@ func TestEditMessageCreatesNewItemAndLinks(t *testing.T) {
 	db := database.DBConn
 
 	// Create isolated owner, group, and message.
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, "OFFER: old-subject ("+prefix+")", 55.9533, -3.1883)
 
@@ -244,7 +244,7 @@ func TestAddEmailReturnsItsOwnNewId(t *testing.T) {
 	// CreateTestUser inserts the user plus a primary email (prefix@test.com).
 	// The two addresses below are additional secondaries, so they will always
 	// hit the INSERT branch (not the "already on this user" early-return path).
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	addEmail := func(email string) uint64 {
@@ -311,14 +311,14 @@ func TestConvertToStoryReturnsItsOwnNewId(t *testing.T) {
 
 	// ConvertToStory is mod-only, so the requesting user needs a Moderator
 	// membership in at least one group.
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Two distinct newsfeed authors with distinct messages, so we can tell apart
 	// which story row belongs to which conversion.
-	posterA := CreateTestUser(t, prefix+"_pa", "User")
-	posterB := CreateTestUser(t, prefix+"_pb", "User")
+	posterA := CreateTestUser(t, prefix+"_pa", utils.SYSTEMROLE_USER)
+	posterB := CreateTestUser(t, prefix+"_pb", utils.SYSTEMROLE_USER)
 
 	msgA := "Freegle story A " + prefix
 	msgB := "Freegle story B " + prefix

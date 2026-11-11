@@ -67,13 +67,19 @@
         :hide-header-close="force || gate"
         :no-close-on-esc="force || gate"
         :modal-class="gate ? 'reply-gate-modal' : undefined"
+        :header-class="isUx ? 'py-2' : undefined"
+        :body-class="isUx ? 'py-1' : undefined"
+        :footer-class="isUx ? 'py-1 px-2' : undefined"
         no-fade
       >
         <template #header>
           <div class="d-flex flex-column w-100">
             <div v-if="task">
-              <h1 class="header--size3 w-100">
-                <span class="float-end">
+              <h1
+                class="w-100"
+                :class="isUx ? 'header--size4 mb-0' : 'header--size3'"
+              >
+                <span v-if="!isUx" class="float-end">
                   <span class="small d-inline-flex justify-content-start">
                     <v-icon
                       v-for="i in done"
@@ -102,12 +108,13 @@
                 <span v-else-if="task.type === 'EEELabel'">
                   Help train Freegle's photo recognition
                 </span>
+                <span v-else-if="isUx">A question about Freegle</span>
               </h1>
               <div v-if="gate" class="fw-bold">
                 You've replied to a lot of posts today. Please check one post
                 for us first. Does it look OK?
               </div>
-              <div v-else class="fw-bold">
+              <div v-else-if="!isUx" class="fw-bold">
                 These little things help Freegle run smoothly. Thank you!
               </div>
             </div>
@@ -115,7 +122,7 @@
         </template>
         <template #default>
           <b-card-text>
-            <p v-if="mod" class="text-muted small">
+            <p v-if="mod && !isUx" class="text-muted small">
               (This is something members see. You're seeing it too even though
               you're a mod, so you can see what it looks like to them.)
             </p>
@@ -162,6 +169,13 @@
                   @next="considerNext"
                 />
               </div>
+              <div v-else-if="task.type === 'UxPrompt'">
+                <MicroVolunteeringUxPrompt
+                  :prompt="task.uxprompt"
+                  @skipped="uxSkipped"
+                  @next="considerNext"
+                />
+              </div>
               <div v-else-if="task.type === 'Invite'">
                 <MicroVolunteeringInvite @next="considerNext" />
               </div>
@@ -176,12 +190,18 @@
             <b-button
               v-if="inviteAccepted && !force"
               variant="link"
-              class="mb-1"
+              :size="isUx ? 'sm' : undefined"
+              :class="isUx ? 'px-1' : 'mb-1'"
               @click="stopIt"
             >
               Don't ask me again
             </b-button>
-            <b-button variant="secondary" class="mb-1" @click="doneForNow">
+            <b-button
+              variant="secondary"
+              :size="isUx ? 'sm' : undefined"
+              :class="isUx ? 'px-1' : 'mb-1'"
+              @click="doneForNow"
+            >
               Ask again tomorrow
             </b-button>
           </div>
@@ -220,6 +240,9 @@ const MicroVolunteeringAIImageReview = defineAsyncComponent(
 )
 const MicroVolunteeringEeeLabel = defineAsyncComponent(
   () => import('./MicroVolunteeringEeeLabel')
+)
+const MicroVolunteeringUxPrompt = defineAsyncComponent(
+  () => import('./MicroVolunteeringUxPrompt')
 )
 
 const props = defineProps({
@@ -273,6 +296,7 @@ const types = ref([
   'Invite',
   'AIImageReview',
   'EEELabel',
+  'UxPrompt',
 ])
 const bump = ref(1)
 
@@ -283,6 +307,11 @@ const inviteAccepted = computed(() => {
 const mod = computed(() => {
   return me.value?.isModerator || me.value?.isAdmin
 })
+
+// A question about the site is drawn small: its own heading and no hearts or second heading line, a
+// tighter frame and no moderator note, so the whole card fits one phone screen. A moderator sees the
+// same card as a member. docs/developers/reference/ux-member-surveys.md.
+const isUx = computed(() => task.value?.type === 'UxPrompt')
 
 if (me.value && !miscStore.modtools) {
   // MT
@@ -367,6 +396,8 @@ async function getTask() {
     clientLog.info('Microvolunteering challenge received', {
       event_type: 'microvolunteering',
       challenge_type: task.value.type,
+      prompt_id: task.value.uxprompt?.id,
+      prompt_kind: task.value.uxprompt?.kind,
     })
 
     miscStore.set({
@@ -381,6 +412,7 @@ async function getTask() {
       task.value.type === 'Survey2' ||
       task.value.type === 'AIImageReview' ||
       task.value.type === 'EEELabel' ||
+      task.value.type === 'UxPrompt' ||
       task.value.type === 'Invite'
     ) {
       showTask.value = true
@@ -416,6 +448,12 @@ async function stopIt() {
   await authStore.saveMicrovolunteering('Declined')
 
   doneForNow()
+}
+
+// A member who skipped a question about the site is not asked another one this visit, as well as
+// the server not offering the same one again.
+function uxSkipped() {
+  types.value = types.value.filter((t) => t !== 'UxPrompt')
 }
 
 function considerNext(graded) {

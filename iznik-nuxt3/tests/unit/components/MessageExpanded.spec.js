@@ -150,6 +150,22 @@ vi.mock('~/composables/useClientLog', () => ({
   action: vi.fn(),
 }))
 
+const { mockInterestedState, mockSetInterested } = vi.hoisted(() => ({
+  mockInterestedState: vi.fn(),
+  mockSetInterested: vi.fn(),
+}))
+
+vi.mock('~/api', () => ({
+  default: () => ({
+    message: {
+      interestedState: (...args) => mockInterestedState(...args),
+      setInterested: (...args) => mockSetInterested(...args),
+    },
+  }),
+}))
+
+vi.stubGlobal('useRuntimeConfig', () => ({ public: {} }))
+
 // Mock defineAsyncComponent to return stub components immediately
 vi.mock('vue', async (importOriginal) => {
   const actual = await importOriginal()
@@ -266,6 +282,10 @@ describe('MessageExpanded', () => {
           },
         },
         stubs: {
+          MessageOwnActions: {
+            template: '<div class="own-post-actions" />',
+            props: ['message'],
+          },
           'v-icon': {
             template: '<span class="v-icon" :data-icon="icon"><slot /></span>',
             props: ['icon'],
@@ -385,6 +405,13 @@ describe('MessageExpanded', () => {
             template: '<div class="message-report-modal" />',
             props: ['id'],
             emits: ['hidden'],
+          },
+          BulkItemsInterest: {
+            template: '<div class="bulk-items-interest" />',
+          },
+          MessageItemList: {
+            template: '<div class="message-item-list" />',
+            props: ['id'],
           },
         },
         ...options.global,
@@ -700,6 +727,27 @@ describe('MessageExpanded', () => {
       mockFromme.value = true
       const wrapper = await createWrapper({ replyable: true })
       expect(wrapper.find('.reply-button').exists()).toBe(false)
+    })
+
+    // A poster who reaches their own post from Browse or a link sees this view.
+    // It must still let them finish the post (Discourse 10284).
+    it('lets the poster mark their own post', async () => {
+      mockFromme.value = true
+      const wrapper = await createWrapper({ replyable: true })
+      expect(wrapper.find('.own-post-actions').exists()).toBe(true)
+    })
+
+    it('does not offer the poster controls to anyone else', async () => {
+      mockFromme.value = false
+      const wrapper = await createWrapper({ replyable: true })
+      expect(wrapper.find('.own-post-actions').exists()).toBe(false)
+    })
+
+    it('does not offer them once the post is finished', async () => {
+      mockFromme.value = true
+      mockMessage.value.outcomes = [{ outcome: 'Taken' }]
+      const wrapper = await createWrapper({ replyable: true })
+      expect(wrapper.find('.own-post-actions').exists()).toBe(false)
     })
 
     // Rippling-out: the post is visible but hasn't rippled to this viewer, so a
@@ -1384,6 +1432,185 @@ describe('MessageExpanded', () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.posted-on-groups').exists()).toBe(false)
       expect(wrapper.text()).not.toContain('Freegle Testville')
+    })
+  })
+
+  describe("I'm interested button", () => {
+    // The composable keeps its state per post for the life of the page, so each case uses a post of its own.
+    let nextId = 5000
+
+    async function interestedWrapper(state, change = () => {}) {
+      mockMessage.value.id = ++nextId
+      change()
+      mockInterestedState.mockResolvedValue(state)
+      const wrapper = await createWrapper({ id: mockMessage.value.id })
+      await flushPromises()
+      return wrapper
+    }
+
+    const button = (w) => w.find('[data-testid="interested-button"]')
+    const marked = (w) => w.find('[data-testid="interested-marked"]')
+
+    it('shows the button in the arm button and asks once for the post', async () => {
+      const wrapper = await interestedWrapper({
+        arm: 'button',
+        interested: false,
+        eligible: true,
+      })
+      expect(button(wrapper).exists()).toBe(true)
+      expect(button(wrapper).text()).toBe("I'm interested")
+      expect(mockInterestedState).toHaveBeenCalledTimes(1)
+      expect(mockInterestedState).toHaveBeenCalledWith(nextId)
+      // Reply is still there, and still primary.
+      expect(wrapper.find('.reply-button.primary').exists()).toBe(true)
+    })
+
+    it('shows no button in the control arm', async () => {
+      const wrapper = await interestedWrapper({
+        arm: '',
+        interested: false,
+        eligible: true,
+      })
+      expect(button(wrapper).exists()).toBe(false)
+      expect(marked(wrapper).exists()).toBe(false)
+    })
+
+    it('shows the marked state whatever the arm', async () => {
+      const wrapper = await interestedWrapper({
+        arm: '',
+        interested: true,
+        eligible: true,
+      })
+      expect(button(wrapper).exists()).toBe(false)
+      expect(marked(wrapper).exists()).toBe(true)
+      expect(marked(wrapper).text()).toContain('Interested')
+      // The note is only for the press that made the mark.
+      expect(wrapper.find('[data-testid="interested-note"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('marks on press, shows the note, and undoes', async () => {
+      const wrapper = await interestedWrapper({
+        arm: 'button',
+        interested: false,
+        eligible: true,
+      })
+      mockSetInterested.mockResolvedValue({ interested: true })
+      await button(wrapper).trigger('click')
+      await flushPromises()
+      expect(mockSetInterested).toHaveBeenCalledWith(nextId, true)
+      expect(marked(wrapper).exists()).toBe(true)
+      expect(button(wrapper).exists()).toBe(false)
+      expect(wrapper.find('[data-testid="interested-note"]').text()).toBe(
+        "Saved. Find it in My Posts. We'll remind you tomorrow if it's still there."
+      )
+
+      mockSetInterested.mockResolvedValue({ interested: false })
+      await wrapper.find('[data-testid="interested-undo"]').trigger('click')
+      await flushPromises()
+      expect(mockSetInterested).toHaveBeenLastCalledWith(nextId, false)
+      expect(marked(wrapper).exists()).toBe(false)
+      expect(button(wrapper).exists()).toBe(true)
+    })
+
+    it('is hidden, and not even asked for, on your own post', async () => {
+      const wrapper = await interestedWrapper(
+        { arm: 'button', interested: false, eligible: true },
+        () => {
+          mockFromme.value = true
+        }
+      )
+      expect(button(wrapper).exists()).toBe(false)
+      expect(mockInterestedState).not.toHaveBeenCalled()
+    })
+
+    it('is hidden, and not asked for, when signed out', async () => {
+      const wrapper = await interestedWrapper(
+        { arm: 'button', interested: false, eligible: true },
+        () => {
+          mockLoggedIn.value = false
+        }
+      )
+      expect(button(wrapper).exists()).toBe(false)
+      expect(mockInterestedState).not.toHaveBeenCalled()
+    })
+
+    it('is hidden, and not asked for, once the post is taken', async () => {
+      const wrapper = await interestedWrapper(
+        { arm: 'button', interested: false, eligible: true },
+        () => {
+          mockMessage.value.successful = true
+        }
+      )
+      expect(button(wrapper).exists()).toBe(false)
+      expect(mockInterestedState).not.toHaveBeenCalled()
+    })
+
+    it('is hidden, and not asked for, on a bulk post', async () => {
+      const wrapper = await interestedWrapper(
+        { arm: 'button', interested: false, eligible: true },
+        () => {
+          mockMessage.value.bulkcount = 3
+        }
+      )
+      expect(button(wrapper).exists()).toBe(false)
+      expect(mockInterestedState).not.toHaveBeenCalled()
+    })
+
+    it('shows no button when the server says the post is not eligible', async () => {
+      const wrapper = await interestedWrapper({
+        arm: 'button',
+        interested: false,
+        eligible: false,
+      })
+      expect(button(wrapper).exists()).toBe(false)
+    })
+
+    it('shows no button, and no error, when the API fails', async () => {
+      mockMessage.value.id = ++nextId
+      mockInterestedState.mockRejectedValue(new Error('404'))
+      const wrapper = await createWrapper({ id: mockMessage.value.id })
+      await flushPromises()
+      expect(button(wrapper).exists()).toBe(false)
+      expect(marked(wrapper).exists()).toBe(false)
+      expect(wrapper.find('.reply-button').exists()).toBe(true)
+    })
+  })
+
+  describe('posts with an item list', () => {
+    const items = [
+      { id: 1, name: 'Sofa', quantity: 1 },
+      { id: 2, name: 'Chairs', quantity: 2 },
+    ]
+
+    it('replies to a clearance by registering interest in its items', async () => {
+      mockMessage.value.bulkcount = 2
+      mockMessage.value.bulkitems = items
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.bulk-items-interest').exists()).toBe(true)
+      expect(wrapper.find('.message-item-list').exists()).toBe(false)
+      expect(wrapper.find('.reply-button').text()).toBe('Register interest')
+    })
+
+    it('shows an automatically split post as a list and replies to it as usual', async () => {
+      mockMessage.value.bulkcount = 2
+      mockMessage.value.bulkitems = items
+      mockMessage.value.autosplit = true
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.message-item-list').exists()).toBe(true)
+      expect(wrapper.find('.bulk-items-interest').exists()).toBe(false)
+      expect(wrapper.find('.reply-button').text()).toBe('Reply')
+    })
+
+    it('shows no item list on a WANTED, and does not treat it as a clearance', async () => {
+      mockMessage.value.type = 'Wanted'
+      mockMessage.value.bulkcount = 2
+      mockMessage.value.bulkitems = items
+      mockMessage.value.autosplit = true
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.message-item-list').exists()).toBe(false)
+      expect(wrapper.find('.bulk-items-interest').exists()).toBe(false)
     })
   })
 })

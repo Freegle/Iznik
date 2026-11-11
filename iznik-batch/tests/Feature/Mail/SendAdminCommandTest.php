@@ -277,7 +277,7 @@ class SendAdminCommandTest extends TestCase
         config(['freegle.mail.enabled_types' => 'Admin']);
         Mail::fake();
 
-        $user = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 0]);
+        $user = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 0, 'marketingconsent' => 1]);
 
         $adminId = $this->createAdmin(['essential' => false]);
 
@@ -288,7 +288,7 @@ class SendAdminCommandTest extends TestCase
     }
 
     /**
-     * Test: essential=0 + moderator → always sent.
+     * Test: essential=0 + moderator with relevantallowed=0 → sent.
      * Mirrors V1 testNonessential.
      */
     public function test_nonessential_always_sends_to_moderator(): void
@@ -296,7 +296,7 @@ class SendAdminCommandTest extends TestCase
         config(['freegle.mail.enabled_types' => 'Admin']);
         Mail::fake();
 
-        $mod = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 0]);
+        $mod = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 0, 'marketingconsent' => 1]);
         DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $adminId = $this->createAdmin(['essential' => false]);
@@ -324,6 +324,123 @@ class SendAdminCommandTest extends TestCase
             ->assertSuccessful();
 
         Mail::assertSent(AdminMail::class, 1);
+    }
+
+    /**
+     * A Newsletter ADMIN can be a fundraising appeal, so it only goes to people who agreed to hear
+     * about ways to support Freegle (users.marketingconsent). Moderators are no exception.
+     */
+    public function test_nonessential_skips_member_and_moderator_without_marketing_consent(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $member = $this->createTestUser(['lastaccess' => now(), 'marketingconsent' => 0]);
+        $mod = $this->createTestUser(['lastaccess' => now(), 'marketingconsent' => 0]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+
+        $adminId = $this->createAdmin(['essential' => false]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->expectsTable(['Metric', 'Count'], $this->statsRows(['Skipped (no marketing consent)' => 2]))
+            ->assertSuccessful();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_nonessential_sends_to_member_with_marketing_consent(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $user = $this->createTestUser(['lastaccess' => now(), 'marketingconsent' => 1]);
+
+        $adminId = $this->createAdmin(['essential' => false]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, 1);
+    }
+
+    /**
+     * Turning off donation requests in Settings also keeps Newsletter ADMINs away, until the
+     * pause lapses.
+     */
+    public function test_nonessential_skips_member_who_paused_donation_requests(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $paused = $this->createTestUser([
+            'lastaccess' => now(),
+            'marketingconsent' => 1,
+            'settings' => ['nodonationasks' => TRUE, 'nodonationasksuntil' => now()->addMonth()->toIso8601String()],
+        ]);
+
+        $lapsed = $this->createTestUser([
+            'lastaccess' => now(),
+            'marketingconsent' => 1,
+            'settings' => ['nodonationasks' => TRUE, 'nodonationasksuntil' => now()->subDay()->toIso8601String()],
+        ]);
+
+        $adminId = $this->createAdmin(['essential' => false]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->expectsTable(['Metric', 'Count'], $this->statsRows([
+                'Emails Sent' => 1,
+                'Skipped (donation requests off)' => 1,
+            ]))
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, 1);
+        Mail::assertSent(AdminMail::class, fn (AdminMail $mail) => $mail->user->id === $lapsed->id);
+    }
+
+    public function test_essential_ignores_marketing_consent_and_donation_requests(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $user = $this->createTestUser([
+            'lastaccess' => now(),
+            'marketingconsent' => 0,
+            'settings' => ['nodonationasks' => TRUE],
+        ]);
+
+        $adminId = $this->createAdmin(['essential' => true]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, 1);
+    }
+
+    /**
+     * The summary table the command prints, with every count zero except those given.
+     */
+    private function statsRows(array $counts): array
+    {
+        $rows = [
+            'Admins Processed' => 1,
+            'Emails Sent' => 0,
+            'Skipped (active only)' => 0,
+            'Skipped (relevantallowed)' => 0,
+            'Skipped (no marketing consent)' => 0,
+            'Skipped (donation requests off)' => 0,
+            'Skipped (dedup)' => 0,
+            'Skipped (outside the area)' => 0,
+            'Skipped (no email)' => 0,
+            'Skipped (simplemail=None)' => 0,
+            'Errors' => 0,
+        ];
+
+        $out = [];
+        foreach (array_replace($rows, $counts) as $metric => $count) {
+            $out[] = [$metric, $count];
+        }
+
+        return $out;
     }
 
     /**
@@ -497,6 +614,7 @@ class SendAdminCommandTest extends TestCase
 
         $user = $this->createTestUser([
             'lastaccess' => now(),
+            'marketingconsent' => 1,
             'settings' => ['simplemail' => 'None'],
         ]);
 
@@ -675,6 +793,29 @@ class SendAdminCommandTest extends TestCase
             $firstnames = array_column($mail->volunteers ?? [], 'firstname');
             return ! in_array('Hidden', $firstnames, true);
         });
+    }
+
+    /**
+     * Test: an ADMIN with volunteercredits off goes out without the volunteer names, for a
+     * message from someone else rather than from the volunteers.
+     */
+    public function test_volunteer_credits_off_sends_no_volunteers(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $user = $this->createTestUser(['lastaccess' => now()]);
+
+        $mod = $this->createTestUser(['lastaccess' => now(), 'fullname' => 'Jane Smith']);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+
+        $adminId = $this->createAdmin(['volunteercredits' => 0]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, fn (AdminMail $mail) => $mail->volunteers === []
+            && $mail->envelope()->from->name === config('freegle.branding.name'));
     }
 
     /**

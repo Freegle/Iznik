@@ -20,7 +20,7 @@
       <mj-column width="33%">
         <mj-button
           href="{{ $tellUrl }}"
-          mj-class="btn-dark"
+          mj-class="btn-dark btn-group"
           font-size="13px"
           border-radius="4px"
           align="center"
@@ -29,7 +29,7 @@
       <mj-column width="33%">
         <mj-button
           href="{{ $giveUrl }}"
-          mj-class="btn-success"
+          mj-class="btn-success btn-group"
           font-size="13px"
           border-radius="4px"
           align="center"
@@ -38,7 +38,7 @@
       <mj-column width="33%">
         <mj-button
           href="{{ $askUrl }}"
-          mj-class="btn-success"
+          mj-class="btn-success btn-group"
           font-size="13px"
           border-radius="4px"
           align="center"
@@ -135,7 +135,7 @@
       <mj-column width="33%">
         <mj-button
           href="{{ $tellUrl }}"
-          mj-class="btn-dark"
+          mj-class="btn-dark btn-group"
           font-size="13px"
           border-radius="4px"
           align="center"
@@ -144,7 +144,7 @@
       <mj-column width="33%">
         <mj-button
           href="{{ $giveUrl }}"
-          mj-class="btn-success"
+          mj-class="btn-success btn-group"
           font-size="13px"
           border-radius="4px"
           align="center"
@@ -153,7 +153,7 @@
       <mj-column width="33%">
         <mj-button
           href="{{ $askUrl }}"
-          mj-class="btn-success"
+          mj-class="btn-success btn-group"
           font-size="13px"
           border-radius="4px"
           align="center"

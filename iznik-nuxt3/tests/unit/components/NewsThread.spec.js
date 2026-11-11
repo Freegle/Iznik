@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import NewsThread from '~/components/NewsThread.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 const {
   mockNewsfeed,
@@ -22,7 +28,8 @@ const {
   mockTeamFetch,
   mockMuteOnChitChat,
   mockUnMuteOnChitChat,
-} = vi.hoisted(() => {
+} = await vi.hoisted(async () => {
+  const { SYSTEMROLE_USER } = await import('~/constants')
   const { ref } = require('vue')
   return {
     mockNewsfeed: ref({
@@ -46,7 +53,7 @@ const {
     mockMe: ref({
       id: 1,
       displayname: 'Current User',
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
       profile: { path: '/me.jpg' },
       settings: { enterNewLine: false },
     }),
@@ -333,7 +340,7 @@ describe('NewsThread', () => {
     mockMe.value = {
       id: 1,
       displayname: 'Current User',
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
       profile: { path: '/me.jpg' },
       settings: { enterNewLine: false },
     }
@@ -513,7 +520,7 @@ describe('NewsThread', () => {
   describe('hidden thread display', () => {
     beforeEach(() => {
       mockNewsfeed.value.hidden = true
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
     })
 
     it('shows hidden notice for moderators', async () => {
@@ -553,7 +560,7 @@ describe('NewsThread', () => {
     })
 
     it('does not show hidden notice for regular users', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('This has been hidden')
     })
@@ -610,7 +617,7 @@ describe('NewsThread', () => {
     it('shows Edit option for moderator', async () => {
       mockNewsfeed.value.userid = 100
       mockMe.value.id = 1
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Edit')
     })
@@ -618,7 +625,7 @@ describe('NewsThread', () => {
     it('hides Edit option for non-owner non-moderator', async () => {
       mockNewsfeed.value.userid = 100
       mockMe.value.id = 1
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       const wrapper = await createWrapper()
       const editItems = wrapper
         .findAll('.dropdown-item')
@@ -636,7 +643,7 @@ describe('NewsThread', () => {
 
   describe('refer options', () => {
     beforeEach(() => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       mockNewsfeed.value.type = 'Message'
     })
 
@@ -653,7 +660,7 @@ describe('NewsThread', () => {
       // But the canRefer computed won't be directly accessible from vm
       // because script setup exposes computed refs differently
       // Instead we verify by checking that the dropdown items appear
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       mockSupportOrAdmin.value = true
       const wrapper = await createWrapper()
       // When supportOrAdmin is true, the refer options should be visible
@@ -668,7 +675,7 @@ describe('NewsThread', () => {
     })
 
     it('hides refer options for regular users', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       mockSupportOrAdmin.value = false
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('Refer to OFFER')
@@ -677,7 +684,7 @@ describe('NewsThread', () => {
 
   describe('story conversion', () => {
     beforeEach(() => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
     })
 
     it('shows "Turn into Story" for moderators when type is not Story', async () => {
@@ -693,7 +700,7 @@ describe('NewsThread', () => {
     })
 
     it('hides "Turn into Story" for regular users', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('Turn this into a Story')
     })
@@ -738,7 +745,7 @@ describe('NewsThread', () => {
 
   describe('lockdown (mods held)', () => {
     beforeEach(() => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       mockChitChatMod.value = true
       mockNewsfeed.value.type = 'Message'
       mockNewsfeed.value.hidden = false
@@ -994,7 +1001,7 @@ describe('NewsThread', () => {
     })
 
     it('calls referTo when Refer to OFFER clicked', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = await createWrapper()
       const referBtn = wrapper
         .findAll('.dropdown-item')
@@ -1004,7 +1011,7 @@ describe('NewsThread', () => {
     })
 
     it('calls referTo when Refer to WANTED clicked', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = await createWrapper()
       const referBtn = wrapper
         .findAll('.dropdown-item')
@@ -1014,7 +1021,7 @@ describe('NewsThread', () => {
     })
 
     it('calls convertToStory when Turn into Story clicked', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       mockNewsfeed.value.type = 'Message'
       const wrapper = await createWrapper()
       const storyBtn = wrapper
@@ -1387,28 +1394,28 @@ describe('NewsThread', () => {
     })
 
     it('computes mod as true for Moderator systemrole', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
       expect(comp.vm.mod).toBe(true)
     })
 
     it('computes mod as true for Admin systemrole', async () => {
-      mockMe.value.systemrole = 'Admin'
+      mockMe.value.systemrole = SYSTEMROLE_ADMIN
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
       expect(comp.vm.mod).toBe(true)
     })
 
     it('computes mod as true for Support systemrole', async () => {
-      mockMe.value.systemrole = 'Support'
+      mockMe.value.systemrole = SYSTEMROLE_SUPPORT
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
       expect(comp.vm.mod).toBe(true)
     })
 
     it('computes mod as false for User systemrole', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
       expect(comp.vm.mod).toBeFalsy()
@@ -1435,7 +1442,7 @@ describe('NewsThread', () => {
     })
 
     it('computes canRefer based on mod and type', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       mockNewsfeed.value.type = 'Message'
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
@@ -1443,7 +1450,7 @@ describe('NewsThread', () => {
     })
 
     it('computes canStory based on mod and type', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       mockNewsfeed.value.type = 'Message'
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
@@ -1468,25 +1475,25 @@ describe('NewsThread', () => {
 
   describe('team store fetch', () => {
     it('fetches ChitChat Moderation team for moderators', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       await createWrapper()
       expect(mockTeamFetch).toHaveBeenCalledWith('ChitChat Moderation')
     })
 
     it('fetches ChitChat Moderation team for support', async () => {
-      mockMe.value.systemrole = 'Support'
+      mockMe.value.systemrole = SYSTEMROLE_SUPPORT
       await createWrapper()
       expect(mockTeamFetch).toHaveBeenCalledWith('ChitChat Moderation')
     })
 
     it('fetches ChitChat Moderation team for admin', async () => {
-      mockMe.value.systemrole = 'Admin'
+      mockMe.value.systemrole = SYSTEMROLE_ADMIN
       await createWrapper()
       expect(mockTeamFetch).toHaveBeenCalledWith('ChitChat Moderation')
     })
 
     it('does not fetch ChitChat Moderation team for regular users', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       await createWrapper()
       expect(mockTeamFetch).not.toHaveBeenCalled()
     })

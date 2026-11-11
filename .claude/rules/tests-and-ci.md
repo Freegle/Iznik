@@ -62,6 +62,20 @@ test, both invisible in CI.
 
 ## CI failures that look like infrastructure and are not
 
+- **A job's `playwright-failures/` artifacts can belong to an earlier job.** `~/artifacts` sits
+  outside the workspace and survived on the pooled VM, so a red job's traces and screenshots
+  were attached to later jobs. Jobs 41657, 41710 and 41774 each ran 267 of 267 Playwright
+  tests green; their red was Vitest, while the attached failures named tests from other
+  branches. Read `playwright.out` ("N passed") and the failing step before believing an
+  artifact. The job now clears `~/artifacts` before checkout.
+- **Playwright can drive an app built from another branch.** The tests come from the checkout,
+  but the app is `freegle-prod-local` / `modtools-prod-local`, built on a pooled runner VM whose
+  BuildKit can reuse a `COPY . .` layer from an earlier branch. Jobs 41657 and 41710 (PR #1855)
+  failed on a ModTools chart layout and a support link that exist only in PRs #1853 and #1856,
+  and the build step took 129s and said nothing. A red that tests code your branch does not
+  touch is this, not a flaky test. `scripts/verify-prod-image-source.sh` now compares every
+  tracked file under `iznik-nuxt3/` with the container and rebuilds with `--no-cache` on a
+  difference; read its output in the "Verify production containers" step.
 - **"Laravel, Go, Playwright and Vitest all false" with only "Evaluate overall test results"
   failing** is a real test failure tripping fail-fast. It is not a killed machine.
 - **"Build containers" failing across several PRs at once**, with a gateway timeout fetching an
@@ -76,6 +90,11 @@ test, both invisible in CI.
 - **Adding a dispatch arm to `ChatMessage.vue` without a matching stub in `ChatMessage.spec.js`
   fails the whole vitest run**, as an unhandled rejection blamed on an unrelated file. If the
   suite breaks somewhere strange after a chat change, look here first.
+- **Playwright's browser says it is Chrome on Windows.** `playwright.config.js` spreads
+  `devices['Desktop Chrome']`, whose User-Agent has no `HeadlessChrome`, so app code that spots
+  "not a real user" by User-Agent never fires under test. Sentry's HeadlessChrome check missed it
+  and CI's ModTools runs sent 1,689 Google sign-in errors a week to the live project as
+  `production`. Test for automation with `navigator.webdriver`.
 - **Seeding rows with identical timestamps gives non-deterministic order.** Newsfeed replies are
   ordered by `timestamp`, not `added`, so a test can appear to prove an ordering it does not.
 
@@ -177,6 +196,12 @@ genuinely on different lines.
 - **`status-nuxt` has no lockfile**, so its image re-resolves dependencies on every build and is
   at the mercy of whatever the base image's package manager does with the peer graph. A build
   that worked yesterday can fail today with nothing changed on our side.
+- **A seeded pending post that a test edits can leave the pending queue mid-run.** The per-spec
+  pending posts are seeded Pending on an unmoderated community. An edit to the subject or text makes
+  the batch content check look at the post again, and finding nothing wrong it approves it. A later
+  test in the same spec that expects that post in the queue passes or fails on whether the check ran
+  in between. Give each test that edits a pending post its own one (`pending.offer`,
+  `pending.wanted`), as `test-modtools-edit-message.spec.js` does.
 - **A passing Playwright run deletes every PNG at the top of `SCREENSHOTS_DIR`.** `fixtures.js`
   has a global `afterAll` that calls `cleanupScreenshots()` when the run exits clean, so images
   a spec writes there with `page.screenshot({ path })` vanish seconds after they are logged as
@@ -205,7 +230,12 @@ genuinely on different lines.
   annotation on the test. A reload after aborted chunk loads is host noise when it lines up with a
   container event; without one, or several in a run, look for a server resetting connections.
   A login refill means the ModTools login form lost what was typed before submit, about once in
-  forty logins, cause not yet found: a member could hit it too. It refills once, then fails.
+  forty logins, cause not yet found: a member could hit it too. It refills once, then fails. When a login modal does
+  not close (or a ModTools login times out or is refused), the log carries one `[LOGIN-DIAG]` line from
+  `tests/e2e/utils/login-diagnostics.js`: modal count and `data-instance` ids, whether the store holds a
+  member, the email field and password length, any error text, and the navigation entry type. Read it
+  before theorising. CI 2026-10-17/18 showed no refill in 2084 ModTools logins, so the "one in forty"
+  figure is unproven.
   A new-page recovery means Chromium left `context.newPage()` unanswered for a minute before any
   test code ran. Seen once in three runs, with no container event, memory pressure or crash
   logged; the fixture asks once more. More than one in a run is worth chasing in Chromium.
@@ -352,8 +382,50 @@ build, not by bisecting the boundary.
 - **An uploaded photo's thumbnail 404s on a stack with offset ports** (worktrees, CI on
   9080): the delivery service is asked to fetch `tusd.localhost:<host port>`, which its
   container cannot reach. The upload itself succeeded; check the tusd id in the draft.
+- **The Go suite runs against the dev API's own database.** Both read `MYSQL_DBNAME` in the
+  apiv2 container, so rows seeded by hand for a screenshot or a manual check can be changed by a
+  Go run through the status API. After one, the worktree's Support user was a Moderator again
+  and ModTools said "You don't have access to SysAdmin tools". Re-check roles and seeded rows
+  after any Go run, before trusting what the dev site shows.
+- **A Playwright POST whose database reset dies part-way leaves the database empty, and the
+  env endpoint still answers.** Under heavy host load (another session's vitest workers, load
+  average over 1,000) the reset's `spawnSync` timed out after dropping the data, so `users` had
+  0 rows, and `GET /api/tests/env/<prefix>` went on returning the seeded ids from
+  `test-envs.json` with a 200. ModTools then said "We don't know that email address" for a
+  moderator the env endpoint had just named. Count `users` before trusting either; a second
+  POST, once the load has gone, resets it properly.
+- **A browser run through the status API empties rows seeded by hand.** It resets the database
+  to its fixtures as it starts. Afterwards the seeded session and every `ux_*` rollup row were
+  gone, and the UX tab showed each funnel at 0 started with no error. The UX read API keeps each
+  answer for ten minutes, so a page opened before the rows were back went on showing zeros after
+  they were. Re-seed, then restart `apiv2` to drop the cached answers.
 
 ## See also
 
 - `docs/developers/testing.md` - the four suites and how to run them.
 - `.claude/rules/dev-containers.md` - why a local pass can be testing old code.
+
+## A green background step that failed
+
+`Run monitor-fsm unit tests (background)`, `Lint iznik-nuxt3 (eslint, background)`, the two
+`Run ... tests (background)` Go service steps and `Upload Go coverage (background)` are
+CircleCI background steps, so each one is marked green the moment it starts, whatever
+happens afterwards. The real result is the `pass`/`fail` written to
+`~/test-output/<name>.result`, read by the parallel block (which stops the suites and prints
+`FAIL-FAST: background check <name> failed`) and by `Collect background checks`, which is the
+step that actually goes red and prints the output. A job where the parallel suites show as
+`killed` and nothing names a test is this: read the collect step, not the suites. For Go
+coverage the join is `Wait for Go coverage upload`; a Coveralls job count one short means that
+upload did not finish or did not upload, and its own step's log says which.
+
+## "Coveralls grouped 0 parallel job(s)" on a build that has all four
+
+Coveralls only processes the queued uploads once the webhook closes the build, and the
+webhook reply counts the jobs before it does that. So the reply said `"jobs":0` on every run
+from 2026-08-18 to 2026-10-27 while the four `Coveralls - <flag>` jobs landed 10 to 20s
+later and the aggregate was right (jobs 43482 and 43488: webhook, then the four per-flag
+commit statuses, then the build's `calculated_at`). Waiting before the webhook does not help;
+the statuses never appear until it is sent. The step now checks the real thing after the
+webhook: the per-flag commit statuses on GitHub, counted from when the coverage setup
+started. If that warns, read the commit's statuses first; four of them means the wait ran
+out, not that the ids are wrong.

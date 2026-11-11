@@ -13,9 +13,11 @@ use App\Mail\Session\LoginLinkMail;
 use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
+use App\Mail\Chat\ChatNotification;
 use App\Mail\Message\ModStdMessageMail;
+use App\Models\ChatRoom;
 use App\Models\User;
-use App\Services\BlockedKeywordBackfillService;
+use App\Services\ChatNotificationService;
 use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
@@ -178,6 +180,34 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $task = DB::table('background_tasks')->first();
         $this->assertNotNull($task->processed_at);
         $this->assertNull($task->failed_at);
+    }
+
+    public function test_email_admin_test_without_volunteer_credits_lists_no_volunteers(): void
+    {
+        Mail::fake();
+
+        $mod = $this->createTestUser(['fullname' => 'Jane Smith', 'lastaccess' => now()]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_admin_test',
+            'data' => json_encode([
+                'user_id' => $mod->id,
+                'email' => 'tester@example.com',
+                'subject' => 'A message from a partner',
+                'text' => 'Hello',
+                'volunteercredits' => false,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, fn (AdminMail $mail) => $mail->hasTo('tester@example.com')
+            && $mail->volunteers === []
+            && $mail->groupName === 'Freegle');
     }
 
     public function test_email_admin_test_requires_an_address(): void
@@ -1115,6 +1145,152 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNotNull($task->processed_at);
     }
 
+    /**
+     * An offer with one replier whose reply is waiting for their answer to the question Freegle asked, and a chat with
+     * a second replier whose reply went through.
+     *
+     * @return array{0: int, 1: int, 2: int, 3: int, 4: int, 5: int} post, held chat, held reply, question, other chat, other reply
+     */
+    private function offerWithAHeldReply(array $prompt = []): array
+    {
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $other = $this->createTestUser();
+        $freegle = $this->createTestUser();
+
+        $msgId = DB::table('messages')->insertGetId(['fromuser' => $poster->id, 'subject' => 'OFFER: Armchair', 'date' => now(), 'collection' => 'Approved']);
+
+        $heldChat = DB::table('chat_rooms')->insertGetId(['chattype' => 'User2User', 'user1' => $poster->id, 'user2' => $replier->id]);
+        $reply = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => $replier->id, 'message' => 'Is it still available?', 'type' => 'Interested',
+            'refmsgid' => $msgId, 'date' => now(), 'reviewrequired' => 0, 'reviewrejected' => 0,
+            'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+        $question = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => $freegle->id, 'message' => '@Sam, do you still want it?', 'type' => 'Prompt',
+            'refmsgid' => $msgId, 'date' => now(), 'processingrequired' => 0, 'processingsuccessful' => 0,
+        ]);
+        DB::table('chat_prompts')->insert($prompt + [
+            'chatmsgid' => $question, 'msgid' => $msgId, 'msgids' => json_encode([$msgId]), 'userid' => $replier->id,
+            'heldchatmsgid' => $reply, 'kind' => 'confirm_reply', 'options' => '[]', 'created_at' => now(), 'expires_at' => now()->addDays(3),
+        ]);
+
+        $otherChat = DB::table('chat_rooms')->insertGetId(['chattype' => 'User2User', 'user1' => $poster->id, 'user2' => $other->id]);
+        $otherReply = DB::table('chat_messages')->insertGetId([
+            'chatid' => $otherChat, 'userid' => $other->id, 'message' => 'Can I have it?', 'type' => 'Interested',
+            'refmsgid' => $msgId, 'date' => now(), 'reviewrequired' => 0, 'reviewrejected' => 0,
+            'processingrequired' => 0, 'processingsuccessful' => 1,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'message_outcome',
+            'data' => json_encode(['msgid' => $msgId, 'byuser' => $poster->id, 'outcome' => 'Taken', 'happiness' => 'Happy', 'comment' => '', 'userid' => 0, 'message' => 'Sorry, this has now been taken.']),
+            'created_at' => now(),
+        ]);
+
+        return [$msgId, $heldChat, $reply, $question, $otherChat, $otherReply];
+    }
+
+    public function test_message_outcome_expires_an_open_reply_question_and_drops_the_reply(): void
+    {
+        [$msgId, $heldChat, $reply, $question, $otherChat] = $this->offerWithAHeldReply();
+        $behind = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => DB::table('chat_messages')->where('id', $reply)->value('userid'), 'message' => 'no thanks, sorry',
+            'type' => 'Default', 'date' => now(), 'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $prompt = DB::table('chat_prompts')->where('chatmsgid', $question)->first();
+        $this->assertEquals('expired', $prompt->answer, 'the question is over, so its buttons stop');
+        $this->assertNotNull($prompt->answered_at);
+
+        foreach ([$reply, $behind] as $id) {
+            $row = DB::table('chat_messages')->where('id', $id)->first();
+            $this->assertEquals(0, $row->processingrequired, 'the batch no longer has it to deliver');
+            $this->assertEquals(0, $row->processingsuccessful);
+            $this->assertEquals(\App\Models\ChatMessage::PROCESSFAIL_POST_GONE, $row->processingfailreason);
+        }
+    }
+
+    public function test_message_outcome_writes_nothing_as_the_poster_into_a_chat_whose_reply_is_held(): void
+    {
+        [$msgId, $heldChat, , , $otherChat] = $this->offerWithAHeldReply();
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $this->assertEquals(0, DB::table('chat_messages')->where('chatid', $heldChat)->where('type', 'Completed')->count(),
+            'the poster never saw the reply, so nothing is written as the poster');
+        $this->assertEquals(1, DB::table('chat_messages')->where('chatid', $otherChat)->where('type', 'Completed')->count(),
+            'a chat whose reply the poster did get is told as before');
+    }
+
+    public function test_message_outcome_leaves_alone_what_the_replier_wrote_after_answering_no(): void
+    {
+        [$msgId, $heldChat, $reply, $question] = $this->offerWithAHeldReply(['answer' => 'no', 'answered_at' => now()->subMinutes(5), 'answered_via' => 'button']);
+        DB::table('chat_messages')->where('id', $reply)->update([
+            'processingrequired' => 0, 'processingsuccessful' => 0, 'processingfailreason' => \App\Models\ChatMessage::PROCESSFAIL_REPLY_WITHDRAWN,
+        ]);
+        $later = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => DB::table('chat_messages')->where('id', $reply)->value('userid'), 'message' => 'Do you have anything else?',
+            'type' => 'Default', 'date' => now(), 'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $row = DB::table('chat_messages')->where('id', $later)->first();
+        $this->assertEquals(1, $row->processingrequired, 'an ordinary message written after the no is still to be delivered');
+        $this->assertNull($row->processingfailreason);
+        $this->assertEquals('no', DB::table('chat_prompts')->where('chatmsgid', $question)->value('answer'), 'and the answer stands');
+    }
+
+    public function test_message_outcome_leaves_alone_what_the_replier_wrote_after_a_yes_was_delivered(): void
+    {
+        [$msgId, $heldChat, $reply] = $this->offerWithAHeldReply(['answer' => 'yes', 'answered_at' => now()->subMinutes(5), 'answered_via' => 'button']);
+        DB::table('chat_messages')->where('id', $reply)->update(['processingrequired' => 0, 'processingsuccessful' => 1]);
+        $later = DB::table('chat_messages')->insertGetId([
+            'chatid' => $heldChat, 'userid' => DB::table('chat_messages')->where('id', $reply)->value('userid'), 'message' => 'When can I collect?',
+            'type' => 'Default', 'date' => now(), 'processingrequired' => 1, 'processingsuccessful' => 0,
+        ]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $row = DB::table('chat_messages')->where('id', $later)->first();
+        $this->assertEquals(1, $row->processingrequired, 'a message written after the yes went through is an ordinary one');
+        $this->assertNull($row->processingfailreason);
+    }
+
+    public function test_message_outcome_leaves_a_delivered_reply_with_a_question_to_be_told(): void
+    {
+        [$msgId, $heldChat, $reply] = $this->offerWithAHeldReply(['answer' => 'yes', 'answered_at' => now(), 'answered_via' => 'button']);
+        DB::table('chat_messages')->where('id', $reply)->update(['processingrequired' => 0, 'processingsuccessful' => 1]);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $this->assertEquals(1, DB::table('chat_messages')->where('chatid', $heldChat)->where('type', 'Completed')->count(),
+            'the poster has this reply, so they tell the replier it has gone');
+        $this->assertEquals('yes', DB::table('chat_prompts')->where('heldchatmsgid', $reply)->value('answer'), 'and the answer stands');
+    }
+
+    public function test_message_outcome_drops_a_reply_answered_yes_but_not_yet_delivered(): void
+    {
+        [$msgId, $heldChat, $reply, $question] = $this->offerWithAHeldReply(['answer' => 'yes', 'answered_at' => now(), 'answered_via' => 'button']);
+
+        $this->mock(PushNotificationService::class);
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1, '--sleep' => 0])->assertSuccessful();
+
+        $row = DB::table('chat_messages')->where('id', $reply)->first();
+        $this->assertEquals(0, $row->processingrequired, 'the item has gone, so the batch must not deliver it');
+        $this->assertEquals(0, $row->processingsuccessful);
+        $this->assertEquals('yes', DB::table('chat_prompts')->where('chatmsgid', $question)->value('answer'), 'what they answered is not rewritten');
+        $this->assertEquals(0, DB::table('chat_messages')->where('chatid', $heldChat)->where('type', 'Completed')->count());
+    }
+
     public function test_message_outcome_skips_message_for_unpromised_chats(): void
     {
         $poster = $this->createTestUser();
@@ -1508,6 +1684,172 @@ class ProcessBackgroundTasksCommandTest extends TestCase
                 'Other mod lastmsgemailed must not be pre-set — daemon must be able to notify them'
             );
         }
+    }
+
+    /**
+     * Approve a post with a standard message, then run the User2Mod chat notifier over the chat
+     * it opened. Returns the poster, the sending mod, a second moderator and the chat.
+     *
+     * @return array{0: \App\Models\User, 1: \App\Models\User, 2: \App\Models\User, 3: object}
+     */
+    private function approveWithStdMsgThenNotify(bool $chatsMarkedRead): array
+    {
+        Mail::fake();
+
+        $poster = $this->createTestUser(['email_preferred' => 'poster' . uniqid() . '@example.com']);
+        $mod = $this->createTestUser(['fullname' => 'Approving Mod']);
+        $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
+        DB::table('users')->whereIn('id', [$mod->id, $otherMod->id])->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+
+        $configId = DB::table('mod_configs')->insertGetId([
+            'name' => 'Chatread Test Config',
+            'createdby' => $mod->id,
+            'chatread' => $chatsMarkedRead ? 1 : 0,
+            'network' => 'Freegle',
+        ]);
+        DB::table('users')->where('id', $mod->id)->update(['modconfigid' => $configId]);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Fridge freezer (Somewhere)',
+            'date' => now(),
+            'collection' => 'Approved',
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_approved',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'subject' => 'Thanks for freegling: OFFER: Fridge freezer (Somewhere)',
+                'body' => 'Just a note to say thanks for freegling.',
+                'stdmsgid' => 0,
+                'action' => 'Approve',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class)->shouldReceive('notifyGroupMods')->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $chatRoom = DB::table('chat_rooms')
+            ->where('user1', $poster->id)
+            ->where('chattype', ChatRoom::TYPE_USER2MOD)
+            ->first();
+        $this->assertNotNull($chatRoom, 'The standard message opens a chat with the poster');
+
+        // The notifier runs on its own schedule; here it runs straight after, with no delay.
+        app(ChatNotificationService::class)->notifyByEmail(ChatRoom::TYPE_USER2MOD, (int) $chatRoom->id, 0);
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        return [$poster, $mod, $otherMod, $chatRoom];
+    }
+
+    private function chatNotificationsTo(\App\Models\User $user): int
+    {
+        return Mail::sent(ChatNotification::class, function (ChatNotification $mail) use ($user) {
+            return collect($mail->to)->pluck('address')->contains($user->email_preferred);
+        })->count();
+    }
+
+    public function test_approve_stdmsg_reaches_the_poster_once(): void
+    {
+        // On 2026-11-03 two posters approved with "Thanks for freegling" each got it twice: the
+        // standard message itself, then the chat notifier's "Your conversation with the ...
+        // Volunteers" carrying the same words 30 seconds later.
+        [$poster, , $otherMod] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: FALSE);
+
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($poster) {
+            return collect($mail->to)->pluck('address')->contains($poster->email_preferred);
+        });
+        $this->assertSame(0, $this->chatNotificationsTo($poster), 'The poster already has the words; no chat notification');
+
+        // The other moderators are still told what a colleague sent.
+        $this->assertSame(1, $this->chatNotificationsTo($otherMod));
+    }
+
+    public function test_approve_stdmsg_counts_as_seen_by_the_mod_who_sent_it(): void
+    {
+        [, $mod, , $chatRoom] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: FALSE);
+
+        $chatMsgId = (int) DB::table('chat_messages')->where('chatid', $chatRoom->id)->where('type', 'ModMail')->value('id');
+        $roster = DB::table('chat_roster')->where('chatid', $chatRoom->id)->where('userid', $mod->id)->first();
+
+        $this->assertNotNull($roster);
+        $this->assertSame($chatMsgId, (int) $roster->lastmsgseen, 'Your own standard message is not unread to you');
+        $this->assertSame(0, $this->chatNotificationsTo($mod));
+    }
+
+    public function test_approve_stdmsg_with_chats_marked_read_sends_other_mods_no_copy(): void
+    {
+        [$poster, , $otherMod, $chatRoom] = $this->approveWithStdMsgThenNotify(chatsMarkedRead: TRUE);
+
+        $chatMsg = DB::table('chat_messages')->where('chatid', $chatRoom->id)->where('type', 'ModMail')->first();
+        $this->assertSame(1, (int) $chatMsg->mailedtoall);
+        $this->assertSame(1, (int) $chatMsg->seenbyall);
+
+        $otherRoster = DB::table('chat_roster')->where('chatid', $chatRoom->id)->where('userid', $otherMod->id)->first();
+        $this->assertNotNull($otherRoster, 'The other moderators are in the chat');
+        $this->assertSame((int) $chatMsg->id, (int) $otherRoster->lastmsgseen, 'Marked read for the other moderators');
+
+        $this->assertSame(0, $this->chatNotificationsTo($otherMod));
+        $this->assertSame(0, $this->chatNotificationsTo($poster));
+    }
+
+    public function test_member_stdmsg_with_chats_marked_read_sends_other_mods_no_copy(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser(['fullname' => 'Sending Mod']);
+        $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
+        DB::table('users')->whereIn('id', [$mod->id, $otherMod->id])->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
+
+        $configId = DB::table('mod_configs')->insertGetId([
+            'name' => 'Chatread Member Config',
+            'createdby' => $mod->id,
+            'chatread' => 1,
+            'network' => 'Freegle',
+        ]);
+        DB::table('users')->where('id', $mod->id)->update(['modconfigid' => $configId]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'subject' => 'Your location',
+                'body' => 'Please update your location.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class)->shouldReceive('notifyGroupMods')->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $chatRoom = DB::table('chat_rooms')
+            ->where('user1', $member->id)
+            ->where('chattype', ChatRoom::TYPE_USER2MOD)
+            ->first();
+        $this->assertNotNull($chatRoom);
+
+        app(ChatNotificationService::class)->notifyByEmail(ChatRoom::TYPE_USER2MOD, (int) $chatRoom->id, 0);
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        $chatMsg = DB::table('chat_messages')->where('chatid', $chatRoom->id)->where('type', 'ModMail')->first();
+        $this->assertSame(1, (int) $chatMsg->mailedtoall);
+        $this->assertSame(1, (int) $chatMsg->seenbyall);
+        $this->assertSame(0, $this->chatNotificationsTo($otherMod));
+        $this->assertSame(0, $this->chatNotificationsTo($member));
     }
 
     public function test_mod_stdmsg_for_member_creates_log_and_modmails_record(): void
@@ -2488,6 +2830,61 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
+    public function test_freebie_alerts_add_sends_an_automatically_split_post_without_its_crops(): void
+    {
+        // Bulk items made by the auto-splitter do not make a clearance: the post goes to the
+        // partners like any Offer. Its item crops stay behind, or the photo they were cut
+        // from would arrive several times over.
+        $poster = $this->createTestUser();
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser'   => $poster->id,
+            'subject'    => 'OFFER: Sofa and two chairs',
+            'textbody'   => 'A sofa and two kitchen chairs.',
+            'type'       => 'Offer',
+            'lat'        => 52.5,
+            'lng'        => -1.8,
+            'date'       => now(),
+            'collection' => 'Approved',
+            'arrival'    => now(),
+        ]);
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $msgId, 'position' => 0, 'name' => 'Sofa', 'quantity' => 1, 'condition' => 'Unknown'],
+            ['msgid' => $msgId, 'position' => 1, 'name' => 'Chairs', 'quantity' => 2, 'condition' => 'Unknown'],
+        ]);
+        DB::table('messages_autosplit')->insert(['msgid' => $msgId, 'state' => 'Split', 'kind' => 'several_items']);
+        $photo = DB::table('messages_attachments')->insertGetId(['msgid' => $msgId, 'externaluid' => 'freegletusd-both', 'externalmods' => '{}', 'contenttype' => 'image/jpeg']);
+        $crop = DB::table('messages_attachments')->insertGetId(['msgid' => $msgId, 'externaluid' => 'freegletusd-both', 'externalmods' => '{"cx":1,"cy":2,"cw":300,"ch":200,"fw":800,"fh":600,"precrop":true}', 'contenttype' => 'image/jpeg']);
+
+        DB::table('background_tasks')->insert([
+            'task_type'  => 'freebie_alerts_add',
+            'data'       => json_encode(['msgid' => $msgId]),
+            'created_at' => now(),
+        ]);
+
+        config(['freegle.freebie_alerts.api_key' => 'test-key-123']);
+        config(['freegle.freebie_alerts.api_url' => 'https://api.freebiealerts.app']);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'api.freebiealerts.app/freegle/post/create' => \Illuminate\Support\Facades\Http::response(['success' => true], 200),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep'          => 0,
+        ])->assertSuccessful();
+
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        \Illuminate\Support\Facades\Http::assertSent(function ($request) use ($photo, $crop) {
+            return str_contains($request->url(), '/freegle/post/create')
+                && str_contains($request['images'], "timg_{$photo}.jpg")
+                && ! str_contains($request['images'], "timg_{$crop}.jpg");
+        });
+    }
+
     public function test_freebie_alerts_add_skips_clearance_posts(): void
     {
         // Defense-in-depth: even if a freebie_alerts_add task was somehow enqueued for a
@@ -2975,4 +3372,291 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         Mail::assertSent(ModStdMessageMail::class);
     }
 
+
+    private function configureBothPostFeeds(): void
+    {
+        config(['freegle.freebie_alerts.api_key' => 'fa-key']);
+        config(['freegle.freebie_alerts.api_url' => 'https://api.freebiealerts.app']);
+        config(['freegle.yeybu.api_key' => 'yeybu-key']);
+        config(['freegle.yeybu.api_url' => 'https://db.yeybu.com/feeds/v1']);
+    }
+
+    private function queuePostFeedTask(string $type, array $data, $createdAt = null): int
+    {
+        return DB::table('background_tasks')->insertGetId([
+            'task_type' => $type,
+            'data' => json_encode($data),
+            'created_at' => $createdAt ?? now(),
+        ]);
+    }
+
+    private function postFeedRetries(): array
+    {
+        return DB::table('background_tasks')
+            ->whereNull('processed_at')
+            ->orderBy('id')
+            ->get()
+            ->all();
+    }
+
+    public function test_post_feed_add_retries_only_the_partner_that_timed_out(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', ['msgid' => $msgId]);
+        $this->configureBothPostFeeds();
+
+        Http::fake([
+            'api.freebiealerts.app/*' => Http::response([], 200),
+            'db.yeybu.com/*' => Http::response([], 504),
+        ]);
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->runBackgroundTasksOnce();
+
+        $retries = $this->postFeedRetries();
+        $this->assertCount(1, $retries);
+        $this->assertSame('freebie_alerts_add', $retries[0]->task_type);
+        $data = json_decode($retries[0]->data, true);
+        $this->assertSame($msgId, $data['msgid']);
+        $this->assertSame('yeybu', $data['feed']);
+        $this->assertSame(1, $data['retries']);
+        $this->assertFalse($data['alerted']);
+        $this->assertGreaterThan(now()->getTimestamp(), \Illuminate\Support\Carbon::parse($retries[0]->created_at)->getTimestamp());
+
+        // A first failure is not an error yet.
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('error');
+    }
+
+    public function test_post_feed_retry_waits_until_it_is_due(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ], now()->addMinutes(2));
+        $this->configureBothPostFeeds();
+        Http::fake();
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertNothingSent();
+        $this->assertCount(1, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_retry_goes_only_to_its_partner(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $taskId = $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 200)]);
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($request) => $request->url() === 'https://db.yeybu.com/feeds/v1/freegle/post/create');
+        $this->assertNotNull(DB::table('background_tasks')->where('id', $taskId)->value('processed_at'));
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_retried_add_sends_nothing_once_the_post_is_taken(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        DB::table('messages_outcomes')->insert(['msgid' => $msgId, 'outcome' => 'Taken']);
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake();
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertNothingSent();
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_retried_add_sends_nothing_once_the_post_is_deleted(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        DB::table('messages')->where('id', $msgId)->update(['deleted' => now()]);
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake();
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_post_feed_retried_remove_is_skipped_when_the_post_is_live_again(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_remove', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake();
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertNothingSent();
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_retried_remove_is_sent_when_the_post_is_still_gone(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        DB::table('messages_outcomes')->insert(['msgid' => $msgId, 'outcome' => 'Taken']);
+        $this->queuePostFeedTask('freebie_alerts_remove', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(3)->toIso8601String(),
+            'retries' => 1,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 200)]);
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($request) => $request->url() === "https://db.yeybu.com/feeds/v1/freegle/post/{$msgId}/delete");
+    }
+
+    public function test_post_feed_failure_is_an_error_once_it_has_lasted_an_hour(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subMinutes(61)->toIso8601String(),
+            'retries' => 6,
+            'alerted' => false,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 504)]);
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->runBackgroundTasksOnce();
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('error')
+            ->withArgs(fn ($message) => $message === 'Post feed add still failing after an hour')
+            ->once();
+
+        $retries = $this->postFeedRetries();
+        $this->assertCount(1, $retries);
+        $data = json_decode($retries[0]->data, true);
+        $this->assertTrue($data['alerted']);
+        $this->assertSame(7, $data['retries']);
+
+        // The delay is capped at half an hour.
+        $due = \Illuminate\Support\Carbon::parse($retries[0]->created_at)->getTimestamp() - now()->getTimestamp();
+        $this->assertLessThanOrEqual(1800, $due);
+        $this->assertGreaterThan(1700, $due);
+    }
+
+    public function test_post_feed_failure_already_reported_is_not_reported_again(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subHours(3)->toIso8601String(),
+            'retries' => 10,
+            'alerted' => true,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 503)]);
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->runBackgroundTasksOnce();
+
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('error');
+        $this->assertCount(1, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_is_given_up_after_a_day(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', [
+            'msgid' => $msgId,
+            'feed' => 'yeybu',
+            'first_failed_at' => now()->subHours(25)->toIso8601String(),
+            'retries' => 50,
+            'alerted' => true,
+        ]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 504)]);
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->runBackgroundTasksOnce();
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('error')
+            ->withArgs(fn ($message) => $message === 'Post feed add given up after a day of failures')
+            ->once();
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_connection_failure_is_retried(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', ['msgid' => $msgId]);
+        $this->configureBothPostFeeds();
+        Http::fake([
+            'api.freebiealerts.app/*' => Http::failedConnection(),
+            'db.yeybu.com/*' => Http::response([], 200),
+        ]);
+
+        $this->runBackgroundTasksOnce();
+
+        $retries = $this->postFeedRetries();
+        $this->assertCount(1, $retries);
+        $this->assertSame('freebie_alerts', json_decode($retries[0]->data, true)['feed']);
+    }
+
+    public function test_post_feed_refusal_is_not_retried(): void
+    {
+        $msgId = $this->createLiveOfferForPostFeeds();
+        $this->queuePostFeedTask('freebie_alerts_add', ['msgid' => $msgId]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 400)]);
+
+        $this->runBackgroundTasksOnce();
+
+        $this->assertCount(0, $this->postFeedRetries());
+    }
+
+    public function test_post_feed_remove_of_a_post_the_partner_never_had_is_not_retried(): void
+    {
+        $this->queuePostFeedTask('freebie_alerts_remove', ['msgid' => 99999]);
+        $this->configureBothPostFeeds();
+        Http::fake(['*' => Http::response([], 404)]);
+
+        $this->runBackgroundTasksOnce();
+
+        Http::assertSentCount(2);
+        $this->assertCount(0, $this->postFeedRetries());
+    }
 }

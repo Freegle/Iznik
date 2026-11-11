@@ -50,7 +50,7 @@ func insertChitchatHold(t *testing.T, nfID uint64) {
 
 func TestMessageLockdownheldTrueWithUnresolvedHold(t *testing.T) {
 	prefix := uniquePrefix("ld_held_msg")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, posterID)
 	msgID := CreateTestMessage(t, posterID, prefix+" offer", 52.5, -1.8)
 
@@ -69,7 +69,7 @@ func TestMessageLockdownheldTrueWithUnresolvedHold(t *testing.T) {
 
 func TestMessageLockdownheldFalseWhenNoHold(t *testing.T) {
 	prefix := uniquePrefix("ld_held_msg_none")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, posterID)
 	msgID := CreateTestMessage(t, posterID, prefix+" offer", 52.5, -1.8)
 
@@ -85,7 +85,7 @@ func TestMessageLockdownheldFalseWhenNoHold(t *testing.T) {
 
 func TestMessageLockdownheldFalseWhenOutcomeSet(t *testing.T) {
 	prefix := uniquePrefix("ld_held_msg_resolved")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, posterID)
 	msgID := CreateTestMessage(t, posterID, prefix+" offer", 52.5, -1.8)
 
@@ -107,7 +107,7 @@ func TestMessageLockdownheldFalseWhenOutcomeSet(t *testing.T) {
 
 func TestListMessagesLockdownheldTrueWithUnresolvedHold(t *testing.T) {
 	prefix := uniquePrefix("ld_held_list")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	msgID := CreateTestMessage(t, posterID, prefix+" offer", 52.5, -1.8)
@@ -194,8 +194,8 @@ func TestNewsfeedFeedSummaryLockdownheldTrueForModWhenHeldAndHidden(t *testing.T
 	db.Exec("UPDATE newsfeed SET hidden = NOW() WHERE id = ?", nfID)
 	insertChitchatHold(t, nfID)
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	db.Exec("UPDATE users SET systemrole = 'Moderator' WHERE id = ?", modID)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_MODERATOR, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	resp, err := getApp().Test(httptest.NewRequest("GET",

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\User;
 use App\Services\Lockdown\LockdownService;
@@ -1111,7 +1112,7 @@ class PushNotificationService
         $msg = DB::table('chat_messages as cm')
             ->join('chat_rooms as cr', 'cm.chatid', '=', 'cr.id')
             ->where('cm.id', $messageId)
-            ->select('cm.userid as sender', 'cm.reviewrequired', 'cm.reviewrejected', 'cm.reportreason',
+            ->select('cm.userid as sender', 'cm.type', 'cm.reviewrequired', 'cm.reviewrejected', 'cm.reportreason',
                 'cr.chattype', 'cr.user1', 'cr.user2')
             ->first();
 
@@ -1133,6 +1134,13 @@ class PushNotificationService
         switch ($msg->chattype) {
             case ChatRoom::TYPE_USER2USER:
                 $fd = [(int) $msg->user1, (int) $msg->user2];
+
+                // The question Freegle asks a replier about a reply is not shown to the poster until the reply is
+                // delivered, so the push is for the replier alone.
+                $askedOnly = $msg->type === ChatMessage::TYPE_PROMPT ? ChatMessage::questionAskedOnlyOf($messageId) : null;
+                if ($askedOnly !== null) {
+                    $fd = [$askedOnly];
+                }
                 break;
 
             case ChatRoom::TYPE_USER2MOD:
@@ -1367,12 +1375,13 @@ class PushNotificationService
             ->get()
             ->all();
 
-        $count = 0;
-        foreach ($notifs as $notif) {
-            if (! in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])) {
-                continue;
-            }
+        $devices = array_values(array_filter($notifs, fn ($notif) => in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])));
+        if (empty($devices)) {
+            return 0;
+        }
 
+        $count = 0;
+        foreach ($devices as $notif) {
             try {
                 // forceVisible=FALSE — Android must stay DATA-ONLY so the app's
                 // own notification builder (InboxStyle / BigPictureStyle) runs.

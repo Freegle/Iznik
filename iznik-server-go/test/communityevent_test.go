@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func TestCommunityEvent_InvalidID(t *testing.T) {
@@ -34,7 +35,7 @@ func TestCommunityEventCreateUnauthorized(t *testing.T) {
 
 func TestCommunityEventCreateMissingFields(t *testing.T) {
 	prefix := uniquePrefix("cewr_miss")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Missing title
@@ -74,7 +75,7 @@ func TestCommunityEventDeleteUnauthorized(t *testing.T) {
 
 func TestCommunityEventCreateWithoutGroup(t *testing.T) {
 	prefix := uniquePrefix("cewr_nogrp")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Regular user can create without a group (groups added separately via AddGroup).
@@ -87,10 +88,10 @@ func TestCommunityEventCreateWithoutGroup(t *testing.T) {
 
 func TestCommunityEventCreateNoGroupAdminAllowed(t *testing.T) {
 	prefix := uniquePrefix("cewr_admngrp")
-	adminID := CreateTestUser(t, prefix, "User")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, adminID)
 	db := database.DBConn
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", adminID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, adminID)
 
 	// Admin/support can create without a group.
 	body := `{"title":"Test Event","location":"Edinburgh","description":"A test community event"}`

@@ -128,11 +128,11 @@ class ChatSpamService
              WHERE chat_messages.date >= ?
                AND reviewrejected = 1
                AND (spam_users.collection IS NULL OR spam_users.collection != 'Whitelisted')
-               AND users.systemrole = 'User'
+               AND users.systemrole = ?
              GROUP BY chat_messages.userid
              HAVING count > ?
              ORDER BY count DESC",
-            [$start, self::AUTO_MARK_THRESHOLD]
+            [$start, User::SYSTEMROLE_USER, self::AUTO_MARK_THRESHOLD]
         );
 
         $count = 0;

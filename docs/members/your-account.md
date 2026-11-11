@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
@@ -52,6 +52,17 @@ There is also a weekly **Community Event Roundup** email (sent Thursdays) listin
 events near you. It is on by default and can be turned off in Settings.
 
 If you are in the app, you can also turn on a **daily push notification** of new posts.
+
+**Freegle updates** in Settings is news and ways to support Freegle, including fundraising
+emails and the newsletters your community's volunteers send. It is off unless you turned it on,
+here or with the box under the login form. You can turn it off at any time. The opt-out link at
+the foot of a community newsletter turns it off too.
+
+If you have ever donated to Freegle, Settings also has a **Donation requests** switch. Turn it
+off and we will not ask you to donate for a year, on the site or by email. Settings shows the
+date it ends. After that we may ask again, and you can turn it off for another year. The switch
+stays there for good, so you can turn it back on whenever you like. If you have never donated, you will not
+see it.
 
 Above the email settings there is a **Feed** section with a "How far away" slider, marked
 Nearer at one end and Further at the other. It changes what you see when browsing, what we

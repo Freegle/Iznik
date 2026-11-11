@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -35,7 +36,7 @@ func TestVolunteeringCreateUnauthorized(t *testing.T) {
 
 func TestVolunteeringCreateMissingFields(t *testing.T) {
 	prefix := uniquePrefix("volwr_miss")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Missing title
@@ -75,7 +76,7 @@ func TestVolunteeringDeleteUnauthorized(t *testing.T) {
 
 func TestVolunteeringCreateWithoutGroup(t *testing.T) {
 	prefix := uniquePrefix("volwr_nogrp")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Regular user can create without a group (groups added separately via AddGroup).
@@ -88,10 +89,10 @@ func TestVolunteeringCreateWithoutGroup(t *testing.T) {
 
 func TestVolunteeringCreateNoGroupAdminAllowed(t *testing.T) {
 	prefix := uniquePrefix("volwr_admngrp")
-	adminID := CreateTestUser(t, prefix, "User")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, adminID)
 	db := database.DBConn
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", adminID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, adminID)
 
 	// Admin/support can create without a group.
 	body := `{"title":"Test Vol","location":"Edinburgh","description":"A test volunteering opportunity"}`
@@ -106,13 +107,13 @@ func TestVolunteering_NationalOpsListedWithNoGroups(t *testing.T) {
 	prefix := uniquePrefix("volnatnogrp")
 	db := database.DBConn
 
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO volunteering (userid, title, description, location, online, pending, deleted, expired) VALUES (?, 'National Only Vol', 'national desc', '', 1, 0, 0, 0)", creatorID)
 	var nationalOpID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND title = 'National Only Vol' ORDER BY id DESC LIMIT 1", creatorID).Scan(&nationalOpID)
 	assert.Greater(t, nationalOpID, uint64(0))
 
-	loneID := CreateTestUser(t, prefix+"_lone", "User")
+	loneID := CreateTestUser(t, prefix+"_lone", utils.SYSTEMROLE_USER)
 	_, loneToken := CreateTestSession(t, loneID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/volunteering?jwt="+loneToken, nil))

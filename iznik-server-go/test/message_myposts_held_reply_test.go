@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,8 +52,8 @@ func TestMessageReplies_HeldReplyHiddenFromPoster(t *testing.T) {
 		INDEX (msgid), INDEX (chatid), INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 
 	// The poster's own post (FK target for rippling_held_replies.msgid and refmsgid).
 	postMsgID := CreateTestMessage(t, posterID, "OFFER: myposts held reply test", 51.5, -0.1)

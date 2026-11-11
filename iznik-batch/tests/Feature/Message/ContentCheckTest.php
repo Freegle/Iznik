@@ -2,8 +2,6 @@
 
 namespace Tests\Feature\Message;
 
-use App\Models\Group;
-use App\Models\MessageGroup;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\ContentCheckService;
@@ -1641,6 +1639,38 @@ class ContentCheckTest extends TestCase
 
         $this->assertNull(DB::table('messages')->where('id', $msgid)->value('contentcheck_checked_at'),
             'An old approved post (outside the recent-arrival window) must not be rescanned');
+    }
+
+    public function test_freebiealerts_task_queued_for_an_automatically_split_post(): void
+    {
+        // An ordinary member's post that the auto-splitter turned into an item list has bulk
+        // items like a clearance, but it is an ordinary Offer and goes to freebiealerts.app.
+        $user = $this->createTestUser();
+        DB::table('users')->where('id', $user->id)->update(['postingstatus' => 'DEFAULT']);
+
+        $message = $this->createTestMessage($user, [
+            'subject'    => 'OFFER: Sofa and two chairs (EC1A)',
+            'textbody'   => 'A sofa and two kitchen chairs.',
+            'collection' => Message::COLLECTION_PENDING,
+            'lat'        => 51.50,
+            'lng'        => -0.13,
+        ]);
+        $msgid = $message->id;
+
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $msgid, 'position' => 0, 'name' => 'Sofa', 'quantity' => 1, 'condition' => 'Unknown'],
+            ['msgid' => $msgid, 'position' => 1, 'name' => 'Chairs', 'quantity' => 2, 'condition' => 'Unknown'],
+        ]);
+        DB::table('messages_autosplit')->insert(['msgid' => $msgid, 'state' => 'Split', 'kind' => 'several_items']);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals(0, $stats['errors'], 'processUnprocessed had errors');
+        $this->assertEquals(1, $stats['approved']);
+        $this->assertEquals(1, DB::table('background_tasks')
+            ->where('task_type', 'freebie_alerts_add')
+            ->whereRaw("JSON_EXTRACT(data, '$.msgid') = ?", [$msgid])
+            ->count(), 'an automatically split post is an ordinary Offer for freebiealerts.app');
     }
 
     public function test_freebiealerts_task_not_queued_for_bulk_offer(): void

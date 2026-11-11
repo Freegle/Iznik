@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -78,8 +79,8 @@ func TestListChats_HeldReplyOnlyRoomHiddenFromRecipient(t *testing.T) {
 		INDEX (msgid), INDEX (chatid), INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 
 	// The original post being replied to (FK target for rippling_held_replies.msgid).
 	postMsgID := CreateTestMessage(t, posterID, "OFFER: held reply list test", 51.5, -0.1)
@@ -144,8 +145,8 @@ func TestListChats_ReviewRequiredOnlyRoomHiddenFromRecipient(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("listreview")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 
 	postMsgID := CreateTestMessage(t, posterID, "OFFER: review-held reply list test", 51.5, -0.1)
 

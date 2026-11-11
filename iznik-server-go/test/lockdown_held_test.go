@@ -45,9 +45,9 @@ func addHold(t *testing.T, incidentID uint64, kind string, refid uint64, userid 
 func TestGetModtoolsLockdownStatsCounts(t *testing.T) {
 	prefix := uniquePrefix("ld_counts")
 	db := database.DBConn
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 
 	incidentID := pressLockdown(t, token, "counts "+prefix)
 	defer cleanupIncident(t, incidentID)
@@ -104,9 +104,9 @@ func TestGetModtoolsLockdownStatsCounts(t *testing.T) {
 // drain - how many are still held, what became of the rest, and the email queue.
 func TestGetModtoolsLockdownStatsRelease(t *testing.T) {
 	prefix := uniquePrefix("ld_release")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 
 	incidentID := pressLockdown(t, token, "release "+prefix)
 	defer cleanupIncident(t, incidentID)
@@ -149,7 +149,7 @@ func TestGetModtoolsLockdownStatsRelease(t *testing.T) {
 func TestGetModtoolsLockdownStatsAcksListEveryLoop(t *testing.T) {
 	prefix := uniquePrefix("ld_acks")
 	db := database.DBConn
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "acks "+prefix)
@@ -178,9 +178,9 @@ func TestGetModtoolsLockdownStatsAcksListEveryLoop(t *testing.T) {
 
 func TestCommunityEventCreatedWhileEventsHeldIsCounted(t *testing.T) {
 	prefix := uniquePrefix("ld_event_count")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	incidentID := pressLockdown(t, supportToken, "event count "+prefix)
@@ -203,7 +203,7 @@ func TestCommunityEventCreatedWhileEventsHeldIsCounted(t *testing.T) {
 
 func TestPatchLockdownNoticeRejectsOverlong(t *testing.T) {
 	prefix := uniquePrefix("ld_notice_long")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "notice long "+prefix)
@@ -218,7 +218,7 @@ func TestPatchLockdownNoticeRejectsOverlong(t *testing.T) {
 
 func TestPatchLockdownNoticeNullOrBlankMeansNoNotice(t *testing.T) {
 	prefix := uniquePrefix("ld_notice_none")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	resp, result := patchLockdown(t, token, map[string]interface{}{
@@ -243,7 +243,7 @@ func TestPatchLockdownNoticeNullOrBlankMeansNoNotice(t *testing.T) {
 
 func TestPatchLockdownRemovedActionsAreUnknown(t *testing.T) {
 	prefix := uniquePrefix("ld_removed")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	incidentID := pressLockdown(t, token, "removed actions "+prefix)
@@ -259,10 +259,10 @@ func TestPatchLockdownRemovedActionsAreUnknown(t *testing.T) {
 
 func TestGetModtoolsLockdownHeldChat(t *testing.T) {
 	prefix := uniquePrefix("ld_held_chat")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 	senderID := CreateTestUserWithEmail(t, prefix+"_sender", prefix+"-sender@example.com")
-	recipientID := CreateTestUser(t, prefix+"_recip", "User")
+	recipientID := CreateTestUser(t, prefix+"_recip", utils.SYSTEMROLE_USER)
 
 	incidentID := pressLockdown(t, token, "held chat "+prefix)
 	defer cleanupIncident(t, incidentID)
@@ -305,9 +305,9 @@ func TestGetModtoolsLockdownHeldChat(t *testing.T) {
 
 func TestGetModtoolsLockdownHeldPostAndChitChat(t *testing.T) {
 	prefix := uniquePrefix("ld_held_post")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	incidentID := pressLockdown(t, token, "held post "+prefix)
 	defer cleanupIncident(t, incidentID)
@@ -332,10 +332,10 @@ func TestGetModtoolsLockdownHeldPostAndChitChat(t *testing.T) {
 
 func TestGetModtoolsLockdownHeldPages(t *testing.T) {
 	prefix := uniquePrefix("ld_held_pages")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	recipientID := CreateTestUser(t, prefix+"_recip", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+	recipientID := CreateTestUser(t, prefix+"_recip", utils.SYSTEMROLE_USER)
 
 	incidentID := pressLockdown(t, token, "held pages "+prefix)
 	defer cleanupIncident(t, incidentID)
@@ -358,7 +358,7 @@ func TestGetModtoolsLockdownHeldPages(t *testing.T) {
 
 func TestGetModtoolsLockdownHeldValidatesAndRefuses(t *testing.T) {
 	prefix := uniquePrefix("ld_held_auth")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)

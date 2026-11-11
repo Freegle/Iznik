@@ -162,7 +162,7 @@ services:
       - PORT=8082
       - BACKUP_BUCKET=gs://freegle_backup_uk
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      test: ["CMD", "curl", "-f", "--max-time", "9", "http://localhost:8082/health"]
       interval: 30s
       timeout: 10s
       retries: 3

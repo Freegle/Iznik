@@ -3,14 +3,13 @@ import { useMiscStore } from '~/stores/misc'
 import { useRuntimeConfig } from '#app'
 import Api from '~/api'
 import { useMobileStore } from '~/stores/mobile'
+import { donationAsksPaused } from '~/composables/useDonationAsks'
 
 export function useDonationAskModal(requestedVariant = null) {
   const authStore = useAuthStore()
   const miscStore = useMiscStore()
   const runtimeConfig = useRuntimeConfig()
   const api = Api(runtimeConfig)
-
-  const me = authStore.user
 
   const variant = ref(requestedVariant)
 
@@ -20,14 +19,15 @@ export function useDonationAskModal(requestedVariant = null) {
     const { outcome } = params
 
     if (outcome === 'Taken' || outcome === 'Received') {
-      // If someone has set up a regular donation, then we don't ask them to donate again.  Wouldn't be fair to
-      // pester them.
+      // If someone has set up a regular donation, or has asked us not to ask them to donate, then we don't.
+      // Wouldn't be fair to pester them.
+      const me = authStore.user
 
       const lastAsk = miscStore.get('lastdonationask')
       const canAsk =
         !lastAsk || new Date().getTime() - lastAsk > 60 * 60 * 1000 * 24 * 7
 
-      if (!me?.donorrecurring && canAsk) {
+      if (!me?.donorrecurring && !donationAsksPaused(me?.settings) && canAsk) {
         show()
       }
     }

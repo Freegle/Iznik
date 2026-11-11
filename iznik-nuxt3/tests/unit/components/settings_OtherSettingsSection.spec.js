@@ -15,7 +15,6 @@ const { mockMe } = vi.hoisted(() => {
 })
 
 const mockSaveAndGet = vi.fn()
-const mockSetMarketingConsent = vi.fn()
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
@@ -26,13 +25,6 @@ vi.mock('~/composables/useMe', () => ({
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
     saveAndGet: mockSaveAndGet,
-  }),
-}))
-
-vi.mock('~/stores/misc', () => ({
-  useMiscStore: () => ({
-    marketingConsent: true,
-    setMarketingConsent: mockSetMarketingConsent,
   }),
 }))
 
@@ -204,9 +196,16 @@ describe('OtherSettingsSection', () => {
       expect(wrapper.vm.enterNewLineLocal).toBe(true)
     })
 
-    it('initializes marketingConsentLocal', () => {
+    it('initializes marketingConsentLocal from the server value', async () => {
+      mockMe.value = { settings: {}, marketingconsent: true }
       const wrapper = createWrapper()
+      await wrapper.vm.$nextTick()
       expect(wrapper.vm.marketingConsentLocal).toBe(true)
+    })
+
+    it('shows marketing consent off when the server has none', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.vm.marketingConsentLocal).toBe(false)
     })
   })
 
@@ -257,16 +256,22 @@ describe('OtherSettingsSection', () => {
     })
 
     describe('changeMarketingConsent', () => {
-      it('calls miscStore.setMarketingConsent', () => {
+      it('saves consent to the server', async () => {
         const wrapper = createWrapper()
-        wrapper.vm.changeMarketingConsent(true)
-        expect(mockSetMarketingConsent).toHaveBeenCalledWith(true)
+        await wrapper.vm.changeMarketingConsent(true)
+        expect(mockSaveAndGet).toHaveBeenCalledWith({ marketingconsent: true })
       })
 
-      it('passes false to setMarketingConsent', () => {
+      it('saves a withdrawal to the server', async () => {
         const wrapper = createWrapper()
-        wrapper.vm.changeMarketingConsent(false)
-        expect(mockSetMarketingConsent).toHaveBeenCalledWith(false)
+        await wrapper.vm.changeMarketingConsent(false)
+        expect(mockSaveAndGet).toHaveBeenCalledWith({ marketingconsent: false })
+      })
+
+      it('emits update event', async () => {
+        const wrapper = createWrapper()
+        await wrapper.vm.changeMarketingConsent(true)
+        expect(wrapper.emitted('update')).toBeTruthy()
       })
     })
   })

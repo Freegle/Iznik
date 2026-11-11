@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\OrmHarness;
 
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\OrmHarness\GoldenSql;
 use Tests\TestCase;
@@ -12,7 +13,8 @@ use Tests\TestCase;
 class Wave2SpamCleanupTest extends TestCase
 {
     private const SPAMMER_COLLECTION = 'Spammer';
-    private const MEMBER_ROLE = 'Member';
+    /** memberships.role value: the table is gone, so there is no model constant for it. */
+    private const ROLE_MEMBER = 'Member';
 
     // SELECT memberships.userid, memberships.groupid FROM memberships
     //   INNER JOIN spam_users ... WHERE spam_users.collection = ? AND memberships.role = ?
@@ -33,7 +35,7 @@ class Wave2SpamCleanupTest extends TestCase
             ->select('memberships.userid', 'memberships.groupid')
             ->join('spam_users', 'memberships.userid', '=', 'spam_users.userid')
             ->where('spam_users.collection', self::SPAMMER_COLLECTION)
-            ->where('memberships.role', self::MEMBER_ROLE));
+            ->where('memberships.role', self::ROLE_MEMBER));
     }
 
     /**
@@ -55,7 +57,7 @@ class Wave2SpamCleanupTest extends TestCase
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
             ->join('users', function ($j) {
                 $j->on('messages.fromuser', '=', 'users.id')
-                  ->where('users.systemrole', 'User');
+                  ->where('users.systemrole', User::SYSTEMROLE_USER);
             })
             ->whereNull('messages.deleted'));
     }

@@ -74,22 +74,37 @@ Read these directly; the pages above link into them rather than copy them:
 | Merging two accounts | [./reference/account-merge.md](./reference/account-merge.md) |
 | The mobile apps | [./reference/mobile-app.md](./reference/mobile-app.md) |
 | Electricals and reuse reporting | [./reference/electricals.md](./reference/electricals.md) |
+| Impact figures on the stats page (benefit, fly-tipping, inflation) | [./reference/impact-figures.md](./reference/impact-figures.md) |
 | Item desirability scoring | [./reference/item-desirability.md](./reference/item-desirability.md) |
 | Matched-posts email | [./reference/matched-posts-email.md](./reference/matched-posts-email.md) |
+| New posts from people you have chatted with (experiment) | [./reference/familiar-posts-email.md](./reference/familiar-posts-email.md) |
+| AI item images | [./reference/ai-item-images.md](./reference/ai-item-images.md) |
+| The cleaned item of a post | [./reference/message-items.md](./reference/message-items.md) |
+| Posts of several items become item lists (auto-split) | [./reference/auto-split.md](./reference/auto-split.md) |
 | Getting a first reply in | [./reference/first-reply.md](./reference/first-reply.md) |
 | Unsubscribing from email (List-Unsubscribe) | [./reference/unsubscribe.md](./reference/unsubscribe.md) |
 | Mail deferrals and suppression | [./reference/mail-deferrals.md](./reference/mail-deferrals.md) |
 | Email tracking journal (how opens are recorded) | [./reference/email-tracking-journal.md](./reference/email-tracking-journal.md) |
 | Donation asks in email (Stripe, wallets) | [./reference/donation-asks-in-email.md](./reference/donation-asks-in-email.md) |
 | Notification chase-up email | [./reference/notification-chaseup-email.md](./reference/notification-chaseup-email.md) |
+| Volunteering renewal email | [./reference/volunteering-renewal-email.md](./reference/volunteering-renewal-email.md) |
 | Browser testing with Chrome DevTools | [./reference/browser-testing.md](./reference/browser-testing.md) |
 | Worktrees / parallel instances | [./reference/worktrees.md](./reference/worktrees.md) |
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
+| Support cases and the first pass on a referral | [./reference/support-cases.md](./reference/support-cases.md) |
 | CookieYes watchdog (cookie banner checks) | [./reference/cookieyes-watchdog.md](./reference/cookieyes-watchdog.md) |
+| Google housekeeping (Search Console and Ads weekly checks) | [./reference/google-housekeeping.md](./reference/google-housekeeping.md) |
 | Chat prompts (Freegle's tappable questions) | [./reference/chat-prompts.md](./reference/chat-prompts.md) |
 | Google Play technical quality (DEX, memory, zero-tap) | [./reference/play-technical-quality.md](./reference/play-technical-quality.md) |
+| Cloud builders for a token window (Katapult VMs, broker burn pool) | [./reference/cloud-builders.md](./reference/cloud-builders.md) |
+| Improving Freegle from what people do and what they care about (the overview of idea farming and experiments) | [./ux-idea-farming-and-experiments.md](./ux-idea-farming-and-experiments.md) |
+| Improving Freegle from what people do and what they care about (the overview of idea farming and experiments) | [./ux-idea-farming-and-experiments.md](./ux-idea-farming-and-experiments.md) |
+| UX telemetry (the event and rollup contract) | [./reference/ux-telemetry.md](./reference/ux-telemetry.md) |
+| The SysAdmin UX tab (sections, address, filters, Biggest loss) | [./reference/ux-sysadmin-tab.md](./reference/ux-sysadmin-tab.md) |
+| UX experiments (the engine that runs, reads and decides a change) | [./reference/ux-experiments.md](./reference/ux-experiments.md) |
+| Member surveys (short phone questions, coded into grouped problems) | [./reference/ux-member-surveys.md](./reference/ux-member-surveys.md) |
 
 Each component also has its own README (`iznik-nuxt3/README.md`, `iznik-server-go/README.md`,
 `iznik-batch/README.md`, `iznik-routing-go/README.md`, `iznik-spatial-go/README.md`), and

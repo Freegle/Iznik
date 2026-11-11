@@ -176,3 +176,32 @@ func TestIllustrationCourtesyStripping(t *testing.T) {
 	// Clean up.
 	db.Exec("DELETE FROM ai_images WHERE name = ?", testItem)
 }
+
+// A name the batch matched to another name's picture is offered that picture at compose time.
+func TestIllustrationAliasOffersMatchedPicture(t *testing.T) {
+	db := database.DBConn
+	n := time.Now().UnixNano()
+	picture := fmt.Sprintf("UTTest Cat litter %d", n)
+	alias := fmt.Sprintf("UTTest 3 bags of cat litter %d", n)
+	uid := fmt.Sprintf("test-uid-alias-%d", n)
+	db.Exec("INSERT INTO ai_images (name, externaluid) VALUES (?, ?)", picture, uid)
+	var id uint64
+	db.Raw("SELECT id FROM ai_images WHERE name = ?", picture).Scan(&id)
+	db.Exec("INSERT INTO ai_image_aliases (name, aiimageid, method) VALUES (?, ?, 'key')", alias, id)
+	t.Cleanup(func() { db.Exec("DELETE FROM ai_images WHERE id = ?", id) })
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/illustration?item="+url.QueryEscape("OFFERED: "+alias+" (Town)"), nil))
+	var result misc.IllustrationResult
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, 0, result.Ret)
+	if assert.NotNil(t, result.Illustration) {
+		assert.Equal(t, uid, result.Illustration.ExternalUID)
+	}
+
+	// Not once the picture itself is no longer active.
+	db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/illustration?item="+url.QueryEscape(alias), nil))
+	result = misc.IllustrationResult{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, 3, result.Ret)
+}

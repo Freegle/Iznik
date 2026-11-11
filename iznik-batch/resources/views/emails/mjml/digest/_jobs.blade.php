@@ -3,7 +3,8 @@
      (multi-post) branches of unified.blade.php so the two can never drift —
      the daily branch silently lacking this block is exactly the bug this
      partial fixes. Falls back to a standalone "Donating helps too!" button
-     when the user has no nearby jobs so the donation CTA is always present.
+     when the user has no nearby jobs. $donateUrl is null for a donor who has
+     asked not to be asked to donate, and then every donate element goes.
 
      Layout: compact spacing, and the job list is split across TWO mj-columns
      so it shows 2-up on desktop (half the height) and stacks to a single
@@ -63,18 +64,21 @@
          otherwise stack < 480px), saving a line. Short labels so each fits its
          half-width button on a narrow phone. --}}
     <mj-group>
-        <mj-column width="50%">
+        <mj-column width="{{ $donateUrl ? '50%' : '100%' }}">
             <mj-button href="{{ $jobsUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="13px" inner-padding="6px 14px" border-radius="5px" width="92%">
                 More jobs
             </mj-button>
         </mj-column>
+        @if($donateUrl)
         <mj-column width="50%">
             <mj-button href="{{ $donateUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="13px" inner-padding="6px 14px" border-radius="5px" width="92%">
                 Donate
             </mj-button>
         </mj-column>
+        @endif
     </mj-group>
 </mj-section>
+@if($donateUrl)
 {{-- The donate button now lands on our Stripe page rather than PayPal, so say
      what's on offer there. Images are blocked by default in a lot of clients,
      hence the alt text carries the same message. --}}
@@ -83,7 +87,8 @@
         <mj-image src="{{ $donateMarksUrl ?? 'https://www.ilovefreegle.org/emailimages/paymethods.png' }}" alt="Donate with Apple Pay, Google Pay, PayPal or card" title="Donate with Apple Pay, Google Pay, PayPal or card" width="180px" align="center" padding="0" href="{{ $donateUrl }}" />
     </mj-column>
 </mj-section>
-@else
+@endif
+@elseif($donateUrl)
 <mj-section background-color="#ffffff" padding="0 20px 0">
     <mj-column>
         <mj-divider border-color="#eeeeee" border-width="1px" padding="0 0 10px 0" />

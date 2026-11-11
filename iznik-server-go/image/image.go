@@ -2,6 +2,7 @@ package image
 
 import (
 	"encoding/json"
+	"fmt"
 	stdlog "log"
 	"os"
 	"strconv"
@@ -39,7 +40,6 @@ var typeConfigs = map[string]imageTypeConfig{
 	"User":           {Table: "users_images", IDColumn: "userid", TrustStoredContentType: true},
 	"Newsfeed":       {Table: "newsfeed_images", IDColumn: "newsfeedid", TrustStoredContentType: true},
 	"Story":          {Table: "users_stories_images", IDColumn: "storyid", TrustStoredContentType: true},
-	"Noticeboard":    {Table: "noticeboards_images", IDColumn: "noticeboardid", TrustStoredContentType: true},
 }
 
 // PostRequest handles all POST /image operations.
@@ -65,8 +65,7 @@ type PostRequest struct {
 	ChatMessage    uint64 `json:"chatmessage"`
 	UserID         any    `json:"user"` // Can be uint64 (parent ID) or bool (type flag)
 	Newsfeed       uint64 `json:"newsfeed"`
-	Story          any    `json:"story"`       // Can be bool (type flag)
-	Noticeboard    any    `json:"noticeboard"` // Can be bool (type flag)
+	Story          any    `json:"story"` // Can be bool (type flag)
 	Newsletter     uint64 `json:"newsletter"`
 }
 
@@ -91,9 +90,6 @@ func (req *PostRequest) resolveType() string {
 	if isTruthy(req.Story) {
 		return "Story"
 	}
-	if isTruthy(req.Noticeboard) {
-		return "Noticeboard"
-	}
 	return "Message"
 }
 
@@ -116,8 +112,6 @@ func (req *PostRequest) resolveParentID() uint64 {
 		return req.Newsfeed
 	case "Story":
 		return toUint64(req.Story)
-	case "Noticeboard":
-		return toUint64(req.Noticeboard)
 	default:
 		return req.MsgID
 	}
@@ -188,7 +182,7 @@ func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 	case "Newsfeed":
 		ownerCol, table = "userid", "newsfeed"
 	default:
-		// Newsletter, Noticeboard: mod-managed content. Non-mods have no ownership
+		// Newsletter: mod-managed content. Non-mods have no ownership
 		// claim (system mods are already allowed above), so deny.
 		return false
 	}
@@ -210,7 +204,7 @@ func ownsImageParent(myid uint64, imgType string, parentID uint64) bool {
 // finding 5). Attaching a new image to an existing parent is a direct write to
 // content that is already live - a different table from the parent's own gated PATCH
 // edit path, so without this it reached a held post/event/opportunity/story/
-// noticeboard/chitchat item regardless of the surface's hold. Group, Newsletter,
+// chitchat item regardless of the surface's hold. Group, Newsletter,
 // ChatMessage and User have no surface of their own here: Group/Newsletter images are
 // mod-managed outside any member-facing surface, ChatMessage images ride the chat
 // surface's own gate elsewhere, and User (avatar) uploads are never held.
@@ -218,7 +212,7 @@ func heldSurfaceForImgType(imgType string) string {
 	switch imgType {
 	case "Message":
 		return "posts"
-	case "CommunityEvent", "Volunteering", "Story", "Noticeboard":
+	case "CommunityEvent", "Volunteering", "Story":
 		return "events"
 	case "Newsfeed":
 		return "chitchat"
@@ -347,6 +341,34 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	})
 }
 
+// ParentOf returns the id of the entity an image row belongs to, and whether the row exists.
+// The parent is 0 while a photo is not yet linked: a post photo uploaded during the give flow
+// has a NULL msgid until the draft is submitted. Scanning that NULL straight into a uint64
+// fails ("converting NULL to uint64 is unsupported"), so the column is read through COALESCE.
+func ParentOf(imgType string, id uint64) (uint64, bool, error) {
+	cfg, ok := typeConfigs[imgType]
+	if !ok {
+		return 0, false, fmt.Errorf("invalid imgtype %q", imgType)
+	}
+
+	var rows []struct{ Parent uint64 }
+	// cfg.IDColumn/
+	// cfg.Table come from typeConfigs, which has exactly 10 entries, all
+	// reachable here - one rendered form per entry, proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_6f9c3996f035, removed in
+	// d22ba1d6c).
+	err := database.DBConn.Table("`"+cfg.Table+"`").
+		Select("COALESCE(`"+cfg.IDColumn+"`, 0) AS parent").
+		Where("id = ?", id).
+		Limit(1).
+		Scan(&rows).Error
+	if err != nil || len(rows) == 0 {
+		return 0, false, err
+	}
+
+	return rows[0].Parent, true, nil
+}
+
 func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	imgType := req.resolveType()
 
@@ -365,16 +387,12 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	// Refusing it lost every rotation made while posting.
 	myid := auth.WhoAmI(c)
 	db := database.DBConn
-	var rotateParentID uint64
-	// cfg.IDColumn/
-	// cfg.Table come from typeConfigs, which has exactly 10 entries, all
-	// reachable here - one rendered form per entry, proven by the retired
-	// ormharness (shapes.json / TestTier3Shapes_6f9c3996f035, removed in
-	// d22ba1d6c).
-	db.Table("`"+cfg.Table+"`").Select("`"+cfg.IDColumn+"`").Where("id = ?", req.ID).Scan(&rotateParentID)
-	var exists int64
-	db.Table("`"+cfg.Table+"`").Where("id = ?", req.ID).Count(&exists)
-	if exists == 0 {
+	rotateParentID, exists, err := ParentOf(imgType, req.ID)
+	if err != nil {
+		stdlog.Printf("image doRotate: parent lookup %s id %d failed: %v", cfg.Table, req.ID, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to rotate image")
+	}
+	if !exists {
 		return fiber.NewError(fiber.StatusNotFound, "Image not found")
 	}
 	unattached := rotateParentID == 0 && imgType != "User"
@@ -388,6 +406,13 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 	}
 
 	modsJSON := `{"rotate":` + strconv.Itoa(*req.Rotate) + `}`
+
+	// A crop (an auto-split item photo) turns with the photo; see misc.Mods.Rotated.
+	var current string
+	db.Table("`"+cfg.Table+"`").Select("COALESCE(externalmods, '')").Where("id = ?", req.ID).Scan(&current)
+	if m, ok := misc.ParseMods(current); ok && m.Crop() != nil {
+		modsJSON = m.Rotated(*req.Rotate).JSON()
+	}
 
 	// Same
 	// typeConfigs-driven table name as 6f9c3996f035 above - 10 possible
@@ -414,7 +439,7 @@ func doRotate(c *fiber.Ctx, req *PostRequest) error {
 
 // getFlagTypes maps the legacy query flags to image types, mirroring V1
 // image.php's flag checks and the vhost rewrite forms (nimg_→newsletter, cimg_→communityevent, oimg_→volunteering, simg_→story,
-// fimg_→newsfeed, mimg_→chatmessage, uimg_→user, bimg_→noticeboard; plain
+// fimg_→newsfeed, mimg_→chatmessage, uimg_→user; plain
 // img_ is a message attachment).
 var getFlagTypes = []struct {
 	flag    string
@@ -427,7 +452,6 @@ var getFlagTypes = []struct {
 	{"newsfeed", "Newsfeed"},
 	{"chatmessage", "ChatMessage"},
 	{"user", "User"},
-	{"noticeboard", "Noticeboard"},
 }
 
 // archivePrefixes: the only types V1 ever archived to Azure (the switch in
@@ -438,7 +462,6 @@ var archivePrefixes = map[string]string{
 	"ChatMessage":    "mimg",
 	"Newsfeed":       "fimg",
 	"CommunityEvent": "cimg",
-	"Noticeboard":    "bimg",
 }
 
 type legacyAttachment struct {

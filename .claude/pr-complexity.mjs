@@ -56,7 +56,7 @@ const ALLOWED_FIRST = new Set([
   'post', 'mid', 'anti', 'all', 'so', 'up', 'down', 'off', 'on', 'over',
   'under', 'out', 'in', 'e', 'cross', 'road', 'drive', 'travel', 'new',
   'old', 'high', 'low', 'best', 'worst', 'real', 'top', 'left', 'right',
-  'hand', 'man', 'double', 'single', 'open', 'close', 'far',
+  'hand', 'man', 'double', 'single', 'open', 'close', 'far', 'fly',
 ])
 
 function main(raw) {

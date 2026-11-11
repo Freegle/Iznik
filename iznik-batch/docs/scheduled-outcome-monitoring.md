@@ -118,12 +118,24 @@ ports them into this pipeline:
 
 | Probe | V1 equivalent | Severity |
 |---|---|---|
-| `/var/run/reboot-required` exists | "Server reboot required" | warning (names the packages) |
-| `apt-get upgrade -s` lists security packages | "Security patches to apply" | warning (with count) |
+| `/var/run/reboot-required` exists | "Server reboot required" | none: judged by age on SysAdmin (see below) |
+| `apt-get upgrade -s` lists security packages | "Security patches to apply" | none: judged by age on SysAdmin (see below) |
 | `monit summary -B` per-service status | per-line OK-pattern match | `Not monitored` / `Initializing` / `Resource limit matched` ⇒ warning; anything else non-OK (incl. a dead monit daemon) ⇒ **error** — monit restarts the API services, and a silent monit death has caused a real outage |
 | host unreachable over ssh | (implicit) | warning |
 
-One ssh round-trip per host gathers all three signals. V1's beanstalkd,
+One ssh round-trip per host gathers all three signals.
+
+Pending patches and reboots no longer turn the dot amber. `freegle-maint`
+patches and reboots the estate on a schedule, so "pending" is normal for most
+of a week. `HostPatchTracker` records how long each has been pending as the
+`host-patch <host>` row on the SysAdmin Cron Jobs tab, and that row fails (a
+red number) once something has been pending longer than the host's
+maintenance interval plus grace: `FREEGLE_MONITORING_PATCH_MAX_AGE_DAYS`
+(default 9, for weekly hosts) and `FREEGLE_MONITORING_PATCH_MAX_AGE_OVERRIDES`
+(for example `db2=16,db3=16`, for the hosts patched in alternate weeks).
+"Pending since" lives on the last line of the row's own output, so it needs
+no schema change. An unreachable host records nothing, and the row goes
+overdue. V1's beanstalkd,
 exim-queue and V1-spool checks are deliberately not ported (dead tech /
 covered by `email:health`).
 

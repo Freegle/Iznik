@@ -284,7 +284,8 @@ class CommunityNewsEmailService
      *
      * "Deliverable" is User::scopeReceivingOurMails — the same gate the Stories
      * newsletter and the events/volunteering roundups use, and the SQL form of
-     * V1's User::sendOurMails().
+     * V1's User::sendOurMails(). TrashNothing members are left out
+     * (User::scopeNotTrashNothing).
      */
     public function eligibleMembers(CommunityNewsArea $area)
     {
@@ -305,6 +306,8 @@ class CommunityNewsEmailService
             // 643,931 mails — every member however dormant — and the dead
             // mailboxes among them caused a mass deferral storm at the relay.
             ->receivingOurMails()
+            // Not for TrashNothing members.
+            ->notTrashNothing()
             ->where(new StContains('authorities.polygon', $this->memberPoint()))
             ->distinct()
             ->select('users.id');

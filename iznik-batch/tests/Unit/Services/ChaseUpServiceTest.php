@@ -65,6 +65,44 @@ class ChaseUpServiceTest extends TestCase
         ];
     }
 
+    public function test_an_intended_taken_on_a_split_post_marks_its_items_gone(): void
+    {
+        // TAKEN from the chase-up link is recorded here, not by the Go API, and a split post
+        // is counted item by item; without its items marked gone it would count nothing.
+        $message = $this->createTestMessage($this->createTestUser());
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $message->id, 'name' => 'Sofa', 'quantity' => 1, 'available' => 1],
+            ['msgid' => $message->id, 'name' => 'Chairs', 'quantity' => 2, 'available' => 1],
+        ]);
+        DB::table('messages_autosplit')->insert(['msgid' => $message->id, 'state' => 'Split']);
+        DB::table('messages')->where('id', $message->id)->update(['availableinitially' => 3, 'availablenow' => 3]);
+        DB::table('messages_outcomes_intended')->insert([
+            'msgid' => $message->id,
+            'outcome' => 'Taken',
+            'timestamp' => now()->subHour(),
+        ]);
+
+        $this->assertSame(1, app(ChaseUpService::class)->processIntendedOutcomes());
+
+        $this->assertSame(0, DB::table('messages_bulk_items')->where('msgid', $message->id)->where('available', 1)->count());
+        $this->assertSame(0, (int) DB::table('messages')->where('id', $message->id)->value('availablenow'));
+    }
+
+    public function test_an_intended_taken_on_a_clearance_leaves_its_items(): void
+    {
+        $message = $this->createTestMessage($this->createTestUser());
+        DB::table('messages_bulk_items')->insert(['msgid' => $message->id, 'name' => 'Desk', 'quantity' => 4, 'available' => 1]);
+        DB::table('messages_outcomes_intended')->insert([
+            'msgid' => $message->id,
+            'outcome' => 'Taken',
+            'timestamp' => now()->subHour(),
+        ]);
+
+        app(ChaseUpService::class)->processIntendedOutcomes();
+
+        $this->assertSame(1, DB::table('messages_bulk_items')->where('msgid', $message->id)->where('available', 1)->count());
+    }
+
     public function test_no_messages_returns_zero_stats(): void
     {
         $stats = $this->service->process();
@@ -240,6 +278,78 @@ class ChaseUpServiceTest extends TestCase
         $stats = $this->service->process();
 
         $this->assertEquals(0, $stats['chased']);
+    }
+
+    public function test_skips_post_from_deleted_user(): void
+    {
+        $data = $this->createChaseCandidate();
+
+        DB::table('users')->where('id', $data['user']->id)->update(['deleted' => now()]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased']);
+        $this->assertNull(DB::table('messages')->where('id', $data['message']->id)->value('lastchaseup'));
+    }
+
+    public function test_a_modmail_is_not_a_reply(): void
+    {
+        $data = $this->createChaseCandidate();
+
+        DB::table('chat_messages')
+            ->where('chatid', $data['room']->id)
+            ->update(['type' => 'ModMail']);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased'], 'a post whose only chat row is a ModMail has no reply to chase');
+    }
+
+    public function test_a_recent_modmail_does_not_hide_an_old_reply(): void
+    {
+        $data = $this->createChaseCandidate();
+
+        $this->createTestChatMessage($data['room'], $data['replier'], [
+            'type' => 'ModMail',
+            'date' => now()->subHour(),
+        ]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['chased']);
+    }
+
+    private function holdReply(array $data, string $status): void
+    {
+        $chatMessage = DB::table('chat_messages')->where('chatid', $data['room']->id)->first();
+
+        DB::table('rippling_held_replies')->insert([
+            'chatid' => $chatMessage->chatid,
+            'chatmsgid' => $chatMessage->id,
+            'msgid' => $data['message']->id,
+            'replieruserid' => $data['replier']->id,
+            'status' => $status,
+        ]);
+    }
+
+    public function test_a_held_rippling_reply_is_not_a_reply(): void
+    {
+        $data = $this->createChaseCandidate();
+        $this->holdReply($data, 'held');
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased'], 'the poster has not seen a held reply, so there is nothing to chase');
+    }
+
+    public function test_a_released_rippling_reply_counts_as_a_reply(): void
+    {
+        $data = $this->createChaseCandidate();
+        $this->holdReply($data, 'released');
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['chased']);
     }
 
     public function test_constants(): void

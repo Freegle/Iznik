@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,10 +23,10 @@ func TestSSOErrorURL(t *testing.T) {
 }
 
 func TestIsModSystemrole(t *testing.T) {
-	assert.True(t, isModSystemrole("Admin"))
-	assert.True(t, isModSystemrole("Support"))
-	assert.True(t, isModSystemrole("Moderator"))
-	assert.False(t, isModSystemrole("User"))
+	assert.True(t, isModSystemrole(utils.SYSTEMROLE_ADMIN))
+	assert.True(t, isModSystemrole(utils.SYSTEMROLE_SUPPORT))
+	assert.True(t, isModSystemrole(utils.SYSTEMROLE_MODERATOR))
+	assert.False(t, isModSystemrole(utils.SYSTEMROLE_USER))
 	assert.False(t, isModSystemrole(""))
 }
 

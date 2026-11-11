@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,7 +26,7 @@ func TestPatchMessage_RemovingAIAttachmentWritesDeclinedRow(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("aiDeclined")
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	msgID := CreateTestMessage(t, ownerID, "WANTED: Chicken mesh "+prefix, 55.0, -1.0)
 

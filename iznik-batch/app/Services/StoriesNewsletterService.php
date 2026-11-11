@@ -189,6 +189,8 @@ class StoriesNewsletterService
             ->select(['users.id'])
             ->where('users.newslettersallowed', 1)
             ->receivingOurMails()
+            // Not for TrashNothing members.
+            ->notTrashNothing()
             ->distinct();
 
         // Stream eligible members in keyset-paginated chunks; pluck()-ing the entire

@@ -378,6 +378,57 @@ describe('ChatMessage', () => {
     })
   })
 
+  // On 6 and 7 November 2026, phone and app members tapped chat messages 1,563 times in 881 sessions. A
+  // tap selects the message (and shows Mark unread or Delete), but the message had no pointer cursor, so
+  // every tap was logged as a dead click. A selected message could not be unselected: 30 sessions tapped
+  // one again, and 52 tapped beside its link.
+  describe('tapping a message', () => {
+    it('a second tap on a selected message unselects it', async () => {
+      const wrapper = await createWrapper()
+      await wrapper.find('div').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.selected').exists()).toBe(true)
+      await wrapper.find('.selected').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.selected').exists()).toBe(false)
+    })
+
+    it('pressing Delete on a selected message keeps it selected while the question is open', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, userid: 1 }),
+      })
+      const wrapper = await createWrapper()
+      await wrapper.find('div').trigger('click')
+      await flushPromises()
+      const del = wrapper
+        .findAll('.b-button')
+        .find((b) => b.text().includes('Delete'))
+      // The press reaches the message too, as a real tap does; it must not count as a tap on the message.
+      await del.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.selected').exists()).toBe(true)
+    })
+
+    it('shows it can be tapped, so a tap on it is not counted as a dead click', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.selectable').exists()).toBe(true)
+    })
+
+    it('a deleted message cannot be tapped', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, deleted: true }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.selectable').exists()).toBe(false)
+    })
+  })
+
   describe('deleted state', () => {
     it('applies deleted class for deleted messages', async () => {
       const { setupChat } = await import('~/composables/useChat')

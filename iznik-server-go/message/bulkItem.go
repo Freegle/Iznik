@@ -552,10 +552,16 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 		default:
 			condition = "Unknown"
 		}
-		total += qty
 
 		var itemID uint64
 		if in.ID > 0 {
+			// Only this post's own items. An id from another post would otherwise be
+			// kept, and have this post's photos linked to it.
+			var owned int64
+			db.Table("messages_bulk_items").Where("id = ? AND msgid = ?", in.ID, msgid).Count(&owned)
+			if owned == 0 {
+				continue
+			}
 			itemID = in.ID
 			db.Table("messages_bulk_items").Where("id = ? AND msgid = ?", itemID, msgid).
 				Updates(map[string]interface{}{
@@ -585,6 +591,7 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 		}
 
 		if itemID > 0 {
+			total += qty
 			keepIDs = append(keepIDs, itemID)
 			// Claim this item's photos for the message (freshly uploaded
 			// attachments have no msgid yet; msgid is an existing core column).
@@ -595,7 +602,14 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 			for _, attID := range in.Attachments {
 				db.Table("messages_attachments").Where("id = ? AND (msgid IS NULL OR msgid = ?)", attID, msgid).
 					Update("msgid", msgid)
-				linkBulkItemAttachment(db, itemID, attID)
+				// Link only a photo that is now this post's: the link is an upsert on
+				// the attachment, so linking another post's photo would take it off
+				// that post's item.
+				var mine int64
+				db.Table("messages_attachments").Where("id = ? AND msgid = ?", attID, msgid).Count(&mine)
+				if mine > 0 {
+					linkBulkItemAttachment(db, itemID, attID)
+				}
 			}
 		}
 	}

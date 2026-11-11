@@ -16,6 +16,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailtracking"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -423,7 +424,7 @@ func TestEmailTrackingStatsUnauthorized(t *testing.T) {
 func TestEmailTrackingStatsWithAuth(t *testing.T) {
 	// Create a support user with token using existing test utilities
 	prefix := uniquePrefix("emailstats")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Request with authentication
@@ -453,7 +454,7 @@ func TestEmailTrackingUserEmailsUnauthorized(t *testing.T) {
 func TestEmailTrackingUserEmailsWithAuth(t *testing.T) {
 	// Create a support user with token using existing test utilities
 	prefix := uniquePrefix("emailuser")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a test tracking record for the support user
@@ -636,10 +637,10 @@ func TestEmailTrackingImageCompactScrollDepth(t *testing.T) {
 // is why it went unnoticed. V1 has no such condition anywhere.
 func TestEmailTrackingFindsUserByTheirOwnAddress(t *testing.T) {
 	prefix := uniquePrefix("emailbyaddr")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	memberEmail := prefix + "_member@test.com"
 
 	// A row with canon and backwards filled, which is the ordinary case and exactly
@@ -684,7 +685,7 @@ func reverseForTest(s string) string {
 // Error 1054 on every such request.
 func TestEmailTrackingAddressOfNoMemberSearchesRecipient(t *testing.T) {
 	prefix := uniquePrefix("emailnomember")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	address := prefix + "_nobody@test.com"

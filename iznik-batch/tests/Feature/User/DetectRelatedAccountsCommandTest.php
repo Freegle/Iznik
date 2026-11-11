@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\User;
 
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -247,7 +248,7 @@ class DetectRelatedAccountsCommandTest extends TestCase
     {
         // Volunteers hand their details out as part of the role, so them recurring across
         // accounts is expected rather than suspicious.
-        $mod = $this->createTestUser(['systemrole' => 'Moderator']);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
         $member = $this->createTestUser();
 
         $this->say($mod->id, 'Any problems, ring me on 07700900222.');

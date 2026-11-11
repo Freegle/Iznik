@@ -37,6 +37,7 @@ const mockReplyStateMachine = {
   emailValid: ref(false),
   replyText: ref(''),
   collectText: ref(''),
+  replyImage: ref(null),
   error: ref(null),
   canSend: ref(true),
   isProcessing: ref(false),
@@ -91,6 +92,14 @@ vi.mock('~/composables/useDistance', () => ({
   milesAway: vi.fn().mockReturnValue(5),
 }))
 
+// The experiment arm. The pane asks for it with flowArm(FlowName.REPLY, 'reply-collect-chips').
+let mockArm = null
+const mockFlowArm = vi.fn(() => mockArm)
+vi.mock('~/composables/useFlowTelemetry', () => ({
+  FlowName: { REPLY: 'reply' },
+  flowArm: (...args) => mockFlowArm(...args),
+}))
+
 vi.mock('~/composables/useClientLog', () => ({
   action: vi.fn(),
 }))
@@ -127,6 +136,10 @@ describe('ChatReplyPane', () => {
     mockReplyStateMachine.isProcessing.value = false
     mockReplyStateMachine.error.value = null
     mockReplyStateMachine.showWelcomeModal.value = false
+    mockReplyStateMachine.replyImage.value = null
+    mockReplyStateMachine.collectText.value = ''
+    mockArm = null
+    mockFlowArm.mockClear()
   })
 
   async function createWrapper(props = {}) {
@@ -250,6 +263,12 @@ describe('ChatReplyPane', () => {
           ErrorMessage: {
             template: '<span class="error-message" />',
             props: ['name'],
+          },
+          OurUploader: {
+            template:
+              '<button class="our-uploader-stub" :data-type="type" @click="$emit(\'update:modelValue\', [{ id: 77, path: \'/full.jpg\', paththumb: \'/thumb.jpg\' }])" />',
+            props: ['modelValue', 'type', 'startOpen'],
+            emits: ['update:modelValue'],
           },
           VeeForm: {
             template: '<form class="vee-form"><slot /></form>',
@@ -425,6 +444,109 @@ describe('ChatReplyPane', () => {
     })
   })
 
+  describe('reply-collect-chips experiment', () => {
+    it('control: no buttons under the collect box', async () => {
+      mockArm = 'a'
+      const wrapper = await createWrapper()
+      expect(mockFlowArm).toHaveBeenCalledWith('reply', 'reply-collect-chips')
+      expect(wrapper.find('.collect-chips').exists()).toBe(false)
+    })
+
+    it('no arm at all (experiment off): no buttons', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.collect-chips').exists()).toBe(false)
+    })
+
+    it('arm b: three buttons under the collect box', async () => {
+      mockArm = 'b'
+      const wrapper = await createWrapper()
+      const chips = wrapper.findAll('.collect-chip')
+      expect(chips.map((c) => c.text())).toEqual([
+        'This weekend',
+        'Weekday evenings',
+        'Any time',
+      ])
+      expect(chips[0].attributes('type')).toBe('button')
+    })
+
+    it('arm b: tapping a button fills the box and marks it', async () => {
+      mockArm = 'b'
+      const wrapper = await createWrapper()
+      const chips = wrapper.findAll('.collect-chip')
+      await chips[1].trigger('click')
+      expect(mockReplyStateMachine.collectText.value).toBe('Weekday evenings')
+      expect(
+        wrapper.findAll('.collect-chip')[1].attributes('aria-pressed')
+      ).toBe('true')
+      expect(
+        wrapper.findAll('.collect-chip')[0].attributes('aria-pressed')
+      ).toBe('false')
+    })
+
+    it('arm b: the box stays editable after a tap', async () => {
+      mockArm = 'b'
+      const wrapper = await createWrapper()
+      await wrapper.findAll('.collect-chip')[0].trigger('click')
+      expect(mockReplyStateMachine.collectText.value).toBe('This weekend')
+      mockReplyStateMachine.collectText.value = 'Saturday after 2pm'
+      await flushPromises()
+      expect(
+        wrapper.findAll('.collect-chip')[0].attributes('aria-pressed')
+      ).toBe('false')
+    })
+
+    it('a Wanted post never asks for the arm and has no buttons', async () => {
+      mockArm = 'b'
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        type: 'Wanted',
+      })
+      const wrapper = await createWrapper()
+      expect(mockFlowArm).not.toHaveBeenCalled()
+      expect(wrapper.find('.collect-chips').exists()).toBe(false)
+    })
+  })
+
+  describe('photo', () => {
+    it('offers to add a photo and opens the chat uploader', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.our-uploader-stub').exists()).toBe(false)
+      const add = wrapper.find('.composer-photo-add')
+      expect(add.text()).toContain('Add a photo')
+      await add.trigger('click')
+      expect(wrapper.find('.our-uploader-stub').attributes('data-type')).toBe(
+        'ChatMessage'
+      )
+    })
+
+    it('keeps the uploaded photo and shows it', async () => {
+      const wrapper = await createWrapper()
+      await wrapper.find('.composer-photo-add').trigger('click')
+      await wrapper.find('.our-uploader-stub').trigger('click')
+      await flushPromises()
+      expect(mockReplyStateMachine.replyImage.value).toEqual({
+        id: 77,
+        paththumb: '/thumb.jpg',
+      })
+      expect(mockReplyStateMachine.startTyping).toHaveBeenCalled()
+      expect(wrapper.find('.composer-photo__img').attributes('src')).toBe(
+        '/thumb.jpg'
+      )
+      expect(wrapper.find('.our-uploader-stub').exists()).toBe(false)
+    })
+
+    it('removes the photo', async () => {
+      mockReplyStateMachine.replyImage.value = { id: 77, paththumb: '/t.jpg' }
+      const wrapper = await createWrapper()
+      const remove = wrapper
+        .findAll('.composer-photo .b-button')
+        .find((b) => b.text().includes('Remove photo'))
+      await remove.trigger('click')
+      expect(mockReplyStateMachine.replyImage.value).toBeNull()
+      expect(wrapper.find('.composer-photo-add').exists()).toBe(true)
+    })
+  })
+
   describe('delivery notice', () => {
     it('shows delivery notice when delivery possible', async () => {
       mockMessageStore.byId.mockReturnValue({
@@ -567,6 +689,43 @@ describe('ChatReplyPane', () => {
       const wrapper = await createWrapper()
       const sendBtn = wrapper.find('.spin-button')
       expect(sendBtn.attributes('disabled')).toBeDefined()
+    })
+  })
+
+  describe('a post split into items', () => {
+    const split = (type) => ({
+      ...mockMessage,
+      type,
+      autosplit: true,
+      bulkcount: 2,
+      bulkitems: [
+        { id: 1, name: 'Sofa', quantity: 1, available: true },
+        { id: 2, name: 'Lamp', quantity: 1, available: false },
+      ],
+    })
+
+    afterEach(() => {
+      mockReplyStateMachine.replyText.value = ''
+    })
+
+    it('asks which items on an OFFER, and writes the choice as the first line', async () => {
+      mockMessageStore.byId.mockReturnValue(split('Offer'))
+      const wrapper = await createWrapper()
+      const choice = wrapper.find('[data-testid="reply-item-choice"]')
+      expect(choice.exists()).toBe(true)
+      expect(choice.text()).toContain('Which would you like?')
+      // An item already TAKEN is not offered.
+      expect(wrapper.find('[data-testid="reply-item-2"]').exists()).toBe(false)
+      await wrapper.find('[data-testid="reply-item-1"]').trigger('click')
+      expect(mockReplyStateMachine.replyText.value).toBe("I'd like: Sofa")
+    })
+
+    it('never asks on a WANTED', async () => {
+      mockMessageStore.byId.mockReturnValue(split('Wanted'))
+      const wrapper = await createWrapper()
+      expect(wrapper.find('[data-testid="reply-item-choice"]').exists()).toBe(
+        false
+      )
     })
   })
 
@@ -749,6 +908,19 @@ describe('ChatReplyPane', () => {
         false
       )
       expect(wrapper.text()).toContain('as soon as it does')
+    })
+  })
+  describe('after the reply is sent', () => {
+    afterEach(() => {
+      mockReplyStateMachine.isComplete.value = false
+    })
+
+    it('tells the opener the reply was sent', async () => {
+      const wrapper = await createWrapper()
+      mockReplyStateMachine.isComplete.value = true
+      await flushPromises()
+
+      expect(wrapper.findComponent(ChatReplyPane).emitted('sent')).toBeTruthy()
     })
   })
 })

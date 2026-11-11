@@ -78,4 +78,35 @@ class Location extends Model implements Auditable
         $canon = strtolower(preg_replace("/[^A-Za-z0-9]/", '', $name));
         return DB::table('locations')->where('canon', 'LIKE', $canon)->first();
     }
+
+    /**
+     * The bracket a post subject carries for this location, as the Go API builds it
+     * for every post made on Freegle (message.constructLocationString): the area name
+     * and the outward half of the postcode, "Stoneygate LE2". A postcode with no area
+     * gives the outward half alone, and a location that is not a postcode gives its
+     * name. Null when the id is not in `locations`.
+     */
+    public static function subjectArea(int $locationId): ?string
+    {
+        $loc = DB::table('locations as l')
+            ->leftJoin('locations as a', 'a.id', '=', 'l.areaid')
+            ->where('l.id', $locationId)
+            ->select('l.name', 'l.type', 'a.name as area')
+            ->first();
+
+        if (!$loc || $loc->name === null || $loc->name === '') {
+            return null;
+        }
+
+        if ($loc->type !== 'Postcode') {
+            return $loc->name;
+        }
+
+        $outward = $loc->name;
+        if (($space = strpos($outward, ' ')) > 0) {
+            $outward = substr($outward, 0, $space);
+        }
+
+        return $loc->area ? "{$loc->area} {$outward}" : $outward;
+    }
 }

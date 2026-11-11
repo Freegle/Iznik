@@ -302,6 +302,10 @@
               </div>
             </div>
 
+            <!-- An ordinary post the server split into items: the list only,
+                 replied to like any other post. -->
+            <MessageItemList v-if="isSplit" :id="id" />
+
             <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
             <BulkItemsInterest
               v-if="isBulk"
@@ -419,6 +423,11 @@
                   We'll pass it on to the owner as soon as it does.
                 </span>
               </NoticeMessage>
+              <MessageOwnActions
+                v-if="fromme && !message.outcomes?.length"
+                :message="message"
+                class="mb-2"
+              />
               <div
                 v-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
@@ -449,6 +458,7 @@
                 >
                   Cancel
                 </b-button>
+                <MessageInterested v-if="canMarkInterested" :id="message.id" />
                 <b-button
                   v-if="!fromme"
                   variant="primary"
@@ -521,6 +531,11 @@
             pass it on to the owner as soon as it does.
           </span>
         </NoticeMessage>
+        <MessageOwnActions
+          v-if="fromme && !message.outcomes?.length"
+          :message="message"
+          class="mb-2"
+        />
         <div
           v-if="replyable && !replied && !message.successful"
           class="footer-buttons"
@@ -550,6 +565,7 @@
           >
             Cancel
           </b-button>
+          <MessageInterested v-if="canMarkInterested" :id="message.id" />
           <b-button
             v-if="!fromme"
             variant="primary"
@@ -671,6 +687,10 @@ import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
 import ChatReplyPane from '~/components/ChatReplyPane'
 import BulkItemsInterest from '~/components/BulkItemsInterest'
+import MessageItemList from '~/components/MessageItemList'
+import { isAutoSplit, isClearance } from '~/composables/useAutoSplit'
+import MessageInterested from '~/components/MessageInterested'
+import MessageOwnActions from '~/components/MessageOwnActions'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
@@ -798,9 +818,10 @@ const reachFinished = computed(() => message.value?.reachfinished === true)
 // web page that just duplicates the catalogue — so suppress it. A giver's own
 // free-text description doesn't start with this generated marker, so it still
 // shows. (Marker kept in sync with buildBulkSummary in iznik-server-go.)
-const isBulk = computed(
-  () => (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
-)
+// Only a clearance; an automatically split post has an item list too, but is replied
+// to like any other post (composables/useAutoSplit.js).
+const isBulk = computed(() => isClearance(message.value))
+const isSplit = computed(() => isAutoSplit(message.value))
 const hideGeneratedBulkBody = computed(() => {
   const body = message.value?.textbody || ''
   return isBulk.value && body.startsWith('Items available in this offer:')
@@ -809,6 +830,16 @@ const hideGeneratedBulkBody = computed(() => {
 // A bulk offer is replied to by registering per-item interest, not by opening a
 // reply box — so the main reply button becomes "Register interest". These mirror
 // the BulkItemsInterest child's state (emitted up) so the button can reflect it.
+// The "I'm interested" mark is for a signed-in member looking at someone else's open, single-item post.
+const canMarkInterested = computed(
+  () =>
+    loggedIn.value &&
+    !fromme.value &&
+    !isBulk.value &&
+    !message.value?.successful &&
+    message.value?.id > 0
+)
+
 const bulkInterestRef = ref(null)
 const bulkCanRegister = ref(false)
 const bulkSubmitted = ref(false)
@@ -2419,6 +2450,11 @@ onUnmounted(() => {
     width: auto !important;
     display: flex !important;
     justify-content: center;
+  }
+
+  /* With the interested control beside it, Reply takes the rest of the row rather than all of it. */
+  &:has(.interested-control) .reply-button {
+    width: auto !important;
   }
 
   /* Mobile: only Reply button visible, full width */

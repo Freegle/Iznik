@@ -40,8 +40,9 @@
                     announcements about the running of the group.
                   </li>
                   <li>
-                    Newsletter - people can opt out (via the setting which
-                    mentions "to remind you"). These are encouragements to
+                    Newsletter - only goes to members who have said yes to
+                    "Freegle updates" (news and ways to support Freegle), and
+                    they can say no at any time. These are encouragements to
                     freegle more, fundraising mails or newsletters.
                   </li>
                 </ul>

@@ -79,7 +79,7 @@ func TestLockdownRefusesDeleteAdmin(t *testing.T) {
 func TestLockdownRefusesCommentCreate(t *testing.T) {
 	prefix := uniquePrefix("ld_cmwr_create")
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	_, modToken := CreateTestSession(t, modID)
 
 	restore := modsHeld()
@@ -95,7 +95,7 @@ func TestLockdownRefusesCommentCreate(t *testing.T) {
 func TestLockdownRefusesCommentEdit(t *testing.T) {
 	prefix := uniquePrefix("ld_cmwr_edit")
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	_, modToken := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -117,7 +117,7 @@ func TestLockdownRefusesCommentEdit(t *testing.T) {
 func TestLockdownRefusesCommentDelete(t *testing.T) {
 	prefix := uniquePrefix("ld_cmwr_del")
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	_, modToken := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -137,7 +137,7 @@ func TestLockdownRefusesCommentDelete(t *testing.T) {
 
 func TestLockdownRefusesPostModConfig(t *testing.T) {
 	prefix := uniquePrefix("ld_ModCfgPost")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	restore := modsHeld()
@@ -189,7 +189,7 @@ func TestLockdownRefusesDeleteModConfig(t *testing.T) {
 
 func TestLockdownRefusesPostStdMsg(t *testing.T) {
 	prefix := uniquePrefix("ld_StdMsgPost")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
 
@@ -205,7 +205,7 @@ func TestLockdownRefusesPostStdMsg(t *testing.T) {
 
 func TestLockdownRefusesPatchStdMsg(t *testing.T) {
 	prefix := uniquePrefix("ld_StdMsgPatch")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
 	msgID := createTestStdMsg(t, cfgID, prefix+"_msg")
@@ -222,7 +222,7 @@ func TestLockdownRefusesPatchStdMsg(t *testing.T) {
 
 func TestLockdownRefusesDeleteStdMsg(t *testing.T) {
 	prefix := uniquePrefix("ld_StdMsgDel")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
 	msgID := createTestStdMsg(t, cfgID, prefix+"_msg")
@@ -244,7 +244,7 @@ func TestLockdownRefusesDeleteStdMsg(t *testing.T) {
 func TestLockdownRefusesPatchSpammer(t *testing.T) {
 	prefix := uniquePrefix("ld_SpamPatch")
 	_, token := createSpamAdminUser(t, prefix)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Suspicious")
 
 	restore := modsHeld()
@@ -260,7 +260,7 @@ func TestLockdownRefusesPatchSpammer(t *testing.T) {
 func TestLockdownRefusesDeleteSpammer(t *testing.T) {
 	prefix := uniquePrefix("ld_SpamDel")
 	_, token := createSpamAdminUser(t, prefix)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "Spammer", "Bad actor")
 
 	restore := modsHeld()
@@ -275,9 +275,9 @@ func TestLockdownDoesNotRefusePostSpammerReport(t *testing.T) {
 	// POST /spammers (reporting as PendingAdd) stays allowed for anyone even while
 	// mods is held - only the confirm/reject/delete actions are refused.
 	prefix := uniquePrefix("ld_SpamPost")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	restore := modsHeld()
 	defer restore()
@@ -296,7 +296,7 @@ func TestLockdownDoesNotRefusePostSpammerReport(t *testing.T) {
 
 func TestLockdownRefusesExportSpammersEvenForSupport(t *testing.T) {
 	prefix := uniquePrefix("ld_SpamExport")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	restore := lockdown.SetTestState(lockdown.State{

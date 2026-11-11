@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,11 +17,11 @@ import (
 // so ModSpammer.vue can display "Unconfirmed Spammer".
 func TestGetUserSpammerPendingAddObjectForMods(t *testing.T) {
 	prefix := uniquePrefix("SpamParPA")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
-	reporterID := CreateTestUser(t, prefix+"_reporter", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	reporterID := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	db.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid) VALUES (?, 'PendingAdd', 'Looks dodgy', ?)",
@@ -47,11 +48,11 @@ func TestGetUserSpammerPendingAddObjectForMods(t *testing.T) {
 // V1 parity: confirmed Spammer row also gives mods a rich object (not a bare bool).
 func TestGetUserSpammerConfirmedObjectForMods(t *testing.T) {
 	prefix := uniquePrefix("SpamParCS")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
-	adderID := CreateTestUser(t, prefix+"_adder", "Admin")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	adderID := CreateTestUser(t, prefix+"_adder", utils.SYSTEMROLE_ADMIN)
 
 	db := database.DBConn
 	db.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid) VALUES (?, 'Spammer', 'Confirmed', ?)",
@@ -75,10 +76,10 @@ func TestGetUserSpammerConfirmedObjectForMods(t *testing.T) {
 // This is so chat UI etc. can warn about confirmed spammers but not leak PendingAdd reports.
 func TestGetUserSpammerConfirmedBoolForMembers(t *testing.T) {
 	prefix := uniquePrefix("SpamParMB")
-	userID := CreateTestUser(t, prefix+"_viewer", "User")
+	userID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, userToken := CreateTestSession(t, userID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid) VALUES (?, 'Spammer', 'Confirmed', ?)",
 		targetID, userID)
@@ -100,10 +101,10 @@ func TestGetUserSpammerConfirmedBoolForMembers(t *testing.T) {
 // pending reports must not leak to regular users.
 func TestGetUserSpammerPendingAddHiddenFromMembers(t *testing.T) {
 	prefix := uniquePrefix("SpamParMH")
-	userID := CreateTestUser(t, prefix+"_viewer", "User")
+	userID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, userToken := CreateTestSession(t, userID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	db.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid) VALUES (?, 'PendingAdd', 'Dodgy', ?)",
 		targetID, userID)
@@ -125,10 +126,10 @@ func TestGetUserSpammerPendingAddHiddenFromMembers(t *testing.T) {
 // so their ChitChat/newsfeed posts are muted while pending review.
 func TestPostSpammerPendingAddSuppressesNewsfeed(t *testing.T) {
 	prefix := uniquePrefix("SpamParSup")
-	reporterID := CreateTestUser(t, prefix+"_reporter", "User")
+	reporterID := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
 	_, reporterToken := CreateTestSession(t, reporterID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	// Sanity check: starts unsuppressed.
 	db := database.DBConn
 	db.Exec("UPDATE users SET newsfeedmodstatus = NULL WHERE id = ?", targetID)
@@ -151,12 +152,12 @@ func TestPostSpammerPendingAddSuppressesNewsfeed(t *testing.T) {
 func TestPostSpammerPendingAddPreservesOriginalReporter(t *testing.T) {
 	prefix := uniquePrefix("SpamParDup")
 
-	firstReporterID := CreateTestUser(t, prefix+"_r1", "User")
+	firstReporterID := CreateTestUser(t, prefix+"_r1", utils.SYSTEMROLE_USER)
 	_, firstToken := CreateTestSession(t, firstReporterID)
-	secondReporterID := CreateTestUser(t, prefix+"_r2", "User")
+	secondReporterID := CreateTestUser(t, prefix+"_r2", utils.SYSTEMROLE_USER)
 	_, secondToken := CreateTestSession(t, secondReporterID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(`{"userid":%d,"collection":"PendingAdd","reason":"First report"}`, targetID)
 	req := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/spammers?jwt=%s", firstToken), strings.NewReader(body))

@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,8 +63,8 @@ type httptestResponse struct {
 func TestBulkEditGetOfferByToken(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkeditget")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
@@ -101,7 +102,7 @@ func TestBulkEditGetOfferByToken(t *testing.T) {
 func TestBulkEditUpdateAvailability(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkeditavail")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
@@ -138,7 +139,7 @@ func TestBulkEditUpdateAvailability(t *testing.T) {
 func TestBulkEditUpdateQuantity(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkeditqty")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
@@ -162,7 +163,7 @@ func TestBulkEditUpdateQuantity(t *testing.T) {
 // TestBulkEditItemNotInOffer: a token for one offer cannot edit another offer's item.
 func TestBulkEditItemNotInOffer(t *testing.T) {
 	prefix := uniquePrefix("bulkeditxoffer")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 
 	msgA := CreateTestMessage(t, ownerID, prefix+" A", 55.95, -3.18)
 	addBulkItem(t, msgA, prefix+"A-item", 3, "Good")
@@ -190,8 +191,8 @@ func TestBulkEditBadToken(t *testing.T) {
 // refused; a non-bulk message is rejected.
 func TestBulkEditLinkMint(t *testing.T) {
 	prefix := uniquePrefix("bulkeditmint")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	strangerID := CreateTestUser(t, prefix+"_stranger", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	addBulkItem(t, msgID, prefix+"Desk", 4, "Good")

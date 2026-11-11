@@ -16,7 +16,7 @@ func TestEditReviewSkipsDeletedPost(t *testing.T) {
 	prefix := uniquePrefix("editdeleted")
 	db := database.DBConn
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 

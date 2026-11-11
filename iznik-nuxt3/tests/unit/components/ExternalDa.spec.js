@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ExternalDa from '~/components/ExternalDa.vue'
 
-const { mockMe, mockRecentDonor } = vi.hoisted(() => {
+const { mockMe, mockRecentDonor, mockAskForDonations } = vi.hoisted(() => {
   const { ref } = require('vue')
   return {
     mockMe: ref({ id: 1, email: 'test@example.com' }),
     mockRecentDonor: ref(false),
+    mockAskForDonations: ref(true),
   }
 })
 
@@ -32,6 +33,7 @@ vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: mockMe,
     recentDonor: mockRecentDonor,
+    askForDonations: mockAskForDonations,
   }),
 }))
 
@@ -57,6 +59,7 @@ describe('ExternalDa', () => {
     vi.useFakeTimers()
     mockMe.value = { id: 1, email: 'test@example.com' }
     mockRecentDonor.value = false
+    mockAskForDonations.value = true
     mockMiscStore.boredWithJobs = false
     mockMiscStore.adsDisabled = false
     mockRuntimeConfig.public.ISAPP = false
@@ -235,6 +238,21 @@ describe('ExternalDa', () => {
   })
 
   describe('fallback ad behavior', () => {
+    it('shows the donate banner in the fallback', async () => {
+      const wrapper = createWrapper({ jobs: false })
+      wrapper.vm.fallbackAdVisible = true
+      await flushPromises()
+      expect(wrapper.find('img[src*="SupportFreegle"]').exists()).toBe(true)
+    })
+
+    it('leaves out the donate banner for someone who asked not to be asked', async () => {
+      mockAskForDonations.value = false
+      const wrapper = createWrapper({ jobs: false })
+      wrapper.vm.fallbackAdVisible = true
+      await flushPromises()
+      expect(wrapper.find('img[src*="SupportFreegle"]').exists()).toBe(false)
+    })
+
     it('sets fallbackAdVisible when app mode without cookies', async () => {
       mockRuntimeConfig.public.ISAPP = true
       mockRuntimeConfig.public.USE_COOKIES = false

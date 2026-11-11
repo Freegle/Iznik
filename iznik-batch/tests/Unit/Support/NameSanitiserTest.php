@@ -27,7 +27,7 @@ class NameSanitiserTest extends TestCase
             'one edit ilovefreegle' => ['Ilovefreegl Support'],
             'bare freegle' => ['Freegle'],
             'freegle postcode' => ['Freegle SK9'],
-            'bare admin' => ['Admin'],
+            'bare admin' => ['Admin'], // role-literal-ok: a display name the sanitiser tests, not a role
             'support team solo' => ['Support Team'],
             'prize winner' => ['Prize Winner'],
             'surname freegle' => ['Susan Freegle'],

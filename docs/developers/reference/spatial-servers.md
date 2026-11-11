@@ -269,12 +269,16 @@ feed import) needed to change. Instances without the places file (the
 database servers run a copy of the finder too) simply say "not available" if
 asked.
 
-Regenerating the file after a map refresh:
+Regenerating the file after a map refresh, on the production host:
 
 ```
-docker exec freegle-spatial go run ./cmd/placesextract \
+docker exec freegledocker-spatial placesextract \
     -pbf /data/uk-latest.osm.pbf -out - | gzip > iznik-routing-go/data/places.jsonl.gz
 ```
+
+The production image is the slim `runtime` build, which carries the `cmd/` tools as programs
+but no Go toolchain. In a dev stack the image is the full one, so there it is
+`docker exec freegle-spatial go run ./cmd/placesextract` with the same arguments.
 
 (With `-out -` the tool streams plain JSONL to stdout: the container's data
 folder is mounted read-only, so the compressed file is written host-side; a

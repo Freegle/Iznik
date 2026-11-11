@@ -60,8 +60,8 @@ func TestLockdownNudgeSetsProcessingRequiredWhenChatHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_nudge_held")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatMessage(t, chatid, user1ID, "Hello")
 	_, token := CreateTestSession(t, user1ID)
@@ -85,8 +85,8 @@ func TestLockdownNudgeLeavesProcessingRequiredZeroWhenNotHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_nudge_unheld")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatMessage(t, chatid, user1ID, "Hello")
 	_, token := CreateTestSession(t, user1ID)
@@ -129,7 +129,7 @@ func TestLockdownRefusesModOpeningNewUser2ModChatToMember(t *testing.T) {
 	db := database.DBConn
 
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, modToken := CreateTestSession(t, modID)
 
 	restore := modsHeld()
@@ -150,7 +150,7 @@ func TestLockdownAllowsModReplyingInUser2ModChatMemberStarted(t *testing.T) {
 	prefix := uniquePrefix("ld_chat_reply")
 
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, modToken := CreateTestSession(t, modID)
 
 	existing := CreateTestChatRoom(t, memberID, nil, "User2Mod")
@@ -175,7 +175,7 @@ func TestLockdownDoesNotRefuseModOpeningUser2ModChatWhenNotHeld(t *testing.T) {
 	db := database.DBConn
 
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, modToken := CreateTestSession(t, modID)
 
 	resp := putChatRoom(t, modToken, map[string]interface{}{
@@ -196,7 +196,7 @@ func TestLockdownDoesNotRefuseModOpeningUser2ModChatWhenNotHeld(t *testing.T) {
 func TestLockdownAllowsMemberOpeningOwnUser2ModChatWhileModsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_chat_own")
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, memberToken := CreateTestSession(t, memberID)
 
 	restore := modsHeld()

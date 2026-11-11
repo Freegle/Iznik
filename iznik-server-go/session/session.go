@@ -19,8 +19,10 @@ import (
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/maildeferral"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/supportcase/casestore"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
+	"github.com/freegle/iznik-server-go/ux"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
@@ -1042,9 +1044,11 @@ func GetSession(c *fiber.Ctx) error {
 		var pendingvolunteering, pendingvolunteeringother, spammerpendingadd, spammerpendingremove, stories int64
 		var chatreview, chatreviewother, newsletterstories, giftaid, happiness, relatedmembers int64
 		var housekeeping, cronjobs int64
+		var uxExperimentsConfirm, uxExperimentsRemove int64
 		var emailin, emailout int64
 		var maildeferrals int64
 		var helperEscalated int64
+		var supportCases int64
 
 		var wg2 sync.WaitGroup
 
@@ -1242,6 +1246,17 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
+		// --- Support cases waiting for Support (Support and Admin) ---
+		// The Cases tab of Support Tools, which only Support and Admin see. A referring moderator
+		// follows their own case by mail and the case link, so they get no count for it.
+		if userRow.Systemrole == utils.SYSTEMROLE_SUPPORT || userRow.Systemrole == utils.SYSTEMROLE_ADMIN {
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+				supportCases, _ = casestore.CountAwaitingSupport(db)
+			}()
+		}
+
 		// --- Gift aid (global) ---
 		wg2.Add(1)
 		go func() {
@@ -1284,6 +1299,18 @@ func GetSession(c *fiber.Ctx) error {
 				Count(&relatedmembers)
 		}()
 
+		// --- UX experiments with a verdict that nobody has closed (Admin only) ---
+		// What is waiting is developer work: adopted ones to confirm and take the switch out of,
+		// ended ones whose variant code is still in. Like every SysAdmin count, it is Admin only,
+		// because ModTools shows the SysAdmin page to Admin only.
+		if userRow.Systemrole == utils.SYSTEMROLE_ADMIN {
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+				uxExperimentsConfirm, uxExperimentsRemove = ux.VerdictCounts()
+			}()
+		}
+
 		// --- Housekeeping tasks: overdue or failed (Admin only) ---
 		// Housekeeping is a SysAdmin function — Admin systemrole only. Support
 		// users don't see the SysAdmin housekeeping list, so counting it for
@@ -1297,26 +1324,14 @@ func GetSession(c *fiber.Ctx) error {
 					Count(&housekeeping)
 			}()
 
-			// --- Cron jobs: failures + never-run jobs (admin-only) ---
+			// --- Cron jobs: failed, never-run or overdue registry entries (admin-only) ---
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				var failures int64
-				db.Table("cron_job_status").Where("last_exit_code IS NOT NULL AND last_exit_code != 0").Count(&failures)
-
-				var runCount int64
-				db.Table("cron_job_status").Count(&runCount)
-
-				activeCount := int64(housekeeper.ActiveCronJobCount())
-				neverRun := activeCount - runCount
-				if neverRun < 0 {
-					neverRun = 0
-				}
-
-				cronjobs = failures + neverRun
+				cronjobs = housekeeper.CountCronJobsNeedingAttention()
 			}()
 
-			// --- Email health: incoming and outgoing alerts (admin/support) ---
+			// --- Email health: incoming and outgoing alerts (Admin only) ---
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
@@ -1327,10 +1342,8 @@ func GetSession(c *fiber.Ctx) error {
 			// ADMIN only, like every other badge on that page - the whole
 			// block is SYSTEMROLE_ADMIN, so a support user gets no
 			// maildeferrals key and therefore no badge, exactly as they get
-			// none for housekeeping or cronjobs. Deliberate, not an oversight:
-			// support can open the Delayed tab (the endpoint is
-			// IsAdminOrSupport) but is not badged towards it. The neighbouring
-			// comments saying "admin/support" are wrong about the gate.
+			// none for housekeeping or cronjobs. ModTools shows the SysAdmin
+			// page, and so the Delayed tab, to Admin only.
 			// Counted by DOMAIN, and per-mailbox reasons excluded, so the badge
 			// matches what the Delayed table shows. A full inbox is not an
 			// outage and must not light this up.
@@ -1352,7 +1365,7 @@ func GetSession(c *fiber.Ctx) error {
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
-			emailin + emailout + helperEscalated + maildeferrals
+			emailin + emailout + helperEscalated + supportCases + maildeferrals + uxExperimentsConfirm + uxExperimentsRemove
 
 		work = fiber.Map{
 			"pending":                  pending,
@@ -1373,6 +1386,7 @@ func GetSession(c *fiber.Ctx) error {
 			"chatreviewother":          chatreviewother,
 			"newsletterstories":        newsletterstories,
 			"helperEscalated":          helperEscalated,
+			"supportcases":             supportCases,
 			"giftaid":                  giftaid,
 			"happiness":                happiness,
 			"relatedmembers":           relatedmembers,
@@ -1381,6 +1395,9 @@ func GetSession(c *fiber.Ctx) error {
 			"emailin":                  emailin,
 			"emailout":                 emailout,
 			"maildeferrals":            maildeferrals,
+			"uxexperiments":            uxExperimentsConfirm + uxExperimentsRemove,
+			"uxexperimentsconfirm":     uxExperimentsConfirm,
+			"uxexperimentsremove":      uxExperimentsRemove,
 			"total":                    total,
 		}
 	}
@@ -1909,15 +1926,7 @@ func PatchSession(c *fiber.Ctx) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Golden column order not
-			// alphabetical, but normaliseColumnOrder handled the map-Create
-			// reorder; see the retired ormharness's normalise_test.go
-			// TestNormaliseColumnOrder_Insert (removed in d22ba1d6c).
-			db.Table("users_aboutme").Create(map[string]interface{}{
-				"userid":    myid,
-				"text":      *req.Aboutme,
-				"timestamp": gorm.Expr("NOW()"),
-			})
+			user.SaveAboutMe(db, myid, *req.Aboutme)
 		}()
 	}
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MessageHistory from '~/components/MessageHistory.vue'
+import { SYSTEMROLE_MODERATOR, SYSTEMROLE_USER } from '~/constants'
 
 const { mockMessage, mockUser } = vi.hoisted(() => {
   return {
@@ -31,7 +32,7 @@ const mockMessageStore = {
 }
 
 const mockAuthStore = {
-  user: { id: 1, systemrole: 'User' },
+  user: { id: 1, systemrole: SYSTEMROLE_USER },
 }
 
 const mockUserStore = {
@@ -81,7 +82,7 @@ describe('MessageHistory', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockMessageStore.byId.mockReturnValue(mockMessage)
-    mockAuthStore.user = { id: 1, systemrole: 'User' }
+    mockAuthStore.user = { id: 1, systemrole: SYSTEMROLE_USER }
     mockMiscStore.breakpoint = 'lg'
   })
 
@@ -217,13 +218,13 @@ describe('MessageHistory', () => {
 
   describe('approved by', () => {
     it('fetches approving mod for moderators', () => {
-      mockAuthStore.user = { id: 1, systemrole: 'Moderator' }
+      mockAuthStore.user = { id: 1, systemrole: SYSTEMROLE_MODERATOR }
       createWrapper()
       expect(mockUserStore.fetch).toHaveBeenCalledWith(200)
     })
 
     it('does not fetch approving mod for regular users', () => {
-      mockAuthStore.user = { id: 1, systemrole: 'User' }
+      mockAuthStore.user = { id: 1, systemrole: SYSTEMROLE_USER }
       mockUserStore.fetch.mockClear()
       createWrapper()
       expect(mockUserStore.fetch).not.toHaveBeenCalled()

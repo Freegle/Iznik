@@ -66,6 +66,11 @@ import { useMessageStore } from '~/stores/message'
 import { timeago } from '~/composables/useTimeFormat'
 import { useMiscStore } from '~/stores/misc'
 import { useMe } from '~/composables/useMe'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const props = defineProps({
   id: {
@@ -104,9 +109,9 @@ const me = authStore.user
 
 if (
   me &&
-  (me.systemrole === 'Moderator' ||
-    me.systemrole === 'Support' ||
-    me.systemrole === 'Admin')
+  (me.systemrole === SYSTEMROLE_MODERATOR ||
+    me.systemrole === SYSTEMROLE_SUPPORT ||
+    me.systemrole === SYSTEMROLE_ADMIN)
 ) {
   // A message has one moderation decision, not one per group
   // (messages.approvedby). Fetch the approving mod. Might fail, e.g.

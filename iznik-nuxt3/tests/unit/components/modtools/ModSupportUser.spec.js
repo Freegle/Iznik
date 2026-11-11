@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ModSupportUser from '~/modtools/components/ModSupportUser.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Mock the API module used by ModSupportUser for separate support data fetches.
 const mockApiFns = {
@@ -68,7 +73,7 @@ describe('ModSupportUser', () => {
     email: 'test@example.com',
     displayname: 'Test User',
     lastaccess: new Date().toISOString(),
-    systemrole: 'User',
+    systemrole: SYSTEMROLE_USER,
     bouncing: false,
     spammer: null,
     emails: [{ id: 1, email: 'test@example.com', preferred: true }],
@@ -104,6 +109,20 @@ describe('ModSupportUser', () => {
           },
         },
         stubs: {
+          OurToggle: {
+            template:
+              '<button class="our-toggle" :data-checked="String(modelValue)" @click="$emit(\'update:modelValue\', !modelValue)" />',
+            props: [
+              'modelValue',
+              'height',
+              'width',
+              'fontSize',
+              'sync',
+              'size',
+              'labels',
+              'variant',
+            ],
+          },
           'b-card': {
             template: '<div class="card"><slot /><slot name="header" /></div>',
             props: ['noBody'],
@@ -313,7 +332,7 @@ describe('ModSupportUser', () => {
     it('shows admin notice when user is Admin', async () => {
       const wrapper = await mountComponent(
         { expand: true },
-        { systemrole: 'Admin' }
+        { systemrole: SYSTEMROLE_ADMIN }
       )
       expect(wrapper.text()).toContain('admin rights')
     })
@@ -321,7 +340,7 @@ describe('ModSupportUser', () => {
     it('shows support notice when user is Support', async () => {
       const wrapper = await mountComponent(
         { expand: true },
-        { systemrole: 'Support' }
+        { systemrole: SYSTEMROLE_SUPPORT }
       )
       expect(wrapper.text()).toContain('support rights')
     })
@@ -408,12 +427,12 @@ describe('ModSupportUser', () => {
     })
 
     it('admin returns true when systemrole is Admin', async () => {
-      const wrapper = await mountComponent({}, { systemrole: 'Admin' })
+      const wrapper = await mountComponent({}, { systemrole: SYSTEMROLE_ADMIN })
       expect(wrapper.vm.admin).toBe(true)
     })
 
     it('admin returns false when systemrole is not Admin', async () => {
-      const wrapper = await mountComponent({}, { systemrole: 'User' })
+      const wrapper = await mountComponent({}, { systemrole: SYSTEMROLE_USER })
       expect(wrapper.vm.admin).toBe(false)
     })
 
@@ -689,6 +708,46 @@ describe('ModSupportUser', () => {
       )
       expect(wrapper.text()).toContain('Donations')
       expect(wrapper.text()).toContain('£10')
+    })
+  })
+
+  describe('donation requests toggle', () => {
+    // The API sends support a yes/no "donor" flag; the donation list itself needs
+    // Gift Aid permission, so the switch must not depend on it.
+    const donor = true
+
+    it('is hidden for someone who has never donated', async () => {
+      const wrapper = await mountComponent({ expand: true })
+      expect(wrapper.text()).not.toContain('Donation requests')
+    })
+
+    it('shows as on for a donor who has not opted out', async () => {
+      const wrapper = await mountComponent({ expand: true }, { donor })
+      expect(wrapper.text()).toContain('Donation requests')
+      expect(
+        wrapper.find('.donation-asks .our-toggle').attributes('data-checked')
+      ).toBe('true')
+    })
+
+    it('shows as off for a donor who has opted out', async () => {
+      const wrapper = await mountComponent(
+        { expand: true },
+        { donor, nodonationasks: true }
+      )
+      expect(
+        wrapper.find('.donation-asks .our-toggle').attributes('data-checked')
+      ).toBe('false')
+    })
+
+    it('saves only nodonationasks for that member when switched off', async () => {
+      const wrapper = await mountComponent({ expand: true }, { donor })
+      wrapper.find('.donation-asks .our-toggle').element.click()
+      await flushPromises()
+      expect(mockEdit).toHaveBeenCalledWith({
+        id: 123,
+        settings: { nodonationasks: true },
+      })
+      expect(mockFetchMT).toHaveBeenCalled()
     })
   })
 

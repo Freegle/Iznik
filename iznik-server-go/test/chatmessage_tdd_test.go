@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,9 +22,9 @@ func TestGetChatMessages_ModSeesDeletedUserMessages(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("modviewdel")
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	victimID := CreateTestUser(t, prefix+"_victim", "User")
-	phisherID := CreateTestUser(t, prefix+"_phisher", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	victimID := CreateTestUser(t, prefix+"_victim", utils.SYSTEMROLE_USER)
+	phisherID := CreateTestUser(t, prefix+"_phisher", utils.SYSTEMROLE_USER)
 
 	PromoteTestUserToModerator(t, modID)
 	// phisher has no membership (already unsubscribed)
@@ -87,8 +88,8 @@ func TestGetChatMessages_HeldReplyHiddenFromPoster(t *testing.T) {
 		"source ENUM('email','tn','web') NOT NULL DEFAULT 'email', " +
 		"lat DOUBLE NULL, lng DOUBLE NULL, status VARCHAR(20) DEFAULT 'held', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 
 	// The original post (messages.id) that the chat is about — required by the FK on rippling_held_replies.msgid.
 	postMsgID := CreateTestMessage(t, posterID, "OFFER: Test item (heldreply)", 51.5, -0.1)

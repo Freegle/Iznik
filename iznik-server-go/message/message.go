@@ -325,6 +325,10 @@ type Message struct {
 	// exposed so list/summary views can flag a bulk offer cheaply.
 	BulkItems []BulkItem `json:"bulkitems,omitempty" gorm:"-"`
 	Bulkcount int        `json:"bulkcount,omitempty" gorm:"-"`
+	// Autosplit is true when the item list was made by the auto-splitter from an
+	// ordinary member's post, not by a clearance: the post gets the item list and
+	// none of the clearance extras. docs/developers/reference/auto-split.md.
+	Autosplit bool `json:"autosplit,omitempty" gorm:"-"`
 	// Bulkslots are the offerer-defined collection windows a replier picks from.
 	Bulkslots []string `json:"bulkslots,omitempty" gorm:"-"`
 	// Accessinstructions is the offerer's private note (address / gate code /
@@ -563,6 +567,14 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// the "My Posts" replies + replycount, so it must gate too or the poster sees a held reply
 				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
 				// (no mod exemption), matching the #927 count-surface gates.
+				//
+				// A reply held for its sender's answer (the car seat question) is gated the same way and
+				// for the same reason: it is left unprocessed, which every surface that reads
+				// processingsuccessful already skips, and this list does not. utils.ReplyHeldByQuestionSQL
+				// is the gate every count of replies shares. It is out while its question is unanswered,
+				// including the three days before the batch drops it, and after a no or when the post has
+				// gone. After a yes it is listed, as any reply the batch has yet to deliver is, for the
+				// minute before the batch delivers it.
 				db.Table("chat_messages").
 					Select("DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
 						"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname").
@@ -571,6 +583,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					Where("refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
 						"AND reviewrequired = 0 AND reviewrejected = 0 "+
 						"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
+						"AND NOT "+utils.ReplyHeldByQuestionSQL("chat_messages")+" "+
 						"AND DATEDIFF(chat_messages.date, messages.arrival) < ?",
 						id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).
 					Group("userid").
@@ -840,6 +853,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				canSeeInterest := message.Fromuser == myid || isMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 				message.Bulkcount = len(message.BulkItems)
+				if message.Bulkcount > 0 {
+					message.Autosplit = isAutoSplit(db, message.ID)
+				}
+				// Crops are shown with their items, not again among the post's photos.
+				message.MessageAttachments = withoutCrops(message.MessageAttachments)
 
 				// Part gone: somebody has taken some. Read from the takers rather than
 				// from availablenow, which an ordinary post no longer maintains.
@@ -1777,9 +1795,9 @@ func handlePartnerConsent(c *fiber.Ctx, myid uint64, req PostMessageRequest) err
 func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
-	ctx := getMessageModContext(db, myid, req.ID)
-	if ctx == nil {
-		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+	ctx, err := prepareModReply(db, myid, req.ID)
+	if err != nil {
+		return err
 	}
 
 	subject := ""
@@ -1795,23 +1813,42 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		stdmsgid = *req.Stdmsgid
 	}
 
+	if err := sendModReply(db, ctx, myid, req.ID, subject, body, stdmsgid); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to send the message")
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// prepareModReply runs every check that can refuse a moderator's message to a poster and
+// returns the message's context. It changes nothing, so a caller that also edits the post can
+// run it first. Moderators are a national pool, so there is no community to choose.
+func prepareModReply(db *gorm.DB, myid uint64, msgid uint64) (*MessageModContext, error) {
+	ctx := getMessageModContext(db, myid, msgid)
+	if ctx == nil {
+		return nil, fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+	}
+
+	return ctx, nil
+}
+
+// sendModReply logs a moderator's message to a poster and queues it for sending.
+func sendModReply(db *gorm.DB, ctx *MessageModContext, myid uint64, msgid uint64, subject string, body string, stdmsgid uint64) error {
 	// Write the mod log entry synchronously, exactly once, like the other mod actions
 	// (hold/release/repost/edit). Previously the log was written by the batch processor,
 	// but that INSERT is unconditional and runs again whenever the task is retried (e.g.
 	// after a transient email-spool failure), producing duplicate "Replied" rows in the
 	// mod history (Discourse 9672/6). The batch now skips the log for this action.
-	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, ctx.Fromuser, myid, req.ID, stdmsgid, subject)
+	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, ctx.Fromuser, myid, msgid, stdmsgid, subject)
 
 	// Queue the email via background task (the log is already written above).
 	// Identical golden to
 	// b25ea3ba4ade, 02b3821ea3b9 and 7603ee833330; converted together per gate (h).
-	db.Table("background_tasks").Create(map[string]interface{}{
+	return db.Table("background_tasks").Create(map[string]interface{}{
 		"task_type": "email_message_reply",
 		"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-			req.ID, myid, subject, body, stdmsgid, "Leave Approved Message", 1),
-	})
-
-	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+			msgid, myid, subject, body, stdmsgid, "Leave Approved Message", 1),
+	}).Error
 }
 
 // handleRejectToDraft converts a message back into a draft for reposting.
@@ -2192,6 +2229,12 @@ type patchMessageRequest struct {
 	Bulkitems          []BulkItemInput `json:"bulkitems"`
 	Bulkslots          []string        `json:"bulkslots"`
 	Accessinstructions *string         `json:"accessinstructions"`
+
+	// With Replybody set, a moderator's edit also messages the poster (the "Edit and
+	// Message" standard message). Stdmsgid is recorded on the edit and the message.
+	Replysubject *string `json:"replysubject"`
+	Replybody    *string `json:"replybody"`
+	Stdmsgid     *uint64 `json:"stdmsgid"`
 }
 
 // resolvePartnerAuth reads a ?partner= query param and resolves the acting user
@@ -2358,8 +2401,11 @@ var errLockdownResponded = errors.New("lockdown: response already written")
 func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, fromPartner bool) error {
 	db := database.DBConn
 
-	// Editing a clearance (bulk offer) is gated on the Clearance permission.
-	if req.Bulkitems != nil && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+	// Editing a clearance (bulk offer) is gated on the Clearance permission. The item
+	// list of an automatic split is the poster's to edit; who may edit the post at all
+	// is checked below.
+	splitPost := isAutoSplit(db, req.ID)
+	if req.Bulkitems != nil && !splitPost && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
 		return fiber.NewError(fiber.StatusForbidden, "You do not have permission to edit a clearance")
 	}
 
@@ -2377,6 +2423,16 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
 	}
 
+	// An automatic split's items can only be taken off the list or recounted; the
+	// list written is built from the post's own items (splitItemsEdit).
+	if req.Bulkitems != nil && splitPost {
+		items, err := splitItemsEdit(db, req.ID, req.Bulkitems)
+		if err != nil {
+			return err
+		}
+		req.Bulkitems = items
+	}
+
 	// Section 11.3 of the lockdown plan: a moderator editing someone else's post is
 	// refused outright while "mods" is held. The poster editing their own post (even
 	// when they are also a moderator) is a member edit, handled below via the "posts"
@@ -2385,6 +2441,18 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		if lockdown.GateMod(c, myid) {
 			return errLockdownResponded
 		}
+	}
+
+	// Only an OFFER is ever split. A split post changed to a WANTED, by its poster or a
+	// moderator, is first put back as it was written, so a WANTED never has an item list,
+	// Mark TAKEN on its items, or "Which would you like?" in its reply box. Any item list
+	// sent with the change goes with the split.
+	if splitPost && req.Type != nil && *req.Type != utils.OFFER {
+		if err := undoAutoSplit(db, req.ID); err != nil && !errors.Is(err, errAlreadyUndone) {
+			return fiber.NewError(fiber.StatusInternalServerError, "Could not undo the split")
+		}
+		splitPost = false
+		req.Bulkitems = nil
 	}
 
 	// Get old values for edit tracking.
@@ -2600,7 +2668,11 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	}
 
 	// Issue 2: Log the edit (type='Message', subtype='Edit').
-	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_EDIT, fromuser, myid, req.ID, 0, "Message edited")
+	editStdmsgid := uint64(0)
+	if req.Stdmsgid != nil {
+		editStdmsgid = *req.Stdmsgid
+	}
+	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_EDIT, fromuser, myid, req.ID, editStdmsgid, "Message edited")
 
 	// Update attachment ordering if provided.
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
@@ -2644,8 +2716,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 				db.Table("messages_attachments").Where("id = ?", attid).
 					Updates(map[string]interface{}{"msgid": req.ID, "primary": primary})
 			}
-			// Delete any attachments not in the new list.
-			db.Table("messages_attachments").Where("msgid = ? AND id NOT IN (?)", req.ID, req.Attachments).Delete(nil)
+			// Delete any attachments not in the new list. The list never holds an
+			// auto-split item crop, which is kept while its photo is.
+			keep := keepCropsOfKeptPhotos(db, req.ID, req.Attachments)
+			db.Table("messages_attachments").Where("msgid = ? AND id NOT IN (?)", req.ID, keep).Delete(nil)
 		} else {
 			// Empty array — remove all attachments.
 			// Identical golden to
@@ -2817,15 +2891,23 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		// 9d1cfd7098bc (PutMessageAs); converted together per gate (h).
 		db.Table("messages").Where("id = ?", req.ID).
 			Updates(map[string]interface{}{"availableinitially": total, "availablenow": total})
-		if req.Textbody == nil {
-			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
-				// Identical golden to
-				// 9beaa0265ff1 (PutMessageAs); converted together per gate (h).
-				db.Table("messages").Where("id = ?", req.ID).
-					Updates(map[string]interface{}{"textbody": summary, "message": summary})
+		if splitPost {
+			// The poster's own description stays; a removed item takes its crops with
+			// it; items already marked gone stay gone in the count. No photo links to
+			// fetch: a split item's photos are the post's own.
+			deleteOrphanCrops(db, req.ID)
+			recomputeBulkAvailableNow(db, req.ID)
+		} else {
+			if req.Textbody == nil {
+				if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
+					// Identical golden to
+					// 9beaa0265ff1 (PutMessageAs); converted together per gate (h).
+					db.Table("messages").Where("id = ?", req.ID).
+						Updates(map[string]interface{}{"textbody": summary, "message": summary})
+				}
 			}
+			go ingestBulkItemPhotos(db, req.ID)
 		}
-		go ingestBulkItemPhotos(db, req.ID)
 	}
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, req.ID, req.Bulkslots)
@@ -2856,12 +2938,49 @@ func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error
 		}
 	}
 
+	db := database.DBConn
+
+	// Every check that could refuse the message runs before the edit, so a refused
+	// message never leaves a changed post the poster hasn't been told about.
+	var replyCtx *MessageModContext
+	if req.Replybody != nil {
+		if c.Query("partner") != "" {
+			return fiber.NewError(fiber.StatusForbidden, "Partners can't message posters")
+		}
+		if strings.TrimSpace(*req.Replybody) == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "The message to the poster is empty")
+		}
+
+		var err error
+		replyCtx, err = prepareModReply(db, myid, req.ID)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := applyPatchMessageCore(c, myid, req, false); err != nil {
 		if err == errLockdownResponded {
 			return nil
 		}
 		return err
 	}
+
+	if replyCtx != nil {
+		subject := ""
+		if req.Replysubject != nil {
+			subject = *req.Replysubject
+		}
+		stdmsgid := uint64(0)
+		if req.Stdmsgid != nil {
+			stdmsgid = *req.Stdmsgid
+		}
+
+		if err := sendModReply(db, replyCtx, myid, req.ID, subject, *req.Replybody, stdmsgid); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError,
+				"The edit was saved, but the message to the poster was not sent")
+		}
+	}
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
@@ -3768,9 +3887,11 @@ type PostMessageRequest struct {
 	// Only the offerer may pass another user's id — e.g. to record a replier's
 	// verbally-expressed interest against the structured catalogue.
 	Interestuserid *uint64 `json:"interestuserid"`
-	// Bulk-offer interest state change (action "BulkInterestState").
+	// Bulk-offer interest state change (action "BulkInterestState"), and the item
+	// marked gone or back on offer (action "BulkItemAvailable").
 	Bulkitemid *uint64 `json:"bulkitemid"`
 	State      *string `json:"state"`
+	Available  *bool   `json:"available"`
 	// Optional structured terms attached to a promise (action "Promise"). Stored
 	// as JSON on messages_promises.terms and returned on the message's promises;
 	// omit it and nothing changes. Deployments that turn a promise into a formal
@@ -4045,6 +4166,10 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 		return handleBulkInterestState(c, myid, req)
 	case "BulkEditLink":
 		return handleBulkEditLink(c, myid, req)
+	case "BulkItemAvailable":
+		return handleBulkItemAvailable(c, myid, req)
+	case "AutoSplitUndo":
+		return handleAutoSplitUndo(c, myid, req)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 	}
@@ -4098,6 +4223,20 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	if req.Userid != nil && *req.Userid > 0 && *req.Userid != myid {
 		createSystemChatMessage(db, myid, *req.Userid, req.ID, utils.CHAT_MESSAGE_PROMISED)
 	}
+
+	// Tell the other members who replied that it is promised to someone else. Queued rather than
+	// done here, like the Taken notice: the batch finds the repliers, skips the promisee and
+	// anyone already told, and checks the promise still stands when it runs. A promise to
+	// nobody in particular (userid 0) tells every replier, except from a Trash Nothing member:
+	// Trash Nothing promises arrive that way and do not say who to, so the batch tells nobody.
+	notifiedPromisee := uint64(0)
+	if promisedTo != myid {
+		notifiedPromisee = promisedTo
+	}
+	db.Table("background_tasks").Create(map[string]interface{}{
+		"task_type": "message_promised",
+		"data":      gorm.Expr("JSON_OBJECT('msgid', ?, 'userid', ?, 'byuser', ?)", req.ID, notifiedPromisee, myid),
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -4356,6 +4495,11 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		db.Table("messages_by").Create(map[string]interface{}{
 			"msgid": req.ID, "userid": *req.Userid, "count": availNow,
 		})
+	}
+
+	// An automatic split marked Taken as a whole: its items went with it.
+	if req.Outcome == utils.OUTCOME_TAKEN {
+		markSplitItemsGone(db, req.ID)
 	}
 
 	// Mark successful in spatial index so that:
@@ -4651,7 +4795,7 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 		if aiImageID > 0 {
 			if containsUint64(badAttachmentIDs, att.ID) {
 				microvolunteering.ForceRejectAIImage(db, userID, aiImageID)
-			} else {
+			} else if !removeAIImageAlias(db, msgID, aiImageID) {
 				microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
 			}
 		}
@@ -4663,6 +4807,22 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 			"msgid": msgID,
 		})
 	}
+}
+
+// removeAIImageAlias handles a moderator removing a picture this post borrowed from another
+// item name (an ai_image_aliases row the batch made). What was wrong is the match, not the
+// picture, so the alias goes and the picture's own votes are left alone. Returns whether
+// there was such an alias.
+func removeAIImageAlias(db *gorm.DB, msgID uint64, aiImageID uint64) bool {
+	var subject string
+	db.Table("messages").Select("COALESCE(subject, '')").Where("id = ?", msgID).Scan(&subject)
+	name := misc.IllustrationItemName(subject)
+	if name == "" {
+		return false
+	}
+
+	res := db.Table("ai_image_aliases").Where("name = ? AND aiimageid = ?", name, aiImageID).Delete(nil)
+	return res.Error == nil && res.RowsAffected > 0
 }
 
 func containsUint64(slice []uint64, val uint64) bool {

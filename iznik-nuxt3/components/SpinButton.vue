@@ -142,10 +142,12 @@ const cancelLoading = () => {
     }, props.minimumSpinTime)
   })
 }
-const finishSpinner = () => {
+// Pass false when the action failed: the spinner stops but the success tick is
+// not shown. Any other argument (including none) means success.
+const finishSpinner = (succeeded) => {
   clearTimeout(timer)
   cancelLoading().then(() => {
-    if (props.doneIcon) {
+    if (props.doneIcon && succeeded !== false) {
       done.value = true
       setTimeout(() => {
         // Resets the transient "done" check icon props.timeout (5s) after the

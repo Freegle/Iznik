@@ -3,11 +3,11 @@ package test
 // Gate tests for image/image.go's doCreate (section 11.3 of the lockdown plan,
 // plans/active/2026-09-27-lockdown-switch.md; review finding 5): POST /image can
 // attach a NEW image to content that is already live - a message, community event,
-// volunteering opportunity, story, noticeboard or ChitChat post - via a wholly
+// volunteering opportunity, story or ChitChat post - via a wholly
 // separate write path from that entity's own gated PATCH edit (a different table:
 // messages_attachments, communityevents_images, and so on, never the entity row
 // itself). Before this fix that path had no lockdown gate at all, so it reached a
-// held post/event/opportunity/story/noticeboard/chitchat item regardless of the
+// held post/event/opportunity/story/chitchat item regardless of the
 // surface's hold. Rotating an existing image (doRotate) is deliberately unaffected -
 // see TestLockdownAllowsImageRotateWhilePostsHeld below.
 //
@@ -16,7 +16,6 @@ package test
 // test binaries that `go test ./...` runs concurrently against the same test database.
 // postsHeld, eventsHeld and chitchatHeld are defined in lockdown_gates_message_test.go,
 // lockdown_gates_events_test.go and lockdown_gates_newsfeed_test.go respectively.
-// createTestNoticeboard is defined in noticeboard_test.go, same package.
 
 import (
 	"encoding/json"
@@ -27,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -42,7 +42,7 @@ func attachImage(t *testing.T, token string, body string) *http.Response {
 
 func TestLockdownRefusesImageAttachToHeldMessage(t *testing.T) {
 	prefix := uniquePrefix("ld_img_msg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, "Held image test "+prefix, 55.9533, -3.1883)
 
@@ -61,7 +61,7 @@ func TestLockdownRefusesImageAttachToHeldMessage(t *testing.T) {
 
 func TestLockdownRefusesImageAttachToHeldCommunityEvent(t *testing.T) {
 	prefix := uniquePrefix("ld_img_ce")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, ownerID)
 	eventID := CreateTestCommunityEvent(t, ownerID)
 
@@ -80,7 +80,7 @@ func TestLockdownRefusesImageAttachToHeldCommunityEvent(t *testing.T) {
 
 func TestLockdownRefusesImageAttachToHeldVolunteering(t *testing.T) {
 	prefix := uniquePrefix("ld_img_vol")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, ownerID)
 	volID := CreateTestVolunteering(t, ownerID)
 
@@ -99,7 +99,7 @@ func TestLockdownRefusesImageAttachToHeldVolunteering(t *testing.T) {
 
 func TestLockdownRefusesImageAttachToHeldStory(t *testing.T) {
 	prefix := uniquePrefix("ld_img_story")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, ownerID)
 	storyID := CreateTestStory(t, ownerID, prefix+" headline", "A test story", false, true)
 
@@ -118,7 +118,7 @@ func TestLockdownRefusesImageAttachToHeldStory(t *testing.T) {
 
 func TestLockdownRefusesImageAttachToHeldNewsfeed(t *testing.T) {
 	prefix := uniquePrefix("ld_img_nf")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, ownerID)
 	nfID := CreateTestNewsfeed(t, ownerID, 52.2, -0.1, "Held image test "+prefix)
 
@@ -135,40 +135,13 @@ func TestLockdownRefusesImageAttachToHeldNewsfeed(t *testing.T) {
 	assert.Equal(t, int64(0), count, "no image must be attached to a held ChitChat post")
 }
 
-// Noticeboard content has no per-member ownership at all (image.go's ownsImageParent
-// treats it, like Group and Newsletter, as mod-managed - see the "default" case
-// there), so only a system moderator can even reach the parentID != 0 branch this
-// gate sits in. A system moderator is not Support/Admin, so GateMember still refuses
-// them - the same as any other member-facing surface gate.
-func TestLockdownRefusesImageAttachToHeldNoticeboard(t *testing.T) {
-	prefix := uniquePrefix("ld_img_nb")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	nbID := createTestNoticeboard(t, posterID)
-
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	db := database.DBConn
-	db.Exec("UPDATE users SET systemrole = 'Moderator' WHERE id = ?", modID)
-	_, token := CreateTestSession(t, modID)
-
-	restore := eventsHeld()
-	defer restore()
-
-	body := fmt.Sprintf(`{"externaluid":"freegletusd-ld-nb-%s","imgtype":"Noticeboard","noticeboard":%d}`, prefix, nbID)
-	resp := attachImage(t, token, body)
-	assertLockdownRefused(t, resp)
-
-	var count int64
-	db.Raw("SELECT COUNT(*) FROM noticeboards_images WHERE noticeboardid = ?", nbID).Scan(&count)
-	assert.Equal(t, int64(0), count, "no image must be attached to a held noticeboard")
-}
-
 // Rotating an existing image is a separate operation (doRotate) from attaching a new
 // one, and the review explicitly asked for it to stay allowed while a surface is
 // held - it does not publish new content, only re-orients what a moderator has
 // already seen.
 func TestLockdownAllowsImageRotateWhilePostsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_img_rotate")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, "Rotate held test "+prefix, 55.9533, -3.1883)
 

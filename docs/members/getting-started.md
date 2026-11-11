@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-17
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/index.vue
@@ -30,6 +30,13 @@ To sign up:
    **Google**, or **Apple** (Apple is offered in the iOS app).
 4. If you signed up with email, check your inbox and confirm your address so we can email
    you replies.
+
+The join form has the Continue with buttons at the top, then your name, email and password,
+then the **Join Freegle!** button. Joining signs you in at once.
+
+Under the form is a box to say you would like news and ways to support Freegle by email. It
+starts unticked, and leaving it unticked changes nothing. You can change your mind later with
+**Freegle updates** in Settings.
 
 Already have an account? Choose **Log in** in the same box. Forgotten your password? Use
 the "forgotten password" link and we will email you a link to get back in.

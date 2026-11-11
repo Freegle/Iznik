@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -98,8 +99,8 @@ func TestAnswerChatPrompt_DeliveryPatchesThePost(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frprompt")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: prompt test", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
@@ -136,8 +137,8 @@ func TestAnswerChatPrompt_DeadlineSetsADate(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptdl")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: deadline test", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
@@ -172,9 +173,9 @@ func TestAnswerChatPrompt_OnlyTheMemberAskedMayAnswer(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptauth")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
-	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
+	strangerID := CreateTestUser(t, prefix+"_stranger", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: prompt auth", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
@@ -203,8 +204,8 @@ func TestAnswerChatPrompt_RejectsAnAnswerThatWasNotOffered(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptbad")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: prompt bad answer", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
@@ -229,8 +230,8 @@ func TestAnswerChatPrompt_CannotBeAnsweredTwice(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frprompttwice")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: prompt twice", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
@@ -268,8 +269,8 @@ func TestFetchChatMessages_PromptIsServedWithItsOptions(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptfetch")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: prompt fetch", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
@@ -318,8 +319,8 @@ func TestAnswerChatPrompt_AcceptsAPickedDate(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptpick")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: picked date", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
@@ -353,8 +354,8 @@ func TestAnswerChatPrompt_RejectsAnOutOfRangeDate(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptbaddate")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: bad date", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
@@ -392,8 +393,8 @@ func TestAnswerChatPrompt_RefusesAnExpiredPrompt(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptexpired")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: expired prompt", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")
@@ -436,8 +437,8 @@ func TestAnswerChatPrompt_NoRushRecordsWithoutPatchingThePost(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("frpromptnorush")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	freegleID := CreateTestUser(t, prefix+"_freegle", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	freegleID := CreateTestUser(t, prefix+"_freegle", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: no rush", 51.5, -0.1)
 
 	chatID := CreateTestChatRoom(t, freegleID, &posterID, "User2User")

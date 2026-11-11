@@ -3,6 +3,7 @@
 namespace App\Console\Commands\Authority;
 
 use App\Services\AuthorityStatsService;
+use App\Support\ReuseBenefit;
 use Illuminate\Console\Command;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx as XlsxReader;
 use PhpOffice\PhpSpreadsheet\Style\Border;
@@ -95,11 +96,14 @@ class AuthorityStatsCommand extends Command
         $months = $report['months'];
         $benefitPerTonne = $report['benefitPerTonne'];
         $co2PerTonne = $report['co2PerTonne'];
+        $flyTipPerItem = $report['flyTipPerItem'];
 
-        // Convert a weight in kilograms to tonnes of CO2 / GBP of benefit, each
-        // to one decimal place, as the summary rows present them.
+        // Convert a weight in kilograms to tonnes of CO2, each to one decimal
+        // place, as the summary rows present them. The benefit is the reuse
+        // benefit of the weight plus the fly-tipping saving on the gifts.
         $co2 = static fn (float $kg): float => round($kg * $co2PerTonne / 100) / 10;
-        $benefit = static fn (float $kg): float => round($kg * $benefitPerTonne / 100) / 10;
+        $benefit = static fn (float $kg, float $gifts): float
+            => round(($kg * $benefitPerTonne / 1000 + $gifts * $flyTipPerItem) * 10) / 10;
 
         $reader = new XlsxReader();
         $reader->setReadFilter(new ReportColumnFilter());
@@ -134,17 +138,23 @@ class AuthorityStatsCommand extends Command
         $sheet->setCellValue('D11', $co2($t[2]['weight']));
         $sheet->setCellValue('E11', $co2($totWeight));
 
-        // Benefit (GBP).
-        $sheet->setCellValue('B12', $benefit($t[0]['weight']));
-        $sheet->setCellValue('C12', $benefit($t[1]['weight']));
-        $sheet->setCellValue('D12', $benefit($t[2]['weight']));
-        $sheet->setCellValue('E12', $benefit($totWeight));
+        // Benefit (GBP), with a footnote saying how much is the fly-tipping saving.
+        $totGifts = $t[0]['outcomes'] + $t[1]['outcomes'] + $t[2]['outcomes'];
+        $sheet->setCellValue('A12', 'Benefit*');
+        $sheet->setCellValue('B12', $benefit($t[0]['weight'], $t[0]['outcomes']));
+        $sheet->setCellValue('C12', $benefit($t[1]['weight'], $t[1]['outcomes']));
+        $sheet->setCellValue('D12', $benefit($t[2]['weight'], $t[2]['outcomes']));
+        $sheet->setCellValue('E12', $benefit($totWeight, $totGifts));
+        $sheet->setCellValue(
+            'A14',
+            '* ' . ReuseBenefit::describeFlyTipSaving($totGifts * $flyTipPerItem)
+        );
 
         // Number of gifts made.
         $sheet->setCellValue('B13', round($t[0]['outcomes']));
         $sheet->setCellValue('C13', round($t[1]['outcomes']));
         $sheet->setCellValue('D13', round($t[2]['outcomes']));
-        $sheet->setCellValue('E13', round($t[0]['outcomes'] + $t[1]['outcomes'] + $t[2]['outcomes']));
+        $sheet->setCellValue('E13', round($totGifts));
 
         // Some template cells carry a stray date format, which would render these
         // numbers as dates. Force explicit numeric formats on every value we set.
@@ -184,10 +194,11 @@ class AuthorityStatsCommand extends Command
             $sheet->setCellValue("L$grouprow", $co2($w[2]));
             $sheet->setCellValue("M$grouprow", $co2($wSum));
 
-            $sheet->setCellValue("N$grouprow", $benefit($w[0]));
-            $sheet->setCellValue("O$grouprow", $benefit($w[1]));
-            $sheet->setCellValue("P$grouprow", $benefit($w[2]));
-            $sheet->setCellValue("Q$grouprow", $benefit($wSum));
+            $g = $group['outcomes'];
+            $sheet->setCellValue("N$grouprow", $benefit($w[0], $g[0]));
+            $sheet->setCellValue("O$grouprow", $benefit($w[1], $g[1]));
+            $sheet->setCellValue("P$grouprow", $benefit($w[2], $g[2]));
+            $sheet->setCellValue("Q$grouprow", $benefit($wSum, $g[0] + $g[1] + $g[2]));
 
             $sheet->setCellValue("R$grouprow", round($group['outcomes'][0]));
             $sheet->setCellValue("S$grouprow", round($group['outcomes'][1]));
@@ -247,7 +258,7 @@ class AuthorityStatsCommand extends Command
         // Restore the green section-header bars (stripped from the template).
         $this->applyGreenHeaders($sheet);
 
-        $this->fillPostcodeSheet($spreadsheet, $report, $co2PerTonne, $benefitPerTonne);
+        $this->fillPostcodeSheet($spreadsheet, $report, $co2PerTonne, $benefitPerTonne, $flyTipPerItem);
 
         $spreadsheet->setActiveSheetIndexByName('Standard report');
 
@@ -358,7 +369,7 @@ class AuthorityStatsCommand extends Command
      *
      * @param  array<string, mixed>  $report
      */
-    private function fillPostcodeSheet($spreadsheet, array $report, float $co2PerTonne, float $benefitPerTonne): void
+    private function fillPostcodeSheet($spreadsheet, array $report, float $co2PerTonne, float $benefitPerTonne, float $flyTipPerItem): void
     {
         $sheet = $spreadsheet->getSheetByName('Postcode breakdown');
         $row = 2;
@@ -371,7 +382,10 @@ class AuthorityStatsCommand extends Command
             $sheet->setCellValue("E$row", $stat[AuthorityStatsService::OUTCOMES]);
             $sheet->setCellValue("F$row", round($stat[AuthorityStatsService::WEIGHT], 1));
             $sheet->setCellValue("G$row", round($stat[AuthorityStatsService::WEIGHT] * $co2PerTonne, 2));
-            $sheet->setCellValue("H$row", round($stat[AuthorityStatsService::WEIGHT] * $benefitPerTonne / 10) / 100);
+            $sheet->setCellValue("H$row", round(
+                ($stat[AuthorityStatsService::WEIGHT] * $benefitPerTonne / 1000
+                    + $stat[AuthorityStatsService::OUTCOMES] * $flyTipPerItem) * 100
+            ) / 100);
             $row++;
         }
 

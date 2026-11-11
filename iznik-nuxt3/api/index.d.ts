@@ -28,7 +28,6 @@ import DonationsAPI from './DonationsAPI.js'
 import DrivingAPI from './DrivingAPI.js'
 import ElectricalsAPI from './ElectricalsAPI.js'
 import EmailTrackingAPI from './EmailTrackingAPI.js'
-import UxAPI from './UxAPI.js'
 import ExportAPI from './ExportAPI.js'
 import GiftAidAPI from './GiftAidAPI.js'
 import HousekeeperAPI from './HousekeeperAPI.js'
@@ -44,7 +43,6 @@ import MicroVolunteeringAPI from './MicroVolunteeringAPI.js'
 import ModConfigsAPI from './ModConfigsAPI.js'
 import ModMembersAPI from './ModMembersAPI.js'
 import NewsAPI from './NewsAPI.js'
-import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
 import SessionAPI from './SessionAPI.js'
 import ShortlinksAPI from './ShortlinksAPI.js'
@@ -52,12 +50,16 @@ import SpammersAPI from './SpammersAPI.js'
 import StatusAPI from './StatusAPI.js'
 import StoriesAPI from './StoriesAPI.js'
 import SupportAIAPI from './SupportAIAPI.js'
+import SupportCasesAPI from './SupportCasesAPI.js'
 import SystemLogsAPI from './SystemLogsAPI.js'
 import TeamAPI from './TeamAPI.js'
 import TownAPI from './TownAPI.js'
 import TrystAPI from './TrystAPI.js'
 import UserAPI from './UserAPI.js'
 import UserSearchAPI from './UserSearchAPI.js'
+import UxAPI from './UxAPI.js'
+import UxExperimentsAPI from './UxExperimentsAPI.js'
+import UxSurveysAPI from './UxSurveysAPI.js'
 import VisualiseAPI from './VisualiseAPI.js'
 import VolunteeringAPI from './VolunteeringAPI.js'
 
@@ -80,7 +82,6 @@ interface API {
   driving: DrivingAPI;
   electricals: ElectricalsAPI;
   emailtracking: EmailTrackingAPI;
-  ux: UxAPI;
   export: ExportAPI;
   giftaid: GiftAidAPI;
   housekeeper: HousekeeperAPI;
@@ -96,7 +97,6 @@ interface API {
   modconfigs: ModConfigsAPI;
   modmembers: ModMembersAPI;
   news: NewsAPI;
-  noticeboard: NoticeboardAPI;
   notification: NotificationAPI;
   session: SessionAPI;
   shortlinks: ShortlinksAPI;
@@ -104,12 +104,16 @@ interface API {
   status: StatusAPI;
   stories: StoriesAPI;
   supportai: SupportAIAPI;
+  supportcases: SupportCasesAPI;
   systemlogs: SystemLogsAPI;
   team: TeamAPI;
   town: TownAPI;
   tryst: TrystAPI;
   user: UserAPI;
   usersearch: UserSearchAPI;
+  ux: UxAPI;
+  uxexperiments: UxExperimentsAPI;
+  uxsurveys: UxSurveysAPI;
   visualise: VisualiseAPI;
   volunteering: VolunteeringAPI;
 }

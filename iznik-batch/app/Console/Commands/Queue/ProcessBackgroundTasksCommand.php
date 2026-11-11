@@ -2,12 +2,15 @@
 
 namespace App\Console\Commands\Queue;
 
+use App\Services\AutoSplit\Crops;
+use App\Support\ClearanceSql;
 use App\Console\Commands\Mail\SendAdminCommand;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Charity\CharitySignupMail;
 use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
+use App\Mail\Chat\SupportCaseMessageMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
 use App\Mail\Session\ForgotPasswordMail;
@@ -17,16 +20,21 @@ use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
 use App\Models\BackgroundTask;
+use App\Models\ChatMessage;
 use App\Models\ChatRoom;
+use App\Models\Message;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
 use App\Services\Lockdown\LockdownService;
 use App\Services\PostcodeRemapService;
 use App\Services\UserManagementService;
+use App\Services\Ux\UxExperimentRefused;
+use App\Services\Ux\UxExperimentService;
 use App\Services\PushNotificationService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -47,6 +55,12 @@ class ProcessBackgroundTasksCommand extends Command
 {
     use GracefulShutdown;
     use PreventsOverlapping;
+
+    /**
+     * Told to a member who replied to an Offer that has since been promised to someone else.
+     * Also the key that stops them being told twice about the same post.
+     */
+    public const PROMISED_TO_SOMEONE_ELSE_NOTICE = "This has been promised to someone else for now. If they do not collect it, I will let you know.\n\nThis is an automated message.";
 
     protected $signature = 'queue:background-tasks
                             {--limit=50 : Maximum tasks to process per iteration}
@@ -176,6 +190,11 @@ class ProcessBackgroundTasksCommand extends Command
             ->whereNull('processed_at')
             ->whereNull('failed_at')
             ->where('attempts', '<', self::MAX_ATTEMPTS)
+            // A retry is queued with created_at in the future, for when it falls due. Compared on
+            // the database clock, which also stamps rows queued by the Go API, so a database
+            // timezone that differs from the app's cannot hold ordinary tasks back.
+            // keep-raw: NOW() must be the database's clock, and the builder binds a PHP time instead.
+            ->whereRaw('created_at <= NOW()')
             ->orderBy('created_at')
             ->limit($limit)
             ->get()
@@ -276,13 +295,16 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_EMAIL_MERGE             => $this->handleEmailMerge($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_VERIFY            => $this->handleEmailVerify($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_REFER_TO_SUPPORT        => $this->handleReferToSupport($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_SUPPORT_CASE_MESSAGE    => $this->handleSupportCaseMessage($data, $spooler),
             BackgroundTask::TASK_MESSAGE_OUTCOME         => $this->handleMessageOutcome($data),
+            BackgroundTask::TASK_MESSAGE_PROMISED        => $this->handleMessagePromised($data),
             BackgroundTask::TASK_FREEBIE_ALERTS_ADD      => $this->handleFreebieAlertsAdd($data),
             BackgroundTask::TASK_FREEBIE_ALERTS_REMOVE   => $this->handleFreebieAlertsRemove($data),
             BackgroundTask::TASK_HOUSEKEEPER_NOTIFY      => $this->handleHousekeeperNotify($data),
             BackgroundTask::TASK_REMAP_POSTCODES         => $this->handleRemapPostcodes($data),
             BackgroundTask::TASK_USER_FORGET             => $this->handleUserForget($data),
             BackgroundTask::TASK_TN_SYNC                 => $this->handleTnSyncCommand($data),
+            BackgroundTask::TASK_UX_EXPERIMENT           => $this->handleUxExperiment($data),
             default => throw new \RuntimeException("Unknown task type: {$taskType}"),
         };
     }
@@ -437,11 +459,12 @@ class ProcessBackgroundTasksCommand extends Command
             throw new \RuntimeException("email_admin_test: user {$data['user_id']} not found");
         }
 
-        // One national site: the same sender name, volunteers address and volunteers as the real send.
+        // One national site: the same sender name, volunteers address and volunteers as the real send,
+        // leaving the volunteers out when the ADMIN is sent for someone else.
         $groupName = 'Freegle';
         $modsEmail = config('freegle.mail.support_addr');
         $groupShort = null;
-        $volunteers = SendAdminCommand::getVolunteers();
+        $volunteers = ($data['volunteercredits'] ?? TRUE) ? SendAdminCommand::getVolunteers() : [];
 
         $admin = SendAdminCommand::personalise([
             'subject' => $data['subject'],
@@ -451,6 +474,7 @@ class ProcessBackgroundTasksCommand extends Command
             'ctalink' => $data['ctalink'] ?? null,
             'essential' => $data['essential'] ?? true,
             'template' => ($data['template'] ?? '') ?: null,
+            'volunteercredits' => $data['volunteercredits'] ?? TRUE,
         ], $groupName, $modsEmail, $user);
 
         $mail = new AdminMail($user, $admin, $groupName, $modsEmail, $groupShort, $volunteers, $data['email']);
@@ -708,17 +732,7 @@ class ProcessBackgroundTasksCommand extends Command
             $chatRoom = ChatRoom::getOrCreateUser2Mod($posterId);
 
             if ($chatRoom) {
-                DB::table('chat_messages')->insert([
-                    'chatid' => $chatRoom->id,
-                    'userid' => $byUser,
-                    'message' => "{$subject}\r\n\r\n{$body}",
-                    'type' => 'ModMail',
-                    'refmsgid' => $msgId,
-                    'date' => now(),
-                    'reviewrequired' => 0,
-                    'processingrequired' => 0,
-                    'processingsuccessful' => 1,
-                ]);
+                $this->recordModMail((int) $chatRoom->id, $posterId, $byUser, $subject, $body, $msgId);
 
                 // Reopen any closed rosters so the chat reappears in the acting
                 // mod's (and the member's) chat list, mirroring V2 CreateChatMessage
@@ -821,31 +835,7 @@ class ProcessBackgroundTasksCommand extends Command
             $chatRoom = ChatRoom::getOrCreateUser2Mod($userId);
 
             if ($chatRoom) {
-                $chatMessageId = DB::table('chat_messages')->insertGetId([
-                    'chatid' => $chatRoom->id,
-                    'userid' => $byUser,
-                    'message' => "{$subject}\r\n\r\n{$body}",
-                    'type' => 'ModMail',
-                    'date' => now(),
-                    'reviewrequired' => 0,
-                    'processingrequired' => 0,
-                    'processingsuccessful' => 1,
-                ]);
-
-                // V1 parity: upToDate() — mark the chat message as already emailed to the member
-                // so the notification daemon (NotifyUser2ModCommand) does not send a duplicate.
-                // V1 calls $r->upToDate($fromuser) after the direct email send, which sets
-                // lastmsgemailed = MAX(chat_messages.id) for the member's roster entry.
-                DB::table('chat_roster')->upsert(
-                    [
-                        'chatid' => $chatRoom->id,
-                        'userid' => $userId,
-                        'lastmsgemailed' => $chatMessageId,
-                        'lastemailed' => now(),
-                    ],
-                    ['chatid', 'userid'],
-                    ['lastmsgemailed', 'lastemailed']
-                );
+                $this->recordModMail((int) $chatRoom->id, $userId, $byUser, $subject, $body, null);
 
                 // Reopen any closed rosters so the chat reappears in the acting
                 // mod's (and the member's) chat list — see reopenClosedRosters().
@@ -913,14 +903,14 @@ class ProcessBackgroundTasksCommand extends Command
             'text' => trim("{$outcome} {$comment}"),
         ]);
 
+        // The post has gone, so a reply still waiting for its sender's answer (the question Freegle asks about a
+        // damaged or bulky offer) is never delivered. Done first: the chats below are chosen by what was delivered.
+        $this->expireReplyQuestions($msgId);
+
         // 2. Notify interested users who replied but didn't get the item.
         // Find User2User chat rooms with INTERESTED messages referencing this message,
         // excluding users who are in messages_by (i.e. who got the item).
-        $replies = DB::table('chat_messages')
-            ->join('chat_rooms', function ($join) {
-                $join->on('chat_rooms.id', '=', 'chat_messages.chatid')
-                    ->where('chat_rooms.chattype', 'User2User');
-            })
+        $replies = $this->interestedChatsQuery($msgId)
             ->leftJoin('messages_by', function ($join) {
                 $join->on('messages_by.msgid', '=', 'chat_messages.refmsgid')
                     ->on(function ($j) {
@@ -928,12 +918,7 @@ class ProcessBackgroundTasksCommand extends Command
                             ->orOn('messages_by.userid', '=', 'chat_rooms.user2');
                     });
             })
-            ->where('refmsgid', $msgId)
-            ->where('chat_messages.type', 'Interested')
-            ->where('reviewrejected', 0)
             ->whereNull('messages_by.id')
-            ->distinct()
-            ->select('chatid')
             ->get();
 
         foreach ($replies as $reply) {
@@ -972,6 +957,160 @@ class ProcessBackgroundTasksCommand extends Command
             'outcome' => $outcome,
             'notified_chats' => count($replies),
         ]);
+    }
+
+    /**
+     * The User2User chats of members who replied to a post: those with an Interested message about it. A reply
+     * still held for its sender's answer is left out, because the poster never had it, and a message from the
+     * poster would land in a chat they have nothing in.
+     */
+    protected function interestedChatsQuery(int $msgId): \Illuminate\Database\Query\Builder
+    {
+        return DB::table('chat_messages')
+            ->join('chat_rooms', function ($join) {
+                $join->on('chat_rooms.id', '=', 'chat_messages.chatid')
+                    ->where('chat_rooms.chattype', 'User2User');
+            })
+            ->where('refmsgid', $msgId)
+            ->where('chat_messages.type', 'Interested')
+            ->where('reviewrejected', 0)
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('chat_prompts as cpr')
+                    ->whereColumn('cpr.heldchatmsgid', 'chat_messages.id')
+                    ->where('cpr.kind', 'confirm_reply')
+                    ->where('chat_messages.processingsuccessful', 0);
+            })
+            ->distinct()
+            ->select('chatid', 'chat_rooms.user1', 'chat_rooms.user2');
+    }
+
+    /**
+     * Handle a promise of an Offer: tell the other members who replied that it has been promised to someone else.
+     *
+     * Mirrors the Taken notice in handleMessageOutcome: one message in each replier's chat with the giver, written
+     * by the giver and inserted already processed. A member is told once per post, however often it is promised
+     * again. Nothing is sent when the promise no longer exists, when items are still unpromised, when the post
+     * has gone, or for a promise made on Trash Nothing, which names nobody.
+     */
+    protected function handleMessagePromised(array $data): void
+    {
+        $msgId = (int) ($data['msgid'] ?? 0);
+        $promisee = (int) ($data['userid'] ?? 0);
+
+        if ($msgId === 0) {
+            throw new \RuntimeException('message_promised requires msgid');
+        }
+
+        $message = DB::table('messages')->where('id', $msgId)->first(['fromuser', 'type', 'availablenow']);
+        if (! $message || $message->type !== Message::TYPE_OFFER || DB::table('messages_outcomes')->where('msgid', $msgId)->exists()) {
+            return;
+        }
+
+        // The same test as message.PromisedFor in the Go API: one promise is one item.
+        $promises = DB::table('messages_promises')->where('msgid', $msgId)->count();
+        if ($promises === 0 || $promises < max((int) $message->availablenow, 1)) {
+            return;
+        }
+
+        $fromUser = (int) $message->fromuser;
+
+        // A Trash Nothing promise does not say who it went to, so that member would be told it
+        // went to someone else. Tell nobody.
+        if ($promisee === 0 && User::find($fromUser)?->isTrashNothingAccount()) {
+            Log::info('Promise notice skipped: Trash Nothing promise names nobody', ['msgid' => $msgId]);
+
+            return;
+        }
+
+        $told = 0;
+
+        foreach ($this->interestedChatsQuery($msgId)->get() as $chat) {
+            $replier = (int) $chat->user1 === $fromUser ? (int) $chat->user2 : (int) $chat->user1;
+
+            if ($replier === $promisee) {
+                continue;
+            }
+
+            $alreadyTold = DB::table('chat_messages')
+                ->where('chatid', $chat->chatid)
+                ->where('refmsgid', $msgId)
+                ->where('type', ChatMessage::TYPE_SYSTEM)
+                ->where('message', self::PROMISED_TO_SOMEONE_ELSE_NOTICE)
+                ->exists();
+            if ($alreadyTold) {
+                continue;
+            }
+
+            DB::table('chat_messages')->insert([
+                'chatid' => $chat->chatid,
+                'userid' => $fromUser,
+                'message' => self::PROMISED_TO_SOMEONE_ELSE_NOTICE,
+                'type' => ChatMessage::TYPE_SYSTEM,
+                'refmsgid' => $msgId,
+                'date' => now(),
+                'reviewrequired' => 0,
+                'processingrequired' => 0,
+                'processingsuccessful' => 1,
+            ]);
+
+            // Mark the giver as up-to-date in this chat so it doesn't appear as unread to them.
+            $lastMsgId = DB::table('chat_messages')->where('chatid', $chat->chatid)->max('id');
+            DB::table('chat_roster')->updateOrInsert(
+                ['chatid' => $chat->chatid, 'userid' => $fromUser],
+                ['lastmsgseen' => $lastMsgId, 'date' => now()]
+            );
+
+            $told++;
+        }
+
+        Log::info('Processed message promise', ['msgid' => $msgId, 'notified_chats' => $told]);
+    }
+
+    /**
+     * Close the reply questions (chat_prompts kind confirm_reply) about a post that has gone, and drop the replies
+     * waiting on them. A question still open is answered "expired" so that its buttons stop, and the reply it held is
+     * withdrawn, with whatever the same member wrote after it in that chat while the question was open: the item is
+     * gone, so there is nothing left for the poster to be told. A reply already answered yes but not yet delivered is
+     * dropped the same way, so the batch cannot deliver it after the item has gone. A question answered no, or over,
+     * refused its messages at the time, and anything the member wrote in that chat since is an ordinary message that
+     * is left alone; the same goes for what they wrote after a yes was delivered.
+     */
+    protected function expireReplyQuestions(int $msgId): void
+    {
+        $questions = DB::table('chat_prompts as cp')
+            ->join('chat_messages as held', 'held.id', '=', 'cp.heldchatmsgid')
+            ->where('cp.kind', 'confirm_reply')
+            ->where('cp.msgid', $msgId)
+            ->get(['cp.chatmsgid', 'cp.heldchatmsgid', 'cp.answer', 'cp.answered_at', 'held.chatid', 'held.userid']);
+
+        foreach ($questions as $question) {
+            if ($question->answered_at !== null && $question->answer !== 'yes') {
+                continue;
+            }
+
+            if ($question->answered_at === null) {
+                DB::table('chat_prompts')
+                    ->where('chatmsgid', $question->chatmsgid)
+                    ->whereNull('answered_at')
+                    ->update(['answer' => 'expired', 'answered_at' => now(), 'answered_via' => 'post_gone']);
+            }
+
+            // The messages the question holds, or held: up to the answer, with the same clock slack as
+            // ChatMessage::heldByQuestionSql.
+            $heldUntil = ($question->answered_at === null ? now() : Carbon::parse($question->answered_at))->addSeconds(2);
+            DB::table('chat_messages')
+                ->where('chatid', $question->chatid)
+                ->where('userid', $question->userid)
+                ->where('id', '>=', $question->heldchatmsgid)
+                ->where('processingrequired', 1)
+                ->where('date', '<=', $heldUntil)
+                ->update([
+                    'processingrequired' => 0,
+                    'processingsuccessful' => 0,
+                    'processingfailreason' => ChatMessage::PROCESSFAIL_POST_GONE,
+                ]);
+        }
     }
 
     /**
@@ -1139,6 +1278,68 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
+     * Tell the other side of a support case about a new message in its ModTools thread.
+     *
+     * A Support message goes to the referring moderator; a Referrer message goes to the support
+     * address. The author is never mailed their own message, and nothing from the first pass is
+     * included. Replies are made in ModTools, so a missing case or message is logged and dropped.
+     */
+    protected function handleSupportCaseMessage(array $data, EmailSpoolerService $spooler): void
+    {
+        $caseId = (int) ($data['caseid'] ?? 0);
+        $messageId = (int) ($data['messageid'] ?? 0);
+
+        if ($caseId === 0 || $messageId === 0) {
+            throw new \RuntimeException('support_case_message requires caseid and messageid');
+        }
+
+        $message = DB::table('support_case_messages')->where('id', $messageId)->where('caseid', $caseId)->first();
+        $case = DB::table('support_cases')->where('id', $caseId)->first();
+
+        if (! $message || ! $case) {
+            Log::warning('Support case message not found', ['case_id' => $caseId, 'message_id' => $messageId]);
+            return;
+        }
+
+        $author = $message->userid ? User::find($message->userid) : null;
+        $authorEmails = $author
+            ? DB::table('users_emails')->where('userid', $author->id)->pluck('email')->map(fn ($e) => strtolower((string) $e))->all()
+            : [];
+
+        if ($message->role === 'Support') { // role-literal-ok: support case message role
+            $referrer = $case->referrerid ? User::find($case->referrerid) : null;
+            $email = $referrer?->email_preferred;
+
+            if (! $referrer || ! $email || (int) $referrer->id === (int) $message->userid) {
+                return;
+            }
+
+            $recipients = [$email];
+        } else {
+            $supportAddr = (string) config('freegle.mail.support_addr', 'support@ilovefreegle.org');
+            $recipients = array_values(array_filter(
+                array_map('trim', explode(',', $supportAddr)),
+                fn ($r) => $r !== '' && ! in_array(strtolower($r), $authorEmails, true)
+            ));
+        }
+
+        if (! $recipients) {
+            return;
+        }
+
+        $mail = new SupportCaseMessageMail(
+            caseId: $caseId,
+            role: (string) $message->role,
+            authorName: $author ? ($author->fullname ?: 'Someone') : 'Someone',
+            body: (string) $message->body,
+        );
+
+        $spooler->spool($mail, $recipients);
+
+        Log::info('Sent support case message email', ['case_id' => $caseId, 'message_id' => $messageId]);
+    }
+
+    /**
      * Handle refer-to-support — sends a plain text email to the support team.
      *
      * V1 parity: ChatRoom::referToSupport() lines 2266-2284.
@@ -1148,6 +1349,11 @@ class ProcessBackgroundTasksCommand extends Command
         EmailSpoolerService $spooler,
         bool $shouldSpool
     ): void {
+        // A support case is mailed by support:first-pass, with its brief; this is only the legacy task.
+        if (! empty($data['caseid'])) {
+            return;
+        }
+
         $chatId = (int) ($data['chatid'] ?? 0);
         $userId = (int) ($data['userid'] ?? 0);
 
@@ -1259,6 +1465,106 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
+     * The settings (mod_configs row) a moderator uses. V1: ModConfig::getForGroup(), with
+     * the moderator's own config (users.modconfigid) in place of the per-community one.
+     *
+     * Their own config, else any they created, else the default.
+     */
+    private function resolveModConfigId(int $byUser): ?int
+    {
+        // Step 1: the mod's own config (users.modconfigid).
+        $configId = DB::table('users')->where('id', $byUser)->value('modconfigid');
+
+        if (! $configId) {
+            $configId = DB::table('mod_configs')
+                ->where('createdby', $byUser)
+                ->value('id');
+        }
+
+        if (! $configId) {
+            $configId = DB::table('mod_configs')
+                ->where('default', 1)
+                ->value('id');
+        }
+
+        return $configId ? (int) $configId : null;
+    }
+
+    /**
+     * Put a standard message that has just been mailed to a member into their chat with the
+     * volunteers, and mark who already has it, so the chat notifier does not mail it again.
+     * V1: Message::mail() and User::mail(), with ChatRoom::upToDate() and updateRoster().
+     *
+     * - The member has been mailed it: their roster is marked as mailed up to it.
+     * - The moderator who sent it has seen it.
+     * - If that moderator's settings mark chats as read (mod_configs.chatread), the message
+     *   counts as seen and mailed for everyone and the other moderators are mailed no copy.
+     *   Otherwise the other moderators are mailed a copy, so they know what a colleague sent.
+     *
+     * One transaction, so the notifier never sees the message without its marks.
+     */
+    private function recordModMail(
+        int $chatId,
+        int $memberId,
+        int $byUser,
+        string $subject,
+        string $body,
+        ?int $refMsgId
+    ): int {
+        $configId = $this->resolveModConfigId($byUser);
+        $chatsMarkedRead = $configId
+            && (int) DB::table('mod_configs')->where('id', $configId)->value('chatread') === 1;
+
+        return DB::transaction(function () use ($chatId, $memberId, $byUser, $subject, $body, $refMsgId, $chatsMarkedRead) {
+            $now = now();
+
+            $chatMessageId = (int) DB::table('chat_messages')->insertGetId([
+                'chatid' => $chatId,
+                'userid' => $byUser,
+                'message' => "{$subject}\r\n\r\n{$body}",
+                'type' => ChatMessage::TYPE_MODMAIL,
+                'refmsgid' => $refMsgId,
+                'date' => $now,
+                'reviewrequired' => 0,
+                'processingrequired' => 0,
+                'processingsuccessful' => 1,
+                'mailedtoall' => $chatsMarkedRead ? 1 : 0,
+                'seenbyall' => $chatsMarkedRead ? 1 : 0,
+            ]);
+
+            DB::table('chat_roster')->upsert(
+                ['chatid' => $chatId, 'userid' => $memberId, 'lastmsgemailed' => $chatMessageId, 'lastemailed' => $now],
+                ['chatid', 'userid'],
+                ['lastmsgemailed', 'lastemailed']
+            );
+
+            $seenBy = [$byUser];
+            if ($chatsMarkedRead) {
+                $seenBy = array_merge($seenBy, DB::table('users')
+                    ->whereIn('systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
+                    ->where('id', '!=', $memberId)
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all());
+            }
+
+            DB::table('chat_roster')->upsert(
+                array_map(fn ($userId) => [
+                    'chatid' => $chatId,
+                    'userid' => $userId,
+                    'lastmsgseen' => $chatMessageId,
+                    'lastmsgemailed' => $chatMessageId,
+                    'lastemailed' => $now,
+                ], array_values(array_unique($seenBy))),
+                ['chatid', 'userid'],
+                ['lastmsgseen', 'lastmsgemailed', 'lastemailed']
+            );
+
+            return $chatMessageId;
+        });
+    }
+
+    /**
      * Resolve the BCC address for a mod standard message action.
      *
      * V1 parity: ModConfig::getForGroup() + ModConfig::getBcc() + ModConfig::evalIt().
@@ -1273,22 +1579,8 @@ class ProcessBackgroundTasksCommand extends Command
             return null;
         }
 
-        // Step 1: the mod's own config (users.modconfigid).
-        $configId = DB::table('users')->where('id', $byUser)->value('modconfigid');
-
-        if (! $configId) {
-            // Fall back to any config created by this mod.
-            $configId = DB::table('mod_configs')
-                ->where('createdby', $byUser)
-                ->value('id');
-        }
-
-        if (! $configId) {
-            // Fall back to a default config.
-            $configId = DB::table('mod_configs')
-                ->where('default', 1)
-                ->value('id');
-        }
+        // Step 1: the mod's config.
+        $configId = $this->resolveModConfigId($byUser);
 
         if (! $configId) {
             return null;
@@ -1402,15 +1694,38 @@ class ProcessBackgroundTasksCommand extends Command
     ];
 
     /**
-     * The partner post feeds that have a key configured.
+     * A partner that times out or returns a 5xx is retried, one partner at a time, with the
+     * delay doubling from a minute up to this. The retry is a new task row whose created_at
+     * is when it falls due.
+     */
+    private const POST_FEED_RETRY_MAX_DELAY_SECONDS = 1800;
+
+    /**
+     * Partner outages are usually short, so a failure is only reported as an error once it
+     * has gone on this long. Before then each failure is a warning.
+     */
+    private const POST_FEED_ALERT_AFTER_SECONDS = 3600;
+
+    /**
+     * After this long the post is given up on and reported.
+     */
+    private const POST_FEED_GIVE_UP_AFTER_SECONDS = 86400;
+
+    /**
+     * The partner post feeds that have a key configured. A retry carries the one partner it
+     * is for, and goes only to that one.
      *
      * @return array<string, array{name: string, url: string, key: string}>
      */
-    private function configuredPostFeeds(): array
+    private function configuredPostFeeds(array $data = []): array
     {
         $feeds = [];
 
         foreach (self::POST_FEEDS as $configKey => $name) {
+            if (isset($data['feed']) && $data['feed'] !== $configKey) {
+                continue;
+            }
+
             $apiKey = config("freegle.{$configKey}.api_key");
             if (! empty($apiKey)) {
                 $feeds[$configKey] = [
@@ -1425,59 +1740,52 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
-     * Add a post to the partner post feeds (freebiealerts.app, yeybu.com).
+     * What the partners are sent for a post, or null when the post should not be on their
+     * feeds now.
      *
-     * V1 parity with FreebieAlerts::add() — only sends outstanding Offers with
-     * a location. TrashNothing messages are skipped (TN syncs directly).
+     * V1 parity with FreebieAlerts::add() — only outstanding, approved Offers with a
+     * location. TrashNothing messages are skipped (TN syncs directly). It is worked out at
+     * send time, so a retry that falls due after the post was taken, withdrawn or deleted
+     * sends nothing.
      */
-    protected function handleFreebieAlertsAdd(array $data): void
+    private function postFeedPayload(int $msgId): ?array
     {
-        $msgId = (int) ($data['msgid'] ?? 0);
-        if ($msgId === 0) {
-            throw new \RuntimeException('freebie_alerts_add requires msgid');
-        }
-
-        $feeds = $this->configuredPostFeeds();
-        if (empty($feeds)) {
-            Log::debug('No post feed API key configured, skipping add', ['msgid' => $msgId]);
-            return;
-        }
-
         // Only outstanding Offers (no outcome yet).
-        $msg = DB::table('messages')->where('id', $msgId)->first();
+        $msg = DB::table('messages')->where('id', $msgId)->whereNull('deleted')->first();
         if (! $msg || $msg->type !== 'Offer') {
-            return;
+            return null;
         }
 
         $hasOutcome = DB::table('messages_outcomes')->where('msgid', $msgId)->exists();
         if ($hasOutcome) {
-            return;
+            return null;
         }
 
-        // Defense-in-depth: skip clearance/bulk-offer posts even if somehow enqueued.
-        $isClearance = DB::table('messages_bulk_items')->where('msgid', $msgId)->exists();
-        if ($isClearance) {
+        // Defense-in-depth: skip clearances even if somehow enqueued. An automatically split
+        // post is an ordinary Offer and goes to the partners.
+        if (ClearanceSql::isClearance((int) $msgId)) {
             Log::info('Skipping freebie_alerts_add for clearance post', ['msgid' => $msgId]);
-            return;
+            return null;
         }
 
         // Skip TrashNothing messages — TN syncs to the partners directly.
         if ($msg->sourceheader && str_starts_with($msg->sourceheader, 'TN-')) {
-            return;
+            return null;
         }
 
         if ($msg->collection !== 'Approved') {
-            return;
+            return null;
         }
 
         if (! $msg->lat || ! $msg->lng) {
-            return;
+            return null;
         }
 
         // Build image list from message attachments.
         // Same pattern as digest emails: externalurl if set, otherwise {images.domain}/timg_{id}.jpg.
         $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-        $attachments = DB::table('messages_attachments')->where('msgid', $msgId)->get();
+        // The post's own photos: an auto-split item crop would repeat the photo it was cut from.
+        $attachments = Crops::exclude(DB::table('messages_attachments')->where('msgid', $msgId))->get();
         $images = $attachments->map(function ($att) use ($imagesDomain) {
             return ! empty($att->externalurl)
                 ? $att->externalurl
@@ -1486,7 +1794,7 @@ class ProcessBackgroundTasksCommand extends Command
 
         $body = $msg->textbody ?: 'No description';
 
-        $payload = [
+        return [
             'id' => $msgId,
             'title' => $msg->subject,
             'description' => $body,
@@ -1494,11 +1802,33 @@ class ProcessBackgroundTasksCommand extends Command
             'longitude' => $msg->lng,
             'images' => $images,
             // The partners expect "YYYY-MM-DD HH:MM:SS"; arrival comes back with microseconds.
-            'created_at' => \Illuminate\Support\Carbon::parse($msg->arrival)->format('Y-m-d H:i:s'),
+            'created_at' => Carbon::parse($msg->arrival)->format('Y-m-d H:i:s'),
         ];
+    }
 
-        foreach ($feeds as $feed) {
-            $this->sendToPostFeed($feed, $msgId, 'add', '/freegle/post/create', $payload);
+    /**
+     * Add a post to the partner post feeds (freebiealerts.app, yeybu.com).
+     */
+    protected function handleFreebieAlertsAdd(array $data): void
+    {
+        $msgId = (int) ($data['msgid'] ?? 0);
+        if ($msgId === 0) {
+            throw new \RuntimeException('freebie_alerts_add requires msgid');
+        }
+
+        $feeds = $this->configuredPostFeeds($data);
+        if (empty($feeds)) {
+            Log::debug('No post feed API key configured, skipping add', ['msgid' => $msgId]);
+            return;
+        }
+
+        $payload = $this->postFeedPayload($msgId);
+        if ($payload === null) {
+            return;
+        }
+
+        foreach ($feeds as $configKey => $feed) {
+            $this->sendToPostFeed($configKey, $feed, $msgId, 'add', '/freegle/post/create', $payload, $data);
         }
     }
 
@@ -1514,24 +1844,40 @@ class ProcessBackgroundTasksCommand extends Command
             throw new \RuntimeException('freebie_alerts_remove requires msgid');
         }
 
-        $feeds = $this->configuredPostFeeds();
+        $feeds = $this->configuredPostFeeds($data);
         if (empty($feeds)) {
             Log::debug('No post feed API key configured, skipping remove', ['msgid' => $msgId]);
             return;
         }
 
-        foreach ($feeds as $feed) {
-            $this->sendToPostFeed($feed, $msgId, 'remove', "/freegle/post/{$msgId}/delete", null);
+        // A retried remove can fall due after the post came back - reposted, or its outcome
+        // withdrawn - and a fresh add has gone out since. Deleting it then would take a live
+        // post off the feed. Only retries are checked: a first remove is queued as the post
+        // goes, and its change may not be readable here yet.
+        if (isset($data['feed']) && $this->postFeedPayload($msgId) !== null) {
+            Log::info('Skipping retried post feed remove, the post is live again', [
+                'feed' => $data['feed'],
+                'msgid' => $msgId,
+            ]);
+            return;
+        }
+
+        foreach ($feeds as $configKey => $feed) {
+            $this->sendToPostFeed($configKey, $feed, $msgId, 'remove', "/freegle/post/{$msgId}/delete", null, $data);
         }
     }
 
     /**
-     * POST one add or remove to one partner. A failure is logged and reported, never thrown,
-     * so the other partners still get it. A remove has no body.
+     * POST one add or remove to one partner. A failure is never thrown, so the other
+     * partners still get it. A remove has no body.
+     *
+     * A timeout, connection failure, 408, 429 or 5xx is retried later for this partner
+     * alone. Any other refusal is our request being wrong, so it is reported at once and
+     * not retried - except a 404 on a remove, which means the partner never had the post.
      *
      * @param array{name: string, url: string, key: string} $feed
      */
-    private function sendToPostFeed(array $feed, int $msgId, string $action, string $path, ?array $payload): void
+    private function sendToPostFeed(string $configKey, array $feed, int $msgId, string $action, string $path, ?array $payload, array $data): void
     {
         $name = $feed['name'];
 
@@ -1544,30 +1890,84 @@ class ProcessBackgroundTasksCommand extends Command
             $response = $payload === null
                 ? $request->send('POST', $feed['url'] . $path)
                 : $request->post($feed['url'] . $path, $payload);
-
-            if ($response->successful()) {
-                Log::info("Post feed {$action} succeeded", ['feed' => $name, 'msgid' => $msgId]);
-            } else {
-                Log::warning("Post feed {$action} failed", [
-                    'feed' => $name,
-                    'msgid' => $msgId,
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                ]);
-                if ($action === 'add' && app()->bound('sentry')) {
-                    app('sentry')->captureMessage("{$name} add failed for message {$msgId}: {$response->status()}");
-                }
-            }
         } catch (\Throwable $e) {
-            Log::error("Post feed {$action} exception", [
+            $this->retryPostFeed($configKey, $name, $msgId, $action, $data, $e->getMessage());
+            return;
+        }
+
+        $status = $response->status();
+
+        if ($response->successful()) {
+            Log::info("Post feed {$action} succeeded", ['feed' => $name, 'msgid' => $msgId]);
+        } elseif ($status >= 500 || $status === 408 || $status === 429) {
+            $this->retryPostFeed($configKey, $name, $msgId, $action, $data, (string) $status);
+        } elseif ($action === 'remove' && $status === 404) {
+            Log::info('Post feed remove found nothing to remove', ['feed' => $name, 'msgid' => $msgId]);
+        } else {
+            Log::warning("Post feed {$action} failed", [
                 'feed' => $name,
                 'msgid' => $msgId,
-                'error' => $e->getMessage(),
+                'status' => $status,
+                'body' => $response->body(),
             ]);
             if (app()->bound('sentry')) {
-                app('sentry')->captureException($e);
+                app('sentry')->captureMessage("{$name} {$action} failed for message {$msgId}: {$status}");
             }
         }
+    }
+
+    /**
+     * Queue another try of one add or remove for one partner, after a failure that may be
+     * temporary. The failure is a warning until it has gone on for an hour, an error once
+     * then, and an error again when it is given up on after a day.
+     */
+    private function retryPostFeed(string $configKey, string $name, int $msgId, string $action, array $data, string $reason): void
+    {
+        $firstFailedAt = isset($data['first_failed_at']) ? Carbon::parse($data['first_failed_at']) : now();
+        $failingFor = now()->getTimestamp() - $firstFailedAt->getTimestamp();
+        $retries = (int) ($data['retries'] ?? 0);
+        $alerted = ! empty($data['alerted']);
+        $context = [
+            'feed' => $name,
+            'msgid' => $msgId,
+            'reason' => $reason,
+            'retries' => $retries,
+            'first_failed_at' => $firstFailedAt->toDateTimeString(),
+        ];
+
+        if ($failingFor >= self::POST_FEED_GIVE_UP_AFTER_SECONDS) {
+            Log::error("Post feed {$action} given up after a day of failures", $context);
+            if (app()->bound('sentry')) {
+                app('sentry')->captureMessage("{$name} {$action} given up for message {$msgId} after a day: {$reason}");
+            }
+            return;
+        }
+
+        if (! $alerted && $failingFor >= self::POST_FEED_ALERT_AFTER_SECONDS) {
+            Log::error("Post feed {$action} still failing after an hour", $context);
+            if (app()->bound('sentry')) {
+                app('sentry')->captureMessage("{$name} {$action} still failing for message {$msgId} after an hour: {$reason}");
+            }
+            $alerted = true;
+        } else {
+            Log::warning("Post feed {$action} failed, will retry", $context);
+        }
+
+        $delay = min(60 * (2 ** min($retries, 10)), self::POST_FEED_RETRY_MAX_DELAY_SECONDS);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => $action === 'add'
+                ? BackgroundTask::TASK_FREEBIE_ALERTS_ADD
+                : BackgroundTask::TASK_FREEBIE_ALERTS_REMOVE,
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'feed' => $configKey,
+                'first_failed_at' => $firstFailedAt->toIso8601String(),
+                'retries' => $retries + 1,
+                'alerted' => $alerted,
+            ]),
+            'created_at' => DB::raw('DATE_ADD(NOW(), INTERVAL ' . (int) $delay . ' SECOND)'),
+        ]);
     }
 
     /**
@@ -1660,5 +2060,35 @@ class ProcessBackgroundTasksCommand extends Command
         if ($exitCode !== 0) {
             throw new \RuntimeException("tn:sync failed with exit code {$exitCode}");
         }
+    }
+
+    /**
+     * Start, stop or close a UX experiment for the experiment routes (PATCH
+     * /modtools/ux/experiments/:id). The Go API only queues; the service applies the concurrency
+     * cap, the 24-hour end and the config key the client reads, so those rules live once.
+     */
+    private function handleUxExperiment(array $data): void
+    {
+        $id = (int) ($data['id'] ?? 0);
+        $action = (string) ($data['action'] ?? '');
+        $service = app(UxExperimentService::class);
+        try {
+            match ($action) {
+                'start' => $service->start($id),
+                'stop' => $service->stop($id, (string) ($data['reason'] ?: 'Stopped from ModTools.')),
+                'close' => $service->close($id, $data['cleanup_pr'] ?: null),
+                default => throw new \RuntimeException("Unknown ux_experiment action: {$action}"),
+            };
+        } catch (UxExperimentRefused $e) {
+            // The rules said no (the cap, a second experiment on the flow, too little power, a
+            // status that does not allow it). That is an answer for the person who clicked, not a
+            // fault: say so on the experiment, where the experiment routes show it, and finish the task.
+            // Trying again would only be refused again.
+            $service->recordRefusal($id, $action, $e->getMessage());
+            Log::info('UX experiment action refused', ['id' => $id, 'action' => $action, 'why' => $e->getMessage()]);
+
+            return;
+        }
+        Log::info('UX experiment action applied', ['id' => $id, 'action' => $action]);
     }
 }

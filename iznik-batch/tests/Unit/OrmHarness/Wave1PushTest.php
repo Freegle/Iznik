@@ -25,6 +25,10 @@ use Tests\TestCase;
  */
 class Wave1PushTest extends TestCase
 {
+    /** memberships.role values: the table is gone, so there is no model constant for them. */
+    private const ROLE_OWNER = 'Owner';
+    private const ROLE_MODERATOR = 'Moderator';
+
     // SELECT DISTINCT userid FROM memberships
     //   WHERE groupid = ? AND role IN ('Owner', 'Moderator')
     private const SITE_GROUP_MODS = '21c764087977';
@@ -57,7 +61,7 @@ class Wave1PushTest extends TestCase
             ->distinct()
             ->select('userid')
             ->where('groupid', 1)
-            ->whereIn('role', ['Owner', 'Moderator']));
+            ->whereIn('role', [self::ROLE_OWNER, self::ROLE_MODERATOR]));
     }
 
     public function test_mod_memberships_with_settings(): void
@@ -65,7 +69,7 @@ class Wave1PushTest extends TestCase
         GoldenSql::assert(self::SITE_MOD_MEMBERSHIPS, fn () => DB::table('memberships')
             ->select('groupid', 'settings')
             ->where('userid', 1)
-            ->whereIn('role', ['Owner', 'Moderator'])
+            ->whereIn('role', [self::ROLE_OWNER, self::ROLE_MODERATOR])
             ->where('collection', 'Approved'));
     }
 
@@ -83,7 +87,7 @@ class Wave1PushTest extends TestCase
             ->distinct()
             ->select('userid', 'settings')
             ->where('groupid', 1)
-            ->whereIn('role', ['Owner', 'Moderator']));
+            ->whereIn('role', [self::ROLE_OWNER, self::ROLE_MODERATOR]));
     }
 
     public function test_push_notification_lookups(): void

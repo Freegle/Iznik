@@ -139,6 +139,7 @@ import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { useTrystStore } from '~/stores/tryst'
 import { useAuthStore } from '~/stores/auth'
+import { isClearance } from '~/composables/useAutoSplit'
 
 const messageStore = useMessageStore()
 const userStore = useUserStore()
@@ -217,12 +218,11 @@ const visiblePosts = computed(() => {
   visiblePostList = visiblePostList || []
 
   // Bulk offers ("clearances") are managed from their own card
-  // (MyPostsClearances) — don't also show them in the normal posts list.
-  visiblePostList = visiblePostList.filter((post) => {
-    const msg = messageStore.byId(post.id)
-    const bulkcount = msg?.bulkcount ?? msg?.bulkitems?.length ?? 0
-    return bulkcount === 0
-  })
+  // (MyPostsClearances) — don't also show them in the normal posts list. An
+  // automatically split post is an ordinary post and stays here.
+  visiblePostList = visiblePostList.filter(
+    (post) => !isClearance(messageStore.byId(post.id))
+  )
 
   const filter = filterText.value.trim().toLowerCase()
   if (filter) {

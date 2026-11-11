@@ -14,6 +14,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // Import AFTER mocks so vi.mock() factories are wired up.
 
 import { useMe, fetchMe } from '~/composables/useMe'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // ============================================================
 // STORE MOCKS — must be declared before any imports that
@@ -42,7 +48,7 @@ vi.mock('~/stores/team', () => ({
 function makeUser(overrides = {}) {
   return {
     id: 42,
-    systemrole: 'User',
+    systemrole: SYSTEMROLE_USER,
     trustlevel: null,
     settings: { mylocation: { name: 'Oxford' } },
     supporter: false,
@@ -115,7 +121,7 @@ describe('useMe — me / realMe / myid / loggedIn', () => {
   })
 
   it('me is null when user has no id (falsy)', () => {
-    mockAuthState.user = { systemrole: 'User' } // no id
+    mockAuthState.user = { systemrole: SYSTEMROLE_USER } // no id
     const { me } = useMe()
     expect(me.value).toBeNull()
   })
@@ -192,10 +198,10 @@ describe('useMe — myLocation', () => {
 describe('useMe — role flags', () => {
   const roleTable = [
     // [systemrole, mod, support, admin, supportOrAdmin]
-    ['User', false, false, false, false],
-    ['Moderator', true, false, false, false],
-    ['Support', true, true, false, true],
-    ['Admin', true, false, true, true],
+    [SYSTEMROLE_USER, false, false, false, false],
+    [SYSTEMROLE_MODERATOR, true, false, false, false],
+    [SYSTEMROLE_SUPPORT, true, true, false, true],
+    [SYSTEMROLE_ADMIN, true, false, true, true],
     [null, false, false, false, false],
     [undefined, false, false, false, false],
   ]
@@ -239,21 +245,21 @@ describe('useMe — chitChatMod', () => {
   })
 
   it('is true for Admin (via supportOrAdmin)', () => {
-    mockAuthState.user = makeUser({ id: 1, systemrole: 'Admin' })
+    mockAuthState.user = makeUser({ id: 1, systemrole: SYSTEMROLE_ADMIN })
     mockTeamState.getTeam = vi.fn().mockReturnValue(null)
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(true)
   })
 
   it('is true for Support (via supportOrAdmin)', () => {
-    mockAuthState.user = makeUser({ id: 1, systemrole: 'Support' })
+    mockAuthState.user = makeUser({ id: 1, systemrole: SYSTEMROLE_SUPPORT })
     mockTeamState.getTeam = vi.fn().mockReturnValue(null)
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(true)
   })
 
   it('is true for regular user who is in the ChitChat Moderation team', () => {
-    mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
+    mockAuthState.user = makeUser({ id: 5, systemrole: SYSTEMROLE_USER })
     mockTeamState.getTeam = vi
       .fn()
       .mockReturnValue({ members: [{ id: 5 }, { id: 6 }] })
@@ -262,21 +268,21 @@ describe('useMe — chitChatMod', () => {
   })
 
   it('is false for regular user not in the ChitChat Moderation team', () => {
-    mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
+    mockAuthState.user = makeUser({ id: 5, systemrole: SYSTEMROLE_USER })
     mockTeamState.getTeam = vi.fn().mockReturnValue({ members: [{ id: 99 }] })
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(false)
   })
 
   it('is false when team is null (team not yet loaded)', () => {
-    mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
+    mockAuthState.user = makeUser({ id: 5, systemrole: SYSTEMROLE_USER })
     mockTeamState.getTeam = vi.fn().mockReturnValue(null)
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(false)
   })
 
   it('looks up ChitChat Moderation team by name', () => {
-    mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
+    mockAuthState.user = makeUser({ id: 5, systemrole: SYSTEMROLE_USER })
     mockTeamState.getTeam = vi.fn().mockReturnValue(null)
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(false) // trigger evaluation
@@ -307,6 +313,24 @@ describe('useMe — supporter / donor', () => {
     mockAuthState.user = makeUser({ donated: '2025-01-01' })
     const { donor } = useMe()
     expect(donor.value).toBe('2025-01-01')
+  })
+
+  it('askForDonations is true by default', () => {
+    mockAuthState.user = makeUser({ settings: {} })
+    const { askForDonations } = useMe()
+    expect(askForDonations.value).toBe(true)
+  })
+
+  it('askForDonations is true when logged out', () => {
+    mockAuthState.user = null
+    const { askForDonations } = useMe()
+    expect(askForDonations.value).toBe(true)
+  })
+
+  it('askForDonations is false once they ask not to be asked', () => {
+    mockAuthState.user = makeUser({ settings: { nodonationasks: true } })
+    const { askForDonations } = useMe()
+    expect(askForDonations.value).toBe(false)
   })
 })
 

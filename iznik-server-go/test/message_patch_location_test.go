@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -45,7 +46,7 @@ const (
 func setupTnPatchLocationMessage(t *testing.T, prefix string) (msgID uint64, tnpostid string, key string, tnuserid uint64) {
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	// users.tnuserid is UNIQUE, so a fixed value only works for the first test
 	// in the run - every later one silently fails to become a TN partner and
 	// gets a 403 instead of exercising the location derivation. Derive it from
@@ -205,7 +206,7 @@ func TestPatchMessageDoesNotDeriveLocationIdForNonPartnerCaller(t *testing.T) {
 	prefix := uniquePrefix("patchloc_nonpartner")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Offer", patchLocOldLat, patchLocOldLng)

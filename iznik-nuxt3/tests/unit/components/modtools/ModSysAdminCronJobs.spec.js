@@ -101,6 +101,12 @@ describe('ModSysAdminCronJobs', () => {
             props: ['variant'],
           },
           'b-spinner': { template: '<div class="spinner" />' },
+          'b-button': {
+            template:
+              '<button class="btn" :class="variant" @click="$emit(\'click\')"><slot /></button>',
+            props: ['variant'],
+            emits: ['click'],
+          },
         },
       },
     })
@@ -209,5 +215,64 @@ describe('ModSysAdminCronJobs', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Server error')
+  })
+
+  // A sysadmin looking for what is broken should not have to scan every category.
+  describe('failing filter', () => {
+    function filterButton(wrapper) {
+      return wrapper.findAll('button').find((b) => b.text().includes('Failing'))
+    }
+
+    it('counts the failing jobs on the filter button', async () => {
+      mockFetchCronJobs.mockResolvedValue(sampleCronJobs)
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      // data:update-cpi exited 1; mail:chat:user2user has never run.
+      expect(filterButton(wrapper).text()).toContain('2')
+    })
+
+    it('shows only failing jobs and their categories when on, and everything when off', async () => {
+      mockFetchCronJobs.mockResolvedValue(sampleCronJobs)
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      await filterButton(wrapper).trigger('click')
+      let text = wrapper.text()
+      expect(text).toContain('data:update-cpi')
+      expect(text).toContain('mail:chat:user2user')
+      expect(text).not.toContain('deploy:watch')
+      expect(wrapper.findAll('tr.category-row').map((r) => r.text())).toEqual([
+        'Email — Chat',
+        'Data',
+      ])
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('All'))
+        .trigger('click')
+      text = wrapper.text()
+      expect(text).toContain('deploy:watch')
+    })
+
+    it('says so when nothing is failing', async () => {
+      mockFetchCronJobs.mockResolvedValue([sampleCronJobs[0]])
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      await filterButton(wrapper).trigger('click')
+      expect(wrapper.text()).toContain('No jobs are failing')
+      expect(wrapper.text()).not.toContain('deploy:watch')
+    })
+
+    it('counts a disabled job as not failing', async () => {
+      mockFetchCronJobs.mockResolvedValue([
+        { ...sampleCronJobs[2], active: false },
+      ])
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      expect(filterButton(wrapper).text()).toContain('0')
+    })
   })
 })

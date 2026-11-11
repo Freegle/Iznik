@@ -10,6 +10,7 @@ import (
 
 	address2 "github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -75,7 +76,7 @@ func TestAddressModeratorAccess(t *testing.T) {
 
 	// Create Support user who can access any address
 	prefixSupport := uniquePrefix("addr_support")
-	supportUserID := CreateTestUser(t, prefixSupport, "Support")
+	supportUserID := CreateTestUser(t, prefixSupport, utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportUserID)
 
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/address/"+idstr+"?jwt="+supportToken, nil))
@@ -87,7 +88,7 @@ func TestAddressModeratorAccess(t *testing.T) {
 
 	// Create Admin user who can access any address
 	prefixAdmin := uniquePrefix("addr_admin")
-	adminUserID := CreateTestUser(t, prefixAdmin, "Admin")
+	adminUserID := CreateTestUser(t, prefixAdmin, utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminUserID)
 
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/address/"+idstr+"?jwt="+adminToken, nil))
@@ -398,4 +399,38 @@ func TestAddressCreateWithoutLatLngUsesPostcodeCoordinates(t *testing.T) {
 	assert.NotZero(t, addr.Lng, "lng must be postcode coordinates, not 0 (Null Island)")
 	assert.InDelta(t, postcode.Lat, addr.Lat, 0.001, "should use postcode lat from locations table")
 	assert.InDelta(t, postcode.Lng, addr.Lng, 0.001, "should use postcode lng from locations table")
+}
+
+func TestAddressIncludesBuildingNumber(t *testing.T) {
+	// A house with only a number has no building name, so without the number the address is just the street.
+	prefix := uniquePrefix("addr_number")
+	userID, token := CreateFullTestUser(t, prefix)
+
+	db := database.DBConn
+	db.Exec("INSERT IGNORE INTO paf_addresses (id, postcodeid, udprn, buildingnumber) VALUES (102367698, 1687412, 50464674, 66)")
+	db.Exec("INSERT INTO users_addresses (userid, pafid) VALUES (?, 102367698)", userID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/address?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var addresses []address2.Address
+	json2.Unmarshal(rsp(resp), &addresses)
+
+	var numbered *address2.Address
+	for i := range addresses {
+		if addresses[i].Buildingnumber == "66" {
+			numbered = &addresses[i]
+		}
+	}
+	assert.NotNil(t, numbered, "Listed address should carry its building number")
+
+	if numbered != nil {
+		idstr := strconv.FormatUint(numbered.ID, 10)
+		resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/address/"+idstr+"?jwt="+token, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var single address2.Address
+		json2.Unmarshal(rsp(resp), &single)
+		assert.Equal(t, "66", single.Buildingnumber)
+	}
 }

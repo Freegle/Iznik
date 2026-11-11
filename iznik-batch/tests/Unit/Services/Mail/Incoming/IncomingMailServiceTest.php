@@ -2,7 +2,6 @@
 
 namespace Tests\Unit\Services\Mail\Incoming;
 
-use App\Models\Group;
 use App\Mail\Fbl\FblNotification;
 use App\Models\ChatMessage;
 use App\Models\User;
@@ -193,6 +192,75 @@ class IncomingMailServiceTest extends TestCase
             $attached->backwards,
             'backwards is REVERSE(canon), the definition V1 writes at both its insert sites'
         );
+    }
+
+    /**
+     * canonicalizeEmail is the canon the lookup searches for, so it must give the
+     * canon User::canonMail writes, on every TN shape.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProviderExternal(\Tests\Unit\Models\UserEmailTest::class, 'tnCanonTable')]
+    public function test_canonicalize_email_matches_the_tn_canon_table(string $email, string $canon): void
+    {
+        $method = new \ReflectionMethod(IncomingMailService::class, 'canonicalizeEmail');
+        $method->setAccessible(true);
+
+        $this->assertSame($canon, $method->invoke($this->service, strtolower($email)));
+        $this->assertSame(User::canonMail($email), $method->invoke($this->service, $email));
+    }
+
+    private function findUserByEmail(string $email): ?User
+    {
+        $method = new \ReflectionMethod(IncomingMailService::class, 'findUserByEmail');
+        $method->setAccessible(true);
+
+        return $method->invoke($this->service, $email);
+    }
+
+    private function attachTnAddress(User $user, string $email): void
+    {
+        DB::table('users_emails')->insert([
+            'userid' => $user->id,
+            'email' => $email,
+            'canon' => User::canonMail(strtolower($email)),
+            'backwards' => strrev(User::canonMail(strtolower($email))),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+    }
+
+    /**
+     * A member on a bare address and an alias of the same member are one account.
+     */
+    public function test_find_user_by_email_matches_a_bare_address_to_its_alias(): void
+    {
+        $base = 'tnbare'.str_replace('.', '', uniqid('', true));
+        $member = $this->createTestUser();
+        $this->attachTnAddress($member, "{$base}-jane@user.trashnothing.com");
+
+        $this->assertSame($member->id, $this->findUserByEmail("{$base}-jane-g12@user.trashnothing.com")?->id);
+
+        $dotted = $this->createTestUser();
+        $this->attachTnAddress($dotted, "{$base}.hayes-g298@user.trashnothing.com");
+
+        $this->assertSame($dotted->id, $this->findUserByEmail("{$base}.hayes@user.trashnothing.com")?->id);
+    }
+
+    /**
+     * The old canon stripped everything after the last hyphen, so mail from a bare
+     * "mary-jane@" resolved to whoever held "mary-gNNN@".
+     */
+    public function test_find_user_by_email_keeps_prefix_sharing_members_apart(): void
+    {
+        $base = 'tnapart'.str_replace('.', '', uniqid('', true));
+        $mary = $this->createTestUser();
+        $this->attachTnAddress($mary, "{$base}-g12@user.trashnothing.com");
+
+        $this->assertNull($this->findUserByEmail("{$base}-jane@user.trashnothing.com"));
+
+        $bibiana = $this->createTestUser();
+        $this->attachTnAddress($bibiana, "{$base}b@user.trashnothing.com");
+
+        $this->assertNull($this->findUserByEmail("{$base}b-gomes-g4840@user.trashnothing.com"));
     }
 
     /**
@@ -2677,7 +2745,7 @@ class IncomingMailServiceTest extends TestCase
         if (array_key_exists('ourPostingStatus', $attributes)) {
             $update['postingstatus'] = $attributes['ourPostingStatus'];
         }
-        if (($attributes['role'] ?? null) === 'Moderator') {
+        if (($attributes['role'] ?? null) === \App\Models\User::SYSTEMROLE_MODERATOR) {
             $update['systemrole'] = \App\Models\User::SYSTEMROLE_MODERATOR;
         }
         foreach (['emailfrequency', 'eventsallowed', 'volunteeringallowed'] as $column) {
@@ -4028,7 +4096,7 @@ class IncomingMailServiceTest extends TestCase
         $mod = $this->createTestUser(['email_preferred' => $this->uniqueEmail('mod')]);
         $this->createMembership($mod, $group, [
             'ourPostingStatus' => 'DEFAULT',
-            'role' => 'Moderator',
+            'role' => User::SYSTEMROLE_MODERATOR,
         ]);
         DB::table('users')->where('id', $mod->id)->update([
             'lastlocation' => $this->createLocation(51.5, -0.1),

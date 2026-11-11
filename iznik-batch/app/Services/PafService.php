@@ -40,12 +40,15 @@ class PafService
             return $this->cache[$cacheKey];
         }
 
-        $row = DB::table($table)->where($column, $value)->first(['id']);
+        // From the write node, like refIds: a value added a moment ago may not have reached a read
+        // node yet, and inserting it again would break the unique index.
+        $row = DB::table($table)->useWritePdo()->where($column, $value)->first(['id']);
 
         if ($row) {
             $id = $row->id;
         } else {
-            $id = DB::table($table)->insertGetId([$column => $value]);
+            DB::table($table)->insertOrIgnore([$column => $value]);
+            $id = DB::table($table)->useWritePdo()->where($column, $value)->value('id');
         }
 
         $this->cache[$cacheKey] = $id;
@@ -86,7 +89,9 @@ class PafService
         while (($line = fgets($fh)) !== false) {
             $fields = str_getcsv(trim($line));
 
-            if (count($fields) < 16) {
+            // Every PAF line has a numeric UDPRN. A line without one is from some other file:
+            // a postcode directory loaded this way once put 1.9M non-addresses in paf_addresses.
+            if (count($fields) < 16 || !ctype_digit(trim($fields[12]))) {
                 $processed++;
                 continue;
             }
@@ -164,7 +169,9 @@ class PafService
         while (($line = fgets($fh)) !== false) {
             $fields = str_getcsv(trim($line));
 
-            if (count($fields) < 16) {
+            // Every PAF line has a numeric UDPRN. A line without one is from some other file:
+            // a postcode directory loaded this way once put 1.9M non-addresses in paf_addresses.
+            if (count($fields) < 16 || !ctype_digit(trim($fields[12]))) {
                 $processed++;
                 continue;
             }
@@ -216,6 +223,188 @@ class PafService
         $this->cache = [];
 
         return [$processed, $updated];
+    }
+
+    /** Values remembered per lookup table before the cache is emptied, to bound memory. */
+    private const REF_CACHE_LIMIT = 200000;
+
+    /** @var array<string, array<string, int>> lookup field => value => id */
+    private array $refCache = [];
+
+    /**
+     * Apply a batch of CSV PAF lines, as paf:import-run does: insert addresses not seen
+     * before and update those that have changed, matching on UDPRN. A whole batch costs a
+     * handful of queries, where load() and update() cost several per line.
+     *
+     * Lines whose postcode is not in locations yet are returned unapplied, so the caller
+     * can keep them and try again with the next release.
+     *
+     * @param string[] $lines
+     * @return array{inserted: int, updated: int, skipped: string[]}
+     */
+    public function applyLines(array $lines): array
+    {
+        $parsed = [];
+        foreach ($lines as $line) {
+            $line = rtrim($line, "\r\n");
+            $fields = array_map('trim', str_getcsv($line));
+            if (count($fields) < 16 || !ctype_digit($fields[12])) {
+                // Not an address line. Nothing to retry.
+                continue;
+            }
+            $parsed[] = [$line, $fields];
+        }
+
+        $postcodes = $this->postcodeIds(array_map(fn($p) => $p[1][0], $parsed));
+
+        $skipped = [];
+        $known = [];
+        foreach ($parsed as [$line, $f]) {
+            $postcodeId = $postcodes[strtoupper($f[0])] ?? null;
+            if ($postcodeId) {
+                $known[] = [$postcodeId, $f];
+            } else {
+                $skipped[] = $line;
+            }
+        }
+
+        // CSV column => lookup field. Joined with +, not array_merge, which would renumber
+        // the columns and shift every field along by one.
+        $refFields = array_combine(range(1, 5), self::FIELD_TYPES_1)
+            + array_combine(range(7, 11), self::FIELD_TYPES_2);
+        $refIds = [];
+        foreach ($refFields as $ix => $field) {
+            $refIds[$field] = $this->refIds($field, array_map(fn($k) => $k[1][$ix], $known));
+        }
+
+        $records = [];
+        foreach ($known as [$postcodeId, $f]) {
+            $record = [
+                'udprn' => (int) $f[12],
+                'postcodeid' => $postcodeId,
+                'buildingnumber' => $f[6] !== '' ? (int) $f[6] : null,
+                'postcodetype' => $f[13] !== '' ? $f[13] : null,
+                'suorganisationindicator' => $f[14] !== '' ? $f[14] : null,
+                'deliverypointsuffix' => $f[15] !== '' ? $f[15] : null,
+            ];
+            foreach ($refFields as $ix => $field) {
+                $record["{$field}id"] = $f[$ix] !== '' ? $refIds[$field][$f[$ix]] : null;
+            }
+
+            // A UDPRN twice in one batch would be one row; the later line wins.
+            $records[$record['udprn']] = $record;
+        }
+
+        $inserted = 0;
+        $updated = 0;
+        if ($records) {
+            $udprns = array_keys($records);
+            $existing = DB::table('paf_addresses')->whereIn('udprn', $udprns)->count();
+            $columns = array_keys(reset($records));
+            $affected = DB::table('paf_addresses')->upsert(
+                array_values($records),
+                ['udprn'],
+                array_values(array_diff($columns, ['udprn']))
+            );
+
+            // MySQL counts 1 for each row inserted, 2 for each updated, 0 for one already
+            // the same.
+            $inserted = count($records) - $existing;
+            $updated = intdiv(max(0, $affected - $inserted), 2);
+        }
+
+        return ['inserted' => $inserted, 'updated' => $updated, 'skipped' => $skipped];
+    }
+
+    /**
+     * @param string[] $postcodes
+     * @return array<string, int> upper-cased postcode => locations.id
+     */
+    private function postcodeIds(array $postcodes): array
+    {
+        $wanted = array_values(array_unique(array_map('strtoupper', array_filter($postcodes))));
+        if (!$wanted) {
+            return [];
+        }
+
+        $ids = [];
+        foreach (DB::table('locations')
+            ->where('type', 'Postcode')
+            ->whereIn('name', $wanted)
+            ->get(['id', 'name']) as $row) {
+            $ids[strtoupper($row->name)] = $row->id;
+        }
+
+        return $ids;
+    }
+
+    /**
+     * The ids in a paf_<field> lookup table for some values, adding any that are new.
+     *
+     * @param string[] $values
+     * @return array<string, int> value => id
+     */
+    private function refIds(string $field, array $values): array
+    {
+        $table = "paf_{$field}";
+        $cache = $this->refCache[$field] ?? [];
+        if (count($cache) > self::REF_CACHE_LIMIT) {
+            $cache = [];
+        }
+
+        $missing = [];
+        foreach (array_unique($values) as $value) {
+            if ($value !== '' && !isset($cache[$value])) {
+                $missing[] = $value;
+            }
+        }
+
+        if ($missing) {
+            $found = $this->selectRefs($table, $field, $missing);
+            $new = array_values(array_filter($missing, fn($v) => !isset($found[$v])));
+
+            if ($new) {
+                DB::table($table)->insertOrIgnore(array_map(fn($v) => [$field => $v], $new));
+                $found += $this->selectRefs($table, $field, $new);
+            }
+
+            foreach ($missing as $value) {
+                // The unique index's collation can fold values the lookup above did not
+                // (accents, say). One query each for those is fine; they are rare.
+                $cache[$value] = $found[$value] ?? $this->getRefId($table, $field, $value);
+            }
+        }
+
+        $this->refCache[$field] = $cache;
+
+        return $cache;
+    }
+
+    /**
+     * @param string[] $values
+     * @return array<string, int> value => id, matching case-insensitively as the
+     *                            unique index does
+     *
+     * Read from the write node. refIds reads again straight after inserting the new values, and a
+     * read node that is behind does not have them yet: the fallback would then insert them a second
+     * time and fail on the unique index ("Duplicate entry ... for key paf_departmentname...").
+     */
+    private function selectRefs(string $table, string $field, array $values): array
+    {
+        $byLower = [];
+        foreach (DB::table($table)->useWritePdo()->whereIn($field, $values)->get(['id', $field]) as $row) {
+            $byLower[mb_strtolower($row->$field)] = $row->id;
+        }
+
+        $ids = [];
+        foreach ($values as $value) {
+            $id = $byLower[mb_strtolower($value)] ?? null;
+            if ($id) {
+                $ids[$value] = $id;
+            }
+        }
+
+        return $ids;
     }
 
     /**

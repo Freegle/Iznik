@@ -12,13 +12,14 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateTryst(t *testing.T) {
 	prefix := uniquePrefix("Tryst")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	// CreateTryst requires a chat room between the users.
@@ -48,8 +49,8 @@ func TestCreateTryst(t *testing.T) {
 // handler, which is what a caller sees.
 func TestCreateTrystDuplicateReturnsExistingID(t *testing.T) {
 	prefix := uniquePrefix("TrystDup")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	// CreateTryst requires a chat room between the users.
@@ -85,8 +86,8 @@ func TestCreateTrystDuplicateReturnsExistingID(t *testing.T) {
 
 func TestGetTrystList(t *testing.T) {
 	prefix := uniquePrefix("TrystList")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	db := database.DBConn
@@ -105,8 +106,8 @@ func TestGetTrystList(t *testing.T) {
 
 func TestGetTrystSingle(t *testing.T) {
 	prefix := uniquePrefix("TrystSingle")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	db := database.DBConn
@@ -131,8 +132,8 @@ func TestGetTrystSingle(t *testing.T) {
 
 func TestPatchTryst(t *testing.T) {
 	prefix := uniquePrefix("TrystPatch")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	db := database.DBConn
@@ -155,8 +156,8 @@ func TestPatchTryst(t *testing.T) {
 
 func TestConfirmTryst(t *testing.T) {
 	prefix := uniquePrefix("TrystConf")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	db := database.DBConn
@@ -184,8 +185,8 @@ func TestConfirmTryst(t *testing.T) {
 
 func TestDeclineTryst(t *testing.T) {
 	prefix := uniquePrefix("TrystDecl")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user2ID)
 
 	db := database.DBConn
@@ -212,8 +213,8 @@ func TestDeclineTryst(t *testing.T) {
 
 func TestDeleteTryst(t *testing.T) {
 	prefix := uniquePrefix("TrystDel")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	db := database.DBConn
@@ -238,8 +239,8 @@ func TestDeleteTryst(t *testing.T) {
 
 func TestDeleteTrystWithBodyID(t *testing.T) {
 	prefix := uniquePrefix("TrystDelBody")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	db := database.DBConn
@@ -266,9 +267,9 @@ func TestDeleteTrystWithBodyID(t *testing.T) {
 
 func TestTrystPermissionDenied(t *testing.T) {
 	prefix := uniquePrefix("TrystPerm")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	db := database.DBConn
@@ -285,8 +286,8 @@ func TestTrystPermissionDenied(t *testing.T) {
 
 func TestGetTrystSingleIncludesCalendarLink(t *testing.T) {
 	prefix := uniquePrefix("TrystCal")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	db := database.DBConn
@@ -330,8 +331,8 @@ func TestGetTrystSingleIncludesCalendarLink(t *testing.T) {
 
 func TestGetTrystListIncludesCalendarLink(t *testing.T) {
 	prefix := uniquePrefix("TrystCalList")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	db := database.DBConn
@@ -372,8 +373,8 @@ func TestGetTrystV2Path(t *testing.T) {
 // participant names in the event title, 15-minute duration, and Europe/London timezone.
 func TestGetTrystCalendarLinkPayload(t *testing.T) {
 	prefix := uniquePrefix("TrystCalP")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	db := database.DBConn

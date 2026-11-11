@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -49,7 +50,7 @@ func TestChitChatSeenAllClearsTheCount(t *testing.T) {
 
 	// A full user, because the ChitChat feed is filtered by distance from the viewer.
 	userID, token := CreateFullTestUser(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 
 	lat := 55.9533
 	lng := -3.1883

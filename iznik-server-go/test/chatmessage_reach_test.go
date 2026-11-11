@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/roadblur"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/gofiber/fiber/v2"
 )
@@ -48,8 +49,8 @@ func TestCreateChatMessage_ReachBlockedReplyHeld(t *testing.T) {
 		INDEX (msgid), INDEX (chatid), INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	// GetLatLng reads settings.mylocation first — put the replier at (51.5, -0.1).
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, replierID)
 
@@ -129,8 +130,8 @@ func TestCreateChatMessage_ReportToModsNotReachGated(t *testing.T) {
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	reporterID := CreateTestUser(t, prefix+"_reporter", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	reporterID := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
 	// Reporter is at (51.5, -0.1) and — like Neville in #9852 — is NOT a member of the post's group.
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, reporterID)
 
@@ -243,8 +244,8 @@ func TestCreateChatMessage_ReachUndecidedReplyPassesThrough(t *testing.T) {
 		INDEX (msgid), INDEX (chatid), INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, replierID)
 
 	msgID := CreateTestMessage(t, posterID, "OFFER: reach undecided test item", 51.5, -0.1)

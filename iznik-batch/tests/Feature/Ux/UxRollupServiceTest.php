@@ -24,7 +24,7 @@ class UxRollupServiceTest extends TestCase
         parent::setUp();
         Carbon::setTestNow('2026-03-06 02:20:00');
         $this->fakeLoki();
-        foreach (['ux_flow_daily', 'ux_flow_outcome_daily', 'ux_field_daily', 'ux_component_daily',
+        foreach (['ux_flow_daily', 'ux_flow_outcome_daily', 'ux_field_daily', 'ux_flow_signal_daily', 'ux_component_daily',
             'ux_feature_adoption_daily', 'ux_search_daily', 'ux_regret_daily',
             'ux_telemetry_health_daily', 'ux_sample_sessions'] as $t) {
             DB::table($t)->delete();
@@ -152,6 +152,63 @@ class UxRollupServiceTest extends TestCase
         $this->assertSame('give', $r->flow);
         $this->assertSame('deadline', $r->field);
         $this->assertSame([9, 4, 2], [(int) $r->revisits, (int) $r->validation_failures, (int) $r->choice_switches]);
+    }
+
+    /** The signal queries: people who showed it, and (with the join to flow_complete) those who finished. */
+    private function signalPattern(string $flow, string $actions, bool $finished): string
+    {
+        $head = '/^count by \([^)]*\) \(sum by \(flow_instance_id, [^)]*\) \(count_over_time\(\{[^}]*\} \| json [a-z_, ]+ \| flow="'.$flow.'" \| action_name'.$actions;
+        $tail = ' \| flow_instance_id!="" \[1d\]\)\)';
+
+        return $finished
+            ? $head.$tail.' and on \(flow_instance_id\) /'
+            : $head.$tail.'\)$/';
+    }
+
+    public function test_signals_count_visits_and_how_many_of_them_went_on_to_finish(): void
+    {
+        $at = $this->dims(['step' => 'give-mobile-details']);
+        $this->lokiMatrix($this->signalPattern('give', '="step_enter"', false), [[$at, 400]]);
+        $this->lokiMatrix($this->signalPattern('give', '="step_enter"', true), [[$at, 300]]);
+        $this->lokiMatrix($this->signalPattern('give', '="step_back"', false), [[$at, 70]]);
+        $this->lokiMatrix($this->signalPattern('give', '="step_back"', true), [[$at, 11]]);
+        $this->lokiMatrix($this->signalPattern('give', '="help_sought"', false), [[$at, 9]]);
+        $field = $at + ['field' => 'deadline'];
+        $this->lokiMatrix($this->signalPattern('give', '=~"\^\(field_revisit\|validation_failed\|choice_switched\)\$"', false), [[$field, 50]]);
+        $this->lokiMatrix($this->signalPattern('give', '=~"\^\(field_revisit\|validation_failed\|choice_switched\)\$"', true), [[$field, 45]]);
+
+        $this->assertTrue($this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC')));
+
+        $rows = DB::table('ux_flow_signal_daily')->where('date', self::DAY)->get()->keyBy(fn ($r) => $r->signal.'|'.$r->field);
+        $this->assertSame([400, 300], [(int) $rows['reached|']->people, (int) $rows['reached|']->finished]);
+        $this->assertSame([70, 11], [(int) $rows['backed|']->people, (int) $rows['backed|']->finished]);
+        // Nobody who asked for help finished, and that is still a row, not a missing one.
+        $this->assertSame([9, 0], [(int) $rows['help|']->people, (int) $rows['help|']->finished]);
+        $this->assertSame([50, 45], [(int) $rows['field|deadline']->people, (int) $rows['field|deadline']->finished]);
+        $this->assertSame('give-mobile-details', $rows['backed|']->step);
+        $this->assertSame('mobile', $rows['backed|']->device_class);
+        $this->assertSame(1, (int) $rows['backed|']->logged_in);
+    }
+
+    public function test_the_signal_join_is_on_the_visit_and_carries_no_user_input(): void
+    {
+        $this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC'));
+
+        $this->assertTrue($this->lokiSent('and on (flow_instance_id)', 'flow="give"', 'action_name="step_back"', 'action_name="flow_complete"'));
+        $this->assertTrue($this->lokiSent('flow="chat_outcome"', 'action_name="step_enter"', 'count by (step,'));
+    }
+
+    public function test_a_missing_signal_table_skips_it_and_still_writes_the_rest(): void
+    {
+        $this->lokiMatrix($this->flowPattern('give', 'step_enter'), [[$this->dims(['step' => 'give', 'first_visit' => 'true']), 5]]);
+        \Illuminate\Support\Facades\Schema::drop('ux_flow_signal_daily');
+
+        try {
+            $this->assertTrue($this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC')));
+            $this->assertSame(5, (int) DB::table('ux_flow_daily')->where('date', self::DAY)->value('entered'));
+        } finally {
+            (require base_path('database/migrations/2026_10_21_000001_create_ux_flow_signal_daily_table.php'))->up();
+        }
     }
 
     public function test_component_clicks_dead_rage_repeat_and_scaled_impressions(): void
@@ -284,7 +341,7 @@ class UxRollupServiceTest extends TestCase
         $this->lokiMatrix('/event_type="page_view"\} \| json page_route \| page_route=~"\^\(\?:give\|give-mobile\)\$" \[1d\]/', [[[], 100]]);
         $this->lokiMatrix('/sum\(count_over_time\(\{[^}]*event_type="page_view"\} \[1d\]/', [[[], 1000]]);
         $this->lokiMatrix('/sum\(count_over_time\(\{[^}]*event_type="interaction"\} \[1d\]/', [[[], 50]]);
-        foreach ([1000, 1000, 1000, 1200, 800] as $i => $n) {
+        foreach ([1000, 1000, 1000, 1200, 800, 1000, 1000] as $i => $n) {
             DB::table('ux_telemetry_health_daily')->insert(['date' => Carbon::parse(self::DAY)->subDays($i + 1)->toDateString(), 'metric' => 'event:page_view', 'observed' => $n]);
         }
         DB::table('ux_telemetry_health_daily')->insert(['date' => '2026-03-04', 'metric' => 'event:interaction', 'observed' => 100]);
@@ -295,10 +352,102 @@ class UxRollupServiceTest extends TestCase
         $m = fn (string $k) => DB::table('ux_telemetry_health_daily')->where('date', self::DAY)->where('metric', $k)->first();
         $this->assertEquals([100, 80, 0.8], [$m('flow_start:give')->expected, $m('flow_start:give')->observed, $m('flow_start:give')->ratio]);
         $this->assertEquals([1000, 1000, 1.0], [$m('event:page_view')->expected, $m('event:page_view')->observed, $m('event:page_view')->ratio]);
-        // Two days of history is not enough for a median.
+        // Two days of history is not enough for a baseline.
         $this->assertNull($m('event:interaction')->expected);
         $this->assertNull($m('event:interaction')->ratio);
         $this->assertEquals(50, $m('event:interaction')->observed);
+    }
+
+    private function healthRow(string $metric, string $date, float $observed): void
+    {
+        DB::table('ux_telemetry_health_daily')->insert(['date' => $date, 'metric' => $metric, 'observed' => $observed]);
+    }
+
+    private function healthFor(string $metric)
+    {
+        return DB::table('ux_telemetry_health_daily')->where('date', self::DAY)->where('metric', $metric)->first();
+    }
+
+    public function test_health_baseline_ignores_days_before_a_change_in_sampling(): void
+    {
+        // Impressions went to 10% of sessions: a week at full rate, then a week sampled. The
+        // median of the mixed fortnight is 5500, so a normal sampled day read as 0.18.
+        config()->set('freegle.ux.health_change_points', ['event:impressions' => '2026-02-26']);
+        $this->lokiMatrix('/sum\(count_over_time\(\{[^}]*event_type="impressions"\} \[1d\]/', [[[], 1000]]);
+        for ($i = 1; $i <= 14; $i++) {
+            $date = Carbon::parse(self::DAY)->subDays($i)->toDateString();
+            $this->healthRow('event:impressions', $date, $date >= '2026-02-26' ? 1000 : 10000);
+        }
+
+        $this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC'));
+
+        $this->assertEquals([1000, 1.0], [$this->healthFor('event:impressions')->expected, $this->healthFor('event:impressions')->ratio]);
+    }
+
+    public function test_health_says_not_enough_history_instead_of_comparing_against_a_mostly_empty_past(): void
+    {
+        // event:flow only started to arrive recently: five real days among empty ones. A median
+        // over that is nonsense (it read 3.4x), and five days is under the minimum anyway.
+        $this->lokiMatrix('/sum\(count_over_time\(\{[^}]*event_type="flow"\} \[1d\]/', [[[], 500]]);
+        $this->healthRow('event:flow', '2026-03-04', 10);
+        $this->healthRow('event:flow', '2026-03-03', 20);
+        $this->healthRow('event:flow', '2026-03-02', 30);
+        $this->healthRow('event:flow', '2026-03-01', 40);
+        $this->healthRow('event:flow', '2026-02-28', 50);
+        $this->healthRow('event:flow', '2026-02-27', 0);
+        $this->healthRow('event:flow', '2026-02-26', 0);
+
+        $this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC'));
+
+        $row = $this->healthFor('event:flow');
+        $this->assertNull($row->expected);
+        $this->assertNull($row->ratio);
+        $this->assertEquals(500, $row->observed);
+    }
+
+    public function test_health_baseline_skips_empty_days_once_there_are_enough_real_ones(): void
+    {
+        $this->lokiMatrix('/sum\(count_over_time\(\{[^}]*event_type="session_start"\} \[1d\]/', [[[], 100]]);
+        foreach (range(1, 8) as $i) {
+            $this->healthRow('event:session_start', Carbon::parse(self::DAY)->subDays($i)->toDateString(), 100);
+        }
+        foreach (range(9, 14) as $i) {
+            $this->healthRow('event:session_start', Carbon::parse(self::DAY)->subDays($i)->toDateString(), 0);
+        }
+
+        $this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC'));
+
+        $this->assertEquals([100, 1.0], [$this->healthFor('event:session_start')->expected, $this->healthFor('event:session_start')->ratio]);
+    }
+
+    public function test_health_compares_a_day_with_the_same_weekday_so_a_busy_sunday_is_not_an_alarm(): void
+    {
+        // Every Thursday runs 30% above the other days, as Sundays do on live. Against the median of the
+        // last fortnight a normal Thursday read 1.3; against the Thursdays before it, it reads 1.0.
+        $this->lokiMatrix('/sum\(count_over_time\(\{[^}]*event_type="page_view"\} \[1d\]/', [[[], 1300]]);
+        for ($i = 1; $i <= 28; $i++) {
+            $day = Carbon::parse(self::DAY)->subDays($i);
+            $this->healthRow('event:page_view', $day->toDateString(), $day->isThursday() ? 1300 : 1000);
+        }
+
+        $this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC'));
+
+        $this->assertEquals([1300, 1.0], [$this->healthFor('event:page_view')->expected, $this->healthFor('event:page_view')->ratio]);
+    }
+
+    public function test_health_uses_the_fortnight_until_there_are_three_of_the_same_weekday(): void
+    {
+        // One earlier Thursday since the change point: under three, so the fortnight median is used.
+        config()->set('freegle.ux.health_change_points', ['event:impressions' => '2026-02-21']);
+        $this->lokiMatrix('/sum\(count_over_time\(\{[^}]*event_type="impressions"\} \[1d\]/', [[[], 1000]]);
+        for ($i = 1; $i <= 12; $i++) {
+            $day = Carbon::parse(self::DAY)->subDays($i);
+            $this->healthRow('event:impressions', $day->toDateString(), $day->isThursday() ? 2000 : 1000);
+        }
+
+        $this->service()->rollupLokiDay(Carbon::parse(self::DAY, 'UTC'));
+
+        $this->assertEquals([1000, 1.0], [$this->healthFor('event:impressions')->expected, $this->healthFor('event:impressions')->ratio]);
     }
 
     public function test_sample_sessions_are_capped_per_step_and_old_ones_deleted(): void

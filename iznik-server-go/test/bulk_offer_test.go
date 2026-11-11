@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +43,7 @@ func grantClearance(t *testing.T, userID uint64) {
 func TestBulkOfferPutCreatesCatalogue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkput")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	grantClearance(t, userID)
 	token := getToken(t, userID)
 
@@ -98,9 +99,9 @@ func TestBulkOfferPutCreatesCatalogue(t *testing.T) {
 func TestBulkOfferGetReturnsCatalogue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkget")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Office desk", 4, "Good")
@@ -161,8 +162,8 @@ func TestBulkOfferGetReturnsCatalogue(t *testing.T) {
 func TestBulkInterest(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkint")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
@@ -242,8 +243,8 @@ func TestBulkInterest(t *testing.T) {
 func TestBulkInterestCreatesRoster(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkroster")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
@@ -287,8 +288,8 @@ func TestBulkInterestCreatesRoster(t *testing.T) {
 func TestBulkInterestMessageIsStructured(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkstruct")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Office Clearance", 55.95, -3.18)
 	// Three items: ref #1, #2, #3 in insertion (id) order.
@@ -334,9 +335,9 @@ func TestBulkInterestMessageIsStructured(t *testing.T) {
 func TestBulkInterestOnBehalf(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkonbehalf")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
@@ -385,9 +386,9 @@ func TestBulkInterestOnBehalf(t *testing.T) {
 func TestBulkInterestState(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkstate")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	strangerID := CreateTestUser(t, prefix+"_stranger", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
@@ -422,8 +423,8 @@ func TestBulkInterestState(t *testing.T) {
 func TestBulkInterestPreservesReservedState(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkreserve")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
@@ -470,7 +471,7 @@ func TestBulkInterestPreservesReservedState(t *testing.T) {
 func TestBulkOfferPatchRebuildsCatalogue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkpatch")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	grantClearance(t, ownerID)
 	token := getToken(t, ownerID)
 
@@ -512,7 +513,7 @@ func TestBulkOfferPatchRebuildsCatalogue(t *testing.T) {
 func TestBulkOfferSlots(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkslots")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	grantClearance(t, ownerID)
 	token := getToken(t, ownerID)
 
@@ -565,7 +566,7 @@ func TestBulkOfferSlots(t *testing.T) {
 func TestBulkItemPhotoIngestion(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkphoto")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
@@ -619,8 +620,8 @@ func TestBulkItemPhotoIngestion(t *testing.T) {
 func TestBulkItemUploadedPhotoDeliveryURL(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkphotourl")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Office desk", 4, "Good")
@@ -668,9 +669,9 @@ func TestBulkItemUploadedPhotoDeliveryURL(t *testing.T) {
 func TestBulkOfferAccessInstructions(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkaccess")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
 	grantClearance(t, ownerID)
 	ownerToken := getToken(t, ownerID)
 
@@ -763,8 +764,8 @@ func TestBulkOfferAccessInstructions(t *testing.T) {
 func TestBulkInterestStateCollectedWritesMessagesByAndDecrementsAvailableNow(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkcollected1")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
@@ -807,8 +808,8 @@ func TestBulkInterestStateCollectedWritesMessagesByAndDecrementsAvailableNow(t *
 func TestBulkInterestStateCollectedAccumulatesMultipleItems(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkcollected2")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
@@ -853,8 +854,8 @@ func TestBulkInterestStateCollectedAccumulatesMultipleItems(t *testing.T) {
 func TestBulkOfferPatchAccessInstructions(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkpatchaccess")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	grantClearance(t, ownerID)
 	ownerToken := getToken(t, ownerID)
 

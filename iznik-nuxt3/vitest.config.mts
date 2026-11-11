@@ -122,23 +122,6 @@ export default defineConfig({
       ),
       'vue-letter': path.join(rootDir, 'tests/unit/mocks/vue-letter.js'),
       letterparser: path.join(rootDir, 'tests/unit/mocks/letterparser.js'),
-      // Handsontable mocks
-      '@handsontable/vue3': path.join(
-        rootDir,
-        'tests/unit/mocks/handsontable.js'
-      ),
-      'handsontable/registry': path.join(
-        rootDir,
-        'tests/unit/mocks/handsontable-registry.js'
-      ),
-      'handsontable/styles/handsontable.min.css': path.join(
-        rootDir,
-        'tests/unit/mocks/handsontable-css.js'
-      ),
-      'handsontable/styles/ht-theme-classic.min.css': path.join(
-        rootDir,
-        'tests/unit/mocks/handsontable-css.js'
-      ),
       // Map libraries installed only by the ModTools layer (modtools/package.json).
       // Unresolvable here, they made the coverage transform of ModGroupMap.vue
       // fail silently; see tests/unit/mocks/modtools-map-libs.js. The CSS entry
@@ -146,7 +129,7 @@ export default defineConfig({
       // package's sub-paths.
       '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css': path.join(
         rootDir,
-        'tests/unit/mocks/handsontable-css.js'
+        'tests/unit/mocks/empty-css.js'
       ),
       '@geoman-io/leaflet-geoman-free': path.join(
         rootDir,

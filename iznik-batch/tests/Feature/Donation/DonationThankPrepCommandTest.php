@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Donation;
 
+use App\Models\User;
 use App\Mail\Donation\DonationThankPrepMail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -27,6 +28,7 @@ class DonationThankPrepCommandTest extends TestCase
             'source'           => $attributes['source']           ?? 'DonateWithPayPal',
             'giftaidconsent'   => $attributes['giftaidconsent']   ?? 0,
             'thanked'          => $attributes['thanked']          ?? null,
+            'giftaidchaseup'   => $attributes['giftaidchaseup']   ?? null,
             'timestamp'        => $attributes['timestamp']        ?? now(),
         ]);
     }
@@ -59,7 +61,7 @@ class DonationThankPrepCommandTest extends TestCase
             'firstname'  => 'Test',
             'lastname'   => 'Donor',
             'fullname'   => 'Test Donor',
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'added'      => now()->subYears(2),
         ], $attributes);
         if ($id !== null) {
@@ -651,5 +653,151 @@ class DonationThankPrepCommandTest extends TestCase
                 && $mail->cards[0]['donation']['payer'] === 'banktransfer@example.com'
                 && $mail->cards[0]['thankReasonKey'] === 'external';
         });
+    }
+
+    /**
+     * Run the digest for one donor whose earlier donation is below the
+     * high-water mark and whose new qualifying donation produces the card.
+     *
+     * @return array<string, mixed> The donor's card.
+     */
+    private function cardForDonorWithEarlierDonation(
+        ?string $chaseUp,
+        ?string $giftAidPeriod = null,
+        array $moreAsks = [],
+        bool $recordedByVolunteer = false
+    ): array {
+        Mail::fake();
+
+        $userId = $this->insertUser(['firstname' => 'Asked', 'lastname' => 'Donor', 'fullname' => 'Asked Donor']);
+
+        if ($giftAidPeriod !== null) {
+            DB::table('giftaid')->insert([
+                'userid'      => $userId,
+                'period'      => $giftAidPeriod,
+                'fullname'    => 'Asked Donor',
+                'homeaddress' => '',
+                'reviewed'    => now()->subDay(),
+                'recordedby'  => $recordedByVolunteer ? $this->insertUser(['fullname' => 'Volunteer']) : null,
+            ]);
+        }
+
+        // The chase-up mail records an ask alongside giftaidchaseup; a volunteer's later asks are more rows.
+        foreach (array_merge($chaseUp !== null ? [$chaseUp] : [], $moreAsks) as $askedAt) {
+            DB::table('giftaid_asks')->insert(['userid' => $userId, 'askedby' => null, 'timestamp' => $askedAt]);
+        }
+
+        $oldId = $this->insertDonation([
+            'userid'         => $userId,
+            'GrossAmount'    => 10.00,
+            'Payer'          => 'asked@example.com',
+            'timestamp'      => now()->subDays(10),
+            'giftaidchaseup' => $chaseUp,
+        ]);
+        $this->setLastSentId($oldId);
+
+        $this->insertDonation([
+            'userid'      => $userId,
+            'GrossAmount' => 25.00,
+            'Payer'       => 'asked@example.com',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        $cards = [];
+        foreach (Mail::sent(DonationThankPrepMail::class) as $mail) {
+            foreach ($mail->cards as $card) {
+                $cards[] = $card;
+            }
+        }
+        $this->assertCount(1, $cards);
+
+        return $cards[0];
+    }
+
+    private function renderCard(array $card): string
+    {
+        return view('emails.mjml.donation.thank-prep', [
+            'cards' => [$card],
+            'total' => 25.00,
+            'email' => 'thanker@example.com',
+        ])->render();
+    }
+
+    public function test_card_records_when_giftaid_was_asked_and_nobody_replied(): void
+    {
+        $card = $this->cardForDonorWithEarlierDonation('2026-10-12 09:30:00');
+
+        $this->assertNull($card['giftaid']);
+        $this->assertNotNull($card['giftaidAskedOn']);
+        $this->assertSame('2026-10-12', $card['giftaidAskedOn']->toDateString());
+    }
+
+    public function test_card_has_no_asked_date_when_never_chased_up(): void
+    {
+        $card = $this->cardForDonorWithEarlierDonation(null);
+
+        $this->assertNull($card['giftaid']);
+        $this->assertNull($card['giftaidAskedOn']);
+    }
+
+    public function test_card_has_no_asked_date_when_a_declaration_exists(): void
+    {
+        $card = $this->cardForDonorWithEarlierDonation('2026-10-12 09:30:00', 'Past4YearsAndFuture');
+
+        $this->assertNotNull($card['giftaid']);
+        $this->assertNull($card['giftaidAskedOn']);
+    }
+
+    public function test_rendered_card_says_asked_on_date_no_reply(): void
+    {
+        $html = $this->renderCard($this->cardForDonorWithEarlierDonation('2026-10-12 09:30:00'));
+
+        $this->assertStringContainsString('Asked on 12 Oct 2026, no reply', $html);
+        $this->assertStringNotContainsString('Never asked', $html);
+    }
+
+    public function test_card_counts_every_time_we_asked(): void
+    {
+        $card = $this->cardForDonorWithEarlierDonation('2026-08-01 09:30:00', null, ['2026-10-20 14:00:00', '2026-09-15 10:00:00']);
+
+        $this->assertSame(3, $card['giftaidAsks']);
+        $this->assertSame('2026-10-20', $card['giftaidAskedOn']->toDateString());
+
+        $html = $this->renderCard($card);
+        $this->assertStringContainsString('Asked 3 times, last on 20 Oct 2026, no reply', $html);
+    }
+
+    public function test_rendered_card_says_a_volunteer_recorded_the_decline(): void
+    {
+        $card = $this->cardForDonorWithEarlierDonation(null, 'Declined', [], true);
+        $this->assertTrue($card['giftaid']['recordedByVolunteer']);
+
+        $html = $this->renderCard($card);
+        $this->assertStringContainsString('On file: Declined (recorded by a volunteer)', $html);
+    }
+
+    public function test_rendered_card_says_the_donor_declined_on_the_form(): void
+    {
+        $html = $this->renderCard($this->cardForDonorWithEarlierDonation(null, 'Declined'));
+
+        $this->assertStringContainsString('On file: Declined', $html);
+        $this->assertStringNotContainsString('recorded by a volunteer', $html);
+    }
+
+    public function test_rendered_card_says_never_asked_when_not_chased_up(): void
+    {
+        $html = $this->renderCard($this->cardForDonorWithEarlierDonation(null));
+
+        $this->assertStringContainsString('Never asked / not on file', $html);
+        $this->assertStringNotContainsString('no reply', $html);
+    }
+
+    public function test_rendered_card_shows_declaration_not_asked_state(): void
+    {
+        $html = $this->renderCard($this->cardForDonorWithEarlierDonation('2026-10-12 09:30:00', 'Declined'));
+
+        $this->assertStringContainsString('On file: Declined', $html);
+        $this->assertStringNotContainsString('no reply', $html);
     }
 }

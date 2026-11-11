@@ -1,13 +1,18 @@
 ---
-last_reviewed: 2026-10-11
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
   - iznik-nuxt3/modtools/pages/chats/**
   - iznik-nuxt3/modtools/layouts/default.vue
   - iznik-nuxt3/modtools/components/ModMember*.vue
+  - iznik-nuxt3/modtools/components/ModBulk*.vue
+  - iznik-nuxt3/modtools/composables/useBulkSelect.js
+  - iznik-nuxt3/modtools/stores/spammer.js
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
   - iznik-nuxt3/modtools/components/ModSupportUser.vue
+  - iznik-nuxt3/modtools/components/ModChatFooter.vue
+  - iznik-nuxt3/modtools/pages/support/cases/[[id]].vue
   - iznik-batch/app/Services/ChatProcessService.php
   - iznik-batch/app/Console/Commands/User/DetectRelatedAccountsCommand.php
 ---
@@ -48,6 +53,11 @@ that more common: a post can reach your community from a freegler who is not on 
 Someone with **Support** access can look up any freegler on the system, on any community,
 so ask them when you need to see an account that is outside your own communities. See
 [Support Tools](https://wiki.ilovefreegle.org/Support_Tools) on the wiki.
+
+If a freegler who has donated asks us to stop asking them for money, Support can turn off
+**Donation requests** on their account in Support Tools. That stops every donation ask, on the
+site and by email, for a year; Support Tools shows the date it ends. The freegler can also do it
+themselves in Settings.
 
 You can type the member's number with or without a `#` in front of it. Both work.
 

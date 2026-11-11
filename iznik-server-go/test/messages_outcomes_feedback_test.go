@@ -14,7 +14,7 @@ import (
 func TestMessagesOutcomesFeedbackColumn(t *testing.T) {
 	prefix := uniquePrefix("fbcol")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, prefix+" offer", 52.5, -1.8)
 
 	cases := map[string]struct {
@@ -66,7 +66,7 @@ func TestWorkCountHappinessEmptyCommentExcluded(t *testing.T) {
 	// The count is national and the test database is shared, so compare before and after.
 	before := getSessionWork(t, token)["happiness"].(float64)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, memberID, "OFFER: Rating only item", 55.95, -3.19)
 	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments, reviewed, timestamp) "+
 		"VALUES (?, 'Taken', 'Happy', '', 0, NOW())", msgID)

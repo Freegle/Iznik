@@ -11,8 +11,9 @@ import (
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
-	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 // The single-point reach gates — replyeligible on the message list and the
@@ -29,8 +30,8 @@ func TestReplyEligibleGridGate(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("spbre")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, viewerID)
 
 	mid := CreateTestMessage(t, posterID, "OFFER: single point grid (spbre)", 51.5, -0.1)
@@ -84,8 +85,8 @@ func TestChatReplyGateGridGate(t *testing.T) {
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("spbchat")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, replierID)
 
 	msgID := CreateTestMessage(t, posterID, "OFFER: chat gate grid (spbchat)", 51.5, -0.1)

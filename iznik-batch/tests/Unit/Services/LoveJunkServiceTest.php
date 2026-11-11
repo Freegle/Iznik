@@ -141,6 +141,36 @@ class LoveJunkServiceTest extends TestCase
         $this->assertNull(DB::table('lovejunk')->where('msgid', $msgId)->first());
     }
 
+    public function test_sends_an_automatically_split_message_without_its_crops(): void
+    {
+        // Bulk items made by the auto-splitter do not make a clearance. LoveJunk had this post
+        // as one draft before it was split, and still does; the item crops are not sent,
+        // because LoveJunk fetches the upload and would get the whole photo again.
+        $this->fakeSuccessfulPost();
+
+        $userId = $this->createUser();
+        $locationId = $this->createLocation();
+        $msgId = $this->createMessage($userId, $locationId, ['subject' => 'OFFER: Sofa and two chairs (London)']);
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $msgId, 'position' => 0, 'name' => 'Sofa', 'quantity' => 1],
+            ['msgid' => $msgId, 'position' => 1, 'name' => 'Chairs', 'quantity' => 2],
+        ]);
+        DB::table('messages_autosplit')->insert(['msgid' => $msgId, 'state' => 'Split', 'kind' => 'several_items']);
+        DB::table('messages_attachments')->insert([
+            ['msgid' => $msgId, 'externaluid' => 'freegletusd-photo1', 'externalmods' => '{}'],
+            ['msgid' => $msgId, 'externaluid' => 'freegletusd-photo1', 'externalmods' => '{"cx":1,"cy":2,"cw":300,"ch":200,"fw":800,"fh":600,"precrop":true}'],
+        ]);
+
+        $result = (new LoveJunkService())->sync();
+
+        $this->assertEquals(1, $result['sent']);
+        Http::assertSent(function ($request) {
+            $images = $request->data()['images'] ?? [];
+
+            return count($images) === 1 && str_contains($images[0]['url'], 'photo1');
+        });
+    }
+
     public function test_skips_message_without_postcode(): void
     {
         Http::fake();

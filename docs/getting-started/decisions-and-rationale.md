@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-02
+last_reviewed: 2026-10-30
 owner: Freegle dev team
 ---
 
@@ -177,8 +177,8 @@ environments at once
   Capacitor. A fix lands everywhere at once
   ([../developers/reference/mobile-app.md](../developers/reference/mobile-app.md)).
 
-There is a separate native app experiment in `freegle-app/`. It does not ship, and the
-reason it does not is exactly the point above: it would be a second codebase to maintain.
+A native app experiment was tried and removed, for exactly the reason above: it would be
+a second codebase to maintain.
 
 ## Why Netlify for the frontends
 

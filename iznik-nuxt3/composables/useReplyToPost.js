@@ -19,6 +19,7 @@ export function useReplyToPost() {
         replyMessage: replyStore.replyMessage,
         replyingAt: replyStore.replyingAt,
         replySource: replyStore.replySource,
+        replyImageId: replyStore.replyImage?.id || null,
       }
 
       if (
@@ -81,7 +82,8 @@ export function useReplyToPost() {
         replyToSend.value.replyMsgId,
         false,
         noNavigate,
-        replyToSend.value.replySource
+        replyToSend.value.replySource,
+        replyToSend.value.replyImageId
       )
 
       // Clear the store of any message to avoid repeatedly sending it.
@@ -89,6 +91,7 @@ export function useReplyToPost() {
       replyStore.replyMessage = null
       replyStore.replyingAt = Date.now()
       replyStore.replySource = null
+      replyStore.replyImage = null
 
       // Clear the composing draft for this item too.  The state-machine path
       // does this via clearReply() → clearDraft() in the COMPLETED transition,

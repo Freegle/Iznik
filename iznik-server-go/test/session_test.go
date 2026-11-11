@@ -31,7 +31,7 @@ func postSession(body string) *http.Response {
 func TestLostPasswordSuccess(t *testing.T) {
 	prefix := uniquePrefix("lostpw-ok")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(`{"action":"LostPassword","email":"%s"}`, email)
 	resp := postSession(body)
@@ -59,7 +59,7 @@ func TestLostPasswordSendsToEmailUsedNotPreferred(t *testing.T) {
 	// address must get the login link at the address they actually used - not
 	// at their preferred address, which may differ and may be the one bouncing.
 	prefix := uniquePrefix("lostpw-used")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	primaryEmail := fmt.Sprintf("%s@test.com", prefix)
 	secondaryEmail := fmt.Sprintf("%s-secondary@test.com", prefix)
 
@@ -100,7 +100,7 @@ func TestLostPasswordMissingEmail(t *testing.T) {
 func TestUnsubscribeSuccess(t *testing.T) {
 	prefix := uniquePrefix("unsub-ok")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(`{"action":"Unsubscribe","email":"%s"}`, email)
 	resp := postSession(body)
@@ -150,7 +150,7 @@ func TestSessionUnsupportedAction(t *testing.T) {
 func TestLostPasswordReusesExistingKey(t *testing.T) {
 	prefix := uniquePrefix("lostpw-reuse")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	CreateTestUser(t, prefix, "User")
+	CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// First request creates the key.
 	body := fmt.Sprintf(`{"action":"LostPassword","email":"%s"}`, email)
@@ -179,7 +179,7 @@ func TestLostPasswordDeletedUser(t *testing.T) {
 	// Create a deleted user with email.
 	db := database.DBConn
 	fullname := fmt.Sprintf("Test User %s", prefix)
-	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, deleted) VALUES ('Test', ?, ?, 'User', NOW())", prefix, fullname)
+	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, deleted) VALUES ('Test', ?, ?, ?, NOW())", prefix, fullname, utils.SYSTEMROLE_USER)
 	var userID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)
 	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", userID, email)
@@ -200,7 +200,7 @@ func TestLostPasswordDeletedUser(t *testing.T) {
 
 func TestGetSession(t *testing.T) {
 	prefix := uniquePrefix("get_sess")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
@@ -239,7 +239,7 @@ func TestGetSessionReturnsDonorFields(t *testing.T) {
 	// frontend can suppress ads for recent donors (recentDonor computed prop).
 	prefix := uniquePrefix("sess_donor")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Insert a donation dated 10 days ago — within the 31-day ADFREE_PERIOD.
@@ -273,7 +273,7 @@ func TestGetSessionReturnsEngagementLevel(t *testing.T) {
 	// personalise the suggested donation amount without a separate API call.
 	prefix := uniquePrefix("sess_eng")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Set engagement level directly — normally maintained by the V1 Engage.php cron.
@@ -296,7 +296,7 @@ func TestGetSessionReturnsEngagementLevel(t *testing.T) {
 func TestGetSessionEmailsHaveOurdomainFlag(t *testing.T) {
 	prefix := uniquePrefix("sess_ourd")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Add an internal ourdomain email alongside the real one.
@@ -339,7 +339,7 @@ func TestGetSessionEmailsExposeBouncedTimestamp(t *testing.T) {
 	// one carries a timestamp.
 	prefix := uniquePrefix("sess_bounced")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	healthyEmail := fmt.Sprintf("%s@test.com", prefix)
@@ -383,7 +383,7 @@ func TestGetSessionReturnsMailFlags(t *testing.T) {
 	// state, and Relevant::sendMessages keeps mailing users who appear opted out.
 	prefix := uniquePrefix("sess_mail_flags")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	check := func(rel, news int) {
@@ -421,7 +421,7 @@ func TestGetSessionAppliesSettingsDefaults(t *testing.T) {
 	// so the UI toggle renders ON (matching cron behaviour) rather than OFF (Boolean(undefined)).
 	prefix := uniquePrefix("sess_defaults")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Overwrite settings to a blob that has no notificationmails or engagement keys.
@@ -474,7 +474,7 @@ func TestGetSessionAppliesSettingsDefaults(t *testing.T) {
 func TestGetSessionLatLngPrefersMyLocation(t *testing.T) {
 	prefix := uniquePrefix("sess_latlng")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create two distinct locations: the user's home postcode and a remote location.
@@ -525,7 +525,7 @@ func TestGetSessionNotLoggedIn(t *testing.T) {
 // session, not the one with the lowest primary key.
 func TestGetSessionReturnsCurrentSessionCredentials(t *testing.T) {
 	prefix := uniquePrefix("sess_cred")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	// Insert two sessions. idOther is inserted first so it has the lower PK
@@ -576,7 +576,7 @@ func TestGetSessionReturnsCurrentSessionCredentials(t *testing.T) {
 // ID from the token.
 func TestGetSessionReturnsCurrentSessionCredentialsViaAuth2(t *testing.T) {
 	prefix := uniquePrefix("sess_auth2")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	// Insert two sessions. idOther is inserted first so it has a lower PK
@@ -625,7 +625,7 @@ func TestGetSessionReturnsCurrentSessionCredentialsViaAuth2(t *testing.T) {
 // helper/run-loop.sh when no JWT is supplied but PERSISTENT_TOKEN is set.
 func TestGetSessionViaAuth2ReturnsJWT(t *testing.T) {
 	prefix := uniquePrefix("sess_auth2_jwt")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	sessionID, _ := CreateTestSession(t, userID)
 	db := database.DBConn
 
@@ -653,7 +653,7 @@ func TestGetSessionViaAuth2ReturnsJWT(t *testing.T) {
 func TestLoginEmailPassword(t *testing.T) {
 	prefix := uniquePrefix("login_ep")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a sha1(password + salt) hashed password for the Native login.
 	db := database.DBConn
@@ -697,7 +697,7 @@ func TestLoginEmailPassword(t *testing.T) {
 func TestLoginWrongPassword(t *testing.T) {
 	prefix := uniquePrefix("login_wrongpw")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a sha1(password + salt) hashed password for the Native login.
 	db := database.DBConn
@@ -754,7 +754,7 @@ func TestLoginUnknownEmail(t *testing.T) {
 
 func TestLoginLinkKey(t *testing.T) {
 	prefix := uniquePrefix("login_link")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Use the LostPassword flow to create a Link login key.
 	email := fmt.Sprintf("%s@test.com", prefix)
@@ -796,7 +796,7 @@ func TestLoginMultipleNativeLogins(t *testing.T) {
 	// any valid credentials for that userid should work.
 	prefix := uniquePrefix("login_multi")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	salt := os.Getenv("PASSWORD_SALT")
@@ -851,7 +851,7 @@ func TestLoginNullUid(t *testing.T) {
 	// Legacy Native logins may have NULL uid. These should still work.
 	prefix := uniquePrefix("login_nulluid")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	salt := os.Getenv("PASSWORD_SALT")
@@ -887,7 +887,7 @@ func TestLoginNullUid(t *testing.T) {
 
 func TestPatchSessionDisplayname(t *testing.T) {
 	prefix := uniquePrefix("patch_dname")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -919,7 +919,7 @@ func TestPatchSessionDisplayname(t *testing.T) {
 
 func TestPatchSessionSettings(t *testing.T) {
 	prefix := uniquePrefix("patch_settings")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	newSettings := `{"notifications":{"push":true},"email":"daily"}`
@@ -946,7 +946,7 @@ func TestPatchSessionSettings(t *testing.T) {
 func TestPatchSessionReinstateLogsRestored(t *testing.T) {
 	prefix := uniquePrefix("patch_restore")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Soft-delete the account as self-service deletion does, then create the
 	// session afterwards, mirroring a user logging back in during the grace
@@ -990,7 +990,7 @@ func TestPatchSessionReinstateLogsRestored(t *testing.T) {
 func TestPatchSessionSettingsPostcodeChange(t *testing.T) {
 	prefix := uniquePrefix("sess_postcode")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a test location of type Postcode.
@@ -1037,7 +1037,7 @@ func TestPatchSessionSettingsPostcodeChange(t *testing.T) {
 
 func TestPatchSessionOnHoliday(t *testing.T) {
 	prefix := uniquePrefix("patch_holiday")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -1077,7 +1077,7 @@ func TestPatchSessionNotLoggedIn(t *testing.T) {
 
 func TestPatchSessionConfirmEmailKey(t *testing.T) {
 	prefix := uniquePrefix("confirm_email")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -1126,7 +1126,7 @@ func TestPatchSessionConfirmEmailKey(t *testing.T) {
 // minutes of the bounce.
 func TestPatchSessionConfirmEmailClearsBounce(t *testing.T) {
 	prefix := uniquePrefix("confirm_unbounce")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -1170,7 +1170,7 @@ func TestPatchSessionConfirmEmailClearsBounce(t *testing.T) {
 
 func TestPatchSessionConfirmEmailKeyNotFound(t *testing.T) {
 	prefix := uniquePrefix("confirm_nf")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -1189,9 +1189,9 @@ func TestPatchSessionConfirmEmailKeyNotFound(t *testing.T) {
 
 func TestPatchSessionConfirmEmailMergesUser(t *testing.T) {
 	prefix := uniquePrefix("confirm_merge")
-	userID1 := CreateTestUser(t, prefix+"_u1", "User")
+	userID1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token1 := CreateTestSession(t, userID1)
-	userID2 := CreateTestUser(t, prefix+"_u2", "User")
+	userID2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 
@@ -1246,12 +1246,12 @@ func TestPatchSessionConfirmEmailMergesUser(t *testing.T) {
 // duplicate, matching on counterparty in either user1/user2 ordering.
 func TestPatchSessionConfirmEmailMergeConsolidatesChatRooms(t *testing.T) {
 	prefix := uniquePrefix("merge_rooms")
-	survivor := CreateTestUser(t, prefix+"_srv", "User")
+	survivor := CreateTestUser(t, prefix+"_srv", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, survivor)
-	loser := CreateTestUser(t, prefix+"_los", "User")
-	zed := CreateTestUser(t, prefix+"_zed", "User")   // both users chat to zed, same ordering
-	yana := CreateTestUser(t, prefix+"_yan", "User")  // both users chat to yana, opposite ordering
-	wendy := CreateTestUser(t, prefix+"_wen", "User") // only the loser chats to wendy
+	loser := CreateTestUser(t, prefix+"_los", utils.SYSTEMROLE_USER)
+	zed := CreateTestUser(t, prefix+"_zed", utils.SYSTEMROLE_USER)   // both users chat to zed, same ordering
+	yana := CreateTestUser(t, prefix+"_yan", utils.SYSTEMROLE_USER)  // both users chat to yana, opposite ordering
+	wendy := CreateTestUser(t, prefix+"_wen", utils.SYSTEMROLE_USER) // only the loser chats to wendy
 
 	db := database.DBConn
 
@@ -1406,7 +1406,7 @@ func reverseString(s string) string {
 
 func TestDeleteSession(t *testing.T) {
 	prefix := uniquePrefix("del_sess")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Verify session exists.
@@ -1441,7 +1441,7 @@ func TestDeleteSession(t *testing.T) {
 // Freegle and ModTools at once.
 func TestDeleteSessionScopedToCurrentSeries(t *testing.T) {
 	prefix := uniquePrefix("del_sess_series")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	// Production gives each login a distinct random series; the CreateTestSession
@@ -1492,7 +1492,7 @@ func TestDeleteSessionScopedToCurrentSeries(t *testing.T) {
 // never evict the user's other logins.
 func TestDeleteSessionNeverDeletesAllWhenSeriesUnresolvable(t *testing.T) {
 	prefix := uniquePrefix("del_sess_zero")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	mk := func(series uint64) uint64 {
@@ -1530,7 +1530,7 @@ func TestDeleteSessionNeverDeletesAllWhenSeriesUnresolvable(t *testing.T) {
 
 func TestPostSessionForget(t *testing.T) {
 	prefix := uniquePrefix("forget")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -1561,7 +1561,7 @@ func TestPostSessionForget(t *testing.T) {
 
 func TestPostSessionForgetMod(t *testing.T) {
 	prefix := uniquePrefix("forget_mod")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, userID)
 	_, token := CreateTestSession(t, userID)
 
@@ -1590,7 +1590,7 @@ func TestPostSessionForgetMod(t *testing.T) {
 // deletion must be recorded in logs so mod tools have an audit trail.
 func TestForgetWritesDeletionLog(t *testing.T) {
 	prefix := uniquePrefix("forget_log")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -1612,10 +1612,10 @@ func TestForgetWritesDeletionLog(t *testing.T) {
 
 func TestPostSessionRelated(t *testing.T) {
 	prefix := uniquePrefix("related")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"action":   "Related",
@@ -1665,12 +1665,12 @@ func getSessionWork(t *testing.T, token string) map[string]interface{} {
 func TestWorkCountStoriesBasic(t *testing.T) {
 	prefix := uniquePrefix("wc_stories")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a regular user who is a member of the same group and writes a story.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	storyID := CreateTestStory(t, memberID, "Test headline", "Great story", false, true)
 	defer db.Exec("DELETE FROM users_stories WHERE id = ?", storyID)
 
@@ -1682,7 +1682,7 @@ func TestWorkCountStoriesBasic(t *testing.T) {
 func TestWorkCountStoriesDateFilter(t *testing.T) {
 	prefix := uniquePrefix("wc_stories_date")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
@@ -1691,7 +1691,7 @@ func TestWorkCountStoriesDateFilter(t *testing.T) {
 	before := getSessionWork(t, token)["stories"].(float64)
 
 	// Create a member with a story dated 60 days ago (outside 31-day window).
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	var storyID uint64
 	db.Exec("INSERT INTO users_stories (userid, headline, story, reviewed, public, date) "+
 		"VALUES (?, 'Old story', 'Long ago', 0, 0, DATE_SUB(NOW(), INTERVAL 60 DAY))",
@@ -1711,7 +1711,7 @@ func TestWorkCountStoriesDateFilter(t *testing.T) {
 func TestWorkCountNewsletterStories(t *testing.T) {
 	prefix := uniquePrefix("wc_newsletter")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	// Grant newsletter permission so this mod can see the count.
 	db.Exec("UPDATE users SET permissions = 'Newsletter' WHERE id = ?", modID)
@@ -1719,7 +1719,7 @@ func TestWorkCountNewsletterStories(t *testing.T) {
 	_, token := CreateTestSession(t, modID)
 
 	// Create a reviewed, public story not yet newsletter-reviewed.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	var storyID uint64
 	db.Exec("INSERT INTO users_stories (userid, headline, story, reviewed, public, newsletterreviewed, date) "+
 		"VALUES (?, 'Newsletter story', 'Ready for newsletter', 1, 1, 0, NOW())", memberID)
@@ -1734,13 +1734,13 @@ func TestWorkCountNewsletterStories(t *testing.T) {
 func TestWorkCountNewsletterStoriesRequiresPermission(t *testing.T) {
 	prefix := uniquePrefix("wc_nl_perm")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	// No newsletter permission — regular mod.
 	_, token := CreateTestSession(t, modID)
 
 	// Create a reviewed, public story not yet newsletter-reviewed.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	var storyID uint64
 	db.Exec("INSERT INTO users_stories (userid, headline, story, reviewed, public, newsletterreviewed, date) "+
 		"VALUES (?, 'Perm test story', 'Should not appear', 1, 1, 0, NOW())", memberID)
@@ -1755,7 +1755,7 @@ func TestWorkCountNewsletterStoriesRequiresPermission(t *testing.T) {
 func TestWorkCountNewsletterStoriesExcludesDeletedUsers(t *testing.T) {
 	prefix := uniquePrefix("wc_nl_deleted")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
@@ -1763,7 +1763,7 @@ func TestWorkCountNewsletterStoriesExcludesDeletedUsers(t *testing.T) {
 	baseline := getSessionWork(t, token)["newsletterstories"].(float64)
 
 	// Create a story for a deleted user — should NOT be counted.
-	deletedUserID := CreateTestUser(t, prefix+"_deleted", "User")
+	deletedUserID := CreateTestUser(t, prefix+"_deleted", utils.SYSTEMROLE_USER)
 	var deletedStoryID uint64
 	db.Exec("INSERT INTO users_stories (userid, headline, story, reviewed, public, newsletterreviewed, date) "+
 		"VALUES (?, 'Deleted user story', 'Should not count', 1, 1, 0, NOW())", deletedUserID)
@@ -1783,12 +1783,12 @@ func TestWorkCountNewsletterStoriesExcludesDeletedUsers(t *testing.T) {
 func TestWorkCountHappinessBasic(t *testing.T) {
 	prefix := uniquePrefix("wc_happy")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a message in the group and add a happiness outcome with a real comment.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, memberID, "OFFER: Test happy item", 55.95, -3.19)
 	var outcomeID uint64
 	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments, reviewed, timestamp) "+
@@ -1804,13 +1804,13 @@ func TestWorkCountHappinessBasic(t *testing.T) {
 func TestWorkCountHappinessAutoCommentExcluded(t *testing.T) {
 	prefix := uniquePrefix("wc_happy_auto")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	before := getSessionWork(t, token)["happiness"].(float64)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, memberID, "OFFER: Auto comment item", 55.95, -3.19)
 
 	// Insert outcomes with each of the auto-generated comments that should be excluded.
@@ -1853,12 +1853,12 @@ func TestWorkCountHappinessAutoCommentExcluded(t *testing.T) {
 func TestWorkCountGiftAid(t *testing.T) {
 	prefix := uniquePrefix("wc_giftaid")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a giftaid declaration pending review.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) "+
 		"VALUES (?, 'This', 'Test Person', '123 Test Street')", memberID)
 	var giftaidID uint64
@@ -1873,12 +1873,12 @@ func TestWorkCountGiftAid(t *testing.T) {
 func TestWorkCountGiftAidDeclinedExcluded(t *testing.T) {
 	prefix := uniquePrefix("wc_giftaid_dec")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a Declined giftaid - should not be counted.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) "+
 		"VALUES (?, 'Declined', 'Test Decliner', '456 No Street')", memberID)
 	var giftaidID uint64
@@ -1900,13 +1900,13 @@ func TestWorkCountGiftAidDeclinedExcluded(t *testing.T) {
 func TestWorkCountChatReview(t *testing.T) {
 	prefix := uniquePrefix("wc_chatrev")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create two users who are members of the group.
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// Create a chat room and a message that requires review.
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
@@ -1940,16 +1940,16 @@ func TestWorkCountHousekeepingAdminOnly(t *testing.T) {
 	db.Exec("INSERT INTO housekeeper_tasks (task_key, name, interval_hours, enabled, placeholder, last_status) VALUES (?, ?, 1, 1, 0, 'failure')", taskKey, "WC test overdue")
 	defer db.Exec("DELETE FROM housekeeper_tasks WHERE task_key = ?", taskKey)
 
-	supportID := CreateTestUser(t, prefix+"_sup", "User")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, supportID)
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	_, supTok := CreateTestSession(t, supportID)
 	assert.Equal(t, float64(0), getSessionWork(t, supTok)["housekeeping"].(float64),
 		"Support must not get the housekeeping count (Admin-only)")
 
-	adminID := CreateTestUser(t, prefix+"_adm", "User")
+	adminID := CreateTestUser(t, prefix+"_adm", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, adminID)
-	db.Exec("UPDATE users SET systemrole = 'Admin' WHERE id = ?", adminID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_ADMIN, adminID)
 	_, admTok := CreateTestSession(t, adminID)
 	assert.GreaterOrEqual(t, getSessionWork(t, admTok)["housekeeping"].(float64), float64(1),
 		"Admin must get the housekeeping count")
@@ -1963,20 +1963,20 @@ func TestWorkCountSpammerPendingAddRequiresSpamAdmin(t *testing.T) {
 	prefix := uniquePrefix("wc_spa")
 
 	// A pending-add spam_users row to count (the count is system-wide).
-	flaggedID := CreateTestUser(t, prefix+"_flagged", "User")
+	flaggedID := CreateTestUser(t, prefix+"_flagged", utils.SYSTEMROLE_USER)
 	db.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid) VALUES (?, 'PendingAdd', 'WC test', ?)", flaggedID, flaggedID)
 	defer db.Exec("DELETE FROM spam_users WHERE userid = ?", flaggedID)
 
 	// Support user WITHOUT SpamAdmin permission → 0.
-	supportID := CreateTestUser(t, prefix+"_sup", "User")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, supportID)
-	db.Exec("UPDATE users SET systemrole = 'Support', permissions = NULL WHERE id = ?", supportID)
+	db.Exec("UPDATE users SET systemrole = ?, permissions = NULL WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
 	_, supTok := CreateTestSession(t, supportID)
 	assert.Equal(t, float64(0), getSessionWork(t, supTok)["spammerpendingadd"].(float64),
 		"Support without SpamAdmin permission must not get spammerpendingadd")
 
 	// User WITH SpamAdmin permission → counts.
-	spamAdminID := CreateTestUser(t, prefix+"_spa", "User")
+	spamAdminID := CreateTestUser(t, prefix+"_spa", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, spamAdminID)
 	db.Exec("UPDATE users SET permissions = 'SpamAdmin' WHERE id = ?", spamAdminID)
 	_, spaTok := CreateTestSession(t, spamAdminID)
@@ -2003,7 +2003,7 @@ func TestWorkCountSpammerPendingAddRequiresSpamAdmin(t *testing.T) {
 
 func TestWorkCountTotalExcludesInformational(t *testing.T) {
 	prefix := uniquePrefix("wc_total")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
@@ -2047,7 +2047,7 @@ func TestWorkCountTotalExcludesInformational(t *testing.T) {
 
 func TestWorkCountsNotReturnedForNonMod(t *testing.T) {
 	prefix := uniquePrefix("wc_nonmod")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
@@ -2078,13 +2078,13 @@ func TestWorkCountsNotReturnedForNonMod(t *testing.T) {
 func TestWorkCountRelatedMembers(t *testing.T) {
 	prefix := uniquePrefix("wc_related")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create two regular users in the mod's group who are related.
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// Both users must have login history to be counted (matches list filter).
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
@@ -2111,12 +2111,12 @@ func TestWorkCountRelatedMembers(t *testing.T) {
 func TestWorkCountRelatedMembersNoLogins(t *testing.T) {
 	prefix := uniquePrefix("wc_rel_nologin")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	// No users_logins rows — neither user can log in.
 
 	u1, u2 := user1ID, user2ID
@@ -2131,8 +2131,8 @@ func TestWorkCountRelatedMembersNoLogins(t *testing.T) {
 	beforeRelated := beforeWork["relatedmembers"].(float64)
 
 	// Add a second pair with logins to establish baseline.
-	user3ID := CreateTestUser(t, prefix+"_u3", "User")
-	user4ID := CreateTestUser(t, prefix+"_u4", "User")
+	user3ID := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
+	user4ID := CreateTestUser(t, prefix+"_u4", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user3ID, prefix+"_u3_login")
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user4ID, prefix+"_u4_login")
 	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u3_login", prefix+"_u4_login")
@@ -2165,10 +2165,10 @@ func TestWorkCountHeldVolunteeringIsBlueNotRed(t *testing.T) {
 	prefix := uniquePrefix("wc_volheld")
 	db := database.DBConn
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, modID)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) "+
 		"VALUES (?, 'Held Vol', 'Description', '', 1, 0, 0)", memberID)
 	var volID uint64
@@ -2196,7 +2196,7 @@ func TestWorkCountHeldVolunteeringIsBlueNotRed(t *testing.T) {
 
 func TestWorkCountAllFieldsPresent(t *testing.T) {
 	prefix := uniquePrefix("wc_fields")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
@@ -2219,32 +2219,19 @@ func TestWorkCountAllFieldsPresent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Work Counts: Active/Inactive moderator split
-// ---------------------------------------------------------------------------
-
-// setMembershipSettings updates the JSON settings on a membership row.
-func setMembershipSettings(t *testing.T, membershipID uint64, settings string) {
-	db := database.DBConn
-	result := db.Exec("UPDATE memberships SET settings = ? WHERE id = ?", settings, membershipID)
-	if result.Error != nil {
-		t.Fatalf("ERROR: Failed to update membership settings: %v", result.Error)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Work Counts: Chat review uses RECIPIENT matching
 // ---------------------------------------------------------------------------
 
 func TestWorkCountChatReviewRecipientMatching(t *testing.T) {
 	prefix := uniquePrefix("wc_chat_recip")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// user1 is in the mod's group, user2 is in a different group.
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// user2 (non-member) sends a message TO user1 (member of mod's group).
 	// Recipient is user1 → recipient IS in mod's group → should be counted.
@@ -2272,13 +2259,13 @@ func TestWorkCountChatReviewRecipientMatching(t *testing.T) {
 func TestWorkCountChatReviewExcludesDeletedUser(t *testing.T) {
 	prefix := uniquePrefix("wc_chatdel")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 
 	// Create two users who are members of the group.
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// Create a chat room and a review-required message from user1.
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
@@ -2312,7 +2299,7 @@ func TestWorkCountChatReviewExcludesDeletedUser(t *testing.T) {
 func TestGetSessionRejectsOldAppVersion(t *testing.T) {
 	// App version 2.x should be rejected with ret=123.
 	prefix := uniquePrefix("sess_oldapp")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/session?jwt=%s&appversion=2.0.1", token), nil)
@@ -2329,7 +2316,7 @@ func TestGetSessionRejectsOldAppVersion(t *testing.T) {
 func TestGetSessionRecordsWebVersion(t *testing.T) {
 	prefix := uniquePrefix("sess_webver")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/session?jwt=%s&webversion=2026-03-23", token), nil)
@@ -2346,7 +2333,7 @@ func TestGetSessionRecordsWebVersion(t *testing.T) {
 func TestGetSessionRecordsAppVersion(t *testing.T) {
 	prefix := uniquePrefix("sess_appver")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// App version 3.x should be accepted and recorded.
@@ -2387,7 +2374,7 @@ func TestSessionProfileDBImage(t *testing.T) {
 	// the session should return profile with computed path/paththumb URLs.
 	db := database.DBConn
 	prefix := uniquePrefix("sess_prof_db")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Insert a DB-stored profile image (no url, no externaluid, not archived).
@@ -2414,7 +2401,7 @@ func TestSessionProfileExternalUID(t *testing.T) {
 	// the session should return profile with delivery service URLs.
 	db := database.DBConn
 	prefix := uniquePrefix("sess_prof_ext")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	fakeUID := "freegletusd-sessprofiletest123"
@@ -2443,7 +2430,7 @@ func TestSessionProfileExternalURL(t *testing.T) {
 	// the session should return that URL as path/paththumb.
 	db := database.DBConn
 	prefix := uniquePrefix("sess_prof_url")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	externalURL := "https://example.com/avatar.jpg"
@@ -2459,8 +2446,8 @@ func TestSessionProfileExternalURL(t *testing.T) {
 func TestSessionProfileNoImage(t *testing.T) {
 	// When a user has no profile image, the session should not include profile.
 	prefix := uniquePrefix("sess_prof_none")
-	CreateTestUser(t, prefix, "User")
-	userID := CreateTestUser(t, prefix+"b", "User")
+	CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	userID := CreateTestUser(t, prefix+"b", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Don't insert any users_images row.
@@ -2472,7 +2459,7 @@ func TestSessionProfileUseprofileDisabled(t *testing.T) {
 	// When useprofile is explicitly set to 0, the session should not include profile.
 	db := database.DBConn
 	prefix := uniquePrefix("sess_prof_off")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Insert a profile image.
@@ -2491,7 +2478,7 @@ func TestSessionProfileMatchesUserEndpoint(t *testing.T) {
 	// row without path/paththumb, while the user endpoint used ProfileSetPath.
 	db := database.DBConn
 	prefix := uniquePrefix("sess_prof_match")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Give the user a DB-stored profile image.
@@ -2528,7 +2515,7 @@ func TestLoginDeletedUserEmailPassword(t *testing.T) {
 	// account" banner. The Go V2 API must NOT filter them out.
 	prefix := uniquePrefix("login_del_ep")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	salt := os.Getenv("PASSWORD_SALT")
@@ -2566,7 +2553,7 @@ func TestLoginDeletedUserEmailPassword(t *testing.T) {
 func TestLoginDeletedUserLinkKey(t *testing.T) {
 	// impersonating a deleted user via login link must work.
 	prefix := uniquePrefix("login_del_lk")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 
@@ -2599,7 +2586,7 @@ func TestSessionDeletedAndForgottenFields(t *testing.T) {
 	// GET /session must return both 'deleted' and 'forgotten' fields so the
 	// frontend can show the correct restore/rejoin UI.
 	prefix := uniquePrefix("sess_del_fg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -2627,7 +2614,7 @@ func TestDeletedUserForgotPassword(t *testing.T) {
 	// Deleted users should still be able to use forgot-password so they can
 	// recover their account.
 	prefix := uniquePrefix("del_forgot")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	// Soft-delete the user.
@@ -2651,7 +2638,7 @@ func TestPatchSessionRestoreDeletedAccount(t *testing.T) {
 	// to nil by the JSON decoder for JSON null values, so the check
 	// `req.Deleted != nil` was always false. Fix: use json.RawMessage (non-pointer).
 	prefix := uniquePrefix("patch_restore")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -2686,7 +2673,7 @@ func TestDeletedUserLinkLogin(t *testing.T) {
 	// Deleted users should still be able to log in via link so they can see
 	// the restore banner.
 	prefix := uniquePrefix("del_link")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	// Create a login key for the user.
@@ -2715,7 +2702,7 @@ func TestGetSessionInventsNameFromEmail(t *testing.T) {
 		localPart := fmt.Sprintf("sp%d", time.Now().UnixNano()%100000000)
 
 		// Create a user with empty fullname and no first/last name.
-		db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('', 'User')")
+		db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('', ?)", utils.SYSTEMROLE_USER)
 		var userID uint64
 		db.Raw("SELECT id FROM users ORDER BY id DESC LIMIT 1").Scan(&userID)
 
@@ -2768,7 +2755,7 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 
 	t.Run("stores apptype=User when modtools param absent", func(t *testing.T) {
 		prefix := uniquePrefix("push_user")
-		userID := CreateTestUser(t, prefix, "User")
+		userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
 
 		token_val := fmt.Sprintf("fcm-token-user-%s", prefix)
@@ -2795,7 +2782,7 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 
 	t.Run("stores apptype=ModTools when modtools=true query param", func(t *testing.T) {
 		prefix := uniquePrefix("push_modtools")
-		userID := CreateTestUser(t, prefix, "User")
+		userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
 
 		token_val := fmt.Sprintf("fcm-token-modtools-%s", prefix)
@@ -2822,7 +2809,7 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 
 	t.Run("stores apptype=ModTools when modtools=true in body (Capacitor app)", func(t *testing.T) {
 		prefix := uniquePrefix("push_modbody")
-		userID := CreateTestUser(t, prefix, "User")
+		userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
 
 		token_val := fmt.Sprintf("fcm-token-modbody-%s", prefix)
@@ -2851,7 +2838,7 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 
 	t.Run("ON DUPLICATE KEY UPDATE preserves apptype correctly", func(t *testing.T) {
 		prefix := uniquePrefix("push_upsert")
-		userID := CreateTestUser(t, prefix, "User")
+		userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
 
 		token_val := fmt.Sprintf("fcm-token-upsert-%s", prefix)
@@ -2884,7 +2871,7 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 
 	t.Run("ON DUPLICATE KEY UPDATE corrects type on upsert", func(t *testing.T) {
 		prefix := uniquePrefix("push_typefix")
-		userID := CreateTestUser(t, prefix, "User")
+		userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
 
 		token_val := fmt.Sprintf("fcm-token-typefix-%s", prefix)
@@ -2931,14 +2918,14 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 		})
 
 		// User A registers the device token first.
-		userA := CreateTestUser(t, prefix+"a", "User")
+		userA := CreateTestUser(t, prefix+"a", utils.SYSTEMROLE_USER)
 		_, tokenA := CreateTestSession(t, userA)
 		reqA := httptest.NewRequest("PATCH", "/api/session?jwt="+tokenA, bytes.NewReader(body))
 		reqA.Header.Set("Content-Type", "application/json")
 		getApp().Test(reqA)
 
 		// User B logs in on the SAME device (same token) and registers.
-		userB := CreateTestUser(t, prefix+"b", "User")
+		userB := CreateTestUser(t, prefix+"b", utils.SYSTEMROLE_USER)
 		_, tokenB := CreateTestSession(t, userB)
 		reqB := httptest.NewRequest("PATCH", "/api/session?jwt="+tokenB, bytes.NewReader(body))
 		reqB.Header.Set("Content-Type", "application/json")
@@ -3020,7 +3007,7 @@ func TestTopicActiveWithin(t *testing.T) {
 func TestLoginWritesLoginLog(t *testing.T) {
 	prefix := uniquePrefix("login_log")
 	email := fmt.Sprintf("%s@test.com", prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	salt := os.Getenv("PASSWORD_SALT")
@@ -3071,7 +3058,7 @@ func TestLoginWritesLoginLog(t *testing.T) {
 // wording for it rather than the password one.
 func TestLoginLinkWritesLoginLog(t *testing.T) {
 	prefix := uniquePrefix("login_link_log")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	lpBody, _ := json.Marshal(map[string]interface{}{
@@ -3103,7 +3090,7 @@ func TestLoginLinkWritesLoginLog(t *testing.T) {
 // question when someone reports being logged out unexpectedly.
 func TestDeleteSessionWritesLogoutLog(t *testing.T) {
 	prefix := uniquePrefix("logout_log")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	series := userID*1000 + 3
@@ -3128,7 +3115,7 @@ func TestDeleteSessionWritesLogoutLog(t *testing.T) {
 // precisely the state worth seeing, so it is logged as such.
 func TestDeleteSessionLogsWhenNothingDeleted(t *testing.T) {
 	prefix := uniquePrefix("logout_log_none")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())", userID, userID*1000+4)
@@ -3156,7 +3143,7 @@ func TestDeleteSessionLogsWhenNothingDeleted(t *testing.T) {
 // gets the same refusal as a wrong key and no session.
 func TestLoginLinkKeyRefusedForPartnerMember(t *testing.T) {
 	prefix := uniquePrefix("login_link_tn")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	linkKey := fmt.Sprintf("%s-key", prefix)

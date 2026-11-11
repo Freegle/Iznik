@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-11
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/**
@@ -10,6 +10,7 @@ covers:
   - iznik-batch/app/Services/TakedownService.php
   - iznik-batch/app/Services/Ripple/**
   # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-server-go/test/message_edit_and_message_test.go
   - iznik-server-go/test/modtools_searchmemb_test.go
   - iznik-batch/tests/Unit/Services/Ripple/**
 ---
@@ -113,6 +114,20 @@ community. Each action can be marked:
 
 Keep them friendly and personal. A short human note lands far better than a corporate one.
 
+### Adding a note to a post and telling the poster
+
+An **Edit and Message** standard message does two things with one click. It adds its text
+to the post, and it sends the poster a message saying why. It suits posts that need the
+same note every time, such as knives (you must be 18 or over to collect, and the handover
+must be in person) or firewood.
+
+When you write one under Settings, the main text box is **Added to post**: the wording
+that goes into the post, at the top or the bottom. A second box, **Message to poster**,
+holds what the poster is sent. When you use it, you see what the post will read and the
+message to the poster, and you can change either before you send. The post is changed and
+the message is sent together. The mod log records both the edit and the message against
+the standard message you used.
+
 ### Fill-in boxes and optional bits
 
 A standard message can mark parts of its wording with `<editthis>...</editthis>` (something
@@ -120,7 +135,8 @@ you must write yourself each time) or `<optional>...</optional>` (something that
 applies sometimes). You add those tags when you write the message under Settings.
 
 When a message uses either of them, sending it opens the message laid out in order rather
-than as one block of text:
+than as one block of text. For **Edit and Message** this applies to the text added to the
+post and to the message to the poster alike:
 
 - An **`<editthis>`** part is a highlighted box. Fill it in before you send.
 - An **`<optional>`** part comes with **Keep** and **Remove**. You must choose one, and you
@@ -163,7 +179,8 @@ quorum.
 ## Posts from Trash Nothing that nobody chose
 
 Some posts arrive from Trash Nothing without the person choosing a Freegle community at
-all - we match them to a community from where they are. Those posts carry a warning saying
+all - we match them to a community from where they are. A post where they did choose one
+goes on that community, even when they post from inside another community's area. Those posts carry a warning saying
 so, worded for where the post has got to: on one waiting in **Pending** it says approve or
 delete is the whole of it, and on one already **live** it says what happens if members
 report it. They behave differently from an ordinary post, because the person behind them
@@ -182,8 +199,9 @@ it back.
 
 The same applies to the person on the **members page**: they show a warning saying they are
 a Trash Nothing user who didn't choose the community, and the Chat, Mail and standard-message
-buttons are not offered. If they later post to a community they've chosen, all of this goes
-away by itself and they become an ordinary member.
+buttons are not offered. A Trash Nothing member who has left your community
+can't be written to either, so Blank Reply and the standard messages aren't offered on their
+posts any more. See [contacting Trash Nothing members](managing-members.md#contacting-trash-nothing-members).
 
 Ordinary freeglers are unaffected - they can still reply to the post, and the reply reaches
 the poster on Trash Nothing as usual.

@@ -295,6 +295,23 @@ class StoriesNewsletterCommandTest extends TestCase
         Mail::assertNothingSent();
     }
 
+    public function test_skips_trash_nothing_members(): void
+    {
+        $this->minStories();
+
+        $stamped = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0, 'lastaccess' => now()]);
+        DB::table('users')->where('id', $stamped->id)->update(['tnuserid' => random_int(900000000, 999999999)]);
+
+        $this->createTestUser([
+            'email_preferred' => 'tn' . uniqid() . '-g1' . User::TN_EMAIL_SUFFIX,
+            'newslettersallowed' => 1, 'bouncing' => 0, 'lastaccess' => now(),
+        ]);
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+    }
+
     /**
      * V1's Newsletter::send() called sendOurMails() per user, which refuses
      * anyone not seen for six months. This port dropped that check, so on

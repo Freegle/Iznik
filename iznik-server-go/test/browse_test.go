@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -78,7 +79,7 @@ func TestRecordScrollDepth_SessionUpsertKeepsMax(t *testing.T) {
 // other sessions are in the window.
 func TestScrollDepthCurve(t *testing.T) {
 	prefix := uniquePrefix("scrolldepth")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -110,7 +111,7 @@ func TestScrollDepthCurveRequiresLogin(t *testing.T) {
 // The scroll-depth curve is Support/Admin only.
 func TestScrollDepthCurveRequiresAdmin(t *testing.T) {
 	prefix := uniquePrefix("scrolldepth_noauth")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/scroll/depth?jwt=%s", token), nil))

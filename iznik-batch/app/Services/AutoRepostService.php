@@ -196,6 +196,9 @@ class AutoRepostService
                                 userId: $msg->fromuser,
                                 userName: $user->displayname,
                                 userEmail: $user->email_preferred,
+                                repostDate: $msg->arrival
+                                    ? \Illuminate\Support\Carbon::parse($msg->arrival)->addDays($interval)->toDateString()
+                                    : null,
                             ));
                         }
                     }
@@ -266,8 +269,7 @@ class AutoRepostService
             foreach ($bands as $type => $band) {
                 $outer->orWhere(function ($q) use ($type, $band) {
                     $q->where('messages.type', $type)
-                        // keep-raw: an interval expression against NOW() with a bound
-                        // parameter; the query builder has no interval helper.
+                        // keep-raw: an interval expression against NOW() with a bound parameter; the query builder has no interval helper.
                         ->whereRaw('messages.arrival <= DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['earliest']])
                         ->whereRaw('messages.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['latest']]);
                 });

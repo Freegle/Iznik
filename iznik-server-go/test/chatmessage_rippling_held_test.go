@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
-
 )
 
 // TestFetchChatMessages_HeldByRippling verifies that when a mod views a chat via GET /api/chat/:id/message,
@@ -37,9 +37,9 @@ func TestFetchChatMessages_HeldByRippling(t *testing.T) {
 		INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	PromoteTestUserToModerator(t, modID)
 
@@ -129,9 +129,9 @@ func TestFetchChatMessages_HeldByRippling_ReleasedNotFlagged(t *testing.T) {
 	prefix := uniquePrefix("ripplereleased")
 
 	// Table created by the first test via IF NOT EXISTS.
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	PromoteTestUserToModerator(t, modID)
 
@@ -212,8 +212,8 @@ func TestGetChatMessagesForRoom_ParticipantHeldReplyExcluded(t *testing.T) {
 		INDEX (status)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, posterID, "OFFER: room held reply test", 51.5, -0.1)
 	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")

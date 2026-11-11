@@ -8,7 +8,6 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
-
 )
 
 // A post is not live until its reach has been calculated. Rippling starts a post
@@ -50,7 +49,7 @@ func feedHasMessage(t *testing.T, url string, msgid uint64) bool {
 }
 
 // The member's own post is theirs to see the moment they post it, so the filter
-// exempts the author. 
+// exempts the author.
 func TestPendingReachNeverHidesYourOwnPost(t *testing.T) {
 	db := database.DBConn
 

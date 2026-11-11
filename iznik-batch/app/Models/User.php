@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\TrashNothing\Sync\TnUserIdMergeConflict;
 use App\Support\EloquentUtils;
 use App\Support\NameSanitiser;
 use Illuminate\Database\Eloquent\Builder;
@@ -120,11 +121,8 @@ class User extends Model implements Auditable
     protected $guarded = ['id'];
     public $timestamps = FALSE;
 
-    // Historic membership role ranking, used only by merge() to pick the higher role.
-    public const ROLE_NONMEMBER = 'Non-member';
-    public const ROLE_MEMBER = 'Member';
-    public const ROLE_MODERATOR = 'Moderator';
-    public const ROLE_OWNER = 'Owner';
+    // The domain of a TrashNothing member's address.
+    public const TN_EMAIL_SUFFIX = '@user.trashnothing.com';
 
     // System-wide roles.
     public const SYSTEMROLE_USER = 'User';
@@ -144,6 +142,9 @@ class User extends Model implements Auditable
      */
     public const USER_INACTIVE_DAYS = 182;
     public const USER_INACTIVE = self::USER_INACTIVE_DAYS * 86400;
+
+    // How long "don't ask me to donate" lasts. Twin of DonationAskOptOutDays in the Go API.
+    public const DONATION_ASK_OPTOUT_DAYS = 365;
 
     // Gift aid period weights for merge comparison (lower = more favourable).
     public const GIFTAID_PERIOD_PAST_4_YEARS_AND_FUTURE = 'Past4YearsAndFuture';
@@ -330,7 +331,7 @@ class User extends Model implements Auditable
      */
     public function isNameExempt(): bool
     {
-        if (in_array($this->systemrole, ['Moderator', 'Support', 'Admin'], TRUE)) {
+        if (in_array($this->systemrole, [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN], TRUE)) {
             return TRUE;
         }
         return $this->isModerator() || $this->isOfficialFreegleUser();
@@ -379,6 +380,66 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Display name for a TN username: dots and underscores become spaces, then
+     * title case ("tricia.hayes" -> "Tricia Hayes").
+     *
+     * Capitalises after any non-alphanumeric, not just whitespace ("mary-jane" ->
+     * "Mary-Jane"), as Go's strings.Title does in CreatePartnerUser, so ucwords()
+     * would give a different name for the same username.
+     */
+    public static function tnDisplayName(string $username): string
+    {
+        $name = str_replace(['.', '_'], ' ', $username);
+
+        return preg_replace_callback(
+            '/(?<![\p{L}\p{N}_])\p{Ll}/u',
+            fn ($m) => mb_strtoupper($m[0]),
+            $name
+        );
+    }
+
+    /**
+     * The bare TN address for a username. TN confirm it is deliverable.
+     */
+    public static function tnEmailForUsername(string $username): string
+    {
+        return $username . self::TN_EMAIL_SUFFIX;
+    }
+
+    /**
+     * The TN username behind a TN address, bare or per-group alias:
+     * "tricia.hayes-g298@user.trashnothing.com" and
+     * "tricia.hayes@user.trashnothing.com" both give "tricia.hayes".
+     *
+     * Only a -g<digits> immediately before the domain is stripped, because
+     * usernames can contain hyphens ("bibiana-gomes-g4840" is "bibiana-gomes").
+     * Lowercased, as usernames are compared without regard to case. Returns NULL
+     * for anything that is not a TN address.
+     */
+    public static function tnUsernameFromEmail(string $email): ?string
+    {
+        if (!preg_match('/^(.+?)(?:-g\d+)?@user\.trashnothing\.com$/i', trim($email), $m)) {
+            return NULL;
+        }
+
+        return strtolower($m[1]);
+    }
+
+    /**
+     * The member's TrashNothing address: the preferred email when it is one, otherwise the
+     * newest. Most members hold several, one per group TN has mailed for them
+     * ("tricia.hayes-g298@user.trashnothing.com"). NULL when they hold none.
+     */
+    public function tnAddress(): ?string
+    {
+        return $this->emails()
+            ->where('email', 'LIKE', '%' . self::TN_EMAIL_SUFFIX)
+            ->orderByDesc('preferred')
+            ->orderByDesc('id')
+            ->value('email');
+    }
+
+    /**
      * Check if user is a national moderator (Moderator, Support or Admin
      * systemrole). Freegle has one moderator pool, not one per community.
      */
@@ -414,7 +475,7 @@ class User extends Model implements Auditable
     public function isTN(): bool
     {
         $email = $this->email_preferred;
-        return $email && str_ends_with($email, '@user.trashnothing.com');
+        return $email && str_ends_with($email, self::TN_EMAIL_SUFFIX);
     }
 
     /**
@@ -451,9 +512,12 @@ class User extends Model implements Auditable
         $email = str_replace('@googlemail.', '@gmail.', $email);
         $email = str_replace('@googlemail.co.uk', '@gmail.co.uk', $email);
 
-        # Canonicalise TN addresses.
-        if (preg_match('/(.*)\-(.*)(@user.trashnothing.com)/', $email, $matches)) {
-            $email = $matches[1] . $matches[3];
+        # Canonicalise TN addresses: strip a per-group -g<digits> suffix, and only that.
+        # Usernames can contain hyphens and a bare username@ address has no suffix, so
+        # stripping after the last hyphen would give "mary-jane@" the canon of another
+        # member's "mary-g12@". Go's CanonicalizePartnerEmail strips the same suffix.
+        if (preg_match('/^(.+)-g\d+(@user\.trashnothing\.com)$/i', $email, $matches)) {
+            $email = $matches[1] . $matches[2];
         }
 
         # Remove plus addressing, which is sometimes used by spammers as a trick, except for Facebook where it
@@ -648,6 +712,44 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Whether we may ask this user to donate, on the site or by email.
+     *
+     * A donor can turn donation requests off in Settings (users.settings.nodonationasks),
+     * and support can set it for them. Absent means we may ask. The opt-out lapses on
+     * users.settings.nodonationasksuntil, which the API sets a year ahead when it is turned on.
+     */
+    public function wantsDonationAsks(): bool
+    {
+        return self::settingsAllowDonationAsks($this->settings);
+    }
+
+    /**
+     * The same check for a raw users.settings value, for queries that do not load a model.
+     */
+    public static function settingsAllowDonationAsks(array|string|null $settings): bool
+    {
+        if (is_string($settings)) {
+            $settings = json_decode($settings, TRUE);
+        }
+
+        if (empty($settings['nodonationasks'] ?? FALSE)) {
+            return TRUE;
+        }
+
+        // An opt-out with no date predates the lapse; donations:lapse-optouts dates it.
+        $until = $settings['nodonationasksuntil'] ?? NULL;
+        if (!is_string($until) || $until === '') {
+            return FALSE;
+        }
+
+        try {
+            return \Carbon\Carbon::parse($until)->isPast();
+        } catch (\Throwable) {
+            return FALSE;
+        }
+    }
+
+    /**
      * Check if a notification type is enabled for this user.
      *
      * @param string $type The notification type (email, emailmine, push)
@@ -755,6 +857,41 @@ class User extends Model implements Auditable
         }
 
         return $query;
+    }
+
+    /**
+     * Leave out TrashNothing members: stamped with a tnuserid, or with a TrashNothing address
+     * as their preferred email. Same definition as isTrashNothingAccount() and Go's
+     * user.TrashNothingSQL. Freegle's own mailings (the Stories newsletter, the engage mails,
+     * Community News) are not for them. Requires `users` in
+     * the query under that name.
+     */
+    public function scopeNotTrashNothing(Builder $query): Builder
+    {
+        return $query
+            ->whereNull('users.tnuserid')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('users_emails as tne')
+                    ->whereColumn('tne.userid', 'users.id')
+                    ->where('tne.preferred', 1)
+                    ->where('tne.email', 'LIKE', '%' . self::TN_EMAIL_SUFFIX);
+            });
+    }
+
+    /**
+     * A TrashNothing member, by the same definition as scopeNotTrashNothing(). Unlike isTN(),
+     * a tnuserid stamp counts even when the preferred email is not a TrashNothing address.
+     */
+    public function isTrashNothingAccount(): bool
+    {
+        return $this->tnuserid !== NULL || $this->isTN();
+    }
+
+    /** Support and Admin, who act for Freegle as a whole rather than for one community. */
+    public function isSupportOrAdmin(): bool
+    {
+        return in_array($this->systemrole, [self::SYSTEMROLE_SUPPORT, self::SYSTEMROLE_ADMIN], TRUE);
     }
 
     /**
@@ -1084,29 +1221,6 @@ class User extends Model implements Auditable
     }
 
     /**
-     * Return the highest privilege group role between two roles.
-     * Order: Owner > Moderator > Member > Non-member
-     */
-    public static function roleMax(string $role1, string $role2): string
-    {
-        $role = self::ROLE_NONMEMBER;
-
-        if ($role1 === self::ROLE_MEMBER || $role2 === self::ROLE_MEMBER) {
-            $role = self::ROLE_MEMBER;
-        }
-
-        if ($role1 === self::ROLE_MODERATOR || $role2 === self::ROLE_MODERATOR) {
-            $role = self::ROLE_MODERATOR;
-        }
-
-        if ($role1 === self::ROLE_OWNER || $role2 === self::ROLE_OWNER) {
-            $role = self::ROLE_OWNER;
-        }
-
-        return $role;
-    }
-
-    /**
      * Return the highest system role between two roles.
      * Order: Admin > Support > Moderator > User
      */
@@ -1140,7 +1254,8 @@ class User extends Model implements Auditable
      * @param int $id1 The user ID to keep (merge target)
      * @param int $id2 The user ID to absorb and delete
      * @param string $reason Human-readable reason for the merge
-     * @param bool $forceMerge If TRUE, bypass canMerge() checks
+     * @param bool $forceMerge If TRUE, bypass canMerge() checks and the different-tnuserid
+     *                         refusal (the latter is still reported)
      * @param int|null $byUserId The user performing the merge (for logging)
      * @return bool TRUE on success, FALSE on failure or if merge is blocked
      */
@@ -1161,6 +1276,23 @@ class User extends Model implements Auditable
 
         if (!$forceMerge && (!$u1->canMerge() || !$u2->canMerge())) {
             return FALSE;
+        }
+
+        // Two different tnuserids are two Trash Nothing accounts. The merge below keeps
+        // id1's and deletes id2 with its own, after which TN posts from the lost id
+        // resolve to nobody, and it cannot be undone. Refuse unless forced, and report to
+        // Sentry either way: a caller asking for this at all means something upstream
+        // decided that two TN accounts are one person.
+        if ($u1->tnuserid && $u2->tnuserid && (int) $u1->tnuserid !== (int) $u2->tnuserid) {
+            $detail = "user {$id2} (tnuserid {$u2->tnuserid}) into user {$id1} (tnuserid {$u1->tnuserid}), reason: {$reason}";
+
+            if (!$forceMerge) {
+                report(new TnUserIdMergeConflict("Refused merge of two Trash Nothing accounts: {$detail}"));
+
+                return FALSE;
+            }
+
+            report(new TnUserIdMergeConflict("Forced merge of two Trash Nothing accounts, tnuserid {$u2->tnuserid} will be lost: {$detail}"));
         }
 
         try {
@@ -1292,6 +1424,12 @@ class User extends Model implements Auditable
             EloquentUtils::reparentRowIgnore(Tryst::class, 'user2', $id2, $id1, $dryRun);
             EloquentUtils::reparentRowIgnore(IsochroneUser::class, 'userid', $id2, $id1, $dryRun);
             EloquentUtils::reparentRowIgnore(Microaction::class, 'userid', $id2, $id1, $dryRun);
+            // The record of which experiment arm a send used. A merge must not depend on an analytics
+            // table, so a table that has not been created yet is skipped. A row that clashes with one the
+            // surviving account already has stays where it is.
+            if (UxExperimentExposure::tableExists()) {
+                EloquentUtils::reparentRowIgnore(UxExperimentExposure::class, 'userid', $id2, $id1, $dryRun);
+            }
 
             // --- Handle bans (keep the earliest ban; carry it over if id1 isn't banned) ---
             if ($u2->banned && (!$u1->banned || $u2->banned < $u1->banned)) {
@@ -1691,6 +1829,18 @@ class User extends Model implements Auditable
         Logger::info("TN-SYNC-TRACE [WRITE] table=messages_promises op=delete where=userid={$this->id}");
         if (!$dryRun) {
             MessagePromise::where('userid', $this->id)->get()->each->delete();
+        }
+
+        // --- Delete the posts they marked "I'm interested" in ---
+        Logger::info("TN-SYNC-TRACE [WRITE] table=messages_interested op=delete where=userid={$this->id}");
+        if (!$dryRun) {
+            MessageInterested::where('userid', $this->id)->delete();
+        }
+
+        // --- Delete experiment exposures (skipped while the table does not exist) ---
+        Logger::info("TN-SYNC-TRACE [WRITE] table=ux_experiment_exposures op=delete where=userid={$this->id}");
+        if (!$dryRun && UxExperimentExposure::tableExists()) {
+            UxExperimentExposure::where('userid', $this->id)->delete();
         }
 
         // --- Mark user as forgotten ---

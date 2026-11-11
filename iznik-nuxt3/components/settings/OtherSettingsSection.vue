@@ -53,21 +53,45 @@
           @change="changeMarketingConsent"
         />
       </div>
+
+      <div v-if="showDonationAsks" class="option-row">
+        <div class="option-info">
+          <span class="option-label">Donation requests</span>
+          <span v-if="donationAsksUntil" class="option-desc"
+            >We won't ask you to donate until {{ donationAsksUntil }}.</span
+          >
+          <span v-else class="option-desc"
+            >Thank you for donating. Turn this off and we won't ask you to
+            donate for a year, on the site or by email.</span
+          >
+        </div>
+        <OurToggle
+          v-model="donationAsksLocal"
+          :width="100"
+          :sync="true"
+          :labels="{ checked: 'On', unchecked: 'Off' }"
+          :color="toggleColor"
+          @change="changeDonationAsks"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, defineEmits, watch } from 'vue'
+import {
+  donationAsksPaused,
+  donationAsksPausedUntil,
+  formatDonationAsksUntil,
+} from '~/composables/useDonationAsks'
+import { ref, computed, defineEmits, watch } from 'vue'
 import { useAuthStore } from '~/stores/auth'
-import { useMiscStore } from '~/stores/misc'
 import OurToggle from '~/components/OurToggle'
 import { useMe } from '~/composables/useMe'
 
 const emit = defineEmits(['update'])
 
 const authStore = useAuthStore()
-const miscStore = useMiscStore()
 
 const { me } = useMe()
 
@@ -77,7 +101,17 @@ const toggleColor = '#61AE24'
 // State
 const autorepostsLocal = ref(true)
 const enterNewLineLocal = ref(false)
-const marketingConsentLocal = ref(true)
+const marketingConsentLocal = ref(false)
+const donationAsksLocal = ref(true)
+
+// Only donors get the choice, and they keep it for good once they have donated.
+const showDonationAsks = computed(
+  () => !!me.value?.donated || !!me.value?.settings?.nodonationasks
+)
+
+const donationAsksUntil = computed(() =>
+  formatDonationAsksUntil(donationAsksPausedUntil(me.value?.settings))
+)
 
 // Methods
 const changeNewLine = async (e) => {
@@ -95,8 +129,18 @@ const changeAutorepost = async (e) => {
   emit('update')
 }
 
-const changeMarketingConsent = (e) => {
-  miscStore.setMarketingConsent(e)
+const changeMarketingConsent = async (e) => {
+  await authStore.saveAndGet({ marketingconsent: e })
+  emit('update')
+}
+
+const changeDonationAsks = async (e) => {
+  const settings = me.value.settings
+  settings.nodonationasks = !e
+  // The server dates a new opt-out; an old date sent back would read as a lapsed one.
+  delete settings.nodonationasksuntil
+  await authStore.saveAndGet({ settings })
+  emit('update')
 }
 
 // Update local refs when props change
@@ -106,7 +150,8 @@ watch(
     if (newVal) {
       autorepostsLocal.value = !newVal.settings?.autorepostsdisable
       enterNewLineLocal.value = newVal.settings?.enterNewLine || false
-      marketingConsentLocal.value = miscStore.marketingConsent
+      marketingConsentLocal.value = !!newVal.marketingconsent
+      donationAsksLocal.value = !donationAsksPaused(newVal.settings)
     }
   },
   { immediate: true }

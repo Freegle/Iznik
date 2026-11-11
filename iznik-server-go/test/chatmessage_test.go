@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
-
 )
 
 // postChatmessages sends a POST to /api/chatmessages with a JSON body.

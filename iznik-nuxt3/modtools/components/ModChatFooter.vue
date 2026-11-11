@@ -408,8 +408,15 @@
       class="mt-1"
       data-test="refer-sent"
     >
-      Referred to Support. They will look at the chat and get back to you by
-      email.
+      Referred to Support. They will look at the chat and get back to you here
+      and by email.
+      <nuxt-link
+        v-if="referCaseId"
+        :to="'/support/cases/' + referCaseId"
+        data-test="refer-case-link"
+      >
+        See the case
+      </nuxt-link>
     </NoticeMessage>
     <NoticeMessage
       v-else-if="referResult === 'failed'"
@@ -423,10 +430,24 @@
     <ConfirmModal
       v-if="showConfirmModal"
       title="Refer this chat to Support?"
-      message="The Support volunteers will have a look at the chat and get back to you by email."
       @confirm="referToSupport"
       @hidden="showConfirmModal = false"
-    />
+    >
+      <p>
+        The Support volunteers will have a look at the chat and get back to you.
+      </p>
+      <label for="refer-reason" class="form-label">
+        What do you need help with? (optional)
+      </label>
+      <b-form-textarea
+        id="refer-reason"
+        v-model="referReason"
+        rows="3"
+        maxlength="2000"
+        autocapitalize="none"
+        data-test="refer-reason"
+      />
+    </ConfirmModal>
     <ModSpammerReport
       v-if="showSpamModal && chat.user1"
       :userid="chat.user1"
@@ -943,10 +964,18 @@ const spamReport = () => {
 // 'sent' or 'failed' after a referral, so the moderator knows whether Support will see it.
 // Nothing was shown before, and a refused request looked exactly like a sent one.
 const referResult = ref(null)
+const referReason = ref('')
+const referCaseId = ref(null)
 const referToSupport = async () => {
   referResult.value = null
+  referCaseId.value = null
   try {
-    await $api.chat.referToSupport(props.id)
+    const ret = await $api.chat.referToSupport(
+      props.id,
+      referReason.value.trim().slice(0, 2000)
+    )
+    referCaseId.value = ret?.caseid || null
+    referReason.value = ''
     referResult.value = 'sent'
   } catch (e) {
     referResult.value = 'failed'

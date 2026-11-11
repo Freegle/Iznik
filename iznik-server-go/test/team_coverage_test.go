@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,7 +26,7 @@ func TestTeamPostUnauthorized(t *testing.T) {
 func TestTeamPostMissingName(t *testing.T) {
 	// Admin but neither body, form nor query carries `name` — 400.
 	prefix := uniquePrefix("TeamPostMiss")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("POST", "/api/team?jwt="+token, nil))
@@ -44,7 +45,7 @@ func TestTeamPatchUnauthorized(t *testing.T) {
 func TestTeamPatchForbidden(t *testing.T) {
 	// Regular user (systemrole=User) hits the 403 branch.
 	prefix := uniquePrefix("TeamPatchForbid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("PATCH",
@@ -55,7 +56,7 @@ func TestTeamPatchForbidden(t *testing.T) {
 func TestTeamPatchMissingID(t *testing.T) {
 	// Admin but no id — the `if req.ID == 0` branch returns 400.
 	prefix := uniquePrefix("TeamPatchNoID")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("PATCH", "/api/team?jwt="+token, nil))
@@ -65,7 +66,7 @@ func TestTeamPatchMissingID(t *testing.T) {
 func TestTeamPatchAddMissingUserid(t *testing.T) {
 	// Action=Add with no userid — nested 400.
 	prefix := uniquePrefix("TeamPatchAddNU")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	body := `{"id":1,"action":"Add"}`
@@ -78,7 +79,7 @@ func TestTeamPatchAddMissingUserid(t *testing.T) {
 func TestTeamPatchRemoveMissingUserid(t *testing.T) {
 	// Action=Remove with no userid — nested 400.
 	prefix := uniquePrefix("TeamPatchRmNU")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	body := `{"id":1,"action":"Remove"}`
@@ -92,7 +93,7 @@ func TestTeamPatchUpdateAttributes(t *testing.T) {
 	// Default switch branch — hits all four UPDATE statements (name, description,
 	// email, wikiurl). This is the PatchTeam path with no `action` key.
 	prefix := uniquePrefix("TeamPatchUpd")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -134,7 +135,7 @@ func TestTeamDeleteUnauthorized(t *testing.T) {
 
 func TestTeamDeleteMissingID(t *testing.T) {
 	prefix := uniquePrefix("TeamDelNoID")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("DELETE", "/api/team?jwt="+token, nil))
@@ -187,7 +188,7 @@ func TestTeamGetMembersImageOverride(t *testing.T) {
 	// imageoverride on teams_members sends getUserProfile down the early-return
 	// path — profile.url/turl must be the override verbatim, default=false.
 	prefix := uniquePrefix("TeamImgOvr")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	teamName := prefix + "_team"
@@ -218,7 +219,7 @@ func TestTeamGetMembersUsersImage(t *testing.T) {
 	// No imageoverride but a users_images row — getUserProfile returns the
 	// CDN uimg_/tuimg_ URLs with default=false.
 	prefix := uniquePrefix("TeamUserImg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	teamName := prefix + "_team"
@@ -248,7 +249,7 @@ func TestTeamGetMembersGravatarDefault(t *testing.T) {
 	// No imageoverride, no users_images — getUserProfile returns the gravatar
 	// default URL with default=true.
 	prefix := uniquePrefix("TeamGravatar")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	teamName := prefix + "_team"
@@ -281,7 +282,7 @@ func TestTeamGetVolunteersWithMember(t *testing.T) {
 	// Create a user with showmod=true directly so the settings string is exact.
 	fullname := "Vol " + prefix
 	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, settings) "+
-		"VALUES ('Vol', ?, ?, 'Moderator', '{\"showmod\":true}')", prefix, fullname)
+		"VALUES ('Vol', ?, ?, ?, '{\"showmod\":true}')", prefix, fullname, utils.SYSTEMROLE_MODERATOR)
 	var userID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)
 	assert.NotZero(t, userID)

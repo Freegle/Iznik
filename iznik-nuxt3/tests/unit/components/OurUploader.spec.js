@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense, ref } from 'vue'
 import OurUploader from '~/components/OurUploader.vue'
+import {
+  READ_RETRY_DELAY_MS,
+  UNREADABLE_PHOTO_MESSAGE,
+} from '~/composables/useUppyInMemory'
 
 // Mock polyfill check functions
 vi.mock('@formatjs/intl-locale/should-polyfill.js', () => ({
@@ -58,6 +62,7 @@ const mockUppy = {
   getFile: vi.fn((id) => ({ id })),
   getFiles: vi.fn(() => []),
   removeFiles: vi.fn(),
+  removeFile: vi.fn(),
 }
 
 vi.mock('@uppy/core', () => ({
@@ -493,6 +498,35 @@ describe('OurUploader', () => {
       const copyRegistered =
         mockUppy.addPreProcessor.mock.invocationCallOrder[1]
       expect(copyRegistered).toBeGreaterThan(compressorRegistered)
+    })
+
+    it('tells the member when a photo cannot be opened', async () => {
+      mockIsApp.value = false
+      const wrapper = await createWrapper()
+      const copyIntoMemory = mockUppy.addPreProcessor.mock.calls[1][0]
+      const unreadable = () =>
+        Promise.reject(
+          Object.assign(new Error('could not be read'), {
+            name: 'NotReadableError',
+          })
+        )
+      mockUppy.getFile.mockReturnValueOnce({
+        id: 'f1',
+        data: { size: 1, type: 'image/jpeg', arrayBuffer: unreadable },
+      })
+
+      vi.useFakeTimers()
+      try {
+        const done = copyIntoMemory(['f1'])
+        await vi.advanceTimersByTimeAsync(READ_RETRY_DELAY_MS)
+        await done
+      } finally {
+        vi.useRealTimers()
+      }
+      await flushPromises()
+
+      expect(mockUppy.removeFile).toHaveBeenCalledWith('f1')
+      expect(wrapper.find('.alert').text()).toBe(UNREADABLE_PHOTO_MESSAGE)
     })
 
     it('registers the HEIC pre-processor before the Compressor plugin', async () => {

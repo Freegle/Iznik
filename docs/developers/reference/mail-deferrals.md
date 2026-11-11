@@ -378,7 +378,7 @@ per type of mail held and a join would multiply member rows; each is keyed on
 pointers in Go so a query branch that does not select them reads as *unknown*
 rather than as a confident "not delayed".
 
-**Support view**: sysadmin > Mail > Delayed
+**Delayed view** (Admin only): sysadmin > Mail > Delayed
 (`GET /modtools/email/deferrals`) answers the question people actually arrive
 with - is mail to this member late? - which has the two different causes above.
 

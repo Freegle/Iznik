@@ -370,9 +370,8 @@ final class Canonical
         }
 
         // MySQL's spatial function family (ST_Distance_Sphere, MBRContains,
-        // ...) is too large to enumerate one by one - the manifest's own
-        // extractor recognises it the same way (the "spatial" mysqlism
-        // pattern in tools/orm-migration/php-extractor/extract.php).
+        // ...) is too large to enumerate one by one, so it is matched by
+        // prefix, as the extractor that generated the manifest did.
         return str_starts_with($up, 'ST_') || str_starts_with($up, 'MBR');
     }
 

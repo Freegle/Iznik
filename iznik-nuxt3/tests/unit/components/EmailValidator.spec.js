@@ -217,6 +217,27 @@ describe('EmailValidator', () => {
     })
   })
 
+  describe('domain lookup status', () => {
+    const lookup = (Status) =>
+      global.fetch.mockResolvedValue({
+        json: () => Promise.resolve({ Status }),
+      })
+
+    it('rejects a domain that does not exist (NXDOMAIN)', async () => {
+      lookup(3)
+      const wrapper = createWrapper()
+      const result = await wrapper.vm.validateEmail('a@nonexistent-domain.test')
+      expect(result).toContain('check your email domain')
+    })
+
+    it('accepts the email when the lookup itself failed (SERVFAIL)', async () => {
+      lookup(2)
+      const wrapper = createWrapper()
+      const result = await wrapper.vm.validateEmail('a@servfail-domain.test')
+      expect(result).toBe(true)
+    })
+  })
+
   describe('invalid (red border) state', () => {
     it('has no is-invalid class before any validation runs', () => {
       const wrapper = createWrapper({ required: true })

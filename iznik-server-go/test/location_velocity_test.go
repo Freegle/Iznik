@@ -15,7 +15,7 @@ import (
 func TestLocationChangeVelocityFlagsRapidHopper(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("locvel")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	db.Exec("UPDATE users SET reviewrequestedat = NULL, reviewreason = NULL, reviewedat = NULL WHERE id = ?", userID)
 	db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", userID)

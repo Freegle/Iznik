@@ -6,13 +6,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"time"
-	"github.com/freegle/iznik-server-go/database"
 )
 
 // A post with no embedding matches nothing, rather than falling back to
@@ -46,9 +46,9 @@ func TestSearchMatchesHoldTheEmailThreshold(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("searchmatch")
 
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	strong := CreateTestUser(t, prefix+"_strong", "User")
-	weak := CreateTestUser(t, prefix+"_weak", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	strong := CreateTestUser(t, prefix+"_strong", utils.SYSTEMROLE_USER)
+	weak := CreateTestUser(t, prefix+"_weak", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, poster, "OFFER: Pine bookcase", 51.5, -0.1)
 
@@ -87,7 +87,7 @@ func TestSearchMatchesHoldTheEmailThreshold(t *testing.T) {
 	// A perfect match on a search nobody has touched for years. users_searches is
 	// never pruned and goes back to 2017, so without an age bound this member
 	// gets mail about something they looked for long ago.
-	stale := CreateTestUser(t, prefix+"_stale", "User")
+	stale := CreateTestUser(t, prefix+"_stale", utils.SYSTEMROLE_USER)
 	seed(stale, "pine bookcase please", 0.99)
 	db.Exec("UPDATE users_searches SET date = DATE_SUB(NOW(), INTERVAL 3 YEAR) WHERE userid = ?", stale)
 

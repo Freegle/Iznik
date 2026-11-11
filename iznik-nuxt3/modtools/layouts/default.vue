@@ -242,23 +242,21 @@
           v-if="supportOrAdmin"
           link="/support"
           name="Support"
+          :count="['supportcases']"
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
-          v-if="supportOrAdmin"
+          v-if="admin"
           link="/sysadmin"
           name="SysAdmin"
-          :count="
-            admin
-              ? [
-                  'housekeeping',
-                  'cronjobs',
-                  'emailin',
-                  'emailout',
-                  'maildeferrals',
-                ]
-              : []
-          "
+          :count="[
+            'housekeeping',
+            'cronjobs',
+            'emailin',
+            'emailout',
+            'maildeferrals',
+            'uxexperiments',
+          ]"
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft

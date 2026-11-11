@@ -8,7 +8,6 @@ import (
 
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
-
 )
 
 func init() {
@@ -48,7 +47,7 @@ func TestSystemLogs_Unauthorized(t *testing.T) {
 
 func TestSystemLogs_ForbiddenForRegularUser(t *testing.T) {
 	prefix := uniquePrefix("syslogs_reg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Regular user without moderator role should be forbidden.
@@ -75,7 +74,7 @@ func TestSystemLogs_ModeratorAccess(t *testing.T) {
 
 func TestSystemLogs_SupportAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogs_sup")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Support user should get through auth.
@@ -88,7 +87,7 @@ func TestSystemLogs_SupportAccess(t *testing.T) {
 
 func TestSystemLogs_AdminAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogs_admin")
-	userID := CreateTestUser(t, prefix, "Admin")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	code, ok := testSystemLogsRequest(t, "/api/modtools/systemlogs?jwt="+token)
@@ -105,7 +104,7 @@ func TestSystemLogs_ModeratorCanViewAnyUser(t *testing.T) {
 
 	// Under the national moderator pool there is no group-scoping left: any
 	// moderator can view logs for any user.
-	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+	otherUserID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", modToken, otherUserID))
 	if ok {
@@ -115,10 +114,10 @@ func TestSystemLogs_ModeratorCanViewAnyUser(t *testing.T) {
 
 func TestSystemLogs_SupportCanViewAnyUser(t *testing.T) {
 	prefix := uniquePrefix("syslogs_supany")
-	supportUserID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportUserID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, supToken := CreateTestSession(t, supportUserID)
 
-	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+	otherUserID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", supToken, otherUserID))
 	if ok {
@@ -139,7 +138,7 @@ func TestSystemLogsCounts_Unauthorized(t *testing.T) {
 
 func TestSystemLogsCounts_ForbiddenForRegularUser(t *testing.T) {
 	prefix := uniquePrefix("syslogscnt_reg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	code, ok := testSystemLogsRequest(t, "/api/modtools/systemlogs/counts?jwt="+token)
@@ -150,7 +149,7 @@ func TestSystemLogsCounts_ForbiddenForRegularUser(t *testing.T) {
 
 func TestSystemLogsCounts_MissingSources(t *testing.T) {
 	prefix := uniquePrefix("syslogscnt_nosrc")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Missing required 'sources' parameter should return 400.
@@ -162,7 +161,7 @@ func TestSystemLogsCounts_MissingSources(t *testing.T) {
 
 func TestSystemLogsCounts_WithSources(t *testing.T) {
 	prefix := uniquePrefix("syslogscnt_src")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// With sources parameter should get past validation.

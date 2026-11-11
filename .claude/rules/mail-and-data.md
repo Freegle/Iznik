@@ -231,40 +231,43 @@ for every form of that filter, because each prefix matches far too much of the t
 '%@user.trashnothing.com'` 5.1s finding all 96. If you need every row, filter on the address and
 group in PHP; that is where 5e2a90450's real speedup came from anyway.
 
-## Go's CanonicalizeEmail is not PHP's canonicalizeEmail
+## Go's CanonicalizeEmail must stay PHP's canonMail
 
-They share a name and a purpose and agree on almost nothing:
+`canon` is one column that both sides write and both match on, so the two functions must give the
+same answer. Go's `user.CanonicalizeEmail` is `User::canonMail` applied to the lowercased
+address, which is what `users:backfill-email-canon` stores: googlemail becomes gmail, a TN
+`-gNNNN` suffix goes, a `+` suffix goes, dots go from the username for Gmail only and from the
+domain always. `user_pure_test.go` holds the cases, each checked against PHP.
 
-| | PHP `IncomingMailService::canonicalizeEmail` | Go `user.CanonicalizeEmail` |
-|---|---|---|
-| TN `-gNNNN` suffix | stripped | kept |
-| dots in local part | stripped for gmail/googlemail only | stripped for every domain |
-| dots in domain | stripped | kept |
-| googlemail -> gmail | yes | no |
+A disagreement is silent and one-way: a row one side writes cannot be found by the other's canon
+lookup. PHP's `findUserByEmail` canon fallback is what stops a member's second address minting a
+second account, so a row with a differently-shaped canon has no such protection, and Go's donation
+matching (`email = ? OR canon = ?`) misses the donor. `users:backfill-email-canon --apply`
+rewrites any row whose canon is not this one, and `--resume` reads only rows added since its last
+run.
 
-`canon` is the column both write and both match on, so the disagreement is silent and one-way: a
-row Go writes cannot be found by a PHP canon lookup, and vice versa. Go writes `canon` in
-`CreatePartnerUser`, `EnsurePartnerIdentifiers`, social auth and signup. PHP's `findUserByEmail`
-canon fallback is what stops a member's second address minting a second account, so a row with a
-Go-written canon has no such protection.
+## A TN canon strips only `-g<digits>`, and old rows keep the old canon
 
-Measured on production 2026-09-19, of 4,476,251 `users_emails` rows, the ones a PHP canon lookup
-cannot find are:
+`User::canonMail` (and `IncomingMailService::canonicalizeEmail`, which now delegates to it)
+used to strip everything after the LAST hyphen of a `@user.trashnothing.com` local part. A bare
+`mary-jane@` then canonicalised to `mary@usertrashnothingcom`, the canon of an unrelated
+member's `mary-g5@`, and `mary-jane-g12@` did not match `mary-jane@`. `findUserByEmail`'s canon
+fallback handed one member's mail to the other. Nothing errors: the wrong account just answers.
 
-| | Rows | Worth fixing |
-|---|---|---|
-| canon holding the address unchanged, outside Trash Nothing | 51,546 | yes |
-| canon holding the address unchanged, Trash Nothing | 41,803 | done at the partner write sites |
-| no canon, a real mailbox | 4,010 | yes |
-| no canon, a `@users.ilovefreegle.org` proxy address | 136,047 | no - matching one member to another has no meaning for these |
+The rule is now `/^(.+)-g\d+(@user\.trashnothing\.com)$/i`, the group suffix and nothing else, so
+a bare address and every alias of one username share a canon and hyphenated usernames survive.
+`UserEmailTest::tnCanonTable` runs the same rows through both functions. Two traps remain:
 
-About a thousand a day are added to the first group, so it grows. The practical effect is that
-duplicate prevention is weaker for those addresses than for the 94.8% of the table that is
-PHP-shaped, not that anything breaks loudly.
-
-Aligning them is not a rename: donation matching and social auth both look up on `canon`, so
-changing the general Go function changes who those match. Fix it at the specific site and say
-which semantics you mean.
+- Rows written under the old rule keep the old canon until `users:backfill-email-canon --apply`
+  rewrites them. Only bare addresses with a hyphenated username change, but dry-run it on
+  production before deploying. Until then a canon match is a candidate and not an answer:
+  compare `User::tnUsernameFromEmail` as well before treating one as the same member.
+- Go's `CanonicalizePartnerEmail` is not a copy of `canonMail`. It treats an alias and a BARE
+  `username@user.trashnothing.com` address alike as TN (`user.TNIdentity`), strips the suffix and the
+  domain dots, and so agrees with PHP for both. It lowercases, which `canonMail` does not, and it does
+  not strip a `+` suffix, which `canonMail` does for any address. Nothing in the repository says whether
+  a TN username can contain `+`; one that does gets a different canon in the two stacks. Any other
+  address falls to the general `CanonicalizeEmail`, which is `canonMail` (see above).
 
 ## See also
 

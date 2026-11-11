@@ -28,7 +28,7 @@ func TestLockdownRefusesCreateLocation(t *testing.T) {
 	prefix := uniquePrefix("ld_loc_create")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	restore := modsHeld()
@@ -54,7 +54,7 @@ func TestLockdownRefusesUpdateLocation(t *testing.T) {
 	prefix := uniquePrefix("ld_loc_update")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Polygon', 55.95, -3.19)", prefix+"_loc")

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-10
+last_reviewed: 2026-10-24
 owner: Freegle ops
 covers:
   - iznik-batch/app/Services/EmailSpoolerService.php

@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestChatRosterUpdateRequiresParticipantOrMod covers the fix for the mod-chat roster IDOR (H2):
@@ -16,7 +17,7 @@ import (
 // still allowed.
 func TestChatRosterUpdateRequiresParticipantOrMod(t *testing.T) {
 	prefix := uniquePrefix("RosterGate")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
 	// A User2Mod chat: user1 is the member corresponding with the group's mods.
 	roomID := CreateTestChatRoom(t, memberID, nil, "User2Mod")
@@ -24,7 +25,7 @@ func TestChatRosterUpdateRequiresParticipantOrMod(t *testing.T) {
 	body := fmt.Sprintf(`{"id":%d}`, roomID)
 
 	// An unrelated ordinary user (not a participant, not a system mod) is denied.
-	attackerID := CreateTestUser(t, prefix+"_attacker", "User")
+	attackerID := CreateTestUser(t, prefix+"_attacker", utils.SYSTEMROLE_USER)
 	_, attackerToken := CreateTestSession(t, attackerID)
 	req := httptest.NewRequest("POST", "/api/chatrooms?jwt="+attackerToken, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

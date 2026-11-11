@@ -551,6 +551,31 @@ describe('chat store', () => {
         expect.any(Function)
       )
     })
+
+    it('treats a refused moderator chat as expected, not an error', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockOpenChat.mockImplementation((params, logError) => {
+        const log = logError({ error: 403, message: 'refused' })
+        return Promise.reject(Object.assign(new Error('403'), { log }))
+      })
+
+      const id = await store.openChatToMods(10, 20)
+
+      expect(id).toBeNull()
+      expect(mockFetchChat).not.toHaveBeenCalled()
+    })
+
+    it('still throws for any other failure', async () => {
+      const store = useChatStore()
+      store.config = {}
+      mockOpenChat.mockImplementation((params, logError) => {
+        logError({ error: 500, message: 'boom' })
+        return Promise.reject(new Error('500'))
+      })
+
+      await expect(store.openChatToMods(10, 20)).rejects.toThrow('500')
+    })
   })
 
   describe('getters', () => {

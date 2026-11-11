@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,7 +17,7 @@ import (
 // only (§15/§16).
 func TestRipplingMetricsEndpoint(t *testing.T) {
 	prefix := uniquePrefix("ripplemetrics")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -45,7 +46,7 @@ func TestRipplingMetricsEndpoint(t *testing.T) {
 // timeout rather than as no data. Proved by shrinking the deadline so every section trips it.
 func TestRipplingMetricsReportsDegradedSectionsOnDeadline(t *testing.T) {
 	prefix := uniquePrefix("rippledeadline")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	restore := rippling.MetricsDeadline
@@ -65,7 +66,7 @@ func TestRipplingMetricsReportsDegradedSectionsOnDeadline(t *testing.T) {
 // A non-admin must be forbidden from the sysadmin metrics endpoint.
 func TestRipplingMetricsRequiresAdmin(t *testing.T) {
 	prefix := uniquePrefix("ripplemetrics_noauth")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
@@ -76,7 +77,7 @@ func TestRipplingMetricsRequiresAdmin(t *testing.T) {
 // a local problem the overall average hides.
 func TestRipplingMetricsSurfacesHotspots(t *testing.T) {
 	prefix := uniquePrefix("ripplehotspot")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -111,7 +112,7 @@ func TestRipplingMetricsSurfacesHotspots(t *testing.T) {
 // back by the sysadmin dashboard as a trend.
 func TestRipplingMetricsSurfacesLiveMetrics(t *testing.T) {
 	prefix := uniquePrefix("ripplive")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -151,7 +152,7 @@ func TestRipplingMetricsSurfacesLiveMetrics(t *testing.T) {
 // capture). The capture_rate is computed from pairs_in_time / pairs_total.
 func TestRipplingMetricsCaptureSummary(t *testing.T) {
 	prefix := uniquePrefix("ripplecapture")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -191,7 +192,7 @@ func TestRipplingMetricsCaptureSummary(t *testing.T) {
 // The endpoint returns a held_reply_summary from rippling_held_replies (§15 friction / §16.5).
 func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 	prefix := uniquePrefix("rippleheld")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -207,8 +208,8 @@ func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 
 	// The real table has FKs (chatmsgid -> chat_messages, msgid -> messages), so create
 	// real referenced rows rather than sentinel ids.
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, "OFFER: held summary test", 51.5, -0.1)
 	chatID := CreateTestChatRoom(t, replierID, &posterID, "User2User")
 	makeChatMsg := func() uint64 {
@@ -250,7 +251,7 @@ func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 // row and a rippling row on the same day must yield a 50% rippling share.
 func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	prefix := uniquePrefix("ripplereply")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -301,7 +302,7 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 // The default (no params) range is echoed back non-empty.
 func TestRipplingMetricsDateRange(t *testing.T) {
 	prefix := uniquePrefix("rippledate")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -346,7 +347,7 @@ func TestRipplingMetricsDateRange(t *testing.T) {
 // response) instead of scoping to the old RIPPLE_WITHIN_GROUPS set.
 func TestRipplingMetricsTrialScopeRetired(t *testing.T) {
 	prefix := uniquePrefix("rippletrial")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?trialOnly=1&jwt=%s", token), nil))
@@ -363,7 +364,7 @@ func TestRipplingMetricsTrialScopeRetired(t *testing.T) {
 // summarised over the same window, with NULL reported as '(not reported)'.
 func TestRipplingMetricsClientSourceSummary(t *testing.T) {
 	prefix := uniquePrefix("ripplesrc")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn

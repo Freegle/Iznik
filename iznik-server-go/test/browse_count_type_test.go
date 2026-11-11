@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +35,7 @@ func TestNearbyCountHonoursTypeFilter(t *testing.T) {
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("nearbycounttype")
-	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	offer := CreateTestMessage(t, posterID, "OFFER: type filter offer (nearbycounttype)", 51.5, -0.1)
 	wanted := CreateTestMessage(t, posterID, "WANTED: type filter wanted (nearbycounttype)", 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", offer, wanted)

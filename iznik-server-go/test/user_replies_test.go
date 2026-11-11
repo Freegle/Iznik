@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,9 +18,9 @@ func TestUserReplies_MultipleOutcomesAppearOnceAndShowLatest(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("replyOutcome")
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, token := CreateTestSession(t, modID)
 

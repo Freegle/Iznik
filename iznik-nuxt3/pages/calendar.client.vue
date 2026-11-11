@@ -50,6 +50,8 @@ const runtimeConfig = useRuntimeConfig()
 // The button is only rendered when eventData has a name (v-if="eventData.name"),
 // so it will be available by the time it needs to render.
 onMounted(() => {
+  // add-to-calendar-button is under the Elastic License 2.0. NOTICE grants the
+  // AGPL section 7 permission to combine Freegle's code with it.
   import('add-to-calendar-button').catch(() => {})
 })
 

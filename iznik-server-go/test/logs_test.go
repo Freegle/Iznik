@@ -53,7 +53,7 @@ func TestGetLogsMemberships(t *testing.T) {
 
 func TestGetLogsNotModerator(t *testing.T) {
 	prefix := uniquePrefix("LogsNoMod")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=messages&jwt=%s", token), nil)
@@ -112,7 +112,7 @@ func TestGetLogsModmailsonly(t *testing.T) {
 	// V1 includes: Message (Rejected, Deleted, Replied) and User (Mailed, Rejected, Deleted).
 	prefix := uniquePrefix("LogsModmail")
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -212,7 +212,7 @@ func TestGetLogsUserReturnsAllTypes(t *testing.T) {
 	// but excludes User/Created and User/Merged subtypes.
 	prefix := uniquePrefix("LogsUserAll")
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	targetUserID := CreateTestUser(t, prefix+"_target", "User")
+	targetUserID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -318,7 +318,7 @@ func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
 	// displays to show what was actually sent in the modmail.
 	prefix := uniquePrefix("LogsModmailText")
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn
@@ -366,7 +366,7 @@ func TestGetLogsMsgsubjectHistoricalIsPreserved(t *testing.T) {
 	// not the current (post-edit) subject. Uses messages_edits to reconstruct history.
 	prefix := uniquePrefix("LogsHistSubj")
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, modID)
 
 	db := database.DBConn

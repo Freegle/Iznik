@@ -21,7 +21,7 @@ class UxContractTest extends TestCase
 
     private const EMITTED = ['flow', 'flow_instance_id', 'step', 'step_seq', 'variant', 'entry', 'first_visit', 'dwell_ms',
         'to_step', 'field', 'change_kind', 'rule', 'attempt', 'from', 'to', 'ok', 'status', 'error_code', 'reason',
-        'last_step', 'age_ms', 'device_class', 'logged_in', 'is_app', 'page_route', 'action_name', 'session_id', 'user_id'];
+        'last_step', 'age_ms', 'start_logged_in', 'started_ms', 'device_class', 'logged_in', 'is_app', 'page_route', 'action_name', 'session_id', 'user_id'];
 
     private function js(): ?string
     {
@@ -88,5 +88,33 @@ class UxContractTest extends TestCase
     private function service(): UxRollupService
     {
         return app(UxRollupService::class);
+    }
+
+    public function test_every_flow_field_an_experiment_read_extracts_is_emitted(): void
+    {
+        $this->fakeLoki();
+        \Illuminate\Support\Facades\DB::table('ux_experiments')->where('name', 'contract-probe')->delete();
+        $id = \Illuminate\Support\Facades\DB::table('ux_experiments')->insertGetId([
+            'flow' => 'give', 'name' => 'contract-probe', 'title' => 't', 'hypothesis' => 'h', 'change_description' => 'c', 'expected' => 'e',
+            'arms' => json_encode(['control' => [0, 49], 'b' => [50, 99]]), 'status' => 'running',
+            'started_at' => '2026-10-14 10:00:00', 'ends_at' => '2026-10-15 10:00:00', 'created_at' => '2026-10-14 10:00:00', 'updated_at' => '2026-10-14 10:00:00',
+        ]);
+        try {
+            app(\App\Services\Ux\UxExperimentService::class)->read(
+                \Illuminate\Support\Facades\DB::table('ux_experiments')->find($id), Carbon::parse('2026-10-14 14:00:00', 'UTC'));
+        } finally {
+            \Illuminate\Support\Facades\DB::table('ux_experiments')->where('id', $id)->delete();
+        }
+
+        $this->assertNotEmpty($this->lokiQueries);
+        foreach ($this->lokiQueries as $q) {
+            preg_match_all('/\| json ([a-z_, ]+?) \|/', $q, $j);
+            $this->assertNotEmpty($j[1], 'no json stage in: '.$q);
+            foreach ($j[1] as $list) {
+                foreach (array_map('trim', explode(',', $list)) as $field) {
+                    $this->assertContains($field, self::EMITTED, "the experiment read extracts '$field' which the browser does not emit");
+                }
+            }
+        }
     }
 }

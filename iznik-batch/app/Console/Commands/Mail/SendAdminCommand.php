@@ -89,6 +89,8 @@ class SendAdminCommand extends Command
             'emails_sent' => 0,
             'skipped_activeonly' => 0,
             'skipped_relevantallowed' => 0,
+            'skipped_marketingconsent' => 0,
+            'skipped_donationasks' => 0,
             'skipped_dedup' => 0,
             'skipped_outside_area' => 0,
             'skipped_no_email' => 0,
@@ -129,6 +131,8 @@ class SendAdminCommand extends Command
                 ['Emails Sent', $stats['emails_sent']],
                 ['Skipped (active only)', $stats['skipped_activeonly']],
                 ['Skipped (relevantallowed)', $stats['skipped_relevantallowed']],
+                ['Skipped (no marketing consent)', $stats['skipped_marketingconsent']],
+                ['Skipped (donation requests off)', $stats['skipped_donationasks']],
                 ['Skipped (dedup)', $stats['skipped_dedup']],
                 ['Skipped (outside the area)', $stats['skipped_outside_area']],
                 ['Skipped (no email)', $stats['skipped_no_email']],
@@ -301,8 +305,8 @@ class SendAdminCommand extends Command
             ->pluck('userid')
             ->flip();
 
-        // Volunteers for the footer.
-        $volunteers = self::getVolunteers();
+        // Volunteers for the footer, unless the ADMIN is sent for someone else.
+        $volunteers = ($admin->volunteercredits ?? 1) ? self::getVolunteers() : [];
 
         $members = DB::table('users')
             ->leftJoin('locations', 'locations.id', '=', 'users.lastlocation')
@@ -312,6 +316,7 @@ class SendAdminCommand extends Command
                 'users.id AS userid',
                 'users.systemrole',
                 'users.relevantallowed',
+                'users.marketingconsent',
                 'users.lastaccess',
                 'users.deleted',
                 'users.settings',
@@ -385,6 +390,14 @@ class SendAdminCommand extends Command
 
                     continue;
                 }
+            }
+
+            // A Newsletter ADMIN can be a fundraising appeal, which needs the member's marketing
+            // consent. That holds for moderators too.
+            if (!$admin->essential && !$member->marketingconsent) {
+                $stats['skipped_marketingconsent']++;
+
+                continue;
             }
 
             // Filter: dedup via pre-loaded set (covers both suggested and regular admins).
@@ -483,6 +496,14 @@ class SendAdminCommand extends Command
             // Filter: skip simplemail=None for non-essential admins.
             if (!$admin->essential && $user->getSimpleMail() === User::SIMPLE_MAIL_NONE) {
                 $stats['skipped_simplemail']++;
+
+                continue;
+            }
+
+            // Filter: a member who turned off donation requests gets no Newsletter ADMIN until
+            // that lapses.
+            if (!$admin->essential && !User::settingsAllowDonationAsks($user->settings)) {
+                $stats['skipped_donationasks']++;
 
                 continue;
             }

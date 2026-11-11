@@ -125,8 +125,39 @@ func truncateString(s string) string {
 	return s[:maxStringLength] + "..."
 }
 
+// redactedValue replaces the value of any field named in sensitiveFields.
+const redactedValue = "[redacted]"
+
+// sensitiveFields are body and query fields whose values must never reach Loki:
+// passwords, third-party login credentials, our own session tokens and login
+// links, unsubscribe keys and partner keys. Truncation is no protection - most
+// passwords and the persistent session token fit inside maxStringLength. Names
+// are matched case-insensitively, at any depth, so a nested "persistent" object
+// in a login response is dropped whole.
+var sensitiveFields = map[string]bool{
+	"password":          true,
+	"applecredentials":  true,
+	"authorizationcode": true,
+	"identitytoken":     true,
+	"fbaccesstoken":     true,
+	"googlejwt":         true,
+	"jwt":               true,
+	"token":             true,
+	"persistent":        true,
+	"loginlink":         true,
+	"key":               true,
+	"k":                 true,
+	"partner":           true,
+	"secret":            true,
+}
+
+func isSensitiveField(name string) bool {
+	return sensitiveFields[strings.ToLower(name)]
+}
+
 // truncateMap recursively truncates all string values in a map, and caps the
 // number of keys kept so a pathologically wide object cannot blow up the line.
+// Values of sensitive fields are replaced with redactedValue.
 func truncateMap(data map[string]interface{}) map[string]interface{} {
 	return truncateMapDepth(data, 0)
 }
@@ -154,7 +185,11 @@ func truncateMapDepth(data map[string]interface{}, depth int) map[string]interfa
 			result["_truncated"] = fmt.Sprintf("%d more keys", len(keys)-kept)
 			break
 		}
-		result[k] = truncateValueDepth(data[k], depth+1)
+		if isSensitiveField(k) {
+			result[k] = redactedValue
+		} else {
+			result[k] = truncateValueDepth(data[k], depth+1)
+		}
 		kept++
 	}
 
@@ -333,11 +368,15 @@ func (l *LokiClient) LogApiRequestFull(version, method, endpoint string, statusC
 		logData[k] = v
 	}
 
-	// Add query parameters (truncated).
+	// Add query parameters (truncated, sensitive ones redacted).
 	if len(queryParams) > 0 {
 		truncatedParams := make(map[string]string)
 		for k, v := range queryParams {
-			truncatedParams[k] = truncateString(v)
+			if isSensitiveField(k) {
+				truncatedParams[k] = redactedValue
+			} else {
+				truncatedParams[k] = truncateString(v)
+			}
 		}
 		logData["query_params"] = truncatedParams
 	}

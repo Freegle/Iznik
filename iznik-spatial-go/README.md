@@ -173,6 +173,11 @@ spatial-knn:
 Traefik routes `spatial-knn.localhost` to the service. `iznik-routing-go` reaches
 it at `http://spatial-knn:8194` via `SPATIAL_KNN_URL`.
 
+The Dockerfile builds two images. With no target (dev and CI) it is the full toolchain image,
+because the test runners `go test` inside the running container. Production builds the
+`runtime` target (`docker-compose.override.batchprod.yml`): the server on Alpine with
+curl for the health checks, tens of MB instead of about 3 GB.
+
 ---
 
 ## OpenAPI / Swagger
