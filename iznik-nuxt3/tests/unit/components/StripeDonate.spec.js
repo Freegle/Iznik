@@ -577,6 +577,17 @@ describe('StripeDonate', () => {
       expect(component.emitted('error')).toBeFalsy()
     })
 
+    it('does not create an intent at mount when nobody is signed in', async () => {
+      mockAuthStore.auth = { jwt: null, persistent: null }
+      mockDonationStore.stripeIntent = vi.fn(() =>
+        Promise.resolve({ id: 'pi_x', clientSecret: 'cs_x' })
+      )
+
+      await createWrapper()
+
+      expect(mockDonationStore.stripeIntent).not.toHaveBeenCalled()
+    })
+
     it('shows session-expired message when tokens are cleared after fetchUser fails', async () => {
       // Simulate: tokens exist but fetchUser fails (both tokens expired)
       // BaseAPI clears tokens on 401 before error reaches component

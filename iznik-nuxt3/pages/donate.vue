@@ -51,12 +51,12 @@
             >
               Signing you in...
             </div>
-            <div v-else-if="parseFloat(amount)" class="payment-section">
+            <div v-else-if="parseFloat(payAmount)" class="payment-section">
               <DonationButton
                 v-if="payPalFallback && !isApp"
-                :key="amount + '-fallback'"
-                :text="'Donate £' + amount"
-                :value="amount"
+                :key="payAmount + '-fallback'"
+                :text="'Donate £' + payAmount"
+                :value="payAmount"
                 :suggest-giving-fund="false"
               />
               <p v-else-if="payPalFallback && isApp" class="text-muted">
@@ -64,8 +64,8 @@
               </p>
               <StripeDonate
                 v-else
-                :key="amount + '-' + monthly + '-stripe'"
-                :price="parseFloat(amount)"
+                :key="payAmount + '-' + monthly + '-stripe'"
+                :price="parseFloat(payAmount)"
                 :monthly="monthly"
                 @success="succeeded"
                 @error="payPalFallback = true"
@@ -219,6 +219,21 @@ function amountFromQuery(raw) {
 }
 
 const amount = ref(amountFromQuery(route.query.amount))
+
+// The payment section is keyed on the amount and, in the app, creates a payment intent when it
+// appears. Typing 25 would make one for 2 and another for 25, so the section follows the amount
+// only once the donor has stopped typing.
+const PAY_AMOUNT_DELAY_MS = 700
+const payAmount = ref(amount.value)
+let payAmountTimer = null
+
+watch(amount, (value) => {
+  clearTimeout(payAmountTimer)
+  payAmountTimer = setTimeout(() => {
+    payAmount.value = value
+  }, PAY_AMOUNT_DELAY_MS)
+})
+
 const monthly = ref(
   route.query.monthly === '1' || route.query.monthly === 'true'
 )
@@ -272,6 +287,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(payAmountTimer)
+
   if (autoLoginTimer) {
     clearTimeout(autoLoginTimer)
     autoLoginTimer = null

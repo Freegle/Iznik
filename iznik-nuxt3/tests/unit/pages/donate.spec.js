@@ -64,8 +64,10 @@ const globalStubs = {
   'v-icon': { template: '<i />', props: ['icon'] },
   'b-input-group': { template: '<div><slot /></div>', props: ['prepend'] },
   'b-input': {
-    template: '<input />',
+    template:
+      '<input @input="$emit(\'update:modelValue\', $event.target.value)" />',
     props: ['modelValue', 'type', 'min', 'step'],
+    emits: ['update:modelValue'],
   },
   'b-img': { template: '<img />', props: ['src', 'alt', 'fluid'] },
   NuxtLink: { template: '<a><slot /></a>', props: ['to'] },
@@ -137,6 +139,19 @@ describe('donate page', () => {
     const stripe = wrapper.findComponent({ name: 'StripeDonate' })
     expect(stripe.exists()).toBe(true)
     expect(stripe.props('monthly')).toBe(true)
+  })
+
+  it('waits until the amount stops changing before the payment section follows it', async () => {
+    const wrapper = await mountPage({ amount: '2' })
+    const stripe = () => wrapper.findComponent({ name: 'StripeDonate' })
+
+    // Typing 25: the section must not be rebuilt for the amount as it was a moment ago.
+    await wrapper.find('input').setValue('25')
+    expect(stripe().props('price')).toBe(2)
+
+    vi.advanceTimersByTime(800)
+    await flushPromises()
+    expect(stripe().props('price')).toBe(25)
   })
 
   it('shows the payment buttons straight away for a normal visit', async () => {
