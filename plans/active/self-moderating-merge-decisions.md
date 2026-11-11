@@ -114,3 +114,25 @@ Batch test tally, against master's batch tests (5,116):
 - Membership origin and implicit: `added_origin` on message submit, TrashNothing placement flags.
 - Approved-members sort order (`useModMembers`, member store, approved page spec), the multi-community report modal (`MessageReportModal`), and the "Hide held posts" switch (`useModMessages`).
 - Carried across, not dropped: the auto-split banner now shows in the branch's `ModMessage`.
+
+## 2026-11-11: adversarial review fixes, and what stays open
+
+What the code does now, where the review found it did not:
+
+- Warn-not-hold is off unless `CHAT_WARN_NOT_HOLD` is set, in the Go API as in the batch. With it on, only a hold for something in the text is delivered behind a warning (money, link, URL on a blocked list, email, language, worry word, known spammer or keyword, greetings spam, abuse). Every other reason stays hidden: shadow ban, blocked source, reused image, a chain from a hidden message. A message that follows one delivered with a warning is not held with it. A warned email carries no image, address map or item link.
+- Only Admin and Support can merge a Support or Admin account. A moderator can still merge two ordinary accounts. A merge keeps the stricter posting status.
+- A ban needs an existing target who is not the caller. Only an Admin can ban a Moderator, Support or Admin account. The ban and the withdrawal of the member's posts are one transaction. Unban clears the ban and restores nothing: an approved post stays Withdrawn and a pending post stays deleted. Reopening them needs a record of which posts the ban took down, and that is a product decision, not built.
+- A graded answer on a settled post is final. The reply gate does not apply to a member the graded endpoint has nothing for (no settled post nearby, no known location, a declined trust level, a lockdown), so it cannot lock anyone out. The graded task skips posts that already have an outcome.
+- Reports count from after the post's last take-down, from accounts that are not banned, deleted or linked to the poster. A restore therefore sticks. There is no judge on the report path and no minimum account age.
+- Auto-approve skips banned and PROHIBITED posters. MODERATED posters are what the fallback is for.
+- Inactive account removal only forgets accounts that never posted or chatted and are not banned. Spam cleanup does not ban a moderator, support or admin account.
+- A moderator can read a taken-down post by id (`deleted` is returned to them), so the Taken down section and Restore work.
+- `GET /modtools/members` has a `related` filter. Member search reads the address from `users_emails`.
+- Digest, events and volunteering mail are off for a member with no membership when the group model is removed, and any one community that turned events or volunteering off turns them off.
+
+Open questions for Edward:
+
+1. Should a plain moderator be able to read any two members' private chat? The branch does, because moderators are one national pool (`canSeeChatRoom`). Master limited it to Admin and Support, or a moderator of a community both were in. The choices are Support and Admin only, or only chats in the review queue or tied to a report or support case.
+2. Should unban reopen the posts the ban took down?
+3. Should the reply gate also count the first message to a poster that carries no post reference? Today a script that sends a plain message to a poster is not counted.
+4. Should reports need a minimum account age, or a judge as a third voice, before a post is taken down?
