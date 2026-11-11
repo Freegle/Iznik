@@ -456,4 +456,27 @@ class AutoApproveServiceTest extends TestCase
         $this->assertEquals(48, AutoApproveService::PENDING_HOURS);
         $this->assertEquals(48, AutoApproveService::ACCOUNT_HOURS);
     }
+
+    public function test_does_not_auto_approve_a_prohibited_or_banned_poster(): void
+    {
+        $prohibited = $this->createTestUser(['added' => now()->subHours(72), 'postingstatus' => 'PROHIBITED']);
+        $banned = $this->createTestUser(['added' => now()->subHours(72), 'banned' => now()->subHour()]);
+        $moderated = $this->createTestUser(['added' => now()->subHours(72), 'postingstatus' => 'MODERATED']);
+
+        $messages = [];
+        foreach ([$prohibited, $banned, $moderated] as $poster) {
+            $messages[] = $this->createTestMessage($poster, [
+                'collection' => Message::COLLECTION_PENDING,
+                'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
+            ]);
+        }
+
+        $this->service->process();
+
+        $collection = fn ($m) => DB::table('messages')->where('id', $m->id)->value('collection');
+        $this->assertEquals(Message::COLLECTION_PENDING, $collection($messages[0]), 'a prohibited poster stays Pending');
+        $this->assertEquals(Message::COLLECTION_PENDING, $collection($messages[1]), 'a banned poster stays Pending');
+        $this->assertEquals(Message::COLLECTION_APPROVED, $collection($messages[2]), 'a moderated poster is what the fallback is for');
+    }
 }

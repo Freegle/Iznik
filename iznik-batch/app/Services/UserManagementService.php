@@ -264,6 +264,8 @@ class UserManagementService
      * - Last access > 6 months ago
      * - Not a spammer
      * - No moderator notes (users_comments)
+     * - Never posted or chatted: an account that has is kept, however long it has been quiet
+     * - Not banned, so the evidence of the ban stays
      * - No meaningful logs in 90 days (excluding User/Created and User/Deleted log entries)
      * - systemrole = 'User'
      * - Not already deleted
@@ -274,8 +276,8 @@ class UserManagementService
         $sixMonthsAgo = now()->subMonths(6)->format('Y-m-d');
         $limit = $limit ?? 50000;
 
-        // Find candidates: no spammer record, no mod notes,
-        // last access > 6 months, systemrole = User, not deleted.
+        // Find candidates: no spammer record, no mod notes, never posted or chatted,
+        // not banned, last access > 6 months, systemrole = User, not deleted.
         $candidates = DB::table('users')
             ->select('users.id')
             ->leftJoin('spam_users', 'users.id', '=', 'spam_users.userid')
@@ -286,6 +288,13 @@ class UserManagementService
             ->where('users.systemrole', User::SYSTEMROLE_USER)
             ->whereNull('users.deleted')
             ->whereNull('users.forgotten')
+            ->whereNull('users.banned')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))->from('messages')->whereColumn('messages.fromuser', 'users.id');
+            })
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))->from('chat_messages')->whereColumn('chat_messages.userid', 'users.id');
+            })
             ->limit($limit)
             ->get();
 

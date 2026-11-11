@@ -110,4 +110,37 @@ class UserCommandsTest extends TestCase
 
         $this->assertLessThanOrEqual(1, $count, 'The limit must cap how many users a run touches');
     }
+
+    public function test_forget_inactive_keeps_a_user_who_ever_posted(): void
+    {
+        $user = $this->createInactiveUser();
+        $this->createTestMessage($user);
+
+        app(UserManagementService::class)->forgetInactiveUsers();
+
+        $this->assertNull($user->fresh()->forgotten, 'An account that posted is kept');
+    }
+
+    public function test_forget_inactive_keeps_a_user_who_ever_chatted(): void
+    {
+        $user = $this->createInactiveUser();
+        $other = $this->createTestUser();
+        $room = $this->createTestChatRoom($user, $other);
+        $this->createTestChatMessage($room, $user);
+
+        app(UserManagementService::class)->forgetInactiveUsers();
+
+        $this->assertNull($user->fresh()->forgotten, 'An account that chatted is kept');
+    }
+
+    public function test_forget_inactive_keeps_a_banned_user(): void
+    {
+        $user = $this->createInactiveUser();
+        $user->banned = now()->subYear();
+        $user->save();
+
+        app(UserManagementService::class)->forgetInactiveUsers();
+
+        $this->assertNull($user->fresh()->forgotten, 'The evidence of a ban is kept');
+    }
 }

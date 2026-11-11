@@ -82,6 +82,20 @@ class SpamCleanupServiceTest extends TestCase
         $this->assertNull(DB::table('users')->where('id', $userId)->value('banned'));
     }
 
+    public function test_does_not_ban_a_moderator_wrongly_on_the_spammer_list(): void
+    {
+        $moderator = $this->createTestUser(['systemrole' => \App\Models\User::SYSTEMROLE_MODERATOR]);
+        DB::table('spam_users')->insert([
+            'userid' => $moderator->id,
+            'collection' => 'Spammer',
+            'added' => now(),
+        ]);
+
+        $this->service->removeSpamMemberships();
+
+        $this->assertNull(DB::table('users')->where('id', $moderator->id)->value('banned'));
+    }
+
     public function test_dry_run_does_not_ban(): void
     {
         $spammerId = $this->makeSpammer();

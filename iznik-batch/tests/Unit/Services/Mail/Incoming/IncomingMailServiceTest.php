@@ -1935,6 +1935,33 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::DROPPED, $result);
     }
 
+    public function test_banned_member_post_dropped(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('bannedposter')]);
+        DB::table('users')->where('id', $user->id)->update([
+            'banned' => now(),
+            'lastlocation' => $this->createLocation(51.5, -0.1),
+        ]);
+
+        $userEmail = $user->emails->first()->email;
+
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'@groups.ilovefreegle.org',
+            'Subject' => 'OFFER: Something (London)',
+        ], 'Normal message body.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $userEmail,
+            $group->nameshort.'@groups.ilovefreegle.org'
+        );
+
+        $this->assertEquals(RoutingResult::DROPPED, $this->service->route($parsed));
+        $this->assertDatabaseMissing('messages', ['fromuser' => $user->id]);
+    }
+
     public function test_drops_known_spammer(): void
     {
         $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('badactor')]);

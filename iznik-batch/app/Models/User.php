@@ -1441,6 +1441,20 @@ class User extends Model implements Auditable
                 }
             }
 
+            // --- Handle posting status: a restriction on the absorbed account is not lost ---
+            // PROHIBITED beats MODERATED, which beats anything else.
+            $restriction = fn (?string $s) => match ($s) {
+                'PROHIBITED' => 2,
+                'MODERATED' => 1,
+                default => 0,
+            };
+            if ($restriction($u2->postingstatus) > $restriction($u1->postingstatus)) {
+                $u1->postingstatus = $u2->postingstatus;
+                if (!$dryRun) {
+                    $u1->save();
+                }
+            }
+
             // --- Merge chat rooms ---
             $rooms = ChatRoom::where(function ($q) use ($id2) {
                 $q->where('user1', $id2)->orWhere('user2', $id2);

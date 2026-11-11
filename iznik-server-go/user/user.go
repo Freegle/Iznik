@@ -2879,18 +2879,19 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 
 	// User attributes: take id1's values if id2 doesn't have them.
 	type UserAttrs struct {
-		Fullname   *string
-		Firstname  *string
-		Lastname   *string
-		Yahooid    *string
-		Systemrole string
-		Added      string
-		Tnuserid   *uint64
+		Fullname      *string
+		Firstname     *string
+		Lastname      *string
+		Yahooid       *string
+		Systemrole    string
+		Added         string
+		Tnuserid      *uint64
+		Postingstatus *string
 	}
 	var u1Attrs, u2Attrs UserAttrs
-	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
+	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid, postingstatus").
 		Where("id = ?", id1).Scan(&u1Attrs)
-	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
+	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid, postingstatus").
 		Where("id = ?", id2).Scan(&u2Attrs)
 
 	// fullname: take id1's if id2 is NULL, skip FBUser/-owner placeholder names.
@@ -2918,6 +2919,24 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	sysRoleOrder := map[string]int{utils.SYSTEMROLE_USER: 0, utils.SYSTEMROLE_MODERATOR: 1, utils.SYSTEMROLE_SUPPORT: 2, utils.SYSTEMROLE_ADMIN: 3}
 	if sysRoleOrder[u1Attrs.Systemrole] > sysRoleOrder[u2Attrs.Systemrole] {
 		tx.Table("users").Where("id = ?", id2).Update("systemrole", u1Attrs.Systemrole)
+	}
+
+	// postingstatus: a restriction on the absorbed account is not lost by merging into a clean
+	// one. PROHIBITED beats MODERATED, which beats anything else.
+	restriction := func(s *string) int {
+		if s == nil {
+			return 0
+		}
+		switch *s {
+		case utils.POSTINGSTATUS_PROHIBITED:
+			return 2
+		case utils.POSTINGSTATUS_MODERATED:
+			return 1
+		}
+		return 0
+	}
+	if restriction(u1Attrs.Postingstatus) > restriction(u2Attrs.Postingstatus) {
+		tx.Table("users").Where("id = ?", id2).Update("postingstatus", *u1Attrs.Postingstatus)
 	}
 
 	// added: take the older date — read id1's added timestamp and pass it directly.

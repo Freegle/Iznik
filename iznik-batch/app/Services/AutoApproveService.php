@@ -90,6 +90,12 @@ class AutoApproveService
             ->whereNull('messages.heldby')
             ->whereNull('messages.deleted')
             ->whereNull('users.deleted')
+            // A member who was banned or set to PROHIBITED after posting is not to be let in by
+            // the clock. MODERATED is the case this fallback exists for, so it is not excluded.
+            ->whereNull('users.banned')
+            ->where(function ($q) {
+                $q->whereNull('users.postingstatus')->orWhere('users.postingstatus', '!=', 'PROHIBITED');
+            })
             ->where('messages.arrival', '<=', now()->subHours(self::PENDING_HOURS + 1))
             // Never auto-approve a post that has already been collected. The take retires
             // the pending row it can see, but a take via a non-Go path (V1 mark()) leaves

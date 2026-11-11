@@ -665,3 +665,37 @@ func TestMergeByModeratorStillMergesOrdinaryAccounts(t *testing.T) {
 	assert.False(t, userExists(id1))
 	assert.True(t, userExists(id2))
 }
+
+// A restriction on the absorbed account survives the merge: PROHIBITED beats MODERATED beats
+// anything else, and a clean absorbed account does not loosen the survivor.
+func TestMergeKeepsTheStricterPostingStatus(t *testing.T) {
+	prefix := uniquePrefix("merge_poststatus")
+	db := database.DBConn
+	_, adminToken := mergeAdminSetup(t, prefix)
+
+	status := func(id uint64) string {
+		var s string
+		db.Raw("SELECT COALESCE(postingstatus, '') FROM users WHERE id = ?", id).Scan(&s)
+		return s
+	}
+
+	prohibited := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
+	clean := CreateTestUser(t, prefix+"_c", utils.SYSTEMROLE_USER)
+	db.Exec("UPDATE users SET postingstatus = ? WHERE id = ?", utils.POSTINGSTATUS_PROHIBITED, prohibited)
+	db.Exec("UPDATE users SET postingstatus = ? WHERE id = ?", utils.POSTINGSTATUS_DEFAULT, clean)
+	assert.Equal(t, 200, mergeUsers(t, adminToken, prohibited, clean))
+	assert.Equal(t, utils.POSTINGSTATUS_PROHIBITED, status(clean), "the survivor takes the restriction")
+
+	moderated := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	unmoderated := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
+	db.Exec("UPDATE users SET postingstatus = ? WHERE id = ?", utils.POSTINGSTATUS_MODERATED, moderated)
+	db.Exec("UPDATE users SET postingstatus = ? WHERE id = ?", utils.POSTINGSTATUS_UNMODERATED, unmoderated)
+	assert.Equal(t, 200, mergeUsers(t, adminToken, moderated, unmoderated))
+	assert.Equal(t, utils.POSTINGSTATUS_MODERATED, status(unmoderated))
+
+	restricted := CreateTestUser(t, prefix+"_r", utils.SYSTEMROLE_USER)
+	other := CreateTestUser(t, prefix+"_o", utils.SYSTEMROLE_USER)
+	db.Exec("UPDATE users SET postingstatus = ? WHERE id = ?", utils.POSTINGSTATUS_PROHIBITED, restricted)
+	assert.Equal(t, 200, mergeUsers(t, adminToken, other, restricted))
+	assert.Equal(t, utils.POSTINGSTATUS_PROHIBITED, status(restricted), "a clean absorbed account does not loosen the survivor")
+}

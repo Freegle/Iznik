@@ -67,6 +67,9 @@ class SpamCleanupService
         $spammers = DB::table('spam_users')
             ->join('users', 'users.id', '=', 'spam_users.userid')
             ->where('spam_users.collection', self::SPAMMER_COLLECTION)
+            // A moderator, support or admin account wrongly on the list is not banned by this job,
+            // as deleteSpamMessages leaves their posts alone.
+            ->where('users.systemrole', User::SYSTEMROLE_USER)
             ->whereNull('users.banned')
             ->pluck('spam_users.userid');
 

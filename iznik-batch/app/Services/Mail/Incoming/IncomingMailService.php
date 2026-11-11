@@ -2504,6 +2504,17 @@ class IncomingMailService
             return $this->dropped('Post from unknown user');
         }
 
+        // A ban is site-wide and stops posting by every route. The web submit path refuses a
+        // banned member; so does this one.
+        if ($user->banned !== null) {
+            Log::info('Post from banned member - dropping', [
+                'user_id' => $user->id,
+            ]);
+            Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=skipped-banned');
+
+            return $this->dropped('Post from banned member');
+        }
+
         // Update user's last access
         Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastaccess=now()');
         DB::table('users')

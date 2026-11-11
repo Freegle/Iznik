@@ -106,6 +106,24 @@ class UserMergeTest extends TestCase
         $this->assertEquals(User::SYSTEMROLE_SUPPORT, $role);
     }
 
+    public function test_merge_keeps_the_stricter_posting_status(): void
+    {
+        $clean = $this->createTestUser(['postingstatus' => 'DEFAULT']);
+        $prohibited = $this->createTestUser(['postingstatus' => 'PROHIBITED']);
+        $this->assertTrue(User::merge($clean->id, $prohibited->id, self::MERGE_REASON));
+        $this->assertEquals('PROHIBITED', DB::table('users')->where('id', $clean->id)->value('postingstatus'));
+
+        $unmoderated = $this->createTestUser(['postingstatus' => 'UNMODERATED']);
+        $moderated = $this->createTestUser(['postingstatus' => 'MODERATED']);
+        $this->assertTrue(User::merge($unmoderated->id, $moderated->id, self::MERGE_REASON));
+        $this->assertEquals('MODERATED', DB::table('users')->where('id', $unmoderated->id)->value('postingstatus'));
+
+        $restricted = $this->createTestUser(['postingstatus' => 'PROHIBITED']);
+        $other = $this->createTestUser(['postingstatus' => 'DEFAULT']);
+        $this->assertTrue(User::merge($restricted->id, $other->id, self::MERGE_REASON));
+        $this->assertEquals('PROHIBITED', DB::table('users')->where('id', $restricted->id)->value('postingstatus'), 'a clean absorbed account does not loosen the survivor');
+    }
+
     public function test_merge_transfers_tn_user_id(): void
     {
         $user1 = $this->createTestUser(['tnuserid' => null]);
