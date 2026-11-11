@@ -144,18 +144,24 @@ var (
 	tableNow   = time.Now
 )
 
-// databaseHasTable asks the database whether a table is there.
-func databaseHasTable(table string) bool {
+// databaseHasTable asks the database whether a table is there. A failed question is an error, not
+// "no": a timeout must not read as a table that has not been made.
+func databaseHasTable(table string) (bool, error) {
 	var names []string
-	database.DBConn.Table("information_schema.tables").Select("table_name").
-		Where("table_schema = DATABASE() AND table_name = ?", table).Scan(&names)
-	return len(names) > 0
+	err := database.DBConn.Table("information_schema.tables").Select("table_name").
+		Where("table_schema = DATABASE() AND table_name = ?", table).Scan(&names).Error
+	return len(names) > 0, err
 }
 
 // SetTableCheck replaces the question "does this table exist" and forgets what was remembered. Tests
 // use it to stand in for a part that has not been made yet; the function it returns puts the real
 // question back.
 func SetTableCheck(fn func(table string) bool) (restore func()) {
+	return SetTableCheckResult(func(table string) (bool, error) { return fn(table), nil })
+}
+
+// SetTableCheckResult is SetTableCheck for a question that can fail.
+func SetTableCheckResult(fn func(table string) (bool, error)) (restore func()) {
 	tableMu.Lock()
 	defer tableMu.Unlock()
 	previous := tableCheck
@@ -189,23 +195,27 @@ func SetTableClock(fn func() time.Time) (restore func()) {
 }
 
 // hasTable answers from memory for a minute. A table that comes into being is noticed within the
-// minute, and one that is not there costs one question a minute, not one per request.
-func hasTable(table string) bool {
+// minute, and one that is not there costs one question a minute, not one per request. A question
+// that failed is returned as an error and is not remembered, so the next request asks again.
+func hasTable(table string) (bool, error) {
 	tableMu.Lock()
 	if a, ok := tableSeen[table]; ok && tableNow().Before(a.expires) {
 		tableMu.Unlock()
-		return a.exists
+		return a.exists, nil
 	}
 	check := tableCheck
 	tableMu.Unlock()
 
-	exists := check(table)
+	exists, err := check(table)
+	if err != nil {
+		return false, err
+	}
 
 	tableMu.Lock()
 	tableSeen[table] = tableAnswer{exists: exists, expires: tableNow().Add(tableCheckTTL)}
 	tableMu.Unlock()
 
-	return exists
+	return exists, nil
 }
 
 // ---- the filters ----
@@ -291,7 +301,11 @@ func Ideas(c *fiber.Ctx) error {
 	}
 	// The table is made by the SQL file that is run before the code is deployed. If the code goes first,
 	// this is the answer that says so, and not a database error.
-	if !hasTable("ux_ideas") {
+	ready, err := hasTable("ux_ideas")
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Could not read ideas")
+	}
+	if !ready {
 		return fiber.NewError(fiber.StatusNotImplemented, "Ideas are not switched on yet")
 	}
 	f, err := parseIdeaFilter(c)
@@ -359,8 +373,14 @@ func Ideas(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Could not read ideas")
 	}
 
-	experiments := experimentsOf(rows)
-	problems := problemsOf(rows)
+	experiments, err := experimentsOf(rows)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Could not read ideas")
+	}
+	problems, err := problemsOf(rows)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Could not read ideas")
+	}
 
 	ideas := make([]Idea, 0, len(rows))
 	for _, r := range rows {
@@ -386,7 +406,7 @@ func Ideas(c *fiber.Ctx) error {
 
 // experimentsOf reads the experiments the ideas point at, as they are now, in one query. Without the
 // experiment table every idea has none.
-func experimentsOf(rows []ideaRow) map[uint64]*IdeaExperiment {
+func experimentsOf(rows []ideaRow) (map[uint64]*IdeaExperiment, error) {
 	out := map[uint64]*IdeaExperiment{}
 	ids := []uint64{}
 	for _, r := range rows {
@@ -394,8 +414,13 @@ func experimentsOf(rows []ideaRow) map[uint64]*IdeaExperiment {
 			ids = append(ids, *r.ExperimentID)
 		}
 	}
-	if len(ids) == 0 || !hasTable("ux_experiments") {
-		return out
+	if len(ids) == 0 {
+		return out, nil
+	}
+	if ready, err := hasTable("ux_experiments"); err != nil {
+		return nil, err
+	} else if !ready {
+		return out, nil
 	}
 	var found []struct {
 		ID        uint64     `gorm:"column:id"`
@@ -404,13 +429,15 @@ func experimentsOf(rows []ideaRow) map[uint64]*IdeaExperiment {
 		Status    string     `gorm:"column:status"`
 		DecidedAt *time.Time `gorm:"column:decided_at"`
 	}
-	database.DBConn.Table("ux_experiments").Select("id, name, title, status, decided_at").Where("id IN ?", ids).Scan(&found)
+	if err := database.DBConn.Table("ux_experiments").Select("id, name, title, status, decided_at").Where("id IN ?", ids).Scan(&found).Error; err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
 	for _, e := range found {
 		out[e.ID] = &IdeaExperiment{ID: e.ID, Name: e.Name, Title: e.Title, Status: e.Status, HoldoutUntil: holdoutUntil(e.Status, e.DecidedAt, now)}
 	}
 
-	return out
+	return out, nil
 }
 
 // holdoutUntil is when the holdout of an adopted experiment ends, while it has not ended. It is the rule the
@@ -435,7 +462,7 @@ func holdoutUntil(status string, decidedAt *time.Time, now time.Time) *string {
 
 // problemsOf reads the member problems the ideas are tied to, in one query. Without the problem table
 // no idea has one, and the idea still carries its own problem title.
-func problemsOf(rows []ideaRow) map[uint64]*IdeaProblem {
+func problemsOf(rows []ideaRow) (map[uint64]*IdeaProblem, error) {
 	out := map[uint64]*IdeaProblem{}
 	ids := []uint64{}
 	for _, r := range rows {
@@ -443,14 +470,21 @@ func problemsOf(rows []ideaRow) map[uint64]*IdeaProblem {
 			ids = append(ids, *r.ProblemID)
 		}
 	}
-	if len(ids) == 0 || !hasTable("ux_problems") {
-		return out
+	if len(ids) == 0 {
+		return out, nil
+	}
+	if ready, err := hasTable("ux_problems"); err != nil {
+		return nil, err
+	} else if !ready {
+		return out, nil
 	}
 	var found []IdeaProblem
-	database.DBConn.Table("ux_problems").Select("id, title").Where("id IN ?", ids).Scan(&found)
+	if err := database.DBConn.Table("ux_problems").Select("id, title").Where("id IN ?", ids).Scan(&found).Error; err != nil {
+		return nil, err
+	}
 	for i := range found {
 		out[found[i].ID] = &found[i]
 	}
 
-	return out
+	return out, nil
 }

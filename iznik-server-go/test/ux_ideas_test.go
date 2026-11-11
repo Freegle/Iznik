@@ -436,6 +436,41 @@ func TestUxIdeasRememberWhetherATableExistsForAMinute(t *testing.T) {
 	assert.Equal(t, map[string]int{"ux_ideas": 2, "ux_experiments": 2}, asked, "asked again once the minute is up, and not before")
 }
 
+// A failed question about a table is a server error, and is not remembered: the next request asks again.
+// Reading it as "no table" would answer 501 "not switched on" for a minute after a transient error.
+func TestUxIdeasAFailedTableQuestionIsAnErrorAndIsNotRemembered(t *testing.T) {
+	prefix := uniquePrefix("uxideaerr")
+	uxIdeasClean(t, prefix)
+	token := uxSupportToken(t, "uxideaerr")
+	expID := uxIdeaExperiment(t, prefix+"-exp", "give", "running")
+	idea := uxInsertIdea(t, "give", prefix+" idea", "scheduled", 4)
+	database.DBConn.Exec("UPDATE ux_ideas SET experiment_id = ? WHERE id = ?", expID, idea.ID)
+
+	failing := "ux_ideas"
+	asked := map[string]int{}
+	restore := ux.SetTableCheckResult(func(table string) (bool, error) {
+		asked[table]++
+		if table == failing {
+			return false, fmt.Errorf("lock wait timeout")
+		}
+		return true, nil
+	})
+	defer restore()
+
+	// The ideas table question fails: a server error, not "not switched on".
+	assert.Equal(t, 500, uxGet(t, token, "ideas", nil))
+
+	// The failure was not remembered, so the next request asks again and gets its answer.
+	failing = ""
+	resp := uxIdeasFor(t, token, "")
+	require.Len(t, resp.Ideas, 1)
+	assert.Equal(t, 2, asked["ux_ideas"])
+
+	// The experiment table question fails: the list is not sent with its experiments quietly missing.
+	failing = "ux_experiments"
+	assert.Equal(t, 500, uxGet(t, token, "ideas", nil))
+}
+
 // Without the ideas table the route is not switched on, as for a route that is not there yet. It must not
 // be a database error: the section tells a 500 from a 404 or 501 and only the last two say "not switched on".
 func TestUxIdeasWithoutTheIdeasTableIsNotSwitchedOn(t *testing.T) {
