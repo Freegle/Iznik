@@ -586,10 +586,14 @@ class SharedAccountSplitter
             : $rooms->where(fn ($q) => $q->where(['user1' => $target, 'user2' => $other])->orWhere(fn ($r) => $r->where(['user1' => $other, 'user2' => $target])))->exists();
     }
 
-    /** Undecided chats and rows left behind do not count: neither moves unless a person acts. */
+    /**
+     * Undecided chats and rows left behind do not count: neither moves unless a person acts.
+     * A preferred-address fix does, as it can be wanted when nothing else moves: an address
+     * move elsewhere can take the account's preferred one and leave it with none.
+     */
     private function nothingToMove(array $plan): bool
     {
-        foreach (['emails', 'messages', 'membershipsMove', 'membershipsCopy', 'historyMove', 'chatsMove'] as $key) {
+        foreach (['emails', 'preferred', 'messages', 'membershipsMove', 'membershipsCopy', 'historyMove', 'chatsMove'] as $key) {
             if ($plan[$key] !== []) {
                 return FALSE;
             }

@@ -347,6 +347,28 @@ class TNSplitSharedAccountCommandTest extends TestCase
         $this->assertFileDoesNotExist($this->rollbackFile . '.second');
     }
 
+    /** An address move elsewhere can take the account's preferred address when nothing else is left to move. */
+    public function test_a_run_with_only_a_preferred_address_to_fix_is_not_already_split(): void
+    {
+        $f = $this->buildSharedAccount();
+        $this->accountTheyAlreadyHave($f);
+        $this->commit($f);
+        DB::table('users_emails')->where('userid', $f['account'])->update(['preferred' => 0]);
+
+        $this->artisan('tn:split-shared-account', [
+            'userid' => $f['account'],
+            'username' => $f['moveName'],
+            'tnuserid' => $f['tnUserId'],
+            '--commit' => true,
+            '--rollback-file' => $this->rollbackFile . '.second',
+        ])
+            ->doesntExpectOutputToContain('Already split')
+            ->assertExitCode(0);
+
+        $this->assertSame(1, (int) DB::table('users_emails')->where('userid', $f['account'])->sum('preferred'));
+        $this->assertSame($f['otherAliasG1'], (int) DB::table('users_emails')->where('userid', $f['account'])->where('preferred', 1)->value('id'), 'the latest TN address left is preferred');
+    }
+
     public function test_the_rollback_keeps_the_account_they_already_have(): void
     {
         $f = $this->buildSharedAccount();
