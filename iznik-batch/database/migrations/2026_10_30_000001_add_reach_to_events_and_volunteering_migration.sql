@@ -22,3 +22,9 @@ UPDATE volunteering
   INNER JOIN locations ON locations.id = users.lastlocation
   SET volunteering.lat = locations.lat, volunteering.lng = locations.lng
   WHERE volunteering.lat IS NULL;
+
+-- A row whose poster has no known location is left with no centre, and an item with no centre
+-- reaches nobody until its owner saves it with a place. How many rows that is:
+SELECT 'communityevents' AS tbl, COUNT(*) AS rows_without_a_centre FROM communityevents WHERE lat IS NULL
+UNION ALL
+SELECT 'volunteering', COUNT(*) FROM volunteering WHERE lat IS NULL;

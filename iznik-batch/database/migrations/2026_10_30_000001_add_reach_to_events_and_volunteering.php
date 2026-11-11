@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -16,7 +17,9 @@ use Illuminate\Support\Facades\Schema;
  * - reachmiles: the crow-flies radius that drive time reaches, derived by routing
  *   when it is saved. The lists and digests filter on this.
  *
- * Existing rows take the poster's last location, and the default reach.
+ * Existing rows take the poster's last location, and the default reach. A row whose poster has
+ * no known location is left with no centre, and an item with no centre reaches nobody until its
+ * owner saves it with a place; the migration logs how many rows that is.
  */
 return new class extends Migration
 {
@@ -39,6 +42,11 @@ return new class extends Migration
                 INNER JOIN locations ON locations.id = users.lastlocation
                 SET {$t}.lat = locations.lat, {$t}.lng = locations.lng
                 WHERE {$t}.lat IS NULL");
+
+            $noCentre = DB::table($t)->whereNull('lat')->count();
+            if ($noCentre > 0) {
+                Log::warning("{$t}: {$noCentre} existing row(s) have no centre because the poster has no known location");
+            }
         }
     }
 

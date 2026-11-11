@@ -173,8 +173,8 @@ return new class extends Migration
                 INNER JOIN (
                     SELECT userid,
                         MIN(CASE WHEN emailfrequency = -1 THEN 0 WHEN emailfrequency > 0 THEN 1 ELSE 2 END) AS freqrank,
-                        MAX(eventsallowed) AS eventsallowed,
-                        MAX(volunteeringallowed) AS volunteeringallowed,
+                        MIN(eventsallowed) AS eventsallowed,
+                        MIN(volunteeringallowed) AS volunteeringallowed,
                         MAX(ourPostingStatus = 'PROHIBITED') AS prohibited,
                         MAX(ourPostingStatus = 'MODERATED') AS moderated,
                         MAX(ourPostingStatus = 'UNMODERATED') AS unmoderated,
@@ -192,6 +192,15 @@ return new class extends Migration
                         WHEN m.dflt = 1 THEN 'DEFAULT'
                         ELSE NULL END,
                     u.modconfigid = m.configid
+            ");
+
+            // A member with no membership left every community, which was how they stopped digests,
+            // events and volunteering mail. The columns default to on, so turn them off for those
+            // members rather than start mailing them.
+            DB::statement("
+                UPDATE users u
+                SET u.emailfrequency = 0, u.eventsallowed = 0, u.volunteeringallowed = 0
+                WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.userid = u.id)
             ");
         }
 

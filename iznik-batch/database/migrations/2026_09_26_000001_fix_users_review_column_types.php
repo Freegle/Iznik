@@ -29,12 +29,19 @@ return new class extends Migration
             return;
         }
 
+        // Only where the columns are still BIGINT. A BIGINT cannot become a TIMESTAMP or a string in
+        // place, so the algorithm is not forced.
+        $type = DB::selectOne("SHOW COLUMNS FROM users LIKE 'reviewreason'")->Type ?? '';
+
+        if (!str_starts_with(strtolower($type), 'bigint')) {
+            return;
+        }
+
         DB::statement("
             ALTER TABLE users
               MODIFY COLUMN reviewrequestedat TIMESTAMP NULL,
               MODIFY COLUMN reviewreason VARCHAR(255) NULL,
-              MODIFY COLUMN reviewedat TIMESTAMP NULL,
-              ALGORITHM=INPLACE, LOCK=NONE
+              MODIFY COLUMN reviewedat TIMESTAMP NULL
         ");
     }
 

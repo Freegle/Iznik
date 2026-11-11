@@ -58,8 +58,18 @@ SET @has_lockdown := (
       AND column_name = 'reportreason'
       AND column_type LIKE '%''Lockdown''%'
 );
-SET @ddl := IF(@has_lockdown = 0,
-    'ALTER TABLE chat_messages MODIFY COLUMN reportreason ENUM(''Spam'',''Other'',''Last'',''Force'',''Fully'',''TooMany'',''User'',''UnknownMessage'',''SameImage'',''DodgyImage'',''CountryBlocked'',''IPUsedForDifferentUsers'',''IPUsedForDifferentGroups'',''SubjectUsedForDifferentGroups'',''SpamAssassin'',''Greetings spam'',''Referenced known spammer'',''Known spam keyword'',''URL on DBL'',''BulkVolunteerMail'',''UsedOurDomain'',''WorryWord'',''Script'',''Link'',''Money'',''Email'',''Language'',''Lockdown'') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL, ALGORITHM=INPLACE, LOCK=NONE',
+SET @current := (
+    SELECT column_type FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'chat_messages'
+      AND column_name = 'reportreason'
+);
+-- Appended to whatever the column holds, so a value added by another migration (such as
+-- 'Abuse') is kept.
+SET @ddl := IF(@has_lockdown = 0 AND @current LIKE 'enum(%',
+    CONCAT('ALTER TABLE chat_messages MODIFY COLUMN reportreason ',
+           LEFT(@current, CHAR_LENGTH(@current) - 1), ',''Lockdown'')',
+           ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL, ALGORITHM=INPLACE, LOCK=NONE'),
     'SELECT 1');
 PREPARE stmt FROM @ddl;
 EXECUTE stmt;

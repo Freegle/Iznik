@@ -32,11 +32,11 @@ SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN welcomed TIMEST
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN modconfigid BIGINT UNSIGNED NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'modconfigid');
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN reviewrequestedat BIGINT UNSIGNED NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'reviewrequestedat');
+SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN reviewrequestedat TIMESTAMP NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'reviewrequestedat');
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN reviewreason BIGINT UNSIGNED NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'reviewreason');
+SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN reviewreason VARCHAR(255) NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'reviewreason');
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN reviewedat BIGINT UNSIGNED NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'reviewedat');
+SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE users ADD COLUMN reviewedat TIMESTAMP NULL", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'users' AND column_name = 'reviewedat');
 PREPARE stmt FROM @s; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @s := (SELECT IF(COUNT(*) = 0, "ALTER TABLE messages ADD COLUMN collection ENUM('Incoming','Pending','Approved','Spam','Rejected') NOT NULL DEFAULT 'Pending', ADD INDEX collection (collection)", 'SELECT 1') FROM information_schema.columns WHERE table_schema = @db AND table_name = 'messages' AND column_name = 'collection');
@@ -90,7 +90,7 @@ UPDATE users u
 INNER JOIN (
     SELECT userid,
         MIN(CASE WHEN emailfrequency = -1 THEN 0 WHEN emailfrequency > 0 THEN 1 ELSE 2 END) AS freqrank,
-        MAX(eventsallowed) AS eventsallowed, MAX(volunteeringallowed) AS volunteeringallowed,
+        MIN(eventsallowed) AS eventsallowed, MIN(volunteeringallowed) AS volunteeringallowed,
         MAX(ourPostingStatus = 'PROHIBITED') AS prohibited, MAX(ourPostingStatus = 'MODERATED') AS moderated,
         MAX(ourPostingStatus = 'UNMODERATED') AS unmoderated, MAX(ourPostingStatus = 'DEFAULT') AS dflt,
         MAX(configid) AS configid
@@ -101,6 +101,12 @@ SET u.emailfrequency = CASE m.freqrank WHEN 0 THEN -1 WHEN 1 THEN 24 ELSE 0 END,
     u.postingstatus = CASE WHEN m.prohibited = 1 THEN 'PROHIBITED' WHEN m.moderated = 1 THEN 'MODERATED'
         WHEN m.unmoderated = 1 THEN 'UNMODERATED' WHEN m.dflt = 1 THEN 'DEFAULT' ELSE NULL END,
     u.modconfigid = m.configid;
+
+-- A member with no membership left every community, which was how they stopped digests, events
+-- and volunteering mail. The columns default to on, so turn them off for those members.
+UPDATE users u
+SET u.emailfrequency = 0, u.eventsallowed = 0, u.volunteeringallowed = 0
+WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.userid = u.id);
 
 UPDATE users u
 INNER JOIN (SELECT userid, MIN(date) AS banned, MIN(byuser) AS bannedby FROM users_banned GROUP BY userid) b ON b.userid = u.id
@@ -132,7 +138,14 @@ TRUNCATE TABLE users_dashboard;
 --   SELECT TABLE_NAME, CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
 --   WHERE TABLE_SCHEMA = DATABASE() AND (COLUMN_NAME IN ('groupid','group_id','volunteer_groupid')
 --      OR REFERENCED_TABLE_NAME IN ('groups','memberships','messages_groups'));
--- and drop each with ALTER TABLE <t> DROP FOREIGN KEY <name>; then the columns:
+-- and drop each with ALTER TABLE <t> DROP FOREIGN KEY <name>; then the unique keys that include
+-- groupid, because dropping the column would rebuild each one on the remaining columns and fail
+-- on a duplicate where several communities held the same row (stats and stats_summaries are
+-- truncated above, so their keys cannot collide):
+ALTER TABLE messages_history DROP INDEX msgid;
+ALTER TABLE locations_excluded DROP INDEX locationid_2;
+ALTER TABLE users_postnotifications_tracking DROP INDEX groupid_frequency;
+-- then the columns:
 ALTER TABLE chat_rooms DROP COLUMN groupid;
 ALTER TABLE messages_spatial DROP COLUMN groupid;
 ALTER TABLE messages_drafts DROP COLUMN groupid;
