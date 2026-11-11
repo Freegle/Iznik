@@ -73,5 +73,7 @@ describe('plugins/cls-debug.client', () => {
     // Largest first.
     expect(context.top_shifts[0]).toContain('0.0700')
     expect(context.top_shifts[1]).toContain('div.jobs-slot')
+    // Each shift carries the path it happened on.
+    expect(context.top_shifts[0]).toContain(`ms ${window.location.pathname}: `)
   })
 })

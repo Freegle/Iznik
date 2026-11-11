@@ -18,7 +18,8 @@
 //     Nothing is shown to the member: the tiles are too small for an
 //     explanation, and support can act on the report.
 //  3. Route the failure by what the probe found. The host answering with an error
-//     (4xx) is a fault in the image or the delivery service, so it goes to Sentry,
+//     status (4xx or 5xx; it sends CORS headers on errors too, so the status is
+//     readable) is a fault in the image or the delivery service, so it goes to Sentry,
 //     fingerprinted by status and the delivery error message so an undecodable
 //     format, an over-size image and a missing file are separate issues. A host that
 //     answered 200 or opaquely, or one that did not answer, says nothing about the
@@ -75,6 +76,9 @@ async function readDeliveryMessage(response) {
 export function normaliseDeliveryMessage(message) {
   return (
     String(message || 'no message')
+      // A URL or an image id in the message would make every image its own issue.
+      .replace(/https?:\/\/\S+/g, 'URL')
+      .replace(/\b[0-9a-f]{8,}\b/gi, 'ID')
       .replace(/\d+(\.\d+)?/g, 'N')
       .replace(/\s+/g, ' ')
       .trim()

@@ -433,6 +433,14 @@ describe('useImageFailureDiagnostics', () => {
       ).toBe('Input image exceeds pixel limit N x N')
     })
 
+    it('masks URLs and image ids so one reason is one issue', () => {
+      expect(
+        normaliseDeliveryMessage(
+          'Unable to fetch https://uploads.example/7fb318f3d31a06ba5b37255ef737c55e for 7fb318f3d31a06ba'
+        )
+      ).toBe('Unable to fetch URL for ID')
+    })
+
     it('has a stable value for a missing message', () => {
       expect(normaliseDeliveryMessage(null)).toBe('no message')
     })

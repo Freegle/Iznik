@@ -30,8 +30,11 @@ export default defineNuxtPlugin(() => {
   const observer = new PerformanceObserver((list) => {
     for (const entry of list.getEntries()) {
       if (!entry.hadRecentInput) {
+        // The path at the time of the shift: the log is written when the page is
+        // hidden, by which time the member may be on another route.
         windows.add(entry.value, entry.startTime, {
           selectors: (entry.sources || []).map(describeSource),
+          path: window.location.pathname,
         })
       }
     }
@@ -55,7 +58,7 @@ export default defineNuxtPlugin(() => {
         .topShifts(5)
         .map(
           (s) =>
-            `${s.value.toFixed(4)} @ ${Math.round(s.startTime)}ms: ${s.detail.selectors.join(', ')}`
+            `${s.value.toFixed(4)} @ ${Math.round(s.startTime)}ms ${s.detail.path}: ${s.detail.selectors.join(', ')}`
         ),
     })
   }
