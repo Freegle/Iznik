@@ -2094,9 +2094,7 @@ func PatchSession(c *fiber.Ctx) error {
 				// it moves the same tables, deletes the other account and
 				// writes the same two "Merged" log rows, with the member as
 				// byuser. V1 did the same from confirmEmail().
-				if err := database.RetryOnDeadlock("verify merge", func() error {
-					return user.MergeUsersTx(db, mail.UserID, myid, myid)
-				}); err != nil {
+				if err := user.MergeUsersTx(db, mail.UserID, myid, myid); err != nil {
 					// Rolled back — nothing half-applied, and the email is
 					// still confirmed below so verification succeeds for the
 					// user. The duplicate account survives; a later
