@@ -3,6 +3,7 @@ import {
   isLocalStack,
   suppressException,
   suppressSentryEvent,
+  thrownByThirdParty,
 } from '~/composables/useSuppressException'
 
 describe('suppressException', () => {
@@ -469,4 +470,75 @@ describe('isLocalStack', () => {
       expect(isLocalStack({ hostname, protocol })).toBe(false)
     }
   )
+})
+
+describe('thrownByThirdParty', () => {
+  function eventWithFrames(...filenames) {
+    return {
+      exception: {
+        values: [
+          {
+            type: 'Error',
+            value: 'pa',
+            stacktrace: {
+              frames: filenames.map((filename) => ({ filename })),
+            },
+          },
+        ],
+      },
+    }
+  }
+
+  // Sentry "Error: pa": Sentry's own XHR wrapper (in our bundle) calls back
+  // into Google's sign-in script, which throws.
+  it('drops an error thrown inside Google sign-in under our bundled Sentry wrapper', () => {
+    expect(
+      thrownByThirdParty(
+        eventWithFrames(
+          'https://www.ilovefreegle.org/_nuxt/entry.abc123.js',
+          'https://accounts.google.com/gsi/client',
+          'https://accounts.google.com/gsi/client'
+        )
+      )
+    ).toBe(true)
+  })
+
+  it.each([
+    'https://btloader.com/tag',
+    'https://cdn.btloader.com/tag',
+    'https://imasdk.googleapis.com/js/sdkloader/ima3.js',
+    'https://example-ads.net/score.min.js',
+    'chrome-extension://abcdef/content.js',
+    'safari-web-extension://abcdef/content.js',
+    'iabjs://navigation_performance_logger_android',
+  ])('drops an error thrown in %s', (filename) => {
+    expect(thrownByThirdParty(eventWithFrames(filename))).toBe(true)
+  })
+
+  it('keeps an error thrown in our own code after passing through a vendor script', () => {
+    expect(
+      thrownByThirdParty(
+        eventWithFrames(
+          'https://accounts.google.com/gsi/client',
+          'https://www.ilovefreegle.org/_nuxt/LoginModal.def456.js'
+        )
+      )
+    ).toBe(false)
+  })
+
+  it('ignores anonymous frames when finding where it was thrown', () => {
+    expect(
+      thrownByThirdParty(
+        eventWithFrames(
+          'https://www.ilovefreegle.org/_nuxt/entry.abc123.js',
+          '<anonymous>'
+        )
+      )
+    ).toBe(false)
+  })
+
+  it('keeps an event with no frames', () => {
+    expect(thrownByThirdParty({ message: 'hello' })).toBe(false)
+    expect(thrownByThirdParty(eventWithFrames())).toBe(false)
+  })
 })

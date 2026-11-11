@@ -1,11 +1,3 @@
-// Robust suppression for Freestar ftUtils.js null-property errors
-// (NUXT3-CES getPlacementPosition, NUXT3-D2H getInnerDimensions) operating on
-// Sentry's parsed event frames. suppressException() below already matches on
-// err.stack string contents, but some events reach Sentry with a stack that
-// doesn't string-match (e.g. framework-wrapped TypeErrors where the original
-// exception is reconstructed before beforeSend sees it). A frame whose filename
-// is ftUtils.js AND whose function is one of Freestar's known null-property
-// sites is a narrow Freestar signature — won't mask real bugs in our own code.
 // A page served by a local or CI stack (freegle-prod-local.localhost,
 // modtools-prod-local.localhost:9080, a dev server on http://localhost:3000).
 // The app is served from https://localhost on Android and capacitor://localhost
@@ -18,6 +10,54 @@ export function isLocalStack({ hostname, protocol }) {
   )
 }
 
+// Scripts that are never ours. An exception thrown inside one of them is the
+// vendor's, whatever page it lands on:
+//   - Google sign-in (accounts.google.com/gsi): after its own status call fails
+//     with a 400 it throws minified errors ("pa", "Na", "Ma") from an XHR
+//     callback. Sentry "Error: pa": 65 web events in the 14 days to
+//     2026-11-11, beside 1,532 from local stacks.
+//   - btloader.com (ad recovery), imasdk.googleapis.com (video ads) and the ad
+//     viewability score.min.js.
+//   - Browser extensions, and the iabjs: bridge of Facebook's in-app browser
+//     ("Java object is gone").
+// Only the frame the error was thrown from is tested, so an error in our own
+// code that merely passes through one of these is still reported.
+const THIRD_PARTY_SCRIPTS = [
+  /^https:\/\/accounts\.google\.com\/gsi\//,
+  /^https:\/\/([a-z0-9-]+\.)*btloader\.com\//,
+  /^https:\/\/imasdk\.googleapis\.com\//,
+  /\/score\.min\.js(\?|$)/,
+  /^(chrome|moz|safari|safari-web)-extension:/,
+  /^iabjs:/,
+]
+
+export function thrownByThirdParty(event) {
+  for (const ex of event?.exception?.values || []) {
+    const frames = (ex.stacktrace?.frames || []).filter(
+      (f) => f.filename && f.filename !== '<anonymous>'
+    )
+    // Sentry orders frames outermost first, so the last is where it was thrown.
+    const thrownAt = frames[frames.length - 1]
+
+    if (
+      thrownAt &&
+      THIRD_PARTY_SCRIPTS.some((re) => re.test(thrownAt.filename))
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+// Robust suppression for Freestar ftUtils.js null-property errors
+// (NUXT3-CES getPlacementPosition, NUXT3-D2H getInnerDimensions) operating on
+// Sentry's parsed event frames. suppressException() below already matches on
+// err.stack string contents, but some events reach Sentry with a stack that
+// doesn't string-match (e.g. framework-wrapped TypeErrors where the original
+// exception is reconstructed before beforeSend sees it). A frame whose filename
+// is ftUtils.js AND whose function is one of Freestar's known null-property
+// sites is a narrow Freestar signature — won't mask real bugs in our own code.
 export function suppressSentryEvent(event) {
   if (!event?.exception?.values) {
     return false

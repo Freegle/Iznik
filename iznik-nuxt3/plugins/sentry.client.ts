@@ -8,6 +8,7 @@ import {
   isLocalStack,
   suppressException,
   suppressSentryEvent,
+  thrownByThirdParty,
 } from '~/composables/useSuppressException'
 import { onTraceChange, getTraceId, getSessionId } from '~/composables/useTrace'
 import {
@@ -116,6 +117,27 @@ export default defineNuxtPlugin((nuxtApp) => {
           // Prevented at source by plugins/leafletTooltipGuard.client.js; this
           // entry catches residual events from cached bundles.
           'latLngToLayerPoint',
+
+          // Microsoft's link scanner (Outlook, Defender) opens the links in our
+          // mails in a scripted browser that rejects with this. The string is
+          // not in our code; every one of 12 sampled addresses is Microsoft's
+          // network (AS8075). About 1,000 events in the 14 days to 2026-11-11.
+          /Object Not Found Matching Id:\d+, MethodName:update, ParamCount:\d+/,
+
+          // A browser extension messaging a tab that has gone.
+          'Invalid call to runtime.sendMessage(). Tab not found',
+
+          // Something cancelled on purpose: an ad video paused or ended before
+          // it played, or a request aborted by whoever started it. Not a fault
+          // in itself, and these come with no frames to say whose it was.
+          /The play\(\) request was interrupted/,
+          'signal is aborted without reason',
+          'The operation was aborted',
+          'The user aborted a request',
+
+          // Safari's wording for 'Failed to fetch' (above), which the SDK suffixes
+          // with the host. Kept when the host is ours.
+          /Load failed \((?![^)]*(ilovefreegle\.org|modtools\.org))[^)]*\)/,
         ],
         integrations: [
           Sentry.browserTracingIntegration({ router }),
@@ -142,6 +164,11 @@ export default defineNuxtPlugin((nuxtApp) => {
           // so also check the parsed event frames directly.
           if (suppressSentryEvent(event)) {
             console.log('Freestar ftUtils frame - suppress event')
+            return null
+          }
+
+          if (thrownByThirdParty(event)) {
+            console.log('Thrown inside a third-party script - suppress event')
             return null
           }
 
