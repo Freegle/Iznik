@@ -217,6 +217,20 @@ export default defineNuxtConfig({
     '/find': { redirect: { to: '/ask', statusCode: 301 } },
     '/find/**': { redirect: { to: '/ask/**', statusCode: 301 } },
 
+    // Addresses from the old Freegle site and its emails that people still follow, from Google
+    // results and mail already sent. Each was seen as a 404 in Sentry (NUXT3-DC6 family). Nitro serves
+    // the 301 for direct hits, which is how these arrive.
+    '/groups': { redirect: { to: '/explore', statusCode: 301 } },
+    '/groups/**': { redirect: { to: '/explore', statusCode: 301 } },
+    '/mygroups': { redirect: { to: '/browse', statusCode: 301 } },
+    '/mygroups/**': { redirect: { to: '/browse', statusCode: 301 } },
+    '/search': { redirect: { to: '/browse', statusCode: 301 } },
+    '/ask/search': { redirect: { to: '/browse', statusCode: 301 } },
+    '/offer': { redirect: { to: '/give', statusCode: 301 } },
+    '/main.php': { redirect: { to: '/', statusCode: 301 } },
+    '/m.php': { redirect: { to: '/', statusCode: 301 } },
+    '/index.php': { redirect: { to: '/', statusCode: 301 } },
+
     // These pages are for logged-in users, or aren't performance-critical enough to render on the server.
     '/birthday/**': { ssr: false },
     '/browse/**': { ssr: false },
