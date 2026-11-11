@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"time"
@@ -18,7 +19,7 @@ import (
 // something looser.
 func TestSearchMatchesWithoutAnEmbeddingReturnNothing(t *testing.T) {
 	prefix := uniquePrefix("searchnoembed")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, poster, "OFFER: No vector here", 51.5, -0.1)
 
 	embedding.Global.SetEntries(nil)

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -59,7 +60,7 @@ func TestMessagesOutcomesFeedbackIndexAvailable(t *testing.T) {
 func TestWorkCountHappinessEmptyCommentExcluded(t *testing.T) {
 	prefix := uniquePrefix("wc_happy_empty")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// The count is national and the test database is shared, so compare before and after.

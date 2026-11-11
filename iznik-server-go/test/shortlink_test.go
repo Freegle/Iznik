@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -60,7 +61,7 @@ func TestGetShortlinkList(t *testing.T) {
 
 func TestPostShortlink(t *testing.T) {
 	prefix := uniquePrefix("ShortlinkPost")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"name":"%s_newlink","url":"https://example.com/%s"}`, prefix, prefix)
@@ -78,7 +79,7 @@ func TestPostShortlink(t *testing.T) {
 func TestPostShortlinkDuplicate(t *testing.T) {
 	prefix := uniquePrefix("ShortlinkDup")
 	createTestShortlink(t, prefix+"_dup", "https://example.com/"+prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"name":"%s_dup","url":"https://example.com/%s_other"}`, prefix, prefix)

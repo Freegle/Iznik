@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,7 +25,7 @@ type replyGateFixture struct {
 }
 
 func setupReplyGate(t *testing.T, prefix string) replyGateFixture {
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, replierID)
 	return replyGateFixture{replierID: replierID, token: token}
 }
@@ -32,7 +33,7 @@ func setupReplyGate(t *testing.T, prefix string) replyGateFixture {
 // A post by somebody else, with a User2User chat between the replier and the poster, ready
 // for an Interested reply.
 func postAndRoom(t *testing.T, f replyGateFixture, prefix string, n int) (msgID uint64, chatID uint64) {
-	posterID := CreateTestUser(t, fmt.Sprintf("%s_poster%d", prefix, n), "User")
+	posterID := CreateTestUser(t, fmt.Sprintf("%s_poster%d", prefix, n), utils.SYSTEMROLE_USER)
 	msgID = CreateTestMessage(t, posterID, fmt.Sprintf("OFFER: gate item %d", n), 51.5, -0.1)
 	chatID = CreateTestChatRoom(t, f.replierID, &posterID, "User2User")
 	return
@@ -64,11 +65,11 @@ func sendInterested(t *testing.T, f replyGateFixture, chatID, msgID uint64) int 
 // replier.
 func settledPost(t *testing.T, f replyGateFixture, prefix string, verdict string, n int) uint64 {
 	db := database.DBConn
-	posterID := CreateTestUser(t, prefix+"_settledposter_"+verdict, "User")
+	posterID := CreateTestUser(t, prefix+"_settledposter_"+verdict, utils.SYSTEMROLE_USER)
 	// Near the members (test users live in Edinburgh): a review task only offers posts near the reviewer.
 	msgID := CreateTestMessage(t, posterID, "OFFER: settled "+verdict+" item", 55.9533, -3.1883)
 	for i := 0; i < n; i++ {
-		voterID := CreateTestUser(t, fmt.Sprintf("%s_voter_%s_%d", prefix, verdict, i), "User")
+		voterID := CreateTestUser(t, fmt.Sprintf("%s_voter_%s_%d", prefix, verdict, i), utils.SYSTEMROLE_USER)
 		db.Exec("INSERT INTO microactions (actiontype, userid, msgid, result, comments, timestamp, score_negative) VALUES ('CheckMessage', ?, ?, ?, 'settled', NOW(), 0)",
 			voterID, msgID, verdict)
 	}

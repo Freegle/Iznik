@@ -5,6 +5,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -61,7 +62,7 @@ func TestLocationChangeVelocityFlagsRapidHopper(t *testing.T) {
 func TestLocationChangeVelocitySkipsMods(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("locvelmod")
-	modID := CreateTestUser(t, prefix, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 
 	db.Exec("UPDATE users SET reviewrequestedat = NULL, reviewreason = NULL, reviewedat = NULL WHERE id = ?", modID)
 	db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", modID)

@@ -41,7 +41,7 @@ class DiscourseNotSignedUpService
         // Active mods, ordered by user id.
         $sixMonthsAgo = Carbon::now()->subMonths(6);
         $activeModsGroups = DB::table('users')
-            ->whereIn('users.systemrole', ['Moderator', 'Support', 'Admin'])
+            ->whereIn('users.systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
             ->whereNull('users.deleted')
             ->where('users.lastaccess', '>', $sixMonthsAgo)
             ->orderBy('users.id')

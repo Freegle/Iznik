@@ -23,6 +23,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -117,7 +118,7 @@ func TestLockdownRefusesNewsfeedReferToActions(t *testing.T) {
 
 func TestLockdownRefusesNewsfeedAttachToThread(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_attach")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	nfID := CreateTestNewsfeed(t, modID, 52.2, -0.1, "Test attach "+prefix)
 	otherID := CreateTestNewsfeed(t, modID, 52.2, -0.1, "Test attach target "+prefix)
@@ -132,7 +133,7 @@ func TestLockdownRefusesNewsfeedAttachToThread(t *testing.T) {
 func TestLockdownRefusesNewsfeedConvertToStory(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_story")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	nfID := CreateTestNewsfeed(t, posterID, 52.2, -0.1, "Test story "+prefix)
 

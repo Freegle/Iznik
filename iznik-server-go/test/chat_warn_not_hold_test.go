@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -55,8 +56,8 @@ func fetchChatMessagesAs(t *testing.T, chatID uint64, token string) map[uint64]m
 }
 
 func setupWarnNotHoldChat(t *testing.T, prefix string) (senderID, recipientID, chatID uint64) {
-	senderID = CreateTestUser(t, prefix+"_sender", "User")
-	recipientID = CreateTestUser(t, prefix+"_recipient", "User")
+	senderID = CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+	recipientID = CreateTestUser(t, prefix+"_recipient", utils.SYSTEMROLE_USER)
 	chatID = CreateTestChatRoom(t, senderID, &recipientID, "User2User")
 	return
 }
@@ -185,9 +186,9 @@ func TestChatWarnNotHold_ListCountsHeldButMasksSnippet(t *testing.T) {
 func TestChatWarnNotHold_ModeratorSeesRealPreview(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("warnmod")
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
-	recipientID := CreateTestUser(t, prefix+"_recipient", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+	recipientID := CreateTestUser(t, prefix+"_recipient", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	chatID := CreateTestChatRoom(t, senderID, &recipientID, "User2User")
 
 	heldID := insertHeldChatMessage(t, chatID, senderID, "Send me £20 first", "Money", 0)

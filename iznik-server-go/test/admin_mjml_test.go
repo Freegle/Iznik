@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -41,7 +42,7 @@ func sendAdminTest(t *testing.T, jwt string, content map[string]interface{}, ema
 
 func adminMjmlSetup(t *testing.T, name string) (uint64, string) {
 	prefix := uniquePrefix(name)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 	return modID, token
 }
@@ -158,7 +159,7 @@ func TestAdminApproveAfterAChangeNeedsANewTest(t *testing.T) {
 func TestAdminTestTokenIsNotTransferable(t *testing.T) {
 	modA, tokenA := adminMjmlSetup(t, "adm_mjml_xfer")
 	prefix := uniquePrefix("adm_mjml_xfer_b")
-	modB := CreateTestUser(t, prefix, "Moderator")
+	modB := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, tokenB := CreateTestSession(t, modB)
 
 	subject := fmt.Sprintf("Xfer %d", modA)

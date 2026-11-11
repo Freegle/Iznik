@@ -14,6 +14,7 @@ use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
+use App\Models\User;
 use App\Services\BlockedKeywordBackfillService;
 use App\Services\ContentCheckService;
 use App\Services\PushNotificationService;
@@ -48,7 +49,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     public function test_processes_push_notify_group_mods_task(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // Insert a task simulating what Go would insert.
         DB::table('background_tasks')->insert([
@@ -1458,7 +1459,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $mod = $this->createTestUser(['fullname' => 'Sending Mod']);
         $otherMod = $this->createTestUser(['fullname' => 'Other Mod']);
 
-        DB::table('users')->where('id', $otherMod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $otherMod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         DB::table('background_tasks')->insert([
             'task_type' => 'email_mod_stdmsg',
@@ -1982,7 +1983,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $poster = $this->createTestUser();
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'BCC Test Mod']);
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // Create a mod_config with ccrejectto = Specific.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2059,7 +2060,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $member = $this->createTestUser();
         $memberEmail = $this->createTestUserEmail($member, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'BCC Me Mod']);
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // Create a mod_config with ccfollmembto = Me.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2122,7 +2123,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $poster = $this->createTestUser();
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'No BCC Mod']);
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // Config with all CC set to Nobody.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2185,7 +2186,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $poster = $this->createTestUser();
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $mod = $this->createTestUser(['fullname' => 'Subst Mod']);
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // Config with $groupname in the BCC address.
         $configId = DB::table('mod_configs')->insertGetId([
@@ -2252,8 +2253,8 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $posterEmail = $this->createTestUserEmail($poster, ['preferred' => 1]);
         $modWithConfig = $this->createTestUser(['fullname' => 'Configured Mod']);
         $modWithoutConfig = $this->createTestUser(['fullname' => 'New Mod']);
-        DB::table('users')->where('id', $modWithConfig->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
-        DB::table('users')->where('id', $modWithoutConfig->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $modWithConfig->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $modWithoutConfig->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // Only modWithConfig has a config.
         $configId = DB::table('mod_configs')->insertGetId([

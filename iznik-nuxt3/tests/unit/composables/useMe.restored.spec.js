@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // Import AFTER mocks so vi.mock() factories are wired up.
 
 import { useMe } from '~/composables/useMe'
+import { SYSTEMROLE_USER } from '~/constants'
 
 // ============================================================
 // STORE MOCKS — must be declared before any imports that
@@ -71,7 +72,7 @@ vi.mock('wicket', () => ({
 function makeUser(overrides = {}) {
   return {
     id: 42,
-    systemrole: 'User',
+    systemrole: SYSTEMROLE_USER,
     trustlevel: null,
     settings: { mylocation: { name: 'Oxford' } },
     supporter: false,

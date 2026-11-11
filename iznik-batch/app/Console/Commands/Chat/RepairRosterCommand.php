@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Chat;
 
+use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -84,7 +85,7 @@ class RepairRosterCommand extends Command
 
             // Ensure the national moderators are in the roster.
             $modIds = DB::table('users')
-                ->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])
+                ->whereIn('systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
                 ->pluck('id');
 
             foreach ($modIds as $modId) {

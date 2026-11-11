@@ -217,7 +217,7 @@ func TestCreateChatMessageModnote(t *testing.T) {
 
 func TestDeleteChatMessageMissingId(t *testing.T) {
 	prefix := uniquePrefix("delmissid")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	request := httptest.NewRequest("DELETE", "/api/chatmessages?jwt="+token, nil)
@@ -230,8 +230,8 @@ func TestDeleteChatMessageWithImage(t *testing.T) {
 
 	// Create two users with a User2User chat
 	prefix := uniquePrefix("delimgmsg")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	msgID := CreateTestChatMessage(t, chatID, user1ID, "Message with image")
 
@@ -333,7 +333,7 @@ func TestPostChatRoomNudgeNotMember(t *testing.T) {
 	// Create chat between user1 and user2, but try to nudge as user3
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	user3ID := CreateTestUser(t, prefix+"_u3", "User")
+	user3ID := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	_, token3 := CreateTestSession(t, user3ID)
 
@@ -349,7 +349,7 @@ func TestPostChatRoomTyping(t *testing.T) {
 	prefix := uniquePrefix("typing")
 
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	_, token := CreateTestSession(t, user1ID)
 
@@ -3827,7 +3827,7 @@ func TestCreateChatMessage(t *testing.T) {
 
 	// Create a mod user with a User2Mod chat for testing
 	prefix := uniquePrefix("chatmsg")
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	PromoteTestUserToModerator(t, modUserID)
 	chatid := CreateTestChatRoom(t, modUserID, nil, "User2Mod")
 	CreateTestChatMessage(t, chatid, modUserID, "Initial message")
@@ -3872,7 +3872,7 @@ func TestCreateChatMessage(t *testing.T) {
 func TestCreateChatMessageLoveJunk(t *testing.T) {
 	// Create test data for LoveJunk integration test
 	prefix := uniquePrefix("lovejunk")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a message with spaces in subject (required for LoveJunk)
 	msgID := CreateTestMessage(t, userID, "Test Offer Item", 55.9533, -3.1883)
@@ -3999,7 +3999,7 @@ func TestCreateChatMessageLoveJunkWithProfileUrl(t *testing.T) {
 	}
 
 	prefix := uniquePrefix("ljprofile")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, "Test Offer Profile", 55.9533, -3.1883)
 
 	ljuserid := uint64(time.Now().UnixNano())
@@ -4045,7 +4045,7 @@ func TestCreateChatMessageLoveJunkWithImageid(t *testing.T) {
 	}
 
 	prefix := uniquePrefix("ljimage")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, "Test Offer Image", 55.9533, -3.1883)
 
 	// Create a chat_images row to link.
@@ -4105,8 +4105,8 @@ func TestPatchChatMessageReplyExpected(t *testing.T) {
 
 	// Create two users with a User2User chat
 	prefix := uniquePrefix("patchmsg")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	msgID := CreateTestChatMessage(t, chatID, user1ID, "Test message for RSVP")
 	_, token := CreateTestSession(t, user1ID)
@@ -4167,7 +4167,7 @@ func TestPatchChatMessageNotYourMessage(t *testing.T) {
 
 func TestPatchChatMessageNotFound(t *testing.T) {
 	prefix := uniquePrefix("patchnf")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, user1ID)
 
 	payload := map[string]interface{}{
@@ -4243,8 +4243,8 @@ func TestDeleteChatMessageNotFound(t *testing.T) {
 func TestReferToSupportByGroupModerator(t *testing.T) {
 	prefix := uniquePrefix("refersupport_mod")
 	db := database.DBConn
-	memberID := CreateTestUser(t, prefix+"_m", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	memberID := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	chatid := CreateTestChatRoom(t, memberID, nil, "User2Mod")
 	CreateTestChatMessage(t, chatid, memberID, "Hello mods")
 	_, token := CreateTestSession(t, modID)
@@ -4268,7 +4268,7 @@ func TestFetchUser2UserChatAsGroupMod(t *testing.T) {
 	prefix := uniquePrefix("U2UModView")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")

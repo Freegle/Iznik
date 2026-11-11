@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,7 +31,7 @@ func TestLockdownRefusesChatmodstatus(t *testing.T) {
 	prefix := uniquePrefix("ld_chatmod")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	_, modToken := CreateTestSession(t, modID)
 
@@ -62,7 +63,7 @@ func TestLockdownRefusesNewsfeedmodstatus(t *testing.T) {
 	prefix := uniquePrefix("ld_newsfeedmod")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	_, modToken := CreateTestSession(t, modID)
 
@@ -154,7 +155,7 @@ func TestLockdownRefusesRatingReviewed(t *testing.T) {
 	// every refusal (plan section 10.5, "Support/Admin callers are exempt from every
 	// refusal"), so a Support rater here would see 200, not 409, regardless of the gate -
 	// that would be proving the exemption, not the refusal this test is named for.
-	raterID := CreateTestUser(t, prefix+"_rater", "Moderator")
+	raterID := CreateTestUser(t, prefix+"_rater", utils.SYSTEMROLE_MODERATOR)
 	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
 	_, token := CreateTestSession(t, raterID)
 

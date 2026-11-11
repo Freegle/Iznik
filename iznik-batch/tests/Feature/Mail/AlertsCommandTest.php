@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mail;
 
+use App\Models\User;
 use App\Services\AlertService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -15,7 +16,7 @@ class AlertsCommandTest extends TestCase
         Mail::fake();
         // The recipients are every moderator, so the fixture moderators are demoted and each
         // test counts only the moderators it creates. The transaction undoes this.
-        DB::table('users')->where('systemrole', '!=', 'User')->update(['systemrole' => 'User']);
+        DB::table('users')->where('systemrole', '!=', User::SYSTEMROLE_USER)->update(['systemrole' => User::SYSTEMROLE_USER]);
     }
 
     private function createAlert(array $attrs = []): int
@@ -36,7 +37,7 @@ class AlertsCommandTest extends TestCase
     private function makeMod(): array
     {
         $user = $this->createTestUser();
-        DB::table('users')->where('id', $user->id)->update(['systemrole' => 'Moderator']);
+        DB::table('users')->where('id', $user->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         return [$user->id];
     }
@@ -164,7 +165,7 @@ class AlertsCommandTest extends TestCase
         $this->createAlert();
 
         $user = $this->createTestUser(['deleted' => now()]);
-        DB::table('users')->where('id', $user->id)->update(['systemrole' => 'Moderator']);
+        DB::table('users')->where('id', $user->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         (new AlertService())->processAlerts();
 

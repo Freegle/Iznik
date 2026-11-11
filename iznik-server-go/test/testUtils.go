@@ -125,7 +125,7 @@ func CreateTestUser(t *testing.T, prefix string, role string) uint64 {
 // so it's just users.systemrole.
 func PromoteTestUserToModerator(t *testing.T, userID uint64) {
 	db := database.DBConn
-	result := db.Exec("UPDATE users SET systemrole = 'Moderator' WHERE id = ?", userID)
+	result := db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_MODERATOR, userID)
 
 	if result.Error != nil {
 		t.Fatalf("ERROR: Failed to promote test user to moderator: %v", result.Error)

@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Mail\Housekeeper\DiscourseReportMail;
+use App\Models\User;
 use App\Services\DiscourseClient;
 use App\Services\DiscourseNotSignedUpService;
 use Carbon\Carbon;
@@ -34,7 +35,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
         // global state: age out every existing moderator so only the mods each test creates count.
         // (Rolled back by DatabaseTransactions; this is setup, not cleanup.)
         DB::table('users')
-            ->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])
+            ->whereIn('systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
             ->update(['lastaccess' => Carbon::now()->subYears(2)]);
     }
 
@@ -66,7 +67,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
         Carbon::setTestNow('2026-10-03 10:00:00'); // a Saturday
 
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // No users on Discourse at all → the mod isn't signed up.
         $client = $this->mockClient([], fn ($id, $u) => []);
@@ -87,7 +88,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
         Carbon::setTestNow('2026-09-30 10:00:00'); // a Wednesday
 
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $client = $this->mockClient(
             [['id' => 200, 'username' => 'themod']],
@@ -107,7 +108,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
         Mail::fake();
 
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
         DB::table('users_emails')->where('userid', $mod->id)->update(['preferred' => 0]);
         DB::table('users_emails')->insert([
             'userid' => $mod->id,
@@ -132,13 +133,13 @@ class DiscourseNotSignedUpServiceTest extends TestCase
     public function test_flags_tn_account_with_mod_role_not_on_discourse(): void
     {
         $owner = $this->createTestUser();
-        DB::table('users')->where('id', $owner->id)->update(['systemrole' => 'Moderator']);
+        DB::table('users')->where('id', $owner->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $tn = $this->createTestUser();
         DB::table('users')->where('id', $tn->id)->update([
             'tnuserid' => 900000000 + $tn->id,
             'lastaccess' => Carbon::now()->subYears(3),
-            'systemrole' => 'Moderator',
+            'systemrole' => User::SYSTEMROLE_MODERATOR,
         ]);
 
         $client = $this->mockClient(
@@ -163,7 +164,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
         Mail::fake();
 
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
         DB::table('users_emails')->insert([
             'userid' => $mod->id,
             'email' => 'alsouses@user.trashnothing.com',

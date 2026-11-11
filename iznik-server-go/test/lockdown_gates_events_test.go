@@ -29,6 +29,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -61,7 +62,7 @@ func TestLockdownRefusesCommunityEventEdit(t *testing.T) {
 func TestLockdownAllowsCommunityEventApproveWhenEventsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_ce_appr")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	eventID := CreateTestCommunityEvent(t, ownerID)
 
@@ -116,7 +117,7 @@ func TestLockdownRefusesCommunityEventSelfApproveByOwner(t *testing.T) {
 func TestLockdownCommunityEventModeratorApproveIsCounted(t *testing.T) {
 	prefix := uniquePrefix("ld_ce_appr_count")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	eventID := CreateTestCommunityEvent(t, ownerID)
 
@@ -172,7 +173,7 @@ func TestLockdownRefusesVolunteeringEdit(t *testing.T) {
 func TestLockdownAllowsVolunteeringApproveWhenEventsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_vol_appr")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	volID := CreateTestVolunteering(t, ownerID)
 
@@ -224,7 +225,7 @@ func TestLockdownRefusesVolunteeringSelfApproveByOwner(t *testing.T) {
 func TestLockdownVolunteeringModeratorApproveIsCounted(t *testing.T) {
 	prefix := uniquePrefix("ld_vol_appr_count")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	volID := CreateTestVolunteering(t, ownerID)
 

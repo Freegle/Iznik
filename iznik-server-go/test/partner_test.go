@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -225,7 +226,7 @@ func TestPartnerPutMemberRefusesBannedUser(t *testing.T) {
 		prefix+"_partner", partnerKey, "test.com")
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET banned = NOW() WHERE id = ?", userID)
 	defer db.Exec("UPDATE users SET banned = NULL WHERE id = ?", userID)
 

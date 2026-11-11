@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,8 +26,8 @@ func setupModerationData(t *testing.T) (uint64, uint64, uint64, uint64, uint64, 
 	db := database.DBConn
 	prefix := uniquePrefix(t.Name())
 
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	regularUserID := CreateTestUser(t, prefix+"_user", "User")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	regularUserID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, regularUserID, nil, "User2Mod")
 
 	result := db.Exec(

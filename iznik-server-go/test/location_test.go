@@ -420,7 +420,7 @@ func TestUpdateLocationNotAdmin(t *testing.T) {
 
 func TestExcludeLocation(t *testing.T) {
 	prefix := uniquePrefix("locwr_excl")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a test location.
@@ -449,7 +449,7 @@ func TestExcludeLocation(t *testing.T) {
 
 func TestExcludeLocationQueuesRemapTask(t *testing.T) {
 	prefix := uniquePrefix("locwr_exclrmp")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a test location with a polygon. The remap task needs the

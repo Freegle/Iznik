@@ -23,6 +23,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,7 +140,7 @@ func TestGetModtoolsLockdownAnyModerator(t *testing.T) {
 	incidentID := pressLockdown(t, supportToken, "mod visibility "+prefix)
 	defer cleanupIncident(t, incidentID)
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	resp, result := getModtoolsLockdown(t, modToken)
@@ -187,7 +188,7 @@ func TestPatchLockdownRefusesPlainMember(t *testing.T) {
 
 func TestPatchLockdownRefusesPlainModerator(t *testing.T) {
 	prefix := uniquePrefix("ld_patch_mod")
-	modID := CreateTestUser(t, prefix, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	resp, _ := patchLockdown(t, token, map[string]interface{}{"action": "press", "reason": "x"})
@@ -583,7 +584,7 @@ func TestGetModtoolsLockdownHistoryEndedByName(t *testing.T) {
 
 func TestGetModtoolsLockdownHistoryRefusesPlainModerator(t *testing.T) {
 	prefix := uniquePrefix("ld_history_mod")
-	modID := CreateTestUser(t, prefix, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	req := httptest.NewRequest("GET", "/api/modtools/lockdown/history?jwt="+token, nil)
@@ -641,7 +642,7 @@ func TestGetModtoolsLockdownStatsLeakedChatExcludesReleasedHolds(t *testing.T) {
 
 func TestGetModtoolsLockdownStatsRefusesPlainModerator(t *testing.T) {
 	prefix := uniquePrefix("ld_stats_mod")
-	modID := CreateTestUser(t, prefix, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	req := httptest.NewRequest("GET", "/api/modtools/lockdown/stats?jwt="+token, nil)

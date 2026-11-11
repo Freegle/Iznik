@@ -22,6 +22,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -82,7 +83,7 @@ func TestLockdownForcesPutMessagePendingWhenPostsHeld(t *testing.T) {
 func TestLockdownRefusesModeratorEditOfOthersPost(t *testing.T) {
 	prefix := uniquePrefix("ld_msg_modedit")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	msgID := CreateTestMessage(t, posterID, prefix+" offer", 52.5, -1.8)
 

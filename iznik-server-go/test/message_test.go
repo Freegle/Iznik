@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -538,7 +539,7 @@ func TestPostMessagePartnerConsent(t *testing.T) {
 func TestPatchMessageLocationOnlyEditDenormalisesLatLng(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("patch_locdenorm")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	token := getToken(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" chair", 55.95, -3.18)
@@ -579,12 +580,12 @@ func TestGetMessageReturnsEditsForMod(t *testing.T) {
 
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Non-mod user (systemrole User, group role Member)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	msgID := CreateTestMessage(t, posterID, prefix+" item", 52.5, -1.8)
@@ -632,7 +633,7 @@ func TestGetMessageReturnsLocationForMod(t *testing.T) {
 
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -663,7 +664,7 @@ func TestGetMessageReturnsLocationForMod(t *testing.T) {
 	assert.InDelta(t, -1.8, locMap["lng"].(float64), 0.01, "Location lng should match")
 
 	// Fetch as non-mod — should NOT see precise location (privacy).
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	resp2, _ := getApp().Test(httptest.NewRequest("GET",
@@ -683,11 +684,11 @@ func TestPatchMessageLocationName(t *testing.T) {
 	prefix := uniquePrefix("msgmod_patchloc")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, prefix+" Test Item", 53.0, -1.0)
 
 	// Find a location name to use.
@@ -725,7 +726,7 @@ func TestPatchMessageExtendDeadlineClearsExpiredOutcome(t *testing.T) {
 	prefix := uniquePrefix("msgpatch_extend")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Test Item", 53.0, -1.0)
@@ -781,7 +782,7 @@ func TestPostMessageNotLoggedIn(t *testing.T) {
 
 func TestPostMessageNoID(t *testing.T) {
 	prefix := uniquePrefix("msgw_noid")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{"action": "Promise"}
@@ -796,7 +797,7 @@ func TestPostMessageNoID(t *testing.T) {
 
 func TestPostMessageUnknownAction(t *testing.T) {
 	prefix := uniquePrefix("msgw_unk")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{"id": 1, "action": "Bogus"}
@@ -813,9 +814,9 @@ func TestPostMessagePromise(t *testing.T) {
 	prefix := uniquePrefix("msgw_promise")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	// Create a chat room between the users for the system message.
@@ -853,8 +854,8 @@ func TestPostMessagePromise(t *testing.T) {
 func TestPostMessagePromiseNotYourMessage(t *testing.T) {
 	prefix := uniquePrefix("msgw_prm_notmine")
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
@@ -875,7 +876,7 @@ func TestPostMessagePromiseNotYourMessage(t *testing.T) {
 func TestPostMessagePromiseMessageNotFound(t *testing.T) {
 	prefix := uniquePrefix("msgw_prm_nf")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{
@@ -895,9 +896,9 @@ func TestPostMessageRenege(t *testing.T) {
 	prefix := uniquePrefix("msgw_renege")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	// Create a chat room and a promise first.
@@ -938,7 +939,7 @@ func TestPostMessageOutcomeIntended(t *testing.T) {
 	prefix := uniquePrefix("msgw_intended")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -968,7 +969,7 @@ func TestPostMessageOutcomeIntendedRepost(t *testing.T) {
 	prefix := uniquePrefix("msgw_int_rep")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -994,7 +995,7 @@ func TestPostMessageOutcomeIntendedRepost(t *testing.T) {
 func TestPostMessageOutcomeIntendedInvalid(t *testing.T) {
 	prefix := uniquePrefix("msgw_int_inv")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1016,7 +1017,7 @@ func TestPostMessageOutcome(t *testing.T) {
 	prefix := uniquePrefix("msgw_outcome")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1051,7 +1052,7 @@ func TestPostMessageOutcomeDuplicate(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_dup")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1081,7 +1082,7 @@ func TestPostMessageOutcomeAllowsTakenOverExpiredPlusAutoWithdrawn(t *testing.T)
 	prefix := uniquePrefix("msgw_out_dup_expauto")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1120,7 +1121,7 @@ func TestPostMessageOutcomeAllowsTakenOverAutoExpiredWithdrawn(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_autoexp")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1153,7 +1154,7 @@ func TestPostMessageOutcomeRejectsTakenOverRealWithdrawn(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_dup_realw")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1197,9 +1198,9 @@ func TestPostMessageAddBy(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	// Set initial availability.
@@ -1234,9 +1235,9 @@ func TestPostMessageAddByUpdate(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_upd")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	// Set initial availability and add an existing entry.
@@ -1273,9 +1274,9 @@ func TestPostMessageRemoveBy(t *testing.T) {
 	prefix := uniquePrefix("msgw_rmby")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	// Set availability and add an entry.
@@ -1310,7 +1311,7 @@ func TestPostMessageOutcomeTakenOnWanted(t *testing.T) {
 	prefix := uniquePrefix("msgw_tak_wnt")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" wanted item", 52.5, -1.8)
 
@@ -1357,8 +1358,8 @@ func TestPostMessageAddByNotYourMessage(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_ny")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
@@ -1383,8 +1384,8 @@ func TestPostMessageRemoveByNotYourMessage(t *testing.T) {
 	prefix := uniquePrefix("msgw_rmby_ny")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
@@ -1411,9 +1412,9 @@ func TestPostMessagePromiseRefusedWithoutChat(t *testing.T) {
 	prefix := uniquePrefix("msgw_prm_nochat")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Promise", "userid": otherID})
@@ -1436,9 +1437,9 @@ func TestPostMessagePromiseWithChatPostsPromisedMessage(t *testing.T) {
 	prefix := uniquePrefix("msgw_prm_chat")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 	chatID := CreateTestChatRoom(t, ownerID, &otherID, "User2User")
 
@@ -1461,7 +1462,7 @@ func TestPostMessageOutcomeTakenWithUserRecordsBy(t *testing.T) {
 
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
 	// Set availability.
@@ -1533,7 +1534,7 @@ func TestPostMessageOutcomeWithdrawnDoesNotMarkSpatialSuccessful(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_sp_w")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1564,7 +1565,7 @@ func TestPostMessageWithdrawnApproved(t *testing.T) {
 	prefix := uniquePrefix("msgw_wdr_app")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1598,7 +1599,7 @@ func TestPostMessageOutcomeQueuesFreebieAlertsRemove(t *testing.T) {
 	prefix := uniquePrefix("msgw_fa_rem")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1629,7 +1630,7 @@ func TestPostMessageOutcomeWithdrawnQueuesFreebieAlertsRemove(t *testing.T) {
 	prefix := uniquePrefix("msgw_fa_rem_w")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1658,7 +1659,7 @@ func TestDeleteMessageQueuesFreebieAlertsRemove(t *testing.T) {
 	prefix := uniquePrefix("msgw_fa_del")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1679,7 +1680,7 @@ func TestPostMessageView(t *testing.T) {
 	prefix := uniquePrefix("msgw_view")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1705,7 +1706,7 @@ func TestPostMessageViewDedup(t *testing.T) {
 	prefix := uniquePrefix("msgw_view_dup")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -1766,8 +1767,8 @@ func TestMessagePageviewSemantics(t *testing.T) {
 	// Distinct viewer (not the owner) so MarkSeen records against a real recipient.
 	setup := func(label string) (msgID uint64, token string, viewerID uint64) {
 		prefix := uniquePrefix(label)
-		ownerID := CreateTestUser(t, prefix+"_owner", "User")
-		viewerID = CreateTestUser(t, prefix+"_viewer", "User")
+		ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+		viewerID = CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 		_, token = CreateTestSession(t, viewerID)
 		msgID = CreateTestMessage(t, ownerID, prefix+" item", 55.9533, -3.1883)
 		return
@@ -1829,7 +1830,7 @@ func TestMessagePageviewSource(t *testing.T) {
 	// notification-tagged open records the source; a later organic open does not clear it
 	{
 		prefix := uniquePrefix("pv_src_notify")
-		userID := CreateTestUser(t, prefix+"_user", "User")
+		userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
 		msgID := CreateTestMessage(t, userID, prefix+" item", 52.5, -1.8)
 
@@ -1842,7 +1843,7 @@ func TestMessagePageviewSource(t *testing.T) {
 	// organic-only open leaves source unset (NULL)
 	{
 		prefix := uniquePrefix("pv_src_organic")
-		userID := CreateTestUser(t, prefix+"_user", "User")
+		userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
 		msgID := CreateTestMessage(t, userID, prefix+" item", 52.5, -1.8)
 
@@ -1887,8 +1888,8 @@ func TestMarkSeenSource(t *testing.T) {
 	}
 
 	prefix := uniquePrefix("markseen_src")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, viewerID)
 	msgID := CreateTestMessage(t, ownerID, prefix+" item", 55.9533, -3.1883)
 
@@ -1917,9 +1918,9 @@ func TestPostMessageAddByNegativeCount(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_neg")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 5 WHERE id = ?", msgID)
@@ -1951,7 +1952,7 @@ func TestPostMessageAddByHugeCount(t *testing.T) {
 
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	db.Exec("UPDATE messages SET availableinitially = 2, availablenow = 2 WHERE id = ?", msgID)
@@ -2092,7 +2093,7 @@ func TestPostMessageRenegeWithoutPromise(t *testing.T) {
 
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	body := map[string]interface{}{
@@ -2121,9 +2122,9 @@ func TestPostMessageRenegeTwiceRecordsOnce(t *testing.T) {
 	prefix := uniquePrefix("msgw_rng_twice")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 	CreateTestChatRoom(t, ownerID, &otherID, "User2User")
 	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgID, otherID)
@@ -2147,7 +2148,7 @@ func TestPostMessageOutcomeNoHappiness(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_noh")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -2176,7 +2177,7 @@ func TestPostMessageOutcomeHappyNoComment(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_nocomm")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" offer item", 52.5, -1.8)
 
@@ -2202,7 +2203,7 @@ func TestPostMessageOutcomeHappyNoComment(t *testing.T) {
 
 func TestPostMessageEmptyBody(t *testing.T) {
 	prefix := uniquePrefix("msgw_empty")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Empty JSON body - should return 400 (missing id).
@@ -2216,7 +2217,7 @@ func TestPostMessageEmptyBody(t *testing.T) {
 
 func TestPostMessageInvalidJSON(t *testing.T) {
 	prefix := uniquePrefix("msgw_badjson")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	url := fmt.Sprintf("/api/message?jwt=%s", token)
@@ -2235,7 +2236,7 @@ func TestGetMessageWithoutHistory(t *testing.T) {
 	// Verify that regular GET /message/:id still works without messagehistory param.
 	prefix := uniquePrefix("msgnohist")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, posterID, prefix+" Normal Message", 55.9533, -3.1883)
 
@@ -2253,7 +2254,7 @@ func TestGetMultipleMessagesStillWorks(t *testing.T) {
 	// Verify that GET /message/id1,id2 still works with the new handler.
 	prefix := uniquePrefix("msgmulti")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	mid1 := CreateTestMessage(t, posterID, prefix+" Multi 1", 55.9533, -3.1883)
 	mid2 := CreateTestMessage(t, posterID, prefix+" Multi 2", 55.9533, -3.1883)
@@ -2280,9 +2281,9 @@ func TestMessagesMarkSeen(t *testing.T) {
 	prefix := uniquePrefix("markseen")
 
 	// Create message owner and viewer
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	// Create messages
@@ -2330,7 +2331,7 @@ func TestMessagesMarkSeenUnauthorized(t *testing.T) {
 
 func TestMessagesMarkSeenEmptyIds(t *testing.T) {
 	prefix := uniquePrefix("markseen_empty")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Test with empty IDs array
@@ -2343,7 +2344,7 @@ func TestMessagesMarkSeenEmptyIds(t *testing.T) {
 
 func TestMessagesMarkSeenInvalidBody(t *testing.T) {
 	prefix := uniquePrefix("markseen_invalid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Test with missing IDs field
@@ -2356,7 +2357,7 @@ func TestMessagesMarkSeenInvalidBody(t *testing.T) {
 
 func TestMessagesMarkSeenInvalidJSON(t *testing.T) {
 	prefix := uniquePrefix("markseen_json")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+token, bytes.NewBufferString("not json"))
@@ -2369,7 +2370,7 @@ func TestMessagesMarkSeenNonExistentIDs(t *testing.T) {
 	// Marking non-existent message IDs should succeed (inserts orphaned View records
 	// but doesn't crash). This matches PHP behaviour.
 	prefix := uniquePrefix("markseen_ghost")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"ids": [999999998, 999999999]}`
@@ -2383,9 +2384,9 @@ func TestMessagesMarkSeenIdempotent(t *testing.T) {
 	// Marking the same message as seen twice should succeed (ON DUPLICATE KEY UPDATE)
 	prefix := uniquePrefix("markseen_idem")
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	msgID := CreateTestMessage(t, ownerID, "Test Idempotent", 55.9533, -3.1883)
@@ -2414,8 +2415,8 @@ func TestMessagesMarkSeenBatchPreservesSemantics(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("markseen_batch")
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	// A batch of messages (enough to exercise the multi-row INSERT).
@@ -2485,7 +2486,7 @@ func TestPatchMessageReconstructsSubjectFromItemLocation(t *testing.T) {
 	db := database.DBConn
 
 	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -2547,7 +2548,7 @@ func TestPatchMessageItemCaseCorrection(t *testing.T) {
 	prefix := uniquePrefix("msgmod_case")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
 	PromoteTestUserToModerator(t, modID)
 	_, modToken := CreateTestSession(t, modID)
@@ -2605,7 +2606,7 @@ func TestRejectToDraftClearsExpiredDeadline(t *testing.T) {
 	prefix := uniquePrefix("msg_r2d_dl")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, prefix+" item", 52.5, -1.8)
@@ -2634,7 +2635,7 @@ func TestRejectToDraftKeepsFutureDeadline(t *testing.T) {
 	prefix := uniquePrefix("msg_r2d_futuredl")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, prefix+" item", 52.5, -1.8)
@@ -2663,7 +2664,7 @@ func TestBackToDraftAlias(t *testing.T) {
 	prefix := uniquePrefix("msg_b2d_alias")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, prefix+" item", 52.5, -1.8)
@@ -2695,7 +2696,7 @@ func TestRejectToDraftClearsOutcome(t *testing.T) {
 	prefix := uniquePrefix("r2d_outcome")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, prefix+" item", 52.5, -1.8)
@@ -2734,8 +2735,8 @@ func TestRejectToDraftResetsAvailablenow(t *testing.T) {
 	prefix := uniquePrefix("r2d_avail")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, prefix+" item", 52.5, -1.8)
@@ -2779,7 +2780,7 @@ func TestMessageAiDeclinedWritesTable(t *testing.T) {
 	prefix := uniquePrefix("msg_ai_dec")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, prefix+" AI declined item", 55.9533, -3.1883)
 
 	// Directly insert into messages_ai_declined to verify the table is writable.
@@ -2804,7 +2805,7 @@ func TestGetMessageTnpostid(t *testing.T) {
 	prefix := uniquePrefix("msg_tnpostid")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" Offer", 55.9533, -3.1883)
 
@@ -2825,7 +2826,7 @@ func TestGetMessageTnpostid(t *testing.T) {
 func TestGetMessageTnpostidNull(t *testing.T) {
 	prefix := uniquePrefix("msg_tnpostidnull")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	msgID := CreateTestMessage(t, userID, prefix+" Offer", 55.9533, -3.1883)
 
@@ -2857,7 +2858,7 @@ func TestPatchMessagePartnerAuth(t *testing.T) {
 	prefix := uniquePrefix("msg_partpatch")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 44444, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Offer", 55.9533, -3.1883)
@@ -2890,7 +2891,7 @@ func TestPatchMessagePartnerWrongDomain(t *testing.T) {
 	prefix := uniquePrefix("msg_partpatchdom")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 55555, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Offer", 55.9533, -3.1883)
@@ -2912,7 +2913,7 @@ func TestPatchMessagePartnerWrongDomain(t *testing.T) {
 func TestPatchMessagePartnerInvalidKey(t *testing.T) {
 	prefix := uniquePrefix("msg_partpatchbad")
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Offer", 55.9533, -3.1883)
 
@@ -2932,8 +2933,8 @@ func TestPatchMessagePartnerNotOwner(t *testing.T) {
 	prefix := uniquePrefix("msg_partpatchnotown")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66666, otherID)
 
 	msgID := CreateTestMessage(t, ownerID, prefix+" Offer", 55.9533, -3.1883)
@@ -2957,7 +2958,7 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 	prefix := uniquePrefix("msg_partlatlng")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	// tnuserid is UNIQUE in production. 77710 is not used by any other test -
 	// 77701-77704, 77801-77804 and 77901-77903 all are. Release it from any user
 	// left by an earlier run before claiming it.
@@ -3940,9 +3941,9 @@ func TestPostMessageAddByWithoutCountLeavesTheNumberAlone(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_nocount")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 5 WHERE id = ?", msgID)
@@ -3974,9 +3975,9 @@ func TestPostMessageAddByWithoutCountKeepsAnEarlierCount(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_keep")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, prefix+" offer item", 52.5, -1.8)
 
 	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 3 WHERE id = ?", msgID)

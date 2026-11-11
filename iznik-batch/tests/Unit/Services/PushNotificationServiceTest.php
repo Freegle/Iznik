@@ -34,7 +34,7 @@ class PushNotificationServiceTest extends TestCase
         DB::table('messages')->whereIn('collection', ['Pending', 'Spam'])->update(['deleted' => now()]);
         DB::table('volunteering')->update(['pending' => 0]);
         // Moderators are national too, so fixture moderators would be push recipients.
-        DB::table('users')->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])->update(['systemrole' => 'User']);
+        DB::table('users')->whereIn('systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])->update(['systemrole' => User::SYSTEMROLE_USER]);
     }
 
     /**

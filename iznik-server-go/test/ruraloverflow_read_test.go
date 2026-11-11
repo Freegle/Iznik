@@ -15,6 +15,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 
 )
@@ -289,7 +290,7 @@ func TestBrowseScopedSearch_RingAdmittedPostSearchable(t *testing.T) {
 	ringSchemaExec(t)
 
 	prefix := uniquePrefix("ringsearch")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	subject := "Quibblewick Chair ring admits viewer (ringsearch)"
 	ringed := CreateTestMessage(t, posterID, subject, 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", ringed)

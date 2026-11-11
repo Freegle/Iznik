@@ -24,7 +24,7 @@ func createTestModeratorUser(t *testing.T, prefix string) uint64 {
 		"firstname":  "Test",
 		"lastname":   prefix,
 		"fullname":   fullname,
-		"systemrole": "Moderator",
+		"systemrole": utils.SYSTEMROLE_MODERATOR,
 		"settings":   `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`,
 	})
 	if result.Error != nil {

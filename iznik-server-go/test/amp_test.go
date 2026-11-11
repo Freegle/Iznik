@@ -15,6 +15,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/gofiber/fiber/v2"
 )
@@ -327,8 +328,8 @@ func TestAMPPostChatReplyWithTracking(t *testing.T) {
 func TestAMPChatRosterMembershipScan(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("amproster")
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -347,7 +348,7 @@ func TestAMPChatRosterMembershipScan(t *testing.T) {
 
 	// Test with user not in roster
 	var notMemberUserID uint64
-	user3ID := CreateTestUser(t, prefix+"_3", "User")
+	user3ID := CreateTestUser(t, prefix+"_3", utils.SYSTEMROLE_USER)
 	result = db.Raw(`
 		SELECT userid FROM chat_roster
 		WHERE chatid = ? AND userid = ?
@@ -507,7 +508,7 @@ func TestAMPPostChatReplyTokenMismatchChatID(t *testing.T) {
 	prefix := uniquePrefix("ampmismatch")
 	user1ID := CreateTestUser(t, prefix+"_1", "User")
 	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	user3ID := CreateTestUser(t, prefix+"_3", "User")
+	user3ID := CreateTestUser(t, prefix+"_3", utils.SYSTEMROLE_USER)
 
 	// Create two different chats
 	chatID1 := CreateTestChatRoom(t, user1ID, &user2ID, "User2User")

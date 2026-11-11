@@ -16,6 +16,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,7 +31,7 @@ func modsHeld() func() {
 
 func TestLockdownRefusesCreateAdmin(t *testing.T) {
 	prefix := uniquePrefix("ld_adm_create")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	restore := modsHeld()
@@ -45,7 +46,7 @@ func TestLockdownRefusesCreateAdmin(t *testing.T) {
 
 func TestLockdownRefusesUpdateAdmin(t *testing.T) {
 	prefix := uniquePrefix("ld_adm_upd")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	adminID := createTestAdmin(t, modID, "Lockdown Update Test "+prefix)
 
@@ -61,7 +62,7 @@ func TestLockdownRefusesUpdateAdmin(t *testing.T) {
 
 func TestLockdownRefusesDeleteAdmin(t *testing.T) {
 	prefix := uniquePrefix("ld_adm_del")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	adminID := createTestAdmin(t, modID, "Lockdown Delete Test "+prefix)
 
@@ -77,7 +78,7 @@ func TestLockdownRefusesDeleteAdmin(t *testing.T) {
 
 func TestLockdownRefusesCommentCreate(t *testing.T) {
 	prefix := uniquePrefix("ld_cmwr_create")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	_, modToken := CreateTestSession(t, modID)
 
@@ -93,7 +94,7 @@ func TestLockdownRefusesCommentCreate(t *testing.T) {
 
 func TestLockdownRefusesCommentEdit(t *testing.T) {
 	prefix := uniquePrefix("ld_cmwr_edit")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	_, modToken := CreateTestSession(t, modID)
 
@@ -115,7 +116,7 @@ func TestLockdownRefusesCommentEdit(t *testing.T) {
 
 func TestLockdownRefusesCommentDelete(t *testing.T) {
 	prefix := uniquePrefix("ld_cmwr_del")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	_, modToken := CreateTestSession(t, modID)
 
@@ -151,7 +152,7 @@ func TestLockdownRefusesPostModConfig(t *testing.T) {
 
 func TestLockdownRefusesPatchModConfig(t *testing.T) {
 	prefix := uniquePrefix("ld_ModCfgPatch")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
 
@@ -169,7 +170,7 @@ func TestLockdownRefusesDeleteModConfig(t *testing.T) {
 	// System admins are exempt from GateMod, so use a plain group owner - a
 	// non-exempt caller who would otherwise be allowed to delete their own config.
 	prefix := uniquePrefix("ld_ModCfgDel")
-	ownerID := CreateTestUser(t, prefix+"_owner", "Moderator")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_MODERATOR)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	cfgID := createTestModConfig(t, prefix+"_cfg", ownerID)
 

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Mail\Alert\AlertMail;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -67,7 +68,7 @@ class AlertService
         $askClick = (bool) ($alert->askclick ?? false);
 
         $mods = DB::table('users')
-            ->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])
+            ->whereIn('systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
             ->whereNull('deleted')
             ->pluck('id');
 

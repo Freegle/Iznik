@@ -165,3 +165,15 @@ export const JOB_ICON_COLOURS = {
   'dark green': '#2d5016',
   'soft sage green': '#7a9a6d',
 }
+
+// Roles. System roles are users.systemrole; membership roles are memberships.role.
+// Moderator is both, so each has its own constant: use the one for the column compared with.
+// Same names and values as the Go API (utils) and PHP (User::SYSTEMROLE_*, Membership::ROLE_*).
+export const SYSTEMROLE_USER = 'User'
+export const SYSTEMROLE_MODERATOR = 'Moderator'
+export const SYSTEMROLE_SUPPORT = 'Support'
+export const SYSTEMROLE_ADMIN = 'Admin'
+
+export const ROLE_MEMBER = 'Member'
+export const ROLE_MODERATOR = 'Moderator'
+export const ROLE_OWNER = 'Owner'

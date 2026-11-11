@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\User;
 use App\Services\AlertService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -31,7 +32,7 @@ class AlertServiceTest extends TestCase
 
         // Every moderator is a recipient, so the fixture moderators are demoted and each test counts
         // only the moderators it creates. The transaction undoes this.
-        DB::table('users')->where('systemrole', '!=', 'User')->update(['systemrole' => 'User']);
+        DB::table('users')->where('systemrole', '!=', User::SYSTEMROLE_USER)->update(['systemrole' => User::SYSTEMROLE_USER]);
     }
 
     // ===================================================================
@@ -74,7 +75,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_ignores_completed_alerts(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // Insert a completed alert — should be ignored.
         $this->insertAlert(['complete' => now()]);
@@ -91,7 +92,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_dryRun_returns_zero_and_sends_no_mail(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $this->insertAlert();
 
@@ -104,7 +105,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_dryRun_does_not_mark_alert_complete(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $alertId = $this->insertAlert();
 
@@ -117,7 +118,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_dryRun_does_not_insert_tracking_records(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $alertId = $this->insertAlert();
 
@@ -134,7 +135,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_sends_email_to_moderator(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $this->insertAlert([]);
 
@@ -147,7 +148,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_sends_email_to_owner(): void
     {
         $owner = $this->createTestUser();
-        DB::table('users')->where('id', $owner->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $owner->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $this->insertAlert([]);
 
@@ -172,7 +173,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_marks_alert_complete_when_under_batch_limit(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $alertId = $this->insertAlert([]);
 
@@ -185,7 +186,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_inserts_tracking_record(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $alertId = $this->insertAlert([]);
 
@@ -208,8 +209,8 @@ class AlertServiceTest extends TestCase
     {
         $mod1 = $this->createTestUser();
         $mod2 = $this->createTestUser();
-        DB::table('users')->where('id', $mod1->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
-        DB::table('users')->where('id', $mod2->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod1->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod2->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $this->insertAlert([]);
 
@@ -221,7 +222,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_returns_total_across_multiple_alerts(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $this->insertAlert([]);
         $this->insertAlert(['subject' => 'Second Alert']);
@@ -239,7 +240,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_skips_deleted_users(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // Mark user as deleted.
         DB::table('users')->where('id', $mod->id)->update(['deleted' => now()]);
@@ -255,7 +256,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_skips_bounced_email(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         // Mark the user's email as bounced.
         DB::table('users_emails')->where('userid', $mod->id)->update(['bounced' => now()]);
@@ -275,7 +276,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_uses_html_field_when_present(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $this->insertAlert([
             'html' => '<b>HTML body</b>',
@@ -291,7 +292,7 @@ class AlertServiceTest extends TestCase
     public function test_processAlerts_falls_back_to_nl2br_text_when_html_empty(): void
     {
         $mod = $this->createTestUser();
-        DB::table('users')->where('id', $mod->id)->update(['systemrole' => 'Moderator', 'emailfrequency' => -1]);
+        DB::table('users')->where('id', $mod->id)->update(['systemrole' => User::SYSTEMROLE_MODERATOR, 'emailfrequency' => -1]);
 
         $this->insertAlert([
             'html' => '',

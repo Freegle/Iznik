@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/localreach"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -71,7 +72,7 @@ func listIDs(t *testing.T, path, token string) []uint64 {
 // there would: the density cap, which is the flat 30 minutes when density cannot be measured.
 func TestLocalReach_DefaultsToPosterAndDensityCap(t *testing.T) {
 	stubRouting(t, false)
-	uid := CreateTestUser(t, uniquePrefix("lr_default"), "User")
+	uid := CreateTestUser(t, uniquePrefix("lr_default"), utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, uid)
 
 	r := readReach(t, "communityevents", createEvent(t, token, ""))
@@ -85,7 +86,7 @@ func TestLocalReach_DefaultsToPosterAndDensityCap(t *testing.T) {
 // A named place overrides the poster's location, and the slider is held to its range.
 func TestLocalReach_NamedPlaceAndClampedMinutes(t *testing.T) {
 	stubRouting(t, false)
-	uid := CreateTestUser(t, uniquePrefix("lr_named"), "User")
+	uid := CreateTestUser(t, uniquePrefix("lr_named"), utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, uid)
 
 	r := readReach(t, "communityevents", createEvent(t, token,
@@ -99,9 +100,9 @@ func TestLocalReach_NamedPlaceAndClampedMinutes(t *testing.T) {
 func TestLocalReach_ListShowsOnlyEventsInReach(t *testing.T) {
 	stubRouting(t, false)
 	prefix := uniquePrefix("lr_list")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	_, posterToken := CreateTestSession(t, posterID)
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	near := createEvent(t, posterToken, "")
@@ -119,9 +120,9 @@ func TestLocalReach_ListShowsOnlyEventsInReach(t *testing.T) {
 func TestLocalReach_FallbackRadiusWhenRoutingFailed(t *testing.T) {
 	stubRouting(t, false)
 	prefix := uniquePrefix("lr_fallback")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	_, posterToken := CreateTestSession(t, posterID)
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	// About 10 and 20 miles north of the viewer.
@@ -138,9 +139,9 @@ func TestLocalReach_FallbackRadiusWhenRoutingFailed(t *testing.T) {
 func TestLocalReach_CentreHiddenFromOthers(t *testing.T) {
 	stubRouting(t, false)
 	prefix := uniquePrefix("lr_hidden")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	_, posterToken := CreateTestSession(t, posterID)
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	id := createEvent(t, posterToken, "")
@@ -163,10 +164,10 @@ func TestLocalReach_CentreHiddenFromOthers(t *testing.T) {
 func TestLocalReach_UpdateKeepsCentre(t *testing.T) {
 	stubRouting(t, false)
 	prefix := uniquePrefix("lr_update")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	_, posterToken := CreateTestSession(t, posterID)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	database.DBConn.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", modID)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	database.DBConn.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, modID)
 	_, modToken := CreateTestSession(t, modID)
 
 	id := createEvent(t, posterToken, fmt.Sprintf(`,"lat":%f,"lng":%f`, londonLat, londonLng))
@@ -183,9 +184,9 @@ func TestLocalReach_UpdateKeepsCentre(t *testing.T) {
 func TestLocalReach_OnlineVolunteeringIsNational(t *testing.T) {
 	stubRouting(t, false)
 	prefix := uniquePrefix("lr_vol")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	_, posterToken := CreateTestSession(t, posterID)
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	create := func(extra string) uint64 {

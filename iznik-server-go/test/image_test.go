@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/gofiber/fiber/v2"
 
@@ -426,7 +427,7 @@ func TestRotateImageNoAuth(t *testing.T) {
 func TestRotateAttachedImageOfAnotherUserRefused(t *testing.T) {
 	// Once a photo belongs to a post, only the post's owner may rotate it.
 	prefix := uniquePrefix("RotateOthers")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, "RotateOthers test "+prefix, 55.9533, -3.1883)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
@@ -438,7 +439,7 @@ func TestRotateAttachedImageOfAnotherUserRefused(t *testing.T) {
 	json.Unmarshal(rsp(resp), &result)
 	imageID := uint64(result["id"].(float64))
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	assert.Equal(t, fiber.StatusForbidden, rotateImage(t, otherToken, imageID))

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,9 +19,9 @@ import (
 // Edinburgh one must still not be offered to an Edinburgh member.
 func TestMicrovolunteering_FarPostIsNotOffered(t *testing.T) {
 	prefix := uniquePrefix("mv_far")
-	reviewer := CreateTestUser(t, prefix+"_rev", "User")
+	reviewer := CreateTestUser(t, prefix+"_rev", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, reviewer)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	far := CreateTestMessage(t, poster, "Far post "+prefix, 51.5074, -0.1278)
 	near := CreateTestMessage(t, poster, "Near post "+prefix, 55.9533, -3.1883)
@@ -43,9 +44,9 @@ func TestMicrovolunteering_FarPostIsNotOffered(t *testing.T) {
 // A vote can only be cast on a post that could have been offered.
 func TestMicrovolunteering_CannotVoteOnFarPost(t *testing.T) {
 	prefix := uniquePrefix("mv_farvote")
-	reviewer := CreateTestUser(t, prefix+"_rev", "User")
+	reviewer := CreateTestUser(t, prefix+"_rev", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, reviewer)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	far := CreateTestMessage(t, poster, "Far vote "+prefix, 51.5074, -0.1278)
 

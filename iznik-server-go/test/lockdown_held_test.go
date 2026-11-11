@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -359,7 +360,7 @@ func TestGetModtoolsLockdownHeldValidatesAndRefuses(t *testing.T) {
 	prefix := uniquePrefix("ld_held_auth")
 	supportID := CreateTestUser(t, prefix+"_sup", "Support")
 	_, supportToken := CreateTestSession(t, supportID)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status, _ := getLockdownJSON(t, "/api/modtools/lockdown/held?kind=spam&jwt="+supportToken)

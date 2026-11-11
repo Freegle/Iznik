@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -28,7 +29,7 @@ func createTestAdmin(t *testing.T, createdby uint64, subject string) uint64 {
 
 func TestListAdmins(t *testing.T) {
 	prefix := uniquePrefix("adm_list")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, "Test Admin "+prefix)
@@ -79,7 +80,7 @@ func TestListAdminsIncludesCompleted(t *testing.T) {
 	// admin and leaving only stale, approved-but-never-sent ones (Derek saw a 3-year-old
 	// Christmas admin as the newest). The listing must include completed admins.
 	prefix := uniquePrefix("adm_done")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// A sent (completed) admin.
@@ -109,7 +110,7 @@ func TestListAdminsIncludesCompleted(t *testing.T) {
 
 func TestCreateAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_create")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"subject":"Test Subject %s","text":"Test text"}`, prefix)
@@ -158,7 +159,7 @@ func TestGetAdmin(t *testing.T) {
 
 func TestUpdateAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_upd")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, "Update Test "+prefix)
@@ -195,7 +196,7 @@ func TestUpdateAdmin(t *testing.T) {
 
 func TestDeleteAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_del")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, "Delete Test "+prefix)
@@ -219,7 +220,7 @@ func TestDeleteAdmin(t *testing.T) {
 
 func TestHoldAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_hold")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, "Hold Test "+prefix)
@@ -243,7 +244,7 @@ func TestHoldAdmin(t *testing.T) {
 
 func TestReleaseAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_rel")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, "Release Test "+prefix)
@@ -276,7 +277,7 @@ func TestPostAdminCreateWithSendAfter(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("admin_sendafter")
 
-	modID := CreateTestUser(t, prefix, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Send a future sendafter datetime.
@@ -339,7 +340,7 @@ func adminExists(id uint64) bool {
 // database is shared, so these five are dated in the future to sit ahead of everything else.
 func TestListAdminsPages(t *testing.T) {
 	prefix := uniquePrefix("adm_page")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	db := database.DBConn
 

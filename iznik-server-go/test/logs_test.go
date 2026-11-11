@@ -8,12 +8,13 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	flog "github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestGetLogsMessages(t *testing.T) {
 	prefix := uniquePrefix("LogsMsg")
-	userID := CreateTestUser(t, prefix, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a log entry.
@@ -34,7 +35,7 @@ func TestGetLogsMessages(t *testing.T) {
 
 func TestGetLogsMemberships(t *testing.T) {
 	prefix := uniquePrefix("LogsMem")
-	userID := CreateTestUser(t, prefix, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -76,7 +77,7 @@ func TestGetLogsNotLoggedIn(t *testing.T) {
 
 func TestGetLogsPagination(t *testing.T) {
 	prefix := uniquePrefix("LogsPag")
-	userID := CreateTestUser(t, prefix, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -110,7 +111,7 @@ func TestGetLogsModmailsonly(t *testing.T) {
 	// Verify that modmailsonly=true filters to only modmail-related logs.
 	// V1 includes: Message (Rejected, Deleted, Replied) and User (Mailed, Rejected, Deleted).
 	prefix := uniquePrefix("LogsModmail")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, modID)
 
@@ -210,7 +211,7 @@ func TestGetLogsUserReturnsAllTypes(t *testing.T) {
 	// Verify that logtype=user returns logs of ALL types (not just Message/User),
 	// but excludes User/Created and User/Merged subtypes.
 	prefix := uniquePrefix("LogsUserAll")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	targetUserID := CreateTestUser(t, prefix+"_target", "User")
 	_, token := CreateTestSession(t, modID)
 
@@ -316,7 +317,7 @@ func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
 	// The V2 path stores this in logs.text via the background task; log.text is what ModTools
 	// displays to show what was actually sent in the modmail.
 	prefix := uniquePrefix("LogsModmailText")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, modID)
 
@@ -364,7 +365,7 @@ func TestGetLogsMsgsubjectHistoricalIsPreserved(t *testing.T) {
 	// the log returns the subject as it was AT THE TIME of the event,
 	// not the current (post-edit) subject. Uses messages_edits to reconstruct history.
 	prefix := uniquePrefix("LogsHistSubj")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, modID)
 

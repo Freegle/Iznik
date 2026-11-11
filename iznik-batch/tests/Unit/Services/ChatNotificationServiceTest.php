@@ -1543,8 +1543,8 @@ class ChatNotificationServiceTest extends TestCase
         ]);
 
         // Moderators are national, so fixture moderators would also be notified.
-        DB::table('users')->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])
-            ->where('id', '!=', $moderator->id)->update(['systemrole' => 'User']);
+        DB::table('users')->whereIn('systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
+            ->where('id', '!=', $moderator->id)->update(['systemrole' => User::SYSTEMROLE_USER]);
 
         $this->createTestChatMessage($room, $member, ['date' => now()->subMinutes(5)]);
 

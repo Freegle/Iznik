@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -228,7 +229,7 @@ func TestSubmitMessageNewMemberStaysPending(t *testing.T) {
 // TestSubmitMessageBannedRefused: a banned member cannot post, and nothing is created.
 func TestSubmitMessageBannedRefused(t *testing.T) {
 	prefix := uniquePrefix("submit_banned")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 	db.Exec("UPDATE users SET banned = NOW() WHERE id = ?", userID)
@@ -244,7 +245,7 @@ func TestSubmitMessageBannedRefused(t *testing.T) {
 // TestSubmitMessageProhibitedRefused: a member whose posting status is PROHIBITED cannot post.
 func TestSubmitMessageProhibitedRefused(t *testing.T) {
 	prefix := uniquePrefix("submit_prohibited")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 	db.Exec("UPDATE users SET postingstatus = 'PROHIBITED' WHERE id = ?", userID)
@@ -261,7 +262,7 @@ func TestSubmitMessageProhibitedRefused(t *testing.T) {
 // unmoderated member's post is forced to Pending instead of going straight to Approved.
 func TestSubmitMessageLockdownPostsHoldForcesPending(t *testing.T) {
 	prefix := uniquePrefix("submit_lockdown")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	database.DBConn.Exec("UPDATE users SET postingstatus = 'DEFAULT' WHERE id = ?", userID)
 

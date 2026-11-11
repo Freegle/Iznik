@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,7 +30,7 @@ func readAdminAudience(id uint64) adminAudience {
 func TestAdminAudience_DefaultsToTheSendersArea(t *testing.T) {
 	stubRouting(t, false)
 	prefix := uniquePrefix("adm_area")
-	modID := CreateTestUser(t, prefix, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	status, result := postAdmin(t, token, map[string]interface{}{"subject": "Area " + prefix, "text": "Hello"})
@@ -48,9 +49,9 @@ func TestAdminAudience_DefaultsToTheSendersArea(t *testing.T) {
 // community before.
 func TestAdminAudience_NationalIsForSupportOnly(t *testing.T) {
 	prefix := uniquePrefix("adm_nat")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	content := map[string]interface{}{"subject": "National " + prefix, "text": "Hello", "national": true}
@@ -73,7 +74,7 @@ func TestAdminAudience_NationalIsForSupportOnly(t *testing.T) {
 func TestAdminAudience_NoAudienceCannotBeApproved(t *testing.T) {
 	stubRouting(t, false)
 	prefix := uniquePrefix("adm_none")
-	supportID := CreateTestUser(t, prefix, "Support")
+	supportID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	id := createTestAdmin(t, supportID, "None "+prefix)

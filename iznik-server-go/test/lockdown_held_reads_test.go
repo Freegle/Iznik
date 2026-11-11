@@ -21,6 +21,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	newsfeedpkg "github.com/freegle/iznik-server-go/newsfeed"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -107,7 +108,7 @@ func TestMessageLockdownheldFalseWhenOutcomeSet(t *testing.T) {
 func TestListMessagesLockdownheldTrueWithUnresolvedHold(t *testing.T) {
 	prefix := uniquePrefix("ld_held_list")
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	msgID := CreateTestMessage(t, posterID, prefix+" offer", 52.5, -1.8)
 

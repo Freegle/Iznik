@@ -128,7 +128,7 @@ func TestLockdownRefusesModOpeningNewUser2ModChatToMember(t *testing.T) {
 	prefix := uniquePrefix("ld_chat_open")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	_, modToken := CreateTestSession(t, modID)
 
@@ -149,7 +149,7 @@ func TestLockdownRefusesModOpeningNewUser2ModChatToMember(t *testing.T) {
 func TestLockdownAllowsModReplyingInUser2ModChatMemberStarted(t *testing.T) {
 	prefix := uniquePrefix("ld_chat_reply")
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	_, modToken := CreateTestSession(t, modID)
 
@@ -174,7 +174,7 @@ func TestLockdownDoesNotRefuseModOpeningUser2ModChatWhenNotHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_chat_open_notheld_ok")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	_, modToken := CreateTestSession(t, modID)
 

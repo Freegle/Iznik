@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -109,7 +110,7 @@ class SpamCleanupService
                     ->where('spam_users.collection', self::SPAMMER_COLLECTION);
             })
             ->join('users', 'messages.fromuser', '=', 'users.id')
-            ->where('users.systemrole', 'User')
+            ->where('users.systemrole', User::SYSTEMROLE_USER)
             ->whereNull('messages.deleted')
             ->pluck('messages.id')
             ->unique();

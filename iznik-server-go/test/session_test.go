@@ -17,6 +17,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/session"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -2163,7 +2164,7 @@ func TestWorkCountRelatedMembersNoLogins(t *testing.T) {
 func TestWorkCountHeldVolunteeringIsBlueNotRed(t *testing.T) {
 	prefix := uniquePrefix("wc_volheld")
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	holderID := CreateTestUser(t, prefix+"_holder", "User")
 	_, token := CreateTestSession(t, modID)
 

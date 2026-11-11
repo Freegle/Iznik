@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 
 )
@@ -59,7 +60,7 @@ func TestSystemLogs_ForbiddenForRegularUser(t *testing.T) {
 
 func TestSystemLogs_ModeratorAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogs_mod")
-	userID := CreateTestUser(t, prefix, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	// Moderator should get through auth. The actual query will likely fail
@@ -99,7 +100,7 @@ func TestSystemLogs_AdminAccess(t *testing.T) {
 
 func TestSystemLogs_ModeratorCanViewAnyUser(t *testing.T) {
 	prefix := uniquePrefix("syslogs_modany")
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modUserID)
 
 	// Under the national moderator pool there is no group-scoping left: any
@@ -176,7 +177,7 @@ func TestSystemLogsCounts_WithSources(t *testing.T) {
 
 func TestSystemLogsCounts_ModeratorAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogscnt_mod")
-	userID := CreateTestUser(t, prefix, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	code, ok := testSystemLogsRequest(t, "/api/modtools/systemlogs/counts?jwt="+token+"&sources=api")
@@ -188,11 +189,11 @@ func TestSystemLogsCounts_ModeratorAccess(t *testing.T) {
 
 func TestSystemLogs_ModeratorCannotViewUnrelatedUser(t *testing.T) {
 	prefix := uniquePrefix("syslogs_moduser")
-	modUserID := CreateTestUser(t, prefix+"_mod", "User")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, modToken := CreateTestSession(t, modUserID)
 
 	// Create a user who is NOT in the moderator's group.
-	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+	otherUserID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	// Moderator should not be able to view logs for a user not in their groups.
 	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", modToken, otherUserID))
@@ -203,11 +204,11 @@ func TestSystemLogs_ModeratorCannotViewUnrelatedUser(t *testing.T) {
 
 func TestSystemLogs_SupportBypassesGroupCheck(t *testing.T) {
 	prefix := uniquePrefix("syslogs_supbypass")
-	supportUserID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportUserID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, supToken := CreateTestSession(t, supportUserID)
 
 	// Create any user.
-	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+	otherUserID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	// Support should bypass group membership checks.
 	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", supToken, otherUserID))

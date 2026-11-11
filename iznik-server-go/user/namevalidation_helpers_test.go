@@ -3,26 +3,27 @@ package user
 import (
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 // ── IsExemptBySystemrole ────────────────────────────────────────────────────
 
 func TestIsExemptBySystemrole_ModeratorRole(t *testing.T) {
-	assert.True(t, IsExemptBySystemrole("Moderator"))
+	assert.True(t, IsExemptBySystemrole(utils.SYSTEMROLE_MODERATOR))
 }
 
 func TestIsExemptBySystemrole_SupportRole(t *testing.T) {
-	assert.True(t, IsExemptBySystemrole("Support"))
+	assert.True(t, IsExemptBySystemrole(utils.SYSTEMROLE_SUPPORT))
 }
 
 func TestIsExemptBySystemrole_AdminRole(t *testing.T) {
-	assert.True(t, IsExemptBySystemrole("Admin"))
+	assert.True(t, IsExemptBySystemrole(utils.SYSTEMROLE_ADMIN))
 }
 
 func TestIsExemptBySystemrole_UserRoleNotMod(t *testing.T) {
 	// Ordinary user is NOT exempt.
-	assert.False(t, IsExemptBySystemrole("User"))
+	assert.False(t, IsExemptBySystemrole(utils.SYSTEMROLE_USER))
 }
 
 func TestIsExemptBySystemrole_EmptyRoleNotMod(t *testing.T) {
