@@ -196,29 +196,36 @@ class SyncWhatJobsGateTest extends TestCase
     }
 
     // The skip limit and the sync times have to agree with the freshness monitor. With an
-    // unchanged feed the only rebuilds are the forced ones, so the gap between them must stay
-    // under the monitor's floor even after a run of half an hour. The runs are the ones in
-    // routes/console.php: 04:40 daily, then 09:00 to 21:00 every three hours (UTC).
-    public function test_forced_rebuilds_on_a_frozen_feed_stay_inside_the_freshness_floor(): void
+    // unchanged feed the only rebuilds are the forced ones. The gate compares strictly: it
+    // rebuilds when the last rebuild, stamped at the END of its run, is more than the limit
+    // old at the START of this one. A run takes about 15 minutes, and the table is not
+    // re-stamped until it finishes, so the age the monitor sees is the gap between run starts
+    // plus the run time. That must leave real headroom under the floor, not just fit.
+    // The runs are the ones in routes/console.php: 04:40 daily, then 09:00 to 21:00 every
+    // three hours (UTC).
+    public function test_forced_rebuilds_on_a_frozen_feed_stay_well_inside_the_freshness_floor(): void
     {
         $runHours = [4 + 40 / 60, 9, 12, 15, 18, 21];
-        $lastRebuild = null;
-        $maxGap = 0.0;
+        $runLength = 0.25;
+        $lastStart = null;
+        $lastEnd = null;
+        $worstAge = 0.0;
 
-        for ($day = 0; $day < 10; $day++) {
+        for ($day = 0; $day < 12; $day++) {
             foreach ($runHours as $hour) {
                 $at = $day * 24 + $hour;
-                if ($lastRebuild === null || $at - $lastRebuild >= WhatJobsService::MAX_SKIP_HOURS) {
-                    if ($lastRebuild !== null && $day >= 2) {
-                        $maxGap = max($maxGap, $at - $lastRebuild);
+                if ($lastEnd === null || $at - $lastEnd > WhatJobsService::MAX_SKIP_HOURS) {
+                    if ($lastStart !== null && $day >= 3) {
+                        $worstAge = max($worstAge, $at - $lastStart + $runLength);
                     }
-                    $lastRebuild = $at;
+                    $lastStart = $at;
+                    $lastEnd = $at + $runLength;
                 }
             }
         }
 
         $floorHours = config('freegle.monitoring.whatjobs_max_age_hours');
-        $this->assertLessThan($floorHours - 0.5, $maxGap, "longest gap between forced rebuilds: {$maxGap}h");
+        $this->assertLessThan($floorHours - 6, $worstAge, "worst age of the table's seenat: {$worstAge}h");
     }
 
     public function test_unreadable_stored_state_falls_back_to_a_full_run(): void
