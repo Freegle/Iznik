@@ -52,8 +52,10 @@
               Signing you in...
             </div>
             <div
-              v-else-if="parseFloat(payAmount) && amountSettled"
+              v-else-if="parseFloat(payAmount)"
               class="payment-section"
+              :class="{ 'payment-section--pending': !amountSettled }"
+              :aria-hidden="!amountSettled"
             >
               <DonationButton
                 v-if="payPalFallback && !isApp"
@@ -231,8 +233,8 @@ const payAmount = ref(amount.value)
 let payAmountTimer = null
 
 // While the two differ the heading shows the new amount and the buttons still carry the old one, so
-// the payment section is hidden until they agree: a quick tap must not pay an amount that is not
-// the one on show.
+// the buttons are hidden until they agree: a quick tap must not pay an amount that is not the one on
+// show. They keep their space, so the page below does not jump while the donor types.
 const amountSettled = computed(
   () => String(payAmount.value) === String(amount.value)
 )
@@ -425,6 +427,10 @@ useHead(
   &:hover:not(.active) {
     background: rgba($color-green-background, 0.1);
   }
+}
+
+.payment-section--pending {
+  visibility: hidden;
 }
 
 .payment-section {

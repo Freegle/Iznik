@@ -148,13 +148,19 @@ describe('donate page', () => {
     // Typing 25: the section must not be rebuilt for the amount as it was a moment ago.
     await wrapper.find('input').setValue('25')
 
-    // In between, the buttons are hidden, so nothing can be paid for an amount that is not the one on show.
-    expect(stripe().exists()).toBe(false)
+    // In between, the buttons are hidden but keep their space, so nothing can be paid for an amount
+    // that is not the one on show and the page below does not jump.
+    expect(wrapper.find('.payment-section').classes()).toContain(
+      'payment-section--pending'
+    )
+    expect(stripe().props('price')).toBe(2)
     expect(wrapper.text()).toContain('£25')
 
     vi.advanceTimersByTime(800)
     await flushPromises()
-    expect(stripe().exists()).toBe(true)
+    expect(wrapper.find('.payment-section').classes()).not.toContain(
+      'payment-section--pending'
+    )
     expect(stripe().props('price')).toBe(25)
   })
 
