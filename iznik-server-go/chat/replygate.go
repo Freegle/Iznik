@@ -15,10 +15,12 @@ import (
 // A member can reply to as many posts as they like, but the people who reply to everything
 // are the ones most likely to be hoarding, reselling or not people at all. REPLY_GATE_AFTER=N
 // makes the (N+1)th reply in a day wait until the member has answered a graded
-// micro-volunteering task correctly (see microvolunteering.HasRecentGradedPass). Random
-// button-pressing does not pass; a wrong answer keeps the gate shut, and the first answer on a
-// post is final. Nobody has to be there for it to work. A member who cannot be given a task
-// (none settled nearby, no known location, asked not to be asked, lockdown) is not gated.
+// micro-volunteering task correctly (see microvolunteering.HasRecentGradedPass). The first
+// answer on a post is final, but the gate is a two-way choice: a member who answers settled
+// posts one after another passes by chance about every second post. It raises the cost of a
+// scripted run of replies; it does not stop one. Nobody has to be there for it to work. A
+// member who cannot be given a task (none settled nearby, no known location, asked not to be
+// asked, lockdown) is not gated.
 
 // ReplyGateAfter is how many replies a member may send in a day before the gate applies.
 // Unset, or anything that isn't a valid non-negative number, defaults to 5. An explicit 0

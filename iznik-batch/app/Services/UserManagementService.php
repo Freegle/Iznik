@@ -265,6 +265,7 @@ class UserManagementService
      * - Not a spammer
      * - No moderator notes (users_comments)
      * - Never posted or chatted: an account that has is kept, however long it has been quiet
+     * - No donation, Gift Aid, story, event, volunteering, rating or newsfeed record
      * - Not banned, so the evidence of the ban stays
      * - No meaningful logs in 90 days (excluding User/Created and User/Deleted log entries)
      * - systemrole = 'User'
@@ -276,8 +277,9 @@ class UserManagementService
         $sixMonthsAgo = now()->subMonths(6)->format('Y-m-d');
         $limit = $limit ?? 50000;
 
-        // Find candidates: no spammer record, no mod notes, never posted or chatted,
-        // not banned, last access > 6 months, systemrole = User, not deleted.
+        // Find candidates: no spammer record, no mod notes, never posted or chatted, none of
+        // the records a member makes by taking part, not banned, last access > 6 months,
+        // systemrole = User, not deleted.
         $candidates = DB::table('users')
             ->select('users.id')
             ->leftJoin('spam_users', 'users.id', '=', 'spam_users.userid')
@@ -295,12 +297,33 @@ class UserManagementService
             ->whereNotExists(function ($q) {
                 $q->select(DB::raw(1))->from('chat_messages')->whereColumn('chat_messages.userid', 'users.id');
             })
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))->from('ratings')
+                    ->where(function ($r) {
+                        $r->whereColumn('ratings.rater', 'users.id')->orWhereColumn('ratings.ratee', 'users.id');
+                    });
+            })
             ->limit($limit)
             ->get();
 
         $count = 0;
 
         foreach ($candidates as $candidate) {
+            // A member who gave, set up Gift Aid, told a story, listed an event or a volunteering
+            // role, or posted to the newsfeed has a record that is theirs, so they are kept.
+            $hasRecord = FALSE;
+
+            foreach (['users_donations', 'giftaid', 'users_stories', 'communityevents', 'volunteering', 'newsfeed'] as $table) {
+                if (DB::table($table)->where('userid', $candidate->id)->exists()) {
+                    $hasRecord = TRUE;
+                    break;
+                }
+            }
+
+            if ($hasRecord) {
+                continue;
+            }
+
             // Check for recent meaningful logs (excluding User/Created and User/Deleted).
             // Equivalent to the original "no logs at all OR most recent meaningful
             // log's DATEDIFF(NOW(), timestamp) > 90": DATEDIFF > 90 is DATEDIFF >= 91,

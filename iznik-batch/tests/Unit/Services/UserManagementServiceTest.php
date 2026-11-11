@@ -179,6 +179,42 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals("Deleted User #{$user->id}", $user->fullname);
     }
 
+    public function test_forget_inactive_users_keeps_members_with_their_own_records(): void
+    {
+        $withVolunteering = User::create([
+            'firstname' => 'Volunteer',
+            'fullname' => 'Volunteer User',
+            'added' => now()->subYears(2),
+            'lastaccess' => now()->subMonths(7),
+            'systemrole' => User::SYSTEMROLE_USER,
+        ]);
+        DB::table('volunteering')->insert([
+            'userid' => $withVolunteering->id,
+            'title' => 'Kept role',
+            'location' => 'Somewhere',
+            'description' => 'x',
+        ]);
+
+        $withNewsfeed = User::create([
+            'firstname' => 'Newsfeed',
+            'fullname' => 'Newsfeed User',
+            'added' => now()->subYears(2),
+            'lastaccess' => now()->subMonths(7),
+            'systemrole' => User::SYSTEMROLE_USER,
+        ]);
+        DB::table('newsfeed')->insert([
+            'userid' => $withNewsfeed->id,
+            'type' => 'Message',
+            'message' => 'A post',
+            'timestamp' => now()->subYears(1),
+        ]);
+
+        $this->service->forgetInactiveUsers();
+
+        $this->assertNull($withVolunteering->fresh()->forgotten);
+        $this->assertNull($withNewsfeed->fresh()->forgotten);
+    }
+
     public function test_forget_inactive_users_skips_already_forgotten(): void
     {
         // Create user who meets all inactive criteria but is already forgotten.

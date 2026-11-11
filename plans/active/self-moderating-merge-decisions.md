@@ -125,7 +125,7 @@ What the code does now, where the review found it did not:
 - A graded answer on a settled post is final. The reply gate does not apply to a member the graded endpoint has nothing for (no settled post nearby, no known location, a declined trust level, a lockdown), so it cannot lock anyone out. The graded task skips posts that already have an outcome.
 - Reports count from after the post's last take-down, from accounts that are not banned, deleted or linked to the poster. A restore therefore sticks. There is no judge on the report path and no minimum account age.
 - Auto-approve skips banned and PROHIBITED posters. MODERATED posters are what the fallback is for.
-- Inactive account removal only forgets accounts that never posted or chatted and are not banned. Spam cleanup does not ban a moderator, support or admin account.
+- Inactive account removal only forgets accounts that never posted or chatted, have no donation, Gift Aid, story, event, volunteering, rating or newsfeed record, and are not banned. This is wider than master, which forgot only accounts with no membership at all. Spam cleanup does not ban a moderator, support or admin account.
 - A moderator can read a taken-down post by id (`deleted` is returned to them), so the Taken down section and Restore work.
 - `GET /modtools/members` has a `related` filter. Member search reads the address from `users_emails`.
 - Digest, events and volunteering mail are off for a member with no membership when the group model is removed, and any one community that turned events or volunteering off turns them off.
@@ -136,3 +136,5 @@ Open questions for Edward:
 2. Should unban reopen the posts the ban took down?
 3. Should the reply gate also count the first message to a poster that carries no post reference? Today a script that sends a plain message to a poster is not counted.
 4. Should reports need a minimum account age, or a judge as a third voice, before a post is taken down?
+5. The reply gate can be passed by guessing. Each graded answer on a settled nearby post is a two-way choice, the first answer is final per post, and any such post can be answered, so a script passes after about two posts. Should only posts the server offered count, with a cap on graded answers a day, or should a failed answer close the gate until the window ends? The second choice can lock a member out, which the gate was changed to avoid.
+6. The reply gate does not apply to a member with no known location, or one who has answered every settled post nearby. A hoarding account with no location is therefore never gated. Should the gate fall back to the member's reply area, or stay shut for a member who has tried and failed?
