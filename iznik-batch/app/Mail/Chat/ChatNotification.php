@@ -820,11 +820,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
             $profileUrl = $this->getProfileImageUrl($messageUser);
         }
 
-        // Get image URL if this is an image message.
-        $imageUrl = $this->getMessageImageUrl($message);
+        // Get image URL if this is an image message. A message shown behind a warning carries
+        // no image, address map or item link: the member reads it in the app.
+        $imageUrl = $sensitive !== null ? null : $this->getMessageImageUrl($message);
 
         // Get referenced message info if this message refers to an item.
-        $refMessageInfo = $this->getMessageRefInfo($message);
+        $refMessageInfo = $sensitive !== null ? null : $this->getMessageRefInfo($message);
 
         // Get user page URL for clicking on profile.
         // Moderators should go to ModTools, members to user site.
@@ -839,7 +840,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable, Descri
         }
 
         // Get map URL for address messages.
-        $mapUrl = $this->getAddressMapUrl($message);
+        $mapUrl = $sensitive !== null ? null : $this->getAddressMapUrl($message);
 
         // Determine the display name for the message author.
         // For mod messages to members, show "Volunteers" instead of individual name.

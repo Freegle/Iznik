@@ -1840,4 +1840,56 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertSame(\App\Support\ChatWarnNotHold::warningText('money'), $prepared['text']);
         $this->assertSame('money', $prepared['sensitive']);
     }
+
+    public function test_warn_not_hold_does_not_email_a_hold_for_a_reused_image(): void
+    {
+        config(['freegle.moderation.chat_warn_not_hold' => true]);
+
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => '',
+            'type' => \App\Models\ChatMessage::TYPE_IMAGE,
+            'date' => now()->subMinutes(5),
+            'reviewrequired' => 1,
+        ]);
+        DB::table('chat_messages')->where('id', $msg->id)->update(['reportreason' => 'SameImage']);
+
+        $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+        $method->setAccessible(true);
+        $rows = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false);
+
+        $this->assertFalse(
+            $rows->contains(fn ($r) => (int) $r->id === (int) $msg->id),
+            'a hold for a reused image is not emailed, even with the switch on'
+        );
+    }
+
+    public function test_a_message_shown_behind_a_warning_carries_no_image_map_or_item_link(): void
+    {
+        config(['freegle.moderation.chat_warn_not_hold' => true]);
+
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Send me £20 first',
+            'type' => \App\Models\ChatMessage::TYPE_IMAGE,
+            'imageid' => 12345,
+            'date' => now()->subMinutes(5),
+            'reviewrequired' => 1,
+        ]);
+        DB::table('chat_messages')->where('id', $msg->id)->update(['reportreason' => 'Money']);
+
+        $mail = new \App\Mail\Chat\ChatNotification(
+            $recipient->fresh(), $sender->fresh(), $room->fresh(), $msg->fresh(), ChatRoom::TYPE_USER2USER
+        );
+        $prepare = new \ReflectionMethod($mail, 'prepareMessage');
+        $prepare->setAccessible(true);
+        $prepared = $prepare->invoke($mail, $msg->fresh());
+
+        $this->assertSame('money', $prepared['sensitive']);
+        $this->assertNull($prepared['imageUrl'], 'a held image is not shown in the email');
+    }
 }

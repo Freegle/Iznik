@@ -1303,7 +1303,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					// Snippet is set for all chats, including deleted users.
 					if chats[ix].Search {
 						chats[ix].Snippet = "...contains '" + search + "'"
-					} else if chat.Chatmsgheld && chat.Chatmsguserid != myid {
+					} else if Enabled() && chat.Chatmsgheld && chat.Chatmsguserid != myid {
 						// A held message is delivered behind a warning; the preview must
 						// not show the text the warning is there to guard.
 						chats[ix].Snippet = SensitiveSnippet

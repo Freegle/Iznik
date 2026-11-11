@@ -962,6 +962,69 @@ class ChatProcessServiceTest extends TestCase
         $this->assertEquals($old->format('Y-m-d H:i:s'), \Carbon\Carbon::parse($latest)->format('Y-m-d H:i:s'));
     }
 
+    /**
+     * A message delivered behind a warning is not a hold anyone is waiting on, so the
+     * message that follows it is not held with it. Without the switch the chain stands.
+     */
+    public function test_a_message_after_a_warned_one_is_not_chained_to_it(): void
+    {
+        config(['freegle.moderation.chat_warn_not_hold' => true]);
+
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $first = $this->createTestChatMessage($room, $user1, [
+            'message' => 'Pay me first at https://not-a-whitelisted-site.example/deal',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+        $this->service->processIncoming();
+        $this->assertEquals(1, DB::table('chat_messages')->where('id', $first->id)->value('reviewrequired'));
+
+        $second = $this->createTestChatMessage($room, $user1, [
+            'message' => 'ok see you at 5',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+        $this->service->processIncoming();
+
+        $row = DB::table('chat_messages')->where('id', $second->id)->first();
+        $this->assertEquals(0, $row->reviewrequired, 'a message after a warned one is delivered');
+        $this->assertNull($row->reportreason);
+    }
+
+    public function test_a_message_after_a_held_one_is_chained_without_the_switch(): void
+    {
+        config(['freegle.moderation.chat_warn_not_hold' => false]);
+
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $this->createTestChatMessage($room, $user1, [
+            'message' => 'Pay me first at https://not-a-whitelisted-site.example/deal',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+        $this->service->processIncoming();
+
+        $second = $this->createTestChatMessage($room, $user1, [
+            'message' => 'ok see you at 5',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+        $this->service->processIncoming();
+
+        $row = DB::table('chat_messages')->where('id', $second->id)->first();
+        $this->assertEquals(1, $row->reviewrequired, 'the hold chains while held messages are hidden');
+        $this->assertSame('Last', $row->reportreason);
+    }
+
     // --- Replies waiting for the replier to confirm (Go chat/replyconfirm.go) ---
 
     /**

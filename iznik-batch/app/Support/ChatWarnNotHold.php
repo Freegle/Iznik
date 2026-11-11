@@ -11,8 +11,9 @@ namespace App\Support;
  * and every path that carries it - the app, the push, the email - shows a warning in place
  * of the text until the member chooses to read it. A moderator can still reject it later.
  *
- * The reason keys and the switch name are shared with the Go API (chat/warnnothold.go).
- * Off unless switched on: this is a thought experiment, not the shipped behaviour.
+ * The reason keys and the switch name are shared with the Go API (chat/warnnothold.go), which
+ * reads the same CHAT_WARN_NOT_HOLD variable. Off unless switched on: this is a thought
+ * experiment, not the shipped behaviour.
  */
 class ChatWarnNotHold
 {
@@ -22,18 +23,23 @@ class ChatWarnNotHold
     }
 
     /**
-     * Stored reasons that mean "a person decided this sender is not to be heard", not "the
-     * content check saw something". A member on full chat moderation (a shadow ban) is held
-     * with the generic Spam reason; Last is the hold that chains from it; Fully is the
-     * explicit form. None of those is a warning to tap through. Shared with the Go API
-     * (chat.HeldReasonsNeverDelivered).
+     * Stored reasons that mean "the content check saw something in the text", which a member
+     * can be warned about and left to judge. Every other reason, and a missing one, is a hold
+     * the member cannot be given a useful warning for: a shadow ban (Spam, Fully, Last), a
+     * blocked source (CountryBlocked, SpamAssassin, Script), a reused image (SameImage,
+     * DodgyImage) and so on. Those stay hidden. This is an allowlist, so a reason added to the
+     * enum later stays hidden until it is chosen here. Shared with the Go API
+     * (chat.HeldReasonsDelivered).
      */
-    public const NEVER_DELIVERED = ['Spam', 'Fully', 'Last'];
+    public const DELIVERED = [
+        'Money', 'Link', 'URL on DBL', 'Email', 'Language', 'WorryWord',
+        'Referenced known spammer', 'Greetings spam', 'Known spam keyword', 'Abuse',
+    ];
 
     /**
      * Whether a message may reach the recipient. A clean message always may. A held one may
      * only under the experiment, and only when it was held for something the member can be
-     * warned about; a hold with no recorded reason cannot be explained, so it stays a hold.
+     * warned about (DELIVERED); any other hold stays a hold.
      */
     public static function deliverable(bool $reviewrequired, ?string $reportreason): bool
     {
@@ -43,7 +49,7 @@ class ChatWarnNotHold
 
         return self::enabled()
             && $reportreason !== null
-            && ! in_array($reportreason, self::NEVER_DELIVERED, true);
+            && in_array($reportreason, self::DELIVERED, true);
     }
 
     /**

@@ -230,7 +230,7 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 		// The PHP notification paths honour this gate; the in-app chat fetch must too, or the
 		// poster reads the held reply here once chats:process-incoming flips processingsuccessful.
 		// The sender still sees their own message (userid = ? branch); only the poster is gated.
-		// deliverableSQL drops the reviewrequired = 0 test under the warn-not-hold experiment,
+		// deliverableSQL lets a content-held message through only when warn-not-hold is switched on,
 		// so a held message reaches the recipient (tagged Sensitive below) instead of a
 		// moderator's queue.
 		//
@@ -373,7 +373,7 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 
 		// strip review/processing fields from non-mod responses.
 		if !modAccess {
-			if a.Reviewrequired && a.Userid != userID {
+			if Enabled() && a.Reviewrequired && a.Userid != userID {
 				messages[ix].Sensitive = SensitiveReason(a.Reportreason)
 			}
 			messages[ix].Reviewrequired = false

@@ -441,9 +441,13 @@ class ChatProcessService
                             ->where('chat_prompts.kind', 'confirm_reply');
                     })
                     ->orderByDesc('id')
-                    ->value('reviewrequired');
+                    ->first(['reviewrequired', 'reportreason']);
 
-                if ($lastReview) {
+                // A previous message delivered behind a warning (warn-not-hold) is not a hold
+                // anyone is waiting on, so it does not chain a hold onto what follows.
+                if ($lastReview
+                    && $lastReview->reviewrequired
+                    && ! \App\Support\ChatWarnNotHold::deliverable(true, $lastReview->reportreason)) {
                     $review = 1;
                     $reviewreason = self::REVIEW_LAST;
                 }

@@ -214,12 +214,11 @@ class ChatNotificationService
             // which case the mail carries a warning in place of the text
             // (ChatNotification::prepareMessage).
             if (\App\Support\ChatWarnNotHold::enabled()) {
-                // A hold about the sender rather than the message is never delivered.
+                // Only a hold for something in the text is delivered.
                 $query->where(function ($q) {
                     $q->where('chat_messages.reviewrequired', 0)
                         ->orWhere(function ($held) {
-                            $held->whereNotNull('chat_messages.reportreason')
-                                ->whereNotIn('chat_messages.reportreason', \App\Support\ChatWarnNotHold::NEVER_DELIVERED);
+                            $held->whereIn('chat_messages.reportreason', \App\Support\ChatWarnNotHold::DELIVERED);
                         });
                 });
             } else {

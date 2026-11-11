@@ -48,12 +48,17 @@ class ChatWarnNotHoldTest extends TestCase
         }
     }
 
-    public function test_a_hold_about_the_sender_is_never_delivered(): void
+    public function test_only_a_hold_for_the_content_is_delivered(): void
     {
         config(['freegle.moderation.chat_warn_not_hold' => true]);
         $this->assertTrue(ChatWarnNotHold::deliverable(false, null), 'a clean message always is');
-        $this->assertTrue(ChatWarnNotHold::deliverable(true, 'Money'), 'a content hold is, behind a warning');
-        foreach (['Spam', 'Fully', 'Last', null] as $reason) {
+        foreach (ChatWarnNotHold::DELIVERED as $reason) {
+            $this->assertTrue(ChatWarnNotHold::deliverable(true, $reason), $reason);
+        }
+        foreach ([
+            'Spam', 'Fully', 'Last', 'SameImage', 'DodgyImage', 'CountryBlocked', 'SpamAssassin',
+            'Script', 'UsedOurDomain', 'IPUsedForDifferentUsers', 'Other', 'Lockdown', null,
+        ] as $reason) {
             $this->assertFalse(ChatWarnNotHold::deliverable(true, $reason), var_export($reason, true));
         }
 

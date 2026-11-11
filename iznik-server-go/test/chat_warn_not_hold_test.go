@@ -63,6 +63,7 @@ func setupWarnNotHoldChat(t *testing.T, prefix string) (senderID, recipientID, c
 }
 
 func TestChatWarnNotHold_DeliversWithReason(t *testing.T) {
+	t.Setenv("CHAT_WARN_NOT_HOLD", "1")
 	db := database.DBConn
 	prefix := uniquePrefix("warnon")
 	senderID, recipientID, chatID := setupWarnNotHoldChat(t, prefix)
@@ -95,6 +96,19 @@ func TestChatWarnNotHold_DeliversWithReason(t *testing.T) {
 	assert.False(t, shadowSeen, "a shadow-banned sender's message stays hidden")
 	_, chainSeen := got[chainID]
 	assert.False(t, chainSeen, "the hold that chains from it stays hidden too")
+
+	// Only a reason the content check gives is delivered. A hold for a blocked source or a
+	// reused image has no warning a member could act on, so it stays hidden.
+	blocked := map[string]uint64{}
+	for _, reason := range []string{"SameImage", "DodgyImage", "CountryBlocked", "SpamAssassin", "Script", "UsedOurDomain", "Other"} {
+		blocked[reason] = insertHeldChatMessage(t, chatID, senderID, "Held for "+reason, reason, 0)
+		defer db.Exec("DELETE FROM chat_messages WHERE id = ?", blocked[reason])
+	}
+	got = fetchChatMessagesAs(t, chatID, recipientToken)
+	for reason, id := range blocked {
+		_, seenBlocked := got[id]
+		assert.False(t, seenBlocked, "a message held for %q stays hidden", reason)
+	}
 
 	plain, plainSeen := got[plainID]
 	if assert.True(t, plainSeen) {
@@ -158,6 +172,7 @@ func fetchChatListAs(t *testing.T, token string) map[uint64]map[string]interface
 // The chat list must tell the recipient there is something to read, without leaking the
 // text the warning guards.
 func TestChatWarnNotHold_ListCountsHeldButMasksSnippet(t *testing.T) {
+	t.Setenv("CHAT_WARN_NOT_HOLD", "1")
 	db := database.DBConn
 	prefix := uniquePrefix("warnlist")
 	senderID, recipientID, chatID := setupWarnNotHoldChat(t, prefix)
@@ -184,6 +199,7 @@ func TestChatWarnNotHold_ListCountsHeldButMasksSnippet(t *testing.T) {
 
 // A moderator opening a member's chat for review reads the real preview, not the mask.
 func TestChatWarnNotHold_ModeratorSeesRealPreview(t *testing.T) {
+	t.Setenv("CHAT_WARN_NOT_HOLD", "1")
 	db := database.DBConn
 	prefix := uniquePrefix("warnmod")
 	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
@@ -209,5 +225,43 @@ func TestChatWarnNotHold_ModeratorSeesRealPreview(t *testing.T) {
 	mine := fetchChatListAs(t, recipientToken)
 	if r, ok := mine[chatID]; assert.True(t, ok) {
 		assert.Equal(t, chat.SensitiveSnippet, r["snippet"], "the member still gets the mask")
+	}
+}
+
+// With the switch off, a held message stays hidden from the recipient, carries no sensitive
+// tag, and does not count as unread.
+func TestChatWarnNotHold_SwitchedOffHidesHeldMessages(t *testing.T) {
+	t.Setenv("CHAT_WARN_NOT_HOLD", "")
+	db := database.DBConn
+	prefix := uniquePrefix("warnoff")
+	senderID, recipientID, chatID := setupWarnNotHoldChat(t, prefix)
+
+	heldID := insertHeldChatMessage(t, chatID, senderID, "Send me £20 first", "Money", 0)
+	linkID := insertHeldChatMessage(t, chatID, senderID, "See http://example.invalid", "Link", 0)
+	defer db.Exec("DELETE FROM chat_messages WHERE id IN (?, ?)", heldID, linkID)
+
+	_, recipientToken := CreateTestSession(t, recipientID)
+	got := fetchChatMessagesAs(t, chatID, recipientToken)
+	_, heldSeen := got[heldID]
+	assert.False(t, heldSeen, "a held message is not delivered while the switch is off")
+	_, linkSeen := got[linkID]
+	assert.False(t, linkSeen, "a held link message is not delivered while the switch is off")
+
+	list := fetchChatListAs(t, recipientToken)
+	if room, listed := list[chatID]; listed {
+		assert.NotEqual(t, chat.SensitiveSnippet, room["snippet"], "no masked preview for a message that is not delivered")
+		assert.Equal(t, float64(0), room["unseen"], "a held message does not count as unread")
+	}
+
+	_, senderToken := CreateTestSession(t, senderID)
+	mine := fetchChatMessagesAs(t, chatID, senderToken)
+	_, ownSeen := mine[heldID]
+	assert.True(t, ownSeen, "the sender still sees their own message")
+}
+
+func TestChatWarnNotHold_EnabledReadsTheSwitch(t *testing.T) {
+	for in, want := range map[string]bool{"": false, "0": false, "false": false, "1": true, "true": true, "TRUE": true, "on": true} {
+		t.Setenv("CHAT_WARN_NOT_HOLD", in)
+		assert.Equal(t, want, chat.Enabled(), "CHAT_WARN_NOT_HOLD=%q", in)
 	}
 }
