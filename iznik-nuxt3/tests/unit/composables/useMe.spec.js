@@ -55,6 +55,8 @@ vi.mock('~/stores/team', () => ({
 vi.mock('wicket', () => ({
   default: {
     Wkt: class {
+      // Added to the real class by wicket-leaflet, which loadLeaflet() loads.
+      construct = {}
       read() {}
       toObject() {
         return {
@@ -789,6 +791,42 @@ describe('useMe — myGroupsBoundingBox', () => {
       expect.anything(),
       expect.anything(),
       expect.any(Error)
+    )
+
+    consoleSpy.mockRestore()
+    Wkt.default.Wkt = originalWkt
+  })
+
+  it('leaves a group out, without throwing, when the wicket-leaflet extension is not loaded', async () => {
+    const Wkt = await import('wicket')
+    const originalWkt = Wkt.default.Wkt
+    const toObject = vi.fn()
+    Wkt.default.Wkt = class {
+      read() {}
+      toObject() {
+        return toObject()
+      }
+    }
+
+    mockAuthState.user = makeUser()
+    mockAuthState.groups = [makeMembership(1)]
+    mockGroupGet.mockReturnValue({
+      namedisplay: 'Test',
+      nameshort: 'Test',
+      type: '',
+      bbox: 'POLYGON((0 0,1 0,1 1,0 0))',
+    })
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { myGroupsBoundingBox } = useMe()
+
+    expect(myGroupsBoundingBox.value).toEqual([
+      [null, null],
+      [null, null],
+    ])
+    expect(toObject).not.toHaveBeenCalled()
+    expect(consoleSpy.mock.calls.map((c) => c[0])).toContain(
+      'WKT extension not loaded'
     )
 
     consoleSpy.mockRestore()
