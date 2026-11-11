@@ -27,7 +27,7 @@
       <b-button variant="secondary" size="lg" @click="skip">
         Skip this one
       </b-button>
-      <ShareNetwork
+      <ShareLink
         network="facebook"
         :url="'https://www.facebook.com/Freegle/posts/' + postId"
         title="Sharing Freegle post'"
@@ -37,15 +37,13 @@
         <b-button variant="secondary" size="lg" class="facebook">
           <v-icon :icon="['fab', 'facebook']" /> Share on Facebook
         </b-button>
-      </ShareNetwork>
+      </ShareLink>
     </div>
   </div>
 </template>
 <script setup>
 import { computed } from 'vue'
-import VueSocialSharing from 'vue-social-sharing'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
-import { useNuxtApp } from '#app'
 
 const props = defineProps({
   id: {
@@ -57,10 +55,6 @@ const props = defineProps({
 const emit = defineEmits(['next'])
 
 const microVolunteeringStore = useMicroVolunteeringStore()
-
-// We install this plugin here rather than from the plugins folder to reduce page load side in the mainline case
-const nuxtApp = useNuxtApp()
-nuxtApp.vueApp.use(VueSocialSharing)
 
 const postId = computed(() => {
   return props.id.substring(props.id.indexOf('_') + 1)
