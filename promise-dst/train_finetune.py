@@ -79,6 +79,10 @@ trainer.train()
 trainer.save_model(OUT_DIR); tok.save_pretrained(OUT_DIR)
 
 # ---- tune the deployment threshold for precision >= 0.95 on the val slice ----
+# The same slice chose the best epoch, and a slice this size holds few positives, so 95%
+# precision is a handful of false positives and the cut is noisy. Its precision is not
+# re-weighted to the real prevalence, which the gold set is. Treat the result as a
+# starting point and read the gold-set interval from eval_finetune.py before shipping it.
 def predict(rows):
     model.eval(); out = []
     with torch.no_grad():
@@ -92,9 +96,15 @@ def predict(rows):
 vp = predict(val_rows); vy = np.array([r['label'] for r in val_rows])
 prec, rec, thr = precision_recall_curve(vy, vp)
 cands = [(rec[i], thr[i]) for i in range(len(thr)) if prec[i] >= 0.95]
-best_rec, best_thr = max(cands) if cands else (0.0, 0.99)
+print(f"val slice: {len(vy)} convs, {int(vy.sum())} positives")
+if not cands:
+    raise SystemExit("no val threshold reaches precision >= 0.95: threshold.json NOT written. "
+                     "Do not ship this model without a tuned threshold.")
+best_rec, best_thr = max(cands)
 json.dump({'threshold': float(best_thr), 'val_recall_at_p95': float(best_rec),
-           'val_roc_auc': float(roc_auc_score(vy, vp))}, open('threshold.json', 'w'), indent=2)
+           'val_roc_auc': float(roc_auc_score(vy, vp)),
+           'val_convs': int(len(vy)), 'val_positives': int(vy.sum())},
+          open('threshold.json', 'w'), indent=2)
 print(f"\nval ROC-AUC {roc_auc_score(vy, vp):.3f} | threshold@P>=0.95 = {best_thr:.3f} "
       f"(val recall {best_rec:.3f})")
 print(f"saved -> {OUT_DIR}/ and threshold.json")
