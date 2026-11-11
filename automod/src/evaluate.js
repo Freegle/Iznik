@@ -25,6 +25,18 @@ function pct(n, d) {
   return d ? `${((100 * n) / d).toFixed(1)}%` : '-';
 }
 
+// Whether production would ask this text question of this post: not where the community's rule
+// answers it, not where it only applies to another kind of post, and not where it needs context
+// (the member's other posts) that an export does not carry. The same gating as walk.js, so the
+// per-node figures count the questions the whole-chart verdicts ask.
+function asked(check, post, facts) {
+  const rules = post.rules && typeof post.rules === 'object' && !Array.isArray(post.rules) ? post.rules : {};
+  if (check.requiresRule && rules[check.requiresRule] !== true) return false;
+  if (check.rule && rules[check.rule] === true) return false;
+  if (check.when && facts[check.when] !== true) return false;
+  return !check.context;
+}
+
 export async function evaluate(posts, { backends, router, chartPath, parallel = 1 } = {}) {
   const chart = loadChart(chartPath);
   const textNodes = Object.entries(chart.states).filter(([, s]) => s.check?.kind === 'text');
@@ -49,7 +61,9 @@ export async function evaluate(posts, { backends, router, chartPath, parallel = 
     const text = postText(post);
     const record = { id: post.id, outcome: post.outcome, reason_title: post.reason_title, answers: {}, verdict: {} };
 
+    const facts = { ...noFacts, ...(post.facts || {}) };
     for (const [nodeId, state] of textNodes) {
+      if (!asked(state.check, post, facts)) continue;
       const node = (nodes[nodeId] ||= { question: state.check.question, answers: {}, agree: 0, asked: 0, labelled: 0, correct: {}, confusion: {} });
       const answers = {};
       for (const name of backends) {
@@ -82,7 +96,7 @@ export async function evaluate(posts, { backends, router, chartPath, parallel = 
     }
 
     for (const name of backends) {
-      const result = await reviewer.review({ ...post, facts: { ...noFacts, ...(post.facts || {}) }, msgid: post.id, groupid: 1, backend: name });
+      const result = await reviewer.review({ ...post, facts, msgid: post.id, groupid: 1, backend: name });
       record.verdict[name] = { verdict: result.verdict, end: result.end };
       const v = verdicts[name];
       const rejected = post.outcome === 'rejected';

@@ -20,6 +20,9 @@ function walk(post, answers) {
     if (c.rule && rules[c.rule] === true) continue;
     if (c.requiresRule && rules[c.requiresRule] !== true) continue;
     if (c.when && facts[c.when] !== true) continue;
+    // A backend that errored on a question production asks would have left the post held as
+    // unavailable, never approved.
+    if (answers[id] === 'error') return { verdict: 'hold', end: 'UNAVAILABLE' };
     if (answers[id] === 'yes') return { verdict: 'hold', end: `HOLD_${id}` };
   }
   return { verdict: 'approve', end: 'APPROVE' };

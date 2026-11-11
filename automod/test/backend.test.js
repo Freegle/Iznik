@@ -87,6 +87,20 @@ test('evaluate compares backends node by node and against the moderator outcome'
   assert.match(formatReport(report), /MONEY/);
 });
 
+test('evaluate asks a node only of the posts production would ask it of, and never one that needs context', async () => {
+  const asks = [];
+  const spy = { setQuestions() {}, async ask(question, text, opts) { asks.push({ question, flags: opts.flags }); return { p: 0.05, answer: 'no', model: 'spy' }; } };
+  const router = routerWith({ claude: spy });
+  const posts = [{ id: 1, subject: 'WANTED: Ladder', body: 'Could I borrow a ladder', type: 'Wanted', facts: { is_wanted: true }, rules: { allowloans: true }, outcome: 'approved' }];
+  const report = await evaluate(posts, { backends: ['claude'], router });
+
+  assert.equal(report.nodes.LOAN, undefined, 'a community that allows loans is not asked about them');
+  assert.equal(report.nodes.ANIMALS_OFFER, undefined, 'a question about offers is not asked of a Wanted post');
+  assert.equal(report.nodes.DUPLICATE_ITEM, undefined, 'a question that needs the member\'s other posts is not asked without them');
+  assert.ok(report.nodes.MONEY.asked === 1, 'an ungated question is');
+  assert.ok(!asks.some((a) => /other open posts/.test(a.question)));
+});
+
 test('evaluate decides a post from an export that carries no facts on its text, not as unavailable', async () => {
   const router = routerWith({ claude: new FakeBackend() });
   const posts = [
