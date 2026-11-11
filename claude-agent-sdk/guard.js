@@ -25,14 +25,18 @@ function stripSqlComments(s) {
 
 // Validate a query is a bounded, read-only SELECT/WITH and return it with a LIMIT
 // enforced. Throws with an explanatory message otherwise.
-function guardSelect(sql, maxRows = 500) {
+//
+// allowSecretNames is for a query written in the code, never one the model wrote: identify_user asks
+// whether a member has a password ("credentials IS NOT NULL" from users_logins), which names the secret
+// table and column but returns only a yes or no. Everything else here still applies to it.
+function guardSelect(sql, maxRows = 500, { allowSecretNames = false } = {}) {
   const s = String(sql || '').trim().replace(/;+\s*$/, '')
   if (!s) throw new Error('Empty query')
   const bare = stripSqlComments(s) // evaluate the comment-free form so /**/ can't hide keywords
   if (!/^\s*(select|with)\b/i.test(bare)) throw new Error('Only SELECT/WITH queries are allowed')
   if (/;/.test(bare)) throw new Error('Multiple statements are not allowed')
   if (DANGEROUS.test(bare)) throw new Error('Query contains a forbidden keyword (read-only SELECT only)')
-  if (SECRET_TABLES.test(bare) || SECRET_COLS.test(bare)) {
+  if (!allowSecretNames && (SECRET_TABLES.test(bare) || SECRET_COLS.test(bare))) {
     throw new Error(
       'Blocked: this references auth-secret tables/columns (sessions/logins/keys). Use identify_user or get_user_dump for a member\'s login state instead.'
     )
