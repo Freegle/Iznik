@@ -191,6 +191,21 @@ const tooTall = () =>
  * answered as the real API does.
  */
 async function installCannedApi(page, queue, posted) {
+  // The wrapper asks at most once an hour. The test fixture records a recent ask on every page
+  // load that has none, and the page's own store writes back what it has in memory, so a change
+  // made to storage on the open page does not last. This runs after the fixture's script on every
+  // load and makes the last ask an old one, so each page opened here is due to ask.
+  await page.addInitScript(() => {
+    try {
+      const misc = JSON.parse(localStorage.getItem('misc') || '{}') || {}
+      misc.vals = misc.vals || {}
+      misc.vals.microvolunteeringlastask = '2020-01-01T00:00:00.000Z'
+      localStorage.setItem('misc', JSON.stringify(misc))
+    } catch {
+      // No storage: the wrapper has no memory of an ask either.
+    }
+  })
+
   await page.route(
     (url) => url.pathname.endsWith('/session'),
     async (route) => {
@@ -238,19 +253,6 @@ async function openMessagePage(page, testEnv) {
     offer,
     'the seeded test offer is missing from the test environment, so there is no message page to open'
   ).toBeTruthy()
-  // The wrapper asks at most once an hour. The test fixture records a recent ask on every page
-  // load that has none, so that the invite stays out of other tests' way; an old ask is left
-  // alone, and an old ask is due.
-  await page.evaluate(() => {
-    try {
-      const misc = JSON.parse(localStorage.getItem('misc') || '{}') || {}
-      misc.vals = misc.vals || {}
-      misc.vals.microvolunteeringlastask = '2020-01-01T00:00:00.000Z'
-      localStorage.setItem('misc', JSON.stringify(misc))
-    } catch {
-      // No storage: the wrapper has no memory of an ask either.
-    }
-  })
   await page.gotoAndVerify(`/message/${offer}`, {
     waitUntil: 'domcontentloaded',
   })
