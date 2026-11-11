@@ -11,6 +11,7 @@ const { FLOW_PATHS, IDEAS_SCHEMA } = require('./ux-ideas-prompt')
 const {
   cleanRequest,
   areaHistory,
+  HISTORY_UNAVAILABLE,
   areaCode,
   validateIdea,
   validateProblem,
@@ -153,6 +154,22 @@ test('areaHistory leaves out the oldest commit of a shallow checkout, which look
   } finally {
     fs.rmSync(shallowRepo, { recursive: true, force: true })
   }
+})
+
+test('areaHistory says the history is unavailable when a shallow checkout could not be deepened', async () => {
+  const fakeGit = (fetchFails) => async (file, args) => {
+    if (args[0] === 'fetch' && fetchFails) throw new Error('no network')
+    if (args[0] === 'rev-parse') return { stdout: 'true\n' }
+    if (args[0] === 'rev-list') return { stdout: 'root1\n' }
+    if (args[0] === 'log') return { stdout: 'root1 2026-01-01 added everything\nabc123 2026-01-02 something\n' }
+    return { stdout: '' }
+  }
+
+  const failed = await areaHistory('give', { codebaseDir: '/x', execFile: fakeGit(true) })
+  assert.deepEqual(failed, [HISTORY_UNAVAILABLE])
+
+  const fetched = await areaHistory('give', { codebaseDir: '/x', execFile: fakeGit(false) })
+  assert.deepEqual(fetched, ['2026-01-02 something'])
 })
 
 test('deepenHistory fetches only into a shallow checkout, and never throws', async () => {

@@ -88,6 +88,9 @@ function isoDate(d) {
   return d.toISOString().slice(0, 10)
 }
 
+// Printed in the history section when the history could not be fetched.
+const HISTORY_UNAVAILABLE = 'history unavailable: the checkout is shallow and could not be deepened, so changes made recently to this area are unknown'
+
 function monthsAgo(months, now = new Date()) {
   const d = new Date(now.getTime())
   d.setUTCMonth(d.getUTCMonth() - months)
@@ -101,7 +104,8 @@ function monthsAgo(months, now = new Date()) {
  *
  * The container's checkout is shallow, so the history is fetched on demand first. git is run with
  * execFile and an argument list, never a shell string. Returns [] for an unknown flow, a missing
- * checkout or any git failure: no history is a thinner brief, not a failed run.
+ * checkout or any git failure: no history is a thinner brief, not a failed run. A shallow checkout
+ * that could not be deepened returns one line saying the history is unavailable.
  *
  * @param {string} flow - a key of FLOW_PATHS.
  * @param {object} [opts]
@@ -119,8 +123,10 @@ async function areaHistory(flow, opts = {}) {
   const run = opts.execFile || execFile
   const since = /^\d{4}-\d{2}-\d{2}$/.test(opts.since || '') ? opts.since : monthsAgo(HISTORY_MONTHS)
 
+  let deepened = true
+
   if (opts.deepen !== false) {
-    await deepenHistory({ dir, since, execFile: run })
+    deepened = await deepenHistory({ dir, since, execFile: run })
   }
 
   try {
@@ -135,6 +141,12 @@ async function areaHistory(flow, opts = {}) {
     // A shallow checkout cuts the parents of its oldest commit, so a path-limited log lists that
     // commit as adding every file, whatever it changed. Leave it out: it is not a change to this area.
     const cutOff = await shallowBoundary(run, dir)
+
+    // The checkout is still shallow and the fetch that would have deepened it failed, so the log
+    // holds only what the clone brought. Say the history is unknown rather than that nothing changed.
+    if (cutOff.size > 0 && !deepened) {
+      return [HISTORY_UNAVAILABLE]
+    }
 
     return String(stdout)
       .split('\n')
@@ -653,6 +665,7 @@ async function generateIdeas({ flow, figures, surveys, problems, values, reports
 module.exports = {
   cleanRequest,
   areaHistory,
+  HISTORY_UNAVAILABLE,
   areaCode,
   validateIdea,
   validateProblem,
