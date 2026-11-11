@@ -81,9 +81,6 @@ class AutomodService
     /** The loop name the lockdown presser sees take effect (LockdownService::ACK_LOOPS). */
     private const LOCKDOWN_LOOP = 'automod';
 
-    /** The longest quote from the deciding step that goes to Loki. */
-    private const EVIDENCE_LOG_CHARS = 160;
-
     /** The service's own per-run figures, kept on the row as `detail` for cost and quality work. */
     private const DETAIL_KEYS = ['features', 'ms', 'calls', 'model', 'cost_usd', 'tokens', 'prompt_sha', 'reply_sha'];
 
@@ -619,12 +616,10 @@ class AutomodService
             'prompt_sha' => $decoded['prompt_sha'] ?? null,
             'reply_sha' => $decoded['reply_sha'] ?? null,
             'text_sha' => $textSha,
-            // The step that decided it, and the few words of the post it quoted (bounded: the
-            // model chooses a short quote). The rest of the path is on the row.
+            // The step that decided it. What it quoted from the post stays on the row, where
+            // moderators read it: a quote can be a phone number or an address, and logs live longer
+            // and reach further than the row.
             'deciding_node' => is_array($deciding) ? ($deciding['node'] ?? null) : null,
-            'deciding_evidence' => is_array($deciding) && isset($deciding['evidence'])
-                ? mb_substr((string) $deciding['evidence'], 0, self::EVIDENCE_LOG_CHARS)
-                : null,
         ];
     }
 

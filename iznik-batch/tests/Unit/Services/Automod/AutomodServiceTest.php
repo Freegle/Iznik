@@ -1088,7 +1088,8 @@ class AutomodServiceTest extends TestCase
         $this->assertSame('p1', $context['prompt_sha']);
         $this->assertSame('r1', $context['reply_sha']);
         $this->assertSame('MONEY', $context['deciding_node']);
-        $this->assertSame('selling for 50 pounds', $context['deciding_evidence']);
+        $this->assertArrayNotHasKey('deciding_evidence', $context, 'what the post said is on the row, not in the logs');
+        $this->assertStringNotContainsString('selling for 50 pounds', json_encode($context));
         $this->assertFalse($context['quality_sample']);
         $text = DB::table('messages')->where('id', $message->id)->first(['subject', 'textbody']);
         $this->assertSame(AutomodService::textSha($text->subject, $text->textbody), $context['text_sha']);
