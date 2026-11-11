@@ -361,4 +361,8 @@ func TestGetChatNameFallsBackToFirstAndLastName(t *testing.T) {
 
 	name := getChatName(db, utils.CHAT_TYPE_USER2USER, 0, uint64(otherID), 1, 1)
 	assert.Equal(t, "Pat Example", name)
+
+	// An empty fullname is as good as NULL: it also falls back to the split name.
+	db.Exec("UPDATE users SET fullname = '' WHERE id = ?", otherID)
+	assert.Equal(t, "Pat Example", getChatName(db, utils.CHAT_TYPE_USER2USER, 0, uint64(otherID), 1, 1))
 }
