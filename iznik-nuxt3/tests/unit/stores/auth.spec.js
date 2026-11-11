@@ -141,6 +141,7 @@ const mockMobileStore = {
   acceptedMobilePushId: false,
   isiOS: false,
   deviceuserinfo: 'test-device',
+  appVersion: null,
 }
 vi.mock('~/stores/mobile', () => ({
   useMobileStore: () => mockMobileStore,
@@ -192,6 +193,7 @@ describe('auth store', () => {
       acceptedMobilePushId: false,
       isiOS: false,
       deviceuserinfo: 'test-device',
+      appVersion: null,
     })
     Object.assign(mockMiscStore, {
       modtools: false,
@@ -829,6 +831,30 @@ describe('auth store', () => {
 
       expect(mockSetAppOutOfDate).not.toHaveBeenCalled()
       expect(store.user.id).toBe(5)
+    })
+  })
+
+  describe('fetchUser reports the installed app version', () => {
+    it('sends the app version on the session call, so the server records it', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockMobileStore.appVersion = '3.2.28'
+      mockFetchv2.mockResolvedValue({ me: { id: 5 }, groups: [] })
+
+      await store.fetchUser()
+
+      expect(mockFetchv2).toHaveBeenCalledWith(
+        expect.objectContaining({ appversion: '3.2.28' }),
+        false
+      )
+    })
+
+    it('sends no app version from the website', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({ me: { id: 5 }, groups: [] })
+
+      await store.fetchUser()
+
+      expect(mockFetchv2.mock.calls[0][0]).not.toHaveProperty('appversion')
     })
   })
 

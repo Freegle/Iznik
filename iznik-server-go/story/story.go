@@ -77,10 +77,11 @@ func Single(c *fiber.Ctx) error {
 				PathThumb:    misc.GetImageDeliveryUrl(s.Imageuid, string(s.Imagemods)),
 			}
 		} else if s.Imagearchived {
+			path, thumb := misc.ArchivedImageUrls("simg", s.Imageid)
 			s.Image = &StoryImage{
 				ID:        s.Imageid,
-				Path:      "https://" + os.Getenv("IMAGE_ARCHIVED_DOMAIN") + "/simg_" + strconv.FormatUint(s.Imageid, 10) + ".jpg",
-				PathThumb: "https://" + os.Getenv("IMAGE_ARCHIVED_DOMAIN") + "/tsimg_" + strconv.FormatUint(s.Imageid, 10) + ".jpg",
+				Path:      path,
+				PathThumb: thumb,
 			}
 		} else {
 			s.Image = &StoryImage{

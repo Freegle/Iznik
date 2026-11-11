@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - frontend-nginx.conf
@@ -56,6 +56,12 @@ bucket and nothing else. Both are set in the provider's console or through its C
 (`object_storage` scope; the cluster is looked up by region, `uk-lon-1`). Public read is
 a bucket setting there, not an S3 ACL or policy, which the provider's S3 interface does
 not accept.
+
+## Archived images
+
+The images V1 moved to Azure are being copied into the same bucket under `archive/`, and the
+images vhost serves them at `/archive/<name>`: from the bucket when the copy has reached them,
+from Azure until then. See [the Azure archive runbook](azure-archive-migration.md).
 
 ## Checks
 

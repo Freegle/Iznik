@@ -1430,7 +1430,8 @@ func isValidRedirectURL(url string) bool {
 		allowedDomains = append(allowedDomains, imageDomain)
 	}
 	if archivedDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN"); archivedDomain != "" {
-		allowedDomains = append(allowedDomains, archivedDomain)
+		// The archive address can carry a path (images.ilovefreegle.org/archive); hosts are compared.
+		allowedDomains = append(allowedDomains, strings.SplitN(archivedDomain, "/", 2)[0])
 	}
 	if groupDomain := os.Getenv("GROUP_DOMAIN"); groupDomain != "" {
 		allowedDomains = append(allowedDomains, groupDomain)

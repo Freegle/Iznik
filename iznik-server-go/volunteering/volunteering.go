@@ -226,7 +226,6 @@ func Single(c *fiber.Ctx) error {
 	var found bool
 	var groups []uint64
 	var dates []VolunteeringDate
-	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
 	imageDomain := os.Getenv("IMAGE_DOMAIN")
 
 	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
@@ -259,8 +258,7 @@ func Single(c *fiber.Ctx) error {
 					image.Paththumb = misc.GetImageDeliveryUrl(image.Externaluid, string(image.Externalmods))
 					image.Externaluid = ""
 				} else if image.Archived > 0 {
-					image.Path = "https://" + archiveDomain + "/oimg_" + strconv.FormatUint(image.ID, 10) + ".jpg"
-					image.Paththumb = "https://" + archiveDomain + "/toimg_" + strconv.FormatUint(image.ID, 10) + ".jpg"
+					image.Path, image.Paththumb = misc.ArchivedImageUrls("oimg", image.ID)
 				} else {
 					image.Path = "https://" + imageDomain + "/oimg_" + strconv.FormatUint(image.ID, 10) + ".jpg"
 					image.Paththumb = "https://" + imageDomain + "/toimg_" + strconv.FormatUint(image.ID, 10) + ".jpg"
