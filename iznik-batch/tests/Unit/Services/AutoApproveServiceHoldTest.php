@@ -117,8 +117,9 @@ class AutoApproveServiceHoldTest extends TestCase
 
         $method = new \ReflectionMethod($this->service, 'approveOnGroup');
         $method->setAccessible(true);
-        $method->invoke($this->service, $candidate, $group->id);
+        $approved = $method->invoke($this->service, $candidate, $group->id);
 
+        $this->assertFalse($approved, 'a write that changed no row is not an approval');
         $this->assertDatabaseHas('messages_groups', [
             'msgid'      => $message->id,
             'groupid'    => $group->id,

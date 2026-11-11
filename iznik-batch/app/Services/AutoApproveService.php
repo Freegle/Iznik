@@ -208,6 +208,7 @@ class AutoApproveService
                 // and then batch-approved when the origin-approval log aged out, Discourse 9812/3).
                 $recentLogsChecked = false;
                 $recentLogs = false;
+                $approvedHere = 0;
 
                 foreach ($groupRows as $candidate) {
                     $isRippledIn = (int) ($candidate->rippled_in ?? 0) === 1;
@@ -235,9 +236,13 @@ class AutoApproveService
                         if ($dryRun) {
                             Log::info("Dry run: would auto-approve message #{$candidate->msgid} on group #{$candidate->groupid}");
                             $stats['approved']++;
-                        } else {
-                            $this->approveOnGroup($candidate, $candidate->groupid);
+                        } elseif ($this->approveOnGroup($candidate, $candidate->groupid)) {
+                            // Only a row the write changed is an approval: a hold bumped mid-run, or
+                            // someone else approving first, leaves it Pending.
                             $stats['approved']++;
+                            $approvedHere++;
+                        } else {
+                            $stats['skipped']++;
                         }
                     } else {
                         $stats['skipped']++;
@@ -248,7 +253,7 @@ class AutoApproveService
                 // has finished expanding (the ExpandService tick loop only revisits 'expanding'
                 // posts), so mail any now-reachable immediate members here too. Idempotent and a
                 // no-op for non-rippling posts (the reach gate + ledger in mailNewlyReachedForPost).
-                if (!$dryRun) {
+                if (!$dryRun && $approvedHere > 0) {
                     app(\App\Services\UnifiedDigestService::class)->mailNewlyReachedForPost((int) $msgid);
                 }
             } catch (\Exception $e) {
@@ -376,8 +381,10 @@ class AutoApproveService
      * Approve a message on a specific group.
      *
      * Matches V1 Message::approve() + Message::autoapprove() side effects.
+     *
+     * @return bool whether this call approved the row (false: a hold or another approval got there first)
      */
-    protected function approveOnGroup(object $candidate, int $groupid): void
+    protected function approveOnGroup(object $candidate, int $groupid): bool
     {
         // V1 notSpam(): if spamtype is SubjectUsedForDifferentGroups, whitelist the subject.
         // V1: Spam::notSpamSubject(getPrunedSubject()) → INSERT IGNORE INTO spam_whitelist_subjects
@@ -423,7 +430,7 @@ class AutoApproveService
             // Hold bumped mid-run, or someone else approved it first — either way the
             // approval did not happen here, so no Autoapproved log (the moderation
             // stats count those logs as real auto-approvals).
-            return;
+            return false;
         }
 
         // V1 autoapprove() log: type=Message, subtype=Autoapproved.
@@ -437,6 +444,8 @@ class AutoApproveService
         ]);
 
         Log::info("Auto-approved message #{$candidate->msgid} on group #{$groupid}");
+
+        return true;
     }
 
     /**
