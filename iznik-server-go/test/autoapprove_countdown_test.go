@@ -412,11 +412,29 @@ func TestAutoapproveatRippledInCopy(t *testing.T) {
 
 	released := CreateTestMessage(t, poster, groupID, prefix+" rippled copy", 52.0, -1.0)
 	ruleHeld := CreateTestMessage(t, poster, groupID, prefix+" rule-held copy", 52.0, -1.0)
-	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", released, ruleHeld)
-	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", released, ruleHeld)
-	db.Exec("UPDATE messages_groups SET collection='Pending', rippled_in=1, arrival=NOW() - INTERVAL 30 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 29 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", released)
+	pulledBack := CreateTestMessage(t, poster, groupID, prefix+" pulled back copy", 52.0, -1.0)
+	locked := CreateTestMessage(t, poster, groupID, prefix+" locked copy", 52.0, -1.0)
+	taken := CreateTestMessage(t, poster, groupID, prefix+" taken copy", 52.0, -1.0)
+	noOrigin := CreateTestMessage(t, poster, groupID, prefix+" no approved origin", 52.0, -1.0)
+	all := []uint64{released, ruleHeld, pulledBack, locked, taken, noOrigin}
+	defer db.Exec("DELETE FROM messages_outcomes WHERE msgid IN ?", all)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN ?", all)
+	defer db.Exec("DELETE FROM messages WHERE id IN ?", all)
+	// The post started on another community, where it is Approved: that is the vetting a
+	// rippled-in copy's short wait relies on.
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	for _, m := range []uint64{released, ruleHeld, pulledBack, locked, taken} {
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 0)", m, originGroup)
+	}
+	for _, m := range []uint64{released, pulledBack, locked, taken, noOrigin} {
+		db.Exec("UPDATE messages_groups SET collection='Pending', rippled_in=1, arrival=NOW() - INTERVAL 30 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 29 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=? AND groupid=?", m, groupID)
+	}
+	db.Exec("UPDATE messages_groups SET needs_moderator=1 WHERE msgid=? AND groupid=?", pulledBack, groupID)
+	db.Exec("UPDATE messages_groups SET locked_by_home=1 WHERE msgid=? AND groupid=?", locked, groupID)
+	db.Exec("UPDATE messages_groups SET collection='Pending' WHERE msgid=? AND groupid=?", locked, originGroup)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, timestamp) VALUES (?, 'Taken', NOW())", taken)
 	db.Exec("UPDATE messages_groups SET collection='Pending', rippled_in=1, arrival=NOW() - INTERVAL 30 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 29 MINUTE, autoapprove_hold_until=NULL, "+
-		"contentcheck_reasons='[{\"check\":\"PerGroupWorryWord\",\"action\":\"flag\",\"detail\":\"rabbit\"}]' WHERE msgid=?", ruleHeld)
+		"contentcheck_reasons='[{\"check\":\"PerGroupWorryWord\",\"action\":\"flag\",\"detail\":\"rabbit\"}]' WHERE msgid=? AND groupid=?", ruleHeld, groupID)
 
 	v := getAutoapproveatField(t, released, groupID, modToken)
 	assert.NotNil(t, v, "a rippled-in copy nothing holds is released after rippled_in_pending_hours")
@@ -426,6 +444,14 @@ func TestAutoapproveatRippledInCopy(t *testing.T) {
 
 	assert.Nil(t, getAutoapproveatField(t, ruleHeld, groupID, modToken),
 		"a copy held by the receiving group's own rules never auto-approves: no countdown")
+	assert.Nil(t, getAutoapproveatField(t, pulledBack, groupID, modToken),
+		"a copy a moderator pulled back (needs_moderator) is never auto-approved: no countdown")
+	assert.Nil(t, getAutoapproveatField(t, locked, groupID, modToken),
+		"a copy the home community is holding is never auto-approved: no countdown")
+	assert.Nil(t, getAutoapproveatField(t, taken, groupID, modToken),
+		"a post that has been taken is never auto-approved: no countdown")
+	assert.Nil(t, getAutoapproveatField(t, noOrigin, groupID, modToken),
+		"a rippled-in copy with no Approved origin copy is not on the short path: no countdown")
 }
 
 // The rollout gate (FREEGLE_AUTOAPPROVE_ENABLED / FREEGLE_AUTOAPPROVE_TRIAL_GROUPS)

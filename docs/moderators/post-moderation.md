@@ -400,7 +400,9 @@ These are known and not fully solved:
   live. New on each post that is on the auto-approve path: a **live countdown** to
   when it will publish (muted "~Nh" when far off, a yellow badge of minutes and seconds
   inside the last hour). Posts that are not going to auto-approve (suspect, spam, held,
-  sampled for quality, or not approved by automated review) show no countdown. A
+  sampled for quality, or not approved by automated review) show no countdown, and nor
+  does a copy that rippled in and was pulled back, is held by its home community, has
+  been taken, or has no Approved copy on the community it started on. A
   community outside the trial never shows one. When the countdown belongs to another
   community the post is on, it says which ("(on Little Hampton)"). Hold the pointer over
   it for the reminder that opening the list puts it back up to 10 minutes. Once the time

@@ -161,6 +161,10 @@ func computeAutoapproveat(db *gorm.DB, msgid uint64, groups []MessageGroup, myMo
 	var msgSpamreason bool
 	db.Table("messages").Select("spamreason IS NOT NULL").Where("id = ?", msgid).Scan(&msgSpamreason)
 
+	// Whether the item has a Taken or Received outcome: read once, and only if a rippled-in copy
+	// needs it.
+	var collected *bool
+
 	for _, i := range pendingIdx {
 		mg := &groups[i]
 
@@ -177,8 +181,24 @@ func computeAutoapproveat(db *gorm.DB, msgid uint64, groups []MessageGroup, myMo
 		// a moderator of that group and never auto-approves, so it gets no countdown. Any
 		// other Pending copy is released once rippled_in_pending_hours have passed (the
 		// hourly sweep adds up to an hour on top, which this estimate ignores).
+		//
+		// AutoApproveService only takes such a copy when nothing blocks it: it was not pulled
+		// back (needs_moderator), the home community is not holding it (locked_by_home), the
+		// item has not been taken or received, and a copy on another community is Approved.
 		if mg.RippledIn == 1 {
-			if reasonsHoldByGroupOwnRules(mg.ContentcheckReasons) {
+			if reasonsHoldByGroupOwnRules(mg.ContentcheckReasons) || mg.NeedsModerator || mg.LockedByHome != 0 {
+				continue
+			}
+			if !originApproved(groups, mg.Groupid) {
+				continue
+			}
+			if collected == nil {
+				var n int64
+				db.Table("messages_outcomes").Where("msgid = ? AND outcome IN ?", msgid, []string{"Taken", "Received"}).Count(&n)
+				c := n > 0
+				collected = &c
+			}
+			if *collected {
 				continue
 			}
 			t := mg.Arrival.Add(time.Duration(rippledInPendingHours()) * time.Hour)
@@ -210,6 +230,18 @@ func computeAutoapproveat(db *gorm.DB, msgid uint64, groups []MessageGroup, myMo
 		}
 		groups[i].Autoapproveat = &t
 	}
+}
+
+// originApproved reports whether the post has an Approved copy that rippling did not create, on
+// a community other than groupid: the vetting a rippled-in copy's short wait relies on.
+func originApproved(groups []MessageGroup, groupid uint64) bool {
+	for _, g := range groups {
+		if g.Groupid != groupid && g.RippledIn == 0 && g.Collection == utils.COLLECTION_APPROVED {
+			return true
+		}
+	}
+
+	return false
 }
 
 // automodRow is one messages_automod row, scanned with explicit column names since Path
