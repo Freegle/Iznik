@@ -2052,21 +2052,6 @@ class ExpandService
     }
 
     /**
-     * Ripple a post INTO every published group whose area the reach now covers (#6).
-     *
-     * "Crosses into a new group" = the reach polygon intersects the group's area. A
-     * group's area is its DPA (poly) if present, else its CGA (polyofficial) — exactly
-     * what groups.polyindex holds (GroupStatsService stores
-     * ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'))), so we test the
-     * spatial-indexed polyindex and skip the (0,0) point sentinel.
-     *
-     * Inserts a messages_groups row idempotently (INSERT IGNORE + NOT EXISTS on the existing
-     * (msgid,groupid) rows, so the origin group and already-rippled groups are never touched
-     * or duplicated). The row is inserted Approved when ripple.rippled_in_pending_hours = 0
-     * (the default - no Pending flicker, since the post was already vetted on origin), else
-     * Pending so AutoApproveService approves it after the mod-veto window.
-     */
-    /**
      * Earned-reach signals. Reach is earned by clean EXPOSURE, not by active reviewer
      * sign-off: a per-community microvolunteer/moderator approval requirement could never
      * keep up with post volume, so it would stall rippling for nearly every post. Instead,
@@ -2393,6 +2378,21 @@ class ExpandService
         return $this->earnedReachCapped($msgid, (int) $msg->fromuser, count($candidates));
     }
 
+    /**
+     * Ripple a post INTO every published group whose area the reach now covers (#6).
+     *
+     * "Crosses into a new group" = the reach polygon intersects the group's area. A
+     * group's area is its DPA (poly) if present, else its CGA (polyofficial) — exactly
+     * what groups.polyindex holds (GroupStatsService stores
+     * ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'))), so we test the
+     * spatial-indexed polyindex and skip the (0,0) point sentinel.
+     *
+     * Inserts a messages_groups row idempotently (INSERT IGNORE + NOT EXISTS on the existing
+     * (msgid,groupid) rows, so the origin group and already-rippled groups are never touched
+     * or duplicated). The row is inserted Approved when ripple.rippled_in_pending_hours = 0
+     * (the default - no Pending flicker, since the post was already vetted on origin), else
+     * Pending so AutoApproveService approves it after the mod-veto window.
+     */
     private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats, ?array $reachableGroupIds = null): void
     {
         try {
