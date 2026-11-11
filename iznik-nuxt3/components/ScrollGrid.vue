@@ -117,7 +117,7 @@ const props = defineProps({
     default: 10,
   },
   // One item per row on a phone too. For cards that carry a title, dates and a description,
-  // such as events and volunteering: half a phone's width cuts them off.
+  // such as events, volunteering and stories: half a phone's width cramps them.
   singleColumn: {
     type: Boolean,
     default: false,
