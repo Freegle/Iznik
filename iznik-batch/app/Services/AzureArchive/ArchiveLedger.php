@@ -34,6 +34,66 @@ class ArchiveLedger
 
     private const MEASURE_KEY = 'azure_archive_measure';
 
+    private const COST_ACK_KEY = 'azure_archive_cost_ack';
+
+    /** Charges closer than this are the same charge. */
+    private const COST_EPSILON = 0.005;
+
+    /**
+     * The bandwidth charges a person has acknowledged by clearing a stop, for this billing period
+     * and the last, and the figures last seen. A charge latches a stop only when it is above what
+     * was acknowledged.
+     *
+     * @return array{current: float, previous: float, lastCurrent: ?float, lastPrevious: ?float}
+     */
+    public function costAcknowledgement(): array
+    {
+        $value = DB::table('config')->where('key', self::COST_ACK_KEY)->value('value');
+        $d = is_string($value) ? json_decode($value, true) : null;
+        $d = is_array($d) ? $d : [];
+
+        return [
+            'current' => (float) ($d['current'] ?? 0),
+            'previous' => (float) ($d['previous'] ?? 0),
+            'lastCurrent' => isset($d['lastCurrent']) ? (float) $d['lastCurrent'] : null,
+            'lastPrevious' => isset($d['lastPrevious']) ? (float) $d['lastPrevious'] : null,
+        ];
+    }
+
+    /**
+     * Record the charges Azure reports now. The billing period has rolled over when this
+     * period's charge falls, or last period's changes: what was acknowledged for this period then
+     * belongs to the last one, and nothing is acknowledged for the new one. A late charge that
+     * changes last period's figure is read the same way, which can only latch a stop, never clear one.
+     */
+    public function noteCosts(float $current, ?float $previous): void
+    {
+        $ack = $this->costAcknowledgement();
+        $rolled = ($ack['lastCurrent'] !== null && $current < $ack['lastCurrent'] - self::COST_EPSILON)
+            || ($previous !== null && $ack['lastPrevious'] !== null && abs($previous - $ack['lastPrevious']) > self::COST_EPSILON);
+
+        if ($rolled) {
+            $ack['previous'] = $ack['current'];
+            $ack['current'] = 0.0;
+        }
+
+        $ack['lastCurrent'] = $current;
+        $ack['lastPrevious'] = $previous ?? $ack['lastPrevious'];
+        $this->saveCostAcknowledgement($ack);
+    }
+
+    /** A person has looked at these charges: they no longer latch a stop. */
+    public function acknowledgeCosts(float $current, float $previous): void
+    {
+        $this->saveCostAcknowledgement(['current' => $current, 'previous' => $previous, 'lastCurrent' => $current, 'lastPrevious' => $previous]);
+    }
+
+    /** @param  array{current: float, previous: float, lastCurrent: ?float, lastPrevious: ?float}  $ack */
+    private function saveCostAcknowledgement(array $ack): void
+    {
+        DB::table('config')->upsert([['key' => self::COST_ACK_KEY, 'value' => json_encode($ack)]], ['key'], ['value']);
+    }
+
     /**
      * The last azure-archive:measure: archived rows per source, and when.
      *
@@ -200,19 +260,18 @@ class ArchiveLedger
     }
 
     /**
-     * Give rows a person has looked at one more fetch: final failures, and fetches the process
-     * died in twice. Returns how many.
+     * Give rows a person has looked at one more fetch: every final failure, whatever its attempts,
+     * and fetches the process died in twice. Returns how many.
      */
     public function requeue(): int
     {
         return DB::table(self::TABLE)
-            ->where('attempts', '>=', self::MAX_ATTEMPTS)
             ->where(fn ($q) => $q->where(fn ($q) => $q->where('status', 'Failed')->where(fn ($q) => $q->whereNull('error')->orWhere('error', 'not like', self::RETRY . '%')))
                 // A fetch that may still be running is left alone.
-                ->orWhere(fn ($q) => $q->where('status', 'Fetching')->where('fetchedat', '<', CarbonImmutable::now('UTC')->subHour())))
+                ->orWhere(fn ($q) => $q->where('status', 'Fetching')->where('attempts', '>=', self::MAX_ATTEMPTS)->where('fetchedat', '<', CarbonImmutable::now('UTC')->subHour())))
             ->update([
                 'status' => 'Failed',
-                'attempts' => self::MAX_ATTEMPTS - 1,
+                'attempts' => DB::raw('LEAST(attempts, ' . (self::MAX_ATTEMPTS - 1) . ')'),
                 'error' => DB::raw("LEFT(CONCAT('" . self::RETRY . "requeued by hand: ', COALESCE(error, 'died while fetching')), 255)"),
             ]);
     }

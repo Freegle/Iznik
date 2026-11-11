@@ -119,7 +119,8 @@ class CopyCommand extends Command
             new ObjectStore(),
             $jpeg,
             (string) config('freegle.azure_archive.key_prefix', 'archive/'),
-            max(60, (int) config('freegle.azure_archive.run_max_minutes', 40) * 60),
+            // At most 50 minutes, so a run always ends inside its hour-long lock.
+            min(50, max(1, (int) config('freegle.azure_archive.run_max_minutes', 40))) * 60,
         );
 
         if ($dryRun) {
@@ -165,7 +166,9 @@ class CopyCommand extends Command
             }
 
             if ($stopped['kind'] === ArchiveCopier::STOP_SUSPECT) {
-                report(new AzureArchiveAlert('azure-archive:copy stopped: ' . $stopped['message']));
+                // Latched: every run would otherwise mark another batch of rows on the same fault.
+                $ledger->latchStop($stopped['message']);
+                report(new AzureArchiveAlert('azure-archive:copy stopped until a person clears it: ' . $stopped['message']));
             }
 
             if (! in_array($stopped['kind'], [ArchiveCopier::STOP_BUDGET, ArchiveCopier::STOP_TIME], true)) {

@@ -33,16 +33,20 @@ views of old photos come out of the same 100 GB. So the copy is paced by Azure's
 - **Any bandwidth charge stops everything**, in this billing period or the last (Cost Management
   lags, so a charge from the last days of a period shows after it has closed). It raises
   `AzureArchiveAlert` in Sentry and is latched: it holds until a person has looked at the bill
-  and runs `azure-archive:status --clear-stop`. A charge from members' views before the copy
-  ever ran latches it too, on purpose.
+  and runs `azure-archive:status --clear-stop`. Clearing records the charges it saw, and only a
+  charge above them stops the copy again; when the billing period turns, what was acknowledged
+  moves with it. A charge from members' views before the copy ever ran latches it too, on purpose.
 - **Azure's figures are checked, not just read.** Hours Azure has not recorded yet come back as
   zero, so the newest hour that counts is the newest with traffic, and the copy's own bytes from
   that hour on are added. If Azure shows less egress for the hours before than the copy alone
   fetched, its figures are behind and nothing is fetched. Figures that cannot be read or trusted
   raise an alert from the hourly status check, because they leave the bill unwatched.
-- **A wrong container stops the copy.** Only Azure's `BlobNotFound` marks a row Missing. Any
-  other 404 (the container gone or made private) stops the run with an alert, and so does a run
-  where most blobs come back missing.
+- **A wrong container stops the copy, and the stop is latched.** Only Azure's `BlobNotFound`
+  marks a row Missing. Any other 404 (the container gone or made private), the same refusal three
+  times in a row (403 or 409, such as public access switched off), or a run where most blobs come
+  back missing stops it with an alert until a person clears it. Before each run the bucket is
+  written to and read back, and three blobs in a row it will not take stop the run, so a wrong
+  bucket cannot spend the allowance on fetches that are thrown away.
 - **Each blob is read once.** The ledger row (`azure_archive_copies`) is written before the
   fetch with the worst case counted, and settled to the real count after, so a run that dies half
   way still counts. A crash or a corrupt read gets one retry. The bytes are checked against the
@@ -129,7 +133,8 @@ the current pace. Each run of the copy appends to `storage/logs/cron/azure-archi
 `Missing` rows are rows whose blob Azure does not have (about 7% of posts, 20% of chats in a
 2026 sample); they are finished, not failures. `Superseded` rows have an uploads id, which the API
 serves first, so their Azure copy is never used. `Failed` rows carry the reason; one without the
-`Retry:` prefix is not tried again and needs a person. Once the cause is dealt with,
+`Retry:` prefix is not tried again and needs a person: usually a blob in the Archive tier,
+which would cost money to read. Once the cause is dealt with,
 `php artisan azure-archive:status --requeue-failed` gives every such row one more fetch.
 
 ## If Azure charges for bandwidth

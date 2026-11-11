@@ -41,6 +41,9 @@ class EgressBudgetTest extends TestCase
             'costError' => null,
             'metricsError' => null,
             'latchedStop' => null,
+            'previousBandwidthCost' => 0.0,
+            'acknowledgedCost' => 0.0,
+            'acknowledgedPreviousCost' => 0.0,
         ], $over);
 
         return new BudgetFigures(
@@ -55,6 +58,9 @@ class EgressBudgetTest extends TestCase
             $v['costError'],
             $v['metricsError'],
             $v['latchedStop'],
+            $v['previousBandwidthCost'],
+            $v['acknowledgedCost'],
+            $v['acknowledgedPreviousCost'],
         );
     }
 
@@ -228,10 +234,7 @@ class EgressBudgetTest extends TestCase
     public function test_a_charge_in_the_last_billing_period_latches_too(): void
     {
         // Cost Management lags: a charge from the last days of a period shows after it closes.
-        $f = $this->figures();
-        $figures = new BudgetFigures($f->now, $f->azureEgress31d, $f->azureNewestPoint, 0, 0, 0, 0.0, 5.0, null, null, null, 0.3);
-
-        $decision = $this->budget()->decide($figures);
+        $decision = $this->budget()->decide($this->figures(['previousBandwidthCost' => 0.3]));
 
         $this->assertFalse($decision->allowed());
         $this->assertStringContainsString('last billing period', (string) $decision->latch);
@@ -239,8 +242,7 @@ class EgressBudgetTest extends TestCase
 
     public function test_an_unreadable_last_period_refuses_when_the_cost_check_is_required(): void
     {
-        $f = $this->figures();
-        $figures = new BudgetFigures($f->now, $f->azureEgress31d, $f->azureNewestPoint, 0, 0, 0, 0.0, 5.0, null, null, null, null);
+        $figures = $this->figures(['previousBandwidthCost' => null]);
 
         $this->assertFalse($this->budget()->decide($figures)->allowed());
         $this->assertTrue($this->budget(costRequired: false)->decide($figures)->allowed());
@@ -257,5 +259,17 @@ class EgressBudgetTest extends TestCase
 
         $this->assertSame('2026-11-11T09:00:00+00:00', $newest?->toIso8601String());
         $this->assertNull(\App\Services\AzureArchive\FigureGatherer::newestReported(['2026-11-11T08:00:00Z' => 0.0]));
+    }
+
+    public function test_an_acknowledged_charge_does_not_latch_but_any_more_does(): void
+    {
+        $seen = $this->figures(['bandwidthCost' => 0.07, 'previousBandwidthCost' => 0.3, 'acknowledgedCost' => 0.07, 'acknowledgedPreviousCost' => 0.3]);
+        $more = $this->figures(['bandwidthCost' => 0.09, 'previousBandwidthCost' => 0.3, 'acknowledgedCost' => 0.07, 'acknowledgedPreviousCost' => 0.3]);
+        $later = $this->figures(['bandwidthCost' => 0.07, 'previousBandwidthCost' => 0.31, 'acknowledgedCost' => 0.07, 'acknowledgedPreviousCost' => 0.3]);
+
+        $this->assertNull($this->budget()->decide($seen)->latch);
+        $this->assertTrue($this->budget()->decide($seen)->allowed());
+        $this->assertNotNull($this->budget()->decide($more)->latch);
+        $this->assertNotNull($this->budget()->decide($later)->latch);
     }
 }

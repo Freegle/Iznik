@@ -64,6 +64,18 @@ class ArchiveCopier
 
     private int $transientInARow = 0;
 
+    /** The same refusal from Azure this many times in a row is about the container, not the blobs. */
+    private const MAX_SAME_REFUSAL_IN_A_ROW = 3;
+
+    /** The bucket failing to store this many blobs in a row stops the run before more are fetched. */
+    private const MAX_STORE_FAILURES_IN_A_ROW = 3;
+
+    private ?string $lastRefusal = null;
+
+    private int $refusalsInARow = 0;
+
+    private int $storeFailuresInARow = 0;
+
     /** @var array{kind: string, message: string}|null */
     private ?array $stopped = null;
 
@@ -89,14 +101,22 @@ class ArchiveCopier
         $this->resetStats();
         $this->spent = 0;
         $this->transientInARow = 0;
+        $this->lastRefusal = null;
+        $this->refusalsInARow = 0;
+        $this->storeFailuresInARow = 0;
         $this->stopped = null;
         $this->deadline = microtime(true) + $this->maxSeconds;
 
-        // The bucket is checked before anything is fetched: a fetch whose bytes cannot be stored
-        // would have to be fetched again.
+        // The bucket is written to and read back before anything is fetched: a fetch whose bytes
+        // cannot be stored would have to be fetched again. A read alone would pass a wrong bucket
+        // name, which answers 404 like an absent key.
         try {
-            $this->store->sizeOf($this->keyPrefix . '.probe');
-        } catch (ObjectStoreUnavailable $e) {
+            $this->store->put($this->keyPrefix . '.probe', 'probe', 'text/plain');
+
+            if ($this->store->sizeOf($this->keyPrefix . '.probe') !== 5) {
+                throw new \RuntimeException('the probe did not read back');
+            }
+        } catch (\Throwable $e) {
             return ['stats' => $this->stats, 'stopped' => ['kind' => self::STOP_BUCKET, 'message' => 'The bucket is unavailable: ' . $e->getMessage()]];
         }
 
@@ -256,11 +276,28 @@ class ArchiveCopier
         }
 
         if ($result->status !== 200 || $result->body === null) {
-            // 403, or 409 for a blob in the Archive tier, which would cost money to rehydrate.
-            $this->fail($blob, $result->bytesCounted, $attempt, false, "Azure answered {$result->status}" . ($result->errorCode ? " ({$result->errorCode})" : ''));
+            $refusal = "Azure answered {$result->status}" . ($result->errorCode ? " ({$result->errorCode})" : '');
+
+            // A blob in the Archive tier would cost money to rehydrate: final, and left for a person.
+            // Anything else (403 AuthorizationFailure, 409 PublicAccessNotPermitted) is probably
+            // about the whole account, so it is kept for a retry, and the same answer three times
+            // in a row stops the run.
+            $this->fail($blob, $result->bytesCounted, $attempt, $result->errorCode !== 'BlobArchived', $refusal);
+
+            $this->refusalsInARow = $refusal === $this->lastRefusal ? $this->refusalsInARow + 1 : 1;
+            $this->lastRefusal = $refusal;
+
+            if ($result->errorCode !== 'BlobArchived' && $this->refusalsInARow >= self::MAX_SAME_REFUSAL_IN_A_ROW) {
+                $this->stopped = ['kind' => self::STOP_SUSPECT, 'message' => "{$refusal} for " . self::MAX_SAME_REFUSAL_IN_A_ROW . ' blobs in a row: the container is probably not readable.'];
+
+                return false;
+            }
 
             return true;
         }
+
+        $this->lastRefusal = null;
+        $this->refusalsInARow = 0;
 
         $note = null;
 
@@ -298,26 +335,41 @@ class ArchiveCopier
             // rather than leave it Fetching, where it would be stuck.
             $this->fail($blob, $result->bytesCounted, $attempt, true, 'Could not store it: ' . get_class($e) . ': ' . $e->getMessage());
 
-            return true;
+            return $this->storeFailed('Could not store ' . self::MAX_STORE_FAILURES_IN_A_ROW . ' blobs in a row: ' . $e->getMessage());
         }
 
         if ($size !== strlen($stored['bytes'])) {
             $this->fail($blob, $result->bytesCounted, $attempt, true, 'The bucket reported ' . var_export($size, true) . ' bytes for ' . strlen($stored['bytes']) . ' written');
 
-            return true;
+            return $this->storeFailed('The bucket misreported ' . self::MAX_STORE_FAILURES_IN_A_ROW . ' blobs in a row.');
         }
+
+        $this->storeFailuresInARow = 0;
 
         $this->ledger->finish($blob, 'Copied', $result->bytesCounted, [
             'azuremd5' => $result->contentMd5,
             'storedbytes' => $size,
             'optimised' => $stored['optimised'],
             'copiedat' => CarbonImmutable::now('UTC'),
-            'error' => $note,
+            // "no smaller" is the normal case for an already tight file, not worth a note.
+            'error' => implode('; ', array_filter([$note, ($stored['note'] ?? null) === 'no smaller' ? null : ($stored['note'] ?? null)])) ?: null,
         ]);
 
         $this->stats['copied']++;
         $this->stats['bytes_stored'] += $size;
         $this->stats['bytes_original'] += strlen($result->body);
+
+        return true;
+    }
+
+    /** Count a blob the bucket would not take; false once that has happened too often in a row. */
+    private function storeFailed(string $why): bool
+    {
+        if (++$this->storeFailuresInARow >= self::MAX_STORE_FAILURES_IN_A_ROW) {
+            $this->stopped = ['kind' => self::STOP_BUCKET, 'message' => $why];
+
+            return false;
+        }
 
         return true;
     }

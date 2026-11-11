@@ -748,9 +748,9 @@ return [
         // support Cost Management. Then the bill must be read in the portal instead.
         // Turning it off also turns off the stop on a bandwidth charge, because the charge cannot be
         // seen. Only false or 0 turns it off.
-        'require_cost_check' => ! in_array(strtolower(trim((string) EnvSetting::env('AZURE_ARCHIVE_REQUIRE_COST_CHECK', 'true'))), ['false', '0'], true),
+        'require_cost_check' => \App\Services\AzureArchive\ArchiveSwitch::onUnlessFalse(EnvSetting::env('AZURE_ARCHIVE_REQUIRE_COST_CHECK', true)),
         // Store the lossless jpegtran optimisation when it is smaller and decodes to the same pixels.
-        'optimise' => ! in_array(strtolower(trim((string) EnvSetting::env('AZURE_ARCHIVE_OPTIMISE', 'true'))), ['false', '0'], true),
+        'optimise' => \App\Services\AzureArchive\ArchiveSwitch::onUnlessFalse(EnvSetting::env('AZURE_ARCHIVE_OPTIMISE', true)),
         // The public address the archived images are served from (the frontend-nginx chain), used
         // by azure-archive:check-serving. Blank: the check is skipped.
         'serving_url' => EnvSetting::env('AZURE_ARCHIVE_SERVING_URL', 'https://images.ilovefreegle.org/archive'),

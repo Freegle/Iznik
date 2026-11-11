@@ -511,6 +511,7 @@ class AzureArchiveCommandsTest extends TestCase
 
         Exceptions::assertReported(fn (AzureArchiveAlert $e) => str_contains($e->getMessage(), 'not there or not public'));
         $this->assertSame(0, DB::table(ArchiveLedger::TABLE)->where('status', 'Missing')->count());
+        $this->assertStringContainsString('ContainerNotFound', (string) (new ArchiveLedger())->latchedStop(), 'latched, so the next run does not repeat it');
     }
 
     public function test_egress_figures_azure_has_not_caught_up_with_fetch_nothing(): void
@@ -523,5 +524,46 @@ class AzureArchiveCommandsTest extends TestCase
         $this->artisan('azure-archive:copy')->expectsOutputToContain('its figures are behind')->assertFailed();
 
         $this->assertSame(0, $this->blobFetches);
+    }
+
+    public function test_clearing_a_stop_acknowledges_the_charge_and_only_more_stops_it_again(): void
+    {
+        Exceptions::fake();
+        $this->bandwidthCost = 0.07;
+        $this->fakeAzure();
+        $this->archivedAttachment();
+
+        $this->artisan('azure-archive:copy')->assertFailed();
+        $this->assertNotNull((new ArchiveLedger())->latchedStop());
+
+        $this->artisan('azure-archive:status', ['--clear-stop' => true])
+            ->expectsOutputToContain('Acknowledged bandwidth charges of 0.07')
+            ->assertSuccessful();
+        $this->artisan('azure-archive:copy')->assertSuccessful();
+        $this->assertGreaterThanOrEqual(1, $this->blobFetches);
+        $this->assertNull((new ArchiveLedger())->latchedStop());
+
+        $this->bandwidthCost = 0.09;
+        Cache::flush();
+        $this->artisan('azure-archive:copy')->assertFailed();
+        $this->assertStringContainsString('0.09', (string) (new ArchiveLedger())->latchedStop());
+    }
+
+    public function test_the_safety_switches_turn_off_only_on_false_or_0(): void
+    {
+        foreach ([[false, false], ['false', false], ['0', false], [0, false], [true, true], ['no', true], ['flase', true], ['', true]] as [$value, $on]) {
+            $this->assertSame($on, \App\Services\AzureArchive\ArchiveSwitch::onUnlessFalse($value), var_export($value, true));
+        }
+    }
+
+    public function test_an_unreadable_bill_does_not_alert_when_the_cost_check_is_off_on_purpose(): void
+    {
+        Exceptions::fake();
+        config(['freegle.azure_archive.require_cost_check' => false]);
+        $this->fakeAzure(['management.azure.com/*/Microsoft.CostManagement/query*' => Http::response(['error' => ['message' => 'not supported']], 400)]);
+
+        $this->artisan('azure-archive:status', ['--report' => true])->assertSuccessful();
+
+        Exceptions::assertNothingReported();
     }
 }

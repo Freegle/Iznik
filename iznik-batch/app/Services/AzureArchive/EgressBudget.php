@@ -25,6 +25,9 @@ namespace App\Services\AzureArchive;
  */
 final class EgressBudget
 {
+    /** Charges closer than this are the same charge. */
+    private const COST_EPSILON = 0.005;
+
     /** A billed GB is read as the larger of the two meanings, so the check errs high. */
     private const BILLED_GB_BYTES = 1073741824;
 
@@ -92,7 +95,7 @@ final class EgressBudget
             if ($this->costCheckRequired) {
                 $refusals[] = 'Azure Cost Management could not be read' . ($f->costError ? ": {$f->costError}" : '') . '.';
             }
-        } elseif ($f->bandwidthCost > 0) {
+        } elseif ($f->bandwidthCost > $f->acknowledgedCost + self::COST_EPSILON) {
             $latch = sprintf('Azure has charged %.2f for bandwidth this billing period, so the free allowance is used up', $f->bandwidthCost);
             $refusals[] = $latch . '.';
         }
@@ -101,7 +104,7 @@ final class EgressBudget
             if ($this->costCheckRequired) {
                 $refusals[] = 'Azure Cost Management could not be read for the last billing period.';
             }
-        } elseif ($f->previousBandwidthCost > 0 && $latch === null) {
+        } elseif ($f->previousBandwidthCost > $f->acknowledgedPreviousCost + self::COST_EPSILON && $latch === null) {
             $latch = sprintf('Azure charged %.2f for bandwidth in the last billing period', $f->previousBandwidthCost);
             $refusals[] = $latch . '.';
         }

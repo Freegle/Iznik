@@ -24,13 +24,16 @@ final class BudgetFigures
         // Cost Management, this billing period: bandwidth charged, and bandwidth billed in GB.
         public readonly ?float $bandwidthCost,
         public readonly ?float $billedEgressGb,
-        public readonly ?string $costError = null,
-        public readonly ?string $metricsError = null,
+        public readonly ?string $costError,
+        public readonly ?string $metricsError,
         // A stop latched by an earlier run, which only a person clears.
-        public readonly ?string $latchedStop = null,
+        public readonly ?string $latchedStop,
         // Bandwidth charged in the billing period before this one. Cost Management lags by a day
         // or more, so a charge from the last days of a period first shows after it has closed.
-        public readonly ?float $previousBandwidthCost = 0.0,
+        public readonly ?float $previousBandwidthCost,
+        // What a person acknowledged of each, when they last cleared a stop.
+        public readonly float $acknowledgedCost = 0.0,
+        public readonly float $acknowledgedPreviousCost = 0.0,
     ) {
     }
 }

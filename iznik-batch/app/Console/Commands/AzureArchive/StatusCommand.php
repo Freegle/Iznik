@@ -42,6 +42,7 @@ class StatusCommand extends Command
             $was = $ledger->latchedStop();
             $ledger->clearStop();
             $this->info($was === null ? 'No stop was latched.' : "Cleared: {$was}");
+            $this->acknowledge($ledger);
 
             return Command::SUCCESS;
         }
@@ -89,6 +90,34 @@ class StatusCommand extends Command
         }
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * Clearing a stop says a person has looked at the bill, so the charges it shows now stop
+     * latching. Only a charge above them latches again.
+     */
+    private function acknowledge(ArchiveLedger $ledger): void
+    {
+        $azure = AzureClient::fromConfig();
+
+        if (! $azure->configured()) {
+            return;
+        }
+
+        $gatherer = FigureGatherer::fromConfig($azure, $ledger);
+        $gatherer->forgetCosts();
+
+        try {
+            $current = $gatherer->costs('BillingMonthToDate')->bandwidthCost();
+            $previous = $gatherer->costs('TheLastBillingMonth')->bandwidthCost();
+        } catch (AzureUnavailable $e) {
+            $this->warn('The bill could not be read, so no charge was acknowledged; a charge will latch the stop again: ' . $e->getMessage());
+
+            return;
+        }
+
+        $ledger->acknowledgeCosts($current, $previous);
+        $this->info(sprintf('Acknowledged bandwidth charges of %.2f this billing period and %.2f the last. Only more than that stops the copy again.', $current, $previous));
     }
 
     private function progress(ArchiveLedger $ledger): void
@@ -178,7 +207,7 @@ class StatusCommand extends Command
             $problems[] = "Azure's egress figures cannot be read or trusted: {$figures->metricsError}";
         }
 
-        if ($figures->costError !== null) {
+        if ($figures->costError !== null && config('freegle.azure_archive.require_cost_check', true)) {
             $problems[] = "the Azure bill cannot be read: {$figures->costError}";
         }
 

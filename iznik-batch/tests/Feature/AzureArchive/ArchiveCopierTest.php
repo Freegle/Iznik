@@ -93,6 +93,16 @@ class ArchiveCopierTest extends TestCase
         return new ArchiveCopier(new ArchiveLedger(), new BlobFetcher(self::SOURCE), $store ?? new ObjectStore(Storage::disk('images')), $jpeg, 'archive/', $maxSeconds);
     }
 
+    /** A bucket whose probe works and whose put() for a real blob does $put. */
+    private function storeWherePutsDo(callable $put, int|null ...$sizes): ObjectStore
+    {
+        $store = $this->createMock(ObjectStore::class);
+        $store->method('put')->willReturnCallback(fn (string $key, $bytes, $type) => $key === 'archive/.probe' ? null : $put($key));
+        $store->method('sizeOf')->willReturnOnConsecutiveCalls(5, ...$sizes);
+
+        return $store;
+    }
+
     private function ledger(string $blob): ?object
     {
         return DB::table(ArchiveLedger::TABLE)->where('blobname', $blob)->first();
@@ -326,9 +336,7 @@ class ArchiveCopierTest extends TestCase
         $id = $this->attachment();
         $name = "img_{$id}.jpg";
         $this->blob($name, 'x');
-        $store = $this->createMock(ObjectStore::class);
-        $store->method('sizeOf')->willReturn(null);
-        $store->method('put')->willThrowException(new ObjectStoreUnavailable('HTTP 503'));
+        $store = $this->storeWherePutsDo(fn () => throw new ObjectStoreUnavailable('HTTP 503'));
 
         $result = $this->copier($store)->copy(self::PLENTY);
 
@@ -371,8 +379,7 @@ class ArchiveCopierTest extends TestCase
         $id = $this->attachment();
         $name = "img_{$id}.jpg";
         $this->blob($name, 'twelve bytes');
-        $store = $this->createMock(ObjectStore::class);
-        $store->method('sizeOf')->willReturnOnConsecutiveCalls(null, 5);
+        $store = $this->storeWherePutsDo(fn () => null, 5);
 
         $this->copier($store)->copy(self::PLENTY);
 
@@ -511,9 +518,7 @@ class ArchiveCopierTest extends TestCase
         $b = $this->attachment();
         $this->blob("img_{$a}.jpg", 'first');
         $this->blob("img_{$b}.jpg", 'second');
-        $store = $this->createMock(ObjectStore::class);
-        $store->method('sizeOf')->willReturn(null);
-        $store->method('put')->willThrowException(new \RuntimeException('Object store refused to write'));
+        $store = $this->storeWherePutsDo(fn () => throw new \RuntimeException('Object store refused to write'));
 
         $result = $this->copier($store)->copy(self::PLENTY);
 
@@ -550,5 +555,94 @@ class ArchiveCopierTest extends TestCase
 
         $this->assertSame(3, $this->fetches[$name]);
         $this->assertSame('Copied', $this->ledger($name)->status);
+    }
+
+    public function test_the_same_refusal_three_times_stops_the_run_and_keeps_the_rows_for_a_retry(): void
+    {
+        $ids = [];
+
+        for ($i = 0; $i < 5; $i++) {
+            $ids[] = $id = $this->attachment();
+            $this->azure["img_{$id}.jpg"] = ['status' => 403, 'body' => '<Error><Code>AuthorizationFailure</Code></Error>', 'md5' => null];
+        }
+
+        $result = $this->copier()->copy(self::PLENTY);
+
+        $this->assertSame(ArchiveCopier::STOP_SUSPECT, $result['stopped']['kind']);
+        $this->assertStringContainsString('AuthorizationFailure', $result['stopped']['message']);
+        $this->assertCount(3, $this->fetches);
+        $this->assertStringStartsWith(ArchiveLedger::RETRY, $this->ledger("img_{$ids[0]}.jpg")->error);
+    }
+
+    public function test_archive_tier_blobs_in_a_row_do_not_stop_the_run(): void
+    {
+        for ($i = 0; $i < 4; $i++) {
+            $id = $this->attachment();
+            $this->blob("img_{$id}.jpg", 'archived', null, 409);
+        }
+
+        $result = $this->copier()->copy(self::PLENTY);
+
+        $this->assertNull($result['stopped']);
+        $this->assertCount(4, $this->fetches);
+    }
+
+    public function test_a_bucket_that_cannot_be_written_is_caught_before_any_fetch(): void
+    {
+        $id = $this->attachment();
+        $this->blob("img_{$id}.jpg", 'x');
+        $store = $this->createMock(ObjectStore::class);
+        $store->method('put')->willThrowException(new \RuntimeException('NoSuchBucket'));
+
+        $result = $this->copier($store)->copy(self::PLENTY);
+
+        $this->assertSame(ArchiveCopier::STOP_BUCKET, $result['stopped']['kind']);
+        $this->assertStringContainsString('NoSuchBucket', $result['stopped']['message']);
+        $this->assertSame([], $this->fetches);
+    }
+
+    public function test_three_blobs_the_bucket_will_not_take_in_a_row_stop_the_run(): void
+    {
+        for ($i = 0; $i < 5; $i++) {
+            $id = $this->attachment();
+            $this->blob("img_{$id}.jpg", "blob {$i}");
+        }
+
+        $result = $this->copier($this->storeWherePutsDo(fn () => throw new \RuntimeException('400 Bad Request')))->copy(self::PLENTY);
+
+        $this->assertSame(ArchiveCopier::STOP_BUCKET, $result['stopped']['kind']);
+        $this->assertCount(3, $this->fetches);
+    }
+
+    public function test_a_failure_marked_final_on_its_first_attempt_can_be_requeued(): void
+    {
+        $id = $this->attachment();
+        $name = "img_{$id}.jpg";
+        $this->blob($name, 'archived', null, 409);
+        $this->copier()->copy(self::PLENTY);
+        $this->assertSame(1, (int) $this->ledger($name)->attempts);
+
+        $this->assertSame(1, (new ArchiveLedger())->requeue());
+        $this->blob($name, 'rehydrated');
+        $this->copier()->copy(self::PLENTY);
+
+        $this->assertSame('Copied', $this->ledger($name)->status);
+        $this->assertSame(2, $this->fetches[$name]);
+    }
+
+    public function test_charges_roll_into_the_last_period_when_the_period_turns(): void
+    {
+        $ledger = new ArchiveLedger();
+        $ledger->acknowledgeCosts(0.07, 0.0);
+
+        // Same period, a little more: the acknowledgement stands.
+        $ledger->noteCosts(0.07, 0.0);
+        $this->assertSame(0.07, $ledger->costAcknowledgement()['current']);
+
+        // The period turns: this period starts again from nothing, last period is what was acknowledged.
+        $ledger->noteCosts(0.0, 0.07);
+        $ack = $ledger->costAcknowledgement();
+        $this->assertSame(0.0, $ack['current']);
+        $this->assertSame(0.07, $ack['previous']);
     }
 }

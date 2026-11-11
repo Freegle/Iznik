@@ -69,6 +69,12 @@ class FigureGatherer
         [$bandwidthCost, $billedGb, $costError] = $this->bandwidth('BillingMonthToDate');
         [$previousCost, , $previousError] = $this->bandwidth('TheLastBillingMonth');
 
+        if ($bandwidthCost !== null) {
+            $this->ledger->noteCosts($bandwidthCost, $previousCost);
+        }
+
+        $ack = $this->ledger->costAcknowledgement();
+
         return new BudgetFigures(
             now: $now,
             azureEgress31d: $egress,
@@ -82,6 +88,8 @@ class FigureGatherer
             metricsError: $metricsError,
             latchedStop: $this->ledger->latchedStop(),
             previousBandwidthCost: $previousCost,
+            acknowledgedCost: $ack['current'],
+            acknowledgedPreviousCost: $ack['previous'],
         );
     }
 
@@ -146,6 +154,13 @@ class FigureGatherer
         } catch (AzureUnavailable $e) {
             return [null, null, $e->getMessage()];
         }
+    }
+
+    /** Read the charges afresh next time, for a person who is about to acknowledge them. */
+    public function forgetCosts(): void
+    {
+        Cache::forget('azure_archive:costs:BillingMonthToDate');
+        Cache::forget('azure_archive:costs:TheLastBillingMonth');
     }
 
     public function costs(string $timeframe = 'BillingMonthToDate'): CostSummary
