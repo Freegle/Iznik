@@ -13,7 +13,14 @@
           ref="paypalbutton"
           class="me-2"
           @click="suppress"
-        />
+        >
+          <img
+            v-if="usePayPalPage"
+            src="/pp_cc_mark_37x23.jpg"
+            :title="'Donate ' + (show ? show : '') + ' with PayPal'"
+            :alt="'Donate ' + (show ? show : '') + ' with PayPal'"
+          />
+        </div>
         <div v-if="text">{{ text }}</div>
         <div v-else-if="!show">Donate</div>
         <div v-else>{{ show }}</div>
@@ -26,11 +33,12 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { loadScript } from 'vue-plugin-load-script'
 import { uid } from '~/composables/useId'
 import { useNuxtApp } from '#app'
 import PayPalGivingFundModal from '~/components/PayPalGivingFundModal'
+import { useMobileStore } from '~/stores/mobile'
 
 const props = defineProps({
   directDonation: {
@@ -61,12 +69,30 @@ const props = defineProps({
 const bump = ref(1)
 const showGivingFund = ref(false)
 
+// PayPal's donate button opens its checkout in a pop-up. In the app's WebView
+// and in the in-app browsers of the Google, Facebook and Instagram apps the
+// pop-up cannot open, PayPal gives up with "Expected element to be passed to
+// render iframe", and the tap does nothing. There we draw the button ourselves
+// and open PayPal's donate page instead, which the app hands to the system
+// browser. PayPal then cannot tell us the amount, so 'clicked' is not emitted.
+const IN_APP_BROWSER = /FBAN\/|FBAV\/|Instagram|GSA\//
+const mobileStore = useMobileStore()
+const needsPayPalPage =
+  import.meta.client &&
+  (mobileStore.isApp || IN_APP_BROWSER.test(window.navigator.userAgent))
+
+// Set on mount rather than in setup, so the server render and the first client
+// render agree.
+const usePayPalPage = ref(false)
+
 watch(
   () => props.value,
   (newVal, oldVal) => {
     bump.value++
     nextTick(() => {
-      checkPayPalLoaded()
+      if (!usePayPalPage.value) {
+        checkPayPalLoaded()
+      }
     })
   }
 )
@@ -75,8 +101,9 @@ const emit = defineEmits(['clicked'])
 const paypalbutton = ref(null)
 const nuxtApp = useNuxtApp()
 
-// Load PayPal script
-await loadScript('https://www.paypalobjects.com/donate/sdk/donate-sdk.js')
+if (!needsPayPalPage) {
+  await loadScript('https://www.paypalobjects.com/donate/sdk/donate-sdk.js')
+}
 
 // Computed properties
 const uniqueId = computed(() => {
@@ -148,7 +175,10 @@ function makeButton() {
 
 function suppress(e) {
   // Stop clicking on the PayPal button itself triggering the button click which will click the PayPal button.
-  e.stopPropagation()
+  // Our own drawing of it has no click of its own, so that one goes through.
+  if (!usePayPalPage.value) {
+    e.stopPropagation()
+  }
 }
 
 function clicked() {
@@ -159,11 +189,22 @@ function clicked() {
     })
   }
 
-  paypalbutton.value?.firstChild?.click()
+  if (usePayPalPage.value) {
+    window.open(
+      'https://www.paypal.com/donate/?hosted_button_id=' + buttonId.value,
+      '_blank'
+    )
+  } else {
+    paypalbutton.value?.firstElementChild?.click()
+  }
 }
 
 // Lifecycle hooks
 onMounted(() => {
-  checkPayPalLoaded()
+  usePayPalPage.value = needsPayPalPage
+
+  if (!usePayPalPage.value) {
+    checkPayPalLoaded()
+  }
 })
 </script>
