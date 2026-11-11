@@ -351,20 +351,6 @@ class AutomodFactsService
         return [false, null];
     }
 
-    private function memberHasPostingStatus(int $groupid, ?int $fromuser): bool
-    {
-        if (!$fromuser) {
-            return true;
-        }
-
-        $membership = DB::table('memberships')
-            ->where('userid', $fromuser)
-            ->where('groupid', $groupid)
-            ->first(['ourPostingStatus']);
-
-        return $membership === null || ($membership->ourPostingStatus !== null && $membership->ourPostingStatus !== '');
-    }
-
     private function contentCheckService(): ContentCheckService
     {
         return $this->contentCheckService ?? new ContentCheckService();

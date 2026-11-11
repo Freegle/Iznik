@@ -1231,13 +1231,15 @@ class ContentCheckService
     /**
      * The checks holdReasons() writes to say WHY a clean post is waiting: the member's
      * posting status, or the group's moderate-everything setting. They describe the row's
-     * situation, not its content, so a post carrying only these is content-clean - which is
-     * what the clean auto-approve path (AutoApproveCleanService) asks. Every NULL-status
-     * member's clean post carries MemberModerated, so a "reasons IS NULL" test would never
-     * match one. NoLocation is deliberately NOT here: a post nobody can place is not
-     * publishable, and the clean path seeds the spatial index from the post's location.
+     * situation, not its content, so a post carrying only these is content-clean. Every
+     * NULL-status member's clean post carries MemberModerated, so a "reasons IS NULL" test
+     * would never match one. NoLocation is deliberately NOT here: a post nobody can place is
+     * not publishable.
      *
-     * The Go countdown (iznik-server-go/message/autoapproveat.go) carries the same list.
+     * Nothing in the batch calls reasonsAreContentClean() or contentCleanSql() outside the
+     * tests: AutoApproveCleanService decides from the chart's recorded decision, and the Go
+     * countdown does not read this list. They stay for a query that needs "no content
+     * finding", and ContentCheckServiceTest pins the SQL form against the PHP one.
      */
     public const HOLD_EXPLANATION_CHECKS = [self::CHECK_MEMBER_MODERATED, self::CHECK_GROUP_MODERATED];
 
