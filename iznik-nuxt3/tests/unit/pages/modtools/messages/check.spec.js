@@ -267,6 +267,21 @@ describe('messages/check/[[id]].vue page', () => {
       expect(mockCheckWork).toHaveBeenCalledWith(true)
     })
 
+    it('says so on the page when marking fails, and leaves the list alone', async () => {
+      mockMessages.value = [{ id: 101 }]
+      mockMessageStore.markChecked.mockRejectedValueOnce(new Error('timeout'))
+      const wrapper = mountComponent()
+      await bulk(wrapper).trigger('click')
+      await wrapper.find('.confirm-yes').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="mark-error"]').text()).toContain(
+        "didn't go through"
+      )
+      expect(mockMessageStore.clear).not.toHaveBeenCalled()
+      expect(mockCheckWork).not.toHaveBeenCalled()
+      expect(bulk(wrapper).attributes('disabled')).toBeUndefined()
+    })
+
     it('has nothing to mark when nothing is loaded, or while the moderators surface is held', async () => {
       const empty = mountComponent()
       expect(bulk(empty).attributes('disabled')).toBeDefined()

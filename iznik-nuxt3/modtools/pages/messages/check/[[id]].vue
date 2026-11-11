@@ -28,6 +28,14 @@
         </div>
       </div>
       <NoticeMessage
+        v-if="markError"
+        variant="danger"
+        class="mt-2"
+        data-testid="mark-error"
+      >
+        {{ markError }}
+      </NoticeMessage>
+      <NoticeMessage
         v-if="!messages.length && !busy && groupsreceived"
         class="mt-2"
       >
@@ -150,6 +158,7 @@ const groupsreceived = computed(() => modGroupStore.received)
 const bump = ref(0)
 const urlOverride = ref(false)
 const marking = ref(false)
+const markError = ref('')
 const showMarkConfirm = ref(false)
 const markIds = ref([])
 
@@ -189,11 +198,20 @@ function askMarkAll() {
 // land on a post further down the queue that nobody has seen.
 async function markAllChecked(ids = messages.value.map((m) => m.id)) {
   marking.value = true
+  markError.value = ''
   try {
-    await messageStore.markChecked({
-      groupid: groupid.value,
-      ids,
-    })
+    try {
+      await messageStore.markChecked({
+        groupid: groupid.value,
+        ids,
+      })
+    } catch {
+      // Say so on the page: the posts stay in the list, and a moderator who saw nothing would
+      // believe they had been checked.
+      markError.value =
+        "That didn't go through, so nothing was marked. Try again in a moment."
+      return
+    }
     show.value = 0
     context.value = null
     listingIds.value = new Set()
