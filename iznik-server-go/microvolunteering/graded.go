@@ -1,6 +1,7 @@
 package microvolunteering
 
 import (
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
@@ -73,6 +74,25 @@ func HasRecentGradedPass(db *gorm.DB, userid uint64) bool {
 	return false
 }
 
+// GradedChallengeAvailable says whether the graded endpoint would offer this member a task
+// right now. It is false while mods or posts are locked down, for a member who has asked not to
+// be asked, and when no settled post is near them. The reply gate lets the reply through in
+// those cases: the member has no way to pass it.
+func GradedChallengeAvailable(db *gorm.DB, userID uint64) bool {
+	if lockdown.Held("mods") || lockdown.Held("posts") {
+		return false
+	}
+	var trustLevel string
+	if err := db.Table("users").Select("COALESCE(trustlevel, ?)", TrustBasic).
+		Where("id = ?", userID).Scan(&trustLevel).Error; err != nil {
+		return false
+	}
+	if trustLevel == TrustDeclined || trustLevel == TrustExcluded {
+		return false
+	}
+	return getGradedMessageChallenge(db, userID) != nil
+}
+
 // getGradedMessageChallenge picks a settled post that the member has not answered on and did
 // not write. Newest first, so the post is still recognisable.
 func getGradedMessageChallenge(db *gorm.DB, userID uint64) *Challenge {
@@ -87,6 +107,7 @@ func getGradedMessageChallenge(db *gorm.DB, userID uint64) *Challenge {
 		Select("m.id").
 		Where("m.collection = ? AND m.deleted IS NULL "+
 			"AND COALESCE(m.fromuser, 0) <> ? "+
+			"AND NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = m.id) "+
 			"AND NOT EXISTS (SELECT 1 FROM microactions mine WHERE mine.msgid = m.id AND mine.userid = ? AND mine.actiontype = ?) "+
 			"AND (SELECT COUNT(*) FROM microactions o WHERE o.msgid = m.id AND o.actiontype = ? AND o.userid <> ?) >= ?",
 			utils.COLLECTION_APPROVED, userID, userID, ChallengeCheckMessage, ChallengeCheckMessage, userID, ApprovalQuorum).

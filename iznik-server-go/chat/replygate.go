@@ -16,8 +16,9 @@ import (
 // are the ones most likely to be hoarding, reselling or not people at all. REPLY_GATE_AFTER=N
 // makes the (N+1)th reply in a day wait until the member has answered a graded
 // micro-volunteering task correctly (see microvolunteering.HasRecentGradedPass). Random
-// button-pressing does not pass; a wrong answer keeps the gate shut. Nobody has to be there
-// for it to work.
+// button-pressing does not pass; a wrong answer keeps the gate shut, and the first answer on a
+// post is final. Nobody has to be there for it to work. A member who cannot be given a task
+// (none settled nearby, no known location, asked not to be asked, lockdown) is not gated.
 
 // ReplyGateAfter is how many replies a member may send in a day before the gate applies.
 // Unset, or anything that isn't a valid non-negative number, defaults to 5. An explicit 0
@@ -65,5 +66,10 @@ func replyGateBlocks(db *gorm.DB, userid uint64) bool {
 	if repliesToday(db, userid) < int64(after) {
 		return false
 	}
-	return !microvolunteering.HasRecentGradedPass(db, userid)
+	if microvolunteering.HasRecentGradedPass(db, userid) {
+		return false
+	}
+	// A member the endpoint has no task for cannot pass, so the gate would shut them out for
+	// a day with nothing they can do. It lets the reply through.
+	return microvolunteering.GradedChallengeAvailable(db, userid)
 }

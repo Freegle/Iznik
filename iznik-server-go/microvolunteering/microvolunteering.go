@@ -615,6 +615,21 @@ func PostResponse(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusForbidden, "Not eligible to review this message")
 			}
 
+			// A graded answer is final. Once the post is settled the first answer stands, and is
+			// graded again as it was given, so a member cannot read "wrong" and send the other
+			// answer to turn it into a pass.
+			var stored string
+			db.Table("microactions").
+				Select("result").
+				Where("actiontype = ? AND userid = ? AND msgid = ?", ChallengeCheckMessage, myid, req.Msgid).
+				Limit(1).
+				Scan(&stored)
+			if stored != "" {
+				if graded := Grade(db, req.Msgid, myid, stored); graded != nil {
+					return c.JSON(fiber.Map{"ret": 0, "status": "Success", "graded": *graded})
+				}
+			}
+
 			// Mark any notifications regarding this message as read
 			db.Table("users_notifications").
 				Where("touser = ? AND url LIKE CONCAT('/microvolunteering/message/', ?) AND type = 'Exhort'", myid, req.Msgid).
