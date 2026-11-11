@@ -45,6 +45,13 @@ describe('useApiCallsInFlight', () => {
     expect(apiCallsInFlight().map((c) => c.path)).toEqual(['/new'])
   })
 
+  it('leaves out a call older than five minutes even before it is pruned', () => {
+    trackApiCall('GET', '/old')
+    vi.advanceTimersByTime(6 * 60 * 1000)
+
+    expect(apiCallsInFlight()).toEqual([])
+  })
+
   it('keeps no more than twenty', () => {
     for (let i = 0; i < 30; i++) trackApiCall('GET', '/p' + i)
 

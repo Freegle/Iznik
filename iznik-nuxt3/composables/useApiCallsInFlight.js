@@ -33,12 +33,16 @@ export function trackApiCall(method, path) {
 export function apiCallsInFlight() {
   const now = Date.now()
 
-  return calls.map((c) => ({
-    method: c.method,
-    path: c.path,
-    stage: c.stage,
-    ageMs: now - c.startedAt,
-  }))
+  // A call older than the prune age is almost certainly dead (its caller went away without
+  // finishing), so it is left out rather than blamed for a stuck button.
+  return calls
+    .filter((c) => now - c.startedAt < MAX_AGE_MS)
+    .map((c) => ({
+      method: c.method,
+      path: c.path,
+      stage: c.stage,
+      ageMs: now - c.startedAt,
+    }))
 }
 
 export function _resetApiCallsInFlightForTests() {
