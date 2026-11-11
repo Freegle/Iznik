@@ -302,28 +302,22 @@ class UserManagementService
                     ->where(function ($r) {
                         $r->whereColumn('ratings.rater', 'users.id')->orWhereColumn('ratings.ratee', 'users.id');
                     });
-            })
-            ->limit($limit)
-            ->get();
+            });
+
+        // A member who gave, set up Gift Aid, told a story, listed an event or a volunteering
+        // role, or posted to the newsfeed has a record that is theirs, so they are kept. Doing
+        // this in the query means the limit counts only members who can be forgotten.
+        foreach (['users_donations', 'giftaid', 'users_stories', 'communityevents', 'volunteering', 'newsfeed'] as $table) {
+            $candidates->whereNotExists(function ($q) use ($table) {
+                $q->select(DB::raw(1))->from($table)->whereColumn("$table.userid", 'users.id');
+            });
+        }
+
+        $candidates = $candidates->limit($limit)->get();
 
         $count = 0;
 
         foreach ($candidates as $candidate) {
-            // A member who gave, set up Gift Aid, told a story, listed an event or a volunteering
-            // role, or posted to the newsfeed has a record that is theirs, so they are kept.
-            $hasRecord = FALSE;
-
-            foreach (['users_donations', 'giftaid', 'users_stories', 'communityevents', 'volunteering', 'newsfeed'] as $table) {
-                if (DB::table($table)->where('userid', $candidate->id)->exists()) {
-                    $hasRecord = TRUE;
-                    break;
-                }
-            }
-
-            if ($hasRecord) {
-                continue;
-            }
-
             // Check for recent meaningful logs (excluding User/Created and User/Deleted).
             // Equivalent to the original "no logs at all OR most recent meaningful
             // log's DATEDIFF(NOW(), timestamp) > 90": DATEDIFF > 90 is DATEDIFF >= 91,
