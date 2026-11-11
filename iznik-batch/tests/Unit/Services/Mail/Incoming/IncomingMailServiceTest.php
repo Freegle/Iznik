@@ -491,6 +491,58 @@ class IncomingMailServiceTest extends TestCase
         $this->assertNull($this->accountHolding($alias)->tnuserid);
     }
 
+    /** TN subscribes a member from their TN address, so a signed mail from anywhere else says nothing. */
+    public function test_a_signed_subscribe_not_from_a_tn_address_gives_no_tn_user_id(): void
+    {
+        config(['freegle.mail.trashnothing_secret' => 'test-secret']);
+        $sentry = $this->recordSentry();
+        $sender = 'tnid'.str_replace('.', '', uniqid('', true)).'@example.com';
+
+        $result = $this->tnSubscribe($this->createTestGroup(), $sender, [
+            'X-Trash-Nothing-User-ID' => '99140007',
+            'X-Trash-Nothing-Secret' => 'test-secret',
+        ]);
+
+        $account = $this->accountHolding($sender);
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+        $this->assertNull($account->tnuserid);
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('99140007', $sentry->calls[0]);
+        $this->assertStringContainsString("user {$account->id}", $sentry->calls[0]);
+    }
+
+    /** A signed mail from a TN address is the ordinary case, and nobody needs to hear about it. */
+    public function test_a_signed_subscribe_from_a_tn_address_reports_nothing(): void
+    {
+        config(['freegle.mail.trashnothing_secret' => 'test-secret']);
+        $sentry = $this->recordSentry();
+        $alias = 'tnid'.str_replace('.', '', uniqid('', true)).'-g1@user.trashnothing.com';
+
+        $this->tnSubscribe($this->createTestGroup(), $alias, [
+            'X-Trash-Nothing-User-ID' => '99140008',
+            'X-Trash-Nothing-Secret' => 'test-secret',
+        ]);
+
+        $this->assertSame(99140008, (int) $this->accountHolding($alias)->tnuserid);
+        $this->assertSame([], $sentry->calls);
+    }
+
+    private function recordSentry(): object
+    {
+        $sentry = new class
+        {
+            public array $calls = [];
+
+            public function captureMessage($message, $severity = null): void
+            {
+                $this->calls[] = (string) $message;
+            }
+        };
+        $this->app->instance('sentry', $sentry);
+
+        return $sentry;
+    }
+
     public function test_a_tn_subscribe_with_a_header_that_is_not_an_id_gives_no_tn_user_id(): void
     {
         config(['freegle.mail.trashnothing_secret' => 'test-secret']);

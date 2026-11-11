@@ -73,7 +73,8 @@ TN's mail carries the member's TN user id in `x-trash-nothing-user-id`, and one 
 Subscribe that creates a user gives the new account that id (`stampTnUserId`). Partner calls and API
 posts find a member only by the id, so the account would otherwise be split from them at the next
 one. It needs TN's secret, because anyone can write the header, so with
-`FREEGLE_TRASHNOTHING_SECRET` unset nothing is stamped. Nobody is matched by the id, so routing is
+`FREEGLE_TRASHNOTHING_SECRET` unset nothing is stamped. It also needs the sender to be a TN address,
+since TN subscribes members from theirs: a signed mail from anywhere else stamps nothing and is reported to Sentry. Nobody is matched by the id, so routing is
 unchanged, and if another account holds it the new account goes without. Whether TN sends the header
 on Subscribe mail needs checking on production: it was measured on posts only.
 
