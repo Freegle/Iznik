@@ -34,6 +34,9 @@ const MAX_FILES = 16
 const MAX_FILE_BYTES = 200 * 1024
 const HISTORY_MONTHS = 6
 const HISTORY_LIMIT = 150
+// The model's words go into the ux_ideas table and the ModTools list, so each text field is bounded.
+const IDEA_TEXT_MAX = 1000
+const IDEA_FILES_MAX = 10
 const CODE_EXTENSIONS = new Set(['.vue', '.js', '.mjs', '.ts'])
 const CATEGORY_KEYS = new Set(CATEGORIES.map((c) => c[0]))
 const IDEA_TYPES = new Set(['fix', 'experiment'])
@@ -125,16 +128,36 @@ async function areaHistory(flow, opts = {}) {
     // the checkout was fetched without blobs.
     const { stdout } = await run(
       'git',
-      ['log', `--since=${since}`, '--no-renames', '--format=%as %s', `-n${HISTORY_LIMIT}`, '--', ...paths],
+      ['log', `--since=${since}`, '--no-renames', '--format=%H %as %s', `-n${HISTORY_LIMIT}`, '--', ...paths],
       { cwd: dir, timeout: 30000, maxBuffer: 4 * 1024 * 1024 }
     )
+
+    // A shallow checkout cuts the parents of its oldest commit, so a path-limited log lists that
+    // commit as adding every file, whatever it changed. Leave it out: it is not a change to this area.
+    const cutOff = await shallowBoundary(run, dir)
 
     return String(stdout)
       .split('\n')
       .map((l) => l.trim())
       .filter(Boolean)
+      .filter((l) => !cutOff.has(l.split(' ')[0]))
+      .map((l) => l.replace(/^\S+ /, ''))
   } catch (e) {
     return []
+  }
+}
+
+// The commits whose parents a shallow checkout has cut off, or an empty set when it is complete.
+async function shallowBoundary(run, dir) {
+  try {
+    const shallow = await run('git', ['rev-parse', '--is-shallow-repository'], { cwd: dir, timeout: 10000 })
+    if (String(shallow.stdout).trim() !== 'true') return new Set()
+
+    const roots = await run('git', ['rev-list', '--max-parents=0', 'HEAD'], { cwd: dir, timeout: 10000 })
+
+    return new Set(String(roots.stdout).split('\n').map((l) => l.trim()).filter(Boolean))
+  } catch (e) {
+    return new Set()
   }
 }
 
@@ -256,10 +279,10 @@ function validateIdea(raw) {
   const idea = {
     title: cutAtWord(str(raw.title), 80),
     category: str(raw.category),
-    change: str(raw.change),
-    rationale: str(raw.rationale),
-    expected: str(raw.expected),
-    risk: str(raw.risk),
+    change: cutAtWord(str(raw.change), IDEA_TEXT_MAX),
+    rationale: cutAtWord(str(raw.rationale), IDEA_TEXT_MAX),
+    expected: cutAtWord(str(raw.expected), IDEA_TEXT_MAX),
+    risk: cutAtWord(str(raw.risk), IDEA_TEXT_MAX),
   }
   for (const k of Object.keys(idea)) {
     if (!idea[k]) return null
@@ -281,8 +304,12 @@ function validateIdea(raw) {
   idea.expected_points = points
   idea.confidence = Math.min(1, Math.max(0, confidence))
   idea.locality = Math.min(5, Math.max(1, Math.round(locality)))
-  idea.files = raw.files.filter((f) => typeof f === 'string' && f.trim()).map((f) => f.trim())
-  idea.like_tried = str(raw.like_tried)
+  idea.files = raw.files
+    .filter((f) => typeof f === 'string')
+    .map((f) => f.trim().slice(0, 200))
+    .filter((f) => f.startsWith('iznik-nuxt3/') && !f.includes('..'))
+    .slice(0, IDEA_FILES_MAX)
+  idea.like_tried = cutAtWord(str(raw.like_tried), IDEA_TEXT_MAX)
 
   return idea
 }
@@ -377,8 +404,9 @@ const SYSTEM_PROMPT = [
   'changes to its member-facing website that would help more members finish what they start.',
   'The Freegle code is checked out read-only in your working directory; you may read, grep and',
   'glob it to check how a screen behaves, but only the front-end source under iznik-nuxt3/ (components,',
-  'composables, stores, pages, layouts, plugins, utils, mixins, api); always give Grep and Glob a path',
-  'inside those folders. You cannot change anything and must not try to.',
+  'composables, stores, pages, layouts, plugins, utils, mixins, api, constants, and constants.js); always',
+  'give Grep and Glob a path inside those folders, and give Grep on a folder a glob such as **/*.vue or',
+  '**/*.{js,vue}. You cannot change anything and must not try to.',
   'Your final answer is a single JSON object matching the schema in the request, and nothing else.',
   'If you cannot return it as structured output, put it in one ```json fenced block.',
 ].join(' ')
@@ -391,8 +419,13 @@ const SYSTEM_PROMPT = [
 // run's tools are held to the front-end source it is meant to read: not .env files, server
 // configuration, other repositories' files, or anything a planted instruction might ask it to
 // quote back into an idea. The hook runs even in bypassPermissions mode.
-const READABLE_DIRS = ['components', 'composables', 'stores', 'pages', 'layouts', 'plugins', 'utils', 'mixins', 'api']
+// constants/ and constants.js are what the components import their roles, limits and patterns from.
+// config.js stays unreadable: it holds settings that come from the environment.
+const READABLE_DIRS = ['components', 'composables', 'stores', 'pages', 'layouts', 'plugins', 'utils', 'mixins', 'api', 'constants']
+const READABLE_FILES = ['constants.js']
 const READABLE_EXTENSIONS = new Set(['.vue', '.js', '.mjs', '.ts', '.css', '.scss'])
+// ripgrep file types whose extensions are all in READABLE_EXTENSIONS (plus jsx and tsx, which are source too).
+const READABLE_GREP_TYPES = new Set(['js', 'ts', 'vue', 'css'])
 
 function realOrResolved(p) {
   try {
@@ -402,36 +435,69 @@ function realOrResolved(p) {
   }
 }
 
+function isDirectory(abs) {
+  try {
+    return fs.statSync(abs).isDirectory()
+  } catch (e) {
+    return false
+  }
+}
+
 /**
  * Is this path (absolute, or relative to the checkout) inside the source directories? A file must
- * also have a source extension; a directory is fine, because Grep and Glob search under it.
+ * have a source extension and not be a dotfile; a directory is fine, because Grep and Glob search
+ * under it. A path that does not exist is treated as a file, so it needs a source extension.
  */
 function readablePath(target, codebaseDir = CODEBASE) {
   if (typeof target !== 'string' || !target || target.includes('\0')) return false
 
   const root = realOrResolved(codebaseDir)
   const abs = realOrResolved(path.resolve(root, target))
+  if (READABLE_FILES.some((f) => abs === path.join(root, 'iznik-nuxt3', f))) return true
+
   const under = READABLE_DIRS.map((d) => path.join(root, 'iznik-nuxt3', d))
   const inside = under.some((dir) => abs === dir || abs.startsWith(dir + path.sep))
   if (!inside) return false
 
-  const ext = path.extname(abs)
-  return ext === '' || READABLE_EXTENSIONS.has(ext)
+  if (path.relative(root, abs).split(path.sep).some((part) => part.startsWith('.'))) return false
+  if (isDirectory(abs)) return true
+
+  return READABLE_EXTENSIONS.has(path.extname(abs))
+}
+
+// A glob that can only match source files: every extension it names is a readable one.
+function sourceOnlyGlob(glob) {
+  if (typeof glob !== 'string' || glob.includes('..') || glob.startsWith('/') || glob.startsWith('!')) return false
+
+  const m = glob.match(/\.(\{[a-z,]+\}|[a-z]+)$/)
+  if (!m) return false
+
+  return m[1]
+    .replace(/[{}]/g, '')
+    .split(',')
+    .every((e) => READABLE_EXTENSIONS.has('.' + e))
 }
 
 /**
  * The reason a Read, Grep or Glob call is refused, or '' when it may go ahead. Grep and Glob must
  * name a directory to search, so a search of the whole checkout is not possible by leaving it out.
+ * A Grep over a directory must also be limited to source files, by a glob that ends in a source
+ * extension or by type js, ts, vue or css, so it cannot return the lines of a non-source file.
  */
 function toolRefusal(toolName, input, codebaseDir = CODEBASE) {
   const i = input && typeof input === 'object' ? input : {}
-  const hint = ' Only front-end source under iznik-nuxt3/' + READABLE_DIRS.join(', iznik-nuxt3/') + ' may be read.'
+  const hint = ' Only front-end source under iznik-nuxt3/' + READABLE_DIRS.join(', iznik-nuxt3/') + ' (and iznik-nuxt3/constants.js) may be read.'
 
   if (toolName === 'Read') {
     return readablePath(i.file_path, codebaseDir) ? '' : 'That file is not readable.' + hint
   }
   if (toolName === 'Grep' || toolName === 'Glob') {
     if (!readablePath(i.path, codebaseDir)) return 'Give a path inside the source directories.' + hint
+    if (toolName === 'Grep' && isDirectory(realOrResolved(path.resolve(realOrResolved(codebaseDir), i.path)))) {
+      if (!sourceOnlyGlob(i.glob) && !READABLE_GREP_TYPES.has(i.type)) {
+        return 'When you Grep a directory, give a glob such as *.vue or **/*.{js,vue}, or a type of js, ts, vue or css, so only source files are searched.' + hint
+      }
+    }
     if (toolName === 'Glob' && (typeof i.pattern !== 'string' || i.pattern.includes('..') || i.pattern.startsWith('/'))) {
       return 'That pattern is not allowed.' + hint
     }
@@ -525,6 +591,7 @@ async function runIdeasQuery({ prompt, codebaseDir = CODEBASE, queryImpl, timeou
 
   if (failure) throw new Error('the model run failed: ' + failure)
   if (signal && signal.aborted) throw new Error('the caller went away, so the model run was stopped')
+  if (abort.signal.aborted) throw new Error(`the model run timed out after ${limit} ms`)
 
   return { answer: structured || parseIdeasJson(text), text, costUsd, model }
 }

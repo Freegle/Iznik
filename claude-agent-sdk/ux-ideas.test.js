@@ -17,6 +17,7 @@ const {
   normaliseAnswer,
   generateIdeas,
   readablePath,
+  runIdeasQuery,
   toolRefusal,
   guardToolUse,
 } = require('./ux-ideas')
@@ -123,17 +124,35 @@ test('areaHistory passes git an argument list, never a shell string, and a bad s
   const calls = []
   const fake = async (file, args, opts) => {
     calls.push({ file, args, opts })
-    return { stdout: '2026-01-02 something\n\n' }
+    return { stdout: args[0] === 'log' ? 'abc123 2026-01-02 something\n\n' : 'false\n' }
   }
 
   const out = await areaHistory('give', { codebaseDir: '/x', since: '--output=/tmp/evil', execFile: fake, deepen: false })
   assert.deepEqual(out, ['2026-01-02 something'])
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].file, 'git')
-  assert.ok(Array.isArray(calls[0].args))
-  assert.match(calls[0].args.find((a) => a.startsWith('--since=')), /^--since=\d{4}-\d{2}-\d{2}$/)
-  const dashdash = calls[0].args.indexOf('--')
-  assert.deepEqual(calls[0].args.slice(dashdash + 1), FLOW_PATHS.give)
+  assert.ok(calls.every((c) => c.file === 'git' && Array.isArray(c.args)))
+  const log = calls.find((c) => c.args[0] === 'log')
+  assert.match(log.args.find((a) => a.startsWith('--since=')), /^--since=\d{4}-\d{2}-\d{2}$/)
+  const dashdash = log.args.indexOf('--')
+  assert.deepEqual(log.args.slice(dashdash + 1), FLOW_PATHS.give)
+})
+
+test('areaHistory leaves out the oldest commit of a shallow checkout, which looks like it added everything', async () => {
+  const shallowRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ux-ideas-shallow-'))
+  try {
+    // Clone the throwaway checkout with only the last two commits. The older of the two, the one
+    // that touched Give, has had its parent cut, so a path-limited log lists it as a commit that
+    // adds every Give file: that is the cut, not a change.
+    execFileSync('git', ['clone', '-q', '--depth', '2', 'file://' + repo, shallowRepo], { stdio: 'pipe' })
+
+    const history = await areaHistory('give', { codebaseDir: shallowRepo, deepen: false })
+    assert.deepEqual(history, [], 'the cut-off commit is not listed')
+
+    // The full checkout keeps its first commit: it really did add the page.
+    const full = await areaHistory('give', { codebaseDir: repo, deepen: false })
+    assert.equal(full.length, 2)
+  } finally {
+    fs.rmSync(shallowRepo, { recursive: true, force: true })
+  }
 })
 
 test('deepenHistory fetches only into a shallow checkout, and never throws', async () => {
@@ -227,7 +246,24 @@ test('validateIdea keeps good ideas, clamps scores and rejects malformed ones', 
   assert.equal(validateIdea({ ...goodIdea, title: '   ' }), null)
   assert.equal(validateIdea(null), null)
   assert.equal(validateIdea('idea'), null)
-  assert.deepEqual(validateIdea({ ...goodIdea, files: ['a.vue', 3, ' '] }).files, ['a.vue'])
+  assert.deepEqual(validateIdea({ ...goodIdea, files: ['iznik-nuxt3/components/A.vue', 3, ' '] }).files, ['iznik-nuxt3/components/A.vue'])
+})
+
+test('validateIdea bounds what the model writes before it is stored and shown', () => {
+  const long = 'word '.repeat(600)
+  const idea = validateIdea({ ...goodIdea, change: long, rationale: long, expected: long, risk: long, like_tried: long })
+  for (const k of ['change', 'rationale', 'expected', 'risk', 'like_tried']) {
+    assert.ok(idea[k].length <= 1000, k + ' is cut at 1000 characters')
+    assert.ok(idea[k].length > 900, k + ' keeps most of what was written')
+  }
+
+  const many = Array.from({ length: 30 }, (_, i) => 'iznik-nuxt3/components/F' + i + '.vue')
+  assert.equal(validateIdea({ ...goodIdea, files: many }).files.length, 10, 'at most ten files')
+  assert.deepEqual(
+    validateIdea({ ...goodIdea, files: ['iznik-nuxt3/components/A.vue', '/etc/passwd', 'iznik-server-go/x.go', 'iznik-nuxt3/../.env', 'a.vue'] }).files,
+    ['iznik-nuxt3/components/A.vue'],
+    'only front-end paths are kept'
+  )
 })
 
 test('validateIdea cuts a title that is too long at the end of a word, not in the middle of one', () => {
@@ -425,6 +461,13 @@ test('generateIdeas stops when its signal aborts, before or during the run', asy
   await assert.rejects(run, /caller went away/)
 })
 
+test('a run cut by the time limit says so even when the SDK ends the stream without an error', async () => {
+  const quiet = async function* (arg) {
+    await new Promise((resolve) => arg.options.abortController.signal.addEventListener('abort', resolve, { once: true }))
+  }
+  await assert.rejects(runIdeasQuery({ prompt: 'x', codebaseDir: repo, queryImpl: quiet, timeoutMs: 20 }), /timed out after 20 ms/)
+})
+
 test('the model may read front-end source and nothing else in the checkout', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'uxguard-'))
   fs.mkdirSync(path.join(root, 'iznik-nuxt3', 'components'), { recursive: true })
@@ -432,19 +475,39 @@ test('the model may read front-end source and nothing else in the checkout', asy
   fs.writeFileSync(path.join(root, 'iznik-nuxt3', 'components', 'secret.env'), 'KEY=1')
   fs.writeFileSync(path.join(root, '.env'), 'KEY=1')
   fs.writeFileSync(path.join(root, 'iznik-nuxt3', 'nuxt.config.js'), 'export default {}')
+  fs.writeFileSync(path.join(root, 'iznik-nuxt3', 'components', '.env'), 'KEY=1')
+  fs.writeFileSync(path.join(root, 'iznik-nuxt3', 'components', 'Dockerfile'), 'KEY=1')
+  fs.writeFileSync(path.join(root, 'iznik-nuxt3', 'components', 'data.json'), '{}')
+  fs.mkdirSync(path.join(root, 'iznik-nuxt3', 'constants'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'iznik-nuxt3', 'constants', 'comparisons.js'), 'export const A = 1')
+  fs.writeFileSync(path.join(root, 'iznik-nuxt3', 'constants.js'), 'export const B = 1')
+  fs.writeFileSync(path.join(root, 'iznik-nuxt3', 'config.js'), 'export default {}')
   fs.symlinkSync(path.join(root, '.env'), path.join(root, 'iznik-nuxt3', 'components', 'link.vue'))
 
   assert.ok(readablePath('iznik-nuxt3/components/A.vue', root))
   assert.ok(readablePath(path.join(root, 'iznik-nuxt3', 'components', 'A.vue'), root))
   assert.ok(readablePath('iznik-nuxt3/components', root), 'a directory to search under')
-  for (const bad of ['.env', 'iznik-nuxt3/nuxt.config.js', 'iznik-nuxt3/components/secret.env', '../etc/passwd',
+  assert.ok(readablePath('iznik-nuxt3/constants.js', root), 'imports of ~/constants can be followed')
+  assert.ok(readablePath('iznik-nuxt3/constants/comparisons.js', root))
+  for (const bad of ['.env', 'iznik-nuxt3/nuxt.config.js', 'iznik-nuxt3/config.js', 'iznik-nuxt3/components/secret.env', '../etc/passwd',
+    'iznik-nuxt3/components/.env', 'iznik-nuxt3/components/Dockerfile', 'iznik-nuxt3/components/data.json',
     'iznik-nuxt3/components/../../.env', 'iznik-nuxt3/components/link.vue', '/etc/passwd', '', undefined]) {
     assert.equal(readablePath(bad, root), false, String(bad))
   }
 
   assert.equal(toolRefusal('Read', { file_path: 'iznik-nuxt3/components/A.vue' }, root), '')
   assert.match(toolRefusal('Read', { file_path: '.env' }, root), /not readable/)
-  assert.equal(toolRefusal('Grep', { pattern: 'x', path: 'iznik-nuxt3/components' }, root), '')
+  assert.equal(toolRefusal('Read', { file_path: 'iznik-nuxt3/constants.js' }, root), '')
+  assert.match(toolRefusal('Read', { file_path: 'iznik-nuxt3/components/.env' }, root), /not readable/)
+  assert.equal(toolRefusal('Grep', { pattern: 'x', path: 'iznik-nuxt3/components', glob: '*.vue' }, root), '')
+  assert.equal(toolRefusal('Grep', { pattern: 'x', path: 'iznik-nuxt3/components', glob: '**/*.{js,vue}' }, root), '')
+  assert.equal(toolRefusal('Grep', { pattern: 'x', path: 'iznik-nuxt3/components', type: 'vue' }, root), '')
+  assert.equal(toolRefusal('Grep', { pattern: 'x', path: 'iznik-nuxt3/components/A.vue' }, root), '', 'a source file needs no glob')
+  assert.match(toolRefusal('Grep', { pattern: 'KEY', path: 'iznik-nuxt3/components' }, root), /glob/, 'a directory search with no glob would read every file type')
+  assert.match(toolRefusal('Grep', { pattern: 'KEY', path: 'iznik-nuxt3/components', glob: '*' }, root), /glob/)
+  assert.match(toolRefusal('Grep', { pattern: 'KEY', path: 'iznik-nuxt3/components', glob: '*.{vue,env}' }, root), /glob/)
+  assert.match(toolRefusal('Grep', { pattern: 'KEY', path: 'iznik-nuxt3/components', glob: '*.json' }, root), /glob/)
+  assert.match(toolRefusal('Grep', { pattern: 'KEY', path: 'iznik-nuxt3/components', type: 'json' }, root), /glob/)
   assert.match(toolRefusal('Grep', { pattern: 'KEY' }, root), /Give a path/, 'a search of the whole checkout is refused')
   assert.match(toolRefusal('Grep', { pattern: 'KEY', path: '.' }, root), /Give a path/)
   assert.equal(toolRefusal('Glob', { pattern: '**/*.vue', path: 'iznik-nuxt3/components' }, root), '')
