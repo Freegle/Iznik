@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -166,7 +167,7 @@ func TestUxIdeasRequireSupport(t *testing.T) {
 	prefix := uniquePrefix("uxideareq")
 	uxIdeasClean(t, prefix)
 	uxInsertIdea(t, "give", prefix+" a secret idea", "open", 3)
-	userID := CreateTestUser(t, uniquePrefix("uxideauser"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxideauser"), utils.SYSTEMROLE_USER)
 	_, userToken := CreateTestSession(t, userID)
 
 	assert.Equal(t, 401, uxGet(t, "", "ideas", nil))
@@ -464,7 +465,7 @@ func TestUxIdeasWithoutTheIdeasTableIsNotSwitchedOn(t *testing.T) {
 	assert.NotContains(t, body, "an idea", "no ideas are sent")
 
 	// Who may ask is settled first, so nobody learns from this whether the table is there.
-	userID := CreateTestUser(t, uniquePrefix("uxideanou"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxideanou"), utils.SYSTEMROLE_USER)
 	_, userToken := CreateTestSession(t, userID)
 	assert.Equal(t, 401, uxGet(t, "", "ideas", nil))
 	assert.Equal(t, 403, uxGet(t, userToken, "ideas", nil))
