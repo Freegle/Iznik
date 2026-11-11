@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	sentrylogpackage "github.com/freegle/iznik-server-go/sentrylog"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -141,7 +143,7 @@ func GetDashboard(c *fiber.Ctx) error {
 		// messages_groups walk, then batched primary-key existence counts. This legacy count
 		// has no messages.arrival condition - the INNER JOIN only required the messages row
 		// to exist - so the batched count is unfiltered.
-		ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+		ctx, cancel := dashboardContext(dashboardDeadline, "legacy_counts", len(groupIDs), startQ, endQ)
 		defer cancel()
 		bdb := db.WithContext(ctx)
 		var msgCount int64
@@ -263,7 +265,7 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 	// range in bounded windows, then count the matching messages in batched primary-key lookups.
 	// The DISTINCT is preserved by scopedMessageIDs' dedup.
 	var newmessages, newmembers int64
-	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+	ctx, cancel := dashboardContext(dashboardDeadline, "recent_counts", len(groupIDs), startQ, endQ)
 	defer cancel()
 	bdb := db.WithContext(ctx)
 	if ids, ok := scopedMessageIDs(bdb, groupIDs, startQ, endQ); ok {
@@ -295,7 +297,7 @@ func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interf
 	if len(groupIDs) == 0 {
 		return []map[string]interface{}{}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+	ctx, cancel := dashboardContext(dashboardDeadline, "users_posting", len(groupIDs), startQ, endQ)
 	defer cancel()
 	db := database.DBConn.WithContext(ctx)
 
@@ -464,7 +466,7 @@ func getUsersReplying(groupIDs []uint64, startQ, endQ string) []map[string]inter
 	if len(groupIDs) == 0 {
 		return []map[string]interface{}{}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+	ctx, cancel := dashboardContext(dashboardDeadline, "users_replying", len(groupIDs), startQ, endQ)
 	defer cancel()
 	db := database.DBConn.WithContext(ctx)
 
@@ -649,7 +651,7 @@ func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 	//
 	// The 30s ceiling is the backstop: if this ever regresses, the query dies
 	// instead of stacking - a missing widget beats a downed write node.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := dashboardContext(30*time.Second, "moderators_active", len(groupIDs), "", "")
 	defer cancel()
 
 	var mods []ModRow
@@ -848,7 +850,7 @@ func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 	// that one stuck query can't hold up the request. That matters more now they share
 	// results: callers asking for the same figures wait on the first one to finish
 	// instead of each running their own, so without a limit they would all wait forever.
-	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+	ctx, cancel := dashboardContext(dashboardDeadline, "happiness", len(groupIDs), startQ, endQ)
 	defer cancel()
 
 	db := database.DBConn.WithContext(ctx)
@@ -984,4 +986,22 @@ func parseRelativeDate(s string) time.Time {
 		}
 		return t
 	}
+}
+
+// dashboardContext is the bounded context a dashboard query runs under. It carries the
+// component, how many communities were asked about and the date range, so that when the
+// deadline is hit the Sentry report says which figure and how broad a request it was.
+// Without these a timeout is just "context deadline exceeded".
+func dashboardContext(timeout time.Duration, component string, groupCount int, startQ, endQ string) (context.Context, context.CancelFunc) {
+	tags := map[string]string{
+		"dashboard_component": component,
+		"dashboard_groups":    strconv.Itoa(groupCount),
+	}
+	if startQ != "" {
+		tags["dashboard_start"] = startQ
+		tags["dashboard_end"] = endQ
+		tags["dashboard_range_days"] = strconv.Itoa(rangeDaysBetween(startQ, endQ))
+	}
+	ctx := sentrylogpackage.WithTags(context.Background(), tags)
+	return context.WithTimeout(ctx, timeout)
 }

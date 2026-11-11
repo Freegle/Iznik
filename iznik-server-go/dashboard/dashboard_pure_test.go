@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	sentrylogpackage "github.com/freegle/iznik-server-go/sentrylog"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -262,4 +263,25 @@ func TestArrivalWindows_BadDatesYieldNoWindows(t *testing.T) {
 func TestArrivalWindows_EmptyRangeYieldsNoWindows(t *testing.T) {
 	assert.Nil(t, arrivalWindows("2026-01-02", "2026-01-02"))
 	assert.Nil(t, arrivalWindows("2026-01-05", "2026-01-02"))
+}
+
+func TestDashboardContextCarriesComponentAndRange(t *testing.T) {
+	ctx, cancel := dashboardContext(time.Second, "users_replying", 3, "2026-01-01", "2026-01-31")
+	defer cancel()
+
+	tags := sentrylogpackage.TagsFrom(ctx)
+	assert.Equal(t, "users_replying", tags["dashboard_component"])
+	assert.Equal(t, "3", tags["dashboard_groups"])
+	assert.Equal(t, "30", tags["dashboard_range_days"])
+	_, hasDeadline := ctx.Deadline()
+	assert.True(t, hasDeadline)
+}
+
+func TestDashboardContextWithoutRangeOmitsIt(t *testing.T) {
+	ctx, cancel := dashboardContext(time.Second, "moderators_active", 1, "", "")
+	defer cancel()
+
+	tags := sentrylogpackage.TagsFrom(ctx)
+	assert.Equal(t, "moderators_active", tags["dashboard_component"])
+	assert.NotContains(t, tags, "dashboard_start")
 }
