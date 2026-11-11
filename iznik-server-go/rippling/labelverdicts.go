@@ -216,11 +216,10 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 	}
 	if !roadblur.RoutingHealthy() {
 		// The breaker is open, so nothing is asked and everything downstream
-		// fails open. Not reported: the failure that opened it was, and a call
-		// still failing after the cooldown reports again, so an outage that
-		// lasts hours still raises an alert every cooldown. Reporting this too
-		// only added a second message a minute after the first.
-		log.Println("Rippling reach evaluation skipped: routing breaker open")
+		// fails open. Keep reporting it (throttled to once a minute): the breaker is
+		// shared with blur and drive-time calls, whose failures open it without
+		// reporting anything, so this can be the only alert during an outage.
+		reportEvalUnavailable("routing breaker open")
 		return nil, nil, false
 	}
 	out := make(map[uint64]string, len(msgids))
