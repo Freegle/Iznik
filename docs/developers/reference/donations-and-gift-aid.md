@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useMe.js
@@ -175,9 +175,11 @@ Links to `/donate` in footers and menus stay; they are not asks.
 Fundraising and newsletter email needs the member's yes, held in `users.marketingconsent`
 (default 0). The server owns it.
 
-- **Giving it at sign-up or login.** The box under the form (`LoginModal.vue`) starts unticked.
-  A tick sets `marketingConsentTicked` in the misc store, which is not persisted, and the next
-  `fetchUser` in `stores/auth.js` saves it. The box can only give consent; it never withdraws it.
+- **Giving it at sign-up or login.** The box under the form (`LoginModal.vue`) starts ticked
+  the first time the form is shown, and the member can untick it. `marketingConsentTicked` in the
+  misc store holds it (null until the form is shown, and not persisted), and the next `fetchUser`
+  in `stores/auth.js` saves a tick. A member who never sees the form is not opted in. The box can
+  only give consent; it never withdraws it.
 - **Changing it.** **Freegle updates** in Settings (`OtherSettingsSection.vue`) shows and saves the
   server value. The opt-out link in a Newsletter ADMIN (`pages/marketing-optout.vue`) sets it
   to 0, and `relevantallowed` to 0 as well.

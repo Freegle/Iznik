@@ -53,8 +53,8 @@ events. It is on by default and can be turned off in Settings.
 If you are in the app, you can also turn on a **daily push notification** of new posts.
 
 **Freegle updates** in Settings is news and ways to support Freegle, including fundraising
-emails and the newsletters your community's volunteers send. It is off unless you turned it on,
-here or with the box under the login form. You can turn it off at any time. The opt-out link at
+emails and the newsletters your community's volunteers send. It is on if you left the box under the
+login form ticked, or turned it on here. You can turn it off at any time. The opt-out link at
 the foot of a community newsletter turns it off too.
 
 If you have ever donated to Freegle, Settings also has a **Donation requests** switch. Turn it

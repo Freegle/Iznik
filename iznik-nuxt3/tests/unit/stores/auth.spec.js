@@ -1313,10 +1313,15 @@ describe('auth store', () => {
       expect(mockMiscStore.marketingConsentTicked).toBe(false)
     })
 
-    it('leaves the profile alone when the box was not ticked', async () => {
-      for (const marketingconsent of [false, true]) {
+    it('leaves the profile alone when the box was unticked or the form was never shown', async () => {
+      for (const [marketingconsent, ticked] of [
+        [false, false],
+        [true, false],
+        [false, null],
+        [true, null],
+      ]) {
         store.setAuth('valid-jwt', 'valid-persistent')
-        mockMiscStore.marketingConsentTicked = false
+        mockMiscStore.marketingConsentTicked = ticked
         mockFetchv2.mockResolvedValue({
           me: { id: 1, marketingconsent },
           groups: [],

@@ -572,7 +572,7 @@ export const useAuthStore = defineStore('auth', {
 
         if (import.meta.client) {
           // The server holds marketing consent. The login box can only give it, and only when the
-          // member ticked it; withdrawing is done in Settings.
+          // member saw the form and left the box ticked; withdrawing is done in Settings.
           const miscStore = useMiscStore()
 
           if (miscStore.marketingConsentTicked) {
