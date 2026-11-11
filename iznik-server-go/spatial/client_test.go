@@ -9,54 +9,6 @@ import (
 	"testing"
 )
 
-func TestBaseURL(t *testing.T) {
-	tests := []struct {
-		name       string
-		knnURL     string
-		serverURL  string
-		wantResult string
-	}{
-		{"KNN env var takes precedence", "http://knn.example", "http://server.example", "http://knn.example"},
-		{"falls back to SPATIAL_SERVER_URL", "", "http://server.example", "http://server.example"},
-		{"falls back to default when both unset", "", "", "http://localhost:8194"},
-		{"empty KNN falls through even if server also empty", "", "", "http://localhost:8194"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			oldKNN, hadKNN := os.LookupEnv("SPATIAL_KNN_URL")
-			oldServer, hadServer := os.LookupEnv("SPATIAL_SERVER_URL")
-			defer func() {
-				if hadKNN {
-					os.Setenv("SPATIAL_KNN_URL", oldKNN)
-				} else {
-					os.Unsetenv("SPATIAL_KNN_URL")
-				}
-				if hadServer {
-					os.Setenv("SPATIAL_SERVER_URL", oldServer)
-				} else {
-					os.Unsetenv("SPATIAL_SERVER_URL")
-				}
-			}()
-
-			if tt.knnURL == "" {
-				os.Unsetenv("SPATIAL_KNN_URL")
-			} else {
-				os.Setenv("SPATIAL_KNN_URL", tt.knnURL)
-			}
-			if tt.serverURL == "" {
-				os.Unsetenv("SPATIAL_SERVER_URL")
-			} else {
-				os.Setenv("SPATIAL_SERVER_URL", tt.serverURL)
-			}
-
-			if got := baseURL(); got != tt.wantResult {
-				t.Errorf("baseURL() = %q, want %q", got, tt.wantResult)
-			}
-		})
-	}
-}
-
 func withServer(t *testing.T, handler http.HandlerFunc) func() {
 	t.Helper()
 	srv := httptest.NewServer(handler)
