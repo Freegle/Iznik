@@ -1,7 +1,7 @@
 {
   "id": "freegle-automod",
   "name": "Freegle automated review",
-  "version": "6",
+  "version": "7",
   "description": "Fact and text checks that decide whether a Pending post can be approved automatically (plans/active/automod-flowchart.md). Built by scripts/build-chart.mjs.",
   "initialState": "START",
   "states": {
@@ -176,6 +176,18 @@
     },
     "HOLD_TOO_LONG": {
       "description": "The post is too long for automated review to read all of it, so it waits for a moderator.",
+      "nodeType": "end"
+    },
+    "INSTRUCTION_TEXT": {
+      "description": "Does it speak to the automated reviewer, for example by telling it how to answer?",
+      "nodeType": "tool",
+      "check": {
+        "kind": "fact",
+        "fact": "instruction_text"
+      }
+    },
+    "HOLD_INSTRUCTION_TEXT": {
+      "description": "It reads as if it is giving instructions to the automated reviewer, so it waits for a moderator.",
       "nodeType": "end"
     },
     "DUPLICATE_ITEM": {
@@ -908,6 +920,28 @@
     {
       "id": "TOO_LONG_no",
       "from": "TOO_LONG",
+      "to": "INSTRUCTION_TEXT",
+      "trigger": "host_driven",
+      "condition": "no",
+      "label": "no",
+      "metadata": {
+        "answer": "no"
+      }
+    },
+    {
+      "id": "INSTRUCTION_TEXT_yes",
+      "from": "INSTRUCTION_TEXT",
+      "to": "HOLD_INSTRUCTION_TEXT",
+      "trigger": "host_driven",
+      "condition": "yes",
+      "label": "yes",
+      "metadata": {
+        "answer": "yes"
+      }
+    },
+    {
+      "id": "INSTRUCTION_TEXT_no",
+      "from": "INSTRUCTION_TEXT",
       "to": "DUPLICATE_ITEM",
       "trigger": "host_driven",
       "condition": "no",

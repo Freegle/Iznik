@@ -36,13 +36,14 @@ test('changing one question changes the hash', () => {
 // The batch sends every one of these as a true or false, and the service holds a post as
 // unavailable when one is missing (src/walk.js). The same list is pinned on the batch side by
 // AutomodFactsServiceTest::CHART_FACTS in iznik-batch; a fact added to the chart has to be added
-// to both, and to AutomodFactsService, before the chart ships. text_truncated is the service's own.
+// to both, and to AutomodFactsService, before the chart ships. text_truncated and instruction_text
+// are the service's own.
 test('the facts the chart reads are the facts the batch sends', () => {
   const sent = [
     'concern_keyword', 'duplicate', 'has_other_posts', 'is_offer', 'is_wanted', 'member_moderated',
     'membership_review', 'microvol_reject', 'mod_note', 'no_location', 'not_english', 'outside_uk',
     'personal_info', 'recent_action', 'spam_links', 'spam_pattern', 'spammer',
   ];
-  const read = factNames(JSON.parse(readFileSync(CHART_PATH, 'utf8'))).filter((name) => name !== 'text_truncated');
+  const read = factNames(JSON.parse(readFileSync(CHART_PATH, 'utf8'))).filter((name) => !['text_truncated', 'instruction_text'].includes(name));
   assert.deepEqual(read.sort(), sent);
 });

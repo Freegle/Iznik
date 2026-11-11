@@ -486,11 +486,11 @@ class AutomodFactsServiceTest extends TestCase
     }
 
     /**
-     * The facts the chart reads (automod/chart.json, version 6; the service names them from the
+     * The facts the chart reads (automod/chart.json, version 7; the service names them from the
      * chart with factNames(), and automod/test/chart.test.js pins the same list). The service
      * holds a post whose request leaves one out, or sends anything but true or false, as
      * unavailable, so a fact that was sometimes null or missing here would hold every such post
-     * until a moderator got to it. text_truncated is not here: the service works that out itself.
+     * until a moderator got to it. text_truncated and instruction_text are not here: the service works those out itself.
      */
     private const CHART_FACTS = [
         'concern_keyword', 'duplicate', 'has_other_posts', 'is_offer', 'is_wanted', 'member_moderated',

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { WorkflowEngine, TransitionValidator, MemoryStorage } from 'ai-flower';
-import { postTextInfo, keywordFlags, sanitiseText, clip, MAX_TEXT_CHARS } from './prompt.js';
+import { postTextInfo, keywordFlags, instructionLike, sanitiseText, clip, MAX_TEXT_CHARS } from './prompt.js';
 import { newAccount } from './backend.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -136,8 +136,9 @@ function canReachEnd(workflow, stateId, seenOnThisPath) {
  * anything else, is not a "no": the question holds the post as unavailable and names the fact,
  * because the batch and this service are built and deployed separately and a fact one side has
  * not learned yet would otherwise quietly switch its question off. The one fact the request need
- * not carry is `text_truncated`, whether the post was too long to read: the service works that
- * out from the text it has (the request may also say so, if the batch cut the text itself).
+ * not carry are the two the service works out from the text it has: `text_truncated`, whether
+ * the post was too long to read (the request may also say so, if the batch cut the text itself),
+ * and `instruction_text`, whether the post speaks to the reviewer.
  *
  * A review leaves nothing behind in the engine's storage: the instance, which would otherwise
  * live as long as the process, is deleted when the review ends.
@@ -166,6 +167,7 @@ export function createReviewer({ backend, chartPath } = {}) {
     const acct = newAccount();
     const { text, truncated } = postTextInfo({ type, subject, body });
     const flags = keywordFlags(text);
+    const instruction = instructionLike(text);
 
     // The batch's facts, plus whether the text was too long to read, which the service knows
     // for itself.
@@ -173,6 +175,8 @@ export function createReviewer({ backend, chartPath } = {}) {
     const facts = {
       ...given,
       text_truncated: truncated || given.text_truncated === true,
+      instruction_text: Boolean(instruction) || given.instruction_text === true,
+      ...(instruction ? { instruction_text_detail: `Reads like an instruction to the reviewer (${instruction})` } : {}),
       ...(truncated ? { text_truncated_detail: `Longer than the ${MAX_TEXT_CHARS} characters a review reads` } : {}),
     };
 

@@ -531,7 +531,11 @@ flowchart of plain questions, the same for every community, kept centrally:
    sooner than the community allows; a web or messaging link, or a blocklisted one; the
    spam checks (bulk mail, a repeated subject, a known spammer, a greeting-only post,
    image spam); another language; and, only where the community restricts personal
-   details, a phone number or email address.
+   details, a phone number or email address. Two are answered by the service from the
+   words themselves, without asking the model: a post too long to read in full, and a
+   post that speaks to the reviewer (a note to the checker, an order to ignore the
+   questions or to answer no, text shaped like the model's own reply). The model reads
+   the member's words, so it is not the only check on a post that tries to instruct it.
 2. Questions about the words of the post, answered by an AI model that first writes down
    what it sees (the items named, any money or sale language, borrowing language,
    animals, medicines, links or codes, and for a very short post its likely meanings)

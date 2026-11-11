@@ -157,6 +157,30 @@ export function sanitiseText(value) {
 }
 
 /**
+ * Phrases that speak to the reviewer rather than to a person who might take the item: a note to
+ * the checker, an order to ignore the questions or the rules, an order to answer no, or a reply
+ * shaped like the answer the model gives. A post that carries one is held, whatever the model
+ * says about it: the model reads the member's words, so it cannot also be the check on them.
+ * A false hold only sends a post to a moderator.
+ */
+const INSTRUCTION_PATTERNS = [
+  ['note_to_checker', /\bnotes? (to|for) (the )?(checker|reviewer|moderator|model|ai|assistant|system|bot|automod)/i],
+  ['ignore_instructions', /\b(ignore|disregard|forget|override|bypass)\b[^.\n]{0,40}\b(instructions?|rules|questions|prompt|guidelines|checks?)\b/i],
+  ['answer_no', /\b(answer|reply|respond|say|output|return|mark|set)\b[^.\n]{0,30}\b(no|false|approve|approved|pass|clean|safe)\b[^.\n]{0,25}\b(to|for|on)\b[^.\n]{0,20}\b(every|all|each|any)\b/i],
+  ['already_answered', /\b(questions?|checks?)\b[^.\n]{0,30}\b(already|have been|are all)\b[^.\n]{0,15}\b(answered|checked|passed|approved)\b/i],
+  ['you_are_ai', /\b(you are|act as|pretend to be)\b[^.\n]{0,20}\b(an? )?(ai|assistant|language model|checker|reviewer)\b/i],
+  ['json_answer', /[{\[]\s*"?(answers?|id|verdict|confidence)"?\s*:/i],
+];
+
+/** The name of the first instruction-like phrase in the text, or '' when there is none. */
+export function instructionLike(text) {
+  for (const [name, pattern] of INSTRUCTION_PATTERNS) {
+    if (pattern.test(String(text ?? ''))) return name;
+  }
+  return '';
+}
+
+/**
  * The post as the model sees it, and whether it had to be cut: sanitised, and cut at
  * MAX_TEXT_CHARS with a note. A cut never leaves half of a surrogate pair.
  */
