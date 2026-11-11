@@ -3261,8 +3261,7 @@ func userOptedOutOfMerge(db *gorm.DB, id uint64) bool {
 // docs/developers/reference/account-merge.md says what a merge does in plain words.
 func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	// Two different TrashNothing ids are two different TrashNothing members. Merging them keeps one
-	// id and drops the other, which loses that member for good (Discourse: pchide251 and
-	// brianandi170). Every merge path comes through here.
+	// id and drops the other, which loses that member for good. Every merge path comes through here.
 	var tn1, tn2 *uint64
 	db.Table("users").Select("tnuserid").Where("id = ?", id1).Scan(&tn1)
 	db.Table("users").Select("tnuserid").Where("id = ?", id2).Scan(&tn2)
