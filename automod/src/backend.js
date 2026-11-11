@@ -456,10 +456,10 @@ export class ClaudeCliBackend extends ClaudeBackend {
             DISABLE_AUTOUPDATER: '1',
           },
         },
-        (err, stdout, stderr) => {
+        (err, stdout) => {
           if (err) {
-            const detail = String(stderr || '').trim().slice(0, 200);
-            return reject(new Error(`claude cli failed: ${String(err.message).slice(0, 200)}${detail ? ` (${detail})` : ''}`));
+            // The exit code or signal only: the CLI's stderr and the error message can carry the prompt.
+            return reject(new Error(`claude cli failed: ${err.code || err.signal || 'error'}`));
           }
           let out;
           try {
@@ -468,7 +468,8 @@ export class ClaudeCliBackend extends ClaudeBackend {
             return reject(new Error('claude cli output was not JSON'));
           }
           if (out.is_error || (out.subtype && out.subtype !== 'success') || (out.terminal_reason && out.terminal_reason !== 'completed')) {
-            return reject(new Error(`claude cli ${out.terminal_reason || out.subtype || 'error'}: ${String(out.result || '').slice(0, 200)}`));
+            // The reason only: on a stopped run `result` is the model's own words, which may quote the post.
+            return reject(new Error(`claude cli ${out.terminal_reason || out.subtype || 'error'}`));
           }
           const text = String(out.result || '');
           let json;

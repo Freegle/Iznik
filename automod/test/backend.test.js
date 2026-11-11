@@ -247,6 +247,11 @@ process.stdin.on('end', () => {
   let out;
   if (mode === 'api_error') {
     out = { type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', result: 'Invalid API key - fix external API key', total_cost_usd: 0, usage: {}, modelUsage: {} };
+  } else if (mode === 'stopped') {
+    out = { type: 'result', subtype: 'error_max_turns', is_error: true, terminal_reason: 'max_turns', result: 'Partial: the post says call me on 07700 900123', total_cost_usd: 0, usage: {}, modelUsage: {} };
+  } else if (mode === 'fail') {
+    process.stderr.write('could not run for the post: call me on 07700 900123');
+    process.exit(3);
   } else if (mode === 'prose') {
     out = { type: 'result', subtype: 'success', is_error: false, terminal_reason: 'completed', result: 'The post says: call me on 07700 900123', total_cost_usd: 0, usage: {}, modelUsage: {} };
   } else if (mode === 'batch') {
@@ -307,11 +312,11 @@ test('the cli backend answers every question from one batched run, and refuses a
   }
 });
 
-test('the cli backend fails with the cause when the cli reports an error', async () => {
+test('the cli backend fails with the reason when the cli reports an error', async () => {
   const backend = new ClaudeCliBackend({ token: 'test-token', bin: fakeCli() });
   process.env.FAKE_CLI_MODE = 'api_error';
   try {
-    await assert.rejects(backend.askOne('Is it a loan?', 'Subject: ladder', {}), /claude cli api_error: Invalid API key/);
+    await assert.rejects(backend.askOne('Is it a loan?', 'Subject: ladder', {}), /^Error: claude cli api_error$/);
   } finally {
     delete process.env.FAKE_CLI_MODE;
   }
@@ -328,6 +333,22 @@ test('the cli backend does not put the model\'s own words, which may quote the p
     });
   } finally {
     delete process.env.FAKE_CLI_MODE;
+  }
+});
+
+test('the cli backend keeps the model\'s words and the cli\'s stderr out of its errors', async () => {
+  const backend = new ClaudeCliBackend({ token: 'test-token', bin: fakeCli() });
+  for (const [mode, expected] of [['stopped', 'claude cli max_turns'], ['fail', 'claude cli failed: 3']]) {
+    process.env.FAKE_CLI_MODE = mode;
+    try {
+      await assert.rejects(backend.askOne('Is it a loan?', 'Subject: ladder', {}), (err) => {
+        assert.equal(err.message, expected);
+        assert.ok(!err.message.includes('07700'), err.message);
+        return true;
+      });
+    } finally {
+      delete process.env.FAKE_CLI_MODE;
+    }
   }
 });
 
