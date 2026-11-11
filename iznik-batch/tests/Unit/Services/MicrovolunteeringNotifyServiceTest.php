@@ -634,6 +634,35 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
         $this->assertStringNotContainsString('could go live', $row->text);
     }
 
+    public function test_a_content_check_or_edit_in_the_same_second_as_the_decision_keeps_the_plain_wording(): void
+    {
+        config(['freegle.autoapprove.enabled' => true, 'freegle.autoapprove.delay_minutes' => 20]);
+
+        $group    = $this->createGroup();
+        $reviewer = $this->createUser('Moderate');
+        $this->addMembership($reviewer, $group);
+        $auto = $this->createUser();
+        $this->addMembership($auto, $group);
+        DB::table('memberships')->where('userid', $auto)->where('groupid', $group)->update(['ourPostingStatus' => null]);
+        $autoMsg = $this->createMessage($group, $auto, 'Pending');
+        $decided = now()->subMinutes(4)->startOfSecond();
+        DB::table('messages_groups')->where('msgid', $autoMsg)->update([
+            'arrival' => now()->subMinutes(5),
+            'contentcheck_checked_at' => $decided,
+        ]);
+        DB::table('messages_automod')->insert([
+            'msgid' => $autoMsg, 'groupid' => $group, 'mode' => 'approve', 'chart_version' => '5',
+            'verdict' => 'approve', 'end_node' => 'APPROVE', 'reason' => null, 'path' => '[]',
+            'created' => $decided,
+        ]);
+
+        (new MicrovolunteeringNotifyService())->notifyForMessages();
+
+        $row = DB::table('users_notifications')->where('touser', $reviewer)->where('type', 'Exhort')->first();
+        $this->assertNotNull($row);
+        $this->assertStringNotContainsString('could go live', $row->text, 'the clean cron needs the decision strictly newer than the check, so this post will not publish');
+    }
+
     public function test_a_post_automated_review_has_not_decided_keeps_the_plain_wording(): void
     {
         config(['freegle.autoapprove.enabled' => true, 'freegle.autoapprove.delay_minutes' => 20]);

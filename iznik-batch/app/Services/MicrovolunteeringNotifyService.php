@@ -236,8 +236,10 @@ class MicrovolunteeringNotifyService
         }
 
         $decided = Carbon::parse($msg->automodcreated);
-        if ((!empty($msg->editedat) && Carbon::parse($msg->editedat)->gt($decided))
-            || (!empty($msg->checkedat) && Carbon::parse($msg->checkedat)->gt($decided))) {
+        // The clean cron needs the decision strictly newer than the edit and the content check, so a
+        // check or edit in the same second is not a current decision.
+        if ((!empty($msg->editedat) && Carbon::parse($msg->editedat)->gte($decided))
+            || (!empty($msg->checkedat) && Carbon::parse($msg->checkedat)->gte($decided))) {
             return null;
         }
 
