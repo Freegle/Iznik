@@ -55,6 +55,14 @@ class IdeasRefreshCommand extends Command
                 continue;
             }
 
+            // Not a funnel failure: nothing was asked, so no back-off is recorded and the next run,
+            // once the secret is set, tries every funnel.
+            if ((string) config('freegle.ux.ideas.internal_secret', '') === '') {
+                $this->error('UX_INTERNAL_SECRET is not set, so the helper would refuse the request. Nothing was asked and no back-off was recorded.');
+
+                return self::FAILURE;
+            }
+
             try {
                 $result = $service->refresh($f, $dryRun);
             } catch (\RuntimeException $e) {

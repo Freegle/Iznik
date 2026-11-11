@@ -831,6 +831,7 @@ class UxIdeasRefreshTest extends TestCase
         config()->set('freegle.discourse.url', 'https://discourse.test');
         config()->set('freegle.ux.ideas.github_repo', 'Freegle/Iznik');
         $this->routes = [
+            'discourse.test/c/tech-modtools/find_by_slug.json' => ['category' => ['read_restricted' => false]],
             'discourse.test/c/tech-modtools/l/latest.json' => ['topic_list' => ['topics' => [
                 ['id' => 11, 'title' => 'Photos fail on iOS', 'created_at' => '2026-10-01T10:00:00.000Z'],
                 ['id' => 12, 'title' => 'Ancient report', 'created_at' => '2026-05-01T10:00:00.000Z'],
@@ -857,6 +858,7 @@ class UxIdeasRefreshTest extends TestCase
         config()->set('freegle.discourse.url', 'https://discourse.test');
         config()->set('freegle.ux.ideas.github_repo', 'Freegle/Iznik');
         $this->routes = [
+            'discourse.test/c/tech-modtools/find_by_slug.json' => ['category' => ['read_restricted' => false]],
             'discourse.test/c/tech-modtools/l/latest.json' => ['topic_list' => ['topics' => [['id' => 11, 'title' => 'Photos fail on iOS', 'created_at' => '2026-10-01T10:00:00.000Z']]]],
             'discourse.test/t/11.json' => ['post_stream' => ['posts' => [['cooked' => '<p>Mail me on joe@example.com</p>']]]],
             'api.github.com/repos/Freegle/Iznik/issues' => [['number' => 5, 'title' => 'Skip link hidden on small screens']],
@@ -880,6 +882,77 @@ class UxIdeasRefreshTest extends TestCase
         $this->assertStringNotContainsString(str_repeat('x', 392), $reports);
     }
 
+    public function test_a_category_that_is_not_public_is_never_read(): void
+    {
+        config()->set('freegle.discourse.api_key', 'k');
+        config()->set('freegle.discourse.url', 'https://discourse.test');
+        config()->set('freegle.ux.ideas.discourse_categories', 'staff-only,tech-modtools,gone');
+        $topic = ['topic_list' => ['topics' => [['id' => 11, 'title' => 'Photos fail on iOS', 'created_at' => '2026-10-01T10:00:00.000Z']]]];
+        $this->routes = [
+            'discourse.test/c/staff-only/find_by_slug.json' => ['category' => ['read_restricted' => true]],
+            'discourse.test/c/staff-only/l/latest.json' => ['topic_list' => ['topics' => [['id' => 99, 'title' => 'Private staff matter', 'created_at' => '2026-10-02T10:00:00.000Z']]]],
+            'discourse.test/c/gone/find_by_slug.json' => ['category' => []],
+            'discourse.test/c/tech-modtools/find_by_slug.json' => ['category' => ['read_restricted' => false]],
+            'discourse.test/c/tech-modtools/l/latest.json' => $topic,
+            'discourse.test/t/11.json' => ['post_stream' => ['posts' => [['cooked' => '<p>Blank page.</p>']]]],
+        ];
+
+        $reports = app(UxIdeasService::class)->brief('give')['reports'];
+
+        $this->assertStringContainsString('Photos fail on iOS: Blank page.', $reports);
+        $this->assertStringNotContainsString('Private staff matter', $reports);
+        $fetched = array_map(fn (Request $r) => $r->url(), $this->sent);
+        $this->assertEmpty(array_filter($fetched, fn ($u) => str_contains($u, 'staff-only/l/latest') || str_contains($u, '/t/99')), 'a staff-only category is not even listed');
+        $this->assertEmpty(array_filter($fetched, fn ($u) => str_contains($u, 'gone/l/latest')), 'a category whose visibility is not stated is treated as not public');
+    }
+
+    public function test_one_category_or_topic_failing_does_not_drop_the_others(): void
+    {
+        config()->set('freegle.discourse.api_key', 'k');
+        config()->set('freegle.discourse.url', 'https://discourse.test');
+        config()->set('freegle.ux.ideas.discourse_categories', 'broken,tech-modtools');
+        $this->routes = [
+            'discourse.test/c/broken/find_by_slug.json' => 'not json at all',
+            'discourse.test/c/tech-modtools/find_by_slug.json' => ['category' => ['read_restricted' => false]],
+            'discourse.test/c/tech-modtools/l/latest.json' => ['topic_list' => ['topics' => [
+                ['id' => 11, 'title' => 'Bad date', 'created_at' => 'not a date'],
+                ['id' => 12, 'title' => 'Photos fail on iOS', 'created_at' => '2026-10-01T10:00:00.000Z'],
+            ]]],
+            'discourse.test/t/12.json' => ['post_stream' => ['posts' => [['cooked' => '<p>Blank page.</p>']]]],
+        ];
+
+        $reports = app(UxIdeasService::class)->brief('give')['reports'];
+
+        $this->assertStringContainsString('Photos fail on iOS: Blank page.', $reports);
+        $this->assertStringNotContainsString('Bad date', $reports);
+    }
+
+    public function test_the_real_scrubber_runs_on_a_report_before_it_is_sent(): void
+    {
+        config()->set('freegle.discourse.api_key', 'k');
+        config()->set('freegle.discourse.url', 'https://discourse.test');
+        config()->set('freegle.ux.ideas.github_repo', 'Freegle/Iznik');
+        $this->routes = [
+            'discourse.test/c/tech-modtools/find_by_slug.json' => ['category' => ['read_restricted' => false]],
+            'discourse.test/c/tech-modtools/l/latest.json' => ['topic_list' => ['topics' => [['id' => 11, 'title' => 'Photos fail', 'created_at' => '2026-10-01T10:00:00.000Z']]]],
+            'discourse.test/t/11.json' => ['post_stream' => ['posts' => [['cooked' => '<p>Mail me on joe@example.com, ring 07700 900123, I live in AB1 2CD. Link https://www.ilovefreegle.org/x?u=42913377&amp;k=abcdefabcdefabcdefabcdef</p>']]]],
+            'api.github.com/repos/Freegle/Iznik/issues' => [['number' => 5, 'title' => 'Mail joe@example.com about AB1 2CD']],
+        ];
+        // The service as it is built in production, with the real scrubber: only the tables are left as they are.
+        $service = new class extends UxIdeasService
+        {
+        };
+
+        $reports = $service->brief('give')['reports'];
+
+        $this->assertStringContainsString('[email]', $reports);
+        $this->assertStringContainsString('[number]', $reports);
+        $this->assertStringContainsString('[postcode]', $reports);
+        foreach (['joe@example.com', '07700', '900123', 'AB1 2CD', '42913377', 'abcdefabcdef'] as $leak) {
+            $this->assertStringNotContainsString($leak, $reports);
+        }
+    }
+
     public function test_a_link_in_a_report_loses_its_auto_login_key_whatever_the_scrubber_does(): void
     {
         config()->set('freegle.discourse.api_key', 'k');
@@ -888,6 +961,7 @@ class UxIdeasRefreshTest extends TestCase
         // A made-up key, as long as the persistent one a Freegle email link carries in its query string.
         $key = str_repeat('fake', 8);
         $this->routes = [
+            'discourse.test/c/tech-modtools/find_by_slug.json' => ['category' => ['read_restricted' => false]],
             'discourse.test/c/tech-modtools/l/latest.json' => ['topic_list' => ['topics' => [['id' => 11, 'title' => 'Unsubscribe link fails', 'created_at' => '2026-10-01T10:00:00.000Z']]]],
             'discourse.test/t/11.json' => ['post_stream' => ['posts' => [['cooked' => "<p>I click https://www.ilovefreegle.org/user/unsubscribe?u=42913377&amp;k=$key&amp;t=digest and nothing happens.</p>"]]]],
             'api.github.com/repos/Freegle/Iznik/issues' => [
@@ -949,6 +1023,26 @@ class UxIdeasRefreshTest extends TestCase
             $this->assertStringContainsString('UX_INTERNAL_SECRET', $e->getMessage());
         }
         $this->assertCount(0, $this->sent);
+    }
+
+    public function test_the_command_with_no_secret_fails_without_starting_a_back_off(): void
+    {
+        config()->set('freegle.ux.ideas.internal_secret', '');
+
+        $this->artisan('ux:ideas-refresh')
+            ->expectsOutputToContain('UX_INTERNAL_SECRET is not set')
+            ->assertExitCode(1);
+
+        $service = app(UxIdeasService::class);
+        foreach (\App\Services\Ux\UxRollupService::FLOWS as $flow) {
+            $this->assertNull($service->backoffUntil($flow), "$flow must not back off for a missing secret");
+        }
+        $this->assertCount(0, $this->sent);
+
+        // Once the secret is set the next run asks every funnel.
+        config()->set('freegle.ux.ideas.internal_secret', 'test-secret');
+        $this->artisan('ux:ideas-refresh')->assertExitCode(0);
+        $this->assertCount(count(\App\Services\Ux\UxRollupService::FLOWS), $this->sent);
     }
 
     public function test_the_batch_waits_longer_than_the_helper_does(): void

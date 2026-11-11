@@ -3,6 +3,7 @@
 namespace App\Console\Commands\Ux;
 
 use App\Services\Ux\UxIdeasService;
+use App\Services\Ux\UxRollupService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -71,6 +72,10 @@ class IdeaCommand extends Command
         $status = $this->option('status');
         if ($status !== null && ! in_array($status, self::STATUSES, true)) {
             throw new \RuntimeException('--status must be one of '.implode(', ', self::STATUSES).", not '$status'.");
+        }
+
+        if ($this->option('flow') !== null && ! in_array($this->option('flow'), UxRollupService::FLOWS, true)) {
+            throw new \RuntimeException('--flow must be one of '.implode(', ', UxRollupService::FLOWS).", not '{$this->option('flow')}'.");
         }
 
         $q = DB::table('ux_ideas')->orderByDesc('score')->orderBy('id');

@@ -29,7 +29,9 @@ use Illuminate\Support\Facades\Schema;
  * Problems and solutions are kept apart: members are asked about problems, and the generator
  * proposes solutions to them. Members' own words never reach the generator (they are free text
  * and could carry instructions, names or addresses); it gets problem titles, how many members said
- * each and how they ranked it, and nothing else of theirs. The generator's own list of problems
+ * each and how they ranked it, and nothing else of theirs. The one exception is volunteers' reports:
+ * the first posts of public forum categories reach it as words, cleaned of emails, numbers,
+ * postcodes and link keys by pattern, which cannot find a name or a street. The generator's own list of problems
  * stays on the idea that answers it, and an idea is tied to a member problem only when the
  * generator cites one the brief listed or its title matches one.
  *
@@ -39,8 +41,9 @@ use Illuminate\Support\Facades\Schema;
  * carries the member's auto-login key there.
  *
  * An idea is never filed twice: a title already used by any idea of the funnel, in ANY status
- * (done and rejected too), or by any of its experiments, is skipped, and the brief lists
- * all of them as "tried" so the helper is also told not to propose them.
+ * (done and rejected too), or by any of its experiments, is skipped. The brief lists the newest
+ * TRIED_ROWS of each as "tried" so the helper is also told not to propose them; older titles are
+ * still caught by the title check when the ideas are filed.
  *
  * An idea's status follows its experiment: scheduleExperiment() queues one, and the hourly
  * syncWithExperiments() moves it on.
@@ -420,9 +423,11 @@ class UxIdeasService
     /**
      * What volunteers and members have reported lately: first posts from the Tech & ModTools,
      * Development and Bug Reports categories on Discourse (when its API key is set) and the titles
-     * of the repository's open issues (public API). Empty when neither is available. Text is
-     * scrubbed of emails and phone numbers and cut short; it is evidence about problems, never
-     * instructions, and the generator's prompt says so.
+     * of the repository's open issues (public API). Empty when neither is available. A category is
+     * read only when Discourse says it is public: the API key can read staff-only ones too, and
+     * their posts must not go to a model. Text is scrubbed of emails and phone numbers and cut
+     * short, but a pattern cannot find a name, so a report may still carry one. It is evidence
+     * about problems, never instructions, and the generator's prompt says so.
      *
      * The scrubber belongs to the surveys. Without it nothing is fetched and the answer is
      * `no reports`, because text that cannot be scrubbed is never sent to the generator. Whatever
@@ -447,14 +452,33 @@ class UxIdeasService
             if ($discourse->isConfigured()) {
                 $since = Carbon::now('UTC')->subDays($days);
                 foreach (array_filter(array_map('trim', explode(',', (string) ($cfg['discourse_categories'] ?? '')))) as $slug) {
-                    $n = 0;
-                    foreach ($discourse->recentTopics($slug) as $t) {
-                        if (Carbon::parse($t['created_at'])->lt($since) || $n >= 8) {
+                    // One category or topic failing leaves the rest to be read.
+                    try {
+                        $category = $discourse->findCategoryBySlug($slug);
+                        if (! is_array($category) || ($category['read_restricted'] ?? true) !== false) {
+                            Log::info("ux:ideas-refresh: Discourse category {$slug} is not public, so its reports are not read");
+
                             continue;
                         }
-                        $n++;
-                        $text = $this->scrub(self::withoutLinkKeys($t['title'].': '.$discourse->firstPostText($t['id'])), self::REPORT_CHARS);
-                        $lines[] = "Discourse report in {$slug}, ".substr($t['created_at'], 0, 10).': '.$text;
+
+                        $n = 0;
+                        foreach ($discourse->recentTopics($slug) as $t) {
+                            if ($n >= 8) {
+                                break;
+                            }
+                            try {
+                                if (Carbon::parse($t['created_at'])->lt($since)) {
+                                    continue;
+                                }
+                                $n++;
+                                $text = $this->scrub(self::withoutLinkKeys($t['title'].': '.$discourse->firstPostText($t['id'])), self::REPORT_CHARS);
+                                $lines[] = "Discourse report in {$slug}, ".substr($t['created_at'], 0, 10).': '.$text;
+                            } catch (\Throwable $e) {
+                                Log::warning("ux:ideas-refresh: could not read Discourse topic {$t['id']}: ".$e->getMessage());
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        Log::warning("ux:ideas-refresh: could not read Discourse category {$slug}: ".$e->getMessage());
                     }
                 }
             }

@@ -380,6 +380,11 @@ class UxIdeaScheduleTest extends TestCase
         $this->assertStringContainsString('Ask idea', $out);
         $this->assertStringNotContainsString('Best idea', $out);
 
+        [$code, $out] = $this->ideaCommand('list', null, ['--flow' => 'gve']);
+        $this->assertSame(1, $code, 'a mistyped funnel is an error, not an empty backlog');
+        $this->assertStringContainsString('--flow must be one of', $out);
+        $this->assertStringNotContainsString('No ideas.', $out);
+
         [$code, $out] = $this->ideaCommand('list', null, ['--status' => 'soon']);
         $this->assertSame(1, $code);
         $this->assertStringContainsString('--status must be one of open, scheduled, running, done, rejected', $out);

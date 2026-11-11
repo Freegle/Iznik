@@ -6,7 +6,10 @@ namespace App\Services\Ux;
  * Takes the obviously personal parts out of free text before it leaves the building for a model:
  * email addresses, phone numbers and other long digit runs, and UK postcodes. It is a net with
  * holes (a name or a street cannot be found by pattern), which is why member text is also sent
- * with no tools and why the idea generator only ever sees themes, never the words.
+ * with no tools and why the idea generator only ever sees themes of it, never the words. The
+ * exception is volunteers' reports from public forum categories and issue titles: the idea
+ * generator reads those as words after this net and the removal of link keys, so a name in a
+ * report is not removed.
  */
 final class UxScrub
 {

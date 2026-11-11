@@ -2078,7 +2078,8 @@ return [
             'min_open' => (int) EnvSetting::env('UX_IDEAS_MIN_OPEN', 3),
             // How many ideas to ask for in one call.
             'count' => (int) EnvSetting::env('UX_IDEAS_COUNT', 12),
-            // An idea whose test was inconclusive goes back to waiting this many times at most.
+            // The most times an idea is tried in all. An inconclusive test sends it back to waiting
+            // until it has had this many tries, so 2 means one retry.
             'max_attempts' => (int) EnvSetting::env('UX_IDEAS_MAX_ATTEMPTS', 2),
         ],
 
