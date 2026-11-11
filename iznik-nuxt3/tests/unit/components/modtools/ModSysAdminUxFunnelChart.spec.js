@@ -110,6 +110,17 @@ describe('ModSysAdminUxFunnelChart', () => {
     expect(w.findAll('.bar-loss')).toHaveLength(2)
   })
 
+  it('puts the tag after the figures, at the end of the row, as plain words', () => {
+    const w = make({ worst: 'give' })
+    const children = w.find('li.funnel-row button.line').element.children
+    const last = children[children.length - 1]
+    expect(last.classList.contains('worst-tag')).toBe(true)
+    expect(last.textContent.trim()).toBe('Biggest loss')
+    // Nothing before the label: the left of the row is left for the names.
+    expect(children[0].classList.contains('label-line')).toBe(true)
+    expect(w.find('.tag-slot').exists()).toBe(false)
+  })
+
   it('tags nothing unless it is told which step is the worst', () => {
     const w = make()
     expect(w.findAll('.worst-tag')).toHaveLength(0)
@@ -162,20 +173,23 @@ describe('ModSysAdminUxFunnelChart', () => {
   })
 
   describe('the tag column', () => {
-    it('gives every row a tag slot as the first cell of its line, and fills only the worst row', () => {
+    it('starts every row with its label and fills only the worst row, with a faint wash', () => {
       const w = make({ worst: 'give-whereami' })
       const rows = w.findAll('li.funnel-row')
       expect(rows).toHaveLength(3)
       for (const row of rows) {
-        const line = row.find('.line')
-        const first = line.element.firstElementChild
+        const first = row.find('.line').element.firstElementChild
         expect(first.classList.contains('label-line')).toBe(true)
-        expect(first.firstElementChild.classList.contains('tag-slot')).toBe(
+        expect(first.firstElementChild.classList.contains('row-label')).toBe(
           true
         )
-        expect(first.children[1].classList.contains('row-label')).toBe(true)
       }
-      expect(rows.map((r) => r.find('.tag-slot .worst-tag').exists())).toEqual([
+      expect(rows.map((r) => r.find('.worst-tag').exists())).toEqual([
+        false,
+        true,
+        false,
+      ])
+      expect(rows.map((r) => r.classes().includes('worst'))).toEqual([
         false,
         true,
         false,
@@ -428,6 +442,68 @@ describe('ModSysAdminUxFunnelChart', () => {
       expect(make({ showKey: false }).text()).not.toContain(
         'Grey dashed outline'
       )
+    })
+  })
+
+  describe('what a step is', () => {
+    it('explains each step name, with the page it is, for hover and focus', () => {
+      const w = make({ flow: 'give' })
+      const rows = w.findAll('li.funnel-row')
+      const tip = rows[0].find('[role="tooltip"]')
+      expect(tip.text()).toContain('/give, step 1')
+      expect(tip.text()).toContain('adds photos')
+      expect(rows[1].find('[role="tooltip"]').text()).toContain(
+        '/give/whereami'
+      )
+    })
+
+    it('hangs the explanation on the row as its description, for a screen reader', () => {
+      const w = make({ flow: 'give' })
+      const line = w.find('button.line')
+      const tip = w.find('li.funnel-row [role="tooltip"]')
+      expect(tip.attributes('id')).toBeTruthy()
+      expect(line.attributes('aria-describedby')).toBe(tip.attributes('id'))
+    })
+
+    it('can be reached from the keyboard on a row that is not a button too', () => {
+      const w = make({ steps: stageWithWays, flow: 'login' })
+      const heading = w.findAll('li.funnel-row')[0].find('.line')
+      expect(heading.element.tagName).toBe('DIV')
+      expect(heading.attributes('tabindex')).toBe('0')
+      expect(heading.attributes('aria-describedby')).toBeTruthy()
+    })
+
+    it('has a different description id for every row', () => {
+      const ids = make({ steps: stageWithWays, flow: 'login' })
+        .findAll('[role="tooltip"]')
+        .map((t) => t.attributes('id'))
+      expect(new Set(ids).size).toBe(ids.length)
+      expect(ids).toHaveLength(3)
+    })
+
+    it('says what a way in means', () => {
+      const w = make({ steps: stageWithWays, flow: 'login' })
+      const tips = w.findAll('[role="tooltip"]').map((t) => t.text())
+      expect(tips[0]).toContain('several ways')
+      expect(tips[1]).toMatch(/^Came in through Signing in\./)
+      expect(tips[2]).toMatch(/^Came in through Joining\./)
+    })
+
+    it('explains the step in the table view as well', async () => {
+      const w = make({ flow: 'give' })
+      await w.find('[data-testid="chart-view-toggle"]').trigger('click')
+      expect(w.find('tbody th').attributes('title')).toContain('/give, step 1')
+    })
+  })
+
+  describe('the tree lines', () => {
+    it('joins each way in to its stage, and ends the line at the last one', () => {
+      const w = make({ steps: stageWithWays })
+      const rows = w.findAll('li.funnel-row')
+      expect(rows[0].classes()).not.toContain('indent')
+      expect(rows[1].classes()).toContain('indent')
+      expect(rows[1].classes()).not.toContain('last')
+      expect(rows[2].classes()).toContain('last')
     })
   })
 

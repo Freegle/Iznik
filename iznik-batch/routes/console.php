@@ -359,6 +359,14 @@ Schedule::command('items:backfill-popularity')
     ->appendOutputTo(cronLog('items:backfill-popularity'))
     ->runInBackground();
 
+// Look at the web domains in active members' email addresses for the Krystal hosting ad. A few
+// hundred a night, one page fetch each, outside the backup drain window.
+Schedule::command('hosting:scan-domains --limit=300')
+    ->dailyAt('02:20')
+    ->withoutOverlapping(180)
+    ->appendOutputTo(cronLog('hosting:scan-domains'))
+    ->runInBackground();
+
 // Link accounts that gave the same mobile number or street address in chat, so they show up
 // in ModTools Related Members. Daily rather than hourly: nothing here is urgent, and a
 // duplicate account that has sat unnoticed for years does not need spotting within the hour.
@@ -502,6 +510,23 @@ Schedule::command('cookieyes:check')
     ->appendOutputTo(cronLog('cookieyes:check'))
     ->runInBackground();
 
+// Google housekeeping: Search Console sitemap/indexing problems and Google Ads (Ad Grants)
+// policy and compliance problems. Results in housekeeper_tasks, failures emailed to geeks.
+// Until the credentials are set up every run fails and says exactly what is missing.
+Schedule::command('google:search-console-check')
+    ->weeklyOn(1, '10:40')
+    ->when(fn () => config('freegle.google.search_console_enabled', true))
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('google:search-console-check'))
+    ->runInBackground();
+
+Schedule::command('google:ads-check')
+    ->weeklyOn(1, '10:50')
+    ->when(fn () => config('freegle.google.ads_enabled', true))
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('google:ads-check'))
+    ->runInBackground();
+
 // Moderator work notifications — tells mods about pending messages, events, etc.
 // Only runs 08:00–21:00; deduplicates against last sent summary.
 // V1: cron/mod_notifs.php (hourly)
@@ -576,6 +601,24 @@ Schedule::command('ux:rollup-daily')
     ->appendOutputTo(cronLog('ux:rollup-daily'))
     ->runInBackground();
 
+// Views per post for the ModTools dashboard's Popular Posts (messages_viewcounts). Early in the
+// UTC day because the dashboard counts live from the start of the day this last ran: the earlier
+// it runs, the less it counts live. Reads the replica, about a minute of index reads.
+Schedule::command('messages:count-views')
+    ->dailyAt('01:10')
+    ->withoutOverlapping(120)
+    ->appendOutputTo(cronLog('messages:count-views'))
+    ->runInBackground();
+
+// Digest click-through by post position: roll the last 14 days (clicks keep arriving after a digest
+// goes out) into email_digest_positions_daily, which the ModTools SysAdmin chart sums. 05:35 UTC is
+// after the backup drain window (03:50 for 45 minutes) and after the morning digests have gone.
+Schedule::command('email:digest-positions-rollup')
+    ->dailyAt('05:35')
+    ->withoutOverlapping(120)
+    ->appendOutputTo(cronLog('email:digest-positions-rollup'))
+    ->runInBackground();
+
 // Hourly: read every running UX experiment from Loki by arm, move traffic towards the arm that
 // is winning, and decide within 24 hours. Off the hour so it never queues behind the rollup.
 Schedule::command('ux:experiments-tick')
@@ -613,6 +656,16 @@ Schedule::command('ux:weekly-report')
     ->weeklyOn(1, '07:40')
     ->withoutOverlapping(30)
     ->appendOutputTo(cronLog('ux:weekly-report'))
+    ->runInBackground();
+
+// Hourly upkeep of the member surveys: close a prompt that has collected its answers, weigh the
+// follow-up picks, and blank member words after 90 days. Off the hour so it never queues behind the
+// rollup. It is not in the backup-drain always_run list: a skipped hour only delays closing a full
+// prompt, and the API already refuses an answer past the cap.
+Schedule::command('ux:prompts-tick')
+    ->hourlyAt(23)
+    ->withoutOverlapping(50)
+    ->appendOutputTo(cronLog('ux:prompts-tick'))
     ->runInBackground();
 
 // Backup apiv2 node serving members: overnight, over the whole previous day, so
@@ -662,6 +715,24 @@ Schedule::command('purge:chats')
     ->dailyAt('02:00')
     ->withoutOverlapping(360)
     ->appendOutputTo(cronLog('purge:chats'))
+    ->runInBackground();
+
+// Support case first pass: runs the AI first pass for referred chats and mails Support. Every
+// minute, because the case row is the queue and a referral should reach Support promptly. A run
+// stops claiming cases after ten minutes, but the last one can wait up to 510 seconds for the helper,
+// so withoutOverlapping (25 minutes) is longer than the longest run.
+Schedule::command('support:first-pass')
+    ->everyMinute()
+    ->withoutOverlapping(25)
+    ->appendOutputTo(cronLog('support:first-pass'))
+    ->runInBackground();
+
+// Retention for support cases (2 years for handled cases, 1 year for briefs). 02:40 is clear of
+// the backup drain window.
+Schedule::command('support:purge-cases')
+    ->dailyAt('02:40')
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('support:purge-cases'))
     ->runInBackground();
 
 // Daily log/bounce/likes purge.
@@ -773,12 +844,25 @@ Schedule::command('chats:process-spam')
     ->appendOutputTo(cronLog('chats:process-spam'))
     ->runInBackground();
 
-// Sync data from TrashNothing.
-// This command can be called more frequently if the "kick" API is called by TN,
-// e.g. to reduce latency by requesting an immediate sync after sending a chat message.
+// Sync data from TrashNothing (ratings, user changes and posts) every ten seconds, so a post
+// reaches Freegle seconds after it is posted on TN. /posts/all lists every post TN has,
+// including the ones it holds until a Freegle community approves them.
+//
+// A run takes three to five seconds, mostly the three requests TrashNothingRateLimiter spaces
+// 750ms apart, so ten seconds leaves a gap between runs and uses about a sixth of the two
+// requests a second TN allows a key. The command's own limits are in minutes, not runs
+// (TNSyncCommand::FEED_HOLD_*_MINUTES, TnUserProvisioner::LOOKUP_*_MINUTES), so they do not
+// change with this. TN can also call the "kick" API for an immediate run, for example after
+// sending a chat message.
+//
+// No withoutOverlapping() here. Under FlockEventMutex the scheduler's overlap lock is held by
+// the schedule:run process, which lives for the whole minute when a task repeats, and
+// schedule:finish runs in another process and cannot release it: the repeats would all be
+// skipped and tn:sync would run once a minute. The command's own lock (PreventsOverlapping, a
+// flock held by the tn:sync process) keeps runs one at a time instead: a run that starts while
+// another is going exits at once.
 Schedule::command('tn:sync')
-    ->everyMinute()
-    ->withoutOverlapping(15)
+    ->everyTenSeconds()
     ->runInBackground();
 
 // Check that TN posts which arrived by email were also ingested via the API,
@@ -799,6 +883,31 @@ Schedule::command('tn:verify-email-coverage')
     ->withoutOverlapping(120)
     ->when(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api', false))
     ->appendOutputTo(cronLog('tn:verify-email-coverage'))
+    ->runInBackground();
+
+// The same check every ten minutes over the last 70, ingesting what it finds missing. It is
+// the second chance for a post the sync skipped as "try later" (TN could not be asked about
+// its poster, or rejected the key) and for anything else the feed missed. The posts TN holds
+// until a Freegle community approves them are listed by /posts/all, so the sync takes those
+// in and a normal run here finds nothing. TN's email still arrives, so this fetches each
+// missing post by id and ingests it, closed ones with their outcome. The last five minutes
+// are left to the sync. The cap is raised for this run: it allows for the backlog after the
+// nightly backup window, which holds this job too.
+Schedule::command('tn:verify-email-coverage --recent=70 --auto-ingest --ingest-closed --max=100')
+    ->cron('3-53/10 * * * *')
+    ->withoutOverlapping(30)
+    ->when(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api', false))
+    ->appendOutputTo(cronLog('tn:verify-email-coverage-recent'))
+    ->runInBackground();
+
+// Give a recent TN API post's poster the membership ingestion failed to write. Each repair is
+// reported to Sentry, since it means a write failed. Only TN API posts are read, so it is gated
+// on the same switch as the API path.
+Schedule::command('tn:reconcile-memberships')
+    ->hourly()
+    ->withoutOverlapping(60)
+    ->when(fn () => (bool) config('freegle.trashnothing.ingest_posts_via_api', false))
+    ->appendOutputTo(cronLog('tn:reconcile-memberships'))
     ->runInBackground();
 
 // =============================================================================
@@ -885,7 +994,9 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 //
 // So the seven-day window is gone, and dormancy is excluded by asking whether the member has
 // used the site rather than by how long ago we last managed to mail them. Never-sent recipients
-// still have no row here, so they are still out of scope.
+// still have no row here, so they are still out of scope. Neither are TrashNothing accounts,
+// bouncing addresses or members with no community on a daily digest any more: the digest never
+// mails them, so counting them made a backlog nothing could clear (DailyDigestLagService).
 //
 // The same slot also asks whether the mail we sent actually arrived, per receiving domain. That
 // is not the same question and the lag figures cannot answer it. On 2026-08-16 every Yahoo-run
@@ -896,24 +1007,10 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 // production on 18 August the check below flags those six domains and nothing else. See
 // DeliveryHealthService.
 Schedule::call(function () {
-    $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC')->toDateTimeString();
-    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(30)->setTimezone('UTC')->toDateTimeString();
-
-    $laggingQuery = \Illuminate\Support\Facades\DB::table('users_digests')
-        ->join('users', 'users.id', '=', 'users_digests.userid')
-        ->where('users_digests.mode', 'daily')
-        ->where('users_digests.lastsent', '<', $londonDayStartUtc)
-        ->whereNull('users.deleted')
-        ->where('users.lastaccess', '>=', $activeSinceUtc);
-
-    $lagging = (clone $laggingQuery)->count();
-
-    // How much of that is more than a week old. The old measure could not see any of this, so
-    // report it separately: a rising figure here means the backlog is not rotating but settling
-    // on the same people.
-    $overAWeek = (clone $laggingQuery)
-        ->where('users_digests.lastsent', '<', \Carbon\Carbon::parse($londonDayStartUtc)->subDays(7)->toDateTimeString())
-        ->count();
+    // Only members the digest would mail are counted; see DailyDigestLagService. over_a_week is
+    // the part more than a week old: if it rises, the backlog is settling on the same people
+    // rather than rotating.
+    ['lagging' => $lagging, 'over_a_week' => $overAWeek] = app(\App\Services\Mail\DailyDigestLagService::class)->measure();
 
     $threshold = (int) env('FREEGLE_DIGEST_DAILY_LAG_ALERT_THRESHOLD', 5000);
     if ($lagging > $threshold) {
@@ -1125,6 +1222,13 @@ Schedule::command('donations:correct-userids')
     ->appendOutputTo(cronLog('donations:correct-userids'))
     ->runInBackground();
 
+// "Don't ask me to donate" lasts a year: date old opt-outs, switch off lapsed ones.
+Schedule::command('donations:lapse-optouts')
+    ->dailyAt('03:15')
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('donations:lapse-optouts'))
+    ->runInBackground();
+
 // User management: Yahoo Groups removal, inactive-user forget, GDPR grace-period
 // forget, and hard delete of fully forgotten users with no messages left.
 // V1: cron/users_retention.php (User::userRetention + User::processForgets).
@@ -1150,6 +1254,23 @@ Schedule::command('matches:notify')
     ->appendOutputTo(cronLog('matches:notify'))
     ->runInBackground();
 
+// Remind members of open posts they marked "I'm interested" in a day ago and have not replied to: one email
+// per member, each mark named once. Hourly is plenty (the reminder is a day late by design); it is not a
+// fixed-time job, so BackupDrain only delays it.
+Schedule::command('messages:interested-chaseup')
+    ->hourlyAt(37)
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('messages:interested-chaseup'))
+    ->runInBackground();
+
+// The experiment familiar-poster: new posts from people a member has chatted with. Does nothing unless the
+// experiment is serving arms. Hourly so a post is still fresh; each member is reached at most once a day.
+Schedule::command('messages:familiar-posts')
+    ->hourlyAt(43)
+    ->withoutOverlapping(60)
+    ->appendOutputTo(cronLog('messages:familiar-posts'))
+    ->runInBackground();
+
 // Email spool processing - runs continuously in daemon mode via supervisor.
 // See docker/supervisor.conf for the mail-spooler program.
 
@@ -1158,6 +1279,21 @@ Schedule::command('matches:notify')
 Schedule::command('queue:background-tasks --max-iterations=60 --spool')
     ->everyMinute()
     ->appendOutputTo(cronLog('queue:background-tasks'))
+    ->runInBackground();
+
+// Royal Mail address data (PAF) requested from the PAF update on SysAdmin Housekeeping. Usually finds
+// nothing to do. When there is a request it runs for hours, holding its own lock, and a run
+// stopped part way carries on the next minute. docs/ops/runbooks/paf-address-data.md.
+Schedule::command('paf:import-run')
+    ->everyMinute()
+    ->appendOutputTo(cronLog('paf:import-run'))
+    ->runInBackground();
+
+// Which PAF release is at the top of AFD's site, for the PAF update on SysAdmin Housekeeping to show. One SFTP
+// directory listing an hour. docs/ops/runbooks/paf-address-data.md.
+Schedule::command('paf:check-latest')
+    ->hourlyAt(23)
+    ->appendOutputTo(cronLog('paf:check-latest'))
     ->runInBackground();
 
 // Deferral-aware mail suppression.
@@ -1530,6 +1666,14 @@ Schedule::command('integrations:sync-whatjobs')
     ->appendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();
 
+// Fails when the newest WhatJobs job is more than 48 hours old, which turns the SysAdmin Cron
+// Jobs tab red. The sync's own check only proves the sync ran, and it ran happily on a feed
+// WhatJobs had stopped updating (20 October 2026, noticed days later when every job looked old).
+Schedule::command('integrations:check-whatjobs-freshness')
+    ->hourly()
+    ->withoutOverlapping(30)
+    ->appendOutputTo(cronLog('integrations:check-whatjobs-freshness'));
+
 // Weekly full re-geocode of the jobs feed. Each sync seeds its geocoding from
 // the previous run's jobs table, so a tuple that was ever resolved wrongly
 // stays wrong forever (measured 2026-08-31: 2,341 jobs pinned on Glasgow
@@ -1697,6 +1841,31 @@ Schedule::command('ai:usage-counts:update --full')
     ->appendOutputTo(cronLog('ai:usage-counts:update-full'))
     ->runInBackground();
 
+// Gives existing AI item pictures their item key, 500 names a run, most-used first. About 30k
+// names, so it is through in a day; after that each run is one count.
+Schedule::command('ai:images:backfill-items')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping(30)
+    ->appendOutputTo(cronLog('ai:images:backfill-items'))
+    ->runInBackground();
+
+// The single item each new or live post is about, for pictures, matched posts and search. New
+// posts get theirs within the minute, ahead of the illustrations job's next pass; live posts from
+// before this get theirs 1,000 a run.
+Schedule::command('messages:clean-items')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->appendOutputTo(cronLog('messages:clean-items'))
+    ->runInBackground();
+
+// Turn new posts of several items into item lists, with each photo on its item. Off unless
+// AUTOSPLIT_MODE is shadow or on. docs/developers/reference/auto-split.md.
+Schedule::command('messages:auto-split')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->appendOutputTo(cronLog('messages:auto-split'))
+    ->runInBackground();
+
 
 // =============================================================================
 // GIFT AID
@@ -1826,18 +1995,6 @@ Schedule::command('newsfeed:generate-link-previews')
     ->everyMinute()
     ->withoutOverlapping(15)
     ->appendOutputTo(cronLog('newsfeed:generate-link-previews'))
-    ->runInBackground();
-
-// =============================================================================
-// NOTICEBOARDS
-// =============================================================================
-
-// Thank users who added noticeboards (once per user, not per board).
-// V1: cron/noticeboards.php (daily at 15:30)
-Schedule::command('noticeboards:thank-users')
-    ->dailyAt('15:30')
-    ->withoutOverlapping(360)
-    ->appendOutputTo(cronLog('noticeboards:thank-users'))
     ->runInBackground();
 
 // =============================================================================

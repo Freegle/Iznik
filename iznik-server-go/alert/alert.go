@@ -40,8 +40,12 @@ type Alert struct {
 	Html      string  `json:"html"`
 	Askclick  int     `json:"askclick"`
 	Tryhard   int     `json:"tryhard"`
-	Complete  string  `json:"complete"`
-	Created   string  `json:"created"`
+	// Requirereply is the "moderators must reply" flag; the member's quoted email and the attachments
+	// are deliberately not here, because GetAlert is public.
+	Requirereply int    `json:"requirereply"`
+	Cancelled    string `json:"cancelled"`
+	Complete     string `json:"complete"`
+	Created      string `json:"created"`
 }
 
 func (Alert) TableName() string {
@@ -51,6 +55,7 @@ func (Alert) TableName() string {
 type AlertStats struct {
 	Responses []AlertResponseStat `json:"responses"`
 	Reached   int64               `json:"reached"`
+	Replied   int64               `json:"replied"`
 }
 
 type AlertResponseStat struct {
@@ -79,7 +84,7 @@ func GetAlert(c *fiber.Ctx) error {
 
 	var a Alert
 	db.Table("alerts").
-		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, requirereply, cancelled, complete, created").
 		Where("id = ?", id).
 		Scan(&a)
 
@@ -111,23 +116,26 @@ func GetAlert(c *fiber.Ctx) error {
 
 		// Get reached (total tracking entries).
 		db.Table("alerts_tracking").Where("alertid = ?", id).Count(&stats.Reached)
+		db.Table("alerts_acknowledgements").Where("alertid = ? AND replied IS NOT NULL", id).Count(&stats.Replied)
 
 		// Merge stats into the alert map in the response.
 		alertMap := response["alert"].(Alert)
 		response["alert"] = fiber.Map{
-			"id":        alertMap.ID,
-			"createdby": alertMap.Createdby,
-			"groupid":   alertMap.Groupid,
-			"from":      alertMap.From,
-			"to":        alertMap.To,
-			"subject":   alertMap.Subject,
-			"text":      alertMap.Text,
-			"html":      alertMap.Html,
-			"askclick":  alertMap.Askclick,
-			"tryhard":   alertMap.Tryhard,
-			"complete":  alertMap.Complete,
-			"created":   alertMap.Created,
-			"stats":     stats,
+			"id":           alertMap.ID,
+			"createdby":    alertMap.Createdby,
+			"groupid":      alertMap.Groupid,
+			"from":         alertMap.From,
+			"to":           alertMap.To,
+			"subject":      alertMap.Subject,
+			"text":         alertMap.Text,
+			"html":         alertMap.Html,
+			"askclick":     alertMap.Askclick,
+			"tryhard":      alertMap.Tryhard,
+			"requirereply": alertMap.Requirereply,
+			"cancelled":    alertMap.Cancelled,
+			"complete":     alertMap.Complete,
+			"created":      alertMap.Created,
+			"stats":        stats,
 		}
 	}
 
@@ -158,7 +166,7 @@ func ListAlerts(c *fiber.Ctx) error {
 
 	var alerts []Alert
 	db.Table("alerts").
-		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, requirereply, cancelled, complete, created").
 		Order("created DESC").
 		Scan(&alerts)
 
@@ -204,6 +212,12 @@ func CreateAlert(c *fiber.Ctx) error {
 		Groupid  json.RawMessage `json:"groupid"`
 		Askclick *int            `json:"askclick"`
 		Tryhard  *int            `json:"tryhard"`
+
+		// Contacting one community's volunteers about a member: the member's original email, kept in
+		// full, files to send with it, and whether each moderator must reply before carrying on.
+		Quoted       string             `json:"quoted"`
+		Attachments  []AttachmentUpload `json:"attachments"`
+		Requirereply *int               `json:"requirereply"`
 	}
 
 	var req CreateRequest
@@ -223,6 +237,18 @@ func CreateAlert(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid groupid")
 		}
 		groupid = &n
+	}
+
+	wantReply := req.Requirereply != nil && *req.Requirereply == 1
+	if groupid == nil && (wantReply || strings.TrimSpace(req.Quoted) != "" || len(req.Attachments) > 0) {
+		return fiber.NewError(fiber.StatusBadRequest, "The original email, attachments and required replies are only for a message to one community")
+	}
+	if len(req.Quoted) > maxQuotedBytes {
+		return fiber.NewError(fiber.StatusBadRequest, "The original email is too long")
+	}
+	files, err := validateAttachments(req.Attachments)
+	if err != nil {
+		return err
 	}
 
 	// Defaults.
@@ -260,11 +286,27 @@ func CreateAlert(c *fiber.Ctx) error {
 		"tryhard":   tryhard,
 		"created":   gorm.Expr("NOW()"),
 	}
+	if wantReply {
+		row["requirereply"] = 1
+	}
+	if strings.TrimSpace(req.Quoted) != "" {
+		row["quoted"] = req.Quoted
+	}
 	if err := db.Table("alerts").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create alert")
 	}
 	alertIDInt, _ := row["@id"].(int64)
 	alertID := uint64(alertIDInt)
+
+	for _, f := range files {
+		if err := db.Table("alerts_attachments").Create(map[string]interface{}{
+			"alertid": alertID, "name": f.name, "mime": f.mime, "size": len(f.data), "data": f.data,
+		}).Error; err != nil {
+			// Do not leave a half-built alert for the mailer to pick up.
+			db.Table("alerts").Where("id = ?", alertID).Delete(&Alert{})
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to save attachment")
+		}
+	}
 
 	return c.JSON(fiber.Map{
 		"ret":    0,

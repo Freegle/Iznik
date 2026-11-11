@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\Ripple;
 
 use App\Models\ChatMessage;
 use App\Models\Group;
+use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
@@ -1146,6 +1147,115 @@ class ExpandServiceTest extends TestCase
         // has been collapsed.
     }
 
+    /**
+     * A member's repost of an item already live on a community (same poster, type and subject)
+     * is a duplicate. When a moderator approves the repost on its home group it must not ripple
+     * back into the communities that already carry the earlier post, or each of them shows the
+     * item twice. Communities that do not carry the earlier post still receive it.
+     */
+    public function test_a_duplicate_post_does_not_ripple_into_groups_already_carrying_the_earlier_post(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $poster = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $subject = DB::table('messages')->where('id', $msgid)->value('subject');
+
+        $poly = 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))';
+        $carrying = $this->createTestGroup();
+        $fresh = $this->createTestGroup();
+        foreach ([$carrying, $fresh] as $g) {
+            DB::statement(
+                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                [$poly, 3857, $g->id]
+            );
+        }
+
+        // The earlier post, already live on the first group having rippled in.
+        $earlier = DB::table('messages')->insertGetId([
+            'date' => now()->subDays(2),
+            'arrival' => now()->subDays(2),
+            'source' => 'Platform',
+            'fromuser' => $poster,
+            'subject' => $subject,
+            'type' => 'Offer',
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $earlier,
+            'groupid' => $carrying->id,
+            'collection' => 'Approved',
+            'arrival' => now()->subDays(2),
+            'rippled_in' => 1,
+        ]);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $carrying->id)->first(),
+            'a duplicate must not ripple into a group that already carries the earlier post'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $fresh->id)->first(),
+            'a group that does not carry the earlier post still receives the post'
+        );
+    }
+
+    /**
+     * The aged-reach expander (advanceDue) is a second route into rippleIntoNewGroups: a post
+     * whose reach has grown ripples into groups that came into reach later. A duplicate must be
+     * kept out there too, not only on the first tick.
+     */
+    public function test_a_duplicate_post_is_kept_out_when_aged_reach_expands_into_a_carrying_group(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $poster = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $subject = DB::table('messages')->where('id', $msgid)->value('subject');
+
+        $this->service()->process(false, 500);
+
+        // Groups that come into reach on a later tick; one already carries the earlier post.
+        $poly = 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))';
+        $carrying = $this->createTestGroup();
+        $fresh = $this->createTestGroup();
+        foreach ([$carrying, $fresh] as $g) {
+            DB::statement(
+                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                [$poly, 3857, $g->id]
+            );
+        }
+        $earlier = DB::table('messages')->insertGetId([
+            'date' => now()->subDays(2),
+            'arrival' => now()->subDays(2),
+            'source' => 'Platform',
+            'fromuser' => $poster,
+            'subject' => $subject,
+            'type' => 'Offer',
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $earlier,
+            'groupid' => $carrying->id,
+            'collection' => 'Approved',
+            'arrival' => now()->subDays(2),
+            'rippled_in' => 1,
+        ]);
+
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'arrival' => now()->subHours(4),
+            'next_expansion_at' => now()->subMinute(),
+            'status' => 'expanding',
+        ]);
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $carrying->id)->first(),
+            'aged-reach expansion must not ripple a duplicate into a group already carrying the earlier post'
+        );
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $fresh->id)->first(),
+            'aged-reach expansion still ripples into a group that does not carry the earlier post'
+        );
+    }
+
     public function test_ripples_post_into_groups_whose_area_the_reach_covers(): void
     {
         // #6: as reach crosses into a group's area (DPA poly if present, else CGA
@@ -1430,7 +1540,7 @@ class ExpandServiceTest extends TestCase
         $legacyModerated = $this->seedGroupInReach();
         $noView = $this->seedGroupInReach();
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $legacyModerated->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $legacyModerated->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'ourPostingStatus' => 'MODERATED', 'added' => now(),
         ]);
 
@@ -1459,7 +1569,7 @@ class ExpandServiceTest extends TestCase
 
         $prohibits = $this->seedGroupInReach();
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $prohibits->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $prohibits->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'ourPostingStatus' => 'PROHIBITED', 'added' => now(),
         ]);
 
@@ -1485,7 +1595,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->seedGroupInReach();
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'ourPostingStatus' => null, 'added' => now(),
         ]);
 
@@ -2217,7 +2327,7 @@ class ExpandServiceTest extends TestCase
         // Home-group membership on IMMEDIATE with events/volunteering off, to prove the downgrade
         // (-1 -> 24) and the verbatim copy of events/volunteering.
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $originGid, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $originGid, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => -1, 'eventsallowed' => 0,
             'volunteeringallowed' => 0, 'added' => now(),
         ]);
@@ -2241,12 +2351,14 @@ class ExpandServiceTest extends TestCase
         // to daily and events/volunteering copied from home.
         $m = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first();
         $this->assertNotNull($m, 'poster added as a member of the rippled-into group');
-        $this->assertSame('Member', $m->role);
+        $this->assertSame(Membership::ROLE_MEMBER, $m->role);
         $this->assertSame('Approved', $m->collection);
         $this->assertSame(24, (int) $m->emailfrequency, 'immediate (-1) downgraded to daily (24)');
         $this->assertSame(0, (int) $m->eventsallowed, 'eventsallowed copied from home group');
         $this->assertSame(0, (int) $m->volunteeringallowed, 'volunteeringallowed copied from home group');
         $this->assertSame(1, (int) $m->rippled, 'rippled membership marked rippled=1');
+        $this->assertSame(1, (int) $m->implicit, 'and implicit=1 with it');
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $m->added_origin);
         $this->assertGreaterThanOrEqual(1, $stats['memberships_added']);
 
         // memberships_history row written (abuse detection) with rippled=1 (welcome suppression).
@@ -2254,6 +2366,7 @@ class ExpandServiceTest extends TestCase
         $this->assertNotNull($hist, 'memberships_history row recorded for the new membership');
         $this->assertSame(1, (int) $hist->rippled, 'history row marked rippled=1 to suppress the per-group welcome');
         $this->assertSame(1, (int) $hist->processingrequired, 'history row still requires processing for abuse detection');
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $hist->added_origin);
 
         // The intro email is claimed exactly once for the post.
         $this->assertSame(
@@ -2288,7 +2401,7 @@ class ExpandServiceTest extends TestCase
         );
 
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Banned', 'added' => now(),
         ]);
 
@@ -2316,7 +2429,7 @@ class ExpandServiceTest extends TestCase
         );
 
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Owner',
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => Membership::ROLE_OWNER,
             'collection' => 'Approved', 'added' => now()->subYears(2), 'rippled' => 0,
         ]);
 
@@ -2324,7 +2437,7 @@ class ExpandServiceTest extends TestCase
 
         $rows = DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->get();
         $this->assertCount(1, $rows, 'still exactly one membership row');
-        $this->assertSame('Owner', $rows[0]->role, 'owner role untouched by rippling');
+        $this->assertSame(Membership::ROLE_OWNER, $rows[0]->role, 'owner role untouched by rippling');
         $this->assertSame(0, (int) $rows[0]->rippled, 'a chosen membership is never marked ripple-created');
     }
 
@@ -2375,7 +2488,7 @@ class ExpandServiceTest extends TestCase
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
         );
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Banned', 'added' => now(),
         ]);
 
@@ -2408,7 +2521,7 @@ class ExpandServiceTest extends TestCase
         ]);
         // The ripple-join membership and the ban that should have blocked it.
         DB::table('memberships')->insert([
-            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'rippled' => 1, 'added' => now()->subDay(),
         ]);
         DB::table('users_banned')->insert([
@@ -2450,7 +2563,7 @@ class ExpandServiceTest extends TestCase
         $poster = $this->createTestUser();
         $groupB = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => 'Member',
+            'userid' => $poster->id, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'rippled' => 0, 'added' => now()->subDay(),
         ]);
         DB::table('users_banned')->insert([
@@ -2477,7 +2590,7 @@ class ExpandServiceTest extends TestCase
 
         // Home membership on NO email (emailfrequency 0).
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $originGid, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $originGid, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => 0, 'eventsallowed' => 1,
             'volunteeringallowed' => 1, 'added' => now(),
         ]);
@@ -2542,7 +2655,7 @@ class ExpandServiceTest extends TestCase
         DB::table('memberships')->where('userid', $posterId)->delete();
         $elsewhere = $this->createTestGroup();
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $elsewhere->id, 'role' => 'Member',
+            'userid' => $posterId, 'groupid' => $elsewhere->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => 4, 'eventsallowed' => 1,
             'volunteeringallowed' => 1, 'added' => now()->subDay(),
         ]);
@@ -2941,6 +3054,50 @@ class ExpandServiceTest extends TestCase
             1,
             (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('ripple_intro_sent'),
             'intro stays claimed once - not re-sent when more groups are added'
+        );
+    }
+
+    /**
+     * A TrashNothing post placed on a community its poster never chose (the origin row's
+     * mod_messaging_allowed = 0) still ripples, but the poster is not joined to the communities
+     * it reaches and is not sent the intro mail: they have not opted in to hearing from Freegle
+     * communities, and a membership is what Freegle's mail goes by.
+     */
+    public function test_unaddressed_tn_post_ripples_without_joining_or_mailing_the_poster(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $posterId = (int) DB::table('messages')->where('id', $msgid)->value('fromuser');
+        $originGid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+
+        DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $originGid)
+            ->update(['mod_messaging_allowed' => 0]);
+        DB::table('memberships')->insert([
+            'userid' => $posterId, 'groupid' => $originGid, 'role' => Membership::ROLE_MEMBER,
+            'collection' => Membership::COLLECTION_APPROVED, 'emailfrequency' => 0, 'implicit' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED, 'added' => now(),
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'the post itself still ripples into group B'
+        );
+        $this->assertNull(
+            DB::table('memberships')->where('userid', $posterId)->where('groupid', $groupB->id)->first(),
+            'the poster is not joined to a community they never chose'
+        );
+        $this->assertSame(
+            0,
+            (int) DB::table('rippling_reach')->where('msgid', $msgid)->value('ripple_intro_sent'),
+            'no intro mail to a poster who has not opted in'
         );
     }
 
@@ -3359,7 +3516,7 @@ class ExpandServiceTest extends TestCase
             'msgtype' => Message::TYPE_OFFER, 'rippled_in' => 1, 'deleted' => 0,
         ]);
         DB::table('memberships')->insert([
-            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => 'Member', 'collection' => 'Approved',
+            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER, 'collection' => 'Approved',
             'emailfrequency' => 24, 'eventsallowed' => 1, 'volunteeringallowed' => 1, 'rippled' => 1, 'added' => now(),
         ]);
         DB::statement(
@@ -3542,7 +3699,7 @@ class ExpandServiceTest extends TestCase
             'msgtype' => Message::TYPE_OFFER, 'rippled_in' => 1, 'deleted' => 0,
         ]);
         DB::table('memberships')->insert([
-            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => 'Member', 'collection' => 'Approved',
+            'userid' => $user->id, 'groupid' => $groupB->id, 'role' => Membership::ROLE_MEMBER, 'collection' => 'Approved',
             'emailfrequency' => 24, 'eventsallowed' => 1, 'volunteeringallowed' => 1, 'rippled' => 1, 'added' => now(),
         ]);
         // A messages_spatial row (the live rippled copy has one) so the post is NOT stale-by-spatial.
@@ -3816,7 +3973,7 @@ class ExpandServiceTest extends TestCase
         }
         foreach ([$near->id, $far->id] as $gid) {
             DB::table('memberships')->insert([
-                'userid' => $poster->id, 'groupid' => $gid, 'role' => 'Member',
+                'userid' => $poster->id, 'groupid' => $gid, 'role' => Membership::ROLE_MEMBER,
                 'collection' => 'Approved', 'rippled' => 1,
             ]);
         }

@@ -242,23 +242,21 @@
           v-if="supportOrAdmin"
           link="/support"
           name="Support"
+          :count="['supportcases']"
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
-          v-if="supportOrAdmin"
+          v-if="admin"
           link="/sysadmin"
           name="SysAdmin"
-          :count="
-            admin
-              ? [
-                  'housekeeping',
-                  'cronjobs',
-                  'emailin',
-                  'emailout',
-                  'maildeferrals',
-                ]
-              : []
-          "
+          :count="[
+            'housekeeping',
+            'cronjobs',
+            'emailin',
+            'emailout',
+            'maildeferrals',
+            'uxexperiments',
+          ]"
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
@@ -311,6 +309,7 @@
     />
     <LoginModal v-if="!loggedIn" ref="loginModal" :key="'login-' + bumpLogin" />
     <div id="sizer" ref="sizer" class="d-none d-lg-block" />
+    <ModAlertReplyGate v-if="loggedIn" />
     <SomethingWentWrong />
   </div>
 </template>

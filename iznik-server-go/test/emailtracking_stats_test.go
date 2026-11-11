@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailtracking"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -85,7 +86,7 @@ func TestTimeSeries_Unauthorized(t *testing.T) {
 
 func TestTimeSeries_ForbiddenForRegularUser(t *testing.T) {
 	prefix := uniquePrefix("tsforbid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/email/stats/timeseries?jwt="+token, nil))
@@ -94,7 +95,7 @@ func TestTimeSeries_ForbiddenForRegularUser(t *testing.T) {
 
 func TestTimeSeries_SupportUserAccess(t *testing.T) {
 	prefix := uniquePrefix("tssupport")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Create some test tracking data.
@@ -127,7 +128,7 @@ func TestTimeSeries_SupportUserAccess(t *testing.T) {
 
 func TestTimeSeries_DefaultDateRange(t *testing.T) {
 	prefix := uniquePrefix("tsdefault")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// No start/end parameters - should default to last 30 days.
@@ -141,7 +142,7 @@ func TestTimeSeries_DefaultDateRange(t *testing.T) {
 
 func TestTimeSeries_TypeFilter(t *testing.T) {
 	prefix := uniquePrefix("tstype")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	now := time.Now()
@@ -175,7 +176,7 @@ func TestStatsByType_Unauthorized(t *testing.T) {
 
 func TestStatsByType_ForbiddenForRegularUser(t *testing.T) {
 	prefix := uniquePrefix("sbtforbid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/email/stats/bytype?jwt="+token, nil))
@@ -184,7 +185,7 @@ func TestStatsByType_ForbiddenForRegularUser(t *testing.T) {
 
 func TestStatsByType_SupportUserAccess(t *testing.T) {
 	prefix := uniquePrefix("sbtsupport")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	now := time.Now()
@@ -219,7 +220,7 @@ func TestStatsByType_SupportUserAccess(t *testing.T) {
 
 func TestStatsByType_NoDateRange(t *testing.T) {
 	prefix := uniquePrefix("sbtnodate")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Without date range should return all stats.
@@ -238,7 +239,7 @@ func TestTopClickedLinks_Unauthorized(t *testing.T) {
 
 func TestTopClickedLinks_ForbiddenForRegularUser(t *testing.T) {
 	prefix := uniquePrefix("tclforbid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/email/stats/clicks?jwt="+token, nil))
@@ -247,7 +248,7 @@ func TestTopClickedLinks_ForbiddenForRegularUser(t *testing.T) {
 
 func TestTopClickedLinks_SupportUserAccess(t *testing.T) {
 	prefix := uniquePrefix("tclsupport")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	now := time.Now()
@@ -278,7 +279,7 @@ func TestTopClickedLinks_SupportUserAccess(t *testing.T) {
 
 func TestTopClickedLinks_Aggregated(t *testing.T) {
 	prefix := uniquePrefix("tclagg")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	now := time.Now()
@@ -306,7 +307,7 @@ func TestTopClickedLinks_Aggregated(t *testing.T) {
 
 func TestTopClickedLinks_NotAggregated(t *testing.T) {
 	prefix := uniquePrefix("tclnoagg")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/email/stats/clicks?jwt="+token+"&aggregate=false", nil))
@@ -319,7 +320,7 @@ func TestTopClickedLinks_NotAggregated(t *testing.T) {
 
 func TestTopClickedLinks_LimitParam(t *testing.T) {
 	prefix := uniquePrefix("tcllimit")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/email/stats/clicks?jwt="+token+"&limit=2", nil))
@@ -328,7 +329,7 @@ func TestTopClickedLinks_LimitParam(t *testing.T) {
 
 func TestTopClickedLinks_AdminUserAccess(t *testing.T) {
 	prefix := uniquePrefix("tcladmin")
-	userID := CreateTestUser(t, prefix, "Admin")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/modtools/email/stats/clicks?jwt="+token, nil))

@@ -205,6 +205,15 @@ test.describe('Browse Page Tests', () => {
     })
     console.log(`Found our test item "${uniqueItem}" on myposts page`)
 
+    // PostMap calls getMessages() once, on mount, and logs which branch it took.
+    // Registered before the navigation so the line cannot be missed. There is
+    // no response to wait on: the nearby branch reads the store's cached list.
+    const feedRequested = page.waitForEvent('console', {
+      predicate: (m) => /GetMessages - /.test(m.text()),
+      timeout: timeouts.navigation.slowPage,
+    })
+    feedRequested.catch(() => {}) // awaited below
+
     // Now navigate to browse and verify the page loads without errors
     console.log('Testing browse page loads')
     await page.gotoAndVerify('/browse', {
@@ -234,6 +243,26 @@ test.describe('Browse Page Tests', () => {
     // Verify page title (SSR starts with default app title; Vue hydration updates it)
     await expect(page).toHaveTitle(/Browse/, {
       timeout: timeouts.navigation.slowPage,
+    })
+
+    // The cards above come from the store before the feed block has mounted,
+    // so this test used to leave before PostFilters, GroupSelect and PostMap
+    // had run, and their coverage moved from run to run. Wait for each.
+    // The filters panel starts collapsed, so attached rather than visible.
+    await expect(page.locator('#communitieslist')).toBeAttached({
+      timeout: timeouts.ui.appearance,
+    })
+    await expect(page.locator('#typeOptions')).toBeAttached()
+
+    // PostMap's first getMessages() has run.
+    await feedRequested
+
+    // Opening the filters shows the map, which Browse otherwise keeps hidden.
+    await page.getByTitle('Show post filters').click()
+    await expect(page.locator('#communitieslist')).toBeVisible()
+    await expect(page.locator('#sortOptions')).toBeVisible()
+    await expect(page.locator('.leaflet-container')).toBeVisible({
+      timeout: timeouts.ui.appearance,
     })
 
     // Clean up

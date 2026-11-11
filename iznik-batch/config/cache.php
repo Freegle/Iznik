@@ -81,7 +81,8 @@ return [
             'driver' => 'database',
             'connection' => env('DB_CACHE_CONNECTION'),
             'table' => env('DB_CACHE_TABLE', 'cache'),
-            'lock_connection' => env('DB_CACHE_LOCK_CONNECTION'),
+            // Locks read their owner back on release, so they must read the node they wrote to.
+            'lock_connection' => env('DB_CACHE_LOCK_CONNECTION', 'mysql_write'),
             'lock_table' => env('DB_CACHE_LOCK_TABLE'),
         ],
 

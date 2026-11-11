@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,9 +64,9 @@ func TestBulkEditGetOfferByToken(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkeditget")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
@@ -104,8 +105,8 @@ func TestBulkEditUpdateAvailability(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkeditavail")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
@@ -143,8 +144,8 @@ func TestBulkEditUpdateQuantity(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkeditqty")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, prefix+"Desk", 4, "Good")
@@ -169,8 +170,8 @@ func TestBulkEditUpdateQuantity(t *testing.T) {
 func TestBulkEditItemNotInOffer(t *testing.T) {
 	prefix := uniquePrefix("bulkeditxoffer")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgA := CreateTestMessage(t, ownerID, groupID, prefix+" A", 55.95, -3.18)
 	addBulkItem(t, msgA, prefix+"A-item", 3, "Good")
@@ -199,9 +200,9 @@ func TestBulkEditBadToken(t *testing.T) {
 func TestBulkEditLinkMint(t *testing.T) {
 	prefix := uniquePrefix("bulkeditmint")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	strangerID := CreateTestUser(t, prefix+"_stranger", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	addBulkItem(t, msgID, prefix+"Desk", 4, "Good")

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -41,9 +42,9 @@ func sendAdminTest(t *testing.T, jwt string, content map[string]interface{}, ema
 
 func adminMjmlSetup(t *testing.T, name string) (uint64, uint64, string) {
 	prefix := uniquePrefix(name)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 	return modID, groupID, token
 }
@@ -160,8 +161,8 @@ func TestAdminApproveAfterAChangeNeedsANewTest(t *testing.T) {
 func TestAdminTestTokenIsNotTransferable(t *testing.T) {
 	modA, groupID, tokenA := adminMjmlSetup(t, "adm_mjml_xfer")
 	prefix := uniquePrefix("adm_mjml_xfer_b")
-	modB := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, modB, groupID, "Moderator")
+	modB := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modB, groupID, utils.ROLE_MODERATOR)
 	_, tokenB := CreateTestSession(t, modB)
 
 	subject := fmt.Sprintf("Xfer %d", groupID)
@@ -238,9 +239,9 @@ func TestAdminTestNeedsOneEmailAddress(t *testing.T) {
 
 func TestAdminTestNeedsModOfGroup(t *testing.T) {
 	prefix := uniquePrefix("adm_mjml_member")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	status, _ := sendAdminTest(t, token, map[string]interface{}{"groupid": groupID, "subject": "S", "text": "T"}, "a@example.com")

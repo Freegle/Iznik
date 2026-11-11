@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,8 +28,8 @@ func TestGroupWorryWordFiresOnRippledInCopy(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("ripworry")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	origin := CreateTestGroup(t, prefix+"_origin")
 	rippled := CreateTestGroup(t, prefix+"_rippled")
@@ -43,7 +44,7 @@ func TestGroupWorryWordFiresOnRippledInCopy(t *testing.T) {
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
 		"'$.spammers', JSON_OBJECT('worrywords', 'rabbit')) WHERE id = ?", rippled)
 
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil)

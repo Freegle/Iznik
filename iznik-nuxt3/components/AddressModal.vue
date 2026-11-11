@@ -342,6 +342,12 @@ async function add(callback) {
     instructions: updatedInstructions.value,
   })
 
+  if (!id) {
+    // Nothing was added: keep the form open and don't show the success tick.
+    callback(false)
+    return
+  }
+
   selectedAddress.value = id
 
   showAdd.value = false

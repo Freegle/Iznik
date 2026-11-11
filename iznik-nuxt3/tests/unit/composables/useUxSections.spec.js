@@ -5,6 +5,8 @@ import {
   uxSections,
   hostedFor,
 } from '~/modtools/composables/useUxSections'
+import ModSysAdminUxReplyConfirmDetail from '~/modtools/components/ModSysAdminUxReplyConfirmDetail.vue'
+import ModSysAdminUxInterestedDetail from '~/modtools/components/ModSysAdminUxInterestedDetail.vue'
 
 describe('useUxSections', () => {
   it('lists the sections in the order of their `order`', () => {
@@ -72,13 +74,20 @@ describe('useUxSections', () => {
     expect(last.order).toBe(90)
   })
 
-  it('has two places other parts add components to, and gives an empty list for a place it does not know', () => {
-    // Which components are in them depends on which other parts of the tab are there, so this names none.
+  it('hosts the reply confirmation detail on an experiment, gives a place it does not know an empty list', () => {
     expect(Object.keys(HOSTED).sort()).toEqual(['experiment', 'problem'])
-    expect(Array.isArray(HOSTED.problem)).toBe(true)
-    expect(Array.isArray(HOSTED.experiment)).toBe(true)
-    expect(hostedFor('problem')).toBe(HOSTED.problem)
-    expect(hostedFor('experiment')).toBe(HOSTED.experiment)
+    expect(HOSTED.experiment).toContain(ModSysAdminUxReplyConfirmDetail)
+    expect(hostedFor('experiment')).toContain(ModSysAdminUxReplyConfirmDetail)
     expect(hostedFor('nothing')).toEqual([])
+  })
+
+  it('hosts the interested button detail on an experiment', () => {
+    expect(hostedFor('experiment')).toContain(ModSysAdminUxInterestedDetail)
+  })
+
+  it('hosts each component once', () => {
+    for (const list of Object.values(HOSTED)) {
+      expect(new Set(list).size).toBe(list.length)
+    }
   })
 })

@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 ARG CLAUDE_UID=1000
 RUN if getent passwd node >/dev/null; then userdel -r node; fi && \
     useradd -m -u ${CLAUDE_UID} -s /bin/bash claude && \
-    mkdir -p /app/codebase /home/claude/.claude/debug && \
+    mkdir -p /app/codebase /home/claude/.claude/debug /home/claude/.claude/projects && \
     chown -R claude:claude /app /home/claude
 
 WORKDIR /app

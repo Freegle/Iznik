@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -47,9 +48,9 @@ func getPromises(t *testing.T, msgID uint64, token string) []map[string]interfac
 
 func setupPromisedMessage(t *testing.T, prefix string) (ownerID uint64, ownerToken string, otherID uint64, otherToken string, msgID uint64) {
 	t.Helper()
-	ownerID = CreateTestUser(t, prefix+"_owner", "User")
+	ownerID = CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken = CreateTestSession(t, ownerID)
-	otherID = CreateTestUser(t, prefix+"_other", "User")
+	otherID = CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken = CreateTestSession(t, otherID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID = CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -156,7 +157,7 @@ func TestAcceptAgreementOnlyByPromisedMember(t *testing.T) {
 	prefix := uniquePrefix("agr_notmine")
 	db := database.DBConn
 	ownerID, ownerToken, otherID, _, msgID := setupPromisedMessage(t, prefix)
-	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
+	strangerID := CreateTestUser(t, prefix+"_stranger", utils.SYSTEMROLE_USER)
 	_, strangerToken := CreateTestSession(t, strangerID)
 
 	status, _ := postAgreementAction(t, ownerToken, map[string]interface{}{

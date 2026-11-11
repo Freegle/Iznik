@@ -7,6 +7,8 @@ const mockFetchMT = vi.fn()
 const mockFetchMultiple = vi.fn()
 const mockFetchPublicLocation = vi.fn()
 const mockRate = vi.fn()
+const mockUnrated = vi.fn()
+const mockAction = vi.fn()
 const mockEngaged = vi.fn()
 const mockMuteOnChitChat = vi.fn()
 const mockUnMuteOnChitChat = vi.fn()
@@ -18,6 +20,13 @@ const mockUserAdd = vi.fn()
 const mockPurge = vi.fn()
 const mockRatingReviewed = vi.fn()
 
+vi.mock('~/composables/useClientLog', () => ({
+  action: (...args) => mockAction(...args),
+}))
+vi.mock('~/composables/useExperiment', () => ({
+  experimentVariant: () => 'rate-on-return:b',
+}))
+
 vi.mock('~/api', () => ({
   default: () => ({
     user: {
@@ -27,6 +36,7 @@ vi.mock('~/api', () => ({
       fetchMultiple: mockFetchMultiple,
       fetchPublicLocation: mockFetchPublicLocation,
       rate: mockRate,
+      unrated: mockUnrated,
       engaged: mockEngaged,
       muteOnChitChat: mockMuteOnChitChat,
       unMuteOnChitChat: mockUnMuteOnChitChat,
@@ -370,6 +380,37 @@ describe('user store', () => {
 
       await store.rate(1, 'Up', 'helpful', 'Great trader')
       expect(mockRate).toHaveBeenCalledWith(1, 'Up', 'helpful', 'Great trader')
+    })
+
+    it('rate logs user_rated with the source and the arms, so an experiment can count it', async () => {
+      mockRate.mockResolvedValue({})
+      mockFetchMultiple.mockResolvedValue([{ id: 1, displayname: 'Rated' }])
+      mockAction.mockClear()
+
+      await store.rate(1, 'Down', 'NoShow', 'Never came', 'rating_nudge')
+      expect(mockAction).toHaveBeenCalledWith('user_rated', {
+        rating: 'Down',
+        source: 'rating_nudge',
+        variant: 'rate-on-return:b',
+      })
+    })
+
+    it('taking a rating back is not logged as a rating', async () => {
+      mockRate.mockResolvedValue({})
+      mockFetchMultiple.mockResolvedValue([{ id: 1, displayname: 'Rated' }])
+      mockAction.mockClear()
+
+      await store.rate(1, null)
+      expect(mockAction).not.toHaveBeenCalled()
+    })
+
+    it('fetchUnrated returns the list, or nothing when the API gives something else', async () => {
+      mockUnrated.mockResolvedValue([{ userid: 2, msgid: 3, gave: true }])
+      expect(await store.fetchUnrated()).toEqual([
+        { userid: 2, msgid: 3, gave: true },
+      ])
+      mockUnrated.mockResolvedValue({ error: 404 })
+      expect(await store.fetchUnrated()).toEqual([])
     })
 
     it('engaged calls API', async () => {

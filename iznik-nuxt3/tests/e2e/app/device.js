@@ -254,6 +254,53 @@ async function forceStop() {
   })
 }
 
+// --- How Android starts and restarts the app ----------------------------------------
+
+/**
+ * Starts the app the way a tap on a notification that Firebase put in the shade does:
+ * an explicit start of MainActivity, with the message's data as extras alongside its
+ * google.message_id. Chat pushes are sent with a notification block (forceVisible in
+ * PushNotificationService), so this is the intent a member's tap produces. fromHistory
+ * adds FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY, which is how Recents hands that same
+ * intent back after Android has killed the app.
+ */
+async function openFromNotification(data, { fromHistory = false } = {}) {
+  const extras = Object.entries({
+    'google.message_id': `app-e2e-${Date.now()}`,
+    ...data,
+  })
+    .map(([k, v]) => `--es ${shQuote(k)} ${shQuote(v)}`)
+    .join(' ')
+  // FLAG_ACTIVITY_NEW_TASK, and FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY from Recents.
+  const flags = fromHistory ? '0x10100000' : '0x10000000'
+  await shell(`am start -W -n ${PACKAGE}/${ACTIVITY} -f ${flags} ${extras}`)
+}
+
+/**
+ * Kills the backgrounded app the way Android does when it wants the memory: the task
+ * and the activity's saved state survive, so the next start rebuilds the activity
+ * rather than starting afresh. Unlike forceStop, which clears all that. Needs adbd
+ * running as root, as start-emulator.sh arranges.
+ */
+async function killInBackground() {
+  // SIGKILL, as the low-memory killer sends. `am kill` will not touch an app that
+  // has only just left the screen.
+  const running = await pid()
+  if (running) await shell(`kill -9 ${running}`)
+  await poll(async () => !(await pid()), {
+    timeoutMs: timeouts.ui.appearance,
+    what: 'the backgrounded app process to be killed',
+  })
+}
+
+/** Taps the app's launcher icon: MAIN/LAUNCHER, with the flags a launcher sends. */
+async function launchFromLauncher() {
+  // FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+  await shell(
+    `am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 -n ${PACKAGE}/${ACTIVITY}`
+  )
+}
+
 // --- Photos: the camera, the gallery, sharing into the app --------------------------
 
 /**
@@ -483,6 +530,9 @@ module.exports = {
   openUrl,
   screenshot,
   forceStop,
+  openFromNotification,
+  killInBackground,
+  launchFromLauncher,
   addImageToGallery,
   isShareTarget,
   shareImage,

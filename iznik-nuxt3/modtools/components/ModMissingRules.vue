@@ -60,6 +60,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
+import { ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
   expanded: {
@@ -86,7 +87,7 @@ const invalid = computed(() => {
     const mygroup = mygroups.find((g) => g.id === group.id)
     if (
       group.type === 'Freegle' &&
-      mygroup?.role === 'Owner' &&
+      mygroup?.role === ROLE_OWNER &&
       !group.rules &&
       group.publish
     ) {
@@ -105,7 +106,7 @@ const newRulesMissing = computed(() => {
     const mygroup = mygroups.find((g) => g.id === group.id)
     if (
       group.type === 'Freegle' &&
-      mygroup?.role === 'Owner' &&
+      mygroup?.role === ROLE_OWNER &&
       group.rules &&
       group.publish
     ) {

@@ -44,7 +44,6 @@ import MessageAPI from './MessageAPI.js'
 import MicroVolunteeringAPI from './MicroVolunteeringAPI.js'
 import ModConfigsAPI from './ModConfigsAPI.js'
 import NewsAPI from './NewsAPI.js'
-import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
 import PartnershipsAPI from './PartnershipsAPI.js'
 import RipplingAPI from './RipplingAPI.js'
@@ -54,6 +53,7 @@ import SpammersAPI from './SpammersAPI.js'
 import StatusAPI from './StatusAPI.js'
 import StoriesAPI from './StoriesAPI.js'
 import SupportAIAPI from './SupportAIAPI.js'
+import SupportCasesAPI from './SupportCasesAPI.js'
 import SystemLogsAPI from './SystemLogsAPI.js'
 import TeamAPI from './TeamAPI.js'
 import TownAPI from './TownAPI.js'
@@ -62,6 +62,8 @@ import UserAPI from './UserAPI.js'
 import UserSearchAPI from './UserSearchAPI.js'
 import UxAPI from './UxAPI.js'
 import UxIdeasAPI from './UxIdeasAPI.js'
+import UxExperimentsAPI from './UxExperimentsAPI.js'
+import UxSurveysAPI from './UxSurveysAPI.js'
 import VisualiseAPI from './VisualiseAPI.js'
 import VolunteeringAPI from './VolunteeringAPI.js'
 
@@ -100,7 +102,6 @@ interface API {
   microvolunteering: MicroVolunteeringAPI;
   modconfigs: ModConfigsAPI;
   news: NewsAPI;
-  noticeboard: NoticeboardAPI;
   notification: NotificationAPI;
   partnerships: PartnershipsAPI;
   rippling: RipplingAPI;
@@ -110,6 +111,7 @@ interface API {
   status: StatusAPI;
   stories: StoriesAPI;
   supportai: SupportAIAPI;
+  supportcases: SupportCasesAPI;
   systemlogs: SystemLogsAPI;
   team: TeamAPI;
   town: TownAPI;
@@ -118,6 +120,8 @@ interface API {
   usersearch: UserSearchAPI;
   ux: UxAPI;
   uxideas: UxIdeasAPI;
+  uxexperiments: UxExperimentsAPI;
+  uxsurveys: UxSurveysAPI;
   visualise: VisualiseAPI;
   volunteering: VolunteeringAPI;
 }

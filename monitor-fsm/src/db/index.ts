@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, MIGRATION_V6_SQL, MIGRATION_V7_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, MIGRATION_V6_SQL, MIGRATION_V7_SQL, MIGRATION_V8_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -102,6 +102,20 @@ function applySchema(db: DB): void {
     })()
     if (!allowsNeedsDetail) {
       try { db.exec(MIGRATION_V7_SQL) } catch { /* already rebuilt */ }
+    }
+  }
+  if (current < 8) {
+    // Rebuild discourse_bug so 'no-reply' is allowed, guarded the same way.
+    const allowsNoReply = (() => {
+      try {
+        const row = db.prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='discourse_bug'"
+        ).get() as { sql?: string } | undefined
+        return !!row?.sql && row.sql.includes("'no-reply'")
+      } catch { return false }
+    })()
+    if (!allowsNoReply) {
+      try { db.exec(MIGRATION_V8_SQL) } catch { /* already rebuilt */ }
     }
   }
   if (current < SCHEMA_VERSION) {
@@ -216,7 +230,7 @@ export function getDiscourseBug(db: DB, topic: number, post: number): DiscourseB
 export function listOpenDiscourseBugs(db: DB): DiscourseBugRow[] {
   return db.prepare(`
     SELECT * FROM discourse_bug
-    WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate','feature-request')
+    WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate','feature-request','no-reply')
     ORDER BY topic, post
   `).all() as DiscourseBugRow[]
 }
@@ -338,6 +352,32 @@ export function markDiscourseBugFixed(db: DB, topic: number, post: number, prNum
     SET state = 'fixed', pr_number = ?, fixed_at = datetime('now'), last_seen_at = datetime('now')
     WHERE topic = ? AND post = ?
   `).run(prNumber, topic, post)
+}
+
+/**
+ * A later post in the same topic, by the person who reported a problem, says it now works. Close their
+ * most recent earlier report that is still live, as 'confirmed', whoever fixed it. Before this a report
+ * fixed by hand rather than by the monitor stayed open for ever: the reporter's "loaded instantly, thank
+ * you" only refreshed its timestamp (10226/12). Only the reporter's own word closes their report.
+ * Returns the report closed, or null.
+ */
+export function closeReportConfirmedByReporter(
+  db: DB, topic: number, laterPost: number, reporter: string | null | undefined,
+): { topic: number; post: number } | null {
+  if (!reporter) return null
+  const row = db.prepare(`
+    SELECT topic, post FROM discourse_bug
+    WHERE topic = ? AND post < ? AND reporter = ?
+      AND state IN ('open','investigating','deferred','needs-detail')
+    ORDER BY post DESC LIMIT 1
+  `).get(topic, laterPost, reporter) as { topic: number; post: number } | undefined
+  if (!row) return null
+  db.prepare(`
+    UPDATE discourse_bug
+    SET state = 'confirmed', reason = ?, fixed_at = COALESCE(fixed_at, datetime('now')), last_seen_at = datetime('now')
+    WHERE topic = ? AND post = ?
+  `).run(`the reporter said it works (post ${laterPost})`, row.topic, row.post)
+  return row
 }
 
 // -------- Sentry issue --------

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-12
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
@@ -13,6 +13,7 @@ covers:
   - iznik-nuxt3/modtools/components/ModAdmin.vue
   - iznik-server-go/admin/admin.go
   - iznik-batch/app/Console/Commands/Mail/CopyAdminsCommand.php
+  - iznik-batch/app/Console/Commands/Mail/SendAdminCommand.php
   - iznik-server-go/admin/content.go
   - iznik-batch/app/Services/AdminMjmlSanitiser.php
   - iznik-nuxt3/modtools/composables/useAdminContent.js
@@ -64,6 +65,10 @@ something optional, using `<editthis>` and `<optional>` tags. See
 [fill-in boxes and optional bits](moderating-posts.md#fill-in-boxes-and-optional-bits)
 for what a moderator then sees when they send it.
 
+An **Edit and Message** action adds its text to the post and sends the poster a separate
+message, which you write in the **Message to poster** box. See
+[adding a note to a post and telling the poster](moderating-posts.md#adding-a-note-to-a-post-and-telling-the-poster).
+
 **Export PDF** produces the whole set as one document: the general settings, the BCC
 settings for each queue, and every standard message with its wording and what sending it
 does. Useful for reviewing a set away from the screen, agreeing wording with your fellow
@@ -92,8 +97,11 @@ already read and copy those.
 ## Broadcasts to the whole community
 
 **ADMINs** (`/admins`) sends a message to the whole community. You can create an
-**Essential** message (which members cannot opt out of) or a **Newsletter** message
-(which they can), optionally with a call-to-action button. Admins and Support can target a
+**Essential** message (which members cannot opt out of) or a **Newsletter** message,
+optionally with a call-to-action button. A Newsletter can ask for donations, so it only goes
+to members who have said yes to **Freegle updates** (news and ways to support Freegle) and
+have not turned off donation requests. It never goes to someone that Rippling or TrashNothing
+put on the community without them choosing it. Moderators get it on the same terms. Admins and Support can target a
 single community or suggest copies to many communities that each community then edits and
 approves. A community's own ADMIN goes to all its members; a copy of a suggested ADMIN only goes to
 members active in the last six months, to keep a burst of mail across every community from drawing spam
@@ -123,7 +131,9 @@ unsubscribe links, and both versions end with the community's volunteers ("Your 
 are ...") and the standard footer: the HMRC charity line and the registered address. So you do not
 need to add your own names. A moderator is named if they have used Freegle in the last year and
 have *Show me as a volunteer* on in their own Settings; anyone with it off is left out. That
-footer, with the names it will use, is shown under the message box, and under the MJML box with a
+footer, with the names it will use, is shown under the message box. An ADMIN sent on behalf of
+someone else, such as a council partner, can leave the volunteers out and come from Freegle instead of
+the community's volunteers, so it does not look as if they wrote it; that is set centrally (`admins.volunteercredits`), not in ModTools. The footer is also shown under the MJML box, with a
 copy button that gives the designed version, the names and the footer as one document for the
 [MJML live editor](https://mjml.io/try-it-live). Members whose email shows formatted mail get the designed version and
 everyone else gets the plain text, so both must say the same. Before it is sent, scripts, forms,
@@ -170,21 +180,29 @@ service. It is useful for understanding why a post turned up where it did.
 ## Specialist tools (permission-gated)
 
 - **Gift Aid** (`/giftaid`, Gift Aid permission) - search Gift Aid declarations and their
-  linked donations.
+  linked donations. Each result says *Consent given* or *Consent declined*. You can also
+  record a donor's answer for them, without signing in as them: *They declined* when they
+  tell you we can't claim, or *Asked, no reply yet* each time you ask and hear nothing. The
+  *Asked, no reply* list, below the boxes for recording a donation and pasting from Xero,
+  shows every donor still waiting, how many times they were asked, and when. It starts
+  folded; open it with *Show the donors waiting for a reply*.
 - **Freegle Helper / Clearances** (`/helper-escalated` and the helper flow, Clearance
   permission) - the queue for the AI concierge that manages replies to bulk clearance
   offers, plus a read-only explainer of how it works.
 
-## Support and sysadmin tools (Support and Admin only)
+## Support and sysadmin tools
 
 These pages are only available to volunteers with the Support or Admin system role:
 
-- **Sysadmin** (`/sysadmin`) - housekeeping, cron jobs, outgoing and incoming email,
-  scrolling and click-through analytics, and rippling analytics.
 - **Support** (`/support`) - look up a user, community or message, the AI Support Helper
-  (work in progress), and spam keyword configuration.
+  and spam keyword configuration.
 - **Images** (`/images`) - review and regenerate AI-generated item images that volunteers
   have flagged.
+
+This one is for the Admin system role only, and is not in the menu for anyone else:
+
+- **Sysadmin** (`/sysadmin`) - housekeeping, cron jobs, outgoing, incoming and delayed
+  email, member behaviour and experiments, rippling analytics and the AI Helper review.
 
 ## Partner platforms: TrashNothing and LoveJunk
 
@@ -196,7 +214,10 @@ chat and moderate them as normal.
   who joined through TrashNothing appears as an ordinary member and posts and replies just
   like anyone else. A few of their settings (some email and notification preferences) are
   managed by TrashNothing rather than Freegle, so those options may be hidden on their
-  member panel.
+  member panel. You cannot add a TrashNothing member to your community yourself, and they
+  are not sent the Stories newsletter, engagement emails or Community News. A member whose
+  post TrashNothing placed on your community without them choosing it is flagged on the members
+  page, as described in [managing members](managing-members.md).
 - **LoveJunk** is a reuse marketplace that Freegle shares OFFERs with, to help more items
   get taken. By default your community's OFFERs are also shown on LoveJunk, and LoveJunk
   users can reply through the normal chat. Those members show a "LoveJunk user" note on

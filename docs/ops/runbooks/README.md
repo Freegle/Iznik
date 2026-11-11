@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-07
+last_reviewed: 2026-10-19
 owner: Freegle dev team
 ---
 
@@ -53,6 +53,15 @@ host after any change).
 
 - Full steps: **[deployment-spend-optimisation.md](deployment-spend-optimisation.md)**.
 - Run roughly monthly, or when a host crosses ~75% disk use.
+
+## Quarterly Royal Mail address data (PAF)
+
+Every three months AFD email the board an unlock key for the new Royal Mail address release.
+An Admin opens the PAF Database Update row on SysAdmin, Housekeeping, and pastes it in. The
+server downloads, unlocks and applies the release in the background; the pop-up shows its
+progress.
+
+- Full steps: **[paf-address-data.md](paf-address-data.md)**.
 
 ## Annual AGM category on Discourse
 
@@ -128,6 +137,13 @@ batch host with `lockdown:on`. Nothing lifts on its own; lifting is a sequence o
 - Full steps: **[lockdown.md](lockdown.md)**.
 - Check the "Taking effect" list after pressing: every batch job should tick within
   seconds, and "Sent since the press" should stay at 0.
+
+## Claude broker on the docker host
+
+The AI support helper and Community News reach Freegle's Claude accounts through a broker
+container, `claude-broker`, rather than holding a token themselves.
+
+- Full steps: **[claude-broker.md](claude-broker.md)**.
 
 ## Adding a runbook
 

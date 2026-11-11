@@ -118,7 +118,7 @@
                   }}</b-td>
                 </b-tr>
                 <b-tr>
-                  <b-td>Benefit (£)</b-td>
+                  <b-td>Benefit (£)*</b-td>
                   <b-td>{{
                     last3MonthsBenefitTotal[0]
                       ? last3MonthsBenefitTotal[0].toLocaleString()
@@ -179,6 +179,7 @@
                 </b-tr>
               </b-tbody>
             </b-table-simple>
+            <p class="text-muted small ps-1">* {{ last3MonthsFlyTipNote }}</p>
             <h3>Freegle Community Data</h3>
             <b-table-simple>
               <b-thead>
@@ -301,6 +302,7 @@
               <StatsImpact
                 :total-weight="totalWeight"
                 :total-benefit="totalBenefit"
+                :benefit-note="flyTipNote"
                 :total-c-o2="totalCO2"
                 :total-gifts="totalGifts"
                 :total-members="totalMembers"
@@ -417,13 +419,15 @@ import StatsImpact from '~/components/StatsImpact.vue'
 import { buildHead } from '~/composables/useBuildHead'
 import { useStatsStore } from '~/stores/stats'
 import {
-  parseOutcomeDate,
   DASHBOARD_CHART_HEADER,
   hasChartDataRows,
+  sumCountsInRange,
 } from '~/composables/useAuthoritySearch'
 import {
   getBenefitPerTonne,
   CO2_PER_TONNE,
+  calculateFlyTipSaving,
+  describeFlyTipSaving,
 } from '~/composables/useReuseBenefit'
 
 const GroupMarker = defineAsyncComponent(
@@ -432,8 +436,8 @@ const GroupMarker = defineAsyncComponent(
 
 // Benefit of reuse per tonne and CO2 impact based on WRAP figures.
 // https://wrap.org.uk/resources/tool/benefits-reuse-tool
-// The benefit value is inflation-adjusted to current year prices.
-// CO2_PER_TONNE and getBenefitPerTonne() are imported from useReuseBenefit.
+// The benefit adds the fly-tipping clear-up costs avoided for the gifts made.
+// Both are inflation-adjusted to current year prices by useReuseBenefit.
 
 // Setup stores and route
 const statsStore = useStatsStore()
@@ -543,39 +547,44 @@ const totalWeight = computed(() => {
   return Math.round(totalWeightUnRounded.value / 100) / 10
 })
 
-// Benefit of reuse per tonne and CO2 impact based on WRAP figures.
-// The benefit value is inflation-adjusted to current year prices.
+const totalFlyTipSaving = computed(() => {
+  return calculateFlyTipSaving(totalGifts.value)
+})
+
 const totalBenefit = computed(() => {
-  return (totalWeightUnRounded.value * getBenefitPerTonne()) / 1000
+  return (
+    (totalWeightUnRounded.value * getBenefitPerTonne()) / 1000 +
+    totalFlyTipSaving.value
+  )
+})
+
+const flyTipNote = computed(() => {
+  return describeFlyTipSaving(totalFlyTipSaving.value)
 })
 
 const totalCO2 = computed(() => {
   return (totalWeightUnRounded.value * CO2_PER_TONNE) / 1000
 })
 
-const totalGifts = computed(() => {
+// Gifts made between start and end, across the communities serving the area,
+// each scaled by how much of it lies inside the area.
+function giftsBetween(start, end) {
   let count = 0
 
   for (const groupid in stats.value) {
-    const overlapValue = overlap(groupid)
-    const stat = stats.value[groupid]
-    const outcomes = Array.isArray(stat.OutcomesPerMonth)
-      ? stat.OutcomesPerMonth
-      : []
-
-    const start = dayjs(startDate.value)
-    const end = dayjs(endDate.value)
-
-    for (const outcome of outcomes) {
-      const m = dayjs(parseOutcomeDate(outcome.date))
-
-      if (!m.isBefore(start) && !m.isAfter(end)) {
-        count += outcome.count * overlapValue
-      }
-    }
+    count += sumCountsInRange(
+      stats.value[groupid].OutcomesPerMonth,
+      start,
+      end,
+      overlap(groupid)
+    )
   }
 
-  return Math.round(count)
+  return count
+}
+
+const totalGifts = computed(() => {
+  return Math.round(giftsBetween(dayjs(startDate.value), dayjs(endDate.value)))
 })
 
 const weightByMonth = computed(() => {
@@ -825,13 +834,26 @@ const last3MonthsKgsTotal = computed(() => {
   return ret
 })
 
+const last3MonthsFlyTipSaving = computed(() => {
+  return last3MonthsGiftsTotal.value.map((gifts) =>
+    calculateFlyTipSaving(gifts)
+  )
+})
+
 const last3MonthsBenefitTotal = computed(() => {
   const benefitPerTonne = getBenefitPerTonne()
-  return [
-    Math.round((last3MonthsKgsTotal.value[0] * benefitPerTonne) / 1000),
-    Math.round((last3MonthsKgsTotal.value[1] * benefitPerTonne) / 1000),
-    Math.round((last3MonthsKgsTotal.value[2] * benefitPerTonne) / 1000),
-  ]
+  return [0, 1, 2].map((mon) =>
+    Math.round(
+      ((last3MonthsKgsTotal.value[mon] || 0) * benefitPerTonne) / 1000 +
+        last3MonthsFlyTipSaving.value[mon]
+    )
+  )
+})
+
+const last3MonthsFlyTipNote = computed(() => {
+  return describeFlyTipSaving(
+    last3MonthsFlyTipSaving.value.reduce((sum, saving) => sum + saving, 0)
+  )
 })
 
 const last3MonthsCO2Total = computed(() => {
@@ -843,36 +865,9 @@ const last3MonthsCO2Total = computed(() => {
 })
 
 const last3MonthsGiftsTotal = computed(() => {
-  const ret = []
-
-  for (let mon = 2; mon >= 0; mon--) {
-    let count = 0
-
-    for (const groupid in stats.value) {
-      const overlapValue = overlap(groupid)
-      const stat = stats.value[groupid]
-      const outcomes = Array.isArray(stat.OutcomesPerMonth)
-        ? stat.OutcomesPerMonth
-        : []
-      let thisone = 0
-
-      const start = last3Months.value[mon].startOf('month')
-      const end = last3Months.value[mon].endOf('month')
-
-      for (const outcome of outcomes) {
-        const m = dayjs(parseOutcomeDate(outcome.date))
-
-        if (!m.isBefore(start) && !m.isAfter(end)) {
-          thisone += outcome.count * overlapValue
-          count += thisone
-        }
-      }
-    }
-
-    ret[mon] = Math.round(count)
-  }
-
-  return ret
+  return last3Months.value.map((month) =>
+    Math.round(giftsBetween(month.startOf('month'), month.endOf('month')))
+  )
 })
 
 const last3MonthsGroups = computed(() => {

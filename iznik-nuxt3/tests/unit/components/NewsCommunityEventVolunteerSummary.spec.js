@@ -140,9 +140,9 @@ describe('NewsCommunityEventVolunteerSummary', () => {
   })
 
   describe('volunteer opportunities row', () => {
-    it('renders link to /volunteering', async () => {
+    it('renders link to the /volunteerings list', async () => {
       const wrapper = await createWrapper()
-      const link = wrapper.find('a[data-to="/volunteering"]')
+      const link = wrapper.find('a[data-to="/volunteerings"]')
       expect(link.exists()).toBe(true)
     })
 

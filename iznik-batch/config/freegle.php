@@ -57,6 +57,32 @@ return [
         'min_lastaccess_days' => EnvSetting::env('FREEGLE_MATCHED_MIN_LASTACCESS_DAYS', 90),
     ],
 
+    // The "I'm interested" chase-up (messages:interested-chaseup): a mark that has stood this long with no reply,
+    // on a post that is still open, is named once in an email. Marks older than max_age_days are left alone.
+    'interested' => [
+        'chaseup_after_hours' => (int) EnvSetting::env('FREEGLE_INTERESTED_CHASEUP_AFTER_HOURS', 24),
+        'max_age_days' => (int) EnvSetting::env('FREEGLE_INTERESTED_MAX_AGE_DAYS', 7),
+        // Members handled per round, so one run never holds every member's rows at once.
+        'chunk' => (int) EnvSetting::env('FREEGLE_INTERESTED_CHUNK', 200),
+    ],
+
+    // The experiment familiar-poster: new posts from people a member has chatted with
+    // (messages:familiar-posts). docs/developers/reference/familiar-posts-email.md.
+    'familiar_posts' => [
+        // A chat counts when each of the two wrote in it within this many days.
+        'lookback_days' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_LOOKBACK_DAYS', 90),
+        // At most this many members are told about one post, those chatted with most recently first.
+        'max_recipients_per_post' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MAX_RECIPIENTS_PER_POST', 20),
+        // At most this many posts in one email.
+        'max_posts_per_email' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MAX_POSTS_PER_EMAIL', 3),
+        // A member is reached at most once in this many hours...
+        'min_gap_hours' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MIN_GAP_HOURS', 24),
+        // ...and on at most this many of the last seven days.
+        'max_days_per_week' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MAX_DAYS_PER_WEEK', 2),
+        // A run never reads posts older than this, however long since the last run.
+        'window_hours' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_WINDOW_HOURS', 6),
+    ],
+
     'avatar_server_url' => EnvSetting::env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
 
     'donations' => [
@@ -120,6 +146,13 @@ return [
         // app root unless absolute). Freegle ships no such file; a deployment
         // adds its own jobs there instead of editing routes/console.php.
         'overlay' => EnvSetting::env('FREEGLE_SCHEDULE_OVERLAY', 'routes/console.deployment.php'),
+    ],
+
+    // Daily rollup of digest click-through by post position (email:digest-positions-rollup), which the
+    // ModTools SysAdmin chart sums. Clicks keep arriving for days after a digest goes out, so each run
+    // recomputes this many days ending yesterday.
+    'digest_positions_rollup' => [
+        'days' => (int) EnvSetting::env('DIGEST_POSITIONS_ROLLUP_DAYS', 14),
     ],
 
     'backup' => [
@@ -478,11 +511,6 @@ return [
             // problem than a real miss.
             'max_age_hours' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_MAX_AGE_HOURS', 72),
         ],
-
-        // Merge the duplicate TN accounts the old address filter could not see. Off
-        // until the backlog has been reviewed with "tn:sync --report-duplicates": it is
-        // ~96 pairs of live members and merging a pair deletes one of them.
-        'merge_legacy_duplicates' => EnvSetting::env('FREEGLE_TN_MERGE_LEGACY_DUPLICATES', false),
     ],
 
     // Discourse forum REST API (V1 discourse_not_signed_up.php).
@@ -777,6 +805,9 @@ return [
         // posts for one area.
         'chitchat_items_per_post' => (int) EnvSetting::env('COMMUNITY_NEWS_CHITCHAT_ITEMS', 1),
         'chitchat_min_days'       => (int) EnvSetting::env('COMMUNITY_NEWS_CHITCHAT_MIN_DAYS', 3),
+        // Areas researched per hourly run, oldest first. 461 areas every 3 days is about 6.4 an hour, so 7
+        // keeps up while never sending them all in one run (the subscription is shared with the AI support helper).
+        'research_max_per_run'    => (int) EnvSetting::env('COMMUNITY_NEWS_RESEARCH_MAX_PER_RUN', 7),
 
         // Weekly email: minimum days between digests for one area, and how many
         // items to include.
@@ -1545,6 +1576,16 @@ return [
         // split-name pattern as FIREBASE_HOST_PATH so the host path never
         // leaks into the container environment).
         'host_ssh_key' => EnvSetting::env('FREEGLE_MONITORING_SSH_KEY', '/etc/monitoring-ssh-key'),
+        // How long security updates or a required reboot may stay pending on a
+        // host before it is a red number on the SysAdmin Cron Jobs tab (see
+        // HostPatchTracker). The default is for the weekly hosts: freegle-maint
+        // patches each one every 7 days, plus 2 days of grace. db2 and db3 are
+        // patched in alternate weeks, so each is done every 14 days: set those
+        // to 16 in the overrides ("db2=16,db3=16", bare host names). The
+        // overrides name hosts, so like FREEGLE_MONITORING_HOSTS they live in
+        // .env.background, not here.
+        'patch_max_age_days' => (int) EnvSetting::env('FREEGLE_MONITORING_PATCH_MAX_AGE_DAYS', 9),
+        'patch_max_age_overrides' => EnvSetting::env('FREEGLE_MONITORING_PATCH_MAX_AGE_OVERRIDES', ''),
         // Per-host probe timeout. ConnectTimeout is 10s inside this budget.
         'host_ssh_timeout_seconds' => (int) EnvSetting::env('FREEGLE_MONITORING_SSH_TIMEOUT', 30),
 
@@ -1629,6 +1670,43 @@ return [
         'stale_after_days' => (int) EnvSetting::env('COOKIEYES_STALE_AFTER_DAYS', 45),
     ],
 
+    // Google housekeeping (google:search-console-check, google:ads-check). Credentials come from
+    // the environment, nothing is stored in the database. See
+    // docs/developers/reference/google-housekeeping.md for how to create them.
+    'google' => [
+        'search_console_enabled' => (bool) EnvSetting::env('GOOGLE_SEARCH_CONSOLE_CHECK_ENABLED', true),
+        'ads_enabled' => (bool) EnvSetting::env('GOOGLE_ADS_CHECK_ENABLED', true),
+        // The service account's JSON key, base64 encoded (preferred) or as a file path.
+        'service_account_b64' => EnvSetting::env('GOOGLE_SERVICE_ACCOUNT_B64', ''),
+        'service_account_file' => EnvSetting::env('GOOGLE_SERVICE_ACCOUNT_FILE', ''),
+        'search_console' => [
+            // Comma separated property URLs to check. Empty means every property the service account can see.
+            'sites' => EnvSetting::env('GOOGLE_SEARCH_CONSOLE_SITES', ''),
+            'sitemap_url' => EnvSetting::env('GOOGLE_SEARCH_CONSOLE_SITEMAP', 'https://www.ilovefreegle.org/sitemap.xml'),
+            // Only properties whose URL contains this are expected to have that sitemap.
+            'sitemap_site_match' => 'ilovefreegle.org',
+            'max_sitemap_age_days' => (int) EnvSetting::env('GOOGLE_SEARCH_CONSOLE_MAX_SITEMAP_AGE_DAYS', 14),
+            // Live posts to ask Google about each week, as well as the home page. 0 turns it off.
+            'inspect_posts' => (int) EnvSetting::env('GOOGLE_SEARCH_CONSOLE_INSPECT_POSTS', 3),
+        ],
+        'ads' => [
+            // Optional. Google now grants Ads API access to the Cloud project (Explorer or Basic level in
+            // the Cloud console), and a project with that access needs no developer token. Sent when set.
+            'developer_token' => EnvSetting::env('GOOGLE_ADS_DEVELOPER_TOKEN', ''),
+            'customer_id' => EnvSetting::env('GOOGLE_ADS_CUSTOMER_ID', ''),
+            // Only needed when the account is reached through a manager account.
+            'login_customer_id' => EnvSetting::env('GOOGLE_ADS_LOGIN_CUSTOMER_ID', ''),
+            'client_id' => EnvSetting::env('GOOGLE_ADS_CLIENT_ID', ''),
+            'client_secret' => EnvSetting::env('GOOGLE_ADS_CLIENT_SECRET', ''),
+            'refresh_token' => EnvSetting::env('GOOGLE_ADS_REFRESH_TOKEN', ''),
+            // Google retires old API versions about a year after release; bump when it does. v21 was
+            // already gone (404) and v22 refused as deprecated on 2026-10-24.
+            'api_version' => EnvSetting::env('GOOGLE_ADS_API_VERSION', 'v26'),
+            // The Ad Grants click-through floor. 0 turns the check off.
+            'min_ctr' => (float) EnvSetting::env('GOOGLE_ADS_MIN_CTR', 0.05),
+        ],
+    ],
+
     'lovejunk' => [
         'api' => EnvSetting::env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
         'secret' => EnvSetting::env('LOVE_JUNK_SECRET', ''),
@@ -1644,6 +1722,9 @@ return [
     'whatjobs' => [
         'feed1' => EnvSetting::env('WHATJOBS_FEED1', ''),
         'feed2' => EnvSetting::env('WHATJOBS_FEED2', ''),
+        // The newest job may be at most this old before integrations:check-whatjobs-freshness
+        // fails and the SysAdmin Cron Jobs tab goes red.
+        'max_feed_age_hours' => (int) EnvSetting::env('WHATJOBS_MAX_FEED_AGE_HOURS', 48),
     ],
 
     'reach_volunteering' => [
@@ -1655,6 +1736,48 @@ return [
         // a few times before giving up, since the timeout is load-related.
         'fetch_attempts'      => (int) EnvSetting::env('REACH_VOLUNTEERING_FETCH_ATTEMPTS', 3),
         'retry_delay_seconds' => (int) EnvSetting::env('REACH_VOLUNTEERING_RETRY_DELAY_SECONDS', 30),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI item pictures
+    |--------------------------------------------------------------------------
+    |
+    | Before a picture is generated for a new item name, Gemini says which item the
+    | name means, so variants share one picture. A fixed model, because the reuse
+    | rate and the judged quality were measured on this one: a "latest" alias would
+    | change the answers underneath. No key means no cleaning: names are generated
+    | as they were. docs/developers/reference/ai-item-images.md.
+    |
+    */
+    'ai_images' => [
+        'gemini_api_key' => EnvSetting::env('GOOGLE_GEMINI_API_KEY', ''),
+        'clean_model' => EnvSetting::env('AI_IMAGE_CLEAN_MODEL', 'gemini-3.5-flash-lite'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Auto-split of multi-item posts
+    |--------------------------------------------------------------------------
+    |
+    | A new native OFFER that lists several separate things becomes a multi-item post: the
+    | text splitter lists the items, the photo splitter gives each photo to the item it shows
+    | and crops photos of several items. docs/developers/reference/auto-split.md.
+    |
+    | mode: "off" does nothing, "shadow" records what it would do in messages_autosplit
+    | without changing the post, "on" splits. Anything else is off. The model is pinned,
+    | because the prompts were tuned and backtested on it: a "latest" alias would change the
+    | answers underneath.
+    |
+    */
+    'autosplit' => [
+        'mode' => EnvSetting::env('AUTOSPLIT_MODE', 'off'),
+        'gemini_api_key' => EnvSetting::env('GOOGLE_GEMINI_API_KEY', ''),
+        'model' => EnvSetting::env('AUTOSPLIT_MODEL', 'gemini-3.8-flash'),
+        // Posts older than this when the job first sees them are left alone.
+        'window_minutes' => (int) EnvSetting::env('AUTOSPLIT_WINDOW_MINUTES', 120),
+        // Photos looked at per post; the rest stay shared post photos.
+        'max_photos' => (int) EnvSetting::env('AUTOSPLIT_MAX_PHOTOS', 8),
     ],
 
     /*
@@ -1769,6 +1892,35 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Support case first pass
+    |--------------------------------------------------------------------------
+    |
+    | When a moderator refers a chat to Support, support:first-pass runs one bounded AI pass over
+    | the member's data and writes a brief, which the referral mail carries. The helper's address
+    | and shared secret are the UX helper's (freegle.ux.prompts). Off unless
+    | SUPPORT_FIRST_PASS_ENABLED is 1 or true; while off, the referral mail goes out without a brief.
+    |
+    | timeout: the helper's own deadline is 480 seconds (FIRST_PASS_DEADLINE_MS); this wait is 30 longer.
+    | per_referrer_per_day: model passes one moderator may use a day, so one person cannot spend the pool.
+    | max_age_minutes: a case still waiting this long gets the plain mail and is never run late.
+    | run_minutes: one support:first-pass run stops claiming new cases after this long.
+    |
+    */
+    'support' => [
+        'first_pass' => [
+            'enabled' => EnvSetting::flag(EnvSetting::env('SUPPORT_FIRST_PASS_ENABLED', false)),
+            'timeout' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_TIMEOUT', 510),
+            'per_referrer_per_day' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_PER_REFERRER_PER_DAY', 10),
+            'max_age_minutes' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_MAX_AGE_MINUTES', 60),
+            'run_minutes' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_RUN_MINUTES', 10),
+            // Where the batch fetches chat images from, the way the Go API builds them.
+            'uploads_url' => EnvSetting::env('UPLOADS', 'https://uploads.ilovefreegle.org:8080/'),
+        ],
+    ],
+
+
+    /*
+    |--------------------------------------------------------------------------
     | UX telemetry
     |--------------------------------------------------------------------------
     |
@@ -1776,7 +1928,7 @@ return [
     | docs/developers/reference/ux-telemetry.md.
     |
     | features: feature key => Vue route NAMES (Nuxt names nested routes with a hyphen, so
-    | pages/noticeboards/[[id]].vue is "noticeboards-id"). A feature counts as used on a day
+    | pages/volunteering/[[id]].vue is "volunteering-id"). A feature counts as used on a day
     | when a page_view carries one of them. Add a line when a feature ships.
     |
     | flow_entry_routes: flow => the route names whose page_view is "someone arrived at the
@@ -1785,7 +1937,6 @@ return [
     */
     'ux' => [
         'features' => [
-            'noticeboards'    => ['noticeboards', 'noticeboards-id'],
             'volunteering'    => ['volunteering', 'volunteering-id', 'volunteerings'],
             'communityevents' => ['communityevents', 'communityevents-groupid', 'communityevent-id'],
             'stories'         => ['stories', 'stories-groupid', 'story-id'],
@@ -1803,6 +1954,33 @@ return [
             'ask'      => ['ask', 'ask-mobile'],
             'reply'    => ['message-id'],
             'settings' => ['settings'],
+        ],
+        // health_change_points: event metric => first full day it was collected the way it is
+        // today. The data-health check builds its baseline only from days on or after this, so a
+        // change in sampling (scroll and impressions went to 10% of sessions on 13 October 2026)
+        // or in what is sent (flow lines began that day) is not read as a fall or a rise.
+        'health_change_points' => [
+            'event:interaction' => '2026-10-14',
+            'event:impressions' => '2026-10-14',
+            'event:flow'        => '2026-10-14',
+        ],
+        // The member surveys (ux:prompt, ux:prompts-tick). See
+        // docs/developers/reference/ux-member-surveys.md.
+        'prompts' => [
+            'helper_url' => EnvSetting::env('UX_HELPER_URL', 'http://ai-support-helper:3000'),
+            // Coding a prompt's answers into problems uses no tools, but writing 300 answers out as
+            // JSON can take several minutes. This wait must be LONGER than the helper's own limit
+            // (10 minutes, UX_THEMES_TIMEOUT_MS in claude-agent-sdk/ux-themes.js), or the batch
+            // hangs up first, the helper aborts on the disconnect and every retry fails the same way.
+            'themes_timeout' => (int) EnvSetting::env('UX_THEMES_TIMEOUT', 660),
+            // Shared secret the helper's /internal/ux-themes and /internal/ux-groups routes require in
+            // the X-Freegle-Internal-Secret header, on top of its private-address check. Unset, the
+            // helper refuses everything and the batch does not try.
+            'internal_secret' => EnvSetting::env('UX_INTERNAL_SECRET', ''),
+            // Free-text answers go to an AI service for coding. Only 1 and true open this gate, set by
+            // a person after the public privacy wording has been checked to cover that. A bare (bool)
+            // cast would read "off" and "no" as true.
+            'privacy_cleared' => EnvSetting::flag(EnvSetting::env('UX_PRIVACY_CLEARED', false)),
         ],
         'report_to'       => EnvSetting::env('UX_REPORT_TO', EnvSetting::env('FREEGLE_GEEKS_ADDR', 'geeks@ilovefreegle.org')),
         'sample_per_step' => 20,
@@ -1903,5 +2081,37 @@ return [
             // An idea whose test was inconclusive goes back to waiting this many times at most.
             'max_attempts' => (int) EnvSetting::env('UX_IDEAS_MAX_ATTEMPTS', 2),
         ],
+
+        // The run length of an experiment decided on the server (mail, push, server code), per
+        // channel. ceiling_hours is the longest run (max_hours) a start is allowed. intake_hours is how
+        // long arms are served by default, and the rest of the run is the window members have to
+        // convert in. A web experiment keeps the global max_hours above. docs/developers/reference/
+        // ux-experiments.md, "Experiments in mail, push and the server".
+        'channels' => [
+            'push' => ['ceiling_hours' => 48, 'intake_hours' => 24],
+            'email' => ['ceiling_hours' => 168, 'intake_hours' => 24],
+            'server' => ['ceiling_hours' => 336, 'intake_hours' => 168],
+        ],
+
+        // Metric sources: the name an experiment gives in design.source => the class that counts it
+        // from the database instead of from Loki (App\Services\Ux\UxMetricSource).
+        'sources' => [
+            'email_click' => \App\Services\Ux\Sources\EmailClickSource::class,
+            'active_after' => \App\Services\Ux\Sources\ActiveAfterSource::class,
+            'interested_reply' => \App\Services\Ux\Sources\InterestedReplySource::class,
+            'familiar_reply' => \App\Services\Ux\Sources\FamiliarReplySource::class,
+            'hosting_ad_click' => \App\Services\Ux\Sources\HostingAdClickSource::class,
+            'confirm_reply_post' => \App\Services\Ux\Sources\ConfirmReplyPostSource::class,
+        ],
+    ],
+
+    // Royal Mail address data (PAF): paf:import-run, from the PAF update on SysAdmin Housekeeping. The
+    // extractor sidecar (paf-extractor/) holds the AFD SFTP login itself. See
+    // docs/ops/runbooks/paf-address-data.md.
+    'paf' => [
+        'extractor_url' => EnvSetting::env('PAF_EXTRACTOR_URL', 'http://paf-extractor:8080'),
+        // Lines per batch, and a pause between batches to leave the database room.
+        'batch_size' => (int) EnvSetting::env('PAF_BATCH_SIZE', 1000),
+        'pause_ms' => (int) EnvSetting::env('PAF_PAUSE_MS', 0),
     ],
 ];

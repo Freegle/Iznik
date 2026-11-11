@@ -176,7 +176,9 @@ Community News is inert until **all** of these are true:
    `ANTHROPIC_API_KEY` (metered) or `COMMUNITY_NEWS_OAUTH_TOKEN` /
    `CLAUDE_CODE_OAUTH_TOKEN` (subscription, via the bundled `claude` CLI) — see
    `.env.background.example`; both are wired into the dev batch service in
-   `docker-compose.yml`.
+   `docker-compose.yml`. On the docker host the token is the claude-broker
+   gateway password and `CLAUDE_BROKER_URL` points the CLI at the broker (see
+   `docs/ops/runbooks/claude-broker.md`).
 3. At least one community has `communitynews` enabled.
 4. **Email only:** `CommunityNews` is present in `FREEGLE_MAIL_ENABLED_TYPES`.
    The ChitChat trial does **not** need this — run the trial first, watch

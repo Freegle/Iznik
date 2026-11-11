@@ -83,6 +83,22 @@ describe('reply store', () => {
       expect(store.draftAt).toBeGreaterThanOrEqual(before)
     })
 
+    it('saveDraft keeps a photo and clearDraft forgets it', () => {
+      const store = useReplyStore()
+      const image = { id: 9, paththumb: 'https://example.com/t.jpg' }
+      store.saveDraft({ msgId: 42, message: '', collect: '', email: '', image })
+      expect(store.draftImage).toEqual(image)
+      store.clearDraft()
+      expect(store.draftImage).toBeNull()
+    })
+
+    it('clearReply forgets a pending photo', () => {
+      const store = useReplyStore()
+      store.replyImage = { id: 9, paththumb: 'https://example.com/t.jpg' }
+      store.clearReply()
+      expect(store.replyImage).toBeNull()
+    })
+
     it('saveDraft does not touch the pending-send fields', () => {
       const store = useReplyStore()
       store.saveDraft({ msgId: 42, message: 'Draft', collect: '', email: '' })

@@ -389,3 +389,59 @@ describe('task deferrals are recorded', () => {
     expect(getDiscourseBug(db, 9901, 1)?.state).toBe('open')
   })
 })
+
+// 10277/1 was deferred because the fix task could not read production (tunnel down),
+// and nothing ever looked at it again. A report parked only for that reason is reopened
+// once the live DB answers, a few times at most.
+describe('reports parked because production could not be read', () => {
+  const tunnelReason = 'deferred by fix task: ungrounded: production DB tunnel unavailable (ground.js db failed to connect); loki returns local-dev only'
+  let liveDbUp = true
+  let original: () => Promise<boolean>
+
+  beforeEach(async () => {
+    const { prodReachDeps } = await import('../actions/index.js')
+    original = prodReachDeps.liveDbAvailable
+    prodReachDeps.liveDbAvailable = async () => liveDbUp
+    liveDbUp = true
+  })
+
+  afterEach(async () => {
+    const { prodReachDeps } = await import('../actions/index.js')
+    prodReachDeps.liveDbAvailable = original
+  })
+
+  function park(topic: number, post: number, reason: string) {
+    upsertDiscourseBug(db, { topic, post, reporter: 'r', excerpt: 'Location changes are not logged.', state: 'open' })
+    db.prepare("UPDATE discourse_bug SET state = 'deferred', reason = ? WHERE topic = ? AND post = ?").run(reason, topic, post)
+  }
+
+  it('reopens it once the live DB answers', async () => {
+    park(9950, 1, tunnelReason)
+    const result = await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
+    expect(getDiscourseBug(db, 9950, 1)?.state).toBe('open')
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
+  })
+
+  it('leaves it parked while the live DB is still down', async () => {
+    liveDbUp = false
+    park(9951, 1, tunnelReason)
+    await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
+    expect(getDiscourseBug(db, 9951, 1)?.state).toBe('deferred')
+  })
+
+  it('does not reopen a report deferred for any other reason', async () => {
+    park(9952, 1, 'deferred by fix task: working-as-designed: external deliverability')
+    park(9953, 1, 'deferred by fix task: ungrounded: loki returns local-dev only')
+    await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
+    expect(getDiscourseBug(db, 9952, 1)?.state).toBe('deferred')
+    expect(getDiscourseBug(db, 9953, 1)?.state).toBe('deferred')
+  })
+
+  it('stops reopening after a few tries', async () => {
+    for (let i = 0; i < 4; i++) {
+      park(9954, 1, tunnelReason)
+      await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
+    }
+    expect(getDiscourseBug(db, 9954, 1)?.state).toBe('deferred')
+  })
+})

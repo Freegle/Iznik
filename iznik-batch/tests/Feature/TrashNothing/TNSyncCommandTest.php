@@ -3,9 +3,13 @@
 namespace Tests\Feature\TrashNothing;
 
 use App\Console\Commands\TrashNothing\TNSyncCommand;
+use App\Console\Concerns\PreventsOverlapping;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\LokiService;
+use App\Services\TrashNothing\Sync\PostSyncer;
+use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -39,6 +43,8 @@ class TNSyncCommandTest extends TestCase
     private const DATE_SYNC = '2026-03-20T10:00:00+00:00';
     private const DATE_LATER = '2026-03-20T12:00:00+00:00';
     private const DATE_OLD = '2026-01-01 00:00:00';
+    private const FEED_HOLD_STORED = '2026-03-20T10:00:00Z';
+    private const FEED_HOLD_LATER = '2026-03-20T15:00:00Z';
 
 
     private string $dateFile;
@@ -541,14 +547,15 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_name_change_updates_fullname(): void
     {
-        $user = $this->createTNUser('OldName');
+        $user = $this->createTNUser('OldName', 'oldname' . random_int(100000, 999999));
+        $new = 'new.name' . random_int(100000, 999999);
 
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
             '*/user-changes*' => Http::response([
                 'changes' => [[
                     'fd_user_id' => $user->id,
-                    'username' => 'NewName',
+                    'username' => $new,
                     'date' => self::DATE_SYNC,
                 ]],
             ], 200),
@@ -556,16 +563,19 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
+        // fullname is the display name for the username, as a provisioned user's is.
         $fullname = DB::table('users')->where('id', $user->id)->value('fullname');
-        $this->assertEquals('NewName', $fullname);
+        $this->assertEquals(User::tnDisplayName($new), $fullname);
     }
 
     public function test_sync_name_change_updates_tn_emails(): void
     {
-        $user = $this->createTNUser('OldName');
+        $old = 'oldname' . random_int(100000, 999999);
+        $new = 'newname' . random_int(100000, 999999);
+        $user = $this->createTNUser('OldName', $old);
 
-        // Add a TN-style email with the old name.
-        $oldEmail = 'OldName-g123@user.trashnothing.com';
+        // A second per-group alias for the same username.
+        $oldEmail = "{$old}-g123@user.trashnothing.com";
         DB::table('users_emails')->insert([
             'userid' => $user->id,
             'email' => $oldEmail,
@@ -578,7 +588,7 @@ class TNSyncCommandTest extends TestCase
             '*/user-changes*' => Http::response([
                 'changes' => [[
                     'fd_user_id' => $user->id,
-                    'username' => 'NewName',
+                    'username' => $new,
                     'date' => self::DATE_SYNC,
                 ]],
             ], 200),
@@ -586,30 +596,25 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
-        // Old email should be removed or replaced.
-        $this->assertFalse(
-            DB::table('users_emails')->where('userid', $user->id)->where('email', $oldEmail)->exists()
-        );
-
-        // New email should exist.
-        $this->assertTrue(
-            DB::table('users_emails')
-                ->where('userid', $user->id)
-                ->where('email', 'NewName-g123@user.trashnothing.com')
-                ->exists()
+        // Each alias moves to the new username and keeps its group suffix; the
+        // preferred one stays preferred.
+        $this->assertEquals(
+            ["{$new}-g1@user.trashnothing.com" => 1, "{$new}-g123@user.trashnothing.com" => 0],
+            DB::table('users_emails')->where('userid', $user->id)->orderBy('email')->pluck('preferred', 'email')->all()
         );
     }
 
     public function test_sync_skips_name_change_when_unchanged(): void
     {
-        $user = $this->createTNUser('SameName');
+        $username = 'same.name' . random_int(100000, 999999);
+        $user = $this->createTNUser(User::tnDisplayName($username), $username);
 
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
             '*/user-changes*' => Http::response([
                 'changes' => [[
                     'fd_user_id' => $user->id,
-                    'username' => 'SameName',
+                    'username' => $username,
                     'date' => self::DATE_SYNC,
                 ]],
             ], 200),
@@ -617,8 +622,12 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
+        // The prettified fullname never equals the raw username; that is not a rename.
         $fullname = DB::table('users')->where('id', $user->id)->value('fullname');
-        $this->assertEquals('SameName', $fullname);
+        $this->assertEquals(User::tnDisplayName($username), $fullname);
+        $this->assertTrue(
+            DB::table('users_emails')->where('userid', $user->id)->where('email', "{$username}-g1@user.trashnothing.com")->exists()
+        );
     }
 
     public function test_sync_name_change_executes_without_error_when_name_changes(): void
@@ -636,8 +645,6 @@ class TNSyncCommandTest extends TestCase
             ], 200),
         ]);
 
-        // User has no email matching the "{oldname}-" pattern so no removeEmail/addEmail
-        // is triggered. Save is commented out in port-testing mode.
         $this->artisan('tn:sync')->assertExitCode(0);
     }
 
@@ -684,6 +691,58 @@ class TNSyncCommandTest extends TestCase
             $lastlocation = DB::table('users')->where('id', $user->id)->value('lastlocation');
             $this->assertNotNull($lastlocation);
         } finally {
+            DB::table('locations')->where('id', $pcId)->delete();
+        }
+    }
+
+    /**
+     * A move TN tells us about is logged like a postcode change in Settings, so moderators
+     * can see it in the member's logs (Discourse 10277). No move, no row.
+     */
+    public function test_sync_location_change_is_logged_once(): void
+    {
+        $user = $this->createTNUser();
+
+        $pcId = 99000203;
+        $lat = 51.5502;
+        $lng = 0.1350;
+        $srid = (int) config('freegle.srid', 3857);
+        DB::table('locations')->updateOrInsert(['id' => $pcId], [
+            'name' => 'RM9 5ZZ',
+            'type' => 'Postcode',
+            'lat' => $lat,
+            'lng' => $lng,
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid)),
+        ]);
+
+        $logged = fn () => DB::table('logs')
+            ->where('user', $user->id)
+            ->where('type', 'User')
+            ->where('subtype', 'PostcodeChange')
+            ->pluck('text')
+            ->all();
+
+        try {
+            Http::fake([
+                '*/ratings*' => Http::response(['ratings' => []], 200),
+                '*/user-changes*' => Http::response([
+                    'changes' => [[
+                        'fd_user_id' => $user->id,
+                        'location' => ['latitude' => $lat, 'longitude' => $lng],
+                        'date' => self::DATE_SYNC,
+                    ]],
+                ], 200),
+                '*/v1/postcodes/knn*' => Http::response(['results' => [['id' => $pcId, 'distance' => 0]]], 200),
+            ]);
+
+            $this->artisan('tn:sync')->assertExitCode(0);
+            $this->assertEquals(['RM9 5ZZ'], $logged(), 'the move is logged with the postcode');
+
+            // The same location again is not a move.
+            $this->artisan('tn:sync', ['--from' => self::DATE_SYNC])->assertExitCode(0);
+            $this->assertEquals(['RM9 5ZZ'], $logged(), 'an unchanged location logs nothing more');
+        } finally {
+            DB::table('logs')->where('user', $user->id)->where('subtype', 'PostcodeChange')->delete();
             DB::table('locations')->where('id', $pcId)->delete();
         }
     }
@@ -800,8 +859,13 @@ class TNSyncCommandTest extends TestCase
     // Duplicate TN user merging
     // =========================================================================
 
-    public function test_merge_duplicate_tn_users(): void
+    /**
+     * Two accounts sharing a TN username, neither holding a TN user id: nothing proves
+     * they are one member, so they are flagged for a person and both kept.
+     */
+    public function test_a_shared_username_without_tn_ids_is_flagged_not_merged(): void
     {
+        $events = $this->recordSyncEvents();
         $user1 = $this->createTestUser(['fullname' => 'Alice']);
         $user2 = $this->createTestUser(['fullname' => 'Alice']);
 
@@ -830,14 +894,151 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
-        // One of the users should have been merged into the other.
-        $user1Exists = User::find($user1->id) !== null;
-        $user2Exists = User::find($user2->id) !== null;
+        $this->assertNotNull(User::find($user1->id));
+        $this->assertNotNull(User::find($user2->id));
+        $this->assertTrue($this->flagged($events, [$user1->id, $user2->id], 'tnuserid-unproven'));
+    }
 
-        $this->assertTrue(
-            ($user1Exists && !$user2Exists) || (!$user1Exists && $user2Exists),
-            'Expected exactly one user to be deleted during merge'
-        );
+    /**
+     * A shared username with two different tnuserids is two TN accounts - a username
+     * released and retaken, or a member who re-registered. Merging would delete one
+     * account and its tnuserid, after which that TN user's posts resolve to nobody.
+     */
+    public function test_merge_skips_users_with_different_tnuserids(): void
+    {
+        $this->fakeEmptyTnFeeds();
+
+        $user1 = $this->createTestUser(['fullname' => 'Carol', 'tnuserid' => 99020101]);
+        $user2 = $this->createTestUser(['fullname' => 'Carol', 'tnuserid' => 99020102]);
+
+        $tnBase = 'carol_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($user1->id, "{$tnBase}-g101@user.trashnothing.com");
+        $this->insertTnAddress($user2->id, "{$tnBase}-g202@user.trashnothing.com");
+
+        $loki = $this->mock(LokiService::class);
+        $loki->shouldIgnoreMissing();
+        $loki->shouldReceive('logEvent')
+            ->once()
+            ->with('tn-sync', 'user-merge-skip', \Mockery::on(fn ($ctx) =>
+                $ctx['reason'] === 'tnuserid-conflict'
+                && $ctx['user_ids'] === [$user1->id, $user2->id]
+                && $ctx['tn_user_ids'] === [99020101, 99020102]
+            ));
+        $loki->shouldNotReceive('logEvent')->with('tn-sync', 'user-merge', \Mockery::any());
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        $this->assertNotNull(User::find($user1->id), 'the first TN account must survive');
+        $this->assertNotNull(User::find($user2->id), 'the second TN account must survive');
+        $this->assertEquals(99020101, User::find($user1->id)->tnuserid);
+        $this->assertEquals(99020102, User::find($user2->id)->tnuserid);
+    }
+
+    /**
+     * One side holding a TN user id and the other none does not prove one member: the
+     * other account may be someone who took the username later. Both are kept and the
+     * group is flagged.
+     */
+    public function test_one_tn_id_on_a_shared_username_is_flagged_not_merged(): void
+    {
+        $this->fakeEmptyTnFeeds();
+        $events = $this->recordSyncEvents();
+
+        $user1 = $this->createTestUser(['fullname' => 'Dave']);
+        $user2 = $this->createTestUser(['fullname' => 'Dave', 'tnuserid' => 99020103]);
+
+        $tnBase = 'dave_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($user1->id, "{$tnBase}-g101@user.trashnothing.com");
+        $this->insertTnAddress($user2->id, "{$tnBase}-g202@user.trashnothing.com");
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        $this->assertNotNull(User::find($user1->id));
+        $this->assertNotNull(User::find($user2->id));
+        $this->assertEquals(99020103, User::find($user2->id)->tnuserid);
+        $this->assertTrue($this->flagged($events, [$user1->id, $user2->id], 'tnuserid-unproven'));
+    }
+
+    /**
+     * Every group is flagged on its own, with its own reason.
+     */
+    public function test_each_shared_username_group_is_flagged_with_its_reason(): void
+    {
+        $this->fakeEmptyTnFeeds();
+        $events = $this->recordSyncEvents();
+
+        $conflict1 = $this->createTestUser(['fullname' => 'Eve', 'tnuserid' => 99020104]);
+        $conflict2 = $this->createTestUser(['fullname' => 'Eve', 'tnuserid' => 99020105]);
+        $twin1 = $this->createTestUser(['fullname' => 'Fay']);
+        $twin2 = $this->createTestUser(['fullname' => 'Fay']);
+
+        $eve = 'eve_' . str_replace('.', '', uniqid('', true));
+        $fay = 'fay_' . str_replace('.', '', uniqid('', true));
+        $this->insertTnAddress($conflict1->id, "{$eve}-g1@user.trashnothing.com");
+        $this->insertTnAddress($conflict2->id, "{$eve}-g2@user.trashnothing.com");
+        $this->insertTnAddress($twin1->id, "{$fay}-g1@user.trashnothing.com");
+        $this->insertTnAddress($twin2->id, "{$fay}-g2@user.trashnothing.com");
+
+        $this->artisan('tn:sync', ['--full-duplicate-scan' => true])->assertExitCode(0);
+
+        foreach ([$conflict1, $conflict2, $twin1, $twin2] as $user) {
+            $this->assertNotNull(User::find($user->id));
+        }
+        $this->assertTrue($this->flagged($events, [$conflict1->id, $conflict2->id], 'tnuserid-conflict'));
+        $this->assertTrue($this->flagged($events, [$twin1->id, $twin2->id], 'tnuserid-unproven'));
+    }
+
+    /**
+     * Record the tn-sync Loki events, so a test can see which groups the duplicate
+     * check flagged.
+     */
+    private function recordSyncEvents(): \ArrayObject
+    {
+        $events = new \ArrayObject();
+        $loki = $this->mock(LokiService::class);
+        $loki->shouldIgnoreMissing();
+        $loki->shouldReceive('logEvent')->andReturnUsing(function ($type, $subtype, $context = []) use ($events) {
+            $events[] = [$subtype, $context];
+        });
+
+        return $events;
+    }
+
+    /** Whether the duplicate check flagged exactly these accounts as one group. */
+    private function flagged(\ArrayObject $events, array $userIds, ?string $reason = null): bool
+    {
+        sort($userIds);
+        foreach ($events as [$subtype, $context]) {
+            if ($subtype !== 'user-merge-skip') {
+                continue;
+            }
+            $ids = $context['user_ids'];
+            sort($ids);
+            if ($ids === $userIds && ($reason === null || $context['reason'] === $reason)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function insertTnAddress(int $userid, string $email): void
+    {
+        DB::table('users_emails')->insert([
+            'userid' => $userid,
+            'email' => $email,
+            'backwards' => strrev($email),
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+    }
+
+    private function fakeEmptyTnFeeds(): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
     }
 
     /**
@@ -847,6 +1048,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_incremental_scan_catches_a_newly_created_duplicate(): void
     {
+        $events = $this->recordSyncEvents();
         // Establish a position first, so the next run is genuinely incremental.
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
@@ -876,8 +1078,8 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync')->assertExitCode(0);
 
         $this->assertTrue(
-            (User::find($user1->id) !== null) xor (User::find($user2->id) !== null),
-            'a duplicate created since the last run must still be merged'
+            $this->flagged($events, [$user1->id, $user2->id]),
+            'a group created since the last run must still be flagged'
         );
     }
 
@@ -889,6 +1091,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_incremental_scan_leaves_a_longer_username_alone(): void
     {
+        $events = $this->recordSyncEvents();
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
             '*/user-changes*' => Http::response(['changes' => []], 200),
@@ -931,6 +1134,7 @@ class TNSyncCommandTest extends TestCase
             DB::table('users_emails')->where('email', $longEmail)->value('userid'),
             'the longer name keeps its own address'
         );
+        $this->assertFalse($this->flagged($events, [$shortUser->id, $longUser->id]), 'two different names are not one group');
     }
 
     /**
@@ -940,6 +1144,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_a_full_rescan_catches_a_duplicate_the_cursor_missed(): void
     {
+        $events = $this->recordSyncEvents();
         $user1 = $this->createTestUser(['fullname' => 'Carol']);
         $user2 = $this->createTestUser(['fullname' => 'Carol']);
         $tnBase = 'carol_' . uniqid('', true);
@@ -967,15 +1172,14 @@ class TNSyncCommandTest extends TestCase
             '*/user-changes*' => Http::response(['changes' => []], 200),
         ]);
 
-        // An ordinary tick sees nothing new and leaves them alone.
+        // An ordinary tick sees nothing new.
         $this->artisan('tn:sync')->assertExitCode(0);
-        $this->assertNotNull(User::find($user1->id));
-        $this->assertNotNull(User::find($user2->id));
+        $this->assertFalse($this->flagged($events, [$user1->id, $user2->id]));
 
         // The whole-table pass finds them.
         $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
         $this->assertTrue(
-            (User::find($user1->id) !== null) xor (User::find($user2->id) !== null),
+            $this->flagged($events, [$user1->id, $user2->id]),
             'the full re-scan must catch what the cursor stepped over'
         );
     }
@@ -1001,7 +1205,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_full_scan_sees_a_pair_whose_older_row_has_canon_style_backwards(): void
     {
-        config(['freegle.trashnothing.merge_legacy_duplicates' => true]);
+        $events = $this->recordSyncEvents();
 
         [$older, $newer, $tnBase] = $this->createCanonStyleDuplicatePair();
 
@@ -1013,8 +1217,8 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
 
         $this->assertTrue(
-            (User::find($older->id) !== null) xor (User::find($newer->id) !== null),
-            "the pair sharing TN username {$tnBase} must be merged even though the "
+            $this->flagged($events, [$older->id, $newer->id]),
+            "the pair sharing TN username {$tnBase} must be found even though the "
             . 'older row holds REVERSE(canon) rather than REVERSE(email)'
         );
     }
@@ -1026,7 +1230,7 @@ class TNSyncCommandTest extends TestCase
      */
     public function test_full_scan_sees_a_pair_whose_older_row_has_no_backwards_at_all(): void
     {
-        config(['freegle.trashnothing.merge_legacy_duplicates' => true]);
+        $events = $this->recordSyncEvents();
 
         $older = $this->createTestUser(['fullname' => 'Nullback']);
         $newer = $this->createTestUser(['fullname' => 'Nullback']);
@@ -1062,16 +1266,14 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
 
         $this->assertTrue(
-            (User::find($older->id) !== null) xor (User::find($newer->id) !== null),
-            'a pair with no backwards at all must still be merged'
+            $this->flagged($events, [$older->id, $newer->id]),
+            'a pair with no backwards at all must still be found'
         );
     }
 
     /**
-     * The review gate. Widening the filter suddenly exposes a backlog of real
-     * member accounts, and merging members is not reversible, so the widened
-     * scan merges nothing until someone has looked at the list. Reporting is
-     * always available and always read-only.
+     * Reporting lists every group, including the ones only the address filter can see,
+     * and changes nothing.
      */
     public function test_report_duplicates_lists_the_legacy_pair_without_merging(): void
     {
@@ -1088,27 +1290,6 @@ class TNSyncCommandTest extends TestCase
 
         $this->assertNotNull(User::find($older->id), 'reporting must not merge');
         $this->assertNotNull(User::find($newer->id), 'reporting must not merge');
-    }
-
-    /**
-     * Until the backlog has been reviewed the live sync behaves exactly as it did
-     * before, so enabling the wider filter stays a deliberate act.
-     */
-    public function test_legacy_pair_is_left_alone_while_the_gate_is_closed(): void
-    {
-        config(['freegle.trashnothing.merge_legacy_duplicates' => false]);
-
-        [$older, $newer] = $this->createCanonStyleDuplicatePair();
-
-        Http::fake([
-            '*/ratings*' => Http::response(['ratings' => []], 200),
-            '*/user-changes*' => Http::response(['changes' => []], 200),
-        ]);
-
-        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
-
-        $this->assertNotNull(User::find($older->id), 'the gate must hold the backlog back');
-        $this->assertNotNull(User::find($newer->id), 'the gate must hold the backlog back');
     }
 
     /**
@@ -1218,6 +1399,359 @@ class TNSyncCommandTest extends TestCase
         $this->assertFileExists($this->dateFile);
         $storedDate = trim(file_get_contents($this->dateFile));
         $this->assertEquals('2026-03-20T15:00:00+00:00', $storedDate);
+    }
+
+    /**
+     * A bound PostSyncer double: the command resolves one with makeWith(), and a closure
+     * binding is honoured where an instance is not.
+     */
+    private function bindPostSyncer(?string $postsMaxDate, ?string $stalledAt): void
+    {
+        $this->app->bind(PostSyncer::class, fn () => new class($postsMaxDate, $stalledAt) extends PostSyncer {
+            public function __construct(private ?string $max, private ?string $stalled) {}
+
+            public function sync(string $from, string $to): array
+            {
+                return [1, $this->max];
+            }
+
+            public function stalledAt(): ?string
+            {
+                return $this->stalled;
+            }
+        });
+    }
+
+    /**
+     * A poster TN could not be asked about stops the post sync. Ratings and user changes
+     * that came in after the window it stopped in must not carry the stored date past the
+     * post, or the next run starts after it and the post is never fetched again.
+     */
+    public function test_the_stored_date_stays_before_a_post_the_sync_stopped_at(): void
+    {
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+        $user = $this->createTestUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => 'tn_r_stall_' . uniqid(),
+                    'ratee_fd_user_id' => $user->id,
+                    'rating' => 'Up',
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        // The posts window began at the stored date less the overlap and stopped there.
+        $this->bindPostSyncer('2026-03-20T09:59:50Z', '2026-03-20T09:59:50Z');
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)), 'no progress to record');
+    }
+
+    public function test_the_stored_date_advances_to_the_window_a_stop_happened_in(): void
+    {
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
+        file_put_contents($this->dateFile, '2026-03-17T10:00:00Z');
+        $user = $this->createTestUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => 'tn_r_stall2_' . uniqid(),
+                    'ratee_fd_user_id' => $user->id,
+                    'rating' => 'Up',
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        // Two days were done and the third stopped at its start.
+        $this->bindPostSyncer('2026-03-19T20:00:00Z', '2026-03-19T09:59:50Z');
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-19T09:59:50Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    public function test_the_stored_date_is_unaffected_when_the_post_sync_got_through(): void
+    {
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+        $user = $this->createTestUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => 'tn_r_nostall_' . uniqid(),
+                    'ratee_fd_user_id' => $user->id,
+                    'rating' => 'Up',
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        $this->bindPostSyncer('2026-03-20T11:00:00Z', null);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-20T15:00:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    /**
+     * One date is stored for ratings, user changes and posts. A feed TN would not serve has
+     * changes this run never saw, and the other feeds' dates say nothing about where they are,
+     * so the date stays and the next run reads the window again.
+     */
+    public function test_the_stored_date_stays_when_the_user_changes_feed_could_not_be_read(): void
+    {
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+        $user     = $this->createTestUser();
+        $ratingId = 'tn_r_feedfail_' . uniqid();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => $ratingId,
+                    'ratee_fd_user_id' => $user->id,
+                    'rating' => 'Up',
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(null, 500),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)));
+        $this->assertTrue(
+            DB::table('ratings')->where('tn_rating_id', $ratingId)->exists(),
+            'what the run did read was still applied'
+        );
+    }
+
+    public function test_the_stored_date_stays_when_the_ratings_feed_could_not_be_read(): void
+    {
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+
+        Http::fake([
+            '*/ratings*' => Http::response(null, 500),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => null,
+                    'date' => '2026-03-20T15:00:00Z',
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    public function test_the_stored_date_moves_again_once_the_feed_can_be_read(): void
+    {
+        file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::sequence()
+                ->push(null, 500)
+                ->push(['changes' => [['fd_user_id' => null, 'date' => '2026-03-20T15:00:00Z']]], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertSame('2026-03-20T10:00:00Z', trim(file_get_contents($this->dateFile)));
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertSame('2026-03-20T15:00:00Z', trim(file_get_contents($this->dateFile)));
+    }
+
+    /** True while TN will not serve the ratings feed. See feedHoldFake(). */
+    private bool $ratingsFeedDown = false;
+
+    /**
+     * One fake for a whole test, because fakes merge and the first registered stub wins: the
+     * ratings feed is down while $ratingsFeedDown is set, and the user changes feed always
+     * serves one change with a later date than the stored one.
+     */
+    private function feedHoldFake(): void
+    {
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), '/ratings')) {
+                return $this->ratingsFeedDown
+                    ? Http::response(null, 500)
+                    : Http::response(['ratings' => []], 200);
+            }
+
+            return Http::response(['changes' => [['fd_user_id' => null, 'date' => self::FEED_HOLD_LATER]]], 200);
+        });
+    }
+
+    /** Binds a recorder as 'sentry' and returns it. */
+    private function recordSentry(): object
+    {
+        $sentry = new class
+        {
+            public array $calls = [];
+
+            public function captureMessage($message, $severity = null): void
+            {
+                $this->calls[] = (string) $message;
+            }
+        };
+        $this->app->instance('sentry', $sentry);
+
+        return $sentry;
+    }
+
+    /**
+     * A feed that fails for good must not hold the date, and so grow the window each run reads,
+     * for ever. The date is held for FEED_HOLD_MAX_MINUTES, Sentry hears once the hold has
+     * lasted FEED_HOLD_ALERT_MINUTES, and the first run after that gives up and moves on, with
+     * a report. One run a minute here.
+     */
+    public function test_a_feed_that_keeps_failing_is_held_then_alerted_then_given_up_on(): void
+    {
+        $sentry = $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        $this->ratingsFeedDown = true;
+        $this->feedHoldFake();
+
+        for ($minute = 0; $minute < TNSyncCommand::FEED_HOLD_MAX_MINUTES; $minute++) {
+            $this->artisan('tn:sync')->assertExitCode(0);
+
+            $this->assertSame(self::FEED_HOLD_STORED, trim(file_get_contents($this->dateFile)), "minute {$minute} holds the date");
+            $this->assertCount(
+                $minute >= TNSyncCommand::FEED_HOLD_ALERT_MINUTES ? 1 : 0,
+                $sentry->calls,
+                "minute {$minute}: Sentry hears once, when the hold has lasted"
+            );
+            $this->travel(1)->minutes();
+        }
+
+        $this->assertStringContainsString('ratings feed', $sentry->calls[0]);
+        $this->assertStringContainsString('moves on after ' . TNSyncCommand::FEED_HOLD_MAX_MINUTES . ' minutes', $sentry->calls[0]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame(self::FEED_HOLD_LATER, trim(file_get_contents($this->dateFile)), 'the date moves on to what the other feed saw');
+        $this->assertCount(2, $sentry->calls, 'and Sentry hears of the give-up');
+        $this->assertStringContainsString('gave up on the ratings feed', $sentry->calls[1]);
+    }
+
+    /**
+     * The limits are minutes, not runs: tn:sync runs every few seconds, and many runs close
+     * together are a short hold, not a long one.
+     */
+    public function test_many_runs_close_together_are_a_short_hold(): void
+    {
+        $sentry = $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        $this->ratingsFeedDown = true;
+        $this->feedHoldFake();
+
+        // 70 runs ten seconds apart: more runs than either limit, in under twelve minutes.
+        for ($run = 1; $run <= 70; $run++) {
+            $this->artisan('tn:sync')->assertExitCode(0);
+            $this->assertSame(self::FEED_HOLD_STORED, trim(file_get_contents($this->dateFile)), "run {$run} holds the date");
+            $this->travel(10)->seconds();
+        }
+
+        $this->assertSame([], $sentry->calls, 'not yet held for long enough to tell anyone');
+    }
+
+    /**
+     * And a few runs far apart are a long hold: two runs an hour apart give up.
+     */
+    public function test_two_runs_an_hour_apart_give_up(): void
+    {
+        $sentry = $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        $this->ratingsFeedDown = true;
+        $this->feedHoldFake();
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertSame(self::FEED_HOLD_STORED, trim(file_get_contents($this->dateFile)));
+
+        $this->travel(TNSyncCommand::FEED_HOLD_MAX_MINUTES)->minutes();
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame(self::FEED_HOLD_LATER, trim(file_get_contents($this->dateFile)), 'the date moves on');
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('gave up on the ratings feed', $sentry->calls[0]);
+    }
+
+    /**
+     * With nothing from the other feeds to say how far to go, giving up moves the date to the
+     * end of the window the run read, so the window stops growing.
+     */
+    public function test_giving_up_on_a_feed_with_nothing_else_seen_moves_the_date_to_the_end_of_the_window(): void
+    {
+        $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        Http::fake([
+            '*/ratings*' => Http::response(null, 500),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $before = time();
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->travel(TNSyncCommand::FEED_HOLD_MAX_MINUTES)->minutes();
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $stored = strtotime(trim(file_get_contents($this->dateFile)));
+        $this->assertGreaterThanOrEqual($before, $stored);
+    }
+
+    /**
+     * The hold is of runs in a row. A run that reads every feed ends it, so a feed that fails
+     * now and then is never given up on.
+     */
+    public function test_a_run_that_reads_every_feed_ends_the_hold(): void
+    {
+        $sentry = $this->recordSentry();
+        file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        $this->feedHoldFake();
+
+        for ($round = 1; $round <= 2; $round++) {
+            $this->ratingsFeedDown = true;
+            for ($minute = 0; $minute < TNSyncCommand::FEED_HOLD_ALERT_MINUTES; $minute++) {
+                $this->artisan('tn:sync')->assertExitCode(0);
+                $this->travel(1)->minutes();
+            }
+
+            // Reads everything, so the date moves and the hold ends.
+            $this->ratingsFeedDown = false;
+            $this->artisan('tn:sync')->assertExitCode(0);
+            $this->assertSame(self::FEED_HOLD_LATER, trim(file_get_contents($this->dateFile)));
+            file_put_contents($this->dateFile, self::FEED_HOLD_STORED);
+        }
+
+        $this->assertSame([], $sentry->calls, 'two short holds are not one long one');
+    }
+
+    /**
+     * Every ten seconds, so a post reaches Freegle seconds after it is posted on TN, and never
+     * two at once: a run takes three to five seconds.
+     *
+     * The scheduler's overlap guard would hold its flock in schedule:run for the whole minute and
+     * skip every repeat, so it must not be there. The command's own lock does that job.
+     */
+    public function test_it_is_scheduled_every_ten_seconds_one_at_a_time(): void
+    {
+        $event = collect(app(Schedule::class)->events())
+            ->first(fn ($e) => preg_match("/artisan'?\s+tn:sync$/", (string) $e->command) === 1);
+
+        $this->assertNotNull($event);
+        $this->assertTrue($event->isRepeatable(), 'more often than once a minute');
+        $this->assertSame(10, $event->repeatSeconds);
+        $this->assertTrue($event->runInBackground);
+        $this->assertFalse($event->withoutOverlapping, 'the scheduler guard would stop the repeats');
+        $this->assertContains(PreventsOverlapping::class, class_uses(TNSyncCommand::class), 'the command keeps runs one at a time');
     }
 
     public function test_reads_stored_date(): void
@@ -1534,14 +2068,9 @@ class TNSyncCommandTest extends TestCase
 
     public function test_loki_logs_user_email_rename(): void
     {
-        $user = $this->createTNUser('OldName');
-
-        DB::table('users_emails')->insert([
-            'userid' => $user->id,
-            'email' => 'OldName-g123@user.trashnothing.com',
-            'preferred' => 0,
-            'added' => now(),
-        ]);
+        $old = 'oldname' . random_int(100000, 999999);
+        $new = 'newname' . random_int(100000, 999999);
+        $user = $this->createTNUser('OldName', $old);
 
         $loki = $this->mock(LokiService::class);
         $loki->shouldIgnoreMissing();
@@ -1549,8 +2078,8 @@ class TNSyncCommandTest extends TestCase
             ->once()
             ->with('tn-sync', 'user-email-rename', \Mockery::on(fn($ctx) =>
                 $ctx['user_id'] === $user->id &&
-                $ctx['old_email'] === 'OldName-g123@user.trashnothing.com' &&
-                $ctx['new_email'] === 'NewName-g123@user.trashnothing.com'
+                $ctx['old_email'] === "{$old}-g1@user.trashnothing.com" &&
+                $ctx['new_email'] === "{$new}-g1@user.trashnothing.com"
             ));
         $loki->shouldReceive('logEvent')
             ->once()
@@ -1561,7 +2090,7 @@ class TNSyncCommandTest extends TestCase
             '*/user-changes*' => Http::response([
                 'changes' => [[
                     'fd_user_id' => $user->id,
-                    'username' => 'NewName',
+                    'username' => $new,
                     'date' => self::DATE_SYNC,
                 ]],
             ], 200),
@@ -1595,7 +2124,7 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync')->assertExitCode(0);
     }
 
-    public function test_loki_logs_user_merge(): void
+    public function test_loki_logs_a_flagged_group_and_no_merge(): void
     {
         $user1 = $this->createTestUser(['fullname' => 'MergeTest']);
         $user2 = $this->createTestUser(['fullname' => 'MergeTest']);
@@ -1621,10 +2150,12 @@ class TNSyncCommandTest extends TestCase
         $loki->shouldIgnoreMissing();
         $loki->shouldReceive('logEvent')
             ->once()
-            ->with('tn-sync', 'user-merge', \Mockery::on(fn($ctx) =>
-                ($ctx['merge_to'] === $user1->id && $ctx['merge_from'] === $user2->id) ||
-                ($ctx['merge_to'] === $user2->id && $ctx['merge_from'] === $user1->id)
+            ->with('tn-sync', 'user-merge-skip', \Mockery::on(fn ($ctx) =>
+                $ctx['reason'] === 'tnuserid-unproven'
+                && $ctx['user_ids'] === [$user1->id, $user2->id]
+                && $ctx['tn_user_ids'] === []
             ));
+        $loki->shouldNotReceive('logEvent')->with('tn-sync', 'user-merge', \Mockery::any());
 
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
@@ -2027,9 +2558,12 @@ class TNSyncCommandTest extends TestCase
     // =========================================================================
 
     /**
-     * Create a user with a TrashNothing email address.
+     * Create a user with a TrashNothing email address. $tnUsername sets the
+     * username in that address, which is what the sync reads as the current one.
+     * The default username is unrelated to $name on purpose: a fullname says nothing
+     * about the username, so a test must only pass if the code reads the address.
      */
-    private function createTNUser(string $name = 'TNUser'): User
+    private function createTNUser(string $name = 'TNUser', ?string $tnUsername = null): User
     {
         $user = User::create([
             'firstname' => $name,
@@ -2038,7 +2572,7 @@ class TNSyncCommandTest extends TestCase
             'added' => now(),
         ]);
 
-        $uniquePrefix = strtolower($name) . '_' . uniqid('', true);
+        $uniquePrefix = $tnUsername ?? uniqid('tnuser_', true);
 
         UserEmail::create([
             'userid' => $user->id,

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-12
+last_reviewed: 2026-10-18
 owner: Freegle dev team
 covers:
   - README.md

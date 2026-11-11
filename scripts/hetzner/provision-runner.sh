@@ -19,9 +19,11 @@ echo "Creating Hetzner $SERVER_TYPE in $LOCATION as $RUNNER_NAME ..."
 # Attach an SSH key so Hetzner does NOT email a root password on create (and so we can SSH in
 # to debug). Override the key name via SSH_KEY_NAME.
 SSH_KEY_NAME="${SSH_KEY_NAME:-hetzner-ci-runner}"
+# role=ci-runner puts the server behind the "ci-runner" Hetzner firewall (SSH only), since the
+# test stack publishes its ports on every interface.
 body="$(jq -n --arg n "$RUNNER_NAME" --arg t "$SERVER_TYPE" --arg i "$IMAGE" \
   --arg l "$LOCATION" --arg u "$USER_DATA" --arg k "$SSH_KEY_NAME" \
-  '{name:$n, server_type:$t, image:$i, location:$l, user_data:$u, ssh_keys:[$k], start_after_create:true, public_net:{enable_ipv4:true, enable_ipv6:true}}')"
+  '{name:$n, server_type:$t, image:$i, location:$l, user_data:$u, ssh_keys:[$k], labels:{role:"ci-runner"}, start_after_create:true, public_net:{enable_ipv4:true, enable_ipv6:true}}')"
 resp="$(curl -s -X POST "$API/servers" -H "Authorization: Bearer $HETZNER_TOKEN" -H "Content-Type: application/json" -d "$body")"
 SID="$(echo "$resp" | jq -r '.server.id // empty')"
 if [ -z "$SID" ]; then echo "PROVISION FAILED:"; echo "$resp" | jq . 2>/dev/null || echo "$resp"; exit 1; fi

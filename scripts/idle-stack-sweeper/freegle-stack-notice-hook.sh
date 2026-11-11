@@ -26,7 +26,7 @@ base="${CLAUDE_PROJECT_DIR:-/home/edward/FreegleDockerWSL}"
 # `./freegle switch` is the reliable mapping (the claude process cwd is the main
 # repo even while working in a worktree). Fall back to cwd.
 wt=""
-[ -n "$sid" ] && [ -f "$base/.claude/active-worktree.$sid" ] && wt="$(cat "$base/.claude/active-worktree.$sid" 2>/dev/null)"
+[ -n "$sid" ] && [ -f "$base/.claude/active-worktree.$sid" ] && wt="$(tail -n1 "$base/.claude/active-worktree.$sid" 2>/dev/null | tr -d '\r')"
 [ -n "$wt" ] || wt="$cwd"
 [ -n "$wt" ] && [ -f "$wt/.env" ] || exit 0
 

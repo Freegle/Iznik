@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\Membership;
 use App\Services\Ripple\ReplyAttributionBackfillService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -226,6 +227,44 @@ class ReplyAttributionBackfillServiceTest extends TestCase
 
         $row = $this->attributionRow($message->id, $replier->id);
         $this->assertSame('home', $row->attribution);
+    }
+
+    /**
+     * A TrashNothing placement on an origin group (implicit = 1, rippled = 0) is not an ordinary
+     * membership, so it does not keep a reply home when the only other membership backing the
+     * home bit is a ripple join.
+     */
+    public function test_trashnothing_placement_alongside_a_ripple_join_is_not_home(): void
+    {
+        $poster = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $message = $this->createTestMessage($poster, $groupA);
+        DB::table('messages_groups')->where('msgid', $message->id)
+            ->update(['arrival' => now()->subDays(10)]);
+        // Cross-posted: a second ORIGIN group (rippled_in = 0).
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $groupB->id,
+            'collection' => Membership::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(10),
+            'rippled_in' => 0,
+        ]);
+
+        $replier = $this->createTestUser();
+        $this->createMembership($replier, $groupA, ['added' => now()->subDays(30), 'rippled' => 1]);
+        $this->createMembership($replier, $groupB, [
+            'added' => now()->subDays(30),
+            'rippled' => 0,
+            'implicit' => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+        ]);
+        $this->insertLegacyRow($message->id, $replier->id, 1);
+
+        $this->service->backfill();
+
+        $row = $this->attributionRow($message->id, $replier->id);
+        $this->assertSame('ripple_join', $row->attribution);
     }
 
     public function test_already_derived_rows_are_untouched_and_limit_respected(): void

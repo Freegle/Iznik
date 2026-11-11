@@ -1,26 +1,141 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxExperimentService.php
+  - iznik-nuxt3/components/ChatReplyPane.vue
+  - iznik-nuxt3/tests/unit/components/ChatReplyPane.spec.js
   - iznik-batch/app/Services/Ux/BetaBinomial.php
   - iznik-batch/app/Services/Ux/UxRng.php
   - iznik-batch/app/Services/Ux/UxExperimentRefused.php
+  - iznik-batch/app/Services/Ux/UxArm.php
+  - iznik-batch/app/Services/Ux/UxMetricSource.php
+  - iznik-batch/app/Services/Ux/ExposureSource.php
+  - iznik-batch/app/Services/Ux/Sources/EmailClickSource.php
+  - iznik-batch/app/Services/Ux/Sources/ActiveAfterSource.php
+  - iznik-batch/app/Models/UxExperimentExposure.php
+  - iznik-batch/app/Support/ExperimentBucket.php
+  - iznik-batch/config/ux_switches.php
+  - iznik-batch/config/ux_cleanups.php
+  - scripts/check-ux-cleanups.mjs
+  - iznik-nuxt3/modtools/composables/useUxVerdict.js
   - iznik-batch/app/Console/Commands/Ux/ExperimentCommand.php
   - iznik-batch/app/Console/Commands/Ux/ExperimentsTickCommand.php
   - iznik-batch/database/migrations/2026_10_14_000001_create_ux_experiment_tables.php
   - iznik-batch/database/migrations/2026_10_14_000001_create_ux_experiment_tables_migration.sql
+  - iznik-batch/database/migrations/2026_10_16_000001_create_ux_experiment_exposures_table.php
+  - iznik-batch/database/migrations/2026_10_16_000001_create_ux_experiment_exposures_table_migration.sql
   - iznik-server-go/ux/experiments.go
+  - iznik-server-go/ux/serverarm.go
   - iznik-server-go/config/config.go
   - iznik-nuxt3/composables/useExperiment.js
+  - iznik-nuxt3/composables/useAppInterstitial.js
+  - iznik-nuxt3/components/AppInterstitial.vue
+  - iznik-nuxt3/tests/e2e/test-mobile-web-app-interstitial.spec.js
+  - iznik-nuxt3/composables/useRatingNudge.js
+  - iznik-nuxt3/components/RatingNudge.vue
+  - iznik-nuxt3/components/RatingNudgeModal.vue
+  - iznik-nuxt3/tests/unit/composables/useRatingNudge.spec.js
+  - iznik-nuxt3/tests/unit/components/RatingNudge.spec.js
+  - iznik-nuxt3/tests/unit/components/RatingNudgeModal.spec.js
+  - iznik-nuxt3/tests/e2e/test-rate-on-return.spec.js
+  - iznik-server-go/user/unrated.go
+  - iznik-server-go/test/user_unrated_test.go
   - iznik-nuxt3/plugins/uxExperiments.client.js
   - iznik-nuxt3/ux-experiments.manifest.json
+  - iznik-nuxt3/pages/ask/mobile/details.vue
+  - iznik-nuxt3/tests/unit/pages/ask/mobile/details.spec.js
   - iznik-nuxt3/tests/unit/uxExperimentsManifest.spec.js
   - iznik-batch/tests/Feature/Ux/UxExperimentServiceTest.php
   - iznik-batch/tests/Feature/Ux/UxExperimentBoundaryTest.php
+  - iznik-batch/tests/Feature/Ux/UxExperimentCleanupDueTest.php
+  - iznik-batch/tests/Feature/Ux/UxExperimentPrimaryEventTest.php
   - iznik-batch/tests/Unit/Ux/BetaBinomialTest.php
   - iznik-batch/tests/Unit/Ux/UxRngTest.php
+  - iznik-batch/tests/Unit/Ux/UxSwitchManifestTest.php
+  - iznik-batch/tests/Unit/Support/ExperimentBucketTest.php
+  - iznik-batch/tests/Feature/Ux/UxArmTest.php
+  - iznik-batch/tests/Feature/Ux/UxExperimentSourceTest.php
+  - iznik-batch/tests/Feature/Ux/EmailClickSourceTest.php
+  - iznik-batch/tests/Feature/Ux/ActiveAfterSourceTest.php
+  - iznik-batch/app/Mail/Digest/UnifiedDigest.php
+  - iznik-batch/resources/views/emails/mjml/digest/unified.blade.php
+  - iznik-batch/tests/Feature/Ux/DigestSubjectExperimentTest.php
+  - iznik-batch/tests/Unit/Mail/UnifiedDigestSubjectExperimentTest.php
+  - iznik-batch/tests/Feature/Ux/UxExposureRetentionTest.php
+  - iznik-batch/tests/Feature/Ux/UxExposureErasureTest.php
+  - iznik-batch/tests/Feature/Ux/UxExposureTableMissingTest.php
+  - iznik-batch/tests/Feature/Ux/UxExposureTableCheckTest.php
+  - iznik-batch/tests/Support/HidesExposureTable.php
+  - iznik-batch/tests/Support/LagsTheReadNode.php
+  - iznik-batch/tests/Support/FakeUxMetricSource.php
+  - iznik-server-go/test/ux_serverarm_test.go
+  - iznik-server-go/ux/serverarm_internal_test.go
+  - iznik-nuxt3/tests/unit/composables/useExperiment.spec.js
   - iznik-server-go/test/ux_experiments_test.go
+  - iznik-nuxt3/modtools/components/ModSysAdminUxExperiments.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentRow.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentDetail.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentReadout.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentForm.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentChannel.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxReplyConfirmDetail.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminUxExperimentsBadge.vue
+  - iznik-nuxt3/modtools/composables/useUxExperimentActions.js
+  - iznik-nuxt3/modtools/composables/useUxExperimentRead.js
+  - iznik-nuxt3/modtools/composables/useUxVerdict.js
+  - iznik-server-go/session/session.go
+  - iznik-nuxt3/modtools/stores/uxExperiments.js
+  - iznik-nuxt3/api/UxExperimentsAPI.js
+  - iznik-nuxt3/tests/unit/api/UxExperimentsAPI.spec.js
+  - iznik-nuxt3/tests/unit/stores/uxExperiments.spec.js
+  - iznik-nuxt3/tests/unit/composables/useUxExperimentActions.spec.js
+  - iznik-nuxt3/tests/unit/composables/useUxExperimentRead.spec.js
+  - iznik-nuxt3/tests/unit/composables/useUxVerdict.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperiments.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentRow.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentDetail.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentReadout.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentForm.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentChannel.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxReplyConfirmDetail.spec.js
+  - iznik-nuxt3/tests/unit/components/modtools/ModSysAdminUxExperimentsBadge.spec.js
+  - iznik-nuxt3/tests/unit/uxExperimentsBoundary.spec.js
+  - iznik-nuxt3/pages/give/mobile/details.vue
+  - iznik-nuxt3/pages/give/mobile/whereami.vue
+  - iznik-nuxt3/tests/unit/pages/give/mobile/skipOptions.spec.js
+  - iznik-nuxt3/tests/e2e/test-modtools-sysadmin-ux-experiments.spec.js
+  - iznik-server-go/message/interested.go
+  - iznik-batch/app/Services/Ux/Sources/InterestedReplySource.php
+  - iznik-batch/app/Services/Ux/Sources/ConfirmReplyPostSource.php
+  - iznik-batch/tests/Feature/Ux/ConfirmReplyPostSourceTest.php
+  - iznik-server-go/chat/replyconfirm.go
+  - iznik-server-go/test/confirmreplypost_test.go
+  - iznik-batch/app/Console/Commands/Message/InterestedChaseUpCommand.php
+  - iznik-batch/app/Mail/Message/InterestedChaseUp.php
+  - iznik-nuxt3/components/MessageInterested.vue
+  - iznik-nuxt3/components/MyPostsInterested.vue
+  - iznik-nuxt3/composables/useInterested.js
+  - iznik-nuxt3/modtools/components/ModSysAdminUxInterestedDetail.vue
+  - iznik-nuxt3/tests/e2e/test-interested-button.spec.js
+  - iznik-server-go/hostingad/hostingad.go
+  - iznik-server-go/test/user_hostingad_test.go
+  - iznik-batch/app/Services/Ux/Sources/HostingAdClickSource.php
+  - iznik-batch/tests/Feature/Ux/HostingAdClickSourceTest.php
+  - iznik-batch/app/Services/Hosting/DomainHostingService.php
+  - iznik-batch/app/Services/Hosting/DnsResolver.php
+  - iznik-batch/app/Console/Commands/Hosting/ScanDomainsCommand.php
+  - iznik-batch/app/Models/DomainHosting.php
+  - iznik-batch/tests/Feature/Hosting/DomainHostingServiceTest.php
+  - iznik-batch/tests/Feature/Hosting/ScanDomainsCommandTest.php
+  - iznik-batch/database/migrations/2026_10_30_000001_create_domain_hosting_table.php
+  - iznik-batch/database/migrations/2026_10_30_000001_create_domain_hosting_table_migration.sql
+  - iznik-nuxt3/composables/useHostingAd.js
+  - iznik-nuxt3/components/HostingAd.vue
+  - iznik-nuxt3/components/HostingAdModal.vue
+  - iznik-nuxt3/tests/unit/composables/useHostingAd.spec.js
+  - iznik-nuxt3/tests/unit/components/HostingAd.spec.js
+  - iznik-nuxt3/tests/unit/components/HostingAdModal.spec.js
 ---
 
 # UX experiments
@@ -48,8 +163,10 @@ flowchart LR
 One experiment is **one pull request, one switch and one row**:
 
 - The PR adds the variant to the frontend only, behind `useExperiment('<name>') === 'b'`. Anything
-  else, including `null`, is control. Nothing in the batch or the Go API changes per experiment, and
-  neither does the schema.
+  else, including `null`, is control. A change to the site needs nothing in the batch or the Go API, and
+  no experiment changes the schema. An experiment decided on the server (mail, push, server code) is
+  different: its call to the arm, and its entry in that runtime's switch list, are code in the batch or the
+  Go API. See [Experiments in mail, push and the server](#experiments-in-mail-push-and-the-server).
 - The switch is the `name`: letters, digits, `_` and `-`, up to 64, and not `__proto__`,
   `constructor` or `prototype` (the name becomes a key in a JSON object the browser reads). The read
   finds the arm by matching the name only at the start of the `variant` field or after a comma, so
@@ -67,11 +184,13 @@ One experiment is **one pull request, one switch and one row**:
   guardrails; default its own flow and `login`), `expected_points` (the effect expected; default 5
   points, the setting `default_expected_points`) and, once started, `power` (see
   [The decision rule](#the-decision-rule-and-why-each-number)). It is set with `ux:experiment create
-  --touches=a,b --expected-points=N`, or in the `design` of `POST /modtools/ux/experiments`.
+  --touches=a,b --expected-points=N`, or in the `design` of `POST /modtools/ux/experiments`. Two more
+  keys judge the change on something other than finishing the funnel: `primary_event` and `base_rate`
+  (see [Judged on an event](#judged-on-an-event)).
 - Status runs `draft`, `running`, then one of `adopted`, `reverted`, `inconclusive` or `stopped`. An
   adopted experiment becomes `closed` when its switch has been removed from the code (see
-  [Corpse control](#corpse-control)); only an adopted one can be closed. A finished experiment that was
-  reverted, inconclusive or stopped can be started again.
+  [Corpse control](#corpse-control)). A reverted, inconclusive or stopped experiment keeps that status when
+  its code cleanup is recorded with `close`, and can be started again only until then.
 - At most **`max_concurrent` (5) run at once**, **one per funnel**, and none for longer than
   **`max_hours` (24)**. `start` refuses a sixth, a second on the same funnel (two changes to one funnel
   cannot be told apart) and an experiment the power check rejects, and sets the end time.
@@ -97,6 +216,11 @@ Bounds are inclusive. Every flow event carries the member's arms in `variant` as
 `name:arm` pairs, so the funnel splits by arm with no per-experiment recording code. The client's
 safety rules (a kill switch, a sticky arm, an exposure event, a cap of five) are below. Use a control
 arm; the epsilon-greedy bandit in `abtest` is for choosing between asks, not for measuring a change.
+
+**Not in the app.** Web experiments run on the website only. In the iOS and Android app
+(`Capacitor.isNativePlatform()`) every running entry is control: no arm, no exposure, nothing in
+`variant`, so app members are in neither arm and are not counted. An adopted change does reach the app,
+because by then it is the site.
 
 ## How arms reach members, live
 
@@ -236,14 +360,16 @@ Past the end it waits up to `stale_wait_hours` (6) for Loki, then marks the expe
 experiment running unread.
 
 **Concurrency.** `start`, `stop`, `close` and each experiment's step in the tick run inside
-`GET_LOCK('ux_experiments')` taken on the write node (`locked()`), so two writers never interleave.
+the cache lock `ux_experiments` (`locked()`, a row in `cache_locks` on the live database store), so two
+writers never interleave. It is not `GET_LOCK`, which the cluster refuses under `pxc_strict_mode=ENFORCING`.
 Every status change is an `UPDATE ... WHERE status = <the status expected>` that checks it changed a
 row, and the tick **re-reads the row after its slow Loki query and before it finishes it**. So a human
 stop that lands while a read is in flight wins, and two simultaneous starts cannot both pass the cap of
 five. A tick that finds the row no longer running leaves it alone.
 
-The same command also runs the holdout check (see [Guardrails and the
-holdout](#guardrails-and-the-holdout)) and prints `Cleanup overdue` for adopted experiments (see
+The same command first applies the cleanup notes in `config/ux_cleanups.php` (`applyCleanups`, see [Corpse
+control](#corpse-control)), then also runs the holdout check (see [Guardrails and the
+holdout](#guardrails-and-the-holdout)) and prints `Cleanup overdue` for adopted experiments and `Cleanup due` for the other ended ones (see
 [Corpse control](#corpse-control)).
 
 ## The decision rule, and why each number
@@ -307,6 +433,49 @@ The default is the status quo: only `adopted` keeps a change, and `reverted`, `i
   recorded at start and shown in every read.
 - **One experiment per funnel.** Two changes to one funnel at once confound each other, and the
   guardrails already read across flows, so five slots across seven funnels is enough.
+
+## Judged on an event
+
+Some changes are not meant to help people finish a funnel. A pop-up of job adverts after a reply is
+meant to get adverts clicked, and the question about the funnel is only whether it does harm. For
+that, `design.primary_event` names a client event, and the experiment is judged on **that event per
+start of the funnel** instead of on finishing it:
+
+- The event must be listed in `UxExperimentService::PRIMARY_EVENTS`, with the words a read uses for it
+  (`job_ad_click`: "clicked a job advert"; `app_store_click`: "clicked an app store button"; `user_rated`: "rated a freegler"). The Go route checks the same list (`primaryEvents` in
+  `iznik-server-go/ux/experiments.go`). The name goes into a LogQL query, so no other name is read.
+- The event's line must carry the member's arms in `variant`, from `experimentVariant()`. A flow event
+  gets that for free; an `action()` event has to add it. Without it the event is never counted.
+- The read is a second query on `event_type="action"` lines with that `action_name`, matched to this
+  experiment's arms in the same way as the flow read, counted hour by hour **up to the settle cut**, the
+  same hours the starts come from. Its `logged_in` is rewritten to one word, so it adds at most two
+  series an arm. Each arm's `events` is stored with the other counts.
+- **Every event line with the arm counts, not only those from people who started the funnel.** Arms
+  are given to everyone, and the client stamps them on every event, so a member who clicks a job advert
+  without replying is counted too. That adds the same noise to both arms and no bias, and makes the
+  figure the change in all such events per start: for job adverts, the change in clicks site-wide.
+- **An event can be a filtered action.** `PRIMARY_EVENT_READS` gives an event the action it reads, the
+  extra fields and a label filter. `job_ad_click_chat` ("clicked a job advert in a chat or after
+  replying") is `job_ad_click` kept to `page="chats-id"` or `context="reply_interstitial"`: the clicks a
+  reply change can move. It measured the finished `reply-job-interstitial` experiment. In October 2026 a week had about
+  4,200 reply starts and 1,920 job advert clicks, 245 of them in chats, so site-wide the rate was about
+  46 per 100 starts and a day could only show a change of about 11 points; in a chat it was about 6 and
+  a day shows about 5. The cost is that it cannot see clicks moving from other pages.
+- The rate is events over starts, within the same strata (six-hour block, signed in or not; for the
+  event, signed in when it was sent). An event can happen more than once per start, so each stratum
+  counts at most one per start, as the per-start guardrails do. Because the rate is a few percent, the
+  sentences give it to one decimal place: `4% clicked a job advert with the change, 1.5% without`.
+- **Finishing the funnel becomes a guardrail**, `flow:<the funnel>`, labelled
+  `finishing "<funnel title>"`, with the usual 2 point margin, and it counts towards `k`. So a change
+  that gets more clicks but stops people finishing is reverted, early or at the end, whatever the clicks.
+- Everything else is the same: the decision rule, the bandit, the share check and the holdout.
+- **The power check needs `design.base_rate`**, the event's usual rate per start as a share (0.02). The
+  rollup only knows how often a funnel is finished, which is the wrong rate, so without a base rate
+  there is no power check and no smallest-effect figure. Give `expected_points` in points of the event's
+  rate: the default 5 is far too big for a click rate.
+
+`ux:experiment create ... --primary-event=job_ad_click_chat --base-rate=0.06 --expected-points=4` sets them
+from the command line.
 
 ## Guardrails and the holdout
 
@@ -388,6 +557,73 @@ What is stored, and where:
 - A refusal by the batch is kept in `result.last_refusal` (`action`, `message`, `at`) until the next
   change of status clears it.
 
+## Reading the result on the tab
+
+The routes send figures and the tab writes the sentences, in the browser. Every word is in
+`iznik-nuxt3/modtools/composables/useUxExperimentRead.js`, so this page does not copy them. It has the
+one line on a row, the lines of the read-out, the label of each guardrail and the holdout paragraph.
+What to know about where the figures come from:
+
+- **The figures are the experiment's `result`**, for a running experiment and a finished one alike (see
+  "The plain-English reads"). A `result` with no `arms` means no count yet. That includes an
+  experiment just started again: a start resets `result`, although the rows of the run before are still
+  in `ux_experiment_reads`, so a restarted experiment shows "No count yet" and never the figures of the run
+  before. A draft has none either.
+- **The full read behind "Show the full read"** is `latest_read.summary`, the paragraph of the newest read
+  since the last start, shown as the batch wrote it and as text. It is never used for a figure, and the
+  link is not drawn when `latest_read` is null.
+- **A guardrail is labelled with the label the batch stored with it**, with a capital letter, and the tab
+  gives it no name of its own. A guardrail the batch adds later needs no change on the tab.
+- **Why it was decided as it was** is the `decision` the batch stored, and the tab shows it. An opened
+  finished experiment writes it whole above the figures, as text. A row for an experiment that was taken
+  off, or could not be told apart, ends with its first sentence. The figures cannot say it: a guardrail
+  can take a change off whatever the main result was, so a change that looks 97% likely to be better can
+  still be "Taken off".
+- **"Also checked" and "Other funnels we watched" are different lists.** The read-out's "Also checked"
+  holds the guardrail lines the batch stored: the experiment's own funnel (failed submissions,
+  validation failures, people looking for help) and, as "finishing ...", other funnels. "Other funnels we
+  watched" holds the funnels the experiment was set up to watch, from `design.touches`.
+- **Nothing is called likely while it is too early to tell.** Until the primary read is `enough`, the
+  read-out gives no chance the change is better and a row names no possible side effect. With a few dozen
+  people both swing to 99% and back by chance, and a high figure beside "Too early to tell" reads as a
+  result. After that, a guardrail is a possible side effect, and "may be worse" in "Also checked", from
+  80% likely to be worse, the same bar as "Change is ahead".
+- **A probability is never written as 100% or 0%**: it reads "over 99%" or "under 1%", as in the batch's
+  own sentences. That includes the last look of a holdout.
+- **The status words are readable**: white on `#2a7a0a`, 5.4 to 1, for Kept and for "Change is ahead",
+  because the ModTools theme forces a lighter green on `.bg-success` that white text cannot be read on
+  (2.8 to 1).
+- **An experiment decided on the server** (see [Experiments in mail, push and the
+  server](#experiments-in-mail-push-and-the-server)) has no flow events, so the tab reads it from the
+  source's own words. Its row names the channel and then the funnel it feeds, such as **Email, Replying**,
+  **Push, Replying** or **Server, Replying** (server code), drafts included, so the column agrees with the
+  Funnel filter, which chooses by funnel. The read-out says "Counted: 12,402 with the change, 12,389
+  without." and "Clicked within a day: 18.0% with the change, 10.0% without.", and ends with the source's
+  note on how it counts. The members counted are fewer than the members reached so far, and "Exposed" is
+  the only word for those. A rate counted by a source is written to one decimal place, because a click rate
+  of 3.0% against 3.4% reads "3% against 3%" in whole percents; a funnel read from Loki keeps whole percents.
+  `ModSysAdminUxExperimentChannel.vue` adds to the details the text each version shows
+  (`design.copy`), how long members are reached and when it is decided, and the members exposed and
+  counted, in the read-out's words and order ("Exposed: 12,512 with the change, 12,500 without."), or by
+  version name with control first when there are more than two. Under them it draws any figure the source shows
+  for information only ("For information only, not used to decide: ... was 16.1% with the change and 2.4% without.",
+  `informationLines`). It draws nothing for a change to the site.
+  The details of `confirm-reply` also draw `ModSysAdminUxReplyConfirmDetail.vue`, a piece the section hosts
+  (`HOSTED.experiment` in `useUxSections.js`), which shows how repliers answered the question. It is short and drills
+  down: the rows that tell the story for all reasons, a toggle for the rest, and each reason closed until it is opened,
+  one at a time. The versions are named as the block above names them, the change first. Only the two buttons answer the
+  question, so a yes is always a tap.
+  "Other funnels we watched" is left out, because another funnel cannot be split by a server arm. Start is
+  switched off while another change runs for the same thing, not only the same funnel, so a mail test can
+  be started beside a reply test on the site. The reason names what holds the place ("Another email
+  experiment is already running for UnifiedDigestDaily."), because "slot" already means the cap on running
+  experiments on that tab. A refusal such as "Experiments in mail, push and server code are switched off."
+  shows like any other.
+- **A link is drawn only for an address that starts with `https://`** (`safeLink`). `pr_url` and
+  `cleanup_pr_url` come from a command line that can store any text, and a `javascript:` address would run
+  when a moderator clicked it. Any other stored text is shown as plain text. Go refuses such an address
+  too, and so does the form.
+
 ## Running one by hand
 
 `php artisan ux:experiment <action>` on the batch host. It does what the routes do through the API, with
@@ -396,19 +632,81 @@ the same rules, because both end in `UxExperimentService`.
 | Command | Does |
 |---|---|
 | `ux:experiment list` | The latest 50 experiments. The `ends` column is filled only for a running one |
-| `ux:experiment create --flow= --name= --title= --hypothesis= --change= --expected=` | A draft. `--flow` is the funnel's key. Optional `--arms` (JSON, default `{"control":[0,49],"b":[50,99]}`, at most five), `--touches=a,b`, `--expected-points=N` (default 5) and `--pr` (the pull request that adds the switch) |
-| `ux:experiment start <name>` | Starts a draft or a finished experiment. Refuses when five are running, when one is running on the same funnel, or when a day of the funnel could hardly show the expected effect. Publishes the arms |
+| `ux:experiment create --flow= --name= --title= --hypothesis= --change= --expected=` | A draft. `--flow` is the funnel's key. Optional `--arms` (JSON, default `{"control":[0,49],"b":[50,99]}`, at most five), `--touches=a,b`, `--expected-points=N` (default 5), `--primary-event=` and `--base-rate=` (see [Judged on an event](#judged-on-an-event)) and `--pr` (the pull request that adds the switch) |
+| `ux:experiment start <name>` | Starts a draft or a finished experiment. Refuses when five are running, when one is running on the same funnel, when a day of the funnel could hardly show the expected effect, or when the experiment has a `cleanup_pr_url` (its code is gone: use a new name, or a new salt once the variant is back). Publishes the arms |
 | `ux:experiment stop <name> --reason=` | Takes a running experiment off. Everyone goes back to control |
-| `ux:experiment close <name> --cleanup-pr=` | Records that an adopted experiment's switch has been removed from the code, and takes it out of the config. Only an adopted experiment can be closed |
+| `ux:experiment close <name> --cleanup-pr=` | Records that the code of an ended experiment has been removed. An adopted experiment becomes `closed` and leaves the config. A reverted, inconclusive or stopped one **keeps its status** and gets the `cleanup_pr_url`, which is required for it. A running or not started one cannot be closed |
 | `ux:experiment config` | Rebuilds the config key from the rows and prints it |
-| `ux:experiments-tick` | The hourly read, decision, re-weighting and holdout check. Also prints `Cleanup overdue` for adopted experiments |
+| `ux:experiments-tick` | The hourly read, decision, re-weighting and holdout check. Also prints `Cleanup overdue` for adopted experiments and `Cleanup due` for reverted, inconclusive and stopped ones |
 
 A good first run: `ux:experiment list`, then `create`, then `start <name>`. A real experiment's `--name`
-is the switch in the code, listed in `iznik-nuxt3/ux-experiments.manifest.json`. That file is empty until
-the first switch lands, so to try the command use any name, for example `try-it`: nothing in the site
-reads a name that has no switch, so members see no change. A refusal is an answer, not a fault: the
+is the switch in the code, listed in `iznik-nuxt3/ux-experiments.manifest.json`. To try the command
+without touching a live switch use any other name, for example `try-it`: nothing in the site reads a name
+that has no switch, so members see no change. A refusal is an answer, not a fault: the
 command prints the reason and exits non-zero. A running experiment prints `ends <time>`; a stopped or
 decided one prints no end, because it has none ahead of it.
+
+## Running one by hand from the tab
+
+The Experiments section of the SysAdmin UX tab does what the command does, through the three routes in
+"The routes". Open it at `/sysadmin?tab=ux&ux_section=experiments`, or from the Experiments link under "Also
+for this funnel" in the Funnels section, which shows that funnel only. It has no period, device or
+sign-in filters, and the tab says so. It is one entry in the tab's section list
+([ux-sysadmin-tab.md](ux-sysadmin-tab.md)) and draws what `useUxExperimentsStore` loads from
+`UxExperimentsAPI`.
+
+- **The list.** One row for each experiment, running first, then not started, then finished, newest first in
+  each. Finished ones show 25, with Show 25 more. A Funnel select and two pills (Active, which is running
+  plus not started and is what the page opens on, and Finished) cut it down and carry counts. A running
+  experiment on a funnel the select hides is never hidden without saying so: a notice counts them and Show
+  all brings them back. The open details of a reverted, inconclusive or stopped experiment whose code is
+  still in place offer Start again and a box for the cleanup pull request with Mark as cleaned up (an
+  https address); once it is recorded neither is offered. A route that is not there yet says "This part is not switched on yet." The strip
+  says how many of the slots are in use, from `max_running`.
+- **The pills and the address.** Waiting for you is drawn only when some experiment has a verdict nobody has
+  acted on (`verdictOf` in `useUxVerdict.js`, the same rule as the red number), and the section then opens on
+  it, so the number leads to what it counts. Otherwise, and when a link opens one experiment and names no
+  pill, the section opens on Active. `ux_exp` is the open
+  experiment's id, or `new` for the form. `ux_estate` is `waiting`, `active` or `finished`, and absent for
+  where the section opens; the old values `running`, `draft` and `all` land there too so old links still work. `ux_flow` is the shared funnel. One row is open at a time, and
+  changing a filter closes it.
+- **The open experiment is always drawn**, whatever an address says. A finished one beyond the first 25 is
+  reached by drawing more rows, in their place, with the rest still paged from there. One that the Funnel
+  select or a chip leaves out is drawn in its own place all the same, with "That experiment is outside the
+  choices above" and a Show all link that takes both choices off and keeps it open. An id that is in no
+  row says "That experiment is not in the list."
+- **The form** (New experiment) asks for the funnel, the short name, a title, what is wrong and why the
+  change should help, what the change does, what we expect to see, which other funnels it could affect
+  (its own is always watched, and signing in is ticked to begin with), the size of change the test is sized
+  for, and an optional link. The short name must be letters, digits, `-` and `_`, up to 64, and not
+  `__proto__`, `constructor` or `prototype`. The form says whether the name is in
+  `ux-experiments.manifest.json`: until it is, everyone sees the old version. **Save as draft** adds a draft.
+  **Save and start** adds it and then asks the batch to start it. The start goes straight after the create, which
+  is why Go reads the new row from the primary database. If the batch refuses the start, the draft stays and
+  its row shows the reason. A 400 or 409 from the routes shows the server's own message under the form.
+  **Cancel** is on offer until the start has been sent. Pressed while the draft is still being made, it
+  closes the form and the start is not asked for: the draft cannot be taken back, but the step that
+  reaches members is held.
+- **The buttons**, in an opened row: Start (a draft), Start again (stopped, could not tell or taken off),
+  Stop now (asks first, then everyone goes back to the old version) and Mark as cleaned up (a kept experiment;
+  during the holdout it also ends the daily comparison with the old version, and says so beside the button).
+  Each only queues a request: the batch applies it within a few minutes, and the row says "Start requested",
+  "Stop requested" or "Cleanup noted" until the experiment changes status or a refusal arrives. The tab asks
+  again after 5, 10, 20, 40, 80 and 160 seconds, and once more when the request is 10 minutes old. Only if
+  that look still finds the request waiting does it say "Not applied yet. The batch may not be running."
+- **A request belongs to one run.** It is kept under the experiment's id, its status and the time its run
+  started (`useUxExperimentActions.js`). Starting stamps a new start time and stopping keeps it, so an
+  experiment that is stopped and started again, or that ends the same way twice, finds none of the requests
+  made in its earlier run, and the card offers Stop now or Start again as it should.
+- **Start is off when the batch would refuse it**, with the reason as its title and written beside the
+  button, because a disabled button shows no title: at the cap ("Already at the cap of running
+  experiments", which comes first, as the batch checks it first) and while another change runs on the
+  same funnel. It reads the whole list the store holds, not only the rows on show.
+- **A refusal** is read from `result.last_refusal` and shown under the button as "That was not done:" and
+  the batch's message. The messages name a funnel by its title.
+
+If the Go routes are not live yet the site still works: every call passes `false` for `logError`, so a
+missing route is not a Sentry event.
 
 ## Corpse control
 
@@ -426,18 +724,805 @@ stop that:
    takes a `keep_until` date in the future and a `reason`.
 2. **Cleanup is a step.** Once an experiment is decided, a cleanup PR is opened. Adopted: the variant
    becomes the only code and the switch goes. Reverted, inconclusive or stopped: the variant code and
-   its tests go. Afterwards `ux:experiment close <name> --cleanup-pr=<url>` records it. **Close an
-   adopted experiment only after the cleanup PR is live**, because closing takes the experiment out of
-   the config key, and until the switch is gone from the code every member would fall back to control
-   and lose the adopted change. Closing also ends the holdout.
+   its tests go. The cleanup PR **adds one line to `iznik-batch/config/ux_cleanups.php`**
+   (`['name' => '<name>', 'cleanup_pr' => 'https://github.com/Freegle/Iznik/pull/<N>']`), and the hourly
+   tick records the close within the hour after the batch deploys, which is the same as
+   `ux:experiment close <name> --cleanup-pr=<url>` by hand. The note closes only an experiment with a verdict
+   that has no cleanup recorded: a draft, a running, an unknown or an already closed one is left alone, and so is
+   a name still in `config/ux_switches.php` (its code is evidently not gone). Because the batch deploys with the
+   PR, an adopted experiment is closed only once the cleanup is live, which matters because closing takes it out of
+   the config key, and until the switch is gone from the code every member would fall back to control and lose
+   the adopted change. Closing also ends the holdout. A line stays in the file once applied, harmlessly.
+   `UxCleanupsTest` checks the batch side, and `scripts/check-ux-cleanups.mjs` (the `check-ux-cleanups` CI job)
+   checks that no line names a switch still in the batch list, the browser manifest or `ux.ServerSwitches`.
 3. **Variants are local and deletable.** The PR adds one `v-if` branch, or one component used only by
    that branch, touching as few files as it can, so cleanup is the inverse diff and never a rewrite.
 4. **History is in the database, not the code.** What was tried and why it came off lives in
    `ux_experiments`, so no comment in the code has to remember it.
 
-**Cleanup overdue.** An adopted experiment not closed after `cleanup_days` (7) is printed by the tick
-(`Cleanup overdue: ...`) and flagged `cleanup_overdue` by `GET /modtools/ux/experiments`, so a missed
-cleanup is seen within a day.
+**Cleanup due.** Two rules, one flag. An adopted experiment not closed after `cleanup_days` (7) is
+printed by the tick (`Cleanup overdue: ...`). A reverted, inconclusive or stopped experiment with no
+`cleanup_pr_url` is due **at once**, because its switch serves control to everyone and the variant code
+is dead from the moment it ended; the tick prints `Cleanup due: <name> was reverted on <date> and its code
+is still in the codebase. Remove it and run ux:experiment close <name> --cleanup-pr=<url>.` Both are
+`cleanup_overdue` in `GET /modtools/ux/experiments` (`UxExperimentService::cleanupDue` and `CleanupOverdue`
+in `iznik-server-go/ux/experiments.go` hold the same rule), and the open experiment says it is overdue.
+So a missed cleanup is seen within a day.
+
+**A verdict is a nudge, from the day it exists.** Separately from the overdue flag, SysAdmin counts every
+experiment with a verdict that nobody has closed, so the next step is not left to be noticed. Two kinds
+count: an adopted one not yet closed (confirm the result and remove the switch), and a reverted,
+inconclusive or stopped one with no `cleanup_pr_url` (remove the variant code). A closed one, or one with a
+cleanup pull request recorded, does not. An adopted one counts at once, where `cleanup_overdue` waits for
+the 7 days, because the nudge is for the moment a decision exists. The Go session serves the count as
+`work.uxexperiments` (with `uxexperimentsconfirm` and `uxexperimentsremove` for the two kinds) to Admin
+only, counted by `ux.VerdictCounts` in `iznik-server-go/ux/experiments.go`. It is a red number on the Behaviour
+tab and on the SysAdmin item in the ModTools menu, and on the Experiments nav inside the UX tab, whose title
+says what is waiting ("2 experiments have a verdict: 1 to confirm, 1 to remove code"). The nav shows the
+blue count of running experiments only when nothing is waiting. The rule is written once in the browser, in
+`modtools/composables/useUxVerdict.js`, which the nav badge, the row and the open experiment share. Each
+row shows what to do next ("Confirm, remove the switch, then close it", or "Remove the variant code, then
+close it"), and the open experiment names the line for `ux_cleanups.php`, the Mark as cleaned up button and the
+`ux:experiment close` command. All of this is on SysAdmin, which is for Admin only, because what is waiting is developer work.
+
+**Closing keeps the outcome.** `close` on an adopted experiment sets `closed`. On a reverted,
+inconclusive or stopped one it leaves the status alone, because what was tried and how it ended is the
+history we keep, and records the cleanup pull request (required), which ends the flag. An experiment with
+a `cleanup_pr_url` cannot be started again (the routes and the command say so), since the variant is no
+longer in the code.
+
+## Experiments on the member site
+
+### Carry on, not Skip, on the Wanted photo step
+
+`ask-photos-carry-on` tests whether an easier way past the photo step gets more Wanted posts finished. It ran
+first on the Offer flow (`give-photos-carry-on`, inconclusive, removed); this is the same change on `ask`.
+
+- **Who.** A member on the phone version of the Wanted flow (`pages/ask/mobile/photos.vue`). In arm `b`, while no
+  photo is attached, an outlined **No photo? Carry on** button replaces the small grey Skip link under Add Photos.
+  It goes to the same details step. Control is the Skip link as it was.
+- **Not the desktop and tablet page.** `PostMessageTablet` shows photos and details side by side on one page. It has
+  no photo step to get past, so there is nothing for the button to do and the variant is not built there. The flow
+  events of `ask` count both versions together, and the arm is stamped on every one of them, so a member on the
+  desktop page is counted in arm `b` and sees control. That dilutes the effect towards zero: size the run for a smaller
+  gain than the phone page could show alone.
+- **Reading the arm.** The arm is read in the page's `onMounted`, never on the server, and only while no photo is
+  attached, because reading it counts the member as having seen the button. A member who arrives with a photo and
+  removes it is counted then, once. `PhotoUploader` takes the `carryOn` prop and draws the button.
+- **Photos.** `give_posted` (`useGivePhotoTelemetry`) reports the photo share for Offers only. This run does not
+  add a Wanted equivalent, so it cannot show whether fewer Wanted posts carry a photo. Wanted posts are less
+  dependent on a photo than Offers.
+- **Sizing.** There is nothing to size by hand for a web experiment. `ux:experiment start` takes the funnel's last
+  7 days of starts and finishes from `ux_flow_outcome_daily`, works out the chance one day would adopt a gain of
+  `expected_points`, stores it in `design.power` and refuses below `min_power` (0.30); the smallest gain a day can
+  show is stored as `mde_points`. See [the decision rule](#the-decision-rule-and-why-each-number). If it refuses,
+  the Wanted flow is too small for a day: raise `--expected-points` only if a bigger gain is believable, and
+  otherwise do not run it.
+- **Starting it.** After the PR is deployed and the manifest entry is live, on the batch host:
+
+  ```bash
+  php artisan ux:experiment create --flow=ask --name=ask-photos-carry-on \
+    --title="Carry on, not Skip, on the Wanted photo step" \
+    --hypothesis="Skip is a small grey link that reads as giving up, so some members stop at the photo step instead of carrying on without a photo." \
+    --change="For half of members on the phone version of the Wanted flow, an outlined No photo? Carry on button replaces the small Skip link while no photo is attached. It goes to the same details step." \
+    --expected="More members finish posting a Wanted, by 3 points or more." \
+    --expected-points=3 --pr=https://github.com/Freegle/Iznik/pull/1854
+  php artisan ux:experiment start ask-photos-carry-on
+  ```
+
+- **Cleanup.** Adopted: `PhotoUploader` always draws the button, the `carryOn` prop and the Skip link go, and the
+  arm read in `pages/ask/mobile/photos.vue` goes. The Offer step still has Skip, so the button then differs between
+  the two flows, which is why a decision to adopt should also say whether to try Offer again. Reverted,
+  inconclusive or stopped: the prop, the button, the arm read and the tests go, then
+  `ux:experiment close ask-photos-carry-on --cleanup-pr=<url>`.
+
+### Tap an answer for when you could collect
+
+`reply-collect-chips` tests whether tapping an answer is easier than typing one, so fewer members hit the empty-box
+error when they press Send on a reply to an Offer. Sending bounces off validation about one time in five on the phone
+site; an Offer has two required boxes, and the second ("When could you collect?") is free text.
+
+- **Who.** A member replying to an **Offer** (`components/ChatReplyPane.vue`). In arm `b`, three buttons sit under
+  the collect box: **This weekend**, **Weekday evenings** and **Any time**. A tap puts that text in the box and clears
+  the "please suggest" error; the box stays editable and the tapped button shows as selected only while the box still
+  holds exactly its text. Control is the box alone. A Wanted has no collect box, so it never asks for the arm.
+- **Reading the arm.** `flowArm(FlowName.REPLY, 'reply-collect-chips')`, once, when the pane first knows the post is
+  an Offer, so only members who could see the buttons are counted. The app build is always control.
+- **By hand.** Whether members use the buttons: the share of sent replies whose collect text equals a chip.
+- **Starting it.** After the PR is deployed and the manifest entry is live:
+
+  ```bash
+  php artisan ux:experiment create --flow=reply --name=reply-collect-chips \
+    --title="Tap an answer for when you could collect" \
+    --hypothesis="Tapping an answer is easier than typing one, so fewer members are stopped by the empty collection-time box when they press Send." \
+    --change="For half of members replying to an Offer on the website, three buttons under the When could you collect? box (This weekend, Weekday evenings, Any time) fill the box when tapped. The box stays editable." \
+    --expected="More members finish a reply, by 3 points or more." \
+    --expected-points=3 --pr=https://github.com/Freegle/Iznik/pull/1909
+  php artisan ux:experiment start reply-collect-chips
+  ```
+
+  The primary event is `flow_complete` per `flow_start` on flow `reply` (base rate about 75%); `validation_failed`
+  per start is the secondary.
+
+- **Cleanup.** Adopted: the buttons always show, and the arm read goes from `ChatReplyPane.vue`. Reverted,
+  inconclusive or stopped: the buttons, their styles, the arm read and the tests go, then
+  `ux:experiment close reply-collect-chips --cleanup-pr=<url>`.
+
+### Who took it, already chosen
+
+`outcome-taker-preselect` tests whether starting "Mark as TAKEN" with the obvious person chosen gets more posts
+marked. In the control, the "who took it" list starts on "-- Please choose --" and a member who presses Mark as
+TAKEN without choosing is stopped (`validation_failed`, field `taker`).
+
+- **Who.** A member marking an ordinary (not bulk) post as Taken in `components/OutcomeBy.vue`, inside the outcome
+  modal, when the post has no taker recorded yet and either exactly one person was promised it
+  (`message.promises`) or, with no promise, exactly one person replied. In arm `b` that person starts in the list
+  as a normal row with their name and the x button, the same row a manual pick makes. The member can remove them
+  and choose someone else, or add more.
+- **No guess.** Two or more promised people, two or more repliers with no promise, a bulk post, or a promised
+  person whose profile has not loaded: nobody is chosen and the list is as control. A wrong guess records the
+  wrong person as the taker, so the arm only guesses when the member's own actions point to one person.
+- **Reading the arm.** `flowArm(FlowName.CHAT_OUTCOME, 'outcome-taker-preselect')` is read in `onMounted`, never in
+  setup, so the server render and the first client render match (control). It is read only when there is a person
+  to choose, because reading it counts the member as having seen the change; members with nobody to choose are not
+  counted in either arm.
+- **Sizing.** The default judgment: finishing the `chat_outcome` flow, base rate about 81%. No `--primary-event`.
+- **Guardrail by hand.** The share of marked-taken posts where the taker was changed from the one chosen for them,
+  from `messages_by`. A high share means the guess is wrong and the arm should be reverted.
+- **Starting it.** After the PR is deployed and the manifest entry is live, on the batch host:
+
+  ```bash
+  php artisan ux:experiment create --flow=chat_outcome --name=outcome-taker-preselect \
+    --title="Who took it, already chosen" \
+    --hypothesis="Members fail the who-took-it check when marking a post as taken, even when they promised it to one person or only one person replied." \
+    --change="For half of members, when exactly one person was promised the post, or exactly one replied, that person starts chosen in the list, with an x to remove them." \
+    --expected="More members finish marking a post as taken, by 3 points or more." \
+    --expected-points=3 --pr=https://github.com/Freegle/Iznik/pull/1910
+  php artisan ux:experiment start outcome-taker-preselect
+  ```
+
+- **Cleanup.** Adopted: the preselection becomes the only behaviour, the arm read goes. Reverted, inconclusive or
+  stopped: `singleLikelyTaker`, the `onMounted` block and the tests go, then
+  `ux:experiment close outcome-taker-preselect --cleanup-pr=<url>`.
+
+### No options screen on the phone Offer flow
+
+`give-skip-options-screen` tests whether dropping a screen of two optional questions gets more phone Offers finished.
+
+- **Who.** A member on the phone version of the Offer flow (`pages/give/mobile/`). In arm `b`, Next on the details
+  step goes straight to the location step (`whereami`) instead of the options screen. Defaults stay as the compose
+  store has them (collection only, no deadline). Control is the options screen as it was.
+- **The way back.** In arm `b` the location step shows a **Delivery or a deadline?** link under the postcode box,
+  which opens the options screen; its Next already returns to the location step.
+- **Reading the arm.** On the details page the arm is read when Next is tapped with a valid item, so only members who
+  get that far are counted. On the location page it is read in `onMounted`, because the server render cannot know it.
+  Both reads are `flowArm(FlowName.GIVE, 'give-skip-options-screen')`. The flow router hook sees the step jump as a
+  normal step complete, so no new events are needed.
+- **Not the desktop and tablet page.** `PostMessageTablet` has no options screen to skip. The arm is stamped on every
+  `give` event, so a desktop member is counted in arm `b` and sees control, which dilutes the effect: size the run for
+  a smaller gain than the phone page could show alone.
+- **Reading the result.** Primary is `flow_complete` per `flow_start`, flow `give`; guardrail `login`. Read by hand
+  after the run: the share of `give_posted` events with a photo per arm, and the share of offers with a deadline or
+  delivery set per arm from `messages`. A drop in deadline use of more than a third is a reason not to adopt.
+- **Starting it.** After the PR is deployed and the manifest entry is live, on the batch host:
+
+  ```bash
+  php artisan ux:experiment create --flow=give --name=give-skip-options-screen \
+    --title="No options screen on the phone Offer flow" \
+    --hypothesis="A whole screen for two optional questions costs more than it earns: some phone members stall between what is it and where are you." \
+    --change="For half of members on the phone version of the Offer flow, Next on the details step goes straight to the location step. A Delivery or a deadline? link there opens the options screen." \
+    --expected="More members finish posting an Offer, by 3 points or more." \
+    --expected-points=3 --pr=https://github.com/Freegle/Iznik/pull/1908
+  php artisan ux:experiment start give-skip-options-screen
+  ```
+
+- **Cleanup.** Adopted: details always goes to `whereami`, the arm reads in both pages go, and the options screen stays
+  behind the link (or goes, if deadline use fell). Reverted, inconclusive or stopped: the two arm reads, the link and
+  the tests go, then `ux:experiment close give-skip-options-screen --cleanup-pr=<url>`.
+
+### An app page on arrival, on phones
+
+`mobile-web-app-interstitial` tests whether a full-screen page asking the member to install the app, shown on
+arrival from a phone browser, gets the app installed. The app gives members notifications of replies, which email
+does not.
+
+- **Who.** A first page view from a phone browser, in arm `b`. The arm is read in `onMounted` of
+  `AppInterstitial.vue` (mounted in `LayoutCommon`, outside the `d-none` block that holds the modals, because it is
+  drawn in place), and only when every rule in `composables/useAppInterstitial.js` says it could show. So a member
+  who would never see it is never counted, and the arm is read at most once per page view. The server never renders
+  it (the component is in `client-only`), so there is no flash and search engines see the page as it was.
+- **What counts as a phone.** The user agent says iPhone or iPod, or Android with `Mobile`, and the window is 767
+  pixels wide or less. Android tablets leave `Mobile` out and an iPad says iPad, so tablets are not shown it. Anyone
+  else on a phone-sized window (a Windows phone, a narrow desktop window) has no store to send to, so is left out.
+- **Never shown.** In the app (the mobile store's `isApp`), on ModTools, to crawlers (`bot`, `crawl`, `spider`,
+  `slurp`, `lighthouse`, `pagespeed`, `facebookexternalhit`, `preview`), on a link carrying a login key (`?k=`), and
+  on these pages and everything under them: `/unsubscribe`, `/forgot`, `/marketing-optout`, `/merge` and `/chats`
+  (reached from an email to finish something); `/give`, `/ask`, `/post`, `/donate`, `/donated` and `/giftaid` (partway
+  through posting, or back from a payment); `/privacy`, `/terms`, `/disclaimer`, `/mydata` and `/security` (legal);
+  and `/mobile` (already about the app). The list is `EXCLUDED` in the composable.
+- **Once, then 30 days.** The visit is recorded in `localStorage` (`freegle_app_interstitial_seen`) when the arm is
+  read, **in both arms**, so control is counted on the same schedule as the variant. With `localStorage` blocked it
+  falls back to `sessionStorage` (once a session), and with neither, to the page view. Every storage call is in a
+  `try`.
+- **Telemetry.** `app_interstitial_shown`, `app_store_click` and `app_interstitial_dismissed` (with `how`:
+  `continue` or `escape`), each an `action()` with `platform` and `variant: experimentVariant()`, so they can be
+  split by arm. Without `variant` the batch cannot count them.
+- **Measure.** `primary_event` is `app_store_click`, listed in `UxExperimentService::PRIMARY_EVENTS` and in
+  `primaryEvents` in `iznik-server-go/ux/experiments.go`. The engine reads an event **per start of the experiment's
+  funnel**, and arrival is not a funnel, so the rate is store clicks per start of `give`, not per member shown. It is
+  the right direction and the right comparison between arms, and not a conversion rate. Clicks on the store button
+  are all there is: whether the app was installed is not seen by the site.
+- **Guardrails.** `--touches=give,ask,reply` makes the share of members finishing each of those flows a guardrail,
+  read for every member in the arm. That is the engine's way of asking whether arrival hurt what members then did:
+  it cannot tell flows started in the same visit from other visits. The flow the experiment sits on is also one:
+  a change that gets store clicks but stops people finishing a Give is reverted.
+- **Sizing.** `start` takes the funnel's last 7 days from `ux_flow_outcome_daily`, but for an event the base rate has
+  to be given, because the rollup only knows how often the funnel is finished. There is no live figure for store
+  clicks before the page runs, so `0.05` per Give start below is an estimate: replace it from the first day's
+  `app_store_click` count over the Give starts of the same day (`GET /modtools/ux/experiments`, or the Loki
+  `app_store_click` action) before trusting the power check. If `start` refuses for power, raise `--expected-points`
+  only if a bigger effect is believable; otherwise do not run it.
+- **Starting it.** After the PR is deployed and the manifest entry is live, on the batch host. `give` is used here; if
+  another experiment is already running on it, use `ask` or `reply` and the same `--touches`.
+
+  ```bash
+  php artisan ux:experiment create --flow=give --name=mobile-web-app-interstitial \
+    --title="App page on arrival, on phones" \
+    --hypothesis="Members on a phone browser do not know the app sends a notification when someone replies, so a page that says so on arrival gets more of them to install it." \
+    --change="For half of members arriving from a phone browser, a full-screen page offers the Freegle app with a store button and a Continue to the website button. It shows once, then not for 30 days." \
+    --expected="More store button clicks per Give start, with no fewer members finishing a Give, Wanted or reply." \
+    --primary-event=app_store_click --base-rate=0.05 --expected-points=2 \
+    --touches=give,ask,reply --pr=https://github.com/Freegle/Iznik/pull/1865
+  php artisan ux:experiment start mobile-web-app-interstitial
+  ```
+
+- **Cleanup.** Adopted: the arm read in `useAppInterstitial.js` goes, so every eligible phone visit opens the page
+  (decide first whether to keep the 30-day gap, which then has no control to compare with), and the manifest entry
+  goes. Reverted, inconclusive or stopped: `AppInterstitial.vue`, `useAppInterstitial.js`, the `LayoutCommon` line,
+  their tests and the e2e spec go, the `app_store_click` entry stays in the two event lists for the next experiment,
+  then `ux:experiment close mobile-web-app-interstitial --cleanup-pr=<url>`.
+
+### Join without a name
+
+`join-name-optional` tests whether leaving the name box off the Join pane gets more people to finish joining.
+
+- **Who.** Anyone who sees the Join pane of the login modal (`components/LoginModal.vue`, the pane shown when the
+  browser has never logged in or the member chose Join), on the website only. In arm `b` the **Your name**
+  box is not drawn and the signup is sent with no `displayname`. Control is the four-field pane as it was. The
+  server already accepts an empty name (`PutUser`, `iznik-server-go/user/user.go`). It does not stay empty: the
+  first time the member is read, `InventName` makes one from the local part of their email address (tidied by
+  `TidyName`), or a generated name when that is unusable, stores it as `users.fullname` and sets
+  `users.inventedname`. "A freegler" is only the fallback when neither works. So other members see a name taken
+  from the joiner's email address.
+- **Asked later.** Givers choose a real name more often when several people reply (live data, 90 days to
+  2026-10-24: from the third reply on, 19% of real-name repliers were chosen against 14% of invented-name ones,
+  accounts over 30 days old). So an arm `b` signup sets `asknamelater` in the member's settings
+  (`composables/useAskName.js`), and the next time they send a reply or finish a post, `AskNameModal` asks
+  "What's your name?" once it has gone, so the ask never stops either from finishing. Save stores the
+  `displayname` and clears the flag; Not now keeps it, so the next post or reply asks again. Client log events
+  `ask_name_shown`, `ask_name_saved` and `ask_name_skipped` count it. Nobody but an arm `b` joiner has the flag.
+- **Not a sign-in.** `loginNative` takes "no name, an email and a password" on the Join pane for a sign-in typed
+  on the wrong pane and logs the member in. With the box hidden that is not the case, so the check is off in arm `b`.
+  Social sign-in is unchanged in both arms.
+- **Reading the arm.** The arm is read once per page view, after mount, when the modal is open on the Join pane,
+  because reading it counts the member as having seen the variant. In the app the arm is always control, as for
+  every web experiment, so the app keeps the four-field pane.
+- **Also check by hand.** The share of new accounts with `users.inventedname = 1` in each arm, and a sample of
+  those names, so moderators are not handed a flood of names made from email addresses. `users.fullname` is no
+  guide: it is filled with the invented name. And how often each arm's joiners are chosen (`messages_by` or
+  `messages_promises`) on Offers with three or more repliers, where a missing name has been seen to cost them.
+- **Starting it.** After the PR is deployed and the manifest entry is live, on the batch host:
+
+  ```bash
+  php artisan ux:experiment create --flow=login --name=join-name-optional \
+    --title="Join without a name" \
+    --hypothesis="The Join pane asks four things and the name is the only one a member does not need to join, so dropping it removes a place to stall." \
+    --change="For half of members, the Join pane has no Your name box. They join with an email and a password." \
+    --expected="More members who start logging in finish, by 5 points or more." \
+    --expected-points=5 --pr=https://github.com/Freegle/Iznik/pull/1906
+  php artisan ux:experiment start join-name-optional
+  ```
+
+- **Cleanup.** Adopted: the box and the `displayname` go from `LoginModal.vue`, with the `confused` check, and
+  the arm read goes; the ask-later prompt stays for every nameless signup. Reverted, inconclusive or stopped: the arm read, `nameHidden`, `useAskName`,
+  `AskNameModal` and the tests go (members still flagged are simply never asked), then
+  `ux:experiment close join-name-optional --cleanup-pr=<url>`.
+
+### The title as the description on the Wanted details step
+
+`ask-description-optional` tests whether letting the item name stand as the description gets more Wanted posts
+finished. On the phone Wanted flow the details step (`pages/ask/mobile/details.vue`) refuses to go on when
+there is no description and no real photo. Skipping the photo is the main way into that step, so a member
+skips one box and meets another.
+
+- **Who.** A member on the phone version of the Wanted flow with no real photo attached (an AI picture does
+  not count as one). In arm `b`, if the description box is empty (or only a number), pressing Next sets the
+  description to the item name and goes on to the location step. The description box stays visible and
+  optional, and nothing is added to the page. Control is the rule as it was: the red "describe" message.
+- **Short item names.** The compose store (`messageValid`) wants at least 3 characters of description when
+  there is no real photo, so an item name under 3 characters ("TV") still gets the prompt in arm `b`.
+- **Not the desktop and tablet page.** `PostMessageTablet` is one form with photos and details together and its
+  rule is unchanged. The flow events of `ask` count both versions, so a desktop member is counted in arm `b`
+  and sees control, which dilutes the effect. The numbers in the plan already allow for it (`expected_points` 3).
+- **Reading the arm.** The arm is read in `onMounted`, never on the server, and only while no real photo is
+  attached, because reading counts the member as under the rule. A member who arrives with a real photo and
+  removes it is counted then, once.
+- **One Wanted experiment at a time.** Both this and `ask-photos-carry-on` change the no-photo path, so this
+  one starts only after `ask-photos-carry-on` has been stopped.
+- **Measured.** The default for a funnel: finishing `ask` per start, so there is no `--primary-event` and no
+  `--base-rate`. The guardrails are the `ask` and `login` funnels. The quality check is the share of Wanted
+  posts whose body equals the item name in each arm, counted from `messages.textbody` over each arm's window.
+- **Starting it.** After the PR is deployed, the manifest entry is live and `ask-photos-carry-on` has stopped,
+  on the batch host:
+
+  ```bash
+  php artisan ux:experiment create --flow=ask --name=ask-description-optional \
+    --title="The title as the description on the Wanted details step" \
+    --hypothesis="Asking for a description after the member skipped the photo is a wall, and the title already describes a wanted post." \
+    --change="For half of members on the phone version of the Wanted flow with no real photo, pressing Next with the description empty uses the item name as the description and goes on, instead of asking for one." \
+    --expected="More members finish posting a Wanted, by 3 points or more." \
+    --expected-points=3 --touches=ask,login --pr=https://github.com/Freegle/Iznik/pull/1907
+  php artisan ux:experiment start ask-description-optional
+  ```
+
+- **Cleanup.** Adopted: delete the arm read and make the title the fallback for everyone, or drop the rule.
+  Reverted, inconclusive or stopped: the arm read, the `titleStands` branch and the tests go, then
+  `ux:experiment close ask-description-optional --cleanup-pr=<url>`.
+
+### Rating the people you dealt with, on the next visit
+
+`rate-on-return` tests whether asking a member, when they arrive, to rate the people they handed an item over
+with gets more ratings. Ratings are what tells a member whether the person offering them a sofa turns up; in the
+week to 11 October 2026 the poster rated the taker after 35% of handovers (the outcome modal asks them), and the
+taker rated the poster after 5% (nobody asks: the thumbs are in the chat header, on desktop only).
+
+- **Who the server names.** `GET /user/unrated` (`iznik-server-go/user/unrated.go`) lists the people the
+  signed-in member handed over with in the last 14 days, from `messages_by` in either direction, newest first,
+  one entry per person and at most five, with the post's item name and whether the member gave or received. A
+  `ratings` row from the member to that person, including one whose rating was later taken back, drops them: a
+  member who withdrew a rating is not asked again. Deleted users are left out.
+- **When it asks.** On arrival at a page, signed in, on the web, in arm `b`, when the page is not one of the
+  interstitial's excluded pages (mid-flow, legal, `/chats` reached from an email) and the member has not been
+  asked in the last 24 hours on this browser (`freegle_rating_nudge_last`), and no other modal is already open (the
+  microvolunteering ask, say: two modals on arrival would be the experiment measuring itself against a mess, so it
+  stands aside, in both arms, with no arm read and the day not used up). `RatingNudge.vue`, mounted in
+  `LayoutCommon`, fetches the list once per page view; only when there is somebody to rate is the arm read, and
+  the time of the visit recorded, **in both arms**, so a member with nobody to rate is counted in neither and
+  control runs on the same 24-hour clock as the variant. The rules are in `composables/useRatingNudge.js`.
+- **What it shows.** `RatingNudgeModal.vue`: "How did it go?", up to three people, each with their photo, name,
+  "You gave them Sofa" or "They gave you Lamp", thumbs up ("Good"), thumbs down ("Not good", which opens the
+  existing reason modal `UserRatingsDownModal`) and Skip. Not now closes it; a tap on the backdrop does not. A
+  person rated or skipped leaves the list; when the list is empty it says Thanks for a second and a half, then closes. Skip is kept for
+  30 days on the browser (`freegle_rating_nudge_skipped`), which is longer than the server looks back, so it
+  means "not for this handover".
+- **Telemetry.** `rating_nudge_shown` (`count`), `rating_nudge_skipped` and `rating_nudge_dismissed` (`how`:
+  `not_now`, `done` or `hidden` for Escape or a navigation; `shown`; `rated`), each with `variant`. The rating
+  itself is `user_rated` (`rating`, `source`), logged by `userStore.rate()` for **every** rating given anywhere
+  on the site, with `variant`, so the arms can be compared on all ratings and not only those from the modal.
+  Taking a rating back is not logged.
+- **Measure.** `primary_event` is `user_rated`, read per start of `chat_outcome`: ratings follow handovers, and
+  that funnel's starts are the nearest thing to a count of handovers the engine has. Finishing `chat_outcome`
+  is the guardrail, with `--touches=chat_outcome,reply,give` so a modal on arrival that puts people off
+  replying or posting is reverted. The read counts the whole site's ratings in each arm, which is the point:
+  the thumbs in the chat header and the outcome modal are still there in both arms.
+- **Sizing.** On 25 October 2026 the live site had about 330 ratings a day, 150 of them imported from
+  TrashNothing, so about 180 given on the site, against about 430 handovers and about 500 `chat_outcome`
+  starts a day. That makes the base rate about 0.4 ratings per start. The unrated pool is about 280 poster
+  sides and 410 taker sides a day; if a tenth of those shown rate, the rate rises by about 14 points, so
+  `--expected-points=10` is believable. Replace the base rate from the first day's `user_rated` count over
+  that day's `chat_outcome` starts before trusting the power check.
+- **Starting it.** The Go API must be deployed first: the frontend calls `GET /user/unrated` on every eligible
+  arrival, and an old API answers 404, which the composable treats as nobody to rate (no arm is read, nothing
+  is counted). Then, on the batch host:
+
+  ```bash
+  php artisan ux:experiment create --flow=chat_outcome --name=rate-on-return \
+    --title="Ask members to rate the people they dealt with, on their next visit" \
+    --hypothesis="Takers almost never rate the person who gave to them because nothing asks; a modal on the next visit naming the people they dealt with gets many more ratings." \
+    --change="For half of signed-in members arriving on the web with an unrated handover in the last 14 days, a modal lists up to three people with thumbs up, thumbs down and Skip. At most once a day." \
+    --expected="Far more ratings per outcome start, with members finishing outcomes, replies and posts as often." \
+    --primary-event=user_rated --base-rate=0.4 --expected-points=10 \
+    --touches=chat_outcome,reply,give --pr=https://github.com/Freegle/Iznik/pull/1921
+  php artisan ux:experiment start rate-on-return
+  ```
+
+- **Reading it by hand.** Beside the engine's read: the share of `user_rated` with `source=rating_nudge`, the
+  thumbs down share in each arm (a flood of thumbs down from people who were never going to rate is a reason
+  not to adopt), `rating_nudge_dismissed` by `how`, and `rating_nudge_skipped` per shown.
+- **Cleanup.** Adopted: the arm read in `useRatingNudge.js` goes and every eligible arrival asks, and the
+  manifest entry goes; `GET /user/unrated` and the `user_rated` event stay. Reverted, inconclusive or stopped:
+  `RatingNudge.vue`, `RatingNudgeModal.vue`, `useRatingNudge.js`, the `LayoutCommon` line, their tests and the
+  e2e spec go; `GET /user/unrated`, `userStore.fetchUnrated()` and the `user_rated` logging and event entries
+  stay for the next experiment; then `ux:experiment close rate-on-return --cleanup-pr=<url>`.
+
+## Experiments in mail, push and the server
+
+An experiment does not have to change the site. Server code can decide what a member gets from the same
+arm: the subject of the daily digest, the title of a push, a message sent after a promise. The arm is
+worked out in the batch or in the Go API from the member's id, with the function the browser uses, so
+all three agree. What changes is the counting. A flow event in Loki cannot be split by a server arm, so
+the counts come from the database.
+
+Nothing here changes until the config row `ux_server_arms` is `1` and someone starts an experiment. The batch
+switch list holds `familiar-poster` ([familiar-posts-email.md](familiar-posts-email.md)); the Go list holds `confirm-reply-post`, `interested-button` and `krystal-hosting-ad`, described below.
+
+**No experiment code in the app build.** An app release takes days to weeks, so a switch shipped in the app cannot be turned on or off quickly. Behaviour in the app that the server decides is fine: a push title, a push's timing or an email chosen on the server per member can be an experiment (`push-posts-title` was stopped on 2026-10-19 because this was misread as "no experiments that reach app members"). See `.claude/rules/conventions.md`.
+
+### One assignment function, in three places
+
+`bucket = crc32("<member id>|<name>") % 100`, or `crc32("<member id>|<name>|<salt>") % 100` when the
+experiment has a salt. The first arm whose inclusive range holds the bucket wins, a range written from
+above to holds nobody, and no match is control, written `""` in server code.
+
+| Where | The function |
+|---|---|
+| The browser | `bucket(id, name, salt)` and `armFromRanges` in `composables/useExperiment.js` |
+| The batch | `ExperimentBucket::bucket` and `armIn` in `app/Support/ExperimentBucket.php` |
+| The Go API | `ux.ExperimentBucket` in `ux/serverarm.go` |
+
+The same vectors are pinned in all three test suites (members 1, 2, 3, 5, 12345 and 999999, for
+`confirm-reply`, `digest-subject` and `digest-subject` with the salt `r2`), so a change that moves one
+bucket fails all three.
+
+A **salt** is optional: 1 to 16 letters, digits, `_` or `-`, from `design.salt`, published in the config
+entry. It makes a re-run fall into different arms from the run before, which otherwise keeps its name and
+so its buckets. An adopted entry keeps it, or adoption would move everyone. An entry whose salt is present
+and malformed is dropped by all three runtimes. Use a salt only where no web step reads the arm: a cached
+page or an app build from before the salt existed ignores it.
+
+### Reading the arm in code
+
+PHP `UxArm::for($userId, 'name')` and Go `ux.ExperimentArm(db, userid, "name")` give the arm, or `""`
+for control. They give `""` unless **all** of these hold:
+
+- the config row `ux_server_arms` is `1`;
+- the name is in that runtime's switch list (below);
+- the entry in the `ux_experiments` row is well formed by the browser's own checks;
+- the entry is adopted (then `until` is ignored), or its `until` is ahead by no more than 15 days. The
+  browser's 25 hour rule stays the browser's.
+
+Both read the two config rows in one query on the read connection and keep them for at most 60 seconds,
+because a queue worker lives for hours. A read error is control, is logged, and is not asked again for
+that minute.
+
+The code that varies content follows three rules:
+
+- **Look the arm up before the content is built.** A mailable's constructor builds its subject, so the
+  arm has to be known first. `UxArm::pick($arm, ['control' => $a, 'items' => $b])` gives the control value
+  for `""` and for an arm it has no value for. `pick` builds every value for every member, so a variant that
+  takes work or can throw is chosen with `if ($arm === 'items')` placed before the control lines, as
+  `UnifiedDigest::getSubject()` does.
+- **The arm is a pure function of the member's id**, so a retry that builds the same mail again gets the
+  same arm. Never use `rand()`.
+- **Keep arm names out of links, headers and the `email_type`**, which other code matches exactly.
+
+### Exposures
+
+`ux_experiment_exposures` has a row each time server code used a member's arm to decide what they get,
+written for every arm, control included, by `UxArm::expose` or `ux.RecordExposure`. Write it where the
+decision is made, after the row the decision is about exists, and never where content is drawn. It never
+throws: a failed row must not stop a send, a reply or a promise. `UxArm::expose` returns true only when its call
+wrote the row, and `UxArm::retract` deletes the row of a member and subject, for a send that reached no one.
+
+| `subject_type` | `subject_id` |
+|---|---|
+| `email` | `email_tracking.id`. No row when email tracking is off |
+| `push` | days since 1970-01-01 UTC, so a member has one row a day (`userid` is in the unique key) |
+| `chat`, `reply` | `chat_messages.id` |
+| `bell` | `users_notifications.id` |
+| `promise` | `messages_promises.id` |
+| `view` | `messages.id` |
+| `post` | `messages.id`: a new post the member was, or in control would have been, told about; or, for `confirm-reply-post`, the poster's own eligible offer whose repliers were, or in control would have been, asked |
+| `hosting_ad` | `domain_hosting.id`: the member's email domain, when the hosting ad was, or in control would have been, shown |
+
+`detail` holds ids and numbers only. No text, address or copy is ever stored, and a value longer than its
+column is skipped and logged, not cut. Rows are kept 90 days: the hourly tick deletes older ones an
+experiment at a time, 5000 rows to a statement. Starting an experiment again first deletes that name's old
+rows, because a same-day push row would hold the unique key and the new run would lose it.
+
+**Who is counted.** Each member once, on their first exposure of a type the source counts. The age test
+runs after the first is chosen: a first exposure younger than the window is not counted yet and is never
+replaced by a later one. So a member mailed and then pushed is one count, on the first. A web view writes
+no row, so an experiment that changes both mail and the site is measured from its first server exposure.
+
+### Metric sources
+
+`design.source` names a class in `config('freegle.ux.sources')` that implements `UxMetricSource`. It
+counts members per arm and stratum, and the engine does the rest as it does for Loki: the same
+probabilities, the same adopt, revert and inconclusive rules, the same holdout. `ExposureSource` does the
+counting in one grouped query over the cohort above; a subclass says what a conversion and a bad event
+are. Five ship.
+
+| Source | Converted when, within the window of the exposure | Guardrail |
+|---|---|---|
+| `email_click` | the member clicked a link in the email, and it was not the unsubscribe link (that link also sets the click time) | clicking the unsubscribe link in the window, margin 0.3 points. That link opens the unsubscribe page, so it counts members who then do nothing, and a mail client's own Unsubscribe button is not seen (`unsubscribeUrl` in `UnifiedDigest.php`, the `unsubscribe` action of `Click` in `emailtracking.go`) |
+| `active_after` | the member has a `users_active` row in the hour of the exposure or inside the window. The site or app writes one when it loads the member's notifications, which it does when they have something unread or when they open the bell, so a member who visits with nothing unread is not counted, in either arm | turning the daily posts push off, for a push only, margin 0.3 points |
+| `familiar_reply` | the member replied to the post the exposure names (`familiar-poster`) | unsubscribing from any of our mail in the window, margin 0.3 points, because control is sent none of these |
+| `confirm_reply_post` | `primary` `no_dead_reply`: the poster saw no dead reply on the post within the window. A dead reply was passed on to the poster and its replier was not promised the item or recorded as taking it by the end of the window. A reply dropped before the poster saw it (a no, or no answer in 3 days) is not dead | `not_taken`, the post not taken within the window, margin 5 points. `nothing_passed_on`, the poster given no reply at all within the window, is shown for information only |
+| `hosting_ad_click` | the member pressed the hosting ad's button within the window (`detail.clicked` on the exposure, written by `POST /user/hostingad`) | `not_back`, the share of members whose last access is not at least an hour after the exposure, margin 2 points |
+
+Opens are never used: they are folded in nightly, and image proxies open mail for people who never looked
+at it. A tap on a push is not used because the app records none. The sources write the numbers in their own
+words: the members **counted** are those first reached at least a window ago, who are fewer than the members
+**exposed** so far, and only "exposed" means sent. `active_after` says what active means in its note, because
+nothing else on the tab does. A guardrail has its own margin and the
+sentences name it, because the 2 point default is far too coarse for a 0.2 percent unsubscribe rate. A
+guardrail is read once 100 members are counted across both arms, and an early revert still needs 300
+counted on each arm.
+
+**For information only.** A source can also show a share that never decides: `information()` in
+`ExposureSource`, a label and a SQL test over the cohort like `bad()`. It is counted in the same query, with
+the members counted as its base, and goes in the read's detail as `information`, never in the guardrails. The
+result text adds "For information only, not used to decide: <label> was X% with the change and Y% without." to
+the read and to the decision, and the tab draws the same line. It is for a share the change moves on purpose,
+where a guardrail would revert the run for doing what it was meant to do; a big margin on a guardrail would
+still count it in the split of the error between guardrails, and would read as a check that is not there.
+
+A source that fails is a read that failed, like Loki being down: the tick uses its last read for up to two
+hours, and after the end waits six hours before it calls the experiment inconclusive. A run that counted
+nobody (the switch was off, or no sender ran) ends inconclusive.
+
+### Design keys
+
+All are set in `--design=<json>` of `ux:experiment create`; the Go create route keeps only `touches` and
+`expected_points`, so these experiments are made on the batch host.
+
+| Key | Meaning |
+|---|---|
+| `channel` | `email`, `push` or `server`. Web when absent. Any other channel, or a `source`, forces a fixed split |
+| `type` | the email type or push kind it changes, `A-Za-z0-9_-`, up to 48 |
+| `source` | a key of `ux.sources`. Needs a channel other than web |
+| `window_hours` | the hours a member has to convert in. Needed with a `source` |
+| `intake_hours`, `max_hours` | the hours members are reached, and the whole run. Only with a `source`. The run is the intake plus the window unless `max_hours` says |
+| `salt` | see above |
+| `slot` | see below |
+| `copy` | arm name to the text that arm shows, up to 240 characters, for the tab. Plain text, never used to build a message |
+| `primary` | which result a source with a choice is decided on. The source says which it offers, by a static `primaries()`; none of the sources shipped now offers one. `create` refuses any other, and refuses the key for a source that offers none. Only with a `source` |
+| `touches`, `expected_points` | as for a web experiment. `touches` is stored as empty for a source experiment: the browser stamps only the arms it has code for, so another funnel's completion cannot be split by a server arm. Set `expected_points` in points of the source's own rate, because the default 5 is far too big for a click rate |
+
+### Run length, slot and a fixed split
+
+| Channel | Longest run | Default time members are reached | Why |
+|---|---|---|---|
+| push | 48 hours | 24 | a member gets one daily posts push a day, and only first exposures count |
+| email | 168 hours | 24 | mail lands over a day or more. The daily digest sends from 07:00 to 12:00, so its run is 48 |
+| server | 336 hours | 168 | a handover or a promise outcome needs a week after the exposure |
+
+`start` refuses a run over the ceiling, and a time members are reached that is longer than the whole run.
+The config key serves arms until the end of the intake plus an hour, and the window runs on with no new
+exposures. A web experiment keeps `max_hours`, 24. An experiment with a web step keeps `intake_hours` at 24
+or less, because the browser drops an entry more than 25 hours ahead.
+
+**One running experiment per slot**: `design.slot`, else `<channel>:<type>` when it has a type, else its
+funnel. A digest test and a reply funnel test run together; two digest tests cannot. A web experiment's slot
+is its funnel, with the wording staff already know. The cap of five running stays shared across channels.
+
+**The split is fixed.** The tick never moves it, because the browser keeps its first arm in
+`localStorage` and a member of a mail experiment is reached again and again, so a moving split would give
+one member two arms. Adoption still sets the winner to 0 to 89 and control to 90 to 99, so some members
+change arm then, as on the web.
+
+`start` also refuses, in plain words, a source experiment when `ux_server_arms` is not `1`, when email
+tracking is off for mail, when a mail or push experiment has no entry in `config/ux_switches.php` (the
+code is not deployed yet) or the entry's arms or metric source differ from the row, and when the source's
+own volume shows the run is too small to read. Every refusal is the kind the queue records and does not
+retry.
+
+### Switch lists and corpse control
+
+An experiment that is not in a runtime's list is control there, whatever the config says. Each runtime has
+one list, because none can read another's source tree: `iznik-nuxt3/ux-experiments.manifest.json` for the
+browser, `iznik-batch/config/ux_switches.php` for the batch and `ux.ServerSwitches` in
+`iznik-server-go/ux/serverarm.go` for the Go API. An entry has the name, the day it was opened, the pull
+request, `keep_until`, the channel, the type, what varies, the arms and the metric.
+
+Each language has a test (`UxSwitchManifestTest`, `TestServerSwitches...`) that reads the code and fails when
+a call has no entry, when an entry has no call left, when the name is not a string literal, and when an entry
+is more than 30 days old unless `keep_until` is still ahead. It warns past 14 days. A server run adopted at
+day 14 lives about 35 days, so set `keep_until` when it is adopted. The scans read the code as the compiler
+does and are tested on sample source, and each test counts the files it read.
+
+A server experiment is listed in Go only: `interested-button` has an entry in `ux.ServerSwitches` and none in the batch
+list, because no batch code reads its arm, and `start` checks the batch list only for mail and push.
+
+### The kill switch
+
+`ux_server_arms` is a config row. Set it through the Support or Admin route, so no deploy is needed:
+
+```
+PATCH /config/admin   {"ux_server_arms": "1"}
+```
+
+Only `1` serves arms. Anything else, or no row, makes every sender act as control within a minute and write no
+exposure row. The row is not public. To stop one experiment, `ux:experiment stop` drops its entry from the key
+at once; the tab's Stop is queued and applied within minutes. Servers also ignore an entry whose `until` has
+passed or is more than 15 days ahead. A source guardrail that trips reverts the experiment early, once both
+arms have 300 counted.
+
+### Privacy
+
+The table holds the member's id, the experiment, the arm, the kind and id of the thing decided, the time, and
+ids. The arm follows from the member's id and the published weights, so it adds nothing. No arm goes in a URL,
+a header or a Loki label, and no route returns rows: the tab shows counts only. The table is part of
+forgetting a member (the scheduled path and the removed TrashNothing path), merging two accounts (PHP and Go),
+the data export (as the experiment, the arm, the kind and the time) and the support dump. Each checks the
+table exists first, so an erasure, a merge or an export never depends on an analytics table. The batch asks
+the write node (`UxExperimentExposure::tableExists()`), because `Schema::hasTable` asks the read node, and a
+read node that is behind says no for a table the write node has just made, which would skip an erasure
+without an error. The export reads its rows from the write node too.
+
+### Confirming a reply before it is passed on
+
+`confirm-reply` held half of the replies to offers whose photo looked damaged, or large or 20 kg and over, and asked the
+replier in the chat "Do you still want it?". It ran from 20 October 2026 and was reverted on 2 November: 14.8% of the
+128 repliers asked had no wasted reply within 7 days, against 25.8% of the 132 not asked, and more of them were never
+handed the item. Its code was removed. Its page on the Experiments section still draws how repliers answered, from the
+stored result (`ModSysAdminUxReplyConfirmDetail`). The same question about a child car seat is policy and is still
+asked of everyone ([chat-prompts.md](chat-prompts.md#child-car-seats)).
+
+Both of its measures counted each replier, and both scored a reply the question dropped as a failure. Of the 155
+questions asked, 117 were answered yes, 4 no and 34 never answered, so about a quarter of asked replies were dropped
+before the poster saw them. A dropped reply cannot be promised, so "not handed the item" rose by construction, and a
+reply nobody answered was "wasted" though it cost the poster nothing. Neither measured what the change is for.
+
+### Confirming a reply, judged per poster
+
+`confirm-reply-post` runs the same question again, measured by what the poster saw.
+
+- **Unit.** The poster is in the arm (`ux.ExperimentArm(db, post.Fromuser, ...)` in `chat/replyconfirm.go`). In `ask`, every
+  replier to the poster's eligible offers is asked, on the website and in the app; in `control` nothing changes. A replier
+  is asked once per post, as before.
+- **Eligible.** An OFFER whose newest `messages_eee` row says damaged, or large or 20 kg and over with no delivery offered,
+  from a poster and to a replier who are not TrashNothing members, in their own chat, not held by rippling, with no outcome
+  yet. A child car seat is asked about as policy and is not in the experiment.
+- **Exposure.** One row per poster and post, subject `post`, written at the first eligible reply in both arms (in the
+  reply's transaction in `ask`, after it in `control`). `ConfirmReplyPostSource` counts each poster once, on their first
+  such post, once it is 7 days old. Strata are `damaged`, `car` and `both`.
+- **Primary, `no_dead_reply`.** The poster saw no dead reply on that post within 7 days of the exposure. A dead reply was
+  passed on (processed and delivered) and its replier was not promised the item or recorded as taking it
+  (`messages_promises`, `messages_by`) by the end of the window. A reply dropped before the poster saw it is not dead.
+- **Guardrail.** `not_taken`, the post not taken within 7 days, margin 5 points. It is the one that stops hiding replies
+  from scoring as a win: a poster with fewer replies has no dead reply, but if that costs items finding a home it shows here.
+- **For information only, `nothing_passed_on`.** The share of posters given no reply at all within 7 days, shown per
+  arm on the tab and in the result text, and never used to decide. Asking is meant to raise it: about a quarter of
+  asked replies were dropped in the first run, and 64% of these posts get only one reply, so about 16% of posters in
+  `ask` can be expected to have nothing passed on. As a guardrail it would revert the run for doing what it is meant
+  to do. It is shown so that over-hiding can be seen; `not_taken` is what decides whether that cost anything.
+- **Run.** Server channel, 7 days of intake and a 7-day window, 336 hours. On live in early November 2026 one week of
+  intake held about 348 posters (174 an arm); 12% of their posts had no dead reply and 56% were taken within 7 days. The
+  low base is because posters rarely record who took an item, so a reply that led to the item going often still counts as
+  dead, in both arms alike. `expected_points` 10 gives a power of 0.98 (5 points would give 0.72).
+
+
+The command that creates and starts it is in the Deploy section of the pull request that added it.
+
+### An I'm interested button
+
+`interested-button` tests whether a quick way to say "I'm interested" before writing a reply leads more members to
+reply. It is decided in Go, so the app build carries no switch.
+
+- **Who.** A signed-in member on the website who opens an Offer or Wanted they could reply to: not their own, not
+  deleted, no outcome, still approved on a community, and neither member a TrashNothing account. Not a request from the
+  app. `GET /message/:id/interested` (`iznik-server-go/message/interested.go`) decides: it looks the arm up with
+  `ux.ExperimentArm` and writes a `view` exposure (subject `messages.id`) for both arms. In the arm `button` the post
+  shows an outlined **I'm interested** button beside Reply (`components/MessageInterested.vue`,
+  `composables/useInterested.js`). In `control` nothing changes.
+- **What a mark does.** `POST /message/:id/interested` writes a `messages_interested` row (one per member and post) and
+  the member sees "Saved. Find it in My Posts." with an Undo. My Posts lists open marks under **Posts you're interested
+  in** with Reply and Remove (`components/MyPostsInterested.vue`, from `GET /message/interested`). That list shows for
+  anyone with a mark, in the app too, so a stop does not hide what a member saved.
+- **The chase-up.** `messages:interested-chaseup` runs hourly. A mark at least 24 hours old and at most 7 days old,
+  with no reply from the member to that post, on a post still open and not promised, is named in one email per member
+  (`App\Mail\Message\InterestedChaseUp`, a Reply button per post opening the reply pane). Each mark is named once:
+  `chasedat` is set when it is mailed, or skipped for a member who cannot be mailed. The hours are
+  `freegle.interested.chaseup_after_hours` and `max_age_days`.
+- **Counted.** `interested_reply`: each member once, on their first `view`, once it is 7 days old. Converted: the member
+  sent a reply to any post within 7 days. The guardrail is `fewer_handovers`: the share of members not promised an
+  item or marked as taking one within the window, margin 2 points. The read's `interested` detail counts marks, members
+  who marked, marks followed by a reply to the same post (before and after the chase-up) and chase-ups sent. The
+  Experiments section shows them (`ModSysAdminUxInterestedDetail`).
+- **Starting it.** After the SQL below, the Go API and the batch are deployed, and `ux_server_arms` is `1`:
+
+  ```bash
+  php artisan ux:experiment create --flow=reply --name=interested-button \
+    --title="I'm interested before replying" \
+    --hypothesis="Writing a first reply is a big step, so some members who want an item leave without replying. A one-tap mark and a reminder bring more of them back to reply." \
+    --change="For half of signed-in members on the website, posts show an I'm interested button beside Reply. A mark is listed in My Posts and chased by email a day later while the post is still open." \
+    --expected="More members reply to a post within 7 days, by 1 point or more." \
+    --design='{"channel":"server","source":"interested_reply","window_hours":168,"intake_hours":72,"max_hours":240,"slot":"server:interested-button","expected_points":1}' \
+    --pr=<this PR>
+  php artisan ux:experiment start interested-button
+  ```
+
+- **Cleanup.** Adopted: the arm call and the exposure go from `interested.go` (every eligible member gets the button),
+  the `ux.ServerSwitches` entry and `InterestedReplySource` go. Reverted, inconclusive or stopped: the button, the GET
+  route's arm, the source and the switch entry go. The table, My Posts list and chase-up can stay until no mark is
+  younger than 7 days, then go too.
+
+Production SQL, before deploying: `iznik-batch/database/migrations/2026_10_23_000001_create_messages_interested_table_migration.sql`.
+
+### A hosting ad for members with a WordPress site
+
+`krystal-hosting-ad` tests whether members who run a WordPress site of their own will look at Krystal, which
+hosts Freegle and pays an affiliate commission on a new customer, when asked once in a modal. It is decided in
+Go, so the app build carries no switch, and the ad never shows in the app.
+
+- **Who.** A signed-in member on the website whose email domain is a WordPress site that is not already on
+  Krystal. The batch finds that out: `hosting:scan-domains` (`DomainHostingService`, nightly at 02:20, 300
+  domains a run) takes the domains of the preferred emails of members active in the last 90 days that at most
+  five active members share (more is a provider or an employer, not somebody's site), leaves out known
+  providers and the public-sector suffixes, and looks at each once, and again after 90 days: one NS lookup and
+  one GET of the home page with a user agent that says who is asking. It keeps two flags (a WordPress
+  fingerprint in the page; a nameserver or a response header naming Krystal), the first nameserver, the Server
+  header and the status, in `domain_hosting`, one row per domain. Nothing there names a member, and the page
+  is never stored.
+- **The decision.** `GET /user/hostingad` (`iznik-server-go/hostingad/hostingad.go`) joins the member's email
+  domain to `domain_hosting`, and when it is WordPress and not Krystal looks the arm up with
+  `ux.ExperimentArm` and writes a `hosting_ad` exposure (subject the domain row) for both arms, in the same
+  transaction as the key `hostingad` in `users.settings`, the unix time of the decision. That key is why a
+  member is asked once, on any device: a member who has it is answered no without a look. When the experiment
+  is off nothing is decided or written, so the member is still eligible when it starts. It answers `show` only;
+  the arm stays on the server.
+- **What it shows.** In the arm `ad`, `HostingAdModal.vue`: "A greener home for your website", three short
+  lines (it looks like you have a WordPress site; Freegle is very happy to be hosted on Krystal, a UK company on
+  green energy that moves sites over; if you switch through this link Freegle gets a small payment and it costs you
+  nothing extra), **Take a look** and **No thanks**. Take a look opens `/shortlink/krystalhosting` in a new tab:
+  the shortlink counts the click and sends the member to the Awin affiliate link for Krystal's WordPress hosting
+  page, with `clickref=hostingad` so the Awin dashboard can tell these clicks from the footer's. `HostingAd.vue`,
+  mounted in `LayoutCommon`, asks the server once per page view on arrival (`composables/useHostingAd.js`):
+  signed in, on the web, not in ModTools, not on one of the interstitial's excluded pages, not asked in the last
+  day on this browser (`freegle_hosting_ad_asked`) and no other modal open. If another modal opens during the
+  call (the rating nudge, say) it waits up to a minute for it to close rather than stacking, because the server
+  has already counted the member.
+- **Telemetry.** `hosting_ad_shown`, `hosting_ad_click` and `hosting_ad_dismissed` (`how`: `not_now` or
+  `hidden`) in the client log, and `POST /user/hostingad` writes the unix time of the first click
+  (`detail.clicked`) and the first dismissal (`detail.dismissed`) on the exposure row.
+- **Counted.** `hosting_ad_click`: each member once, on their exposure, once it is a window old. Converted: a
+  click within the window. Control has no button, so its rate is the floor and the ad arm's rate is the click
+  rate of the modal. The guardrail is `not_back`: the share of members whose last access is not at least an
+  hour after the exposure, margin 2 points, because an interrupt that sends people away is not worth its clicks.
+  The tab does not read Awin: whether a click became a customer, and the commission, are in the Awin dashboard
+  only, and a sale validates 60 days after it.
+- **Sizing.** On 30 October 2026 about 2,700 active members were on a domain shared by at most three active
+  members; of 40 sampled, 5 ran WordPress and 2 were already on Krystal, so the pool is a few hundred members,
+  reached as they visit. That is too small for the usual read within a day, so the intake is a week.
+- **Starting it.** After the SQL below, the Go API and the batch are deployed, `hosting:scan-domains` has run
+  at least once (or `php artisan hosting:scan-domains --limit=3000` by hand), the shortlink row exists and
+  `ux_server_arms` is `1`:
+
+  ```bash
+  php artisan ux:experiment create --flow=login --name=krystal-hosting-ad \
+    --title="Krystal hosting ad for members with a WordPress site" \
+    --hypothesis="Members who run their own WordPress site are a good fit for Krystal, which hosts Freegle and pays a commission on a new customer; asked once, some of them will look." \
+    --change="For half of signed-in members on the website whose email domain is a WordPress site not on Krystal, a modal on arrival, once, with a button to Krystal's WordPress hosting page through Freegle's affiliate link." \
+    --expected="A few percent of members shown the modal click through, and members shown it come back as often as members not shown it." \
+    --design='{"channel":"server","source":"hosting_ad_click","window_hours":168,"intake_hours":168,"max_hours":336,"slot":"server:krystal-hosting-ad","expected_points":2}' \
+    --pr=<this PR>
+  php artisan ux:experiment start krystal-hosting-ad
+  ```
+
+  The flow `login` is only where the tab lists it: the modal is on arrival, not in a funnel.
+- **Cleanup.** Adopted: the arm call goes from `hostingad.go` (every eligible member is asked once), the
+  `ux.ServerSwitches` entry and `HostingAdClickSource` go; the scanner, the table, the routes and the modal
+  stay. Reverted, inconclusive or stopped: the modal, `HostingAd.vue`, `useHostingAd.js`, the `LayoutCommon`
+  line, the routes, the source and the switch entry go, and the scanner and its schedule go with them unless
+  something else has found a use for `domain_hosting`.
+
+Production SQL, before deploying: `iznik-batch/database/migrations/2026_10_30_000001_create_domain_hosting_table_migration.sql`,
+and the shortlink row:
+
+```sql
+INSERT INTO shortlinks (name, type, url) VALUES ('krystalhosting', 'Other',
+  'https://www.awin1.com/cread.php?awinmid=117205&awinaffid=2209193&clickref=hostingad&ued=https%3A%2F%2Fkrystal.io%2Fhosting%2Fwordpress');
+```
+
+### Deploying experiments decided on the server
+
+Run `iznik-batch/database/migrations/2026_10_16_000001_create_ux_experiment_exposures_table_migration.sql`
+first. It is one `CREATE TABLE IF NOT EXISTS`, alters no existing table and is safe to run twice. Then deploy
+the Go API and the batch. Nothing changes until `ux_server_arms` is `1`, and setting it back to `0` is the
+rollback. If the SQL has not been run when the batch is live, forgetting, merging and exporting a member skip
+the table and the hourly tick skips its clean-up.
 
 ## The routes
 
@@ -450,12 +1535,15 @@ in its holdout), `pr_url` and `cleanup_pr_url`.
 `POST /modtools/ux/experiments` creates a draft and answers `{id, status: "draft"}`. The body is
 `flow`, `name`, `title`, `hypothesis`, `change` and `expected`, and optionally `arms` (two numbers each),
 `design` and `pr_url`. It answers 400 with a plain message (more than five arms is one), and 409 when
-the name exists. The new
+the name exists: the unique index on `name` is the only check, so two creates sent at once give one
+200 and one 409, never a 500. The new
 draft's id is read from the primary database, so a start sent straight after is not answered "No such
 experiment" by a replica that has not caught up.
 
 `PATCH /modtools/ux/experiments/:id` with `action` of `start`, `stop` or `close` (and optionally
-`reason` and `cleanup_pr`) queues a `ux_experiment` background task that the batch's background task
+`reason` and `cleanup_pr`) first checks the status (`close` takes an adopted, reverted, inconclusive or
+stopped experiment, and needs `cleanup_pr` for the last three; `start` is refused for one with a
+`cleanup_pr_url`) and then queues a `ux_experiment` background task that the batch's background task
 runner applies, so the cap, the 24-hour end and the config key are enforced by `UxExperimentService` and
 nowhere else. The experiment is looked up on the primary database too. A request the rules refuse (the
 cap, a second experiment on the funnel, too little power, a status the action does not fit) throws
@@ -493,7 +1581,9 @@ frontend reads a config key that only the new Go code serves.
    that is not a Sentry event per page view, but members are in control. The earlier advice that the
    frontend could go first "harmlessly" was wrong.
 
-After that, every experiment is a frontend PR plus a start; nothing else is deployed per experiment.
+After that, every experiment is a frontend PR plus a start; nothing else is deployed per experiment. An
+experiment decided on the server has one more table and its own order: see
+[Deploying experiments decided on the server](#deploying-experiments-decided-on-the-server).
 
 What breaks when a part is missing:
 

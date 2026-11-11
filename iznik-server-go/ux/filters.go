@@ -34,6 +34,8 @@ var honours = map[string]struct{ device, signedIn bool }{
 	"ux_flow_outcome_daily": {device: true, signedIn: false},
 	"ux_field_daily":        {device: true, signedIn: false}, // the table has no logged_in column
 	"ux_component_daily":    {device: true, signedIn: false}, // the table has no logged_in column
+	// Read by funnels (both cuts) and by fields, which clears signedIn from its scope first.
+	"ux_flow_signal_daily": {device: true, signedIn: true},
 }
 
 // flowFilter is what a request asked for, already checked. The zero value asks for nothing.

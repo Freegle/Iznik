@@ -16,7 +16,9 @@ use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
+use Symfony\Component\Mime\Part\DataPart;
 use Symfony\Component\Mime\Part\Multipart\AlternativePart;
+use Symfony\Component\Mime\Part\Multipart\MixedPart;
 use Symfony\Component\Mime\Part\TextPart;
 
 /**
@@ -236,6 +238,8 @@ class EmailSpoolerService
             'text' => $email->getTextBody(),
             'amp_html' => $this->extractAmpContent($email),
             'headers' => $this->extractCustomHeaders($email),
+            // Files sent with the mail (name, mime, base64 content). Empty for nearly every mailable.
+            'attachments' => $this->extractAttachments($email),
             'email_type' => $emailType,
             'mailable_class' => get_class($mailable),
             // Only present for a Mailable that quotes member content (plan section 11.8);
@@ -496,6 +500,25 @@ class EmailSpoolerService
      *
      * AMP content is stored as a text/x-amp-html part in a multipart/alternative body.
      */
+    /**
+     * The files attached to a built message, in a form that survives the JSON spool file.
+     *
+     * @return array<int, array{name: string, mime: string, content: string}>
+     */
+    protected function extractAttachments(Email $email): array
+    {
+        $out = [];
+        foreach ($email->getAttachments() as $part) {
+            $out[] = [
+                'name' => $part->getFilename() ?? 'attachment',
+                'mime' => $part->getMediaType() . '/' . $part->getMediaSubtype(),
+                'content' => base64_encode($part->getBody()),
+            ];
+        }
+
+        return $out;
+    }
+
     protected function extractAmpContent(Email $email): ?string
     {
         $body = $email->getBody();
@@ -814,6 +837,16 @@ class EmailSpoolerService
                         $symfonyMessage->setBody(new TextPart($textBody, 'utf-8', 'plain'));
                     }
                     // If text is empty, Mail::html() has already set HTML-only body.
+
+                    // Attached files: setBody() above stops Symfony adding them itself, so wrap
+                    // whatever body there is with them.
+                    if (!empty($data['attachments'])) {
+                        $files = array_map(
+                            fn ($a) => new DataPart(base64_decode($a['content']), $a['name'], $a['mime']),
+                            $data['attachments']
+                        );
+                        $symfonyMessage->setBody(new MixedPart($symfonyMessage->getBody(), ...$files));
+                    }
                 });
 
                 // SMTP has accepted the message. Record that on local disk BEFORE

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,8 +22,8 @@ func TestPostMessageTakenRetiresRippledPendingKeepsApproved(t *testing.T) {
 
 	originGroup := CreateTestGroup(t, prefix+"_origin")
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, originGroup, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, originGroup, utils.ROLE_MEMBER)
 	_, posterToken := CreateTestSession(t, posterID)
 
 	var locationID uint64
@@ -77,8 +78,8 @@ func TestPostMessageTakenSingleGroupPendingNotStranded(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, posterToken := CreateTestSession(t, posterID)
 
 	var locationID uint64

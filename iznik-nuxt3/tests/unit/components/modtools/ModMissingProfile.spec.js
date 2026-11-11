@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref, computed } from 'vue'
 import ModMissingProfile from '~/modtools/components/ModMissingProfile.vue'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Mock useMe composable - myGroups must be a computed
 const mockMyGroups = ref([])
@@ -58,7 +59,7 @@ describe('ModMissingProfile', () => {
         {
           id: 1,
           type: 'Other',
-          role: 'Moderator',
+          role: ROLE_MODERATOR,
           publish: true,
           tagline: null,
           profile: null,
@@ -73,7 +74,7 @@ describe('ModMissingProfile', () => {
         {
           id: 1,
           type: 'Freegle',
-          role: 'Member',
+          role: ROLE_MEMBER,
           publish: true,
           tagline: null,
           profile: null,
@@ -88,7 +89,7 @@ describe('ModMissingProfile', () => {
         {
           id: 1,
           type: 'Freegle',
-          role: 'Moderator',
+          role: ROLE_MODERATOR,
           publish: false,
           tagline: null,
           profile: null,
@@ -103,7 +104,7 @@ describe('ModMissingProfile', () => {
         {
           id: 1,
           type: 'Freegle',
-          role: 'Moderator',
+          role: ROLE_MODERATOR,
           publish: true,
           tagline: null,
           profile: 'has-profile.jpg',
@@ -119,7 +120,7 @@ describe('ModMissingProfile', () => {
         {
           id: 1,
           type: 'Freegle',
-          role: 'Owner',
+          role: ROLE_OWNER,
           publish: true,
           tagline: 'Has tagline',
           profile: null,
@@ -135,7 +136,7 @@ describe('ModMissingProfile', () => {
         {
           id: 1,
           type: 'Freegle',
-          role: 'Moderator',
+          role: ROLE_MODERATOR,
           publish: true,
           tagline: 'Has tagline',
           profile: 'has-profile.jpg',
@@ -151,7 +152,7 @@ describe('ModMissingProfile', () => {
         {
           id: 1,
           type: 'Freegle',
-          role: 'Moderator',
+          role: ROLE_MODERATOR,
           publish: true,
           tagline: null,
           profile: null,
@@ -160,7 +161,7 @@ describe('ModMissingProfile', () => {
         {
           id: 2,
           type: 'Freegle',
-          role: 'Owner',
+          role: ROLE_OWNER,
           publish: true,
           tagline: 'Has',
           profile: null,
@@ -169,7 +170,7 @@ describe('ModMissingProfile', () => {
         {
           id: 3,
           type: 'Freegle',
-          role: 'Moderator',
+          role: ROLE_MODERATOR,
           publish: true,
           tagline: 'Has',
           profile: 'has.jpg',

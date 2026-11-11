@@ -71,14 +71,14 @@
               {{ group.namedisplay }}
             </nuxt-link>
             <v-icon
-              v-if="group.role === 'Moderator' || group.role === 'Owner'"
+              v-if="group.role === ROLE_MODERATOR || group.role === ROLE_OWNER"
               icon="crown"
               class="mod-icon"
             />
           </div>
           <SettingsGroup
             :groupid="group.id"
-            :leave="group.role === 'Member'"
+            :leave="group.role === ROLE_MEMBER"
             @leave="leaveGroup(group.id)"
           />
         </div>
@@ -188,6 +188,7 @@ import SettingsEmailInfo from '~/components/SettingsEmailInfo'
 import NoticeMessage from '~/components/NoticeMessage'
 import OurToggle from '~/components/OurToggle'
 import { useMe } from '~/composables/useMe'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Unique per instance so label/for pairs never clash when the component renders twice.
 const formId = useId()

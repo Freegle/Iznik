@@ -46,6 +46,8 @@ let mockDraftMessage = null
 let mockDraftCollect = null
 let mockDraftEmail = null
 let mockDraftAt = null
+let mockReplyImage = null
+let mockDraftImage = null
 
 vi.mock('~/stores/reply', () => ({
   useReplyStore: () => ({
@@ -93,6 +95,15 @@ vi.mock('~/stores/reply', () => ({
     },
     get draftAt() {
       return mockDraftAt
+    },
+    get draftImage() {
+      return mockDraftImage
+    },
+    get replyImage() {
+      return mockReplyImage
+    },
+    set replyImage(v) {
+      mockReplyImage = v
     },
     clearReply: mockClearReply,
     saveDraft: mockSaveDraft,
@@ -285,13 +296,18 @@ beforeEach(() => {
   mockDraftCollect = null
   mockDraftEmail = null
   mockDraftAt = null
-  mockSaveDraft.mockImplementation(({ msgId, message, collect, email }) => {
-    mockDraftMsgId = msgId
-    mockDraftMessage = message
-    mockDraftCollect = collect
-    mockDraftEmail = email
-    mockDraftAt = Date.now()
-  })
+  mockReplyImage = null
+  mockDraftImage = null
+  mockSaveDraft.mockImplementation(
+    ({ msgId, message, collect, email, image }) => {
+      mockDraftMsgId = msgId
+      mockDraftMessage = message
+      mockDraftCollect = collect
+      mockDraftEmail = email
+      mockDraftImage = image || null
+      mockDraftAt = Date.now()
+    }
+  )
   mockClearDraft.mockImplementation(() => {
     mockDraftMsgId = null
     mockDraftMessage = null
@@ -776,7 +792,35 @@ describe('draft persistence (typing survives close/reopen)', () => {
       message: 'Yes please',
       collect: 'Weekday evenings',
       email: 'someone@example.com',
+      image: null,
     })
+  })
+
+  it('persists a photo even before anything is typed', async () => {
+    const { result } = mountComposable()
+    result.initialize()
+
+    const image = { id: 321, paththumb: 'https://example.com/t.jpg' }
+    result.replyImage.value = image
+    await flushPromises()
+    vi.advanceTimersByTime(400)
+
+    expect(mockSaveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ msgId: MSG_ID, image })
+    )
+  })
+
+  it('restores a photo-only draft on reopen', () => {
+    const image = { id: 321, paththumb: 'https://example.com/t.jpg' }
+    mockDraftMsgId = MSG_ID
+    mockDraftImage = image
+    mockDraftAt = Date.now() - 60 * 1000
+
+    const { result } = mountComposable()
+    result.initialize()
+
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(result.replyImage.value).toEqual(image)
   })
 
   it('clears the draft when the user empties every field', async () => {
@@ -1210,7 +1254,7 @@ describe('handleJoinGroup (via submit with logged-in user)', () => {
     result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
     await doLoggedInSubmit(result)
 
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 200, false)
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 200, 'replied')
     expect(result.state.value).toBe(ReplyState.COMPLETED)
   })
 
@@ -1370,7 +1414,7 @@ describe('handleJoinGroup: closest-group selection for multi-group posts', () =>
     expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
       10,
       GROUP_CLOSEST.id,
-      false
+      'replied'
     )
     expect(result.state.value).toBe(ReplyState.COMPLETED)
   })
@@ -1396,7 +1440,7 @@ describe('handleJoinGroup: closest-group selection for multi-group posts', () =>
     expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
       10,
       GROUP_MEDIUM.id,
-      false
+      'replied'
     )
     expect(result.state.value).toBe(ReplyState.COMPLETED)
     // No location known, so there's nothing to look distances up against.
@@ -1420,7 +1464,7 @@ describe('handleJoinGroup: closest-group selection for multi-group posts', () =>
     expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
       10,
       GROUP_CLOSEST.id,
-      false
+      'replied'
     )
     expect(result.state.value).toBe(ReplyState.COMPLETED)
     // A single-group post has a forced answer - no need to look up distance.
@@ -1931,7 +1975,11 @@ describe('closestGroupToReplier edge cases', () => {
     ],
   ])('%s', async (_n, me, groups, fetchImpl, expectedId, expectLookup) => {
     await joinWith({ me, groups, fetchImpl })
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, expectedId, false)
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(
+      10,
+      expectedId,
+      'replied'
+    )
     expect(mockGroupFetch).toHaveBeenCalledTimes(
       expectLookup ? groups.length : 0
     )
@@ -1947,7 +1995,7 @@ describe('closestGroupToReplier edge cases', () => {
     result.replyText.value = 'Hello'
     await result.submit()
     await flushPromises()
-    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 100, false)
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 100, 'replied')
   })
 })
 
@@ -2343,6 +2391,22 @@ describe('helpers and lifecycle', () => {
       'Hello\r\n\r\nPossible collection times: Weekends'
     )
     expect(mockReplyingAt).toBeTruthy()
+  })
+
+  it('saveReplyToStore (via submit) keeps the photo for the send', async () => {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = { 0: { id: 100 } }
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    const image = { id: 321, paththumb: 'https://example.com/t.jpg' }
+    result.replyImage.value = image
+    mockReplyToPostFn.mockResolvedValue(false)
+    await result.submit()
+    await flushPromises()
+    expect(mockReplyImage).toEqual(image)
   })
 
   it('submit with a form whose validate() throws falls back to COMPOSING', async () => {

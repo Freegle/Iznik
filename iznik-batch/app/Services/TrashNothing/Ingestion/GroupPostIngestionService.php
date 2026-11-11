@@ -3,6 +3,7 @@
 namespace App\Services\TrashNothing\Ingestion;
 
 use App\Models\Group;
+use App\Models\Location;
 use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageAttachment;
@@ -11,8 +12,14 @@ use App\Models\User;
 use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
+use App\Services\Ripple\ReachMemberQueueService;
+use App\Services\Ripple\RippleEngagementService;
 use App\Services\SpatialQueryService;
 use App\Services\TusService;
+use App\Support\SubjectParser;
+use App\Support\TransactionPolicy;
+use App\Support\TrashNothingPicLinks;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -48,6 +55,38 @@ class GroupPostIngestionService
      */
     public const REASON_NO_USER_ID = 'no-user-id';
 
+    /**
+     * The poster could not be resolved because TN could not be asked who they are (5xx,
+     * 429, timeout, challenge), because TN refused the lookup (a client error other than
+     * 404), because the lookup failed so many runs running that the post was given up,
+     * because their username's address belongs to a Freegle user with a different
+     * tnuserid, or because a deleted account still holds the address or the tnuserid. See
+     * TnUserProvisioner.
+     *
+     * Only the first is transient: the post sync stops at it and asks again next run, so it
+     * leaves no routed entry until the post is finally ingested or skipped (PostSyncer).
+     * The rest are final.
+     *
+     * All of them exist only because this path CREATES a Freegle user for a TN poster
+     * Freegle has never met - a deliberate divergence from email-path case 2, which still
+     * drops such a post as REASON_UNKNOWN_USER. Expect API-side Pending (a new user is
+     * unmapped) against email-side Dropped/unknown-user for the same post; that is the
+     * feature working, not a parity gap.
+     */
+    public const REASON_TN_USER_LOOKUP_FAILED = TnUserProvisioner::REASON_LOOKUP_FAILED;
+
+    public const REASON_TN_USER_LOOKUP_REFUSED = TnUserProvisioner::REASON_LOOKUP_REFUSED;
+
+    public const REASON_TN_USER_LOOKUP_GAVE_UP = TnUserProvisioner::REASON_LOOKUP_GAVE_UP;
+
+    public const REASON_TN_USER_LOOKUP_KEY_REJECTED = TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED;
+
+    public const REASON_TN_USERNAME_CLASH = TnUserProvisioner::REASON_USERNAME_CLASH;
+
+    public const REASON_TN_ADDRESS_HELD_BY_DELETED_USER = TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER;
+
+    public const REASON_TN_ACCOUNT_DELETED = TnUserProvisioner::REASON_ACCOUNT_DELETED;
+
     public const REASON_DUPLICATE = 'duplicate';
 
     /**
@@ -63,6 +102,48 @@ class GroupPostIngestionService
     public const REASON_CROSSPOST = 'crosspost';
 
     public const REASON_MESSAGE_CREATE_FAILED = 'message-create-failed';
+
+    /**
+     * The poster is banned from the group the post was placed on. A banned Freegle member
+     * cannot post to the group, and neither can a TN one: placing the post anyway would
+     * hand it to the moderators who banned them.
+     */
+    public const REASON_BANNED = 'banned';
+
+    /**
+     * The reasons a post is skipped for want of a user that are final, so they are decided and
+     * not merely failed: noted in DeliberateSkips for tn:verify-email-coverage, which shows the
+     * reason beside the miss, or counts the post as skipped on purpose when DeliberateSkips says
+     * the reason is expected. Leaves out REASON_TN_USER_LOOKUP_FAILED (nothing decided), and
+     * REASON_TN_USER_LOOKUP_GAVE_UP and REASON_TN_USER_LOOKUP_KEY_REJECTED (the post is still
+     * wanted, and the verifier is the second chance it gets).
+     */
+    private const FINAL_USER_SKIPS = [
+        self::REASON_UNKNOWN_USER,
+        self::REASON_NO_USER_ID,
+        self::REASON_TN_USER_LOOKUP_REFUSED,
+        self::REASON_TN_USERNAME_CLASH,
+        self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
+        self::REASON_TN_ACCOUNT_DELETED,
+    ];
+
+    /**
+     * Sentry hears of a skip that needs a person once a day for each reason. The sync meets the
+     * same poster's posts again and again, and one report says there is a case to look at.
+     */
+    private const NEEDS_A_HUMAN_REPORTED_KEY_PREFIX = 'tn-ingest:needs-a-human-reported:';
+
+    /** Why a post's consent made the poster's implicit membership ordinary, for the log. */
+    public const REASON_CONSENTED = 'consented through TrashNothing';
+
+    /**
+     * Group/Joined log text for a membership ingestion creates. A group the poster chose has the
+     * text TN's partner add writes; one they did not has its own, which ModTools shows and the
+     * "seen on many groups" check leaves out, as it does 'Rippled'.
+     */
+    public const JOIN_LOG_CHOSEN = 'via partner';
+
+    public const JOIN_LOG_UNADDRESSED = 'TrashNothing unaddressed';
 
     /**
      * messages.sourceheader for a post ingested from the TN API.
@@ -100,6 +181,9 @@ class GroupPostIngestionService
         private readonly bool $dryRun,
         private readonly LokiService $loki,
         private readonly ItemService $itemService,
+        private readonly TnUserProvisioner $userProvisioner,
+        // Reads fixtures and writes no notes, like the provisioner's own flag.
+        private readonly bool $localTesting = false,
     ) {}
 
     /**
@@ -159,7 +243,8 @@ class GroupPostIngestionService
         $postId   = $this->getField($post, 'post_id', 'getPostId');
         $tnUserId = $this->getField($post, 'user_id', 'getUserId');
         $title    = $this->getField($post, 'title', 'getTitle') ?? '';
-        $content  = $this->getField($post, 'content', 'getContent') ?? '';
+        // The photos come with the post as attachments, so TN's link to them goes.
+        $content  = TrashNothingPicLinks::strip($this->getField($post, 'content', 'getContent') ?? '');
         $date     = $this->getField($post, 'date', 'getDate');
         $lat      = $this->getField($post, 'latitude', 'getLatitude');
         $lng      = $this->getField($post, 'longitude', 'getLongitude');
@@ -184,7 +269,8 @@ class GroupPostIngestionService
         // Note this uses `group_id` purely as a HAS-IT/HASN'T-IT flag. Its
         // value is still never used for placement (resolved decision #7: it is
         // TN's own opaque internal id, which drifts out of step with Freegle
-        // group boundaries) — PostSyncer resolves the group from the post's own
+        // group boundaries). PostSyncer places the post on a community the member chose in
+        // freegle_group_ids, or failing that from the post's own
         // coordinates via Location::groupsNear().
         //
         // REPOSTS are unaffected and deliberately not de-duplicated, matching
@@ -206,10 +292,10 @@ class GroupPostIngestionService
             return $this->dropped(self::REASON_CROSSPOST, result: 'crosspost');
         }
 
-        // Idempotency: skip if this post was already ingested for this group,
+        // Idempotency: skip if this post was already ingested, on any group,
         // whether the message we made is still live or has since been deleted —
-        // see existingMessageForGroup() for why deleted still counts.
-        $existing = $this->existingMessageForGroup((string) $postId, $group->id);
+        // see existingMessage() for why both hold.
+        $existing = $this->existingMessage((string) $postId);
         if ($existing !== null) {
             $existingDeleted = $existing->deleted !== null;
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=duplicate tnpostid=' . $postId . ' groupid=' . $group->id . ' msgid=' . $existing->id . ($existingDeleted ? ' existing_deleted=true' : '') . ($this->dryRun ? ' would_be_duplicate=true' : ''));
@@ -230,24 +316,49 @@ class GroupPostIngestionService
         }
 
         // Resolve the Freegle user from TN's user id. TN's `user_id` is TN's OWN id,
-        // not a Freegle id: the mapping is users.tnuserid (unique, set when TN adds a
-        // member through the partner API). A TN user Freegle does not know is skipped -
-        // there is no address to reach them at, so a reply to their post could never be
-        // delivered, and treating the number as a Freegle id would hand the post to
-        // whichever unrelated account happens to hold it.
-        $user = $tnUserId ? $this->resolveUser((int) $tnUserId) : null;
+        // not a Freegle id: treating it as one would hand the post to whichever
+        // unrelated account happens to hold the number. The mapping is
+        // users.tnuserid (unique, set when TN adds a member through the partner API); a
+        // TN poster Freegle has never met is looked up on TN and created, deliberately
+        // unlike email-path case 2 - see TnUserProvisioner. The post is skipped only when
+        // that fails.
+        $user = $tnUserId ? $this->userProvisioner->resolveOrCreate((int) $tnUserId, (string) $postId) : null;
         if ($user === null) {
-            $reason = $tnUserId ? 'unknown-user' : 'no-user-id';
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $reason . ' tnpostid=' . $postId . ' tn_user_id=' . $tnUserId);
-            $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', ['tn_post_id' => $postId, 'tn_user_id' => $tnUserId]);
+            $reason = $tnUserId ? $this->unresolvedUserReason() : self::REASON_NO_USER_ID;
+            $traceReason = match ($reason) {
+                self::REASON_UNKNOWN_USER => 'unknown-user',
+                default                   => $reason,
+            };
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $traceReason . ' tnpostid=' . $postId . ' tn_user_id=' . $tnUserId);
+            $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', [
+                'tn_post_id' => $postId,
+                'tn_user_id' => $tnUserId,
+                'reason'     => $traceReason,
+            ]);
+            if (in_array($reason, self::FINAL_USER_SKIPS, true)) {
+                $this->noteSkip((string) $postId, $reason, $tnUserId);
+            }
             // Mirrors email-path case 2, which sets routing_reason and NOTHING
             // else — no group_id/group_name, even though the email path has
             // resolved the group by this point. dropped() REPLACES the context
             // rather than merging, which is what reproduces that omission here.
-            return $this->dropped(
-                $tnUserId ? self::REASON_UNKNOWN_USER : self::REASON_NO_USER_ID,
-                result: 'skipped',
-            );
+            return $this->dropped($reason, result: 'skipped');
+        }
+
+        // Checked before anything is written, so a banned poster's post leaves no trace on
+        // the group: no message, no membership. One group per post, so a post skipped here
+        // is not ingested at all.
+        if (DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->exists()) {
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=banned tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
+            $this->loki->logEvent('tn-sync', 'post-skip-banned', [
+                'tn_post_id' => $postId,
+                'user_id'    => $user->id,
+                'group_id'   => $group->id,
+            ]);
+
+            $this->noteSkip((string) $postId, self::REASON_BANNED, $tnUserId);
+
+            return $this->dropped(self::REASON_BANNED, result: 'skipped');
         }
 
         // Update user's last access.
@@ -262,14 +373,15 @@ class GroupPostIngestionService
             $user->save();
         }
 
-        // No membership gate: the group here was chosen for the post (via
-        // Location::groupsNear() on its own coordinates), not supplied by a member
-        // posting to a group they belong to, so the poster is frequently not an
+        // No membership gate: when the member named no community on TN, the group
+        // here comes from the post's own coordinates (Location::groupsNear()), not
+        // from a group they belong to, so the poster is frequently not an
         // Approved member of the resolved group — that's expected, not an error.
         // If a membership does exist, its ourPostingStatus still applies (matches
-        // the email path for genuine members); otherwise fall back to the same
-        // 'DEFAULT' a brand-new member gets. The group's own moderation settings
-        // below still apply regardless.
+        // the email path for genuine members), and a blank one is MODERATED as it is
+        // on the email path, on the web and in the content check; otherwise fall back
+        // to the same 'DEFAULT' a brand-new member gets. The group's own moderation
+        // settings below still apply regardless.
         $membership = Membership::where('userid', $user->id)
             ->where('groupid', $group->id)
             ->where('collection', 'Approved')
@@ -290,7 +402,7 @@ class GroupPostIngestionService
         ];
 
         // Determine posting status, applying the same override hierarchy as the email path.
-        $postingStatus = $membership->ourPostingStatus ?? 'DEFAULT';
+        $postingStatus = $membership === null ? 'DEFAULT' : ($membership->ourPostingStatus ?: 'MODERATED');
 
         $overrideModeration = $group->overridemoderation ?? 'None';
         if ($overrideModeration === 'ModerateAll') {
@@ -430,7 +542,194 @@ class GroupPostIngestionService
             // exists. It remains available above on the batch_event stream.
         }
 
+        $this->recordMembership($user, $group, $modMessagingAllowed);
+
         return $routingResult;
+    }
+
+    /**
+     * Makes sure the poster is a member of $group, and that the membership says whether they
+     * chose it.
+     *
+     * The group here is the one whose area holds the post, which is often not one the poster
+     * chose; freegle_group_ids says which they did ($modMessagingAllowed). A poster with no
+     * membership is given one either way, so every TN post has a membership behind it:
+     *
+     * - not chosen: implicit, added_origin tn_unaddressed, mail off, as rippling gives a poster a
+     *   membership on every group their post reaches;
+     * - chosen: ordinary, added_origin partner, as TN's own partner add (PUT
+     *   /memberships?partner=) gives one.
+     *
+     * An existing membership keeps its added_origin, which records how that row was made. A post
+     * that comes with consent clears an implicit membership. Consent only goes one way: a later
+     * post without it never makes a membership implicit again.
+     *
+     * Runs last, so a failure here never leaves the post half-routed. A failure is reported to
+     * Sentry rather than thrown, and the post stays: with no membership behind it the post is
+     * never auto-approved, and its poster cannot be contacted by that group's moderators.
+     */
+    private function recordMembership(User $user, Group $group, bool $modMessagingAllowed): void
+    {
+        try {
+            $existing = DB::table('memberships')
+                ->where('userid', $user->id)
+                ->where('groupid', $group->id)
+                ->first(['rippled', 'implicit']);
+
+            if ($existing !== null) {
+                if ($modMessagingAllowed && ($existing->rippled || $existing->implicit)) {
+                    Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=clear-implicit user_id=' . $user->id . ' group_id=' . $group->id);
+                    if (!$this->dryRun) {
+                        app(RippleEngagementService::class)->clear($user->id, $group->id, self::REASON_CONSENTED);
+                    }
+                }
+
+                return;
+            }
+
+            // A banned poster's row was deleted by the ban; never put it back. ingest() has
+            // already skipped the post, so this only guards a future caller.
+            if (DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->exists()) {
+                return;
+            }
+
+            $this->insertMembership($user, $group, $modMessagingAllowed);
+        } catch (\Throwable $e) {
+            self::reportFailure('TN post ingestion: failed to record the poster\'s membership', $e, [
+                'user_id'  => $user->id,
+                'group_id' => $group->id,
+            ]);
+        }
+    }
+
+    /**
+     * Logs a membership write that failed and sends it to Sentry, so it is seen and not just
+     * left in the daily log. The caller carries on: a post is never lost for this.
+     */
+    public static function reportFailure(string $message, \Throwable $e, array $context = []): void
+    {
+        Log::error($message, $context + ['error' => $e->getMessage()]);
+
+        if (app()->bound('sentry')) {
+            app('sentry')->captureException($e);
+        }
+    }
+
+    /**
+     * The new membership, its memberships_history row and its Group/Joined log, together.
+     *
+     * The history row is what memberships:process works from: abuse checks, flagged comments,
+     * and for a chosen group the per-group welcome, as TN's partner add gets. For a group the
+     * poster did not choose, MembershipsProcessingService sends no welcome and leaves the join
+     * out of the "seen on many groups" check, as it does for a ripple join, by its added_origin.
+     */
+    private function insertMembership(User $user, Group $group, bool $chosen): void
+    {
+        Log::info('TN-SYNC-TRACE [MEMBERSHIP] op=insert-' . ($chosen ? 'ordinary' : 'implicit')
+            . ' user_id=' . $user->id . ' group_id=' . $group->id . ' added_origin='
+            . ($chosen ? Membership::ADDED_ORIGIN_PARTNER : Membership::ADDED_ORIGIN_TN_UNADDRESSED));
+        if ($this->dryRun) {
+            return;
+        }
+
+        self::writeMembership($user->id, $group->id, $chosen, now());
+    }
+
+    /**
+     * Writes a TN poster's new membership, its history row and its join log, all dated $at, and
+     * queues the member for reach mail as every other join path does. Ingestion passes now();
+     * memberships:backfill-tn passes the arrival of the post the membership stands behind, so
+     * both go through here and behave alike. Returns false, writing nothing, when a membership
+     * already exists.
+     *
+     * The join log's text is the reason for the join: JOIN_LOG_CHOSEN for a group the poster
+     * chose, JOIN_LOG_UNADDRESSED for one the post was placed on.
+     */
+    public static function writeMembership(int $userId, int $groupId, bool $chosen, \DateTimeInterface $at): bool
+    {
+        $origin = Membership::addedOriginForInsert(
+            $chosen ? Membership::ADDED_ORIGIN_PARTNER : Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'GroupPostIngestionService::writeMembership', $userId, $groupId,
+        );
+
+        $row = [
+            'userid' => $userId,
+            'groupid' => $groupId,
+            'role' => Membership::ROLE_MEMBER,
+            'collection' => Membership::COLLECTION_APPROVED,
+            // Not left blank, as a ripple join leaves it: ContentCheckService::isUserModerated
+            // reads a blank status as moderated, and would hold every post this poster makes
+            // here. DEFAULT is what ingestion and the content check already give a TN poster
+            // with no membership.
+            'ourPostingStatus' => Membership::POSTING_STATUS_DEFAULT,
+            'added_origin' => $origin,
+            'added' => $at,
+        ];
+
+        if (!$chosen) {
+            // Mail off. Unlike a ripple join, nothing tells the poster they are on this group
+            // (there is no intro mail), so it must not start mailing them. Digests already skip
+            // TN users, but the events and volunteering roundups read these settings and nothing
+            // else. A chosen group keeps the column defaults, as the partner add does.
+            $row += [
+                'emailfrequency' => Membership::EMAIL_FREQUENCY_NEVER,
+                'eventsallowed' => 0,
+                'volunteeringallowed' => 0,
+                'implicit' => 1,
+            ];
+        }
+
+        // All three or none: a membership with no history row skips the abuse checks, and one
+        // with no join log is invisible in ModTools and to the origin backfill.
+        // atomic() retries a deadlock or lock wait on a Galera cluster, which a bare transaction
+        // does not. A retry starts again from the insertOrIgnore, with the earlier attempt rolled
+        // back, so it can never leave a half-written membership; if another writer has made the
+        // row by then, the retry returns false.
+        $written = TransactionPolicy::atomic(function () use ($row, $userId, $groupId, $origin, $chosen, $at) {
+            if (DB::table('memberships')->insertOrIgnore($row) === 0) {
+                // Someone else made the row in the meantime; theirs stands.
+                return false;
+            }
+
+            DB::table('memberships_history')->insert([
+                'userid' => $userId,
+                'groupid' => $groupId,
+                'collection' => Membership::COLLECTION_APPROVED,
+                'processingrequired' => 1,
+                'added_origin' => $origin,
+                'added' => $at,
+            ]);
+
+            DB::table('logs')->insert([
+                'timestamp' => $at,
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'user' => $userId,
+                // A chosen group is the member's own join, as the partner add logs it. A group
+                // they did not choose was the system's doing, as a ripple join is.
+                'byuser' => $chosen ? $userId : null,
+                'groupid' => $groupId,
+                'text' => $chosen ? self::JOIN_LOG_CHOSEN : self::JOIN_LOG_UNADDRESSED,
+            ]);
+
+            return true;
+        }, 'TN membership, history row and join log must exist together');
+
+        if ($written) {
+            // Digests skip TN users and reach mail only considers members with mail on, so it
+            // sends nothing today; queued anyway so TN joins match every other join path.
+            // The membership is already committed, so a failure here is reported and not thrown.
+            try {
+                ReachMemberQueueService::enqueue($userId, ReachMemberQueueService::REASON_JOINED);
+            } catch (\Throwable $e) {
+                self::reportFailure('TN membership written but reach mail queueing failed', $e, [
+                    'user_id'  => $userId,
+                    'group_id' => $groupId,
+                ]);
+            }
+        }
+
+        return $written;
     }
 
     private function createMessage(
@@ -478,6 +777,17 @@ class GroupPostIngestionService
                 $locationId = null;
             }
 
+            // The bracket on TN's title is the member's own words for where they are:
+            // a town, a street, or the whole postcode, in no fixed shape. The email
+            // path never saw that, because TN rewrote the subject per group before
+            // sending. Give the post the bracket every Freegle post gets, built from
+            // the resolved postcode, and drop the bracket when nothing resolved, so
+            // nothing a member typed reaches the subject.
+            $subject = SubjectParser::withLocation(
+                $subject,
+                $locationId !== null ? Location::subjectArea($locationId) : null,
+            );
+
             // TN is the master for a TN member's location (tn:sync keeps lastlocation in
             // step with it), so a post only fills it in when it is empty; the post's own
             // point is where the item is, not where the member is.
@@ -491,6 +801,11 @@ class GroupPostIngestionService
 
             $fromName = $user->fullname ?? $user->firstname ?? null;
 
+            // The member's TN address is the sender, as it is on a post TN emails to the
+            // group: ModTools reads it to say the post came via TrashNothing, and TN's
+            // partner key acts as the owner only of posts whose sender is in TN's domain.
+            $fromAddr = $user->tnAddress();
+
             // TN's own post date, however it arrived. The OpenAPI client hands
             // us a DateTime; an array-shaped post (fixtures, --local-testing,
             // the backfill path) carries the same value as an ISO-8601 string,
@@ -502,7 +817,7 @@ class GroupPostIngestionService
             // re-parses messages.message still recovers the key fields.
             $dateStr = ($postedAt ?? now())->format('D, d M Y H:i:s +0000');
             $groupEmail = $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-            $rfc822 = $this->synthesizeRfc822($fromName, $groupEmail, $subject, $dateStr, $messageid, $postId, $lat, $lng, $content);
+            $rfc822 = $this->synthesizeRfc822($fromName, $fromAddr, $groupEmail, $subject, $dateStr, $messageid, $postId, $lat, $lng, $content);
 
             $msgData = [
                 'date'            => $postedAt !== null ? $postedAt->format('Y-m-d H:i:s') : now(),
@@ -510,10 +825,10 @@ class GroupPostIngestionService
                 'sourceheader'    => self::SOURCEHEADER,
                 'message'         => $rfc822,
                 'fromuser'        => $user->id,
-                'envelopefrom'    => null,
+                'envelopefrom'    => $fromAddr,
                 'envelopeto'      => $groupEmail,
                 'fromname'        => $fromName,
-                'fromaddr'        => null,
+                'fromaddr'        => $fromAddr,
                 'replyto'         => null,
                 'fromip'          => null,
                 'fromcountry'     => null,
@@ -583,10 +898,10 @@ class GroupPostIngestionService
                     'groupid'       => $group->id,
                     'source'        => Message::SOURCE_EMAIL,
                     'fromuser'      => $user->id,
-                    'envelopefrom'  => null,
+                    'envelopefrom'  => $fromAddr,
                     'envelopeto'    => $groupEmail,
                     'fromname'      => $fromName,
-                    'fromaddr'      => null,
+                    'fromaddr'      => $fromAddr,
                     'fromip'        => null,
                     'subject'       => $subject,
                     'prunedsubject' => $prunedSubject,
@@ -632,23 +947,61 @@ class GroupPostIngestionService
     }
 
     /**
-     * The Freegle user behind a TN user id, or null if Freegle has never met them.
-     *
-     * users.tnuserid is unique and is written by the partner membership-add flow, which
-     * runs whenever a TN member joins a Freegle community through TN, so nearly every TN
-     * user who has ever touched Freegle resolves here. Nothing is created for the rest:
-     * the public API gives no name and no address for a poster, so a stub could only
-     * carry an invented address that bounces, and a Freegle member's reply would vanish.
+     * Leave a note of why this post was skipped, for tn:verify-email-coverage, and tell Sentry when
+     * the reason is one a person has to put right. Neither happens in a dry run, which must leave
+     * nothing behind for the next real run, or from fixtures.
      */
-    private function resolveUser(int $tnUserId): ?User
+    private function noteSkip(string $tnPostId, string $reason, mixed $tnUserId): void
     {
-        return User::where('tnuserid', $tnUserId)->orderBy('id')->first();
+        if ($this->dryRun || $this->localTesting) {
+            return;
+        }
+
+        DeliberateSkips::record($tnPostId, $reason);
+
+        if (DeliberateSkips::needsAHuman($reason)
+            && Cache::add(self::NEEDS_A_HUMAN_REPORTED_KEY_PREFIX . $reason, true, now()->addDay())) {
+            $message = "TrashNothing post {$tnPostId} (TN user {$tnUserId}) was skipped as {$reason}: only a person can put"
+                . ' this right, and until then none of the poster\'s posts are ingested. Reported once a day for each reason';
+            Log::error($message);
+
+            if (app()->bound('sentry')) {
+                app('sentry')->captureMessage($message, \Sentry\Severity::error());
+            }
+        }
     }
 
     /**
-     * The message we already hold for this TN post on this group, live or
-     * deleted, or null if we have never ingested it here. Lowest id wins, so
-     * the answer is stable if an older duplicate somehow survives.
+     * The routing_reason for a TN user id the provisioner could not resolve.
+     *
+     * TN having no usable user is the email path's unknown user, so it keeps that path's
+     * wording; the other failures can only happen here.
+     */
+    private function unresolvedUserReason(): string
+    {
+        return match ($this->userProvisioner->lastFailureReason()) {
+            TnUserProvisioner::REASON_LOOKUP_FAILED => self::REASON_TN_USER_LOOKUP_FAILED,
+            TnUserProvisioner::REASON_LOOKUP_REFUSED => self::REASON_TN_USER_LOOKUP_REFUSED,
+            TnUserProvisioner::REASON_LOOKUP_GAVE_UP => self::REASON_TN_USER_LOOKUP_GAVE_UP,
+            TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED => self::REASON_TN_USER_LOOKUP_KEY_REJECTED,
+            TnUserProvisioner::REASON_USERNAME_CLASH => self::REASON_TN_USERNAME_CLASH,
+            TnUserProvisioner::REASON_ADDRESS_HELD_BY_DELETED_USER => self::REASON_TN_ADDRESS_HELD_BY_DELETED_USER,
+            TnUserProvisioner::REASON_ACCOUNT_DELETED => self::REASON_TN_ACCOUNT_DELETED,
+            default => self::REASON_UNKNOWN_USER,
+        };
+    }
+
+    /**
+     * The message we already hold for this TN post, on any group, live or
+     * deleted, or null if we have never ingested it. Lowest id wins, so the
+     * answer is stable if an older duplicate somehow survives.
+     *
+     * ANY GROUP, because a source post is one post, and its group can differ
+     * between reads: a post that names no community is placed by its coordinates
+     * (Location::groupsNear()), so one on the line between two groups can resolve
+     * to either, and a member can change the communities they chose on TN. The sync's windows
+     * overlap, so it reads a post more than once, and a check scoped to the
+     * group would make a second message on the neighbour.
      *
      * DELETED MESSAGES DELIBERATELY STILL COUNT, which is why this is not the
      * email path's findLiveTnMessage() (IncomingMailService.php:3135) with a
@@ -658,7 +1011,7 @@ class GroupPostIngestionService
      *    group off?", so it must skip deleted ones — attaching a messages_groups
      *    row to a deleted message would put the group's copy on something no
      *    member can see.
-     *  - this asks "have we ingested this post for this group before?" — an
+     *  - this asks "have we ingested this post before?" — an
      *    idempotency guard, which a deleted message answers yes to just as
      *    firmly as a live one. Filtering deleted out here would mean the next
      *    run whose window still covers the post RE-CREATES it, resurrecting
@@ -675,12 +1028,10 @@ class GroupPostIngestionService
      * explicit human action, not a side effect of a window overlap: clear the
      * tnpostid on the deleted row and re-run the sync for that window.
      */
-    private function existingMessageForGroup(string $tnPostId, int $groupId): ?object
+    private function existingMessage(string $tnPostId): ?object
     {
         return DB::table('messages')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->where('messages.tnpostid', $tnPostId)
-            ->where('messages_groups.groupid', $groupId)
             ->orderBy('messages.id')
             ->select('messages.id', 'messages.deleted')
             ->first();
@@ -936,11 +1287,23 @@ class GroupPostIngestionService
     }
 
     /**
+     * The From line of the blob synthesizeRfc822() writes: the member's TN address, or TN's
+     * noreply address for a member who has none. tn:backfill-post-senders writes it too.
+     */
+    public static function fromHeader(?string $fromName, ?string $fromAddr): string
+    {
+        $address = $fromAddr ?? 'noreply@trashnothing.com';
+
+        return 'From: ' . ($fromName ? "{$fromName} <{$address}>" : $address);
+    }
+
+    /**
      * Synthesize a minimal RFC822 message blob so any code that re-parses
      * messages.message can still recover the key fields.
      */
     private function synthesizeRfc822(
         ?string $fromName,
+        ?string $fromAddr,
         string $groupEmail,
         string $subject,
         string $date,
@@ -950,11 +1313,10 @@ class GroupPostIngestionService
         mixed $lng,
         string $body,
     ): string {
-        $from = $fromName ? "{$fromName} <noreply@trashnothing.com>" : 'noreply@trashnothing.com';
         $coords = ($lat !== null && $lng !== null) ? "{$lat},{$lng}" : '';
 
         return implode("\r\n", [
-            "From: {$from}",
+            self::fromHeader($fromName, $fromAddr),
             "To: {$groupEmail}",
             "Subject: {$subject}",
             "Date: {$date}",

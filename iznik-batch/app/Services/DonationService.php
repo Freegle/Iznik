@@ -140,6 +140,11 @@ class DonationService
                     continue;
                 }
 
+                // A donor can ask never to be asked to donate again.
+                if (!$user->wantsDonationAsks()) {
+                    continue;
+                }
+
                 // Check if we asked recently.
                 $lastAsk = $this->getLastAskDate($recipient->userid);
 

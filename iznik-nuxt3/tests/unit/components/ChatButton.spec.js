@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import ChatButton from '~/components/ChatButton.vue'
 
@@ -188,6 +188,96 @@ describe('ChatButton', () => {
       const button = wrapper.find('button')
       await button.trigger('click')
       expect(wrapper.emitted('click')).toBeTruthy()
+    })
+  })
+
+  describe('a moderator who may not chat to the member', () => {
+    it('says so in ModTools instead of opening an empty chat', async () => {
+      mockMiscStore.modtools = true
+      // The store answers no id when the server refuses the chat.
+      mockChatStore.openChatToMods.mockResolvedValue(null)
+      try {
+        const wrapper = createWrapper({ userid: 2, groupid: 7 })
+
+        await wrapper.find('button').trigger('click')
+        await flushPromises()
+
+        expect(mockChatStore.openChatToMods).toHaveBeenCalledWith(7, 2)
+        expect(mockPush).not.toHaveBeenCalled()
+        expect(wrapper.find('[data-test="chat-refused"]').exists()).toBe(true)
+      } finally {
+        mockChatStore.openChatToMods.mockResolvedValue(123)
+      }
+    })
+
+    it('opens the chat when it is allowed', async () => {
+      mockMiscStore.modtools = true
+      const wrapper = createWrapper({ userid: 2, groupid: 7 })
+
+      await wrapper.find('button').trigger('click')
+      await flushPromises()
+
+      expect(mockPush).toHaveBeenCalledWith('/chats/123')
+      expect(wrapper.find('[data-test="chat-refused"]').exists()).toBe(false)
+    })
+  })
+
+  describe('reply with a photo', () => {
+    beforeEach(() => {
+      mockChatStore.send.mockReset().mockResolvedValue({})
+    })
+
+    it('sends the photo as a second message after the reply text', async () => {
+      const wrapper = createWrapper({ userid: 2 })
+      await wrapper.vm.openChat(
+        null,
+        'Interested',
+        42,
+        false,
+        true,
+        'browse',
+        777
+      )
+      expect(mockChatStore.send).toHaveBeenNthCalledWith(
+        1,
+        456,
+        'Interested',
+        null,
+        null,
+        42,
+        false,
+        'browse'
+      )
+      expect(mockChatStore.send).toHaveBeenNthCalledWith(
+        2,
+        456,
+        null,
+        null,
+        777
+      )
+    })
+
+    it('sends only the text when there is no photo', async () => {
+      const wrapper = createWrapper({ userid: 2 })
+      await wrapper.vm.openChat(null, 'Interested', 42, false, true, 'browse')
+      expect(mockChatStore.send).toHaveBeenCalledTimes(1)
+    })
+
+    it('still completes the reply if the photo fails to send', async () => {
+      mockChatStore.send
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new Error('photo failed'))
+      const wrapper = createWrapper({ userid: 2 })
+      await wrapper.vm.openChat(
+        null,
+        'Interested',
+        42,
+        false,
+        true,
+        'browse',
+        777
+      )
+      expect(wrapper.emitted('sent')).toBeTruthy()
     })
   })
 

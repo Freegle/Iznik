@@ -6,6 +6,7 @@
         v-model="attachments"
         type="Message"
         :recognise="attachments.length === 0"
+        :carry-on="carryOn"
         empty-title="What should it look like?"
         empty-subtitle="Add a photo if you have one"
         @photo-processed="onPhotoProcessed"
@@ -27,11 +28,12 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from '#imports'
 import { useComposeStore } from '~/stores/compose'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 
 const router = useRouter()
 const composeStore = useComposeStore()
@@ -81,6 +83,33 @@ const attachments = computed({
     composeStore.setAttachmentsForMessage(messageId.value, newValue)
   },
 })
+
+// Experiment ask-photos-carry-on: an outlined "Carry on" button in place of Skip. Anything but arm
+// 'b' is control. The page is server rendered and the arm lives in the browser, so the server render
+// and the first client render are control and the arm is read once the page is mounted. Reading the
+// arm counts the member as having seen the variant, so it is read only when the button can show:
+// with no photo. It is read at most once per page view.
+const experimentArm = ref(null)
+let armRead = false
+let mounted = false
+
+function readExperimentArm() {
+  if (!mounted || armRead || attachments.value.length > 0) return
+  armRead = true
+  experimentArm.value = flowArm(FlowName.ASK, 'ask-photos-carry-on')
+}
+
+const carryOn = computed(
+  () => experimentArm.value === 'b' && attachments.value.length === 0
+)
+
+onMounted(() => {
+  mounted = true
+  readExperimentArm()
+})
+
+// A member who arrived with a photo and removes it can now see the button.
+watch(() => attachments.value.length, readExperimentArm)
 
 // Track if we have photos (for showing Next button)
 const hasPhotos = computed(() => attachments.value.length > 0)

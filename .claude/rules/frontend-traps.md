@@ -152,6 +152,7 @@ can be a sentence (an answer option, a problem title, a step name) therefore run
 edge of a phone screen, with no error and no scrollbar, and a scoped `white-space: normal` does
 nothing. Wrap it with `white-space: normal !important` on a more specific selector, as
 `components/ModSysAdminUxFunnelChart.vue` does for its row labels, and check it at phone width.
+The member question card (components/MicroVolunteeringUxPrompt.vue) is the second place this bit.
 
 ## A filter the old API ignores shows unfiltered figures as filtered
 
@@ -233,6 +234,22 @@ is wrong in either codebase taken alone, and both test suites pass.
   must cope.
 - UX experiments: `docs/developers/reference/ux-experiments.md`, "How arms reach members, live" and
   "Deploying it".
+
+## A modal opened after a navigation can be thrown away, or cancel it
+
+Something that should pop up "once the member reaches the next page" (after a reply, say) has two
+silent ways to fail, and a unit test with one mounted copy catches neither:
+
+- **Opened while the navigation is under way, it cancels it.** `useOurModal` registers a
+  `beforeEach` guard that treats any navigation while a modal is shown as the back button: it hides
+  the modal and calls `next(false)`. Only a route with `?noguard=true` gets through. The member stays
+  where they were, with no error.
+- **The router's `afterEach` is too early when the layout changes.** `/message` and `/chats` use
+  different layouts, so `LayoutCommon` and everything mounted in it are unmounted and mounted again
+  during the move. `afterEach` runs before that, so a modal opened there belongs to the copy that is
+  about to go: it is thrown away, and the new copy never knew. Wait for Nuxt's `page:finish`
+  instead, and keep the request somewhere outside the component (a module-level ref) until the copy
+  that opens it is the one on the new page.
 
 ## See also
 

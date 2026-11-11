@@ -69,7 +69,11 @@ onMounted(async () => {
     const loggedInAs = authStore.user?.id
 
     if (loggedInAs === uid) {
-      await authStore.saveAndGet({ relevantallowed: false })
+      // relevantallowed is what older senders check; marketingconsent is the consent itself.
+      await authStore.saveAndGet({
+        relevantallowed: false,
+        marketingconsent: false,
+      })
       status.value = 'success'
     } else {
       status.value = 'failed'

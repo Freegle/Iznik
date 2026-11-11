@@ -109,10 +109,15 @@
           :msgid="interestedInOthersMsgid"
           :userid="interestedInOthersUserId"
         />
+        <RatingNudge />
+        <HostingAd />
+        <AskNameModal v-if="askNameOpen" />
         <!-- Height detection divs -->
         <div ref="mobileTallDetector" class="mobile-tall-detector" />
         <div ref="desktopTallDetector" class="desktop-tall-detector" />
       </div>
+      <!-- Not in the d-none block above: it is drawn in place, not teleported like a modal. -->
+      <AppInterstitial />
       <BreakpointFettler />
       <OrientationFettler />
       <div id="here" />
@@ -130,6 +135,7 @@
   </div>
 </template>
 <script setup>
+import { useAskName } from '~/composables/useAskName'
 import {
   ref,
   computed,
@@ -153,8 +159,17 @@ import { useReplyToPost } from '~/composables/useReplyToPost'
 import { useMe } from '~/composables/useMe'
 import { useMobileStore } from '@/stores/mobile'
 import ChatButton from '~/components/ChatButton'
+const AskNameModal = defineAsyncComponent(
+  () => import('~/components/AskNameModal.vue')
+)
 const InterestedInOthersModal = defineAsyncComponent(
   () => import('~/components/InterestedInOthersModal.vue')
+)
+const RatingNudge = defineAsyncComponent(
+  () => import('~/components/RatingNudge.vue')
+)
+const HostingAd = defineAsyncComponent(
+  () => import('~/components/HostingAd.vue')
 )
 const DeletedRestore = defineAsyncComponent(
   () => import('~/components/DeletedRestore.vue')
@@ -189,6 +204,7 @@ const adRendering = ref(true)
 const firstRender = ref(true)
 const interestedInOthersMsgid = ref(null)
 const interestedInOthersUserId = ref(null)
+const { askNameOpen } = useAskName()
 const showInterestedModal = ref(false)
 const videoAd = ref(true)
 

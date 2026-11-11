@@ -20,6 +20,17 @@
         Show Stats
       </b-button>
       <b-button variant="white" @click="details"> Show Details </b-button>
+      <b-button
+        v-if="alert.requirereply && !alert.cancelled"
+        variant="white"
+        class="ms-1"
+        @click="stopRequiring"
+      >
+        Stop requiring replies
+      </b-button>
+      <span v-else-if="alert.requirereply" class="text-muted ms-1">
+        Replies no longer required
+      </span>
     </b-col>
     <ModAlertHistoryDetailsModal
       v-if="showDetails"
@@ -75,6 +86,10 @@ const statsModal = ref(null)
 function details() {
   showDetails.value = true
   detailsModal.value?.show()
+}
+
+async function stopRequiring() {
+  await alertStore.cancel(props.alertid)
 }
 
 function stats() {

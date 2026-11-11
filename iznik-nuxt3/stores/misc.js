@@ -10,7 +10,7 @@ const WAIT_FOR_ONLINE_TIMEOUT_MS = 30000
 export const useMiscStore = defineStore('misc', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
-    pick: ['vals', 'source', 'marketingConsent'],
+    pick: ['vals', 'source'],
   },
   state: () => ({
     time: null,
@@ -40,7 +40,10 @@ export const useMiscStore = defineStore('misc', {
     worktimer: false,
     deferGetMessages: false,
     source: null,
-    marketingConsent: true,
+    // Set when the member ticks the marketing consent box on the login form. The next user fetch
+    // saves it to the server, which holds the consent. Not persisted: a tick must not outlive the
+    // page, and a value left over from the old ticked default must never count as consent.
+    marketingConsentTicked: false,
   }),
   actions: {
     init(config) {
@@ -224,8 +227,8 @@ export const useMiscStore = defineStore('misc', {
         poll()
       })
     },
-    setMarketingConsent(value) {
-      this.marketingConsent = value
+    setMarketingConsentTicked(value) {
+      this.marketingConsentTicked = value
     },
     async fetchLatestMessage() {
       try {

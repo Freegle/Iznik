@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,7 +22,7 @@ func ownWithdrawnAndPending(t *testing.T, prefix string) (withdrawn, pending uin
 	db := database.DBConn
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
+	CreateTestMembership(t, viewerID, group, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
@@ -61,4 +62,18 @@ func TestBoundsOmitsOwnPostWithdrawnWhilePending(t *testing.T) {
 	withdrawn, _, token := ownWithdrawnAndPending(t, uniquePrefix("bounds_withdrawn"))
 	ids := browseFeedIDs(t, "/api/message/inbounds?swlat=51.4&swlng=-0.2&nelat=51.6&nelng=0.0&jwt="+token)
 	assert.False(t, ids[withdrawn], "a post withdrawn while Pending is not in the bounds feed")
+}
+
+// The nearby feed is the default Browse view, and its own-posts arm admits a post with a
+// Pending group row. Withdrawing leaves that row Pending but deleted, so without a check on
+// deleted the withdrawn post still counted as one of "your posts" (Discourse 10216/7).
+func TestNearbyOmitsOwnPostWithdrawnWhilePending(t *testing.T) {
+	withdrawn, pending, token := ownWithdrawnAndPending(t, uniquePrefix("nearby_withdrawn"))
+	db := database.DBConn
+	// The own-posts arm needs messages.lat/lng; withdrawal also soft-deletes the message.
+	db.Exec("UPDATE messages SET lat = 51.5, lng = -0.1 WHERE id IN (?, ?)", withdrawn, pending)
+	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", withdrawn)
+	ids := browseFeedIDs(t, "/api/isochrone/message?jwt="+token)
+	assert.False(t, ids[withdrawn], "a post withdrawn while Pending is not in the nearby feed")
+	assert.True(t, ids[pending], "a post still Pending is in the nearby feed")
 }

@@ -314,7 +314,7 @@ class UxExperimentServiceTest extends TestCase
         $this->assertSame([], $this->configArms());
     }
 
-    public function test_only_an_adopted_experiment_can_be_closed(): void
+    public function test_a_running_experiment_cannot_be_closed(): void
     {
         $id = $this->running();
 
@@ -322,7 +322,7 @@ class UxExperimentServiceTest extends TestCase
             $this->service->close($id);
             $this->fail('a running experiment was closed');
         } catch (\RuntimeException $e) {
-            $this->assertStringContainsString('only an adopted experiment can be closed', $e->getMessage());
+            $this->assertStringContainsString('only an adopted, reverted, inconclusive or stopped experiment can be closed', $e->getMessage());
         }
         $this->assertSame('running', $this->service->find($id)->status);
         $this->assertArrayHasKey('give-photos-skip', $this->configArms());
@@ -401,9 +401,9 @@ class UxExperimentServiceTest extends TestCase
     public function test_a_writer_gives_up_when_another_connection_holds_the_lock(): void
     {
         config()->set('freegle.ux.experiments.lock_wait_seconds', 1);
-        $c = config('database.connections.mysql');
-        $other = new \PDO(sprintf('mysql:host=%s;port=%s;dbname=%s', $c['write']['host'][0], $c['port'], $c['database']), $c['username'], $c['password']);
-        $this->assertSame(1, (int) $other->query("SELECT GET_LOCK('ux_experiments', 0)")->fetchColumn());
+        // Another writer, with its own owner token. The lock is a cache lock: the cluster refuses GET_LOCK.
+        $other = \Illuminate\Support\Facades\Cache::lock('ux_experiments', 60);
+        $this->assertTrue((bool) $other->get());
         $id = $this->service->create($this->attrs());
 
         try {
@@ -414,11 +414,13 @@ class UxExperimentServiceTest extends TestCase
         }
         $this->assertSame('draft', $this->service->find($id)->status);
 
-        $other->query("SELECT RELEASE_LOCK('ux_experiments')");
+        $other->release();
         $this->assertSame('running', $this->service->start($id)->status);
         // And the lock was let go again, so the next writer is not kept waiting.
         $this->assertSame('stopped', $this->service->stop($id)->status);
-        $this->assertSame(1, (int) $other->query("SELECT GET_LOCK('ux_experiments', 0)")->fetchColumn());
+        $next = \Illuminate\Support\Facades\Cache::lock('ux_experiments', 60);
+        $this->assertTrue((bool) $next->get());
+        $next->release();
     }
 
     public function test_a_stop_that_lands_while_the_tick_is_reading_wins(): void

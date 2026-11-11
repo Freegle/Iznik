@@ -1509,7 +1509,9 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 		return c.JSON(fiber.Map{"id": 0})
 	}
 
-	// Duplicate prevention: check last post by user
+	// Duplicate prevention: check last post by user. Deletes are soft (the deleted
+	// column is set), so a deleted post must not count or a member who removes a
+	// post and then re-posts the same wording gets the old id back and no new row.
 	type LastPost struct {
 		ID      uint64  `json:"id"`
 		Replyto *uint64 `json:"replyto"`
@@ -1517,7 +1519,7 @@ func createPost(c *fiber.Ctx, db *gorm.DB, myid uint64, req PostRequest) error {
 		Message string  `json:"message"`
 	}
 	var last LastPost
-	db.Table("newsfeed").Select("id, replyto, type, message").Where("userid = ?", myid).Order("id DESC").Limit(1).Scan(&last)
+	db.Table("newsfeed").Select("id, replyto, type, message").Where("userid = ? AND deleted IS NULL", myid).Order("id DESC").Limit(1).Scan(&last)
 
 	var lastReplyto uint64
 	if last.Replyto != nil {

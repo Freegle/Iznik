@@ -23,6 +23,14 @@
 #   local     the local docker-compose spatial (routing) / spatial-knn containers
 #             that batch-prod calls — rebuilt when routing/knn source changed
 #   batch     batch-prod (bind mount): no restart, just verify the schedule parses
+#   paf       the paf-extractor sidecar batch-prod drives for the SysAdmin PAF tab —
+#             rebuilt when paf-extractor/ changed
+#
+# Every run also creates the services in LOCAL_ENSURE_SERVICES (paf-extractor) when they have no
+# container yet, so a sidecar batch-prod needs starts on its first deploy. Any other service in
+# the profiles with no container is only reported: some (objectstore) are not switched on yet.
+# The boot unit runs `compose up -d --no-build`, which cannot create a service whose image
+# was never built; that is how paf-extractor stayed missing on live in October 2026.
 #
 # NOTHING here is hardcoded to a host — set DEPLOY_NODES (and the paths/ports below)
 # via the environment or an env file. Example:
@@ -86,6 +94,9 @@ LOCAL_REPO="${DEPLOY_LOCAL_REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 COMPOSE="${DEPLOY_COMPOSE:-docker compose}"
 LOCAL_SPATIAL_SERVICE="${DEPLOY_LOCAL_SPATIAL_SERVICE:-spatial}"          # routing-go container
 LOCAL_KNN_SERVICE="${DEPLOY_LOCAL_KNN_SERVICE:-spatial-knn}"             # spatial-go container
+LOCAL_PAF_SERVICE="${DEPLOY_LOCAL_PAF_SERVICE:-paf-extractor}"          # PAF download/unlock sidecar
+# Services batch-prod calls, created on deploy if they have no container. Space-separated.
+LOCAL_ENSURE_SERVICES="${DEPLOY_LOCAL_ENSURE_SERVICES:-$LOCAL_PAF_SERVICE}"
 LOCAL_SPATIAL_CONTAINER="${DEPLOY_LOCAL_SPATIAL_CONTAINER:-freegledocker-spatial}"
 LOCAL_SPATIAL_INTERNAL_PORT="${DEPLOY_LOCAL_SPATIAL_INTERNAL_PORT:-8194}" # batch calls this (no auth)
 BATCH_CONTAINER="${DEPLOY_BATCH_CONTAINER:-freegledocker-batch-prod}"
@@ -101,7 +112,7 @@ STOP_GRACE="${DEPLOY_STOP_GRACE:-15}"
 # ---------------------------------------------------------------------------
 DRY_RUN=false
 ASSUME_YES=false
-ONLY=""            # comma list: apiv2,routing,knn,local,batch  (empty = auto)
+ONLY=""            # comma list: apiv2,routing,knn,local,batch,paf  (empty = auto)
 FORCE=false        # deploy a component even if change-detection says unchanged
 SKIP_LOCAL=false
 
@@ -380,15 +391,40 @@ deploy_node() {
 # ---------------------------------------------------------------------------
 # Local (this host): spatial containers batch-prod calls, + batch sanity
 # ---------------------------------------------------------------------------
+# Create (building if needed) the services in LOCAL_ENSURE_SERVICES that have no container, and
+# report any other service in this host's profiles that has none. A stopped container is left as
+# it is: someone may have stopped it on purpose.
+ensure_services_created() {
+  [ -n "$ONLY" ] && ! want local && ! want paf && return
+  local wanted have missing=""
+  wanted="$($COMPOSE config --services 2>/dev/null | sort)"
+  have="$($COMPOSE ps -a --services 2>/dev/null | sort)"
+  [ -z "$wanted" ] && { warn "local: compose config listed no services, not checking for missing containers"; return; }
+  missing="$(comm -23 <(echo "$wanted") <(echo "$have"))"
+  local create="" other="" svc
+  for svc in $missing; do
+    if [[ " $LOCAL_ENSURE_SERVICES " == *" $svc "* ]]; then create+="$svc "; else other+="$svc "; fi
+  done
+  [ -n "$other" ] && warn "local: in the compose profiles but never created (left alone): $other"
+  if [ -z "$create" ]; then
+    ok "local: $LOCAL_ENSURE_SERVICES present"
+    return
+  fi
+  log "local: creating $create(no container yet)"
+  run "$COMPOSE up -d --no-deps --build $create"
+}
+
 deploy_local() {
   $SKIP_LOCAL && { log "skip-local set"; return; }
-  ( ! want local && [ -n "$ONLY" ] && ! want batch ) && return
+  ( ! want local && [ -n "$ONLY" ] && ! want batch && ! want paf ) && return
   local base; base="$(git rev-parse HEAD)"   # what the local tree was on
-  local routing_changed=false knn_changed=false
+  local routing_changed=false knn_changed=false paf_changed=false
   if [ -n "$ONLY" ]; then
     want local && { routing_changed=true; knn_changed=true; }
-  elif $FORCE; then routing_changed=true; knn_changed=true
+    want paf && paf_changed=true
+  elif $FORCE; then routing_changed=true; knn_changed=true; paf_changed=true
   else
+    changed_between "$base" "$TARGET_COMMIT" 'paf-extractor' && paf_changed=true
     changed_between "$base" "$TARGET_COMMIT" 'iznik-routing-go' && routing_changed=true
     changed_between "$base" "$TARGET_COMMIT" 'iznik-spatial-go' && knn_changed=true
   fi
@@ -415,6 +451,14 @@ deploy_local() {
     run "$COMPOSE build $LOCAL_KNN_SERVICE"
     run "$COMPOSE up -d --no-deps $LOCAL_KNN_SERVICE"
   fi
+  if $paf_changed; then
+    # Only between jobs: a rebuild part way through a PAF import fails it (the extractor
+    # cannot resume), and the import has to be started again from the SysAdmin tab.
+    log "local: rebuild $LOCAL_PAF_SERVICE container"
+    run "$COMPOSE build $LOCAL_PAF_SERVICE"
+    run "$COMPOSE up -d --no-deps $LOCAL_PAF_SERVICE"
+  fi
+  ensure_services_created
   # batch-prod is a bind mount: no restart, just confirm the schedule still parses.
   if want batch || [ -z "$ONLY" ]; then
     $DRY_RUN || {

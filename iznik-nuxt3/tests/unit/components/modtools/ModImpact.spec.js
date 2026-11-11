@@ -313,4 +313,20 @@ describe('ModImpact', () => {
       expect(wrapper.text()).toContain('-10')
     })
   })
+
+  describe('benefitNote prop', () => {
+    const note = 'Includes £1,234 saved on clearing up fly-tipping.'
+
+    it('shows no note by default', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.benefit-note').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('BENEFIT*')
+    })
+
+    it('stars the benefit figure and shows the note', () => {
+      const wrapper = mountComponent({ benefitNote: note })
+      expect(wrapper.text()).toContain('BENEFIT*')
+      expect(wrapper.find('.benefit-note').text()).toBe('* ' + note)
+    })
+  })
 })

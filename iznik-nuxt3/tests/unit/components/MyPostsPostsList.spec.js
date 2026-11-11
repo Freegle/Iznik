@@ -133,6 +133,25 @@ describe('MyPostsPostsList', () => {
     })
   })
 
+  describe('posts with an item list', () => {
+    it('leaves clearances to their own card but keeps a post split automatically', () => {
+      const full = {
+        1: { id: 1, bulkcount: 2, bulkitems: [{}, {}] },
+        2: { id: 2, bulkcount: 2, bulkitems: [{}, {}], autosplit: true },
+        3: { id: 3 },
+      }
+      mockMessageStore.byId.mockImplementation((id) => full[id] || null)
+      const wrapper = createWrapper({
+        posts: [
+          { id: 1, hasoutcome: false, arrival: '2024-01-01' },
+          { id: 2, hasoutcome: false, arrival: '2024-01-02' },
+          { id: 3, hasoutcome: false, arrival: '2024-01-03' },
+        ],
+      })
+      expect(wrapper.vm.visiblePosts.map((p) => p.id).sort()).toEqual([2, 3])
+    })
+  })
+
   describe('props', () => {
     it('has required posts prop', () => {
       const props = MyPostsPostsList.props || {}

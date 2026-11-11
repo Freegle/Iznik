@@ -35,8 +35,18 @@
 /mygroups* /browse:splat 200!
 # The WANTED flow was called "find" until Aug 2026.  Old emails, app shortcuts and
 # bookmarks still point here, so this redirect is permanent, not a migration shim.
-/find /ask 301!
+/find /ask/ 301!
 /find/* /ask/:splat 301!
-/how-it-works /help 301!
-/handbook /help 301!
-/contact /help 301!
+/how-it-works /help/ 301!
+/handbook /help/ 301!
+/contact /help/ 301!
+
+# Point redirects at the final address, with the trailing slash Netlify adds to
+# prerendered pages. Without it every hop above became two.
+#
+# Detail pages with no id. The page itself used to send the visitor to the list in
+# the browser, after loading, and that client-side hop landed on a 404 (the welcome
+# mail linked to /volunteering). Send them from the edge instead.
+/volunteering /volunteerings/ 301!
+/communityevent /communityevents/ 301!
+/explore/join /explore/ 301!

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,8 +17,8 @@ import (
 func TestUserModtoolsFlagRequiresMod(t *testing.T) {
 	prefix := uniquePrefix("ModtoolsGate")
 	groupID := CreateTestGroup(t, prefix)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
 	CreateTestMessage(t, targetID, groupID, "History post "+prefix, 55.9533, -3.1883)
 
 	// Anonymous caller passing ?modtools=true must NOT receive posting history.

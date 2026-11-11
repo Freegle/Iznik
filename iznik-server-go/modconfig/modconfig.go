@@ -56,6 +56,7 @@ type StdMsg struct {
 	Newdelstatus string  `json:"newdelstatus"`
 	Edittext     string  `json:"edittext"`
 	Insert       *string `json:"insert"`
+	Replybody    *string `json:"replybody"`
 }
 
 func (StdMsg) TableName() string {
@@ -107,7 +108,7 @@ func canSee(myid uint64, cfg *ModConfig) bool {
 const configColumns = "id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread"
 
 // stdMsgColumns is the explicit column list for mod_stdmsgs queries.
-const stdMsgColumns = "id, configid, title, action, subjpref, subjsuff, body, rarelyused, autosend, newmodstatus, newdelstatus, edittext, `insert`"
+const stdMsgColumns = "id, configid, title, action, subjpref, subjsuff, body, rarelyused, autosend, newmodstatus, newdelstatus, edittext, `insert`, replybody"
 
 // GetModConfig handles GET /modconfig.
 // With id param: returns single config with stdmsgs.
@@ -404,6 +405,7 @@ func PostModConfig(c *fiber.Ctx) error {
 				"newdelstatus": m.Newdelstatus,
 				"edittext":     m.Edittext,
 				"insert":       m.Insert,
+				"replybody":    m.Replybody,
 			})
 		}
 

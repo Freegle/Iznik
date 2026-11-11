@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/image"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -15,8 +17,8 @@ import (
 func TestCreateImageAttachment(t *testing.T) {
 	prefix := uniquePrefix("CreateImage")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message to attach the image to (foreign key on messages_attachments.msgid).
@@ -40,8 +42,8 @@ func TestCreateImageAttachment(t *testing.T) {
 func TestCreateImageAttachmentWithParent(t *testing.T) {
 	prefix := uniquePrefix("CreateImageParent")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a community event to use as parent.
@@ -73,8 +75,8 @@ func TestCreateImageNoAuth(t *testing.T) {
 	// still allowed - see TestCreateImageNoAuthUnlinked.)
 	prefix := uniquePrefix("CreateImageNoAuth")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, "NoAuth test "+prefix, 55.9533, -3.1883)
 
 	body := fmt.Sprintf(`{"externaluid":"freegletusd-test-noauth-%s","imgtype":"Message","msgid":%d}`, prefix, msgID)
@@ -118,11 +120,11 @@ func TestCreateImageNoAuthUnlinked(t *testing.T) {
 func TestCreateImageCrossUserDenied(t *testing.T) {
 	prefix := uniquePrefix("CreateImageCross")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, ownerID, groupID, "Cross test "+prefix, 55.9533, -3.1883)
 
-	attackerID := CreateTestUser(t, prefix+"attacker", "User")
+	attackerID := CreateTestUser(t, prefix+"attacker", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, attackerID)
 
 	body := fmt.Sprintf(`{"externaluid":"freegletusd-cross-%s","imgtype":"Message","msgid":%d}`, prefix, msgID)
@@ -137,7 +139,7 @@ func TestCreateImageCrossUserDenied(t *testing.T) {
 // imgtype='User' with the correct JWT succeeds and links the row to the user.
 func TestCreateUserAvatarOwnedByRequester(t *testing.T) {
 	prefix := uniquePrefix("AvatarOwn")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := fmt.Sprintf(
@@ -167,8 +169,8 @@ func TestCreateUserAvatarOwnedByRequester(t *testing.T) {
 // user's avatar (avatar-hijack prevention): must return 403.
 func TestCreateUserAvatarForAnotherUser(t *testing.T) {
 	prefix := uniquePrefix("AvatarHijack")
-	userA := CreateTestUser(t, prefix+"A", "User")
-	userB := CreateTestUser(t, prefix+"B", "User")
+	userA := CreateTestUser(t, prefix+"A", utils.SYSTEMROLE_USER)
+	userB := CreateTestUser(t, prefix+"B", utils.SYSTEMROLE_USER)
 	_, tokenA := CreateTestSession(t, userA)
 
 	// User A tries to upload an avatar for User B.
@@ -187,7 +189,7 @@ func TestCreateUserAvatarForAnotherUser(t *testing.T) {
 // JWT returns 401 (not the 200 that non-User types return without auth).
 func TestCreateUserAvatarNoAuth(t *testing.T) {
 	prefix := uniquePrefix("AvatarNoAuth")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(
 		`{"externaluid":"freegletusd-noauth-avatar-%s","imgtype":"User","user":%d}`,
@@ -204,8 +206,8 @@ func TestCreateUserAvatarNoAuth(t *testing.T) {
 // avatar for any user (bypasses the ownership check).
 func TestCreateUserAvatarAdminCanSetForOther(t *testing.T) {
 	prefix := uniquePrefix("AvatarAdmin")
-	adminID := CreateTestUser(t, prefix+"Admin", "Admin")
-	targetID := CreateTestUser(t, prefix+"Target", "User")
+	adminID := CreateTestUser(t, prefix+"Admin", utils.SYSTEMROLE_ADMIN) // role-literal-ok: part of a name prefix
+	targetID := CreateTestUser(t, prefix+"Target", utils.SYSTEMROLE_USER)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	body := fmt.Sprintf(
@@ -226,7 +228,7 @@ func TestCreateUserAvatarAdminCanSetForOther(t *testing.T) {
 
 func TestCreateImageMissingUID(t *testing.T) {
 	prefix := uniquePrefix("CreateImageNoUID")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"imgtype":"Message"}`
@@ -239,7 +241,7 @@ func TestCreateImageMissingUID(t *testing.T) {
 
 func TestCreateImageInvalidType(t *testing.T) {
 	prefix := uniquePrefix("CreateImageBadType")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"externaluid":"freegletusd-test-badtype","imgtype":"InvalidType"}`
@@ -253,8 +255,8 @@ func TestCreateImageInvalidType(t *testing.T) {
 func TestCreateImageDefaultType(t *testing.T) {
 	prefix := uniquePrefix("CreateImageDefault")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message (default type is Message, so needs valid msgid).
@@ -277,8 +279,8 @@ func TestCreateImageDefaultType(t *testing.T) {
 func TestRotateImage(t *testing.T) {
 	prefix := uniquePrefix("RotateImage")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message for the image attachment.
@@ -315,7 +317,7 @@ func TestRotateImage(t *testing.T) {
 
 func TestRotateImageWithBooleanFlag(t *testing.T) {
 	prefix := uniquePrefix("RotateBoolFlag")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a community event image.
@@ -386,7 +388,7 @@ func TestRotateUnattachedImageWhilePosting(t *testing.T) {
 	// there is no owner to check. Rotating it must work, as uploading it does, or the
 	// rotation is silently lost when the post is made.
 	prefix := uniquePrefix("RotateUnattached")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	imageID := createUnattachedImage(t, token, "freegletusd-rotate-unattached-"+prefix)
 
@@ -395,6 +397,50 @@ func TestRotateUnattachedImageWhilePosting(t *testing.T) {
 	var mods string
 	database.DBConn.Raw("SELECT externalmods FROM messages_attachments WHERE id = ?", imageID).Scan(&mods)
 	assert.JSONEq(t, `{"rotate":90}`, mods)
+}
+
+func TestImageParentOfUnattachedPhoto(t *testing.T) {
+	// An unattached post photo has a NULL msgid. Reading it must give parent 0 and no error:
+	// scanning the NULL into a uint64 failed on every rotation made while posting, and each
+	// failure went to Sentry (GO-89), although the rotation itself still worked.
+	prefix := uniquePrefix("ParentOfUnattached")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, userID)
+	imageID := createUnattachedImage(t, token, "freegletusd-parentof-unattached-"+prefix)
+
+	parent, exists, err := image.ParentOf("Message", imageID)
+	assert.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, uint64(0), parent)
+}
+
+func TestImageParentOfAttachedPhotoAndMissingRow(t *testing.T) {
+	prefix := uniquePrefix("ParentOfAttached")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	msgID := CreateTestMessage(t, userID, groupID, "ParentOf test "+prefix, 55.9533, -3.1883)
+	_, token := CreateTestSession(t, userID)
+
+	req := httptest.NewRequest("POST", "/api/image?jwt="+token, strings.NewReader(
+		fmt.Sprintf(`{"externaluid":"freegletusd-parentof-attached-%s","imgtype":"Message","msgid":%d}`, prefix, msgID)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	imageID := uint64(result["id"].(float64))
+
+	parent, exists, err := image.ParentOf("Message", imageID)
+	assert.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, msgID, parent)
+
+	_, exists, err = image.ParentOf("Message", imageID+1000000000)
+	assert.NoError(t, err)
+	assert.False(t, exists)
+
+	_, _, err = image.ParentOf("NoSuchType", imageID)
+	assert.Error(t, err)
 }
 
 func TestRotateUnattachedImageBeforeSignup(t *testing.T) {
@@ -409,8 +455,8 @@ func TestRotateAttachedImageOfAnotherUserRefused(t *testing.T) {
 	// Once a photo belongs to a post, only the post's owner may rotate it.
 	prefix := uniquePrefix("RotateOthers")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, ownerID, groupID, "RotateOthers test "+prefix, 55.9533, -3.1883)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
@@ -422,7 +468,7 @@ func TestRotateAttachedImageOfAnotherUserRefused(t *testing.T) {
 	json.Unmarshal(rsp(resp), &result)
 	imageID := uint64(result["id"].(float64))
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	assert.Equal(t, fiber.StatusForbidden, rotateImage(t, otherToken, imageID))
@@ -433,8 +479,8 @@ func TestRotateImageNoAuth(t *testing.T) {
 	// caller may not rotate (deface) an existing image.
 	prefix := uniquePrefix("RotateNoAuth")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, "RotateNoAuth test "+prefix, 55.9533, -3.1883)
 
 	// Create an image first (with auth for setup).

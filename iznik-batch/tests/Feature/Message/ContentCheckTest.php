@@ -651,8 +651,9 @@ class ContentCheckTest extends TestCase
             'match_mode' => 'fuzzy',
         ]);
 
-        // one substitution → levenshtein distance 1 ≤ 1
-        $typo = $this->service->checkConcernKeywords('OFFER: testfuzzy2_cd items', '', $group->id);
+        // one dropped letter → levenshtein distance 1 ≤ 1. A one-letter substitution
+        // is a different word, not a typo: see ContentCheckServiceTest.
+        $typo = $this->service->checkConcernKeywords('OFFER: testfuzy2_cc items', '', $group->id);
         $this->assertNotNull($typo, 'single-char typo must match via fuzzy');
     }
 
@@ -1949,8 +1950,9 @@ class ContentCheckTest extends TestCase
             'settings' => ['spammers' => ['worrywords' => 'badtestword_cc']],
         ]);
 
-        // One character off — levenshtein distance 1.
-        $result = $this->service->checkPerGroupWorryWords('OFFER: badtestword_cd item', 'Some body', $group->id);
+        // One letter dropped: levenshtein distance 1. A one-letter substitution is
+        // a different word, not a typo, so it is not used here.
+        $result = $this->service->checkPerGroupWorryWords('OFFER: badtestwor_cc item', 'Some body', $group->id);
 
         $this->assertNotNull($result);
         $this->assertEquals('PerGroupWorryWord', $result['check']);
@@ -3108,6 +3110,49 @@ class ContentCheckTest extends TestCase
 
         $this->assertNull(DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at'),
             'An old approved post (outside the recent-arrival window) must not be rescanned');
+    }
+
+    public function test_freebiealerts_task_queued_for_an_automatically_split_post(): void
+    {
+        // An ordinary member's post that the auto-splitter turned into an item list has bulk
+        // items like a clearance, but it is an ordinary Offer and goes to freebiealerts.app.
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Sofa and two chairs (EC1A)',
+            'textbody' => 'A sofa and two kitchen chairs.',
+            'message'  => 'A sofa and two kitchen chairs.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $msgid, 'position' => 0, 'name' => 'Sofa', 'quantity' => 1, 'condition' => 'Unknown'],
+            ['msgid' => $msgid, 'position' => 1, 'name' => 'Chairs', 'quantity' => 2, 'condition' => 'Unknown'],
+        ]);
+        DB::table('messages_autosplit')->insert(['msgid' => $msgid, 'state' => 'Split', 'kind' => 'several_items']);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals(0, $stats['errors'], 'processUnprocessed had errors');
+        $this->assertEquals(1, $stats['approved']);
+        $this->assertEquals(1, DB::table('background_tasks')
+            ->where('task_type', 'freebie_alerts_add')
+            ->whereRaw("JSON_EXTRACT(data, '$.msgid') = ?", [$msgid])
+            ->count(), 'an automatically split post is an ordinary Offer for freebiealerts.app');
     }
 
     public function test_freebiealerts_task_not_queued_for_bulk_offer(): void

@@ -15,7 +15,7 @@ Freegle stays up. Use it when a spam or phishing wave is going out faster than m
 can remove it. It lasts hours, not days, and nothing lifts on its own.
 
 The design and its reasoning are in
-[`plans/active/2026-09-27-lockdown-switch.md`](../../../plans/active/2026-09-27-lockdown-switch.md)
+the lockdown switch plan (shipped, removed from `plans/` on 2026-10-28; git history at `3e65b6af25`)
 section 10, with the build details in section 11.
 
 ## What it does
@@ -25,7 +25,7 @@ section 10, with the build details in section 11.
 | chat | member-to-member messages are kept back and look sent to the sender; chat with volunteers keeps flowing |
 | posts | new posts and edits stay pending; the poster sees them as live |
 | ChitChat | new posts and replies are hidden from everyone but the author |
-| events | community events, volunteering, noticeboards and stories wait for approval |
+| events | community events, volunteering and stories wait for approval |
 | mods | moderators can see everything and use only the basic Approve button; everything else is refused |
 | push | no app notifications |
 | email | member mail is not generated; sign-in, password, verification, unsubscribe and deletion emails still go |

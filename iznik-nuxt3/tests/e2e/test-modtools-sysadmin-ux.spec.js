@@ -647,7 +647,7 @@ test.describe('ModTools SysAdmin UX tab', () => {
     })
   }
 
-  test('puts the tag before the label on a phone, with nothing sideways', async ({
+  test('puts the tag below the figures on a phone, with nothing sideways', async ({
     page,
     testEnv,
   }) => {
@@ -663,21 +663,23 @@ test.describe('ModTools SysAdmin UX tab', () => {
 
     const where = await tag.evaluate((el) => {
       const row = el.closest('li.funnel-row')
-      const label = row.querySelector('.row-label')
+      const figures = row.querySelector('.row-value')
       const t = el.getBoundingClientRect()
-      const l = label.getBoundingClientRect()
+      const v = figures.getBoundingClientRect()
+      const r = row.getBoundingClientRect()
       return {
-        tagRight: t.right,
-        labelLeft: l.left,
-        tagMiddle: t.top + t.height / 2,
-        labelTop: l.top,
-        labelBottom: l.bottom,
+        tagTop: t.top,
+        tagBottom: t.bottom,
+        tagLeft: t.left,
+        figuresBottom: v.bottom,
+        figuresLeft: v.left,
+        rowBottom: r.bottom,
       }
     })
-    // Before the label, on the label's line.
-    expect(where.tagRight).toBeLessThanOrEqual(where.labelLeft + 1)
-    expect(where.tagMiddle).toBeGreaterThanOrEqual(where.labelTop - 4)
-    expect(where.tagMiddle).toBeLessThanOrEqual(where.labelBottom + 4)
+    // On a line of its own below the figures, lined up with them, and inside its row.
+    expect(where.tagTop).toBeGreaterThanOrEqual(where.figuresBottom - 1)
+    expect(Math.abs(where.tagLeft - where.figuresLeft)).toBeLessThanOrEqual(2)
+    expect(where.tagBottom).toBeLessThanOrEqual(where.rowBottom + 1)
 
     // Nothing in the tab reaches past its right edge, except the boxes made to scroll on their own
     // (the section row and the figures table). The ModTools page around it is wider than a phone.

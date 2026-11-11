@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\User;
 use App\Mail\Donation\DonationThankPrepMail;
 use App\Models\Group;
 use App\Support\EmojiUtils;
@@ -334,6 +335,8 @@ class DonationThankPrepService
             'aliases'         => [],
             'donationHistory' => [],
             'giftaid'         => null,
+            'giftaidAskedOn'  => null,
+            'giftaidAsks'     => 0,
             'memberships'     => [],
             'modNotes'        => [],
             'modChats'        => [],
@@ -381,7 +384,7 @@ class DonationThankPrepService
             'displayName' => $displayName ?: 'Unknown',
             'added'       => $user->added ? Carbon::parse($user->added) : null,
             'deleted'     => $user->deleted !== null,
-            'systemrole'  => (string) ($user->systemrole ?? 'User'),
+            'systemrole'  => (string) ($user->systemrole ?? User::SYSTEMROLE_USER),
         ];
 
         // Just the preferred external email. Drop Freegle-internal synthetic
@@ -420,7 +423,16 @@ class DonationThankPrepService
                 'housenameornumber' => (string) ($giftaid->housenameornumber ?? ''),
                 'homeaddress'       => (string) ($giftaid->homeaddress ?? ''),
                 'updated'           => $giftaid->updated ? Carbon::parse($giftaid->updated) : null,
+                // A volunteer recorded this answer for the donor, rather than the donor filling in the form.
+                'recordedByVolunteer' => !empty($giftaid->recordedby),
             ];
+        } else {
+            // No declaration. Each row in giftaid_asks is a time we asked (the chase-up mail, or a
+            // volunteer) and got no reply.
+            $asks = DB::table('giftaid_asks')->where('userid', $userId);
+            $card['giftaidAsks'] = (clone $asks)->count();
+            $asked = $asks->max('timestamp');
+            $card['giftaidAskedOn'] = $asked ? Carbon::parse($asked) : null;
         }
 
         $card['memberships'] = DB::table('memberships')

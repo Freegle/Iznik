@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-10-11
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
   - iznik-nuxt3/modtools/components/ModMessage*.vue
   - iznik-nuxt3/modtools/components/ModStdMessageModal.vue
+  - iznik-nuxt3/modtools/components/ModStdMessageSegments.vue
   - iznik-nuxt3/modtools/utils/stdMessageDirectives.js
   - iznik-nuxt3/modtools/composables/multiGroupModeration.js
   # cross-stack behaviour tests (change when the behaviour changes)
@@ -12,6 +13,8 @@ covers:
   - iznik-nuxt3/tests/e2e/test-modtools-edits.spec.js
   - iznik-server-go/test/modtools_edits_rippled_in_test.go
   - iznik-server-go/test/modmessaging_test.go
+  - iznik-server-go/test/message_edit_and_message_test.go
+  - iznik-nuxt3/tests/e2e/test-modtools-edit-message.spec.js
   - iznik-server-go/test/modtools_searchmemb_test.go
   - iznik-server-go/test/multigroup_moderation_test.go
   - iznik-batch/tests/Unit/Services/Ripple/**
@@ -63,6 +66,12 @@ For each post you can:
   already live on yours does not show the Pending actions just because a neighbouring
   community's copy is still waiting, and a Delete on a copy that is no longer pending is
   refused with a message saying so rather than reported as done.
+
+  A post held by another volunteer shows a "Held by" banner and no action buttons. To keep
+  those out of the way, turn on **Hide held posts** at the top of the Pending page. It hides
+  every held post, including ones you hold yourself, and the page says how many are hidden
+  ("3 held posts hidden"). The switch is off by default and your choice is remembered in your
+  browser. It does not change the count on the Pending badge.
 - **Delete** or **Delete as Spam** (on your own community's posts).
 
 ### A post pending on several of your communities
@@ -96,6 +105,12 @@ Reject only for the core rules: a post must be **free** and **legal**.
 Posts left unmoderated auto-approve after a period (historically around 48 hours) so a
 community keeps running through gaps in cover. You can put reliably well-behaved members
 onto immediate posting so their posts do not queue at all (see below).
+
+This applies to TrashNothing posts too, including ones the poster did not address to your
+community. A TrashNothing poster has a membership of the community their post was placed
+on, so a post flagged by the content check and left alone goes live about 49 hours after
+that membership was added, like any other member's. If you do not want it live, approve
+or delete it before then. Details are in [TrashNothing](../developers/reference/trashnothing.md#posts-nobody-chose-unaddressed-tn-posts).
 
 ## Why a post is held or flagged
 
@@ -131,6 +146,10 @@ ModTools tells you *why* a post needs a look, right on the post:
   as several separate posts, until those are merged into one. See
   [TrashNothing posts](rippling-out.md#trashnothing-posts).
 - **Bulk clearance** posts show an item count and a "see how members see it" preview.
+- A post that says **Split automatically into N items** is an ordinary member's post that
+  listed several things, which Freegle has listed separately so people can say which they want.
+  It is moderated like any other post, and the member can undo the split. Only OFFERs are split.
+  If you change one to a WANTED, the split is undone and it goes back to one post.
 
 ## Standard messages
 
@@ -144,6 +163,16 @@ situation (approve, reject, hold, and so on). You configure your sets under Sett
 
 Keep them friendly and personal. A short human note lands far better than a corporate one.
 
+A standard message can also change the member's email frequency or moderation status on
+your community, for example to approve a post and unmoderate the poster. If the poster is
+not a member any more, perhaps because they left after posting, there is nothing to change.
+The message box says so, and the approve, reply or delete still goes ahead.
+
+The member gets a standard message once, by email. It also goes into their chat with the
+volunteers, so the other moderators can see what was said. Whether they are emailed a copy
+depends on **Leave chat unread?** in your settings: "Leave as unread" emails them and shows
+it as unread, while "Mark as read" does neither. You are not sent a copy of your own.
+
 On a post that **rippled in** from another community, you only see the actions that do
 something on yours. Anything we say to a poster about their post comes from the community
 they posted it on, so Blank Reply and the standard messages whose only job is to write to
@@ -153,8 +182,10 @@ the poster is not told. Approve, Hold and Release stay as plain buttons. Taken, 
 and Withdrawn are not offered either: an outcome is a fact about the whole post, so it is
 recorded by the poster or by the moderators of the community it was posted on, and the
 server refuses it from anywhere else. Once the poster is an ordinary member of your
-community, for example because they posted there or wrote back to one of your members
-about this post, Blank Reply and those standard messages come back, and Reject (or a
+community, Blank Reply and those standard messages come back. "Ordinary" means an Approved
+member who joined, moved into your area, or dealt with your community themselves. Someone
+rippling joined to your community, or whom TrashNothing placed there with a post they did
+not address to it, is not ordinary until they do something with it. Once they are, and Reject (or a
 standard message that rejects or deletes) sends them your message. The plain **Delete**
 button is offered too, and removes the copy from your community without sending anything.
 The notice on the post says when this applies. A rippled-in copy
@@ -165,6 +196,26 @@ If the post's **home** community sends it back to pending, the post is withdrawn
 community and never ripples to you again, even if they approve it. There is nothing for you to
 do: it does not arrive in your pending list. The exception is a copy one of your moderators
 has already approved by hand: that stays live on your community, because you have reviewed it.
+
+### Adding a note to a post and telling the poster
+
+An **Edit and Message** standard message does two things with one click. It adds its text
+to the post, and it sends the poster a message saying why. It suits posts that need the
+same note every time, such as knives (you must be 18 or over to collect, and the handover
+must be in person) or firewood.
+
+When you write one under Settings, the main text box is **Added to post**: the wording
+that goes into the post, at the top or the bottom. A second box, **Message to poster**,
+holds what the poster is sent. The subject prefix and suffix apply to that message.
+
+When you use it, you see what the post will read and the message to the poster, and you
+can change either before you click **Save Edit and Send**. Both can use
+[fill-in boxes and optional bits](#fill-in-boxes-and-optional-bits), and each is laid out
+the same way. The post is changed and the message is sent together. If the poster can't be messaged from your community, for example
+on a post that rippled in, nothing is changed, and you are told why. On those posts the
+button isn't offered, though a plain **Edit** still is.
+
+The mod log records both the edit and the message against the standard message you used.
 
 ### Safeguarding flags
 
@@ -195,7 +246,8 @@ you must write yourself each time) or `<optional>...</optional>` (something that
 applies sometimes). You add those tags when you write the message under Settings.
 
 When a message uses either of them, sending it opens the message laid out in order rather
-than as one block of text:
+than as one block of text. For **Edit and Message** this applies to the text added to the
+post and to the message to the poster alike:
 
 - An **`<editthis>`** part is a highlighted box. Fill it in before you send.
 - An **`<optional>`** part comes with **Keep** and **Remove**. You must choose one, and you
@@ -274,7 +326,8 @@ the moderator who did it when it was a moderator rather than a members' review.
 ## Posts from Trash Nothing that nobody chose
 
 Some posts arrive from Trash Nothing without the person choosing a Freegle community at
-all - we match them to a community from where they are. Those posts carry a warning saying
+all - we match them to a community from where they are. A post where they did choose one
+goes on that community, even when they post from inside another community's area. Those posts carry a warning saying
 so, worded for where the post has got to: on one waiting in **Pending** it says approve or
 delete is the whole of it, and on one already **live** it says what happens if members
 report it. They behave differently from an ordinary post, because the person behind them
@@ -293,8 +346,9 @@ it back.
 
 The same applies to the person on the **members page**: they show a warning saying they are
 a Trash Nothing user who didn't choose the community, and the Chat, Mail and standard-message
-buttons are not offered. If they later post to a community they've chosen, all of this goes
-away by itself and they become an ordinary member.
+buttons are not offered. A Trash Nothing member who has left your community
+can't be written to either, so Blank Reply and the standard messages aren't offered on their
+posts any more. See [contacting Trash Nothing members](managing-members.md#contacting-trash-nothing-members).
 
 Ordinary freeglers are unaffected - they can still reply to the post, and the reply reaches
 the poster on Trash Nothing as usual.

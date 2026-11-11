@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,8 +25,8 @@ func TestPatchMessageSubjectEditInvalidatesSearchIndexes(t *testing.T) {
 	prefix := uniquePrefix("reindexSubj")
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	msgID := CreateTestMessage(t, ownerID, groupID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
 
@@ -66,8 +67,8 @@ func TestPatchMessageBodyOnlyEditInvalidatesEmbedding(t *testing.T) {
 	prefix := uniquePrefix("reindexBody")
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	msgID := CreateTestMessage(t, ownerID, groupID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
 
@@ -107,8 +108,8 @@ func TestPatchMessageEditEvictsStaleInMemoryEmbedding(t *testing.T) {
 	prefix := uniquePrefix("reindexEvict")
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	msgID := CreateTestMessage(t, ownerID, groupID, "WANTED: Spindle stem "+prefix, 55.0, -1.0)
 

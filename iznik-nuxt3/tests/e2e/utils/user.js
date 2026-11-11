@@ -13,6 +13,7 @@ const {
   noteRecovery,
 } = require('./app-mount')
 const { waitForModal } = require('./ui')
+const { logLoginState } = require('./login-diagnostics')
 
 /**
  * Remove any leftover modal backdrop.
@@ -1823,10 +1824,17 @@ async function loginViaModTools(page, email, password = 'freegle') {
         { timeout: timeouts.navigation.slowPage }
       )
       .then((handle) => handle.jsonValue())
+      .catch(async (e) => {
+        // Neither closed nor refused within the wait. Say what state the
+        // modal was in, then fail as before.
+        await logLoginState(page, 'ModTools login timed out')
+        throw e
+      })
 
     if (outcome === 'closed') break
 
     const errorText = outcome.replace(/^refused:/, '')
+    await logLoginState(page, 'ModTools login refused')
     if (/fill out the form/i.test(errorText)) {
       // Record what the inputs held when the modal said they were empty.
       const held = await page

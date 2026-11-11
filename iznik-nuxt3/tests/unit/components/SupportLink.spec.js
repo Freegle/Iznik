@@ -96,4 +96,36 @@ describe('SupportLink', () => {
       )
     })
   })
+
+  describe('page the mail was sent from', () => {
+    function body(wrapper) {
+      const href = wrapper.find('.external-link').attributes('href')
+      return decodeURIComponent(href.split('?body=')[1])
+    }
+
+    it('names the page in the note when logged in', () => {
+      useAuthStore.mockReturnValue({ user: { id: 12345 } })
+      const wrapper = createWrapper({ from: 'the National Reuse Day page' })
+      expect(body(wrapper)).toContain(
+        'Note to Freegle: this was sent from the National Reuse Day page. This freegler was logged in as user id: #12345.'
+      )
+    })
+
+    it('names the page in the note when not logged in', () => {
+      useAuthStore.mockReturnValue({ user: null })
+      const wrapper = createWrapper({ from: 'the National Reuse Day page' })
+      expect(body(wrapper)).toContain(
+        'Note to Freegle: this was sent from the National Reuse Day page. This freegler was not logged in.'
+      )
+    })
+
+    it('keeps the support note when no page is given', () => {
+      useAuthStore.mockReturnValue({ user: { id: 12345 } })
+      const wrapper = createWrapper()
+      expect(body(wrapper)).toContain(
+        'Note to support: this freegler was logged in as user id: #12345.'
+      )
+      expect(body(wrapper)).not.toContain('sent from')
+    })
+  })
 })

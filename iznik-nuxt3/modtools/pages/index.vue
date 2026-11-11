@@ -41,7 +41,10 @@
       </ul>
     </div>
     <ModYesterday
-      v-if="me.systemrole === 'Admin' || me.systemrole === 'Support'"
+      v-if="
+        me.systemrole === SYSTEMROLE_ADMIN ||
+        me.systemrole === SYSTEMROLE_SUPPORT
+      "
     />
     <!-- eslint-disable-next-line -->
     <p>Need any help moderating? Mail <ExternalLink href="mailto:mentors@ilovefreegle.org">mentors@ilovefreegle.org</ExternalLink>
@@ -64,7 +67,7 @@
           v-model="groupid"
           all
           modonly
-          :systemwide="me.systemrole === 'Admin'"
+          :systemwide="me.systemrole === SYSTEMROLE_ADMIN"
           active
         />
       </div>
@@ -182,6 +185,7 @@ import { useModGroupStore } from '@/stores/modgroup'
 import { useConfigStore } from '@/stores/config'
 // import { buildHead } from '~/composables/useMTBuildHead'
 import { useMe } from '~/composables/useMe'
+import { SYSTEMROLE_ADMIN, SYSTEMROLE_SUPPORT } from '~/constants'
 
 const miscStore = useMiscStore()
 const modGroupStore = useModGroupStore()

@@ -4,6 +4,7 @@ namespace App\Console\Commands\CommunityNews;
 
 use App\Models\CommunityNewsArea;
 use App\Services\CommunityNews\CommunityNewsAreaService;
+use App\Services\CommunityNews\CommunityNewsLimitReached;
 use App\Services\CommunityNews\CommunityNewsResearchService;
 use Illuminate\Console\Command;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -15,6 +16,7 @@ class ResearchCommunityNewsCommand extends Command
                             {--area= : Only research this area id}
                             {--min-days= : Re-research an area only if last research is older than this many days}
                             {--force : Research even if researched recently}
+                            {--max= : Research at most this many areas in this run (default: research_max_per_run; 0 for no limit)}
                             {--dry-run : Call the model but do not store items}';
 
     protected $description = 'Cluster communitynews-enabled communities into areas and research local news for each';
@@ -50,10 +52,18 @@ class ResearchCommunityNewsCommand extends Command
         $built = $areas->rebuildAreas();
         $this->info(($dryRun ? '[dry-run] ' : '') . "Areas: {$built->count()} from communitynews-enabled communities.");
 
-        $query = CommunityNewsArea::query();
+        // Oldest first, and only a few areas per hourly run, so a whole cadence of research is spread over the
+        // cadence instead of all landing in the first run after the areas fall due or the subscription resets.
+        // The subscription is shared with the AI support helper, and one burst used up its week.
+        $query = CommunityNewsArea::query()->orderByRaw('lastresearched IS NOT NULL, lastresearched')->orderBy('id');
+        $max = $this->option('max') !== null
+            ? (int) $this->option('max')
+            : (int) config('freegle.communitynews.research_max_per_run', 7);
         if ($this->option('area')) {
             $query->where('id', (int) $this->option('area'));
+            $max = 0;
         }
+        $attempted = 0;
 
         $researched = 0;
         $itemsTotal = 0;
@@ -66,8 +76,17 @@ class ResearchCommunityNewsCommand extends Command
                 continue;
             }
 
+            if ($max > 0 && $attempted >= $max) {
+                $this->line("  stopping: {$max} area(s) this run");
+                break;
+            }
+            $attempted++;
+
             try {
                 $result = $research->researchArea($area, $dryRun);
+            } catch (CommunityNewsLimitReached $e) {
+                $this->warn("  stopping: the model refused, {$e->getMessage()}");
+                break;
             } catch (\Throwable $e) {
                 $this->error("  {$area->name}: {$e->getMessage()}");
                 continue;

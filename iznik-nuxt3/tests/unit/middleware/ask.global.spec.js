@@ -68,7 +68,7 @@ describe('production redirect config', () => {
   // cold hit on an old link - _redirects is what answers those.
   it('has forced Netlify redirects for /find', () => {
     const redirects = readFileSync(resolve(root, 'public/_redirects'), 'utf8')
-    expect(redirects).toMatch(/^\/find\s+\/ask\s+301!$/m)
+    expect(redirects).toMatch(/^\/find\s+\/ask\/\s+301!$/m)
     expect(redirects).toMatch(/^\/find\/\*\s+\/ask\/:splat\s+301!$/m)
   })
 

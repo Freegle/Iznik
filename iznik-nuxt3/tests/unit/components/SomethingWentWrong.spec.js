@@ -21,7 +21,7 @@ const appOutOfDateRef = ref(false)
 const appOutOfDateMessageRef = ref('')
 
 // Mutable mobile-store state so each test can pick the app vs website variant.
-const mobileState = { isApp: false }
+const mobileState = { isApp: false, isiOS: false }
 
 // Mock Pinia's storeToRefs to return our refs while preserving other exports
 vi.mock('pinia', async (importOriginal) => {
@@ -71,6 +71,7 @@ describe('SomethingWentWrong', () => {
     appOutOfDateRef.value = false
     appOutOfDateMessageRef.value = ''
     mobileState.isApp = false
+    mobileState.isiOS = false
     // jsdom's location.reload is not directly assignable; redefine it so we can
     // observe forced reloads without navigating.
     reloadSpy = vi.fn()
@@ -198,7 +199,16 @@ describe('SomethingWentWrong', () => {
       expect(reloadSpy).toHaveBeenCalled()
     })
 
-    it('tells app users to update via their app store, offers the website, and shows no Reload button', () => {
+    it('covers the whole screen, so nothing behind it looks usable', () => {
+      appOutOfDateRef.value = true
+
+      const wrapper = createWrapper()
+
+      expect(wrapper.find('.app-out-of-date').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Update required')
+    })
+
+    it('offers app users an Update now button and the website, not Reload', () => {
       appOutOfDateRef.value = true
       appOutOfDateMessageRef.value =
         'App is out of date - please upgrade or use the website'
@@ -206,12 +216,34 @@ describe('SomethingWentWrong', () => {
 
       const wrapper = createWrapper()
 
-      expect(wrapper.find('.notice-message').exists()).toBe(true)
-      expect(wrapper.text().toLowerCase()).toContain('app store')
-      // Website fallback link is offered.
-      expect(wrapper.find('a').exists()).toBe(true)
-      // Reloading won't refresh a stale embedded app bundle, so no Reload button.
-      expect(wrapper.find('button').exists()).toBe(false)
+      expect(wrapper.text()).toContain(
+        'App is out of date - please upgrade or use the website'
+      )
+      expect(wrapper.text()).toContain('Update now')
+      // Reloading will not refresh the bundle inside the app.
+      expect(wrapper.text()).not.toContain('Reload')
+      expect(
+        wrapper.find('a[href="https://www.ilovefreegle.org"]').exists()
+      ).toBe(true)
+    })
+
+    it.each([
+      [
+        false,
+        'https://play.google.com/store/apps/details?id=org.ilovefreegle.direct',
+      ],
+      [true, 'https://apps.apple.com/gb/app/freegle/id970045029'],
+    ])('Update now opens the right store (iOS %s)', async (isiOS, url) => {
+      appOutOfDateRef.value = true
+      mobileState.isApp = true
+      mobileState.isiOS = isiOS
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+
+      const wrapper = createWrapper()
+      await wrapper.find('button').trigger('click')
+
+      expect(openSpy).toHaveBeenCalledWith(url, '_blank')
+      openSpy.mockRestore()
     })
 
     it('takes priority over the stale-build hard-reload banner', () => {

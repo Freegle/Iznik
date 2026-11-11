@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-10-21
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/ExternalDa.vue
@@ -200,7 +200,8 @@ reason.
 
 The app runs without cookie consent, so no ad network can run in it. Every slot shows the
 job listings instead, which need no consent, and the donate banner stands in while there
-are no listings for the member's location. Supporters (recent donors) see neither. There
+are no listings for the member's location. Supporters (recent donors) see neither, and a
+donor who has turned donation requests off never sees the donate banner. There
 is no "bored" switch to another network in the app, because there is none to switch to.
 The decision is the app-without-cookies branch at the top of `visibilityChanged` in
 `iznik-nuxt3/components/ExternalDa.vue`.

@@ -70,7 +70,7 @@ services:
     # Native nginx fronts wiki.ilovefreegle.org via 127.0.0.1:8088 (unchanged).
     restart: unless-stopped
     ports:
-      - "8088:80"
+      - "127.0.0.1:8088:80"
     volumes:
       - /var/wiki/html:/var/www/html
       - /var/wiki/sharewiki:/var/www/share

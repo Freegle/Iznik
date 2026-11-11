@@ -1,11 +1,23 @@
 package ux
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestIsDuplicateKey(t *testing.T) {
+	dup := &mysql.MySQLError{Number: 1062, Message: "Duplicate entry 'x' for key 'ux_experiments_name'"}
+	assert.True(t, isDuplicateKey(dup))
+	assert.True(t, isDuplicateKey(fmt.Errorf("create: %w", dup)), "gorm wraps the driver error")
+	assert.False(t, isDuplicateKey(&mysql.MySQLError{Number: 1146}), "another MySQL error is not a duplicate")
+	assert.False(t, isDuplicateKey(errors.New("duplicate")), "the text alone does not count")
+	assert.False(t, isDuplicateKey(nil))
+}
 
 func TestClip(t *testing.T) {
 	assert.Equal(t, "short", clip("short", 10))

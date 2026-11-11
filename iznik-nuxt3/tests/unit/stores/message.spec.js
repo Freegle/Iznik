@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import { APIError } from '~/api/APIErrors'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const mockFetchByUser = vi.fn()
 const mockSave = vi.fn()
@@ -667,7 +668,8 @@ describe('message store - refreshOrRemoveFromMTList()', () => {
     useAuthStore.mockReturnValue({
       user: { id: 99 },
       member: (gid) =>
-        ({ 1: 'Moderator', 2: 'Owner', 3: 'Member' })[parseInt(gid)] || null,
+        ({ 1: ROLE_MODERATOR, 2: ROLE_OWNER, 3: ROLE_MEMBER })[parseInt(gid)] ||
+        null,
     })
   })
 
@@ -866,7 +868,7 @@ describe('message store - acting on several communities', () => {
     vi.clearAllMocks()
     useAuthStore.mockReturnValue({
       user: { id: 99 },
-      member: () => 'Moderator',
+      member: () => ROLE_MODERATOR,
     })
     mockApprove.mockResolvedValue({})
     mockReject.mockResolvedValue({})
@@ -923,5 +925,56 @@ describe('message store - acting on several communities', () => {
 
     expect(mockDelete.mock.calls[0]).toHaveLength(5)
     expect(store.fetchMT).not.toHaveBeenCalled()
+  })
+})
+
+describe('message store - fetchFailed tells an API failure from a missing post', () => {
+  const apiError = (status) =>
+    new APIError(
+      {
+        request: { path: '/message/5' },
+        response: { status, data: { error: status } },
+      },
+      `API Error GET /message/5 -> status: ${status}`
+    )
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockMiscStore.modtools = false
+    useAuthStore.mockReturnValue({ user: null })
+  })
+
+  it('marks the ids of a batch that failed with a server error', async () => {
+    const store = useMessageStore()
+    store.init({})
+    mockFetch.mockRejectedValueOnce(apiError(502))
+
+    await expect(store.fetchMultiple([5, 6])).rejects.toThrow()
+
+    expect(store.fetchFailed[5]).toBe(true)
+    expect(store.fetchFailed[6]).toBe(true)
+  })
+
+  it('does not mark a post that is not found', async () => {
+    const store = useMessageStore()
+    store.init({})
+    mockFetch.mockRejectedValueOnce(apiError(404))
+
+    await store.fetchMultiple([5])
+
+    expect(store.fetchFailed[5]).toBeUndefined()
+  })
+
+  it('clears the mark once a fetch works', async () => {
+    const store = useMessageStore()
+    store.init({})
+    store.fetchFailed[5] = true
+    mockFetch.mockResolvedValueOnce([{ id: 5, subject: 'Chair' }])
+
+    await store.fetchMultiple([5], true)
+
+    expect(store.fetchFailed[5]).toBeUndefined()
+    expect(store.list[5].subject).toBe('Chair')
   })
 })

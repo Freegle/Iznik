@@ -847,7 +847,7 @@ class TestMailCommand extends Command
                 ->whereHas('group', function ($q) use ($recipient) {
                     $q->whereHas('memberships', function ($mq) use ($recipient) {
                         $mq->where('userid', $recipient->id)
-                            ->whereIn('role', ['Moderator', 'Owner']);
+                            ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
                     });
                 });
         } else {

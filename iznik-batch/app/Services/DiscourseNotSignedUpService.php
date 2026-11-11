@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Mail\Housekeeper\DiscourseReportMail;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -52,7 +53,7 @@ class DiscourseNotSignedUpService
         $activeModsGroups = DB::table('users')
             ->join('memberships', 'users.id', '=', 'memberships.userid')
             ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->whereIn('memberships.role', ['Owner', 'Moderator'])
+            ->whereIn('memberships.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->where('groups.type', 'Freegle')
             ->where('users.lastaccess', '>', $sixMonthsAgo)
             ->orderBy('users.id')
@@ -184,7 +185,7 @@ class DiscourseNotSignedUpService
         return DB::table('users')
             ->join('memberships', 'users.id', '=', 'memberships.userid')
             ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->whereIn('memberships.role', ['Owner', 'Moderator'])
+            ->whereIn('memberships.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->where('groups.type', 'Freegle')
             ->where(function ($q) {
                 $q->whereNotNull('users.tnuserid')

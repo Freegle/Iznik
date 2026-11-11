@@ -217,3 +217,29 @@ func TestGetClientIPForwardedForEmptyFirstElement(t *testing.T) {
 	// Empty first entry triggers fallback to X-Real-IP.
 	assert.Equal(t, "192.0.2.33", ip)
 }
+
+func TestTruncateMapRedactsSensitiveFieldsAtAnyDepth(t *testing.T) {
+	input := map[string]interface{}{
+		"Password": "pw",
+		"email":    "a@b.c",
+		"nested": map[string]interface{}{
+			"persistent": map[string]interface{}{"token": "t"},
+			"googlejwt":  "g",
+			"name":       "n",
+		},
+		"list": []interface{}{map[string]interface{}{"applecredentials": "x", "id": 7}},
+	}
+	out := truncateMap(input)
+
+	assert.Equal(t, redactedValue, out["Password"])
+	assert.Equal(t, "a@b.c", out["email"])
+
+	nested := out["nested"].(map[string]interface{})
+	assert.Equal(t, redactedValue, nested["persistent"])
+	assert.Equal(t, redactedValue, nested["googlejwt"])
+	assert.Equal(t, "n", nested["name"])
+
+	item := out["list"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, redactedValue, item["applecredentials"])
+	assert.Equal(t, 7, item["id"])
+}

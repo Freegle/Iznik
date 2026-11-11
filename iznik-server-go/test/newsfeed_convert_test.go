@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/gorm"
 )
@@ -492,7 +493,7 @@ func TestJoinAndPostOnBehalf_LeavesTheMembersLoginsAlone(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
 	makeChitChatMod(t, modID)
 

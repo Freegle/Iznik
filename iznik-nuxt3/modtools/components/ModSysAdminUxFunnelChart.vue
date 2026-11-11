@@ -24,11 +24,14 @@
           worst: row.worst,
           active: row.selectable && row.step === selected,
           exit: row.exit,
+          last: row.last,
         }"
       >
         <component
           :is="row.selectable ? 'button' : 'div'"
           :type="row.selectable ? 'button' : undefined"
+          :tabindex="row.selectable ? undefined : 0"
+          :aria-describedby="row.help ? helpId(row) : undefined"
           :aria-pressed="
             row.selectable
               ? row.step === selected
@@ -41,9 +44,6 @@
           @click="row.selectable && emit('select', row.step)"
         >
           <span class="label-line">
-            <span class="tag-slot">
-              <span v-if="row.worst" class="worst-tag">Biggest loss</span>
-            </span>
             <span class="row-label">{{ row.label }}</span>
           </span>
           <span class="track">
@@ -65,6 +65,14 @@
             </span>
           </span>
           <span class="row-value">{{ row.text }}</span>
+          <span
+            v-if="row.help"
+            :id="helpId(row)"
+            role="tooltip"
+            class="row-help"
+            >{{ row.help }}</span
+          >
+          <span v-if="row.worst" class="worst-tag">Biggest loss</span>
         </component>
       </li>
     </ul>
@@ -100,7 +108,9 @@
             <td class="tag-cell">
               <span v-if="row.worst" class="worst-tag">Biggest loss</span>
             </td>
-            <th scope="row" class="fw-normal">{{ row.label }}</th>
+            <th scope="row" class="fw-normal" :title="row.help || undefined">
+              {{ row.label }}
+            </th>
             <td class="text-end">{{ row.entered.toLocaleString() }}</td>
             <td class="text-end">
               {{ row.exit ? '' : row.visits.toLocaleString() }}
@@ -131,10 +141,22 @@
 // table. The colours never carry meaning alone: the worst step is tagged "Biggest loss" and the
 // loss is also written out as a number.
 import { computed, ref } from 'vue'
+import { uid } from '~/composables/useId'
 import { withCount } from '~/modtools/composables/useUxFormat'
+import {
+  stepHelp,
+  stageHelp,
+  wayInHelp,
+} from '~/modtools/composables/useUxFunnel'
+
+// Each chart's tooltips need ids no other chart on the page has.
+const chartId = uid('funnel-help')
+const helpId = (row) => `${chartId}-${row.key}`
 
 const props = defineProps({
   title: { type: String, default: '' },
+  // The flow the steps belong to, for the explanation of a step whose meaning depends on it.
+  flow: { type: String, default: '' },
   // From useUxFunnel funnelsFor(): stages [{ step, label, entered, visits, abandoned, reach,
   // lossRate, alternatives? }]
   steps: { type: Array, required: true },
@@ -202,6 +224,8 @@ function makeRow(s, opts = {}) {
     ofVisits: s.visits ? pct(s.lossRate) : '',
     selectable: opts.selectable !== false,
     indent: !!opts.indent,
+    last: !!opts.last,
+    help: opts.indent ? wayInHelp(s, props.flow) : stageHelp(s, props.flow),
     worst,
     exit: false,
   }
@@ -216,7 +240,11 @@ const rows = computed(() => {
         ...makeRow(s, { selectable: false, stage: i }),
         key: 'stage:' + s.step,
       })
-      for (const a of s.alternatives) out.push(makeRow(a, { indent: true }))
+      s.alternatives.forEach((a, n) =>
+        out.push(
+          makeRow(a, { indent: true, last: n === s.alternatives.length - 1 })
+        )
+      )
     } else {
       out.push(makeRow(s))
     }
@@ -245,6 +273,8 @@ const rows = computed(() => {
       ofVisits: '',
       selectable: false,
       indent: false,
+      last: false,
+      help: stepHelp(e.step, props.flow),
       worst: false,
       exit: true,
     })
@@ -272,14 +302,15 @@ const ariaLabel = computed(
   }
 }
 
-// Four columns: the tag, the label, the bar and the figures. The tag has a column of its own, so it
-// sits in the same place on every chart whatever the label says and no row changes height for it.
-// Every row has them, a stage heading and a way out as well as a step, so every bar is the same
-// width for the same share.
+// Four columns: the label, the bar, the figures and the tag. The tag has a column of its own at the
+// right-hand end, so it sits in the same place on every chart whatever the label says and no row
+// changes height for it. The first three are the same on every row, a stage heading and a way out as
+// well as a step, so every bar is the same width for the same share.
 .line {
+  position: relative;
   display: grid;
   width: 100%;
-  grid-template-columns: 5.5rem 11rem minmax(7rem, 14rem) 1fr;
+  grid-template-columns: 11rem minmax(7rem, 14rem) 1fr auto;
   align-items: center;
   column-gap: 0.75rem;
   padding: 0.15rem 0.25rem;
@@ -304,8 +335,7 @@ button.line {
   border-color: #212529;
 }
 
-// On a wide screen the tag and the label are two cells of the row's grid. On a phone they share a
-// line above the bar.
+// On a wide screen the label is a cell of the row's grid. On a phone it is a line above the bar.
 .label-line {
   display: contents;
 }
@@ -314,7 +344,7 @@ button.line {
   font-size: 0.9rem;
   color: #212529;
   // A selectable row is a button, and assets/css/buttons.scss keeps every button on one line with
-  // !important, so a long step name and its "Biggest loss" tag would run into the bar.
+  // !important, so a long step name would run into the bar.
   white-space: normal !important;
   min-width: 0;
 }
@@ -374,23 +404,86 @@ button.line {
   border-radius: 0 2px 2px 0;
 }
 
-// The tag is shorter than a bar, and its slot is a flex box so the line height of the page text does
-// not make it any taller: a row with the tag is as tall as the same row without it.
-.tag-slot {
-  display: flex;
-  align-items: center;
+// The biggest loss is flagged by the amber bar, a faint amber wash on the row and these words at the
+// end of it. Plain coloured text with no background, and one line tall, so a row with the tag is as
+// tall as the same row without it.
+.funnel-row.worst .line {
+  background: rgba(201, 138, 30, 0.12);
 }
 
 .worst-tag {
-  display: inline-block;
-  padding: 0 0.35rem;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.3;
   font-weight: bold;
-  color: #fff;
-  background: #8a5a00;
-  border-radius: 0.6rem;
+  color: #8a5a00;
   white-space: nowrap;
+  justify-self: end;
+}
+
+// What a step is, shown over the row on hover and keyboard focus. The row is a button, or a div
+// made focusable, and aria-describedby points here, so a screen reader reads it and a tap on a
+// phone, which focuses the row, shows it. position: absolute keeps it out of the grid.
+.row-help {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  left: 0.25rem;
+  display: none;
+  max-width: min(24rem, 100%);
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.25rem;
+  background: #212529;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1.35;
+  text-align: left;
+  // A selectable row is a button, which keeps its text on one line (see .row-label).
+  white-space: normal !important;
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.line:hover .row-help,
+.line:focus .row-help,
+.line:focus-within .row-help {
+  display: block;
+}
+
+// A faint tree line from a stage down to its ways in: a vertical line at the left of the group and
+// an elbow into each way in, ending at the last one. It takes the row's text colour at low opacity,
+// so it shows in light and dark alike. The vertical reaches up across the gap between rows.
+.funnel-row.indent {
+  position: relative;
+
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0.65rem;
+    border-color: currentColor;
+    opacity: 0.25;
+    pointer-events: none;
+  }
+
+  // The stem.
+  &::before {
+    top: -0.35rem;
+    height: calc(100% + 0.35rem);
+    border-left: 1px solid;
+  }
+
+  // The elbow, level with the label.
+  &::after {
+    top: 0.85rem;
+    width: 0.5rem;
+    border-top: 1px solid;
+  }
+
+  &.last::before {
+    height: calc(0.85rem + 0.35rem);
+  }
 }
 
 .funnel-row.exit .line {
@@ -406,8 +499,8 @@ button.line {
   white-space: nowrap;
 }
 
-// A phone: the tag and the label share a line above the bar, and the figures go below, each on a
-// line of its own.
+// A phone: the label sits above the bar, and the figures and then the tag go below, each on a line
+// of its own.
 @media (max-width: 599px) {
   .line {
     grid-template-columns: 1fr;
@@ -420,8 +513,8 @@ button.line {
     gap: 0.4rem;
   }
 
-  .tag-slot:empty {
-    display: none;
+  .worst-tag {
+    justify-self: start;
   }
 
   // The label sits above the bar on a phone, so the whole line is set in.

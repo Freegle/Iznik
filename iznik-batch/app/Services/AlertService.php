@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Mail\Alert\AlertMail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -10,6 +11,9 @@ use Illuminate\Support\Facades\Mail;
 class AlertService
 {
     private const GROUP_BATCH_SIZE = 50;
+
+    /** @var array<int, array<int, array{name: string, mime: string, data: string}>> */
+    private array $attachmentCache = [];
 
     private static array $fromMap = [
         'support' => ['config' => 'freegle.mail.support_addr', 'name' => 'Freegle Support'],
@@ -123,7 +127,7 @@ class AlertService
 
         $mods = DB::table('memberships')
             ->where('groupid', $group->id)
-            ->whereIn('role', ['Owner', 'Moderator'])
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->pluck('userid');
 
         $sent = 0;
@@ -202,6 +206,9 @@ class AlertService
                             groupName: $group->nameshort,
                             beaconBase: $modSite,
                             recipientUserId: (int) $userId,
+                            quoted: $alert->quoted ?? null,
+                            requireReply: (bool) ($alert->requirereply ?? false),
+                            files: $this->attachmentsFor($alert),
                         ));
                         $sent++;
                     } catch (\Throwable $e) {
@@ -259,6 +266,9 @@ class AlertService
                 global: $global,
                 groupName: $group->nameshort,
                 beaconBase: config('freegle.sites.user', 'https://www.ilovefreegle.org'),
+                quoted: $alert->quoted ?? null,
+                requireReply: (bool) ($alert->requirereply ?? false),
+                files: $this->attachmentsFor($alert),
             ));
 
             return 1;
@@ -297,6 +307,9 @@ class AlertService
                 askClick: false,
                 global: false,
                 groupName: $group->nameshort,
+                quoted: $alert->quoted ?? null,
+                requireReply: false,
+                files: $this->attachmentsFor($alert),
             ));
         } catch (\Throwable $e) {
             Log::error('AlertService: failed to send alert sender copy', [
@@ -306,6 +319,25 @@ class AlertService
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * The files sent with an alert, loaded once per alert however many mods it goes to.
+     *
+     * @return array<int, array{name: string, mime: string, data: string}>
+     */
+    private function attachmentsFor(object $alert): array
+    {
+        if (! isset($this->attachmentCache[$alert->id])) {
+            $this->attachmentCache[$alert->id] = DB::table('alerts_attachments')
+                ->where('alertid', $alert->id)
+                ->orderBy('id')
+                ->get(['name', 'mime', 'data'])
+                ->map(fn ($r) => ['name' => $r->name, 'mime' => $r->mime, 'data' => $r->data])
+                ->all();
+        }
+
+        return $this->attachmentCache[$alert->id];
     }
 
     private function resolveFrom(string $role): array

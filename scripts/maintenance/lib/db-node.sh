@@ -15,6 +15,7 @@ MAINT_DB_DATADIR="${MAINT_DB_DATADIR:-/var/lib/mysql}"
 MAINT_DB_MIN_FREE_GB="${MAINT_DB_MIN_FREE_GB:-40}"
 MAINT_DB_MAX_GCACHE_PAGES="${MAINT_DB_MAX_GCACHE_PAGES:-4}"
 MAINT_DB_MIN_IST_COVER_MIN="${MAINT_DB_MIN_IST_COVER_MIN:-90}"
+MAINT_DB_IST_SAMPLE_S="${MAINT_DB_IST_SAMPLE_S:-300}"
 MAINT_DB_MIN_PEER_AVAIL_GB="${MAINT_DB_MIN_PEER_AVAIL_GB:-6}"
 MAINT_DB_REJOIN_TIMEOUT="${MAINT_DB_REJOIN_TIMEOUT:-2700}"
 MAINT_DB_APT_EXCLUDE="${MAINT_DB_APT_EXCLUDE:-^percona-}"
@@ -27,7 +28,13 @@ MAINT_DB_ROUTING_INTERNAL_PORT="${MAINT_DB_ROUTING_INTERNAL_PORT:-8197}"
 MAINT_DB_ROUTING_PROBE="${MAINT_DB_ROUTING_PROBE:-/v1/group-proximity?lat=51.5&lng=-0.1&groupid=21250&mode=drive}"
 MAINT_DB_ROUTING_TIMEOUT="${MAINT_DB_ROUTING_TIMEOUT:-900}"
 MAINT_DB_MONIT_HOLD="${MAINT_DB_MONIT_HOLD:-iznik-spatial-go iznik-routing-go mysqld mysql mysql_processes}"
-MAINT_DB_MONIT_RESTORE="${MAINT_DB_MONIT_RESTORE:-mysqld mysql mysql_processes iznik-spatial-go iznik-routing-go iznik-server-go}"
+# Given back after the reboot, before the API: the API is monitored last, once the spatial and
+# routing servers answer, so the load balancer never sends members to a node that cannot
+# evaluate reach.
+MAINT_DB_MONIT_RESTORE="${MAINT_DB_MONIT_RESTORE:-mysqld mysql mysql_processes iznik-spatial-go iznik-routing-go}"
+# How long a restarted API must keep the same process, with monit reporting it OK, before it
+# counts as back. monit's own check can restart a process the run has already seen answer.
+MAINT_DB_API_STABLE_S="${MAINT_DB_API_STABLE_S:-150}"
 MAINT_LB_API_BACKEND="${MAINT_LB_API_BACKEND:-api_server_backend}"
 MAINT_LB_SPATIAL_BACKEND="${MAINT_LB_SPATIAL_BACKEND:-spatial_backend}"
 # The two data nodes are never both patched within this many days.
@@ -177,13 +184,16 @@ db_preflight() {
 }
 
 # How long the peer's write-set cache reaches back, at the current write rate.
+# The rate is averaged over MAINT_DB_IST_SAMPLE_S: a 30 s sample at 04:40, as the
+# batch jobs held by the backup drain caught up, read a burst as the rate and
+# refused a node (86 min against 90) whose cache covered far more.
 db_ist_cover() {
   local a b down rate cover
   wsrep_read "$P"; a=${W[wsrep_last_committed]:-0}; down=${W[wsrep_local_cached_downto]:-0}
-  sleep 30
+  sleep "$MAINT_DB_IST_SAMPLE_S"
   wsrep_read "$P"; b=${W[wsrep_last_committed]:-0}
-  rate=$(( (b - a) / 30 ))
-  if [ "$rate" -le 0 ]; then info "$P: no writes in 30 s; write-set cache covers any stop"; return 0; fi
+  rate=$(( (b - a) / MAINT_DB_IST_SAMPLE_S ))
+  if [ "$rate" -le 0 ]; then info "$P: no writes in $MAINT_DB_IST_SAMPLE_S s; write-set cache covers any stop"; return 0; fi
   cover=$(( (b - down) / rate / 60 ))
   [ "$cover" -ge "$MAINT_DB_MIN_IST_COVER_MIN" ] \
     || die "$P: write-set cache covers about $cover min at the current rate, need $MAINT_DB_MIN_IST_COVER_MIN"
@@ -204,10 +214,52 @@ api_restart_verify() {  # <host> <expected write address>
     [ "${1:-0}" = 1 ] && [ "${2:-}" != "$old" ] || continue
     c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_API_PORT/api/group"); [ "$c" = 200 ] || continue
     line=$(rq "$h" "grep -a 'Connecting to database' $MAINT_DB_API_LOG | tail -1")
-    case "$line" in *"$w"*) info "$h: API restarted (pid $old -> $2), writes to $(name_of_addr "$w")"; return 0;; esac
+    new=$2
+    case "$line" in *"$w"*) info "$h: API restarted (pid $old -> $new), writes to $(name_of_addr "$w")"; api_stable "$h" "$new" "$w"; return 0;; esac
     die "$h: API restarted but its boot line does not name the expected write node"
   done
   die "$h: API did not come back on a new process within 4 minutes"
+}
+
+# Wait until the API keeps one process for MAINT_DB_API_STABLE_S with monit reporting it OK.
+# monit's HTTP check runs its retries back to back straight after a start, finds the port
+# not yet open and restarts the API a second time, killing a process that may already
+# have answered. A process that changes resets the count.
+api_stable() {  # <host> <pid> <expected write address>
+  local h=$1 pid=$2 w=$3 since now deadline cur n p st c line
+  $DRY && return 0
+  since=$(date -u +%s); deadline=$(( since + 300 + MAINT_DB_API_STABLE_S ))
+  while :; do
+    now=$(date -u +%s)
+    [ "$now" -ge "$deadline" ] && die "$h: API did not keep one process for ${MAINT_DB_API_STABLE_S}s within $(( 300 + MAINT_DB_API_STABLE_S ))s"
+    cur=$(rq "$h" "pgrep -x iznik-server-go | wc -l; pgrep -o -x iznik-server-go" | tr '\n' ' ')
+    n=$(echo "$cur" | awk '{print $1}'); p=$(echo "$cur" | awk '{print $2}')
+    if [ "${n:-0}" != 1 ] || [ "$p" != "$pid" ]; then
+      [ -n "$pid" ] && info "$h: API process changed (pid $pid -> ${p:-none}); waiting for it to settle"
+      pid=$p; since=$now; sleep 5; continue
+    fi
+    st=$(monit_summary "$h" | awk -F'|' '$1=="iznik-server-go" {print $2}')
+    c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_API_PORT/api/group")
+    if [ "$st" = OK ] && [ "$c" = 200 ] && [ $(( now - since )) -ge "$MAINT_DB_API_STABLE_S" ]; then
+      line=$(rq "$h" "grep -a 'Connecting to database' $MAINT_DB_API_LOG | tail -1")
+      case "$line" in *"$w"*) ;; *) die "$h: API settled but its boot line does not name the expected write node";; esac
+      info "$h: API settled on pid $pid for $(( now - since ))s, monit OK"
+      return 0
+    fi
+    sleep 10
+  done
+}
+
+# Start a server that monit watches only through a port check. monit restarts such a
+# check only after its failures run out, which for routing is 15 minutes, and does not
+# start it when the check is monitored again, so after a reboot nothing would.
+start_if_down() {  # <host> <monit service> <process name as pgrep -x sees it>
+  local h=$1 svc=$2 proc=$3
+  if $DRY || [ -z "$(rq "$h" "pgrep -x $proc")" ]; then
+    act "$h" "start $svc (not running)" "monit start $svc" || die "$h: monit start $svc failed"
+  else
+    info "$h: $svc already running"
+  fi
 }
 
 # Move the API on <host> off <from> and onto <to>, if it uses <from> at all.
@@ -271,13 +323,21 @@ db_wait_rejoin() {
 
 db_verify_services() {
   local api_w line p
-  wait_http "$T" "http://127.0.0.1:$MAINT_DB_API_PORT/api/group" 300 "API"
+  # The spatial and routing servers first: an API without them answers /api/group but
+  # fails every reach question, and the load balancer would send members to it.
+  start_if_down "$T" iznik-spatial-go iznik-spatial-g
+  start_if_down "$T" iznik-routing-go iznik-routing-g
   wait_http "$T" "http://127.0.0.1:$MAINT_DB_SPATIAL_PORT/health" 600 "spatial /health"
   # monit's routing grace reports a dead routing server as OK: ask it directly.
   wait_http "$T" "http://127.0.0.1:$MAINT_DB_ROUTING_PORT/health" "$MAINT_DB_ROUTING_TIMEOUT" "routing /health"
   wait_http "$T" "http://127.0.0.1:$MAINT_DB_ROUTING_INTERNAL_PORT$MAINT_DB_ROUTING_PROBE" 120 "routing internal route"
+  # Only now the API, which the load balancer marks UP as soon as it answers.
+  start_if_down "$T" iznik-server-go iznik-server-go
+  monit_monitor "$T" iznik-server-go
+  wait_http "$T" "http://127.0.0.1:$MAINT_DB_API_PORT/api/group" 300 "API"
   $DRY && return 0
   api_w=$(envval "$ENV_T" MYSQL_HOST)
+  api_stable "$T" "$(rq "$T" "pgrep -o -x iznik-server-go")" "$api_w"
   line=$(rq "$T" "grep -a 'Connecting to database' $MAINT_DB_API_LOG | tail -1")
   case "$line" in *"$api_w"*) ;; *) die "$T: API boot line does not name its configured write node";; esac
   p=$(rq "$T" "tail -n 300 $MAINT_DB_API_LOG | grep -a -c -i -E 'panic|fatal error'")
@@ -326,6 +386,7 @@ db_run() {  # <target>
     fi
     batch_recreate_verify "$nw" "$nr"; BATCH_MOVED=true
   else BATCH_MOVED=false; info "batch does not use $TS"; fi
+  batch_hold
 
   phase drain-api
   # 3. Drain this node's API; the load balancer moves its clients to the peer.
@@ -373,6 +434,7 @@ db_run() {  # <target>
   phase services
   # 6. monit back: start the daemon, then monitor every service explicitly
   #    (whether "Not monitored" survives a reboot is not relied on either way).
+  #    The API is left out here; db_verify_services starts it once reach can be answered.
   act "$T" "start the monit daemon" "systemctl start monit" || die "$T: could not start monit"
   # shellcheck disable=SC2086
   monit_monitor "$T" $MAINT_DB_MONIT_RESTORE
@@ -384,8 +446,11 @@ db_run() {  # <target>
   # 7. Batch back first, then (this node's API being UP already) the peer's API.
   if $BATCH_MOVED; then
     batch_env_restore
+    # The recreate starts the scheduler again with the rest of supervisor.
     batch_recreate_verify "$B_W" "$B_R"
+    BATCH_HELD=false
   fi
+  batch_release
   if $P_API_MOVED; then
     api_env_restore "$P" "$ENV_P"
     api_restart_verify "$P" "$(envval "$ENV_P" MYSQL_HOST)"

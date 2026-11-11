@@ -13,10 +13,6 @@ function mountPage() {
         'b-col': { template: '<div><slot /></div>' },
         'b-img': { template: '<img :src="src" />', props: ['src', 'lazy'] },
         InviteSomeone: { template: '<div class="invite-someone" />' },
-        PosterModal: {
-          template: '<div class="poster-modal" />',
-          emits: ['hidden'],
-        },
       },
     },
   })
@@ -48,19 +44,5 @@ describe('pages/promote.vue', () => {
     expect(posterLinks[0].attributes('href')).toBe(
       'https://freegle.in/A4WelshPoster'
     )
-  })
-
-  it('opens the poster modal when "I put up a poster!" is clicked', async () => {
-    const wrapper = mountPage()
-
-    expect(wrapper.find('.poster-modal').exists()).toBe(false)
-
-    const buttons = wrapper.findAll('button')
-    const posterButton = buttons.find((b) =>
-      b.text().includes('I put up a poster!')
-    )
-    await posterButton.trigger('click')
-
-    expect(wrapper.find('.poster-modal').exists()).toBe(true)
   })
 })

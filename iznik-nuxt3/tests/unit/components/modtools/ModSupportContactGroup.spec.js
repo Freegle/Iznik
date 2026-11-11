@@ -338,6 +338,101 @@ describe('ModSupportContactGroup', () => {
       })
     })
 
+    it('sends the quoted email, files and required reply for one group', async () => {
+      mockModGroupStore.allGroups = { 1: { id: 1 } }
+      const wrapper = mountComponent()
+      wrapper.vm.from = 'support'
+      wrapper.vm.subject = 'About a member'
+      wrapper.vm.text = 'Please look'
+      wrapper.vm.groupid = 42
+      wrapper.vm.quoted = 'Dear Freegle, the whole email'
+      wrapper.vm.requireReply = true
+      wrapper.vm.files = [{ name: 'a.png', mime: 'image/png', data: 'QQ==' }]
+
+      await wrapper.vm.send(vi.fn())
+
+      expect(mockAlertStore.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          groupid: 42,
+          quoted: 'Dear Freegle, the whole email',
+          requirereply: 1,
+          attachments: [{ name: 'a.png', mime: 'image/png', data: 'QQ==' }],
+        })
+      )
+      // Cleared for the next message.
+      expect(wrapper.vm.quoted).toBe('')
+      expect(wrapper.vm.requireReply).toBe(false)
+      expect(wrapper.vm.files).toEqual([])
+    })
+
+    it('never sends the extras to all groups', async () => {
+      mockModGroupStore.allGroups = { 1: { id: 1 } }
+      const wrapper = mountComponent()
+      wrapper.vm.from = 'support'
+      wrapper.vm.subject = 'S'
+      wrapper.vm.text = 'T'
+      wrapper.vm.groupid = -1
+      wrapper.vm.quoted = 'secret member email'
+      wrapper.vm.requireReply = true
+      wrapper.vm.files = [{ name: 'a.png', mime: 'image/png', data: 'QQ==' }]
+
+      await wrapper.vm.send(vi.fn())
+
+      const sent = mockAlertStore.add.mock.calls.at(-1)[0]
+      expect(sent.groupid).toBe('AllFreegle')
+      expect(sent).not.toHaveProperty('quoted')
+      expect(sent).not.toHaveProperty('requirereply')
+      expect(sent).not.toHaveProperty('attachments')
+    })
+
+    it('shows the extras only when one group is chosen', async () => {
+      mockModGroupStore.allGroups = { 1: { id: 1 } }
+      const wrapper = mountComponent()
+      wrapper.vm.groupid = 1
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.single-group-extras').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Make the volunteers reply')
+
+      wrapper.vm.groupid = -1
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.single-group-extras').exists()).toBe(false)
+    })
+
+    it('refuses too many, wrong type or too big files', async () => {
+      mockModGroupStore.allGroups = { 1: { id: 1 } }
+      const wrapper = mountComponent()
+      const file = (type, size) => ({ type, size, name: 'f' })
+
+      await wrapper.vm.chooseFiles({
+        target: { files: Array(6).fill(file('image/png', 10)) },
+      })
+      expect(wrapper.vm.fileError).toContain('at most 5')
+
+      await wrapper.vm.chooseFiles({
+        target: { files: [file('application/zip', 10)] },
+      })
+      expect(wrapper.vm.fileError).toContain('pictures and PDFs')
+
+      await wrapper.vm.chooseFiles({
+        target: { files: [file('image/png', 2600000)] },
+      })
+      expect(wrapper.vm.fileError).toContain('too big')
+      expect(wrapper.vm.files).toEqual([])
+    })
+
+    it('reads accepted files as base64', async () => {
+      mockModGroupStore.allGroups = { 1: { id: 1 } }
+      const wrapper = mountComponent()
+      const f = new File(['hello'], 'hello.pdf', { type: 'application/pdf' })
+
+      await wrapper.vm.chooseFiles({ target: { files: [f] } })
+
+      expect(wrapper.vm.fileError).toBeNull()
+      expect(wrapper.vm.files).toEqual([
+        { name: 'hello.pdf', mime: 'application/pdf', data: 'aGVsbG8=' },
+      ])
+    })
+
     it('calls callback after sending', async () => {
       const wrapper = mountComponent()
       wrapper.vm.from = 'info'

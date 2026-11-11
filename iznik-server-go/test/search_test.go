@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -33,8 +34,8 @@ func TestAPISearch(t *testing.T) {
 
 	// Create a message with searchable words
 	groupID := CreateTestGroup(t, prefix+"_grp")
-	userID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	CreateTestMessage(t, userID, groupID, "Garden Table Offer", 55.9533, -3.1883)
 
 	// Search on first word in subject
@@ -97,8 +98,8 @@ func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
 
 	// Group A: the message lives here; the support user is NOT a member.
 	groupA := CreateTestGroup(t, prefix+"_a")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
 
 	// A unique word that won't appear in other test data.
 	uniqueWord := prefix + "zygote"
@@ -123,9 +124,9 @@ func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
 
 	// Group B: the support user belongs to this group (not group A).
 	groupB := CreateTestGroup(t, prefix+"_b")
-	supportID := CreateTestUser(t, prefix+"_support", "User")
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
-	CreateTestMembership(t, supportID, groupB, "Member")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_USER)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, supportID)
+	CreateTestMembership(t, supportID, groupB, utils.ROLE_MEMBER)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	// Support user searches with groupids=0 (All communities).
@@ -144,8 +145,8 @@ func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
 	assert.True(t, found, "support user should find messages from groups they are not a member of")
 
 	// Regular mod in group B searching with groupids=0 should NOT see group A messages.
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	url = fmt.Sprintf("/api/message/search/%s?groupids=0&jwt=%s", uniqueWord, modToken)
@@ -168,8 +169,8 @@ func TestSearchByMessageID(t *testing.T) {
 	// purely-numeric term (with or without a leading "#") must return that message.
 	prefix := uniquePrefix("searchbyid")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, "Exercise Bike Lewisham", 55.9533, -3.1883)
 	_, token := CreateTestSession(t, userID)
 
@@ -203,7 +204,7 @@ func TestAPISearch_OriginOnlyExcludesRippledIn(t *testing.T) {
 
 	origin := CreateTestGroup(t, prefix+"_origin")
 	rippled := CreateTestGroup(t, prefix+"_rippled")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, origin, "Origin only search test", 51.5, -0.1)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippled)

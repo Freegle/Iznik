@@ -151,6 +151,12 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
     `docker cp /project/scripts/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
     300000
   )
+  // Hand-written additions that survive regenerating test-fixtures.sql (see its header).
+  runStep(
+    'load extra test fixtures',
+    `docker cp /project/scripts/test-fixtures-extra.sql ${pfx}-percona:/tmp/test-fixtures-extra.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures-extra.sql"`,
+    300000
+  )
   // Roll the fixture post dates forward, exactly as scripts/setup-test-database.sh does
   // when CI builds its database. The fixtures carry fixed 2026-07-09 dates, and the feed
   // only shows posts from the last MessageSpatialService::RECENT_DAYS (31) days. Once

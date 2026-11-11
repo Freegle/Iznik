@@ -1,5 +1,5 @@
 <template>
-  <div v-if="adsEnabled" class="da-disable-cta">
+  <div v-if="adsEnabled && askForDonations" class="da-disable-cta">
     <span class="cta-text">
       <strong>Hate ads?</strong> Us too. Donate and we'll turn them off.
     </span>
@@ -8,8 +8,10 @@
 </template>
 <script setup>
 import { useConfigStore } from '~/stores/config'
+import { useMe } from '~/composables/useMe'
 
 const configStore = useConfigStore()
+const { askForDonations } = useMe()
 const p2 = await configStore.fetch('ads_enabled')
 const adsEnabled = p2?.length && parseInt(p2[0].value)
 </script>

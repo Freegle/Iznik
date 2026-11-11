@@ -1,5 +1,14 @@
 # Finance & Donations Automation — Edward's Plan
 
+Status (2026-10-28): still the live list. Built since the meeting: the Gift Aid claim and update
+commands, the 4-hourly PayPal fallback download, the per-donation thank-prep cards (June 2026),
+the hourly donations summary, Support search by payer email and postcode, and the donor opt-out
+from asks. Not built: the Xero API pull, the donations-plummet alert, contractor reminders, HMRC
+API submission, the sleuthing list and its automation. The income dashboard that the May meeting's
+"near real-time financial information" goal points at is written up as a token-burn candidate in
+`plans/token-burn/finance-dashboard.md`; the current end-to-end picture is
+`docs/freegle-donor-process.html`.
+
 Source: Finance / donations / support meeting (Edward, Jane, Jacky).
 
 This plan covers only the actions assigned to Edward. Jane's and Jacky's actions are noted as dependencies where relevant but are not tracked here.

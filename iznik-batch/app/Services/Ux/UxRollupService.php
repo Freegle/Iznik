@@ -6,6 +6,7 @@ use App\Services\LokiService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Turns one UTC day of client telemetry in Loki, and one day of MySQL history, into the ux_*
@@ -51,6 +52,16 @@ class UxRollupService
      * not whether events were lost. reply starts on typing, often on a browse card; settings at
      * the first save in a visit. event:flow covers them in the health check.
      */
+    /** Days of like-for-like history the health check needs before it will raise an alarm. */
+    public const MIN_BASELINE_DAYS = 7;
+
+    private const BASELINE_WINDOW_DAYS = 14;
+
+    /** Earlier days of the same weekday, within WEEKDAY_WINDOW_DAYS, that a weekday baseline needs. */
+    private const WEEKDAY_BASELINE_DAYS = 3;
+
+    private const WEEKDAY_WINDOW_DAYS = 28;
+
     private const STARTS_ON_ACTION = ['reply', 'settings'];
 
     private const FLOW_DIMS = ['device_class', 'logged_in', 'is_app', 'variant'];
@@ -79,6 +90,13 @@ class UxRollupService
 
         $date = $day->toDateString();
         foreach ($data as $table => $rows) {
+            if (! Schema::hasTable($table)) {
+                // Only a table added after the first release can be missing, when this code is live
+                // before its migration has been run. The rest of the day is still worth writing.
+                Log::warning("ux:rollup-daily: table {$table} does not exist, skipped");
+
+                continue;
+            }
             DB::transaction(function () use ($table, $date, $rows) {
                 DB::table($table)->where('date', $date)->delete();
                 foreach (array_chunk($rows, 500) as $chunk) {
@@ -160,6 +178,7 @@ class UxRollupService
             'ux_flow_daily' => $withDate($flowRows),
             'ux_flow_outcome_daily' => $withDate($outcomeRows),
             'ux_field_daily' => $withDate($fieldRows),
+            'ux_flow_signal_daily' => $withDate($this->collectSignals()),
             'ux_component_daily' => $withDate($this->collectComponents($day)),
             'ux_feature_adoption_daily' => $withDate($this->collectAdoption($day)),
             'ux_search_daily' => $withDate([$this->collectSearch($day)]),
@@ -326,6 +345,71 @@ class UxRollupService
         }
 
         return [array_values($flowRows), array_values($outcomeRows), array_values($fieldRows)];
+    }
+
+    /**
+     * Second thoughts followed to the end of the visit. For each step (and field) it counts the
+     * distinct flow instances that showed the signal, and how many of those also sent flow_complete.
+     * LogQL does the join: a set operation on flow_instance_id, so no raw line is paged. 'reached'
+     * is every instance that entered the step, the base the other signals are compared with.
+     *
+     * A visit that goes back and finishes after midnight UTC is counted as not finished, because
+     * the day's completions are the ones sent that day. That is a small undercount of finished,
+     * the same for every row.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function collectSignals(): array
+    {
+        $rows = [];
+        $signals = [
+            ['reached', 'step_enter', 'step', false],
+            ['backed', 'step_back', 'step', false],
+            ['help', 'help_sought', 'step', false],
+            ['field', 'field_revisit|validation_failed|choice_switched', 'step', true],
+        ];
+
+        foreach (self::FLOWS as $flow) {
+            $finished = sprintf(
+                'sum by (flow_instance_id) (count_over_time(%s | json flow, action_name, flow_instance_id | flow="%s" | action_name="flow_complete" | flow_instance_id!="" [1d]))',
+                $this->flowSelector(), $flow
+            );
+
+            foreach ($signals as [$signal, $actions, $stepLabel, $withField]) {
+                $group = array_merge($withField ? [$stepLabel, 'field'] : [$stepLabel], self::FLOW_DIMS);
+                $match = str_contains($actions, '|') ? '=~"^('.$actions.')$"' : '="'.$actions.'"';
+                $visits = sprintf(
+                    'sum by (flow_instance_id, %s) (count_over_time(%s | json %s | flow="%s" | action_name%s | flow_instance_id!="" [1d]))',
+                    implode(', ', $group), $this->flowSelector(),
+                    implode(', ', array_merge(['flow', 'action_name', 'flow_instance_id'], $group)), $flow, $match
+                );
+                $by = implode(', ', $group);
+
+                foreach (['people' => $visits, 'finished' => $visits.' and on (flow_instance_id) '.$finished] as $column => $inner) {
+                    foreach ($this->metric(sprintf('count by (%s) (%s)', $by, $inner), true) as [$labels, $n]) {
+                        $field = $withField ? mb_substr($labels['field'] ?? '', 0, 64) : '';
+                        $key = array_merge(
+                            [$flow, mb_substr($labels[$stepLabel] ?? '', 0, 64), $field, $signal],
+                            [
+                                mb_substr($labels['device_class'] ?? '', 0, 16),
+                                $this->bool($labels['logged_in'] ?? ''),
+                                $this->bool($labels['is_app'] ?? ''),
+                                mb_substr($labels['variant'] ?? '', 0, 64),
+                            ]
+                        );
+                        $k = implode('|', $key);
+                        $rows[$k] ??= [
+                            'flow' => $key[0], 'step' => $key[1], 'field' => $key[2], 'signal' => $key[3],
+                            'device_class' => $key[4], 'logged_in' => $key[5], 'is_app' => $key[6], 'variant' => $key[7],
+                            'people' => 0, 'finished' => 0,
+                        ];
+                        $rows[$k][$column] += (int) $n;
+                    }
+                }
+            }
+        }
+
+        return array_values($rows);
     }
 
     private function &flowRow(array &$rows, array $key): array
@@ -556,19 +640,84 @@ class UxRollupService
 
         foreach (self::EVENT_TYPES as $type) {
             $observed = $this->scalar(sprintf('sum(count_over_time(%s [1d]))', $this->selector($type)));
-            $history = DB::table('ux_telemetry_health_daily')
-                ->where('metric', 'event:'.$type)
-                ->where('date', '>=', $day->copy()->subDays(14)->toDateString())->where('date', '<', $day->toDateString())
-                ->pluck('observed')->map(fn ($v) => (float) $v)->sort()->values()->all();
-            $expected = null;
-            if (count($history) >= 3) {
-                $mid = intdiv(count($history), 2);
-                $expected = count($history) % 2 ? $history[$mid] : ($history[$mid - 1] + $history[$mid]) / 2;
-            }
+            $expected = $this->baselineMedian('event:'.$type, $day);
             $add('event:'.$type, (float) $observed, $expected);
         }
 
         return $rows;
+    }
+
+    /**
+     * The first day a metric is collected the way it is today, or null when it has never changed.
+     * Days before it are a different measurement (raw counts of lines the client now samples, or
+     * lines that did not exist yet), so they are not a baseline for today.
+     */
+    public static function healthChangePoint(string $metric): ?string
+    {
+        $point = config('freegle.ux.health_change_points.'.$metric);
+
+        return is_string($point) && $point !== '' ? $point : null;
+    }
+
+    /**
+     * Whether an event-metric alarm on $date rests on a trustworthy baseline: the same minimum
+     * number of like-for-like days must have passed since the metric's change point. Used by the
+     * weekly report to ignore rows stored before this rule existed.
+     */
+    public static function healthAlarmTrusted(string $metric, string $date): bool
+    {
+        $point = self::healthChangePoint($metric);
+        if ($point === null) {
+            return true;
+        }
+
+        return Carbon::parse($date)->gte(Carbon::parse($point)->addDays(self::MIN_BASELINE_DAYS));
+    }
+
+    /**
+     * The expected value for a day: the median of the same weekday in the last four weeks once there are
+     * three of them, because traffic has a weekly shape (Sundays run 10 to 35% above the median of all
+     * days on live, which read as an alarm). Until then, the median of the last 14 days. Either way only
+     * days collected the same way as today (on or after the metric's change point) with something
+     * recorded count. Null, meaning "not enough history", with under MIN_BASELINE_DAYS of the 14, so no
+     * alarm is raised on a thin base.
+     */
+    private function baselineMedian(string $metric, Carbon $day): ?float
+    {
+        $point = self::healthChangePoint($metric);
+        $history = function (int $days) use ($metric, $day, $point) {
+            $from = $day->copy()->subDays($days)->toDateString();
+            if ($point !== null && $point > $from) {
+                $from = $point;
+            }
+
+            return DB::table('ux_telemetry_health_daily')
+                ->where('metric', $metric)
+                ->where('date', '>=', $from)->where('date', '<', $day->toDateString())
+                ->where('observed', '>', 0)
+                ->get(['date', 'observed']);
+        };
+
+        $weekday = $history(self::WEEKDAY_WINDOW_DAYS)
+            ->filter(fn ($r) => Carbon::parse((string) $r->date)->dayOfWeek === $day->dayOfWeek)
+            ->pluck('observed')->all();
+        if (count($weekday) >= self::WEEKDAY_BASELINE_DAYS) {
+            return self::median($weekday);
+        }
+
+        $all = $history(self::BASELINE_WINDOW_DAYS)->pluck('observed')->all();
+
+        return count($all) < self::MIN_BASELINE_DAYS ? null : self::median($all);
+    }
+
+    /** @param  array<int, mixed>  $values */
+    private static function median(array $values): float
+    {
+        $values = array_map(fn ($v) => (float) $v, $values);
+        sort($values);
+        $mid = intdiv(count($values), 2);
+
+        return count($values) % 2 ? $values[$mid] : ($values[$mid - 1] + $values[$mid]) / 2;
     }
 
     // -------------------------------------------------------------- samples

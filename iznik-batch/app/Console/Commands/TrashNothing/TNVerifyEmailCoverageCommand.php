@@ -5,6 +5,8 @@ namespace App\Console\Commands\TrashNothing;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\IncomingArchiveReader;
 use App\Services\Mail\Incoming\MailParserService;
+use App\Services\TrashNothing\Ingestion\ClosedPostOutcome;
+use App\Services\TrashNothing\Ingestion\DeliberateSkips;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Services\TrashNothing\Verify\ArchiveInventoryService;
 use App\Services\TrashNothing\Verify\CoverageVerifier;
@@ -12,6 +14,7 @@ use App\Services\TrashNothing\Verify\TnEmailRoutingGate;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
@@ -39,10 +42,13 @@ class TNVerifyEmailCoverageCommand extends Command
     protected $signature = 'tn:verify-email-coverage
                             {--from= : Explicit window start (ISO-8601 UTC). Overrides --lag-hours/--window-hours}
                             {--to= : Explicit window end (ISO-8601 UTC)}
+                            {--recent= : Check the last this many minutes, up to five minutes ago. Overrides --lag-hours/--window-hours}
                             {--lag-hours= : How far behind real time to run (default: config)}
                             {--window-hours= : Window length (default: config)}
                             {--auto-ingest : Backfill genuine misses regardless of the config default}
                             {--report-only : Never backfill, whatever the config says}
+                            {--ingest-closed : Also backfill misses already closed on TN, with their outcome}
+                            {--max= : Most posts one run may backfill (default: config auto_ingest_max)}
                             {--archive-dir= : Read a different archive directory (testing)}
                             {--force : Run even though the email path is still routing TN posts}';
 
@@ -59,6 +65,9 @@ class TNVerifyEmailCoverageCommand extends Command
     private const BACKFILL_CACHE_PREFIX = 'tn-verify:backfilled:';
 
     private const BACKFILL_CACHE_TTL_DAYS = 7;
+
+    // How far short of now --recent stops.
+    private const RECENT_SETTLE_MINUTES = 5;
 
     public function handle(
         ArchiveInventoryService $inventoryService,
@@ -104,7 +113,7 @@ class TNVerifyEmailCoverageCommand extends Command
         $syncer = $this->buildSyncer($loki);
         $result = $verifier->verify($posts, $syncer, $from, $to);
 
-        $backfill = $this->backfill($result[CoverageVerifier::GENUINE], $syncer);
+        $backfill = $this->backfill($result[CoverageVerifier::GENUINE], $syncer, $result[CoverageVerifier::CLOSED] ?? []);
 
         $this->printReport($result, $backfill);
         $this->logRun($loki, $from, $to, $stats, $result, $backfill);
@@ -158,6 +167,15 @@ class TNVerifyEmailCoverageCommand extends Command
             return [$from, $from->addHours((int) ($this->option('window-hours') ?: $config['window_hours']))];
         }
 
+        // The recent window stops short of now: the sync sees a post within seconds, but
+        // longer while TN is slow or a poster's lookup is holding it, and a post it is about
+        // to ingest is not a miss.
+        if ($this->option('recent')) {
+            $to = CarbonImmutable::now('UTC')->subMinutes(self::RECENT_SETTLE_MINUTES);
+
+            return [$to->subMinutes((int) $this->option('recent')), $to];
+        }
+
         $lagHours    = (int) ($this->option('lag-hours') ?: $config['lag_hours']);
         $windowHours = (int) ($this->option('window-hours') ?: $config['window_hours']);
 
@@ -209,21 +227,30 @@ class TNVerifyEmailCoverageCommand extends Command
      * Apply the section S.5 rails and, if anything survives them, ingest.
      *
      * @param  array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed}>  $genuine
-     * @return array{enabled: bool, ingested: string[], failed: string[], skipped_stale: string[], repeats: string[], capped: bool, cap: int}
+     * With --ingest-closed, posts already closed on TN are backfilled as well and given
+     * their outcome (ClosedPostOutcome). Those are posts TN held until a Freegle community
+     * approved them, closed before Freegle ever had them; ingesting them keeps them in the
+     * stats. They count towards the cap like any other.
+     *
+     * @param  array<string, array{post_id: string, subject: string|null, timestamp: string, date: string|null, envelope_to: string, post: mixed, outcome: string}>  $closed
+     * @return array{enabled: bool, ingested: string[], failed: string[], deferred: string[], skipped_stale: string[], repeats: string[], capped: bool, cap: int, closed: array<string, string>}
      */
-    private function backfill(array $genuine, PostSyncer $syncer): array
+    private function backfill(array $genuine, PostSyncer $syncer, array $closed = []): array
     {
         $config = config('freegle.trashnothing.verify_coverage');
-        $cap    = (int) $config['auto_ingest_max'];
+        $cap    = (int) ($this->option('max') ?: $config['auto_ingest_max']);
 
         $out = [
             'enabled'       => $this->autoIngestEnabled(),
             'ingested'      => [],
             'failed'        => [],
+            'deferred'      => [],
             'skipped_stale' => [],
             'repeats'       => [],
             'capped'        => false,
             'cap'           => $cap,
+            'closed'        => [],
+            'needs_person'  => [],
         ];
 
         // Rail 6 first, and unconditionally — a post we already backfilled that
@@ -231,11 +258,24 @@ class TNVerifyEmailCoverageCommand extends Command
         // it would just loop; it needs a human.
         $candidates = [];
         foreach ($genuine as $postId => $entry) {
-            if (Cache::has(self::BACKFILL_CACHE_PREFIX . $postId)) {
+            // Ingestion itself noted why it skipped this one, for a reason a person has to
+            // sort out (a username two TN members share, say). Tried again, since the cause
+            // may have been fixed, but not a failed backfill.
+            if (Cache::has(self::BACKFILL_CACHE_PREFIX . $postId) && ($entry['skip_reason'] ?? null) === null) {
                 $out['repeats'][] = $postId;
                 continue;
             }
             $candidates[$postId] = $entry;
+        }
+
+        // A closed post backfilled before is covered by its message next time, even one
+        // deleted as withdrawn, so one still listed here was skipped by ingestion: leave it.
+        if ($this->option('ingest-closed')) {
+            foreach ($closed as $postId => $entry) {
+                if (! Cache::has(self::BACKFILL_CACHE_PREFIX . $postId)) {
+                    $candidates[$postId] = $entry;
+                }
+            }
         }
 
         if (! $out['enabled'] || $candidates === []) {
@@ -266,9 +306,34 @@ class TNVerifyEmailCoverageCommand extends Command
             }
 
             try {
-                $syncer->ingestFetchedPost($entry['post']);
+                // False means TN could not be asked who the poster is, so nothing was decided.
+                // Not remembered as backfilled (it would then be a repeat miss, and fail the
+                // run) and not a failure: it is still a miss, and the next run tries again.
+                if ($syncer->ingestFetchedPost($entry['post']) === false) {
+                    $out['deferred'][] = $postId;
+                    continue;
+                }
+
+                // Ingestion decided not to place it, for a reason it noted: a person has to
+                // act, so it is reported, not remembered as backfilled. Remembering it would
+                // make every later run that sees it call the backfill failed.
+                if (! DB::table('messages')->where('tnpostid', $postId)->exists()) {
+                    $reason = DeliberateSkips::reasonFor((string) $postId);
+                    if ($reason !== null) {
+                        $out['needs_person'][$postId] = $reason;
+                        continue;
+                    }
+                }
+
                 Cache::put(self::BACKFILL_CACHE_PREFIX . $postId, true, now()->addDays(self::BACKFILL_CACHE_TTL_DAYS));
                 $out['ingested'][] = $postId;
+
+                if (isset($entry['outcome'])) {
+                    $msgId = (int) DB::table('messages')->where('tnpostid', $postId)->orderBy('id')->value('id');
+                    $out['closed'][$postId] = $msgId
+                        ? app(ClosedPostOutcome::class)->apply($msgId, $entry['outcome'])
+                        : 'not-ingested';
+                }
             } catch (\Throwable $e) {
                 $this->error("Backfill failed for post {$postId}: " . $e->getMessage());
                 $out['failed'][] = $postId;
@@ -316,12 +381,20 @@ class TNVerifyEmailCoverageCommand extends Command
         $this->line(sprintf('  deleted on TN       %d  (expected)', $counts[CoverageVerifier::DELETED]));
         $this->line(sprintf('  resolved outcome    %d  (expected)', $counts[CoverageVerifier::RESOLVED]));
         $this->line(sprintf('  date bumped         %d  (expected)', $counts[CoverageVerifier::BUMPED]));
+        $this->line(sprintf('  skipped on purpose  %d  (expected - %s)', $counts[CoverageVerifier::DELIBERATE_SKIP], $this->describeDeliberateSkips($result[CoverageVerifier::DELIBERATE_SKIP])));
         $this->line(sprintf('  TN lookup failed    %d  (undetermined)', $counts[CoverageVerifier::LOOKUP_ERROR]));
-        $this->line(sprintf('  GENUINE MISSES      %d', $counts[CoverageVerifier::GENUINE]));
+        $this->line(sprintf('  GENUINE MISSES      %d%s', $counts[CoverageVerifier::GENUINE], $this->describeMissReasons($result[CoverageVerifier::GENUINE])));
         $this->line(sprintf('  (%d single-post API lookup(s))', $result['api_lookups']));
 
         foreach ($result[CoverageVerifier::GENUINE] as $postId => $entry) {
-            $this->line(sprintf('    miss post_id=%s date=%s to=%s subject=%s', $postId, $entry['date'] ?? '?', $entry['envelope_to'], (string) $entry['subject']));
+            $this->line(sprintf(
+                '    miss post_id=%s date=%s to=%s%s subject=%s',
+                $postId,
+                $entry['date'] ?? '?',
+                $entry['envelope_to'],
+                isset($entry['skip_reason']) ? ' skipped=' . $entry['skip_reason'] : '',
+                (string) $entry['subject']
+            ));
         }
 
         $this->line('');
@@ -332,12 +405,77 @@ class TNVerifyEmailCoverageCommand extends Command
         }
 
         $this->line(sprintf('  ingested            %d', count($backfill['ingested'])));
+        if ($backfill['closed'] !== []) {
+            $this->line(sprintf('  of which closed     %d (%s)', count($backfill['closed']), implode(', ', array_map(
+                fn ($id, $done) => "{$id}: {$done}", array_keys($backfill['closed']), $backfill['closed']
+            ))));
+        }
         $this->line(sprintf('  failed              %d', count($backfill['failed'])));
+        $this->line(sprintf('  deferred (TN user lookup failed, tried again next run)  %d', count($backfill['deferred'])));
         $this->line(sprintf('  skipped (too old)   %d', count($backfill['skipped_stale'])));
+        if ($backfill['needs_person'] !== []) {
+            $this->line(sprintf('  skipped by ingestion, needs a person  %d (%s)', count($backfill['needs_person']), implode(', ', array_map(
+                fn ($id, $why) => "{$id}: {$why}", array_keys($backfill['needs_person']), $backfill['needs_person']
+            ))));
+        }
 
         if ($backfill['repeats'] !== []) {
             $this->error(sprintf('  STILL MISSING AFTER AN EARLIER BACKFILL: %s', implode(', ', $backfill['repeats'])));
         }
+    }
+
+    /**
+     * The reasons ingestion skipped posts on purpose, with how many each, for the report line.
+     *
+     * @param  array<string, string>  $skips  post id => reason
+     */
+    private function describeDeliberateSkips(array $skips): string
+    {
+        if ($skips === []) {
+            return 'a banned poster, or no TN user id';
+        }
+
+        $byReason = array_count_values($skips);
+        ksort($byReason);
+
+        return $this->listReasons($byReason);
+    }
+
+    /**
+     * How many of the misses ingestion skipped, and for which reasons, for the report line. These
+     * are posts it decided not to place for want of a user, so each reason is a cause to fix.
+     *
+     * @param  array<string, array{skip_reason: string|null}>  $misses
+     */
+    private function describeMissReasons(array $misses): string
+    {
+        $byReason = $this->missesByReason($misses);
+
+        if ($byReason === []) {
+            return '';
+        }
+
+        return '  (ingestion skipped ' . array_sum($byReason) . ': ' . $this->listReasons($byReason) . ')';
+    }
+
+    /**
+     * @param  array<string, array{skip_reason: string|null}>  $misses
+     * @return array<string, int>  reason => how many misses, for the misses ingestion skipped
+     */
+    private function missesByReason(array $misses): array
+    {
+        $byReason = array_count_values(array_filter(array_column($misses, 'skip_reason'), fn ($reason) => $reason !== null));
+        ksort($byReason);
+
+        return $byReason;
+    }
+
+    /**
+     * @param  array<string, int>  $byReason
+     */
+    private function listReasons(array $byReason): string
+    {
+        return implode(', ', array_map(fn ($reason, $count) => "{$reason}: {$count}", array_keys($byReason), $byReason));
     }
 
     private function logRun(
@@ -366,10 +504,12 @@ class TNVerifyEmailCoverageCommand extends Command
                 'deleted'      => $result['counts'][CoverageVerifier::DELETED],
                 'resolved'     => $result['counts'][CoverageVerifier::RESOLVED],
                 'bumped'       => $result['counts'][CoverageVerifier::BUMPED],
+                'deliberate_skip' => $result['counts'][CoverageVerifier::DELIBERATE_SKIP],
                 'lookup_error' => $result['counts'][CoverageVerifier::LOOKUP_ERROR],
                 'genuine'      => $result['counts'][CoverageVerifier::GENUINE],
                 'api_lookups'  => $result['api_lookups'],
                 'miss_ids'     => implode(',', array_keys($result[CoverageVerifier::GENUINE])),
+                'miss_reasons' => $this->listReasons($this->missesByReason($result[CoverageVerifier::GENUINE])),
             ]);
         }
 
@@ -377,7 +517,10 @@ class TNVerifyEmailCoverageCommand extends Command
             $context = array_merge($context, [
                 'backfill_enabled' => $backfill['enabled'],
                 'backfilled'       => count($backfill['ingested']),
+                'backfilled_closed' => count($backfill['closed'] ?? []),
+                'backfill_needs_person' => count($backfill['needs_person'] ?? []),
                 'backfill_failed'  => count($backfill['failed']),
+                'backfill_deferred' => count($backfill['deferred']),
                 'backfill_stale'   => count($backfill['skipped_stale']),
                 'backfill_capped'  => $backfill['capped'],
                 'repeat_misses'    => count($backfill['repeats']),

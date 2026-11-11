@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/roadblur"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -79,7 +80,7 @@ func TestFirstReplyPassthrough_RoutingDownFailsClosed(t *testing.T) {
 	t.Cleanup(roadblur.ResetRoutingBreaker)
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough down test", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
@@ -103,7 +104,7 @@ func TestFirstReplyPassthrough_FirstReplyInsideEventualReach(t *testing.T) {
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough test", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
@@ -125,8 +126,8 @@ func TestFirstReplyPassthrough_SecondReplyIsStillHeld(t *testing.T) {
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough second", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
@@ -155,7 +156,7 @@ func TestFirstReplyPassthrough_OutsideEventualReachIsHeld(t *testing.T) {
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough far", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
@@ -172,7 +173,7 @@ func TestFirstReplyPassthrough_DisabledAndUnpopulatedBothHold(t *testing.T) {
 	prefix := uniquePrefix("frpass4")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough off", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
@@ -204,7 +205,7 @@ func TestFirstReplyPassthrough_RespectsTheRolloutPercentage(t *testing.T) {
 	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: rollout", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 

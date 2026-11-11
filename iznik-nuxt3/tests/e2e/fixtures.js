@@ -12,7 +12,7 @@ const {
   DEFAULT_TEST_PASSWORD,
 } = require('./config')
 const logger = require('./logger')
-const { logoutIfLoggedIn } = require('./utils/user')
+const { logoutIfLoggedIn, loginViaModTools } = require('./utils/user')
 const {
   trackFailedLoads,
   waitForAppMount,
@@ -524,6 +524,85 @@ const fixtures = {
       }
     }
 
+    // Playwright reads JS coverage once, when it is stopped, and V8 reports
+    // only the scripts it still holds. A page left by a hard navigation keeps
+    // its coverage until garbage collection runs, so a file's covered lines
+    // moved from run to run with nothing changed (GroupSelect 20 or 1 of 26,
+    // ModYesterday 23 or 0 of 25). Flush before each test-driven navigation:
+    // stop, hand the entries to the reporter, start again.
+    const flushCoverage = async (reason) => {
+      if (!coverageStarted) return
+      let stopped = false
+      try {
+        const result = await Promise.race([
+          Promise.all([
+            page.coverage.stopJSCoverage(),
+            page.coverage.stopCSSCoverage(),
+          ]),
+          new Promise((resolve) => setTimeout(resolve, 10000)),
+        ])
+        if (!Array.isArray(result)) {
+          // Still running: leave it to the end-of-test collection.
+          console.warn(`Coverage flush before ${reason} timed out`)
+          return
+        }
+        stopped = true
+        const [jsCoverage, cssCoverage] = result
+        const coverage = [...jsCoverage, ...cssCoverage]
+        if (coverage.length > 0) {
+          await addCoverageReport(coverage, test.info())
+        }
+      } catch (error) {
+        console.warn(`Coverage flush before ${reason} failed:`, error.message)
+        if (!stopped) return
+      }
+      try {
+        await Promise.all([
+          page.coverage.startJSCoverage({ resetOnNavigation: false }),
+          page.coverage.startCSSCoverage({ resetOnNavigation: false }),
+        ])
+      } catch (error) {
+        coverageStarted = false
+        console.warn('Coverage could not restart:', error.message)
+      }
+    }
+    for (const method of ['goto', 'reload']) {
+      const original = page[method].bind(page)
+      page[method] = async (...args) => {
+        await flushCoverage(method)
+        return original(...args)
+      }
+    }
+
+    // Google's sign-in script throws inside its own callbacks when Google's service answers it
+    // with an error (seen as "Error: pa" after a 400 from accounts.google.com). That is no fault
+    // of ours, and it failed whichever spec was collecting page errors at that moment. A spec's
+    // pageerror listener never sees an error whose top stack frame is in that script; one thrown
+    // by our code, even when Google's script called it, still reaches it.
+    const isGoogleSignInError = (error) => {
+      const topFrame = (error?.stack || '')
+        .split('\n')
+        .find((line) => /^\s*at /.test(line))
+      return /accounts\.google\.com\/gsi\//.test(topFrame || '')
+    }
+    for (const method of ['on', 'once', 'addListener']) {
+      const original = page[method].bind(page)
+      page[method] = (event, listener) => {
+        if (event !== 'pageerror') {
+          return original(event, listener)
+        }
+        return original(event, (error) => {
+          if (isGoogleSignInError(error)) {
+            console.log(
+              `[page error from Google sign-in, ignored] ${error.message}`
+            )
+            return
+          }
+          return listener(error)
+        })
+      }
+    }
+
     // Create a logging proxy for the page
     const loggingPage = logger.createLoggingPage(page)
 
@@ -661,6 +740,23 @@ const fixtures = {
     const isAllowedError = (errorText) => {
       return allowedErrorPatterns.some((pattern) => pattern.test(errorText))
     }
+
+    // Put the page's own console in the test log. Until now only the postMessage
+    // fixture did, so a login that never completed left no trace of why: the
+    // errors, warnings, reloads, chunk failures and "Login failed" lines were
+    // all in the browser and nowhere else. Errors the suite already allows
+    // (Google and FedCM noise, several hundred a run) are left out.
+    page.on('console', (message) => {
+      const type = message.type()
+      const text = message.text()
+      const interesting =
+        type === 'warning' ||
+        /reload|chunk|Login failed/i.test(text) ||
+        (type === 'error' && !isAllowedError(text))
+      if (interesting) {
+        console.log(`[page console ${type}] ${text.substring(0, 500)}`)
+      }
+    })
 
     // Track console errors and fail immediately on critical ones
     page.on('console', async (message) => {
@@ -2217,6 +2313,53 @@ const testWithFixtures = test.extend({
     await use(takeTimestampedScreenshot)
   },
 
+  // Approve a post as the admin test mod, through the Go API. A fresh member's
+  // post is Pending (message_submit.go: an auto-joined member has no posting
+  // status), so it never reaches the browse or explore lists for anyone else.
+  // A test that replies from a list has to approve its post first. Leaves the
+  // browser logged out on the Freegle site.
+  approvePost: async ({ page, testEnv }, use) => {
+    const approvePost = async (msgId) => {
+      if (!msgId) {
+        throw new Error('A message id is required to approve a post')
+      }
+      // The Freegle site and ModTools are different origins with their own
+      // stored logins. Log the poster out of the Freegle site first, or they
+      // are still signed in there afterwards and see their own post with no
+      // Reply button.
+      await logoutIfLoggedIn(page)
+      await loginViaModTools(page, testEnv.mod.email)
+      const jwt = await page.evaluate(() => {
+        const auth = JSON.parse(localStorage.getItem('auth') || '{}')
+        return auth?.auth?.jwt
+      })
+      if (!jwt) {
+        throw new Error('No JWT after ModTools login, cannot approve the post')
+      }
+      // Go router: POST /message with an action is the mod operation (not PATCH).
+      // Authorization is the raw JWT, no "Bearer " prefix. The id must be a JSON
+      // number: postMessage returns it as a string, and a quoted id fails the
+      // Go body parse with "Invalid request body".
+      const response = await page.request.post(
+        `${environment.apiV2BaseUrl}/message`,
+        {
+          data: { id: Number(msgId), action: 'Approve' },
+          headers: { Authorization: jwt },
+        }
+      )
+      if (!response.ok()) {
+        throw new Error(
+          `Approving post ${msgId} failed: ${response.status()} ${await response.text()}`
+        )
+      }
+      console.log(`[Approve] Post ${msgId} approved as ${testEnv.mod.email}`)
+      await logoutIfLoggedIn(page)
+      // Back to the Freegle site, signed out, for whatever the test does next.
+      await page.goto('/', { waitUntil: 'domcontentloaded' })
+    }
+    await use(approvePost)
+  },
+
   withdrawPost: async ({ page }, use) => {
     /**
      * Finds a post on the My Posts page and withdraws it
@@ -2225,7 +2368,7 @@ const testWithFixtures = test.extend({
      * @returns {Promise<boolean>} - True if post was withdrawn successfully
      */
     const withdrawPost = async (options) => {
-      const { item } = options
+      const { item, expectReplies } = options
 
       if (!item) {
         throw new Error('Item text is required for withdrawing a post')
@@ -2252,6 +2395,21 @@ const testWithFixtures = test.extend({
         console.log(
           `Post card for "${item}" is visible, proceeding with withdrawal`
         )
+
+        // A reply-flow test knows how many replies the poster should see.
+        // Check it here: the replies header is what proves the reply reached
+        // the poster, and MyMessage's reply code only runs once it renders.
+        if (expectReplies) {
+          await base
+            .expect(postCard.locator('.replies-count'))
+            .toHaveText(
+              new RegExp(`^\\s*${expectReplies}\\s+repl(y|ies)\\s*$`),
+              { timeout: timeouts.api.default }
+            )
+          await base
+            .expect(postCard.locator('.reply-avatar').first())
+            .toBeVisible({ timeout: timeouts.ui.appearance })
+        }
 
         // Look for the withdraw button within the post card
         // Note: MyMessage.vue uses .action-btn class, not .btn

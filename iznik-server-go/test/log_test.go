@@ -5,6 +5,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -41,7 +42,7 @@ func TestLogCreatesEntry(t *testing.T) {
 	db := database.DBConn
 
 	// Create a test user to associate with the log.
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a log entry.
 	text := "Test log entry from Go tests"
@@ -71,7 +72,7 @@ func TestLogWithGroupID(t *testing.T) {
 
 	// Create test data.
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a log entry with group ID.
 	text := "Test group log entry"
@@ -102,7 +103,7 @@ func TestLogWithMessageID(t *testing.T) {
 
 	// Create test data.
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	messageID := CreateTestMessage(t, userID, groupID, "Test message for log", 55.9533, -3.1883)
 
 	// Create a log entry with message ID.
@@ -133,8 +134,8 @@ func TestLogWithByUser(t *testing.T) {
 	db := database.DBConn
 
 	// Create test users.
-	targetUserID := CreateTestUser(t, prefix+"_target", "User")
-	modUserID := CreateTestUser(t, prefix+"_mod", "User")
+	targetUserID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	// Create a log entry where one user performs action on another.
 	text := "Test byuser log entry"
@@ -163,7 +164,7 @@ func TestLogTimestampIsSet(t *testing.T) {
 	prefix := uniquePrefix("logts")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a log entry.
 	text := "Test timestamp log entry"

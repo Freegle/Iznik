@@ -10,7 +10,7 @@ use Tests\TestCase;
 
 /**
  * HostHealthCheck ports the per-host checks from V1's scripts/cron/status.php
- * (security patches, reboot-required, monit summary) into the outcome
+ * (monit summary, ssh reachability; patch age is HostPatchTracker) into the outcome
  * monitoring pipeline. These tests drive it with a fake runner returning
  * canned probe output, so no ssh happens under test.
  */
@@ -112,25 +112,37 @@ class HostHealthCheckTest extends TestCase
         $this->assertTrue($result->isOk(), $result->message);
     }
 
-    public function test_reboot_required_is_a_plain_warning_without_packages(): void
+    public function test_pending_reboot_and_security_updates_no_longer_light_the_status_light(): void
     {
-        $result = $this->evaluate($this->probeOutput(reboot: 'yes'));
+        // freegle-maint patches on a schedule, so "pending" is normal for most
+        // of a week. HostPatchTracker judges the age instead, on SysAdmin.
+        $result = $this->evaluate($this->probeOutput(reboot: 'yes', security: 3));
 
-        $this->assertTrue($result->isBreach());
-        $this->assertSame('warning', $result->severity);
-        $this->assertStringContainsString('reboot required', $result->message);
-        // No package list: it names nothing a mod acts on, and it made the
-        // modal read like a changelog.
-        $this->assertStringNotContainsString('(', $result->message);
+        $this->assertTrue($result->isOk(), $result->message);
+        $this->assertStringNotContainsString('reboot', $result->message);
+        $this->assertStringNotContainsString('security', $result->message);
     }
 
-    public function test_pending_security_updates_are_a_warning_with_the_count(): void
+    public function test_the_probe_reports_when_a_reboot_became_pending(): void
     {
-        $result = $this->evaluate($this->probeOutput(security: 3));
+        $this->assertStringContainsString('REBOOT_SINCE:', HostHealthCheck::PROBE);
+    }
 
-        $this->assertTrue($result->isBreach());
-        $this->assertSame('warning', $result->severity);
-        $this->assertStringContainsString('3 security update(s) to apply', $result->message);
+    public function test_each_probe_records_the_hosts_patch_state(): void
+    {
+        $this->evaluate($this->probeOutput(security: 4), 'root@host-a');
+
+        $row = \Illuminate\Support\Facades\DB::table('cron_job_status')->where('command', 'host-patch host-a')->first();
+        $this->assertNotNull($row);
+        $this->assertSame(0, (int) $row->last_exit_code);
+        $this->assertStringContainsString('4 security updates pending', $row->last_output);
+    }
+
+    public function test_an_unreachable_host_records_nothing_so_the_row_goes_overdue(): void
+    {
+        $this->evaluate(null, 'root@host-b');
+
+        $this->assertNull(\Illuminate\Support\Facades\DB::table('cron_job_status')->where('command', 'host-patch host-b')->first());
     }
 
     public function test_a_monit_service_not_monitored_is_a_warning(): void
@@ -287,17 +299,17 @@ class HostHealthCheckTest extends TestCase
     public function test_an_error_outranks_coexisting_warnings(): void
     {
         $result = $this->evaluate($this->probeOutput(
-            reboot: 'yes',
-            security: 2,
-            monitLines: ['exim                             Execution failed            Process'],
+            monitLines: [
+                'exim                             Execution failed            Process',
+                'nginx                            Initializing                Process',
+            ],
         ));
 
         $this->assertTrue($result->isBreach());
         $this->assertSame('error', $result->severity);
         // The warnings still travel in the message so the modal shows the
         // whole host picture, not just the worst finding.
-        $this->assertStringContainsString('reboot required', $result->message);
-        $this->assertStringContainsString('2 security update(s)', $result->message);
+        $this->assertStringContainsString('nginx', $result->message);
         $this->assertStringContainsString('exim', $result->message);
     }
 }

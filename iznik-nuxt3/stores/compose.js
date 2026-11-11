@@ -1,6 +1,10 @@
 import { defineStore } from 'pinia'
 import { action } from '~/composables/useClientLog'
 import { FlowName, useFlowTelemetry } from '~/composables/useFlowTelemetry'
+import {
+  givePhotoCount,
+  reportGivePosted,
+} from '~/composables/useGivePhotoTelemetry'
 import { useMessageStore } from '~/stores/message'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
@@ -25,13 +29,17 @@ function submitErrorCode(e) {
   return 'error'
 }
 
-// Record a submit and its result on the flow of the message type, rethrowing any failure.
-async function withSubmitTelemetry(type, fn) {
+// Record a submit and its result on the flow of the message type, rethrowing any failure. The drafts
+// being submitted are passed in because submitting marks them submitted and empties their photos, so
+// the photo count of an OFFER is read first. A posted OFFER reports that count.
+async function withSubmitTelemetry(type, fn, drafts = []) {
   const flow = flowForType(type)
+  const photos = type === 'Offer' ? givePhotoCount(drafts) : 0
   flow?.submit()
   try {
     const result = await fn()
     flow?.submitResult(true, 200, null)
+    if (type === 'Offer') reportGivePosted(photos)
     return result
   } catch (e) {
     flow?.submitResult(false, e?.response?.status ?? null, submitErrorCode(e))
@@ -433,8 +441,11 @@ export const useComposeStore = defineStore('compose', {
       }
       this.submitting = true
       try {
-        const ret = await withSubmitTelemetry(pending.message?.type, () =>
-          this.submitSingle(pending.message, pending.email, pending.options)
+        const ret = await withSubmitTelemetry(
+          pending.message?.type,
+          () =>
+            this.submitSingle(pending.message, pending.email, pending.options),
+          [pending.message]
         )
         // Only reached on success (submitSingle throws otherwise — and we deliberately
         // do NOT clear the draft on failure, so the user can retry rather than lose it).
@@ -738,8 +749,12 @@ export const useComposeStore = defineStore('compose', {
       }
       this.submitting = true
       try {
-        return await withSubmitTelemetry(params.type, () =>
-          this._submitInner(params)
+        return await withSubmitTelemetry(
+          params.type,
+          () => this._submitInner(params),
+          Object.values(this.messages || {}).filter(
+            (m) => m && m.type === params.type && !m.submitted
+          )
         )
       } finally {
         this.submitting = false

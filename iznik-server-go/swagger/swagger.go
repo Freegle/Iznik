@@ -59,7 +59,6 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/newsfeed"
-	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
 	"github.com/freegle/iznik-server-go/shortlink"
 	"github.com/freegle/iznik-server-go/src"
@@ -343,6 +342,81 @@ type alertsResponse struct {
 	// in:body
 	Body []alert.Alert
 }
+
+// swagger:route GET /modtools/alert/pending modtools getPendingAlerts
+// Alerts awaiting my reply
+//
+// The alerts the caller, as a moderator, must reply to before ModTools lets them carry on.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertsResponse
+//	401: errorResponse
+
+// swagger:route POST /modtools/alert/{id}/reply modtools replyToAlert
+// Reply to an alert that requires a reply
+//
+// Sends the reply to the alert's sender as a chat message and records it.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Alert ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertResponse
+//	401: errorResponse
+//	404: errorResponse
+
+// swagger:route POST /modtools/alert/{id}/snooze modtools snoozeAlert
+// Sleep an alert for 30 minutes, once
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Alert ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertResponse
+//	403: errorResponse
+
+// swagger:route POST /modtools/alert/{id}/cancel modtools cancelAlert
+// Stop requiring replies to an alert
+//
+// The sender, or Support/Admin, releases every moderator.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Alert ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: alertResponse
+//	403: errorResponse
 
 // swagger:route GET /modtools/alert/{id} modtools getAlert
 // Get alert by ID
@@ -1342,6 +1416,24 @@ type giftAidResponse struct {
 //
 //	200: successResponse
 //	401: errorResponse
+
+// swagger:route POST /giftaid/record donations recordGiftAid
+// Record a donor's Gift Aid answer (admin)
+//
+// A Gift Aid volunteer records, for the donor, that they declined (outcome Declined) or that we asked again and heard nothing (outcome NoResponse).
+// Body: { userid: <int>, outcome: "Declined" | "NoResponse" }
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+//	409: errorResponse
 
 // ============================================================================
 // Email Tracking
@@ -2913,116 +3005,6 @@ type newsfeedItemResponse struct {
 //	401: errorResponse
 
 // ============================================================================
-// Noticeboard
-// ============================================================================
-
-// swagger:route GET /noticeboard noticeboard getNoticeboard
-// List or get noticeboards
-//
-// Returns active noticeboards, optionally filtered by authority, or a single noticeboard by ID
-//
-// Parameters:
-//   + name: id
-//     in: query
-//     description: Noticeboard ID for single fetch
-//     required: false
-//     type: integer
-//   + name: authorityid
-//     in: query
-//     description: Filter by authority ID
-//     required: false
-//     type: integer
-//
-// Responses:
-//
-//	200: noticeboardsResponse
-//
-// noticeboardsResponse is the response for noticeboards
-// swagger:response noticeboardsResponse
-type noticeboardsResponse struct {
-	// Noticeboards
-	// in:body
-	Body []noticeboard.NoticeboardListItem
-}
-
-// swagger:route GET /noticeboard/{id} noticeboard getNoticeboardSingle
-// Get noticeboard by ID
-//
-// Returns a single noticeboard with its checks and photo
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Noticeboard ID
-//     required: true
-//     type: integer
-//     format: int64
-//
-// Responses:
-//
-//	200: noticeboardItemResponse
-//	400: errorResponse
-//	404: errorResponse
-//
-// noticeboardItemResponse is the response for a single noticeboard
-// swagger:response noticeboardItemResponse
-type noticeboardItemResponse struct {
-	// Noticeboard with checks and photo
-	// in:body
-	Body noticeboard.NoticeboardItem
-}
-
-// swagger:route POST /noticeboard noticeboard postNoticeboard
-// Create noticeboard or perform action
-//
-// Creates a new noticeboard (requires lat/lng) or performs an action on existing one
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-
-// swagger:route PATCH /noticeboard noticeboard patchNoticeboard
-// Update noticeboard
-//
-// Updates noticeboard fields and optionally links photo
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-
-// swagger:route DELETE /noticeboard/{id} noticeboard deleteNoticeboard
-// Delete noticeboard
-//
-// Deletes a noticeboard by ID. Requires mod/admin role.
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Noticeboard ID
-//     required: true
-//     type: integer
-//     format: int64
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	401: errorResponse
-//	403: errorResponse
-
-// ============================================================================
 // Notification
 // ============================================================================
 
@@ -3700,6 +3682,51 @@ type userResponse struct {
 	Body user.User
 }
 
+// swagger:route GET /user/unrated user getUnrated
+// People the member has handed over with and not rated
+//
+// Lists the freeglers the logged-in member handed an item over with in the last 14 days (either
+// direction) and has not rated, newest first, one entry per person, at most five. Used by the
+// rate-on-return experiment to ask on the next visit.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
+// swagger:route GET /user/hostingad user getHostingAd
+// Whether to show the Krystal hosting ad
+//
+// Decides once, for the logged-in member, whether the Krystal hosting ad modal is shown: their email
+// domain must host a WordPress site not on Krystal, and the server experiment krystal-hosting-ad
+// gives the arm. Both arms are recorded as an exposure.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
+// swagger:route POST /user/hostingad user postHostingAd
+// Record what the member did with the hosting ad
+//
+// Writes the time of the member's first click through to Krystal ("click") or first dismissal
+// ("dismiss") on their krystal-hosting-ad exposure row.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+
 // swagger:route GET /user/search user searchUsers
 // Search users
 //
@@ -4267,6 +4294,50 @@ type housekeeperTasksResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 
+// swagger:route GET /sysadmin/paf sysadmin listPafImports
+// List PAF address data imports
+//
+// Lists the latest Royal Mail address data (PAF) imports, newest first, with their progress. Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /sysadmin/paf sysadmin startPafImport
+// Start a PAF address data import
+//
+// Queues a request to download and apply a PAF release, given the unlock key AFD emailed and optionally an archived edition such as Y26M08. One at a time. Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	409: errorResponse
+
+// swagger:route GET /sysadmin/paf/latest sysadmin getPafLatest
+// The latest PAF release on the AFD site
+//
+// The release at the top of AFD's site (its publication date and size), as the batch command paf:check-latest last found it, or why it could not. Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	403: errorResponse
+
 // swagger:route GET /supportai/runs supportai listSupportAIRuns
 // List AI Support Helper runs
 //
@@ -4335,6 +4406,74 @@ type getSupportAIRunParams struct {
 	// required: true
 	ID int64 `json:"id"`
 }
+
+// swagger:route GET /supportcases supportcase listSupportCases
+// List support cases
+//
+// Returns the chats moderators have referred to Support, newest first. Filter with status=Waiting|Open|Handled|All (Waiting is the open cases whose finished first pass or latest referrer message has no Support reply after it) or chatid; page back with before=<id>. Each row says whether it is waiting for Support. Support/Admin only; anyone else gets 404.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	404: errorResponse
+
+// swagger:route PATCH /supportcases supportcase patchSupportCase
+// Mark a support case Handled or Open
+//
+// Support/Admin only; anyone else gets 404. Reopening answers 409 when another case for the same chat and referrer is already open.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	404: errorResponse
+//	409: errorResponse
+
+// swagger:route GET /supportcases/{id} supportcase getSupportCase
+// Get a support case
+//
+// Support and Admin get the full case with the first pass. The moderator who referred it, while they can still see the chat, gets only its status, their reason and the thread. Anyone else gets 404.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	404: errorResponse
+
+// swagger:parameters getSupportCase postSupportCaseMessage
+type supportCaseParams struct {
+	// Case ID
+	// in: path
+	// required: true
+	ID int64 `json:"id"`
+}
+
+// swagger:route POST /supportcases/{id}/messages supportcase postSupportCaseMessage
+// Reply on a support case
+//
+// Adds to the thread between Support and the referring moderator. A referrer posting to a Handled case reopens it.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	401: errorResponse
+//	404: errorResponse
+//	409: errorResponse
 
 // swagger:route POST /donations/bulk donations bulkUploadDonations
 // Bulk upload donations
@@ -4553,6 +4692,21 @@ type getSupportAIRunParams struct {
 //	200: successResponse
 //	404: errorResponse
 
+// swagger:route POST /discourse/relink sso relinkDiscourse
+// Re-link a moderator's Discourse account after an account merge
+//
+// Support or Admin. Moves the Discourse account linked to an account merged into userid onto
+// userid, then updates its email and name. Merges and Discourse sign-in do this by themselves;
+// this is for merges from before they did.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
 // swagger:route GET /discourse_sso sso discourseSSO
 // Discourse SSO login
 //
@@ -4716,6 +4870,45 @@ type getSupportAIRunParams struct {
 // Get rippling reach for a message
 //
 // Returns the rippling reach polygon/area for a specific message.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/interested message getMessageInterested
+// List the member's "I'm interested" marks
+//
+// Returns the posts the logged-in member has marked "I'm interested" in the last 30 days.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/{id}/interested message getMessageInterestedState
+// Whether to offer "I'm interested" on a post
+//
+// Returns whether "I'm interested" is offered on the post, and whether the member has marked it.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /message/{id}/interested message setMessageInterested
+// Mark a post as "I'm interested", or remove the mark
 //
 // Parameters:
 //   + name: id
@@ -5653,6 +5846,121 @@ type getSupportAIRunParams struct {
 //   + name: signed_in
 //     in: query
 //     description: Not applied here, so the answer lists it in ignored. 1 or 0
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/ux/problem-groups modtools getUxProblemGroups
+// What members say, by group
+//
+// The headings member problems are filed under, each with how many problems and mentions it holds and its biggest problem, the largest first and Other last, with the number of answers that fitted no problem.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: flow
+//     in: query
+//     description: A funnel key, or none for problems tied to no funnel; omitted means all
+//     required: false
+//     type: string
+//   + name: q
+//     in: query
+//     description: Text to find in a title or description, at most 60 characters
+//     required: false
+//     type: string
+//   + name: min
+//     in: query
+//     description: The least number of mentions
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/ux/problems modtools getUxProblems
+// Member problems
+//
+// The problems members raised, most mentioned first, each with its group, the quotes the batch checked, the fixes members suggested and how the follow-up ranked it. total counts every match before the limit is applied.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: group
+//     in: query
+//     description: A group name
+//     required: false
+//     type: string
+//   + name: flow
+//     in: query
+//     description: A funnel key, or none for problems tied to no funnel; omitted means all
+//     required: false
+//     type: string
+//   + name: q
+//     in: query
+//     description: Text to find in a title or description, at most 60 characters
+//     required: false
+//     type: string
+//   + name: min
+//     in: query
+//     description: The least number of mentions
+//     required: false
+//     type: integer
+//   + name: limit
+//     in: query
+//     description: How many to return, 30 by default and at most 100
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/ux/values modtools getUxValues
+// What members value
+//
+// What members said they value about Freegle, most mentioned first, at most 20, each with its checked quotes.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/ux/questions modtools getUxQuestions
+// Member questions
+//
+// The survey, awareness and open questions with what members chose per option, the ways out, skips and comments, and the share of right answers. The decoy figures show how readily members say yes to anything.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: kind
+//     in: query
+//     description: One of survey, awareness or open
+//     required: false
+//     type: string
+//   + name: status
+//     in: query
+//     description: One of open or closed
 //     required: false
 //     type: string
 //

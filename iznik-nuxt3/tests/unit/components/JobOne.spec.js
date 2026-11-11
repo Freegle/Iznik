@@ -52,6 +52,10 @@ vi.mock('~/composables/useClientLog', () => ({
   action: (...args) => mockAction(...args),
 }))
 
+vi.mock('~/composables/useExperiment', () => ({
+  experimentVariant: () => 'some-experiment:b',
+}))
+
 vi.mock('~/constants', () => ({
   JOB_ICON_COLOURS: {
     'dark green': '#2d5016',
@@ -253,6 +257,18 @@ describe('JobOne', () => {
           list_length: 10,
           context: 'sidebar',
           page: 'browse-term',
+        })
+      )
+    })
+
+    it("stamps the click with the member's experiment arms, so it can be counted by arm", async () => {
+      const wrapper = createWrapper({ id: 123, context: 'reply_interstitial' })
+      await wrapper.find('.job-item').trigger('click')
+      expect(mockAction).toHaveBeenCalledWith(
+        'job_ad_click',
+        expect.objectContaining({
+          context: 'reply_interstitial',
+          variant: 'some-experiment:b',
         })
       )
     })

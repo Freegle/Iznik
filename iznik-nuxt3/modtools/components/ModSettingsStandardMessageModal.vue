@@ -10,9 +10,9 @@
           v-model="stdmsg.action"
           :options="options"
         />
-        <label :for="`${formId}-edit-text`">Edit Text</label>
+        <label v-if="isEdit" :for="`${formId}-edit-text`">Edit Text</label>
         <b-form-select
-          v-if="stdmsg.action === 'Edit'"
+          v-if="isEdit"
           :id="`${formId}-edit-text`"
           v-model="stdmsg.edittext"
         >
@@ -75,12 +75,26 @@
           <option value="Top">Top</option>
           <option value="Bottom">Bottom</option>
         </b-form-select>
-        <label :for="`${formId}-message-body`">Message Body</label>
+        <label :for="`${formId}-message-body`">{{
+          isEditAndMessage ? 'Added to post' : 'Message Body'
+        }}</label>
         <b-form-textarea
           :id="`${formId}-message-body`"
           v-model="stdmsg.body"
           rows="10"
         />
+        <template v-if="isEditAndMessage">
+          <label :for="`${formId}-reply-body`">Message to poster</label>
+          <p class="text-muted small mb-1">
+            Sent to the poster when the edit is saved. The subject prefix and
+            suffix above apply to this message.
+          </p>
+          <b-form-textarea
+            :id="`${formId}-reply-body`"
+            v-model="stdmsg.replybody"
+            rows="6"
+          />
+        </template>
       </template>
       <template #footer>
         <div class="d-flex justify-content-between flex-wrap w-100">
@@ -146,6 +160,7 @@ const allOptions = [
   { value: 'Reject', text: 'Reject' },
   { value: 'Leave', text: 'Reply' },
   { value: 'Edit', text: 'Edit' },
+  { value: 'Edit and Message', text: 'Edit and Message' },
   { value: 'Hold Message', text: 'Reply and Hold' },
   { value: null, text: '-- Approved Messages -- ' },
   { value: 'Delete Approved Message', text: 'Delete' },
@@ -165,6 +180,13 @@ const options = computed(() => {
 const config = computed(() => {
   return modConfigStore.current
 })
+
+const isEditAndMessage = computed(
+  () => stdmsg.value?.action === 'Edit and Message'
+)
+const isEdit = computed(
+  () => stdmsg.value?.action === 'Edit' || isEditAndMessage.value
+)
 
 const locked = computed(() => {
   // A protected config with a null createdby has no real lock owner, so it must

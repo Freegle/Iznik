@@ -1,7 +1,10 @@
 package ux
 
 import (
+	"math"
 	"sort"
+
+	"github.com/freegle/iznik-server-go/database"
 )
 
 // ---- funnels ----
@@ -36,6 +39,21 @@ type FunnelStep struct {
 	DwellP50Ms         *int64         `json:"dwell_p50_ms"`
 	DwellP90Ms         *int64         `json:"dwell_p90_ms"`
 	By                 *StepBreakdown `json:"by,omitempty"`
+	// Reached, BackedThen and HelpThen count separate visits, and how many of them went on to finish
+	// the flow. Reached is every visit that entered the step, the base the others are compared with.
+	// They are absent for a period the signal rollup has not covered, and BackedThen or HelpThen are
+	// absent when nobody showed that signal at the step.
+	Reached    *Then `json:"reached,omitempty"`
+	BackedThen *Then `json:"backed_then,omitempty"`
+	HelpThen   *Then `json:"help_then,omitempty"`
+}
+
+// Then is a count of separate visits and how many of them finished the flow. A visit that went back
+// three times is one. It comes from ux_flow_signal_daily, which joins each visit to its own end;
+// the event counts elsewhere cannot.
+type Then struct {
+	People   int64 `json:"people"`
+	Finished int64 `json:"finished"`
 }
 
 type FunnelFlow struct {
@@ -198,6 +216,18 @@ var Funnels = serve("funnels", func(r request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	signals, err := signalCounts(r.cur, r.scope())
+	if err != nil {
+		return nil, err
+	}
+	for fi := range cur {
+		for si := range cur[fi].Steps {
+			s := &cur[fi].Steps[si]
+			s.Reached = signals.get(cur[fi].Flow, s.Step, "", signalReached)
+			s.BackedThen = signals.get(cur[fi].Flow, s.Step, "", signalBacked)
+			s.HelpThen = signals.get(cur[fi].Flow, s.Step, "", signalHelp)
+		}
+	}
 	return FunnelsResponse{
 		Start: r.cur.startStr(), End: r.cur.endStr(), Flows: cur,
 		Previous: FlowsPeriod{Start: r.prev.startStr(), End: r.prev.endStr(), Flows: prev},
@@ -268,6 +298,10 @@ type FieldRow struct {
 	Revisits           int64  `json:"revisits" gorm:"column:revisits"`
 	ValidationFailures int64  `json:"validation_failures" gorm:"column:validation_failures"`
 	ChoiceSwitches     int64  `json:"choice_switches" gorm:"column:choice_switches"`
+	// Reached is every visit that entered this field's step. Then is the visits that revisited,
+	// failed validation on or switched this field, and how many of them finished the flow. See Then.
+	Reached *Then `json:"reached,omitempty" gorm:"-"`
+	Then    *Then `json:"then,omitempty" gorm:"-"`
 }
 
 type FieldsPeriod struct {
@@ -304,11 +338,80 @@ var Fields = serve("fields", func(r request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Signed in is not honoured by the field figures, so it is not applied to these either.
+	sc := r.scope()
+	sc.filter.signedIn = ""
+	signals, err := signalCounts(r.cur, sc)
+	if err != nil {
+		return nil, err
+	}
+	for i := range cur {
+		f := &cur[i]
+		f.Reached = signals.get(f.Flow, f.Step, "", signalReached)
+		f.Then = signals.get(f.Flow, f.Step, f.Field, signalField)
+	}
 	return FieldsResponse{
 		Start: r.cur.startStr(), End: r.cur.endStr(), Fields: cur, Previous: FieldsPeriod{Fields: prev},
 		Applied: r.filter.applied("ux_field_daily"),
 	}, nil
 })
+
+// ---- second thoughts followed to the end of the visit ----
+
+// The signal column of ux_flow_signal_daily. The rollup writes them (UxRollupService::collectSignals).
+const (
+	signalReached = "reached"
+	signalBacked  = "backed"
+	signalHelp    = "help"
+	signalField   = "field"
+)
+
+const signalTable = "ux_flow_signal_daily"
+
+// signals holds the summed rows of the signal table for one period, keyed by flow, step, field
+// (empty except for signalField) and signal.
+type signals map[string]Then
+
+func signalKey(flow, step, field, signal string) string {
+	return flow + "\x00" + step + "\x00" + field + "\x00" + signal
+}
+
+// get returns nil when nobody showed the signal there, so the JSON leaves it out.
+func (s signals) get(flow, step, field, signal string) *Then {
+	t, ok := s[signalKey(flow, step, field, signal)]
+	if !ok {
+		return nil
+	}
+	return &t
+}
+
+// signalCounts reads the signal table for the period. The table is new, so before its migration has
+// been run it does not exist; that is no fault, and the answer simply has no such figures.
+func signalCounts(p period, s scope) (signals, error) {
+	out := signals{}
+	if !database.DBConn.Migrator().HasTable(signalTable) {
+		return out, nil
+	}
+	type row struct {
+		Flow     string `gorm:"column:flow"`
+		Step     string `gorm:"column:step"`
+		Field    string `gorm:"column:field"`
+		Signal   string `gorm:"column:signal"`
+		People   int64  `gorm:"column:people"`
+		Finished int64  `gorm:"column:finished"`
+	}
+	var rows []row
+	err := rangeQuery(signalTable, p, s).
+		Select("flow, step, field, `signal`, CAST(SUM(people) AS SIGNED) AS people, CAST(SUM(finished) AS SIGNED) AS finished").
+		Group("flow, step, field, `signal`").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[signalKey(r.Flow, r.Step, r.Field, r.Signal)] = Then{People: r.People, Finished: r.Finished}
+	}
+	return out, nil
+}
 
 // ---- friction ----
 
@@ -329,7 +432,14 @@ type FrictionRow struct {
 	RageClicks     int64          `json:"rage_clicks"`
 	RepeatedIntent int64          `json:"repeated_intent"`
 	Previous       FrictionCounts `json:"previous"`
-	Change         float64        `json:"change"`
+	// Change is the share of clicks in trouble now less the share before. When Compared, both are over
+	// the devices with frictionMinDeviceClicks in each period, last period's rates weighted by this
+	// period's clicks.
+	Change float64 `json:"change"`
+	// Effect is the trouble clicks this period less the number last period's rates would have given at
+	// this period's clicks, device by device. Not Compared, it is all of this period's trouble clicks.
+	Effect   float64 `json:"effect"`
+	Compared bool    `json:"compared"`
 }
 
 type FrictionResponse struct {
@@ -342,6 +452,7 @@ type FrictionResponse struct {
 type frictionDB struct {
 	Page           string `gorm:"column:page"`
 	Component      string `gorm:"column:component"`
+	DeviceClass    string `gorm:"column:device_class"`
 	Impressions    int64  `gorm:"column:impressions"`
 	Clicks         int64  `gorm:"column:clicks"`
 	DeadClicks     int64  `gorm:"column:dead_clicks"`
@@ -349,19 +460,37 @@ type frictionDB struct {
 	RepeatedIntent int64  `gorm:"column:repeated_intent"`
 }
 
-func frictionRows(p period, s scope) (map[[2]string]frictionDB, error) {
+// frictionRows is each (page, component), one row per device class.
+func frictionRows(p period, s scope) (map[[2]string]map[string]frictionDB, error) {
 	var rows []frictionDB
 	err := rangeQuery("ux_component_daily", p, s).
-		Select("page, component, " +
+		Select("page, component, device_class, " +
 			"CAST(SUM(impressions) AS SIGNED) AS impressions, CAST(SUM(clicks) AS SIGNED) AS clicks, " +
 			"CAST(SUM(dead_clicks) AS SIGNED) AS dead_clicks, CAST(SUM(rage_clicks) AS SIGNED) AS rage_clicks, " +
 			"CAST(SUM(repeated_intent) AS SIGNED) AS repeated_intent").
-		Group("page, component").Scan(&rows).Error
-	out := map[[2]string]frictionDB{}
+		Group("page, component, device_class").Scan(&rows).Error
+	out := map[[2]string]map[string]frictionDB{}
 	for _, r := range rows {
-		out[[2]string{r.Page, r.Component}] = r
+		k := [2]string{r.Page, r.Component}
+		if out[k] == nil {
+			out[k] = map[string]frictionDB{}
+		}
+		out[k][r.DeviceClass] = r
 	}
 	return out, err
+}
+
+func (r frictionDB) trouble() int64 {
+	return r.RageClicks + r.DeadClicks + r.RepeatedIntent
+}
+
+func (r frictionDB) add(o frictionDB) frictionDB {
+	r.Impressions += o.Impressions
+	r.Clicks += o.Clicks
+	r.DeadClicks += o.DeadClicks
+	r.RageClicks += o.RageClicks
+	r.RepeatedIntent += o.RepeatedIntent
+	return r
 }
 
 // frictionRatio is the share of clicks that went wrong. A component nobody clicked divides by 1,
@@ -371,11 +500,51 @@ func frictionRatio(r frictionDB) float64 {
 	if clicks < 1 {
 		clicks = 1
 	}
-	return float64(r.RageClicks+r.DeadClicks+r.RepeatedIntent) / float64(clicks)
+	return float64(r.trouble()) / float64(clicks)
 }
 
-// Friction serves GET /modtools/ux/friction: the components whose trouble grew most. The top 20 is
-// worked out from the rows the filter leaves.
+// frictionRow totals a component over its devices and compares it with the period before, device by
+// device, the way ux:weekly-report does: only devices with frictionMinDeviceClicks in both periods,
+// and frictionMinClicks over them in each. A device that only appears in one period (an app release
+// that began sending telemetry) is in the totals and not in the comparison.
+func frictionRow(cur map[string]frictionDB, prev map[string]frictionDB) FrictionRow {
+	var total, prevTotal frictionDB
+	var clicks, prevClicks, trouble int64
+	expected := 0.0
+	for device, c := range cur {
+		total = total.add(c)
+		pv := prev[device]
+		if c.Clicks >= frictionMinDeviceClicks && pv.Clicks >= frictionMinDeviceClicks {
+			clicks += c.Clicks
+			prevClicks += pv.Clicks
+			trouble += c.trouble()
+			expected += float64(c.Clicks) * float64(pv.trouble()) / float64(pv.Clicks)
+		}
+	}
+	for _, pv := range prev {
+		prevTotal = prevTotal.add(pv)
+	}
+
+	row := FrictionRow{
+		Impressions: total.Impressions, Clicks: total.Clicks, DeadClicks: total.DeadClicks,
+		RageClicks: total.RageClicks, RepeatedIntent: total.RepeatedIntent,
+		Previous: FrictionCounts{Impressions: prevTotal.Impressions, Clicks: prevTotal.Clicks, DeadClicks: prevTotal.DeadClicks,
+			RageClicks: prevTotal.RageClicks, RepeatedIntent: prevTotal.RepeatedIntent},
+	}
+	if clicks >= frictionMinClicks && prevClicks >= frictionMinClicks {
+		row.Compared = true
+		row.Effect = float64(trouble) - expected
+		row.Change = (float64(trouble) - expected) / float64(clicks)
+	} else {
+		row.Effect = float64(total.trouble())
+		row.Change = frictionRatio(total) - frictionRatio(prevTotal)
+	}
+	return row
+}
+
+// Friction serves GET /modtools/ux/friction: the components whose trouble clicks changed most, either
+// way, worked out from the rows the filter leaves. Ranked by how many trouble clicks changed rather
+// than by points, so 40 points on 100 clicks comes after 10 points on 2,000.
 var Friction = serve("friction", func(r request) (interface{}, error) {
 	cur, err := frictionRows(r.cur, r.filterOnly())
 	if err != nil {
@@ -387,19 +556,15 @@ var Friction = serve("friction", func(r request) (interface{}, error) {
 	}
 
 	out := make([]FrictionRow, 0, len(cur))
-	for k, c := range cur {
-		pv := prev[k]
-		out = append(out, FrictionRow{
-			Page: c.Page, Component: c.Component, Impressions: c.Impressions, Clicks: c.Clicks,
-			DeadClicks: c.DeadClicks, RageClicks: c.RageClicks, RepeatedIntent: c.RepeatedIntent,
-			Previous: FrictionCounts{Impressions: pv.Impressions, Clicks: pv.Clicks, DeadClicks: pv.DeadClicks,
-				RageClicks: pv.RageClicks, RepeatedIntent: pv.RepeatedIntent},
-			Change: frictionRatio(c) - frictionRatio(pv),
-		})
+	for k, devices := range cur {
+		row := frictionRow(devices, prev[k])
+		row.Page, row.Component = k[0], k[1]
+		out = append(out, row)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Change != out[j].Change {
-			return out[i].Change > out[j].Change
+		a, b := math.Abs(out[i].Effect), math.Abs(out[j].Effect)
+		if a != b {
+			return a > b
 		}
 		if out[i].Page != out[j].Page {
 			return out[i].Page < out[j].Page

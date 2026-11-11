@@ -28,13 +28,21 @@ export default class MembershipsAPI extends BaseAPI {
     // Related collection returns a raw array; all other collections return
     // { members, context?, ratings?, filtercount? }.
     if (Array.isArray(ret)) {
-      return { members: ret, context: null, ratings: [], filtercount: null }
+      return {
+        members: ret,
+        context: null,
+        ratings: [],
+        filtercount: null,
+        order: null,
+      }
     }
     return {
       members: ret?.members ?? [],
       context: ret?.context ?? null,
       ratings: ret?.ratings ?? [],
       filtercount: ret?.filtercount ?? null,
+      // The order the server listed in, or null from a server that does not say.
+      order: ret?.order ?? null,
     }
   }
 

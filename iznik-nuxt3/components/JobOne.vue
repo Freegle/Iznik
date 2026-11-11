@@ -75,6 +75,7 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from '#imports'
 import { useJobStore } from '~/stores/job'
 import { action } from '~/composables/useClientLog'
+import { experimentVariant } from '~/composables/useExperiment'
 import { filterNonsense, jobLocation } from '~/composables/useJobText'
 import ExternalLink from '~/components/ExternalLink'
 import { JOB_ICON_COLOURS } from '~/constants'
@@ -310,6 +311,9 @@ function clicked(event) {
     context: props.context,
     source: 'website',
     page,
+    // The member's experiment arms, so an experiment judged on job advert clicks can count them by
+    // arm (design.primary_event in the batch).
+    variant: experimentVariant(),
   })
 
   // Swap this advert out of the ad slots once the browser has followed the link.

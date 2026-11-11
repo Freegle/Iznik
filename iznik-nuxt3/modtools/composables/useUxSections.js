@@ -5,7 +5,12 @@ import ModSysAdminUxOverview from '~/modtools/components/ModSysAdminUxOverview.v
 import ModSysAdminUxFunnels from '~/modtools/components/ModSysAdminUxFunnels.vue'
 import ModSysAdminUxIdeas from '~/modtools/components/ModSysAdminUxIdeas.vue'
 import ModSysAdminUxProblemIdeas from '~/modtools/components/ModSysAdminUxProblemIdeas.vue'
+import ModSysAdminUxExperiments from '~/modtools/components/ModSysAdminUxExperiments.vue'
+import ModSysAdminUxExperimentsBadge from '~/modtools/components/ModSysAdminUxExperimentsBadge.vue'
+import ModSysAdminUxSurveys from '~/modtools/components/ModSysAdminUxSurveys.vue'
 import ModSysAdminUxPages from '~/modtools/components/ModSysAdminUxPages.vue'
+import ModSysAdminUxReplyConfirmDetail from '~/modtools/components/ModSysAdminUxReplyConfirmDetail.vue'
+import ModSysAdminUxInterestedDetail from '~/modtools/components/ModSysAdminUxInterestedDetail.vue'
 
 // A section has:
 //   key        the value of ux_section
@@ -45,6 +50,30 @@ export const SECTIONS = [
     params: ['step', 'open'],
   },
   {
+    // The experiments, and a form to make one by hand. It loads its own data from its own store.
+    key: 'experiments',
+    label: 'Experiments',
+    order: 30,
+    component: ModSysAdminUxExperiments,
+    badge: ModSysAdminUxExperimentsBadge,
+    funnelLink: { label: 'Experiments' },
+    filters: [],
+    slots: [],
+    params: ['exp', 'estate'],
+  },
+  {
+    // The problems members raised, what works for them, and the questions asked. It loads its own data
+    // from its own store.
+    key: 'members',
+    label: 'What members say',
+    order: 40,
+    component: ModSysAdminUxSurveys,
+    funnelLink: { label: 'What members say' },
+    filters: [],
+    slots: [],
+    params: ['view', 'group', 'problem', 'q', 'question'],
+  },
+  {
     // What the idea generator has proposed, ranked. It loads its own data from its own store.
     key: 'ideas',
     label: 'Ideas',
@@ -66,8 +95,12 @@ export const SECTIONS = [
   },
 ]
 
-// Components that other parts of the tab add to a place that draws them without knowing them.
-export const HOSTED = { problem: [ModSysAdminUxProblemIdeas], experiment: [] }
+// Components that other parts of the tab add to a place that draws them without knowing them. The details of
+// every experiment draw the ones under `experiment`, so each draws nothing unless the experiment is its own.
+export const HOSTED = {
+  problem: [ModSysAdminUxProblemIdeas],
+  experiment: [ModSysAdminUxReplyConfirmDetail, ModSysAdminUxInterestedDetail],
+}
 
 export const uxSections = () => [...SECTIONS].sort((a, b) => a.order - b.order)
 export const hostedFor = (slot) => HOSTED[slot] || []

@@ -168,3 +168,15 @@ Multiple isolated development environments can run in parallel using git worktre
 
 See [./docs/developers/reference/worktrees.md](./docs/developers/reference/worktrees.md) for details.
 </details>
+
+<details>
+<summary>Licence</summary>
+
+## Licence
+
+Freegle's code is free software, under the GNU Affero General Public License, version 3 or any later version. See [LICENSE](./LICENSE) for the licence and [NOTICE](./NOTICE) for the copyright notice.
+
+The AGPL means that anyone who runs a changed copy of this code as a service must offer its users the source of their changes.
+
+The licence includes one additional permission under its section 7. It lets the code be combined with `add-to-calendar-button`, which is under the Elastic License 2.0 and is not free software. That dependency is a drawback, and replacing it with a free library that works as well on phones and in the app would remove the need for the permission.
+</details>

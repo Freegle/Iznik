@@ -15,6 +15,11 @@ vi.mock('~/api', () => ({
   }),
 }))
 
+const mockAdmin = { value: true }
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({ admin: mockAdmin.value }),
+}))
+
 vi.mock('#app', () => ({
   useRuntimeConfig: () => ({ public: { apiUrl: 'http://test' } }),
 }))
@@ -79,12 +84,19 @@ const sampleTasks = [
 describe('ModSysAdminHousekeeping', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockAdmin.value = true
   })
 
-  function mountComponent() {
+  function mountComponent(props = {}) {
     return mount(ModSysAdminHousekeeping, {
+      props,
       global: {
         stubs: {
+          ModSysAdminPafModal: {
+            emits: ['hidden'],
+            template:
+              '<div class="paf-modal"><button class="close-paf" @click="$emit(\'hidden\')" /></div>',
+          },
           'b-table-simple': {
             template: '<table><slot /></table>',
           },
@@ -201,5 +213,62 @@ describe('ModSysAdminHousekeeping', () => {
     const rows = wrapper.findAll('tr')
     const failedRow = rows.find((r) => r.text().includes('Failed Task'))
     expect(failedRow.classes()).toContain('table-danger')
+  })
+  const pafTask = {
+    id: 4,
+    task_key: 'paf-database',
+    name: 'PAF Database Update',
+    description: 'Download and update the Postcode Address File database',
+    interval_hours: 2160,
+    enabled: false,
+    placeholder: true,
+    last_run_at: null,
+    last_status: null,
+    last_summary: null,
+    last_log: null,
+    overdue: false,
+  }
+
+  it('opens the PAF update from its row, in place of Mark Done', async () => {
+    mockFetchTasks.mockResolvedValue([pafTask])
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const row = wrapper.findAll('tr').find((r) => r.text().includes('PAF'))
+    expect(row.text()).not.toContain('Mark Done')
+    // AFD publish a release every three months.
+    expect(row.text()).toContain('Quarterly')
+    expect(wrapper.find('.paf-modal').exists()).toBe(false)
+
+    await row
+      .findAll('button')
+      .find((b) => b.text() === 'Open')
+      .trigger('click')
+    expect(wrapper.find('.paf-modal').exists()).toBe(true)
+
+    // Closing it reads the tasks again, in case an import finished meanwhile.
+    await wrapper.find('.close-paf').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.paf-modal').exists()).toBe(false)
+    expect(mockFetchTasks).toHaveBeenCalledTimes(2)
+  })
+
+  it('opens the PAF update straight away when linked to', async () => {
+    mockFetchTasks.mockResolvedValue([pafTask])
+    const wrapper = mountComponent({ openPaf: true })
+    await flushPromises()
+
+    expect(wrapper.find('.paf-modal').exists()).toBe(true)
+  })
+
+  it('offers the PAF update to Admins only', async () => {
+    mockAdmin.value = false
+    mockFetchTasks.mockResolvedValue([pafTask])
+    const wrapper = mountComponent({ openPaf: true })
+    await flushPromises()
+
+    const row = wrapper.findAll('tr').find((r) => r.text().includes('PAF'))
+    expect(row.findAll('button')).toHaveLength(0)
+    expect(wrapper.find('.paf-modal').exists()).toBe(false)
   })
 })

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-10-21
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/components/ModSysAdminUx.vue
@@ -38,7 +38,7 @@ The system's job is to deal with the first kind on its own, to nudge and measure
 
 **Find the points to improve, automatically.** The behaviour data is rolled up every day into a picture of each flow: how many start, where they drop out, how that compares with before. The biggest losses are marked without anyone looking for them.
 
-**Collect concerns from members, and refine them.** Members who have agreed to help see one question on one screen: whether they had a problem the last time they used Freegle, what has worked well for them, what one thing they would change, and which part of Freegle works best for them. Later, once enough answers are in, they are asked which of three problems other members named has been their biggest in the last three months. Each question has two ways out: "I don't understand" and one that fits, such as "I had no problems", "I can't think of one" or "None of these". Free-text answers are grouped into named problems by an AI, each with a quote checked against the answer it came from, and a problem is shown to staff only once at least two members have raised it. Nothing a member wrote leaves our systems until the privacy wording covers it.
+**Collect concerns from members, and refine them.** Members who have agreed to help see one question on one screen: what could be better about Freegle, what has worked well for them, what one thing they would change, and which part of Freegle works best for them. Later, once enough answers are in, they are asked which of three problems other members named has been their biggest in the last three months. Each question has two ways out: "I don't understand" and one that fits, such as "I can't think of one" or "None of these". Free-text answers are grouped into named problems by an AI, each with a quote checked against the answer it came from, and a problem is shown to staff only once at least two members have raised it. Nothing a member wrote leaves our systems until the privacy wording covers it.
 
 **Turn a concern into options.** A concern is not a solution; it is the start of several. Each option becomes a candidate experiment with a measure at the level of the concern, not of a page: for no-shows, the share of promised items that are actually collected. This part is being designed now.
 

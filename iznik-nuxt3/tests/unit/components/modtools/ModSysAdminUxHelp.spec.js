@@ -163,6 +163,43 @@ describe('ModSysAdminUxHelp', () => {
     })
   })
 
+  describe('whether asking for help ends in giving up', () => {
+    const withFinish = (help_then, reached) => ({
+      ...step('give-mobile-photos', 30, 200),
+      help_then,
+      reached,
+    })
+    const set = (s) => {
+      store.funnels.data = { flows: [{ flow: 'give', steps: [s] }] }
+    }
+
+    it('shows how many who asked for help went on to finish, against the rest', () => {
+      set(
+        withFinish({ people: 30, finished: 6 }, { people: 200, finished: 140 })
+      )
+      const w = make({ open: true })
+      expect(w.text()).toContain('20% (6/30)')
+      expect(w.text()).toContain('79% (134/170)')
+      expect(w.text()).toContain('Many gave up')
+      expect(make().find('.ux-summary').text()).toBe(
+        'Most asked for help at Photos: 15.0% (30 of 200). At Photos, 20% of those who asked for help finished, against 79% who did not.'
+      )
+    })
+
+    it('says it is less of a worry when most who asked still finished', () => {
+      set(
+        withFinish({ people: 30, finished: 22 }, { people: 200, finished: 150 })
+      )
+      expect(make().find('.ux-summary').text()).toBe(
+        'Most asked for help at Photos: 15.0% (30 of 200). Most who asked for help still finished, so this is less of a worry.'
+      )
+    })
+
+    it('leaves the columns out when the server sent no figures', () => {
+      expect(make({ open: true }).text()).not.toContain('Then finished')
+    })
+  })
+
   it('says what the server did with the filters', () => {
     store.funnels.data = {
       ...store.funnels.data,

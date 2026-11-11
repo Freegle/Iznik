@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
   - iznik-batch/tests/Unit/Config/BlankEnvMeansDefaultTest.php
   - iznik-batch/config/freegle.php
+  - iznik-batch/app/Services/Ux/UxPromptService.php
   - iznik-batch/routes/console.php
   - iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php
   - iznik-batch/app/Mail/Session/LoginLinkMail.php
@@ -44,7 +45,6 @@ variables like every other Freegle setting.
 |---|---|---|---|
 | `auth.passwordless` | `FREEGLE_PASSWORDLESS_LOGIN` | `false` | A "forgot password" request sends a **sign-in link** email (`LoginLinkMail`) instead of the "set a new password" one. |
 | `auth.login_link_path` | `FREEGLE_LOGIN_LINK_PATH` | `/` | Where that sign-in link lands on the site. The page there must consume `?u=&k=` to sign the member in; the root app already does. |
-| `trashnothing.merge_legacy_duplicates` | `FREEGLE_TN_MERGE_LEGACY_DUPLICATES` | `false` | On, `tn:sync` narrows to Trash Nothing addresses on the address itself rather than on one form of `users_emails.backwards`, and so sees the ~96 duplicate account pairs the old filter could not. Merging a pair deletes one of the two accounts, so read `tn:sync --report-duplicates` before setting it. |
 | `freebie_alerts.api_key`, `yeybu.api_key` | `FREEBIE_ALERTS_KEY`, `YEYBU_KEY` | blank | Set, approved Offers are pushed to that partner's post feed (see [partner-integrations.md](partner-integrations.md)). Blank, nothing is sent, so a separate deployment never pushes its posts as Freegle's. |
 | `mail.tracking_enabled` | `FREEGLE_MAIL_TRACKING_ENABLED` | `true` | Off, no `email_tracking` row is written and every tracked link, image and pixel helper returns the plain destination. For a deployment whose API does not serve the tracking redirect and pixel. |
 | `mail.enabled_types` | `FREEGLE_MAIL_ENABLED_TYPES` | (as before) | New: a `*` in the list enables every type, so a deployment with its own mailables need not re-list Freegle's whole catalogue. |
@@ -54,9 +54,13 @@ variables like every other Freegle setting.
 | `mail.relay_queue.min_queued` | `FREEGLE_MAIL_RELAY_QUEUE_MIN` | `25` | How many messages a recipient domain needs in the relay queue before the delayed view shows it. Lower and every paced provider is listed permanently, because a sending address on a rate delay always has something queued. |
 | `mail.relay_queue.min_age_minutes` | `FREEGLE_MAIL_RELAY_QUEUE_MIN_AGE` | `120` | The other way a domain earns a row. A handful of messages stuck for a day never reaches the size threshold and is the shape nobody notices, so age qualifies on its own. |
 | `mail.relay_queue.max_rows` | `FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS` | `500` | Most rows kept. An estate-wide episode names thousands of domains; the worst are kept and the rest dropped. |
+| `ai_images.gemini_api_key`, `ai_images.clean_model` | `GOOGLE_GEMINI_API_KEY`, `AI_IMAGE_CLEAN_MODEL` | blank, `gemini-3.5-flash-lite` | With a key, `messages:clean-items` works out each post's item, and AI item pictures, matched posts and search use it (see [message-items.md](message-items.md)). Blank, nothing is cleaned and all three behave as before. The model is fixed because the results were measured on it. |
+| `autosplit.mode`, `autosplit.model`, `autosplit.window_minutes`, `autosplit.max_photos` | `AUTOSPLIT_MODE`, `AUTOSPLIT_MODEL`, `AUTOSPLIT_WINDOW_MINUTES`, `AUTOSPLIT_MAX_PHOTOS` | `off`, `gemini-3.8-flash`, `120`, `8` | `on` turns new posts of several items into item lists, photos included; `shadow` records what it would do in `messages_autosplit` without changing posts; anything else is off. It also needs `GOOGLE_GEMINI_API_KEY`. The model is fixed because the prompts were backtested on it. See [auto-split.md](auto-split.md). |
 | `schedule.profile` | `FREEGLE_SCHEDULE_PROFILE` | `full` | `overlay-only` runs nothing from `routes/console.php` except what the overlay file below schedules. Any other value behaves as `full`, so a typo can never quietly stop the schedule. |
 | `schedule.overlay` | `FREEGLE_SCHEDULE_OVERLAY` | `routes/console.deployment.php` | A schedule file loaded **if it exists** (relative to the app root, or absolute). Freegle ships none. A deployment puts its own jobs there. |
 | `cookieyes.enabled` | `COOKIEYES_ENABLED` | `true` | Off, the weekly `cookieyes:check` is not scheduled. For a deployment with no CookieYes account, which would otherwise fail and email every week. See [cookieyes-watchdog.md](cookieyes-watchdog.md). |
+| `google.search_console_enabled` | `GOOGLE_SEARCH_CONSOLE_CHECK_ENABLED` | `true` | Off, the weekly `google:search-console-check` is not scheduled. See [google-housekeeping.md](google-housekeeping.md). |
+| `google.ads_enabled` | `GOOGLE_ADS_CHECK_ENABLED` | `true` | Off, the weekly `google:ads-check` is not scheduled. See [google-housekeeping.md](google-housekeeping.md). |
 | `image_store.enabled` | `IMAGE_STORE_ENABLED` | `false` | On, `images:push-spool` runs every minute, moving completed tusd uploads from the local spool to the `images` S3 disk. Off, uploads stay in the spool and are served from there, which is how a deployment without a bucket runs. Turn on only after `images:object-store-check` passes; see [the runbook](../../ops/runbooks/images-to-object-storage.md). |
 | `backup.drain.enabled` | `BACKUP_DRAIN_ENABLED` | `false` | Holds batch work off while the nightly database backup runs. Off ships as a no-op. See below. |
 | `backup.drain.start` | `BACKUP_DRAIN_START` | `03:50` | When the hold starts, `HH:MM` in the app timezone. Anything that is not a valid `HH:MM` leaves the drain off rather than holding the schedule back for ever. |
@@ -105,6 +109,29 @@ variables like every other Freegle setting.
 | `ux.ideas.min_open` | `UX_IDEAS_MIN_OPEN` | `3` | A funnel with fewer waiting ideas than this is topped up by the daily `ux:ideas-refresh`. |
 | `ux.ideas.count` | `UX_IDEAS_COUNT` | `12` | How many ideas to ask the helper for in one call. |
 | `ux.ideas.max_attempts` | `UX_IDEAS_MAX_ATTEMPTS` | `2` | How many times an idea whose experiment ended without a decision goes back to waiting. At this many tries `ux:ideas-sync` marks it tried. |
+| `ux_server_arms` | none: a row in the `config` table, set with `PATCH /config/admin` and `{"ux_server_arms":"1"}` | unset, which is off | The one switch for every server arm. Only `1` serves arms. Missing or anything else makes every sender in the batch and the Go API act as control within a minute and stop writing exposure rows, with no deploy. `ux:experiment start` refuses a mail, push or server experiment while it is off. See [Experiments in mail, push and the server](ux-experiments.md#experiments-in-mail-push-and-the-server). |
+| `ux.channels.<channel>.ceiling_hours`, `.intake_hours` | none, set in `config/freegle.php` | push `48` and `24`, email `168` and `24`, server `336` and `168` | For an experiment decided on the server: the longest run `start` accepts, and the hours members are reached by default (the rest of the run is the window they have to convert in). A web experiment keeps `ux.experiments.max_hours`. |
+| `ux.sources.<name>` | none, set in `config/freegle.php` | `email_click`, `active_after`, `interested_reply`, `familiar_reply`, `hosting_ad_click` | The metric sources an experiment can name in `design.source`, each a class that counts from the database instead of Loki. A new source is a class and a line here. |
+| `interested.chaseup_after_hours` | `FREEGLE_INTERESTED_CHASEUP_AFTER_HOURS` | `24` | How old an I'm interested mark must be before `messages:interested-chaseup` emails a reminder about it. See [An I'm interested button](ux-experiments.md#an-im-interested-button). |
+| `interested.max_age_days` | `FREEGLE_INTERESTED_MAX_AGE_DAYS` | `7` | Marks older than this are never chased. |
+| `interested.chunk` | `FREEGLE_INTERESTED_CHUNK` | `200` | Members the chase-up handles per round. |
+| `familiar_posts.lookback_days` | `FREEGLE_FAMILIAR_POSTS_LOOKBACK_DAYS` | `90` | How recent a chat must be for `messages:familiar-posts` to treat two members as knowing each other. See [familiar-posts-email.md](familiar-posts-email.md). |
+| `familiar_posts.max_recipients_per_post` | `FREEGLE_FAMILIAR_POSTS_MAX_RECIPIENTS_PER_POST` | `20` | Members told about one new post, those chatted with most recently first. |
+| `familiar_posts.max_posts_per_email` | `FREEGLE_FAMILIAR_POSTS_MAX_POSTS_PER_EMAIL` | `3` | Posts in one familiar-posts email. |
+| `familiar_posts.min_gap_hours` | `FREEGLE_FAMILIAR_POSTS_MIN_GAP_HOURS` | `24` | A member is reached about familiar posts at most once in this many hours. |
+| `familiar_posts.max_days_per_week` | `FREEGLE_FAMILIAR_POSTS_MAX_DAYS_PER_WEEK` | `2` | And on at most this many of the last seven days. The email says how often it can come from this number. |
+| `familiar_posts.window_hours` | `FREEGLE_FAMILIAR_POSTS_WINDOW_HOURS` | `6` | A familiar-posts run never reads posts older than this. |
+| `ux.prompts.helper_url` | `UX_HELPER_URL` | `http://ai-support-helper:3000` | Where `ux:prompt analyse` and `regroup` reach the helper. See [ux-member-surveys.md](ux-member-surveys.md). |
+| `ux.prompts.themes_timeout` | `UX_THEMES_TIMEOUT` | `660` | Seconds the batch waits for the coder. It must be longer than the helper's own limit of 10 minutes (`UX_THEMES_TIMEOUT_MS`), or the batch hangs up first, the helper stops at the disconnect and every retry fails the same way. |
+| `ux.prompts.internal_secret` | `UX_INTERNAL_SECRET` | empty | The shared secret the helper's internal routes ask for. Empty, `ux:prompt analyse` and `regroup` stop with "UX_INTERNAL_SECRET is not set" and the helper refuses every call. The same value must be in the helper's environment: see [ai-support-helper.md](ai-support-helper.md). |
+| `support.first_pass.enabled` | `SUPPORT_FIRST_PASS_ENABLED` | off | On, `support:first-pass` runs the AI first pass for each chat a moderator refers to Support and puts the brief in the referral mail. Off, the referral mail goes out at once without a brief and the case says "The first pass is turned off". Turning it on needs `UX_INTERNAL_SECRET` set on both the batch and the helper (as above), and `USERDUMP_INTERNAL_KEY` set to the same value on the helper and the Go API (`apiv2` and `apiv2-live`). A pass about a member fails with `DUMP_AUTH` when the key is missing, and stops with `DUMP_AUTH` when the Go API refuses it or `DUMP_LOCKDOWN` during a lockdown. The agent does not work round either by other means; the case gets a plain reason. See [support-cases.md](support-cases.md). |
+| `support.first_pass.timeout` | `SUPPORT_FIRST_PASS_TIMEOUT` | `510` | Seconds the batch waits for the helper. The helper's own deadline (`FIRST_PASS_DEADLINE_MS`, default 480000) must stay shorter. |
+| (helper) | `FIRST_PASS_MAX_TURNS` | `30` | Most turns the helper's agent may take on one first pass. Hitting it fails the case with `TOO_MANY_STEPS` ("The first pass ran out of steps before it could answer"). Set in the helper's `environment:` block. |
+| (helper) | `FIRST_PASS_DEADLINE_MS` | `480000` | One deadline, in milliseconds, over a whole first pass. Set in the helper's `environment:` block. |
+| `support.first_pass.per_referrer_per_day` | `SUPPORT_FIRST_PASS_PER_REFERRER_PER_DAY` | `10` | Model passes one moderator can use a day. Beyond it the case gets the plain mail. |
+| `support.first_pass.max_age_minutes` | `SUPPORT_FIRST_PASS_MAX_AGE_MINUTES` | `60` | A case still waiting this long is never run late. It gets the plain mail. |
+| `support.first_pass.run_minutes` | `SUPPORT_FIRST_PASS_RUN_MINUTES` | `10` | One `support:first-pass` run stops claiming new cases after this long. |
+| `ux.prompts.privacy_cleared` | `UX_PRIVACY_CLEARED` | off | Only `1` or `true` opens it. Closed, `ux:prompt analyse` and `regroup` refuse to run, because members' written answers go to an AI service for coding. A person sets it, after checking that the public privacy wording covers that. See [ux-member-surveys.md](ux-member-surveys.md). |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
 
 Every setting in `config/freegle.php` is read through `EnvSetting::env`, which is Laravel's

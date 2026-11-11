@@ -89,8 +89,9 @@
                     announcements about the running of the group.
                   </li>
                   <li>
-                    Newsletter - people can opt out (via the setting which
-                    mentions "to remind you"). These are encouragements to
+                    Newsletter - only goes to members who have said yes to
+                    "Freegle updates" (news and ways to support Freegle), and
+                    they can say no at any time. These are encouragements to
                     freegle more, fundraising mails or newsletters.
                   </li>
                 </ul>
@@ -370,6 +371,7 @@ import {
 import ModAdminFooterPreview from '~/modtools/components/ModAdminFooterPreview.vue'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 defineRule('required', required)
 defineRule('email', email)
@@ -458,7 +460,7 @@ const pendingcount = computed(() => {
     if (group) {
       if (
         group.type === 'Freegle' &&
-        (group.role === 'Owner' || group.role === 'Moderator')
+        (group.role === ROLE_OWNER || group.role === ROLE_MODERATOR)
       ) {
         if (group.work && group.work.pendingadmins) {
           count += group.work.pendingadmins

@@ -42,6 +42,7 @@
         <div v-for="(c, i) in charts" :key="c.fn.family" class="mb-2">
           <ModSysAdminUxFunnelChart
             :title="familyLabel(c.fn.family)"
+            :flow="openFlow"
             :steps="c.fn.steps"
             :exits="c.fn.exits"
             :previous-reach="c.reach"

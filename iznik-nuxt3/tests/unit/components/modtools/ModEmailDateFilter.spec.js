@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 
 import ModEmailDateFilter from '~/modtools/components/ModEmailDateFilter.vue'
@@ -45,6 +45,26 @@ describe('ModEmailDateFilter', () => {
       const widthMs = new Date(p.end) - new Date(p.start)
       expect(widthMs).toBeGreaterThan(23.5 * 3600 * 1000)
       expect(widthMs).toBeLessThan(24.5 * 3600 * 1000)
+    })
+  })
+
+  describe('on the day the clocks change', () => {
+    // Stepping the local date back a day gives the same clock time yesterday,
+    // which is 25 hours before now on the last Sunday in October in London.
+    // The presets are a number of hours, whatever the clocks did.
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('day is still 24 hours and hour is still 60 minutes', () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-10-25T08:30:00Z'))
+
+      const day = fetchPayload('day')
+      expect(new Date(day.end) - new Date(day.start)).toBe(24 * 3600 * 1000)
+
+      const hour = fetchPayload('hour')
+      expect(new Date(hour.end) - new Date(hour.start)).toBe(3600 * 1000)
     })
   })
 

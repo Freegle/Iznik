@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -55,7 +56,7 @@ func TestBulkDonations_RequiresAuth(t *testing.T) {
 // TestBulkDonations_RequiresSupportRole ensures regular users are rejected
 func TestBulkDonations_RequiresSupportRole(t *testing.T) {
 	prefix := uniquePrefix("bulk_role")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	status, _ := testBulkPost(token, []bulkDonation{})
@@ -65,7 +66,7 @@ func TestBulkDonations_RequiresSupportRole(t *testing.T) {
 // TestBulkDonations_InsertsNew verifies new donations are inserted and counted correctly
 func TestBulkDonations_InsertsNew(t *testing.T) {
 	prefix := uniquePrefix("bulk_insert")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	tx1 := uniqueTxID("TX_NEW_A")
@@ -87,7 +88,7 @@ func TestBulkDonations_InsertsNew(t *testing.T) {
 // TestBulkDonations_SkipsDuplicates verifies identical re-submissions are skipped
 func TestBulkDonations_SkipsDuplicates(t *testing.T) {
 	prefix := uniquePrefix("bulk_dedup")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	tx1 := uniqueTxID("TX_DUP")
@@ -113,7 +114,7 @@ func TestBulkDonations_SkipsDuplicates(t *testing.T) {
 // TestBulkDonations_UpdatesChanged verifies changed amount on re-submission is recorded
 func TestBulkDonations_UpdatesChanged(t *testing.T) {
 	prefix := uniquePrefix("bulk_update")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	tx1 := uniqueTxID("TX_UPD")
@@ -146,7 +147,7 @@ func TestBulkDonations_UpdatesChanged(t *testing.T) {
 // TestBulkDonations_EmptyList verifies an empty submission succeeds with zero counts
 func TestBulkDonations_EmptyList(t *testing.T) {
 	prefix := uniquePrefix("bulk_empty")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	status, result := testBulkPost(token, []bulkDonation{})
@@ -159,7 +160,7 @@ func TestBulkDonations_EmptyList(t *testing.T) {
 // TestBulkDonations_AdminRoleAllowed verifies Admin role (not just Support) can call the endpoint
 func TestBulkDonations_AdminRoleAllowed(t *testing.T) {
 	prefix := uniquePrefix("bulk_admin")
-	userID := CreateTestUser(t, prefix, "Admin")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	tx1 := uniqueTxID("TX_ADMIN")
@@ -184,21 +185,22 @@ func TestBulkDonations_GmailDotVariant(t *testing.T) {
 	db := database.DBConn
 
 	// Admin user to authorise the upload.
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	// Donor whose registered email has no dots in the local part.
-	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	// Remove the default email added by CreateTestUser and insert one with the
 	// correct canon so MatchUserByEmailOrPriorDonation can find it.
 	db.Exec("DELETE FROM users_emails WHERE userid = ?", donorID)
 	storedEmail := fmt.Sprintf("fredbloggs%d@gmail.com", donorID)
-	// storedEmail has no dots — canon is identical to the stored email.
+	// The canon as iznik-batch stores it: the domain loses its dots too.
+	storedCanon := fmt.Sprintf("fredbloggs%d@gmailcom", donorID)
 	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (?, ?, ?)",
-		donorID, storedEmail, storedEmail)
+		donorID, storedEmail, storedCanon)
 
 	// Upload email: same local part but with a dot inserted ("fred.bloggs<id>@gmail.com").
-	// CanonicalizeEmail strips dots, producing "fredbloggs<id>@gmail.com" which matches canon.
+	// CanonicalizeEmail strips Gmail username dots, producing "fredbloggs<id>@gmailcom" which matches canon.
 	uploadEmail := fmt.Sprintf("fred.bloggs%d@gmail.com", donorID)
 
 	tx1 := uniqueTxID("TX_GMAIL_DOT")

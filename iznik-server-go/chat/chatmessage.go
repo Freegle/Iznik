@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/firstreply"
@@ -226,7 +227,11 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 		// The PHP notification paths honour this gate; the in-app chat fetch must too, or the
 		// poster reads the held reply here once chats:process-incoming flips processingsuccessful.
 		// The sender still sees their own message (userid = ? branch); only the poster is gated.
-		reviewFilter = "(userid = ? OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 " +
+		//
+		// A prompt asked of one member (chat_prompts.userid) is written unsuccessful so that
+		// nothing delivers it to the other; the member it was asked of sees it here.
+		reviewFilter = "(userid = ? OR EXISTS (SELECT 1 FROM chat_prompts cpr WHERE cpr.chatmsgid = chat_messages.id AND cpr.userid = ?) " +
+			"OR (reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 " +
 			"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released')))"
 	}
 
@@ -247,6 +252,7 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 	whereArgs := []interface{}{chatID, userID}
 
 	if !modAccess {
+		whereArgs = append(whereArgs, userID)
 		whereSQL += " AND (users.deleted IS NULL OR users.id = ?)"
 		whereArgs = append(whereArgs, userID)
 	}
@@ -475,7 +481,8 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	// Established member of an ORIGIN (non-rippled-in) group of the post, whose membership
 	// predates this reply by more than the join grace (300s)? A join made to reply
 	// (added ~ now) is excluded, and so is a membership rippling itself created - see
-	// wasRippleJoin below.
+	// wasRippleJoin below - or one TrashNothing placed them on (implicit = 1). rippled goes
+	// when Phase 5 moves this to implicit.
 	// BuildClauses
 	// override: see amp.go's ValidateToken for the mechanism and
 	// the retired ormharness's bareexists_test.go (removed in d22ba1d6c) for
@@ -484,7 +491,7 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	tx848af7d73bfe := db.Table("messages_groups").Select(
 		"EXISTS(SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
-			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 "+
+			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 0 AND mem.implicit = 0 "+
 			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
 		myid, utils.COLLECTION_APPROVED, refmsgid)
 	tx848af7d73bfe.Statement.BuildClauses = []string{"SELECT"}
@@ -732,6 +739,24 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// A moderator writing into a chat between two members (a note from chat review) speaks
+	// for no one community, so each TrashNothing member in it must have chosen one the
+	// moderator moderates. A User2Mod chat is never closed to its moderators here: a chat
+	// that was opened to them can always be answered.
+	var writeRoom struct {
+		User1    uint64
+		User2    uint64
+		Groupid  uint64
+		Chattype string
+	}
+	db.Table("chat_rooms").Select("COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid, chattype").
+		Where("id = ?", id).Scan(&writeRoom)
+	if writeRoom.Chattype == utils.CHAT_TYPE_USER2USER && writeRoom.User1 != myid && writeRoom.User2 != myid &&
+		(!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User1) ||
+			!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User2)) {
+		return fiber.NewError(fiber.StatusForbidden, "A TrashNothing member in this chat didn't choose a community you moderate, so you can't add a note")
+	}
+
 	// Guard a reply whose referenced post no longer exists. chat_messages.refmsgid has a FK to
 	// messages.id, and prod purges deleted/rejected/expired posts quickly. If the client replies
 	// to a post that has since been purged, the INSERT below would violate the FK and fail with a
@@ -919,6 +944,17 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// A reply to an offer of a child car seat waits while the replier is asked to check the seat and whether they still
+	// want it, and so does a reply to an offer that looks damaged or too big to carry from a poster in the arm "ask" of
+	// the experiment confirm-reply-post (replyconfirm.go). That is decided here, before the reply is written, so that the reply and what holds it
+	// are written together: chats:process-incoming takes any committed unprocessed reply, whatever its age, and a reply
+	// committed before its hold would be delivered by a run that landed between the two. A reply held by rippling is not
+	// asked about: the question would be shown to the poster before the reply.
+	var confirm *replyConfirmPlan
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
+		confirm = planReplyConfirm(db, id, *payload.Refmsgid, myid)
+	}
+
 	// We can see this chat room.  Create a chat message, but flagged as needing processing.  That means it
 	// will only show up to the user who sent it until it is fully processed.
 	payload.Userid = myid
@@ -935,7 +971,17 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 		if payload.Imageid != nil {
 			// This also stops the image being purged in purge_chats.
-			return linkChatImage(tx, *payload.Imageid, payload.ID)
+			if err := linkChatImage(tx, *payload.Imageid, payload.ID); err != nil {
+				return err
+			}
+		}
+
+		if confirm != nil && confirm.asks() {
+			// In a savepoint of its own: a hold that cannot be written leaves the reply as it would have been with
+			// no question, not a reply that failed.
+			if err := tx.Transaction(func(inner *gorm.DB) error { return confirm.hold(inner, payload.ID) }); err != nil {
+				stdlog.Printf("Could not ask replier %d to confirm reply %d in chat %d: %v", myid, payload.ID, id, err)
+			}
 		}
 
 		return nil
@@ -989,6 +1035,16 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		})
 	}
 
+	// A reply to an eligible offer that is not asked about (control, a replier asked before) still counts the poster.
+	if confirm != nil && !confirm.asks() {
+		confirm.record(db)
+	}
+
+	// The question reaches the replier by push and email, as any chat message does.
+	if confirm != nil && confirm.asks() {
+		confirm.notify()
+	}
+
 	// Rippling reply attribution (sysadmin KPI): for a genuine Interested reply, snapshot the
 	// evidence for HOW the replier came to see the post, and the derived attribution channel.
 	// Scoped to User2User: a refmsgid message in a User2Mod room is a report of the post, not
@@ -1008,6 +1064,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// welcome email + spam check. Params mirror a normal web join's DB defaults (emailfrequency
 	// 24=daily, events + volunteering allowed), NOT the LoveJunk FREQUENCY_NEVER. Best-effort: a join
 	// hiccup must never fail the reply.
+	//
+	// A TrashNothing member is joined like anyone else, so the community's moderators can ban
+	// them or hold their chat. TrashNothing joins its members to a community before they can
+	// reply there, so this is for a TN account replying on Freegle itself. Any existing
+	// membership, a TrashNothing placement included, is left as it is by the check below.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
 		// Already in one of the post's groups? Then nothing needs joining: they can
 		// see it and reply to it where they are. Without this check the join below
@@ -1057,7 +1118,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			}
 
 			if refGroup > 0 {
-				user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
+				user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post", addedorigin.Replied)
 			}
 		}
 	}
@@ -1074,11 +1135,24 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, roomGroupid, payload.Message)
 	}
 
+	// The sender is a participant, so must be on the roster to be emailed the
+	// reply. A moderator writing into a members' chat is not a participant.
+	var participants struct {
+		Chattype string
+		User1    uint64
+		User2    uint64
+	}
+	db.Table("chat_rooms").Select("chattype, COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2").Where("id = ?", id).Scan(&participants)
+	if myid == participants.User1 ||
+		(participants.Chattype == utils.CHAT_TYPE_USER2USER && myid == participants.User2) {
+		ensureRosterRow(db, id, myid)
+	}
+
 	// If anyone has closed this chat, reopen it so it reappears in their list.
-	// Blocked chats are left as-is.  Only applies to User2User and User2Mod chats.
+	// Blocked chats are left as-is.  Applies to User2User, User2Mod and Mod2Mod chats.
 	result := db.Table("chat_roster").
-		Where("chatid = ? AND status = ? AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?))",
-			id, utils.CHAT_STATUS_CLOSED, id, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD).
+		Where("chatid = ? AND status = ? AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?, ?))",
+			id, utils.CHAT_STATUS_CLOSED, id, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_MOD2MOD).
 		Update("status", utils.CHAT_STATUS_OFFLINE)
 
 	if result.Error != nil {
@@ -1141,7 +1215,7 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	}
 
 	// Ensure we're a member of the group.  This may fail if we're banned.
-	if !user.AddMembership(myid, m.Groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_NEVER, 0, 0, "LoveJunk user joining to reply") {
+	if !user.AddMembership(myid, m.Groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_NEVER, 0, 0, "LoveJunk user joining to reply", addedorigin.Replied) {
 		return fiber.NewError(fiber.StatusForbidden, "Failed to join relevant group")
 	}
 
@@ -2084,11 +2158,17 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 		stdlog.Printf("Failed to approve chat message %d: %v", msgID, result.Error)
 	}
 
+	// A reply that waited for its sender's answer (the car seat question) and was then held for review has its question
+	// hidden from the poster. It is shown with the reply.
+	revealQuestionOfApprovedReply(db, msgID)
+
 	// Log the approve action
 	// Converted together with its
 	// identical twin in rejectChatMessage (b8fc832d50a0): a half-converted
 	// pair renumbers the survivor's site ID, so gate (h) refuses the split
 	// state.
+	// The batch chat mailer reads this row, by this exact text, to mail a reply approved after its look-back window
+	// (ChatNotificationService::getUnmailedMessages). Change the text there too.
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log.LOG_TYPE_CHAT,

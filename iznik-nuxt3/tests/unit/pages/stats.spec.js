@@ -6,12 +6,13 @@ import dayjs from 'dayjs'
 import { DASHBOARD_CHART_HEADER } from '~/composables/useAuthoritySearch'
 
 import StatsPage from '~/pages/stats/[[groupname]].vue'
+import StatsImpact from '~/components/StatsImpact.vue'
 
 // ── Stubs ─────────────────────────────────────────────────────────────────
 vi.mock('~/components/StatsImpact.vue', () => ({
   default: {
     template: '<div class="stats-impact" />',
-    props: ['range', 'totalBenefit', 'totalCO2', 'totalWeight'],
+    props: ['range', 'totalBenefit', 'benefitNote', 'totalCO2', 'totalWeight'],
   },
 }))
 vi.mock('~/components/ActivityGraph.vue', () => ({
@@ -72,6 +73,8 @@ vi.mock('~/composables/useBuildHead', () => ({
 vi.mock('~/composables/useReuseBenefit', () => ({
   getBenefitPerTonne: vi.fn(() => 1000),
   CO2_PER_TONNE: 0.5,
+  calculateFlyTipSaving: vi.fn((items) => items * 2),
+  describeFlyTipSaving: vi.fn((saving) => `fly-tipping note for £${saving}`),
 }))
 
 // ── #imports shim ─────────────────────────────────────────────────────────
@@ -268,6 +271,104 @@ describe('pages/stats/[[groupname]].vue', () => {
       await flushPromises()
 
       expect(wrapper.text()).not.toContain('the last 12 months')
+    })
+  })
+
+  describe('benefit includes the fly-tipping saving', () => {
+    // A day in the middle of last month: inside the default window whatever
+    // today is.
+    const lastMonth = dayjs().subtract(1, 'month').date(15).format('YYYY-MM-DD')
+
+    it('adds the saving for the gifts made to the reuse benefit', async () => {
+      storeData = {
+        Weight: [{ date: lastMonth, count: 3000 }],
+        Outcomes: [
+          { date: lastMonth + 'T00:00:00Z', count: 100 },
+          { date: lastMonth + 'T00:00:00Z', count: 50 },
+        ],
+        MessageBreakdown: { Offer: 1, Wanted: 1 },
+      }
+      const wrapper = mountPage()
+      await flushPromises()
+
+      const impact = wrapper.findComponent(StatsImpact)
+      // 3 tonnes at £1,000 a tonne, plus 150 gifts at £2 each.
+      expect(impact.props('totalBenefit')).toBe(3300)
+      expect(impact.props('benefitNote')).toBe('fly-tipping note for £300')
+    })
+
+    it('adds nothing when there are no outcomes', async () => {
+      storeData = {
+        Weight: [{ date: lastMonth, count: 1000 }],
+        MessageBreakdown: { Offer: 1, Wanted: 1 },
+      }
+      const wrapper = mountPage()
+      await flushPromises()
+
+      expect(wrapper.findComponent(StatsImpact).props('totalBenefit')).toBe(
+        1000
+      )
+    })
+  })
+
+  describe('totals cover the period the page names', () => {
+    it('requests exactly the 12 complete months it describes', async () => {
+      mountPage()
+      await flushPromises()
+
+      const params = mockStatsFetch.mock.calls[0][0]
+      expect(params.start).toBe(
+        dayjs().subtract(12, 'month').startOf('month').format('YYYY-MM-DD')
+      )
+    })
+
+    it('counts weights and gifts from the first day to the last', async () => {
+      const first = dayjs().subtract(12, 'month').startOf('month')
+      const last = dayjs().subtract(1, 'month').endOf('month')
+      storeData = {
+        Weight: [
+          { date: first.subtract(1, 'day').format('YYYY-MM-DD'), count: 9000 },
+          { date: first.format('YYYY-MM-DD'), count: 1000 },
+          { date: last.format('YYYY-MM-DD'), count: 1000 },
+        ],
+        Outcomes: [
+          { date: first.subtract(1, 'day').format('YYYY-MM-DD'), count: 900 },
+          { date: first.format('YYYY-MM-DD') + 'T00:00:00Z', count: 10 },
+          { date: last.format('YYYY-MM-DD') + 'T00:00:00Z', count: 10 },
+        ],
+        MessageBreakdown: { Offer: 1, Wanted: 1 },
+      }
+      const wrapper = mountPage()
+      await flushPromises()
+
+      const impact = wrapper.findComponent(StatsImpact)
+      expect(impact.props('totalWeight')).toBe(2)
+      // 2 tonnes at £1,000 a tonne, plus 20 gifts at £2 each.
+      expect(impact.props('totalBenefit')).toBe(2040)
+    })
+
+    it('counts a past financial year in full', async () => {
+      // Financial year 2023-24 runs from 6 April 2023 to 5 April 2024, more
+      // than a year before today.
+      mockRouteReturn = {
+        params: { groupname: undefined },
+        query: { financialYear: 'FY2023' },
+      }
+      storeData = {
+        Weight: [
+          { date: '2023-06-01', count: 1000 },
+          { date: '2024-03-01', count: 2000 },
+          { date: '2024-05-01', count: 5000 },
+        ],
+        Outcomes: [{ date: '2023-06-01T00:00:00Z', count: 30 }],
+        MessageBreakdown: { Offer: 1, Wanted: 1 },
+      }
+      const wrapper = mountPage()
+      await flushPromises()
+
+      const impact = wrapper.findComponent(StatsImpact)
+      expect(impact.props('totalWeight')).toBe(3)
+      expect(impact.props('totalBenefit')).toBe(3060)
     })
   })
 })

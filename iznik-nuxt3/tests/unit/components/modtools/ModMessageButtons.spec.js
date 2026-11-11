@@ -696,6 +696,7 @@ describe('ModMessageButtons', () => {
       expect(wrapper.vm.validActions).toContain('Edit')
       expect(wrapper.vm.validActions).toContain('Hold Message')
       expect(wrapper.vm.validActions).toContain('Approve')
+      expect(wrapper.vm.validActions).toContain('Edit and Message')
     })
 
     it('excludes Approve when cantpost is true', () => {
@@ -714,7 +715,22 @@ describe('ModMessageButtons', () => {
       expect(wrapper.vm.validActions).toContain('Leave Approved Message')
       expect(wrapper.vm.validActions).toContain('Delete Approved Message')
       expect(wrapper.vm.validActions).toContain('Edit')
+      expect(wrapper.vm.validActions).toContain('Edit and Message')
     })
+
+    // Edit and Message writes to the poster, so it goes wherever Reply goes and no
+    // further. A plain Edit stays available.
+    it.each(['Pending', 'Approved'])(
+      'offers no Edit and Message on a %s copy whose poster cannot be written to',
+      (collection) => {
+        const wrapper = mountComponent(
+          { isHomeGroup: false, canMessagePoster: false },
+          { groups: [{ groupid: 456, collection }] }
+        )
+        expect(wrapper.vm.validActions).not.toContain('Edit and Message')
+        expect(wrapper.vm.validActions).toContain('Edit')
+      }
+    )
 
     it('returns empty array for other collections', () => {
       const wrapper = mountComponent(

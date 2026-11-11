@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,7 +65,7 @@ func uxPatch(t *testing.T, token, path string, body interface{}) (int, map[strin
 }
 
 func TestUxExperimentsRequireSupport(t *testing.T) {
-	userID := CreateTestUser(t, uniquePrefix("uxexpuser"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxexpuser"), utils.SYSTEMROLE_USER)
 	_, userToken := CreateTestSession(t, userID)
 
 	assert.Equal(t, 401, uxGet(t, "", "experiments", nil))
@@ -319,6 +320,36 @@ func TestUxCreateExperimentDesign(t *testing.T) {
 	var design string
 	db.Raw("SELECT design FROM ux_experiments WHERE id = ?", uint64(out["id"].(float64))).Scan(&design)
 	assert.JSONEq(t, `{"touches":["give","login"],"expected_points":4.5}`, design)
+
+	// An event to judge on must be one the batch can read; its rate is a share.
+	bad["design"] = map[string]interface{}{"primary_event": `x" } |= "`}
+	code, _ = uxPost(t, token, "experiments", bad)
+	assert.Equal(t, 400, code)
+	bad["design"] = map[string]interface{}{"primary_event": "job_ad_click", "base_rate": 2}
+	code, _ = uxPost(t, token, "experiments", bad)
+	assert.Equal(t, 400, code)
+
+	clicks := uxExperimentBody(prefix, "-clicks", "reply")
+	clicks["design"] = map[string]interface{}{"primary_event": "job_ad_click", "base_rate": 0.02}
+	code, out = uxPost(t, token, "experiments", clicks)
+	require.Equal(t, 200, code, out)
+	db.Raw("SELECT design FROM ux_experiments WHERE id = ?", uint64(out["id"].(float64))).Scan(&design)
+	assert.JSONEq(t, `{"primary_event":"job_ad_click","base_rate":0.02}`, design)
+
+	store := uxExperimentBody(prefix, "-store", "give")
+	store["design"] = map[string]interface{}{"primary_event": "app_store_click", "base_rate": 0.01}
+	code, out = uxPost(t, token, "experiments", store)
+	require.Equal(t, 200, code, out)
+
+	rated := uxExperimentBody(prefix, "-rated", "chat_outcome")
+	rated["design"] = map[string]interface{}{"primary_event": "user_rated", "base_rate": 0.4}
+	code, out = uxPost(t, token, "experiments", rated)
+	require.Equal(t, 200, code, out)
+
+	chat := uxExperimentBody(prefix, "-chat", "reply")
+	chat["design"] = map[string]interface{}{"primary_event": "job_ad_click_chat"}
+	code, out = uxPost(t, token, "experiments", chat)
+	require.Equal(t, 200, code, out)
 }
 
 // An adopted experiment is provisional while its holdout runs: the batch can still reverse it, and
@@ -697,6 +728,88 @@ func TestUxExperimentActionRefusesACleanupAddressThatIsNotHttps(t *testing.T) {
 	assert.Equal(t, int64(1), withAddress)
 }
 
+// An experiment that ended without being adopted has dead variant code at once, until a cleanup is
+// recorded on it.
+func TestUxExperimentsFlagCleanupDueForEveryEndedStatus(t *testing.T) {
+	prefix := uniquePrefix("uxdue")
+	uxExpClean(t, prefix)
+	token := uxSupportToken(t, "uxduesup")
+	db := database.DBConn
+
+	for _, status := range []string{"reverted", "inconclusive", "stopped", "running", "draft"} {
+		db.Exec("INSERT INTO ux_experiments (flow, name, title, hypothesis, change_description, expected, arms, status, decided_at, created_at, updated_at) VALUES ('give', ?, ?, 'h', 'c', 'e', '{\"control\":[0,49],\"b\":[50,99]}', ?, NOW(), NOW(), NOW())", prefix+"-"+status, prefix+" "+status, status)
+	}
+	db.Exec("INSERT INTO ux_experiments (flow, name, title, hypothesis, change_description, expected, arms, status, decided_at, cleanup_pr_url, created_at, updated_at) VALUES ('give', ?, ?, 'h', 'c', 'e', '{\"control\":[0,49],\"b\":[50,99]}', 'reverted', NOW(), 'https://github.com/Freegle/Iznik/pull/3', NOW(), NOW())", prefix+"-cleaned", prefix+" cleaned")
+
+	var all ux.ExperimentsResponse
+	require.Equal(t, 200, uxGet(t, token, "experiments", &all))
+	due := map[string]bool{}
+	for _, f := range all.Flows {
+		for _, e := range append(append([]ux.Experiment{}, f.Running...), f.History...) {
+			due[e.Name] = e.CleanupOverdue
+		}
+	}
+	for _, status := range []string{"reverted", "inconclusive", "stopped"} {
+		assert.True(t, due[prefix+"-"+status], status+" with no cleanup is due at once")
+	}
+	assert.False(t, due[prefix+"-running"])
+	assert.False(t, due[prefix+"-draft"])
+	assert.False(t, due[prefix+"-cleaned"], "a recorded cleanup ends it")
+}
+
+func TestUxExperimentActionClosesAnEndedExperimentOnlyWithACleanup(t *testing.T) {
+	prefix := uniquePrefix("uxendclose")
+	uxExpClean(t, prefix)
+	token := uxSupportToken(t, "uxendclosesup")
+	db := database.DBConn
+	idOf := func(status string) string {
+		db.Exec("INSERT INTO ux_experiments (flow, name, title, hypothesis, change_description, expected, arms, status, decided_at, created_at, updated_at) VALUES ('give', ?, ?, 'h', 'c', 'e', '{\"control\":[0,49],\"b\":[50,99]}', ?, NOW(), NOW(), NOW())", prefix+"-"+status, prefix+" "+status, status)
+		var id uint64
+		db.Raw("SELECT id FROM ux_experiments WHERE name = ?", prefix+"-"+status).Scan(&id)
+		require.NotZero(t, id)
+		return "experiments/" + strconv.FormatUint(id, 10)
+	}
+	queued := func() int64 {
+		var n int64
+		db.Table("background_tasks").Where("task_type = ? AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.reason')) = ?", ux.TaskUxExperiment, prefix).Count(&n)
+		return n
+	}
+
+	for _, status := range []string{"reverted", "inconclusive", "stopped"} {
+		path := idOf(status)
+		code, text := uxSendText(t, "PATCH", token, path, map[string]interface{}{"action": "close", "reason": prefix})
+		assert.Equal(t, 400, code, status)
+		assert.Equal(t, "Give the cleanup pull request that removed the code", text, status)
+		code, out := uxPatch(t, token, path, map[string]interface{}{"action": "close", "reason": prefix, "cleanup_pr": "https://github.com/Freegle/Iznik/pull/4"})
+		assert.Equal(t, 200, code, out)
+	}
+	assert.Equal(t, int64(3), queued())
+
+	for _, status := range []string{"running", "draft"} {
+		code, text := uxSendText(t, "PATCH", token, idOf(status), map[string]interface{}{"action": "close", "reason": prefix, "cleanup_pr": "https://github.com/Freegle/Iznik/pull/4"})
+		assert.Equal(t, 400, code, status)
+		assert.Contains(t, text, "can be closed", status)
+	}
+	assert.Equal(t, int64(3), queued(), "nothing more was queued")
+}
+
+func TestUxExperimentActionRefusesToStartOneWhoseCodeIsGone(t *testing.T) {
+	prefix := uniquePrefix("uxgone")
+	uxExpClean(t, prefix)
+	token := uxSupportToken(t, "uxgonesup")
+	db := database.DBConn
+	db.Exec("INSERT INTO ux_experiments (flow, name, title, hypothesis, change_description, expected, arms, status, decided_at, cleanup_pr_url, created_at, updated_at) VALUES ('give', ?, ?, 'h', 'c', 'e', '{\"control\":[0,49],\"b\":[50,99]}', 'reverted', NOW(), 'https://github.com/Freegle/Iznik/pull/3', NOW(), NOW())", prefix+"-gone", prefix+" gone")
+	var id uint64
+	db.Raw("SELECT id FROM ux_experiments WHERE name = ?", prefix+"-gone").Scan(&id)
+	require.NotZero(t, id)
+
+	code, text := uxSendText(t, "PATCH", token, "experiments/"+strconv.FormatUint(id, 10), map[string]interface{}{"action": "start", "reason": prefix})
+	assert.Equal(t, 400, code)
+	assert.Contains(t, text, "code has been removed")
+	assert.Contains(t, text, "new name")
+	assert.Contains(t, text, "salt")
+}
+
 // uxFunctionBody returns the text of the named top-level function in a Go source file: from its
 // "func name(" to the next top-level function, or the end of the file. It fails the test if the
 // file or the function is not found, or the body is empty, so a wrong name or path cannot pass.
@@ -743,7 +856,7 @@ func TestUxCreateExperimentReadsTheNewIdFromThePrimary(t *testing.T) {
 // The experiments routes read their own two tables and nothing else. They name no table that
 // belongs to another part of the UX work.
 func TestUxExperimentsBoundary(t *testing.T) {
-	files := []string{"../ux/experiments.go"}
+	files := []string{"../ux/experiments.go", "../ux/serverarm.go"}
 	read := 0
 	for _, f := range files {
 		b, err := os.ReadFile(f)
@@ -754,6 +867,76 @@ func TestUxExperimentsBoundary(t *testing.T) {
 			assert.NotContains(t, string(b), name, f)
 		}
 	}
-	require.Len(t, files, 1)
-	assert.Equal(t, 1, read, "the file was read")
+	require.Len(t, files, 2)
+	assert.Equal(t, 2, read, "both files were read")
+}
+
+// The SysAdmin nudge counts, for Admin, experiments with a verdict that nobody has closed: adopted
+// ones to confirm, and reverted, inconclusive or stopped ones whose code is still in. Closed ones, ones
+// with a cleanup pull request, and ones still running or not started are not counted.
+func TestUxExperimentsVerdictCountsInSessionWork(t *testing.T) {
+	prefix := uniquePrefix("uxverdict")
+	uxExpClean(t, prefix)
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, adminID, groupID, utils.ROLE_MODERATOR)
+	_, adminToken := CreateTestSession(t, adminID)
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+	CreateTestMembership(t, supportID, groupID, utils.ROLE_MODERATOR)
+	_, supportToken := CreateTestSession(t, supportID)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+
+	baseConfirm, baseRemove := ux.VerdictCounts()
+
+	insert := func(name, status string, cleanupPR interface{}) {
+		db.Exec("INSERT INTO ux_experiments (flow, name, title, hypothesis, change_description, expected, arms, status, cleanup_pr_url, decided_at, created_at, updated_at) VALUES ('give', ?, ?, 'h', 'c', 'e', '{\"control\":[0,49],\"b\":[50,99]}', ?, ?, NOW(), NOW(), NOW())", prefix+name, prefix+name, status, cleanupPR)
+	}
+	// Counted: one adopted (confirm), and one each of the ended kinds (remove).
+	insert("-adopted", "adopted", nil)
+	insert("-reverted", "reverted", "")
+	insert("-inconclusive", "inconclusive", nil)
+	insert("-stopped", "stopped", nil)
+	// Not counted: closed, ended with the cleanup recorded, adopted with a cleanup recorded,
+	// running and not started.
+	insert("-closed", "closed", "https://github.com/Freegle/Iznik/pull/1")
+	insert("-reverted-done", "reverted", "https://github.com/Freegle/Iznik/pull/2")
+	insert("-adopted-done", "adopted", "https://github.com/Freegle/Iznik/pull/3")
+	insert("-running", "running", nil)
+	insert("-draft", "draft", nil)
+
+	confirm, remove := ux.VerdictCounts()
+	assert.Equal(t, baseConfirm+1, confirm)
+	assert.Equal(t, baseRemove+3, remove)
+
+	work := getSessionWork(t, adminToken)
+	assert.Equal(t, float64(confirm+remove), work["uxexperiments"])
+	assert.Equal(t, float64(confirm), work["uxexperimentsconfirm"])
+	assert.Equal(t, float64(remove), work["uxexperimentsremove"])
+
+	// The work waiting is a developer's. Support and an ordinary moderator get their other work
+	// counts, but not this one.
+	for name, token := range map[string]string{"support": supportToken, "mod": modToken} {
+		other := getSessionWork(t, token)
+		assert.Equal(t, float64(0), other["uxexperiments"], name)
+		assert.Equal(t, float64(0), other["uxexperimentsconfirm"], name)
+		assert.Equal(t, float64(0), other["uxexperimentsremove"], name)
+	}
+
+	// The Go API agrees with the experiments list on which ended ones are waiting.
+	var all ux.ExperimentsResponse
+	require.Equal(t, 200, uxGet(t, adminToken, "experiments", &all))
+	for _, f := range all.Flows {
+		for _, e := range f.History {
+			switch e.Name {
+			case prefix + "-reverted", prefix + "-inconclusive", prefix + "-stopped":
+				assert.True(t, e.CleanupOverdue, e.Name)
+			case prefix + "-reverted-done", prefix + "-closed":
+				assert.False(t, e.CleanupOverdue, e.Name)
+			}
+		}
+	}
 }

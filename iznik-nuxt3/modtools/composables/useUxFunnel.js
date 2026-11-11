@@ -39,7 +39,7 @@ export const EXIT_STEPS = {
 
 // What to call a step on the chart. Route names are for developers; these are for the people
 // reading the tab.
-const STEP_LABELS = {
+export const STEP_LABELS = {
   give: 'Item and photos',
   'give-mobile': 'Start',
   'give-mobile-photos': 'Photos',
@@ -73,6 +73,92 @@ const STEP_LABELS = {
 
 export function stepLabel(step) {
   return STEP_LABELS[step] || step
+}
+
+// What a step is, in plain words: the page it is (the route, as it appears in the address bar)
+// and what the member does there. Shown when the reader hovers over or focuses a step name. Keyed
+// by step; `flow:step` overrides it where two flows share a step name. A step with no entry here
+// fails the test in useUxFunnelHelp.spec.js, so add one with every new step.
+export const STEP_HELP = {
+  give: '/give, step 1 on a computer or tablet: the member names the item, describes it and adds photos.',
+  'give-mobile':
+    '/give/mobile, where the app and phones start: it only sends the member on to the photos screen.',
+  'give-mobile-photos':
+    '/give/mobile/photos, step 1 in the app and on phones: the member takes or picks photos of what they are giving.',
+  'give-clearance':
+    '/give/clearance, the start of a clearance: the member lists lots of items in one post instead of one at a time.',
+  'give-whereami':
+    '/give/whereami, step 2 on a computer or tablet: the member enters their postcode and picks their local community.',
+  'give-mobile-details':
+    '/give/mobile/details, step 2 in the app and on phones: the member names and describes the item, with their photos shown above.',
+  'give-options':
+    '/give/options, step 3 on a computer or tablet: the member answers a few optional questions, such as whether they could deliver.',
+  'give-mobile-options':
+    '/give/mobile/options, step 3 in the app and on phones: the member answers a few optional questions, such as whether they could deliver.',
+  'give-whoami':
+    '/give/whoami, step 4 on a computer or tablet: the member gives their email address, or confirms the one they are signed in with, and posts.',
+  'give-mobile-whereami':
+    '/give/mobile/whereami, the last step in the app and on phones: the member enters their postcode, picks their community, gives their email address and posts.',
+  ask: '/ask, step 1 on a computer or tablet: the member says what they are looking for and adds photos if they have any.',
+  'ask-mobile':
+    '/ask/mobile, where the app and phones start: it only sends the member on to the photos screen.',
+  'ask-mobile-photos':
+    '/ask/mobile/photos, step 1 in the app and on phones: the member adds a photo of what they are looking for, if they have one.',
+  'ask-whereami':
+    '/ask/whereami, step 2 on a computer or tablet: the member enters their postcode and picks their local community.',
+  'ask-mobile-details':
+    '/ask/mobile/details, step 2 in the app and on phones: the member says what they are looking for, with any photo shown above.',
+  'ask-whoami':
+    '/ask/whoami, step 3 on a computer or tablet: the member gives their email address, or confirms the one they are signed in with, and posts.',
+  'ask-mobile-whereami':
+    '/ask/mobile/whereami, the last step in the app and on phones: the member enters their postcode, picks their community, gives their email address and posts.',
+  COMPOSING:
+    'The reply box on a post: the member types their reply. The funnel starts when they begin typing.',
+  VALIDATING:
+    'The reply box on a post: the member pressed send and the reply is checked, for example that it has some text and a usable email address.',
+  AUTHENTICATING:
+    'The sign-in window: the member is not signed in, so they sign in or join before the reply can be sent.',
+  JOINING_GROUP:
+    'Behind the scenes after sending: the member is joined to the community the post is in, if they were not already in it.',
+  CREATING_CHAT:
+    'Behind the scenes after sending: the reply is turned into a chat with the person who posted.',
+  SHOWING_WELCOME:
+    'The welcome window shown to someone who has just joined Freegle by replying.',
+  COMPLETED:
+    'The reply was sent and the chat opened. This is the end of the funnel.',
+  signup:
+    'The Join tab of the sign-in window: a new member chooses a way to join and gives their details.',
+  signin:
+    'The Sign in tab of the sign-in window: an existing member signs in with email and password, Facebook or Google.',
+  forgot:
+    'The Forgotten password link in the sign-in window: the member asks for a password reset email. They are on their way back, so this is not counted as a loss.',
+  'chat_promise:choose':
+    'The Promise window, opened from a chat: the member chooses the item and when it will be collected, then confirms the promise.',
+  'chat_outcome:choose':
+    'The window opened from a post or chat to say how it ended: the member says whether it was taken, received or withdrawn.',
+  settings:
+    '/settings: the member changes their account settings, such as their email and notification choices.',
+}
+
+export function stepHelp(step, flow) {
+  return STEP_HELP[`${flow}:${step}`] || STEP_HELP[step] || ''
+}
+
+// A way into a stage: where the member came in, then what that step is.
+export function wayInHelp(s, flow) {
+  return `Came in through ${s.label}. ${stepHelp(s.step, flow)}`
+}
+
+// A stage heading. One with several ways in lists them, since the heading is their sum and means
+// each of them.
+export function stageHelp(stage, flow) {
+  if (!stage.alternatives) return stepHelp(stage.step, flow)
+  return (
+    'Members reach this stage in one of several ways. ' +
+    stage.alternatives
+      .map((a) => `${a.label}: ${stepHelp(a.step, flow)}`)
+      .join(' ')
+  )
 }
 
 // The family a routed step belongs to: 'mobile' for the mobile pages, 'desktop' otherwise. Flows

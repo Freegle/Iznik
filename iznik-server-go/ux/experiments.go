@@ -36,7 +36,9 @@ var (
 	armNameRe        = regexp.MustCompile(`^[A-Za-z0-9_]{1,16}$`)
 	// These names are keys of the public config object the client reads. A name that is also an
 	// Object.prototype key would be written into it and could shadow the lookup.
-	reservedNames    = map[string]bool{"__proto__": true, "constructor": true, "prototype": true}
+	reservedNames = map[string]bool{"__proto__": true, "constructor": true, "prototype": true}
+	// Ended without being adopted. Closing one of these keeps its status and records the cleanup.
+	endedUnadopted   = map[string]bool{"reverted": true, "inconclusive": true, "stopped": true}
 	experimentStates = map[string]bool{"draft": true, "running": true, "adopted": true, "reverted": true, "inconclusive": true, "stopped": true, "closed": true}
 )
 
@@ -69,7 +71,8 @@ type Experiment struct {
 	LatestRead *ExperimentRead `json:"latest_read"`
 	Hours      float64         `json:"hours"`
 	// CleanupOverdue is true for an adopted experiment whose switch is still in the code after
-	// the grace period, so a caller can list the ones nobody has cleaned up.
+	// the grace period, and at once for a reverted, inconclusive or stopped one with no cleanup
+	// recorded, so a caller can list the ones nobody has cleaned up.
 	CleanupOverdue bool `json:"cleanup_overdue"`
 	// HoldoutUntil is set while an adopted experiment is still inside its holdout: a share of
 	// members keeps the old version and the batch can still reverse the adoption. Closing the
@@ -207,6 +210,10 @@ func Experiments(c *fiber.Ctx) error {
 		if r.Status == "adopted" && r.DecidedAt != nil && now.Sub(*r.DecidedAt) > time.Duration(cleanupDays)*24*time.Hour {
 			e.CleanupOverdue = true
 		}
+		// Reverted, inconclusive and stopped serve control to everyone, so the variant code is dead at once.
+		if endedUnadopted[r.Status] && (r.CleanupPrURL == nil || *r.CleanupPrURL == "") {
+			e.CleanupOverdue = true
+		}
 		if r.Status == "adopted" && r.DecidedAt != nil && holdoutOn {
 			if until := r.DecidedAt.Add(time.Duration(holdoutDays) * 24 * time.Hour); until.After(now) {
 				s := until.UTC().Format(timeFormat)
@@ -230,6 +237,37 @@ func Experiments(c *fiber.Ctx) error {
 		out.Flows = append(out.Flows, *byFlow[f])
 	}
 	return c.JSON(out)
+}
+
+// VerdictCounts is the SysAdmin nudge: how many experiments are waiting for a person now that they
+// have a verdict. confirm is adopted ones not yet closed (confirm the result and remove the
+// switch); remove is reverted, inconclusive or stopped ones with no cleanup recorded (remove the
+// variant code). A closed experiment, or one with a cleanup pull request, is done and not counted.
+//
+// This is wider than cleanup_overdue on purpose. An adopted experiment is overdue only after the
+// grace period (UX_EXPERIMENTS_CLEANUP_DAYS), but the nudge is for the moment a verdict exists, so
+// an adopted one counts at once. For an ended one the two agree.
+func VerdictCounts() (confirm int64, remove int64) {
+	var rows []struct {
+		Status string `gorm:"column:status"`
+		N      int64  `gorm:"column:n"`
+	}
+	err := database.DBConn.Table("ux_experiments").
+		Select("status, COUNT(*) AS n").
+		Where("status IN ? AND (cleanup_pr_url IS NULL OR cleanup_pr_url = '')", []string{"adopted", "reverted", "inconclusive", "stopped"}).
+		Group("status").
+		Scan(&rows).Error
+	if err != nil {
+		return 0, 0
+	}
+	for _, r := range rows {
+		if r.Status == "adopted" {
+			confirm += r.N
+		} else {
+			remove += r.N
+		}
+	}
+	return confirm, remove
 }
 
 // latestReads returns, for each experiment, the paragraph of its newest hourly read taken at or
@@ -274,15 +312,22 @@ type CreateExperimentRequest struct {
 	Arms map[string][]int `json:"arms"`
 	// PrURL is a link to the code change. It is drawn as a link, so it must start with https://.
 	PrURL string `json:"pr_url"`
-	// Design is optional: touches (the flows the change can affect, for the guardrails) and
-	// expected_points (the effect the test is sized for).
+	// Design is optional: touches (the flows the change can affect, for the guardrails),
+	// expected_points (the effect the test is sized for), primary_event (a client event the test is
+	// judged on instead of finishing its funnel) and base_rate (that event's usual rate per start).
 	Design *CreateExperimentDesign `json:"design"`
 }
 
 type CreateExperimentDesign struct {
 	Touches        []string `json:"touches"`
 	ExpectedPoints *float64 `json:"expected_points"`
+	PrimaryEvent   string   `json:"primary_event"`
+	BaseRate       *float64 `json:"base_rate"`
 }
+
+// primaryEvents are the client events a web experiment may be judged on, the same list as
+// UxExperimentService::PRIMARY_EVENTS in the batch. The name reaches a LogQL query there.
+var primaryEvents = map[string]bool{"job_ad_click": true, "job_ad_click_chat": true, "app_store_click": true, "user_rated": true}
 
 // validArms checks arms the way the batch does: at most maxArms, names, ranges inside 0..99, no overlap, a control
 // and at least one variant. Returns the arms as JSON.
@@ -347,6 +392,18 @@ func validDesign(d *CreateExperimentDesign) (string, string) {
 		}
 		out["expected_points"] = *d.ExpectedPoints
 	}
+	if d.PrimaryEvent != "" {
+		if !primaryEvents[d.PrimaryEvent] {
+			return "", "primary_event must be one of: job_ad_click, job_ad_click_chat, app_store_click, user_rated"
+		}
+		out["primary_event"] = d.PrimaryEvent
+	}
+	if d.BaseRate != nil {
+		if *d.BaseRate <= 0 || *d.BaseRate >= 1 {
+			return "", "base_rate must be a share between 0 and 1"
+		}
+		out["base_rate"] = *d.BaseRate
+	}
 	if len(out) == 0 {
 		return "", ""
 	}
@@ -401,12 +458,9 @@ func CreateExperiment(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	var exists int64
-	db.Table("ux_experiments").Where("name = ?", req.Name).Count(&exists)
-	if exists > 0 {
-		return fiber.NewError(fiber.StatusConflict, "An experiment with that name already exists")
-	}
-
+	// The unique index on name is the only check for a duplicate: a count first would let a
+	// lost race between two creates reach the insert only sometimes, so the 1062 path below was
+	// covered on some runs and not others.
 	now := time.Now().UTC()
 	row := map[string]interface{}{
 		"flow": req.Flow, "name": req.Name, "title": clip(req.Title, 160), "hypothesis": strings.TrimSpace(req.Hypothesis),
@@ -464,23 +518,33 @@ func ExperimentAction(c *fiber.Ctx) error {
 	db := database.DBConn
 	// Read the row from the primary. A caller that has just created the experiment sends this
 	// request straight after, and a read replica that does not hold the row yet would answer 404.
-	var status string
-	res := db.Clauses(dbresolver.Write).Table("ux_experiments").Select("status").Where("id = ?", id).Scan(&status)
+	var row struct {
+		Status       string
+		CleanupPrURL *string `gorm:"column:cleanup_pr_url"`
+	}
+	res := db.Clauses(dbresolver.Write).Table("ux_experiments").Select("status, cleanup_pr_url").Where("id = ?", id).Scan(&row)
 	if res.RowsAffected == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "No such experiment")
 	}
+	status := row.Status
 	switch req.Action {
 	case "start":
 		if status != "draft" && status != "stopped" && status != "inconclusive" && status != "reverted" {
 			return fiber.NewError(fiber.StatusBadRequest, "Only a draft or a finished experiment can be started")
+		}
+		if row.CleanupPrURL != nil && *row.CleanupPrURL != "" {
+			return fiber.NewError(fiber.StatusBadRequest, "This experiment's code has been removed, so it cannot be started again. Use a new name, or put the variant back and re-run it with a new salt")
 		}
 	case "stop":
 		if status != "running" {
 			return fiber.NewError(fiber.StatusBadRequest, "Only a running experiment can be stopped")
 		}
 	case "close":
-		if status != "adopted" {
-			return fiber.NewError(fiber.StatusBadRequest, "Only an adopted experiment can be closed")
+		if status != "adopted" && !endedUnadopted[status] {
+			return fiber.NewError(fiber.StatusBadRequest, "Only an adopted, reverted, inconclusive or stopped experiment can be closed")
+		}
+		if endedUnadopted[status] && req.CleanupPr == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "Give the cleanup pull request that removed the code")
 		}
 	}
 

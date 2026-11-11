@@ -175,11 +175,7 @@ class ReachVolunteeringService
             $location   = preg_replace('/,\s*(United Kingdom|UK|England|Scotland|Wales|Northern Ireland)\s*$/i', '', $locationField);
             $commitment = $opp['other_details'] ?? null;
 
-            // Match by externalid OR contacturl (handles migration from old format).
-            $existing = DB::table('volunteering')
-                ->where('contacturl', $url)
-                ->orWhere('externalid', $externalId)
-                ->first();
+            $existing = $this->existing((string) $url, $externalId);
 
             if ($existing) {
                 if ($dryRun) {
@@ -256,5 +252,20 @@ class ReachVolunteeringService
         }
 
         return ['added' => $added, 'updated' => $updated, 'deleted' => $deleted];
+    }
+
+    /**
+     * The row this opportunity already has, matched by externalid or contacturl (contacturl covers rows
+     * from the old format). Read from the write node: the feed can list an opportunity twice, and the
+     * read node may not have the first copy yet. On live (19 October 2026) the second copy was inserted
+     * again and the run stopped on "Duplicate entry 'reach-1341238' for key 'volunteering.externalid'".
+     */
+    protected function existing(string $url, string $externalId): ?object
+    {
+        return DB::table('volunteering')
+            ->useWritePdo()
+            ->where('contacturl', $url)
+            ->orWhere('externalid', $externalId)
+            ->first();
     }
 }

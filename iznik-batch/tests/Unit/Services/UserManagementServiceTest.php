@@ -167,7 +167,7 @@ class UserManagementServiceTest extends TestCase
             'fullname' => 'Inactive User',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subMonths(7),
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
         ]);
 
         $count = $this->service->forgetInactiveUsers();
@@ -190,7 +190,7 @@ class UserManagementServiceTest extends TestCase
             'fullname' => 'Deleted User #12345',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subMonths(7),
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'forgotten' => now()->subDays(30),
         ]);
 
@@ -208,7 +208,7 @@ class UserManagementServiceTest extends TestCase
             'fullname' => 'Member User',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subMonths(7),
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
         ]);
 
         $group = $this->createTestGroup();
@@ -264,6 +264,81 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals('Recent', $user->firstname);
     }
 
+    public function test_forget_user_deletes_their_answers_to_microvolunteer_questions(): void
+    {
+        $user = $this->createTestUser();
+        $other = $this->createTestUser();
+        $prompt = DB::table('ux_prompts')->insertGetId(['kind' => 'open', 'question' => 'q', 'body' => 'b', 'options' => '[]',
+            'status' => 'open', 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ux_prompt_responses')->insert([
+            ['prompt_id' => $prompt, 'userid' => $user->id, 'answer' => json_encode(['text' => 'I live at 4 Acacia Road']), 'comment' => 'ring me on 07700 900123'],
+            ['prompt_id' => $prompt, 'userid' => $other->id, 'answer' => json_encode(['text' => 'Fine']), 'comment' => null],
+        ]);
+
+        $this->service->forgetUser($user->id, 'Test reason');
+
+        $this->assertSame(0, DB::table('ux_prompt_responses')->where('userid', $user->id)->count());
+        // Somebody else's answer is not touched.
+        $this->assertSame(1, DB::table('ux_prompt_responses')->where('userid', $other->id)->count());
+    }
+
+    public function test_forget_user_clears_their_support_case_and_run_data_and_no_ones_else(): void
+    {
+        $user = $this->createTestUser();
+        $other = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $mine = DB::table('support_cases')->insertGetId(['userid' => $user->id, 'referrerid' => $mod->id, 'reason' => 'about them', 'brief' => '{"answer":"x"}']);
+        $theirs = DB::table('support_cases')->insertGetId(['userid' => $other->id, 'referrerid' => $mod->id, 'reason' => 'other', 'brief' => '{"answer":"y"}']);
+        DB::table('support_case_messages')->insert([
+            ['caseid' => $mine, 'userid' => $mod->id, 'role' => 'Referrer', 'body' => 'about the member'],
+            ['caseid' => $theirs, 'userid' => $mod->id, 'role' => 'Referrer', 'body' => 'about another'],
+        ]);
+        $run = fn (int $uid, string $kind) => DB::table('support_ai_runs')->insertGetId(['userid' => $uid, 'kind' => $kind, 'query' => 'q', 'analysis' => 'facts', 'transcript' => 'talk', 'status' => 'Success']);
+        $r1 = $run($user->id, 'FirstPass');
+        $r2 = $run($user->id, 'Interactive');
+        $r3 = $run($other->id, 'FirstPass');
+
+        $this->service->forgetUser($user->id, 'Test reason');
+
+        $case = DB::table('support_cases')->where('id', $mine)->first();
+        $this->assertNull($case->brief);
+        $this->assertNull($case->reason);
+        $this->assertSame('', DB::table('support_case_messages')->where('caseid', $mine)->value('body'));
+        foreach ([$r1, $r2] as $id) {
+            $row = DB::table('support_ai_runs')->where('id', $id)->first();
+            $this->assertNull($row->analysis);
+            $this->assertNull($row->transcript);
+        }
+
+        $otherCase = DB::table('support_cases')->where('id', $theirs)->first();
+        $this->assertSame('{"answer":"y"}', $otherCase->brief);
+        $this->assertSame('other', $otherCase->reason);
+        $this->assertSame('about another', DB::table('support_case_messages')->where('caseid', $theirs)->value('body'));
+        $this->assertSame('facts', DB::table('support_ai_runs')->where('id', $r3)->value('analysis'));
+    }
+
+    public function test_forget_user_takes_their_words_out_of_the_themes_they_fed(): void
+    {
+        $user = $this->createTestUser();
+        $other = $this->createTestUser();
+        $prompt = DB::table('ux_prompts')->insertGetId(['kind' => 'open', 'question' => 'q', 'body' => 'b', 'options' => '[]',
+            'status' => 'open', 'created_at' => now(), 'updated_at' => now()]);
+        $mine = DB::table('ux_prompt_responses')->insertGetId(['prompt_id' => $prompt, 'userid' => $user->id, 'answer' => json_encode(['text' => 'Dave at Elm Road takes them'])]);
+        $theirs = DB::table('ux_prompt_responses')->insertGetId(['prompt_id' => $prompt, 'userid' => $other->id, 'answer' => json_encode(['text' => 'Fine'])]);
+        $problem = DB::table('ux_problems')->insertGetId([
+            'flow' => null, 'kind' => 'problem', 'title' => 'T', 'prompt_id' => $prompt, 'mentions' => 2,
+            'status' => 'open', 'created_at' => now(), 'updated_at' => now(),
+            'evidence' => json_encode(['answer_ids' => [$mine, $theirs], 'quotes' => [
+                ['answer_id' => $mine, 'span' => 'Dave at Elm Road'], ['answer_id' => $theirs, 'span' => 'Fine']]]),
+        ]);
+
+        $this->service->forgetUser($user->id, 'Test reason');
+
+        $evidence = json_decode(DB::table('ux_problems')->where('id', $problem)->value('evidence'), true);
+        $this->assertEquals([['answer_id' => $theirs, 'span' => 'Fine']], $evidence['quotes']);
+        $this->assertSame([$theirs], $evidence['answer_ids']);
+    }
+
     public function test_forget_user_wipes_personal_data(): void
     {
         $user = $this->createTestUser();
@@ -307,6 +382,102 @@ class UserManagementServiceTest extends TestCase
             'subtype' => 'Deleted',
             'text' => 'Test reason',
         ]);
+    }
+
+    /**
+     * A reply that waits for its sender to confirm it, the question Freegle asked them about it, and the row that ties
+     * the two to the replier.
+     *
+     * @param  array<string, mixed>  $prompt  columns of chat_prompts
+     * @return array{0: ChatMessage, 1: ChatMessage}  the reply and the question
+     */
+    private function replyWithQuestion(ChatRoom $room, User $replier, User $freegle, int $postId, string $name, array $prompt = [], array $reply = []): array
+    {
+        $replyMessage = $this->createTestChatMessage($room, $replier, $reply + [
+            'type' => 'Interested', 'refmsgid' => $postId, 'message' => 'Is it still available?',
+            'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+        $question = $this->createTestChatMessage($room, $freegle, [
+            'type' => 'Prompt', 'refmsgid' => $postId, 'processingrequired' => 0, 'processingsuccessful' => 0,
+            'message' => "@{$name}, before we pass your reply on: from the photo, this looks like it may be damaged or not working. Do you still want it?",
+        ]);
+        DB::table('chat_prompts')->insert($prompt + [
+            'chatmsgid' => $question->id, 'msgid' => $postId, 'msgids' => json_encode([$postId]), 'userid' => $replier->id,
+            'heldchatmsgid' => $replyMessage->id, 'kind' => 'confirm_reply', 'options' => json_encode([['value' => 'yes'], ['value' => 'no']]),
+            'created_at' => now(), 'expires_at' => now()->addDays(3),
+        ]);
+
+        return [$replyMessage, $question];
+    }
+
+    public function test_forget_user_takes_the_questions_freegle_asked_them_out_of_the_chats(): void
+    {
+        // The question Freegle asked a replier about a reply is written by the Freegle account and names them, so
+        // blanking what the member wrote does not reach it. It is blanked and taken out of the poster's chat, the record
+        // of it and of how they answered goes, and a reply still waiting for its answer is dropped, not delivered with
+        // its text gone.
+        $replier = $this->createTestUser(['fullname' => 'Sam Replier']);
+        $poster = $this->createTestUser();
+        $freegle = $this->createTestUser();
+        $post = $this->createTestMessage($poster, $this->createTestGroup());
+        $room = $this->createTestChatRoom($replier, $poster);
+
+        [$answeredReply, $answeredQuestion] = $this->replyWithQuestion(
+            $room, $replier, $freegle, $post->id, 'Sam Replier',
+            ['answer' => 'yes', 'answered_at' => now(), 'answered_via' => 'button'],
+            ['processingrequired' => 0, 'processingsuccessful' => 1]
+        );
+        // Delivered with the reply, so the poster was shown it.
+        DB::table('chat_messages')->where('id', $answeredQuestion->id)->update(['processingsuccessful' => 1]);
+        [$waitingReply, $waitingQuestion] = $this->replyWithQuestion($room, $replier, $freegle, $post->id, 'Sam Replier');
+
+        // Another member's question, in another chat, is not theirs to lose.
+        $otherReplier = $this->createTestUser(['fullname' => 'Alex Other']);
+        $otherRoom = $this->createTestChatRoom($otherReplier, $poster);
+        [$otherReply, $otherQuestion] = $this->replyWithQuestion($otherRoom, $otherReplier, $freegle, $post->id, 'Alex Other');
+
+        $this->service->forgetUser($replier->id, 'Test reason');
+
+        foreach ([$answeredQuestion, $waitingQuestion] as $question) {
+            $row = DB::table('chat_messages')->where('id', $question->id)->first();
+            $this->assertNull($row->message, 'the text that named them is blanked');
+            $this->assertEquals(0, $row->processingsuccessful, 'and the poster is no longer shown the card');
+        }
+        $this->assertDatabaseMissing('chat_prompts', ['userid' => $replier->id]);
+
+        $waiting = DB::table('chat_messages')->where('id', $waitingReply->id)->first();
+        $this->assertEquals(0, $waiting->processingrequired, 'a reply still waiting is not left for the batch to deliver blank');
+        $this->assertEquals(0, $waiting->processingsuccessful);
+        $this->assertEquals(ChatMessage::PROCESSFAIL_NOT_CONFIRMED, $waiting->processingfailreason);
+        $this->assertEquals(1, DB::table('chat_messages')->where('id', $answeredReply->id)->value('processingsuccessful'), 'a reply that was delivered stays delivered');
+
+        $this->assertNotNull(DB::table('chat_messages')->where('id', $otherQuestion->id)->value('message'), 'another member\'s question is untouched');
+        $this->assertDatabaseHas('chat_prompts', ['userid' => $otherReplier->id, 'heldchatmsgid' => $otherReply->id]);
+    }
+
+    public function test_forget_user_drops_what_they_wrote_behind_an_open_question_too(): void
+    {
+        $replier = $this->createTestUser(['fullname' => 'Sam Replier']);
+        $poster = $this->createTestUser();
+        $freegle = $this->createTestUser();
+        $post = $this->createTestMessage($poster, $this->createTestGroup());
+        $room = $this->createTestChatRoom($replier, $poster);
+        [$reply] = $this->replyWithQuestion($room, $replier, $freegle, $post->id, 'Sam Replier');
+        $behind = $this->createTestChatMessage($room, $replier, [
+            'message' => 'no thanks, sorry', 'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+        $fromPoster = $this->createTestChatMessage($room, $poster, [
+            'message' => 'Yes it is', 'processingrequired' => 1, 'processingsuccessful' => 0, 'platform' => 1,
+        ]);
+
+        $this->service->forgetUser($replier->id, 'Test reason');
+
+        foreach ([$reply, $behind] as $message) {
+            $row = DB::table('chat_messages')->where('id', $message->id)->first();
+            $this->assertEquals(0, $row->processingrequired, 'with the row gone nothing would hold it, so it is dropped');
+            $this->assertEquals(0, $row->processingsuccessful);
+        }
+        $this->assertEquals(1, DB::table('chat_messages')->where('id', $fromPoster->id)->value('processingrequired'), 'the poster\'s own message is theirs');
     }
 
     public function test_forget_user_records_deletion_for_partners(): void
@@ -650,7 +821,7 @@ class UserManagementServiceTest extends TestCase
 
         // Set user to Moderator role.
         DB::table('users')->where('id', $user->id)->update([
-            'systemrole' => 'Moderator',
+            'systemrole' => User::SYSTEMROLE_MODERATOR,
         ]);
 
         // Create a team with supporttools=1.
@@ -670,7 +841,7 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals(1, $stats['granted']);
 
         $user->refresh();
-        $this->assertEquals('Support', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_SUPPORT, $user->systemrole);
     }
 
     public function test_update_support_roles_removes_access(): void
@@ -679,7 +850,7 @@ class UserManagementServiceTest extends TestCase
 
         // Set user to Support role but don't put them in any support team.
         DB::table('users')->where('id', $user->id)->update([
-            'systemrole' => 'Support',
+            'systemrole' => User::SYSTEMROLE_SUPPORT,
         ]);
 
         $stats = $this->service->updateSupportRoles();
@@ -687,7 +858,7 @@ class UserManagementServiceTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $stats['removed']);
 
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
     }
 
     public function test_update_support_roles_does_not_downgrade_admin(): void
@@ -696,14 +867,14 @@ class UserManagementServiceTest extends TestCase
 
         // Set user to Admin role.
         DB::table('users')->where('id', $user->id)->update([
-            'systemrole' => 'Admin',
+            'systemrole' => User::SYSTEMROLE_ADMIN,
         ]);
 
         $stats = $this->service->updateSupportRoles();
 
         // Admin should not be downgraded even if not in a support team.
         $user->refresh();
-        $this->assertEquals('Admin', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_ADMIN, $user->systemrole);
     }
 
     public function test_update_support_roles_ignores_non_support_teams(): void
@@ -711,7 +882,7 @@ class UserManagementServiceTest extends TestCase
         $user = $this->createTestUser();
 
         DB::table('users')->where('id', $user->id)->update([
-            'systemrole' => 'Moderator',
+            'systemrole' => User::SYSTEMROLE_MODERATOR,
         ]);
 
         // Create a team WITHOUT supporttools.
@@ -730,7 +901,7 @@ class UserManagementServiceTest extends TestCase
 
         // Should not grant support role.
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
     }
 
     // --- Email validation tests ---
@@ -905,58 +1076,58 @@ class UserManagementServiceTest extends TestCase
     public function test_backfill_demotes_stale_moderator(): void
     {
         // systemrole Moderator but no Owner/Moderator membership anywhere.
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $stats = $this->service->backfillModeratorSystemRoles();
 
         $user->refresh();
-        $this->assertEquals('User', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_USER, $user->systemrole);
         $this->assertGreaterThanOrEqual(1, $stats['demoted']);
     }
 
     public function test_backfill_keeps_moderator_with_mod_membership(): void
     {
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
         $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => 'Moderator']);
+        $this->createMembership($user, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $this->service->backfillModeratorSystemRoles();
 
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
     }
 
     public function test_backfill_keeps_moderator_with_owner_membership(): void
     {
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
         $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => 'Owner']);
+        $this->createMembership($user, $group, ['role' => Membership::ROLE_OWNER]);
 
         $this->service->backfillModeratorSystemRoles();
 
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
     }
 
     public function test_backfill_leaves_support_untouched(): void
     {
         // Support outranks Moderator and is set deliberately — never auto-demoted.
-        $user = $this->createTestUser(['systemrole' => 'Support']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_SUPPORT]);
 
         $this->service->backfillModeratorSystemRoles();
 
         $user->refresh();
-        $this->assertEquals('Support', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_SUPPORT, $user->systemrole);
     }
 
     public function test_backfill_dry_run_does_not_change(): void
     {
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $stats = $this->service->backfillModeratorSystemRoles(true);
 
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
         $this->assertGreaterThanOrEqual(1, $stats['demoted']);
     }
 }

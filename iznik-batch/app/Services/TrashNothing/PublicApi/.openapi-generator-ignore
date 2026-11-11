@@ -24,10 +24,10 @@
 
 # FREEGLE LOCAL MODIFICATION.
 # lib/Model/Post.php carries a hand-added `freegle_group_ids` property. TN's live API
-# returns it when an FD API key is used (the Freegle group ids whose moderators the poster
-# has consented to be contacted by), but it is absent from TN's published spec, so
+# returns it when an FD API key is used (the Freegle group ids the member chose for this
+# post, which is also consent to those groups' moderators), but it is absent from TN's published spec, so
 # regenerating the client would delete it. ObjectSerializer only copies properties declared
-# in the model's own maps, so losing it would silently strip consent from every TN post and
+# in the model's own maps, so losing it would silently strip the member's choice from every TN post and
 # stamp mod_messaging_allowed = false across the board — with no error anywhere.
 # To pick up genuine spec changes to Post: remove this line, regenerate, then re-add the
 # property (search the old file for freegle_group_ids — it appears in openAPITypes,

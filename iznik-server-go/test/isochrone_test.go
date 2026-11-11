@@ -312,9 +312,9 @@ func TestEnsureIsochroneExistsMinutesVariation(t *testing.T) {
 // it, defaulting to 'nearby', and counting non-member nearby posts the member feed never showed).
 func TestIsochroneMyGroupsView(t *testing.T) {
 	prefix := uniquePrefix("isomygroups")
-	userID := CreateTestUser(t, prefix+"_u", "User")
+	userID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	memberGroup := CreateTestGroup(t, prefix+"_member")
@@ -358,9 +358,9 @@ func TestIsochroneMyGroupsView(t *testing.T) {
 // spatial stores only one group per post.
 func TestMyGroupsCountsRippledInPost(t *testing.T) {
 	prefix := uniquePrefix("myggrippledin")
-	userID := CreateTestUser(t, prefix+"_u", "User")
+	userID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	memberGroup := CreateTestGroup(t, prefix+"_member")
@@ -403,9 +403,9 @@ func TestMyGroupsCountsRippledInPost(t *testing.T) {
 // spatial.groupid count left stuck so Mark seen could never clear the badge.
 func TestMyGroupsCountExcludesStaleSpatialRow(t *testing.T) {
 	prefix := uniquePrefix("myggstale")
-	userID := CreateTestUser(t, prefix+"_u", "User")
+	userID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	memberGroup := CreateTestGroup(t, prefix+"_member")

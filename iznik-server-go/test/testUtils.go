@@ -161,8 +161,8 @@ func CreateDeletedTestUser(t *testing.T, prefix string) uint64 {
 	fullname := fmt.Sprintf("Deleted User %s", prefix)
 
 	result := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, deleted) "+
-		"VALUES ('Deleted', ?, ?, 'User', NOW())",
-		prefix, fullname)
+		"VALUES ('Deleted', ?, ?, ?, NOW())",
+		prefix, fullname, utils.SYSTEMROLE_USER)
 
 	if result.Error != nil {
 		t.Fatalf("ERROR: Failed to create deleted user: %v", result.Error)
@@ -184,8 +184,8 @@ func CreateTestUserWithEmail(t *testing.T, prefix string, email string) uint64 {
 	fullname := fmt.Sprintf("Test User %s", prefix)
 
 	result := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole) "+
-		"VALUES ('Test', ?, ?, 'User')",
-		prefix, fullname)
+		"VALUES ('Test', ?, ?, ?)",
+		prefix, fullname, utils.SYSTEMROLE_USER)
 
 	if result.Error != nil {
 		t.Fatalf("ERROR: Failed to create user: %v", result.Error)
@@ -720,13 +720,13 @@ func CreateFullTestUser(t *testing.T, prefix string) (uint64, string) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create main user
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create another user for user-to-user chat
-	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+	otherUserID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	// Create membership
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Create address and isochrone
 	CreateTestAddress(t, userID)

@@ -359,6 +359,25 @@ describe('MyMessage', () => {
   })
 
   describe('Rendering', () => {
+    // Saving "some are left" must change what the poster sees, or they cannot
+    // tell it worked (Discourse 10284).
+    it('says part gone once someone has taken some', async () => {
+      mockData.message.availablenow = 19
+      mockData.message.availableinitially = 19
+      mockData.message.partgone = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Part gone, some still available')
+      expect(wrapper.text()).not.toContain('19 available')
+    })
+
+    it('shows the number while none have gone', async () => {
+      mockData.message.availablenow = 19
+      mockData.message.availableinitially = 19
+      mockData.message.partgone = false
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('19 available')
+    })
+
     it('renders the main message wrapper', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.find('.my-message-mobile').exists()).toBe(true)
@@ -485,6 +504,26 @@ describe('MyMessage', () => {
       expect(mobile.exists()).toBe(true)
       expect(mobile.text()).toContain('Unpromise')
       expect(wrapper.find('.mobile-promised').text()).toContain('Test User')
+    })
+
+    it('leaves deleted and spammer members out of the Promise dialog list', async () => {
+      mockData.message.replies = [{ userid: 2 }, { userid: 3 }]
+      mockChatStore.list = [{ otheruid: 4 }, { otheruid: 5 }]
+      const users = {
+        2: { id: 2, displayname: 'Good Replier' },
+        3: { id: 3, displayname: 'A Freegler', deleted: '2026-10-01' },
+        4: { id: 4, displayname: 'Spam Chatter', spammer: true },
+        5: { id: 5, displayname: 'Good Chatter' },
+      }
+      mockUserStore.byId.mockImplementation((id) => users[id])
+      const wrapper = await createWrapper()
+      await wrapper
+        .find('.action-buttons .action-btn--secondary')
+        .trigger('click')
+      await flushPromises()
+      const modal = wrapper.findComponent('.promise-modal')
+      const ids = modal.props('users').map((u) => u.id)
+      expect(ids).toEqual([2, 5])
     })
 
     it('mobile Unpromise opens the renege modal', async () => {
@@ -785,6 +824,22 @@ describe('MyMessage', () => {
       expect(modal.props('selectedUser')).toBe(2)
     })
 
+    it('keeps a deleted or spammer promisee in the renege modal so they can be unpromised', async () => {
+      mockData.message.promised = true
+      mockData.message.outcomes = []
+      mockData.message.promises = [{ userid: 3 }, { userid: 4 }]
+      const users = {
+        3: { id: 3, displayname: 'A Freegler', deleted: '2026-10-01' },
+        4: { id: 4, displayname: 'Spammer', spammer: true },
+      }
+      mockUserStore.byId.mockImplementation((id) => users[id])
+      const wrapper = await createWrapper()
+      await wrapper.find('.unpromise-btn').trigger('click')
+      await flushPromises()
+      const modal = wrapper.findComponent('.renege-modal')
+      expect(modal.props('users').map((u) => u.id)).toEqual([3, 4])
+    })
+
     it('clicking Unpromise button shows renege modal when promisee profile is not yet resolved', async () => {
       mockData.message.promised = true
       mockData.message.outcomes = []
@@ -797,6 +852,68 @@ describe('MyMessage', () => {
       await unpromiseBtn.trigger('click')
       await flushPromises()
       expect(wrapper.find('.renege-modal').exists()).toBe(true)
+    })
+  })
+
+  // A poster could not read their own post's text on a phone: the card had no description and its
+  // title did nothing when tapped (510 taps by 244 people in a week of November 2026).
+  describe('Post text', () => {
+    const text = (w) => w.find('.my-message-text')
+
+    it('is hidden on My Posts until the title is tapped', async () => {
+      const wrapper = await createWrapper()
+      expect(text(wrapper).exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Test description')
+    })
+
+    it('opens when the title is tapped, and closes on a second tap', async () => {
+      const wrapper = await createWrapper()
+      const toggle = wrapper.find('.title-bar button.title-toggle')
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+
+      await toggle.trigger('click')
+      expect(text(wrapper).text()).toContain('Test description')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+
+      await toggle.trigger('click')
+      expect(text(wrapper).exists()).toBe(false)
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+    })
+
+    it('opens from the title on a wide screen too', async () => {
+      const wrapper = await createWrapper()
+      await wrapper
+        .find('button.desktop-title-row.title-toggle')
+        .trigger('click')
+      expect(text(wrapper).text()).toContain('Test description')
+    })
+
+    it('is always shown on the post page, where the title is not a toggle', async () => {
+      const wrapper = await createWrapper({ expand: true, postPage: true })
+      expect(text(wrapper).text()).toContain('Test description')
+      expect(wrapper.find('button.title-toggle').exists()).toBe(false)
+    })
+
+    it('still opens from the title on My Posts with few posts, where replies start open', async () => {
+      // My Posts sets expand when it has five posts or fewer. That opens the replies, not the text.
+      const wrapper = await createWrapper({ expand: true })
+      expect(text(wrapper).exists()).toBe(false)
+      await wrapper.find('.title-bar button.title-toggle').trigger('click')
+      expect(text(wrapper).text()).toContain('Test description')
+    })
+
+    it('does not open from the share button or the post number', async () => {
+      const wrapper = await createWrapper()
+      await wrapper.find('.title-bar .photo-action-btn').trigger('click')
+      await wrapper.find('.title-bar .post-id-link').trigger('click')
+      expect(text(wrapper).exists()).toBe(false)
+    })
+
+    it('has no toggle when the post has no text', async () => {
+      mockData.message.textbody = '   '
+      const wrapper = await createWrapper()
+      expect(wrapper.find('button.title-toggle').exists()).toBe(false)
+      expect(text(wrapper).exists()).toBe(false)
     })
   })
 
@@ -1237,6 +1354,41 @@ describe('MyMessage', () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Group 1')
       expect(wrapper.text()).toContain('Group 2')
+    })
+  })
+
+  describe('Promise action from a mail link', () => {
+    it('opens the promise modal for an Offer with no outcome', async () => {
+      mockData.message.type = 'Offer'
+      mockData.message.outcomes = []
+      const wrapper = await createWrapper({ action: 'promise' })
+      await flushPromises()
+      expect(mockChatStore.fetchChats).toHaveBeenCalled()
+      expect(wrapper.find('.promise-modal').exists()).toBe(true)
+    })
+
+    it('does not open the promise modal for a Wanted', async () => {
+      mockData.message.type = 'Wanted'
+      mockData.message.outcomes = []
+      const wrapper = await createWrapper({ action: 'promise' })
+      await flushPromises()
+      expect(wrapper.find('.promise-modal').exists()).toBe(false)
+    })
+
+    it('does not open the promise modal for a completed Offer', async () => {
+      mockData.message.type = 'Offer'
+      mockData.message.outcomes = [{ outcome: 'Taken' }]
+      const wrapper = await createWrapper({ action: 'promise' })
+      await flushPromises()
+      expect(wrapper.find('.promise-modal').exists()).toBe(false)
+    })
+
+    it('does not open the promise modal when there is no action', async () => {
+      mockData.message.type = 'Offer'
+      mockData.message.outcomes = []
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.find('.promise-modal').exists()).toBe(false)
     })
   })
 })

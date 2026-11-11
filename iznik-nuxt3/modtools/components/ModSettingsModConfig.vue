@@ -81,12 +81,7 @@
       </NoticeMessage>
       <b-card no-body class="mb-2 mt-1">
         <b-card-header>
-          <b-button
-            v-b-toggle.accordion-general
-            block
-            href="#"
-            variant="secondary"
-          >
+          <b-button v-b-toggle.accordion-general block variant="secondary">
             General Settings
           </b-button>
         </b-card-header>
@@ -195,7 +190,6 @@
           <b-button
             v-b-toggle.accordion-pendingmessages
             block
-            href="#"
             variant="secondary"
           >
             Pending Messages
@@ -216,6 +210,7 @@
                 'Leave',
                 'Delete',
                 'Edit',
+                'Edit and Message',
                 'Hold Message',
               ]"
               :locked="locked"
@@ -228,7 +223,6 @@
           <b-button
             v-b-toggle.accordion-approvedmessages
             block
-            href="#"
             variant="secondary"
           >
             Approved Messages
@@ -247,6 +241,7 @@
                 'Leave Approved Message',
                 'Delete Approved Message',
                 'Edit',
+                'Edit and Message',
               ]"
               :locked="locked"
             />
@@ -259,7 +254,6 @@
           <b-button
             v-b-toggle.accordion-approvedmembers
             block
-            href="#"
             variant="secondary"
           >
             Approved Members

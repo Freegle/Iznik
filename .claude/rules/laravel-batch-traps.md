@@ -188,6 +188,14 @@ which carries `_ckyStore._categories` with a `cookies` list per slug; `other` is
 uncategorised group. `CookieYesPublishedBanner` reads it. The scan results are fine for
 scan age and page counts, and as a log line.
 
+## A copied photo hash makes a post look repeated
+
+The content check counts how many posts used a photo's `hash` in the last day and flags a post
+over the limit. A derived `messages_attachments` row that copies the original's hash (an
+auto-split crop, a duplicate made for any other reason) adds to that count for the member's own
+single photo. A post with one group photo cut into three crops is four of the five allowed, with
+nothing in the logs. Leave `hash` empty on any row that is not a new upload.
+
 ## A schema check on the read connection can miss a table you just created
 
 `DB::select`/`selectOne` go to the read node, and DDL done a moment earlier on the write node
@@ -199,6 +207,12 @@ the 04:40 sync that feeds the morning digest (Sentry BATCH-9V, 2026-10-10).
 `Schema::hasIndex`/`hasColumn`/`getIndexes` read through `selectFromWriteConnection`; use them,
 or pass `false` as the third argument to `select`, for any check that follows your own DDL.
 Making the change itself tolerate "already there" is cheaper still.
+
+`Schema::hasTable` is not on that list. It asks the read node (`Connection::scalar`, read PDO), so
+`if (Schema::hasTable('x')) { delete }` skips the delete on a node that is behind, with no error. A
+connection in a transaction reads from the write node, which is why a test never sees it. Ask the write
+node instead: `UxExperimentExposure::tableExists()` is the example, and `UxExposureTableCheckTest` shows
+how to give a test a read node that is behind.
 
 ## A blank environment variable is not the default
 
@@ -234,6 +248,114 @@ more (`max_query_series`), and a label filled from a line has as many values as 
 Group only by labels with a fixed set of values: capture the arm only from the experiment's own arm
 names, and rewrite a free label to fixed words with `label_format` (`UxExperimentService::MAX_ARMS` and
 `SERIES_PER_ARM_AND_FLOW` keep the total under the limit).
+
+## A range query reads the window ending at a step boundary, not at the end you gave
+
+`query_range` rounds its start **down to a multiple of the step**, counted from 1970. With a 7-day step
+the evaluation lands on a Thursday at 00:00 UTC, so `count_over_time(... [7d])` asked for "the week to
+Monday" read Thursday to Thursday and gave a plausible, wrong count (`ux:weekly-report`, November 2026).
+Use a one-day step with the start equal to the end at a midnight, as `UxRollupService::metricOrThrow`
+and `WeeklyReportCommand::frictionDetail` do, and read the last point.
+
+The 500-series cap above also applies **inside** a query: `count(sum by (session_id) (...))` returns one
+series, and is still refused once more than 500 sessions match. Treat that refusal as "more than 500"
+(`lastMetricStatus` 400 with "maximum of series") rather than as Loki being down.
+
+## Look the experiment arm up before the content is built
+
+A mail or push that varies by an experiment arm (`UxArm::for`) is wrong in four ways that look like a
+working experiment:
+
+- **The arm has to be known before the content is built.** A mailable's constructor runs
+  `getSubject()` inside `initTracking`, so reading the arm "where the subject is used" is too late for
+  the subject. Look it up first and choose with `UxArm::pick($arm, ['control' => $a, 'items' => $b])`.
+  `pick` builds both values for every member, so a variant that takes work or can throw is chosen with an
+  `if` on the arm name, and the control lines are not edited. `UnifiedDigest::getSubject()` puts the `if` before
+  them and returns, so control runs the code it always ran.
+  `PushNotificationService::buildDailyNewPostsPayload()` runs its `if` after the control title and replaces that
+  title for the arm `lead`. Its arm lookup, `dailyPostsTitleArm`, also builds the lead title once for a member in
+  either arm, to check that the push has a lead post with a usable name, so both arms leave out the same pushes.
+- **The arm must be a pure function of the member's id.** A retry rebuilds the mailable, and `rand()`
+  would send the same member a different arm each time, in both the mail and the count. Never use it.
+- **Expose after the tracking row exists** (`UxArm::expose($id, $name, $arm, 'email', $this->tracking->id)`),
+  and only when tracking is on. The exposure points at that row, and a mail that was built and never sent is
+  an exposure that cannot convert, in both arms alike.
+- **Expose a push in the method that sends, before the first device is sent to, never in the one that builds the
+  payload.** `buildDailyNewPostsPayload` is also called by `push:daily-posts --dry-run` and by tests, so a row written
+  there counts a push that never went. An Android device shows a push the moment it arrives, so a row written after the
+  loop can be later than the visit it should precede. Take the row back with `UxArm::retract` when `expose` said it
+  wrote it and no device took the push. The exposure is `UxArm::expose($id, $name, $arm, 'push', intdiv(now()->getTimestamp(), 86400))`:
+  one row for the member and the day, however many devices or runs.
+
+Keep the arm name out of links, headers and `email_type`, which other code matches exactly. See
+`docs/developers/reference/ux-experiments.md`, "Experiments in mail, push and the server".
+
+## Anything that holds a chat message and releases it later must be admitted by its release time
+
+`ChatNotificationService::getUnmailedMessages` selects replies by `chat_messages.date` inside a look-back (4 hours as scheduled, `--since`). A reply
+held for longer is outside it when it is released, so the poster is never emailed, with no error. It admits a released
+rippling hold by `rippling_held_replies.releasedat`, a released lockdown hold by `lockdown_holds.releasedat`, and a reply
+confirmed by its sender by `chat_prompts.answered_at`. A reply held for chat review is admitted by the time of its
+`Chat`/`Approved` log row, whose text ("Chat message N approved", `approveChatMessage` in Go) is matched exactly; that one
+was missed until 2026-11-10, and replies a moderator approved more than four hours after they were written were never mailed.
+A new way to hold a chat message needs its own line in that list and
+a test like `test_released_reply_older_than_window_is_delivered_by_releasedat`.
+
+## `processingsuccessful = 1` does not mean the poster gets the message
+
+A message held for review (`reviewrequired = 1`) and one dropped by a block keyword (`reviewrejected = 1`) are
+processed and successful too. Whatever shows one message because another was delivered must test all three, as
+`ChatMessage::scopeVisible` does: `ChatProcessService::showQuestionWithReply` tested the first alone, and showed and
+emailed the confirm-reply question for a reply nobody got. The same goes for anything that looks at the message before the
+one being processed, as the review hold chain does: a Freegle question that sits between two messages must be skipped, or
+it stands in for the held message before it.
+
+## `u.id IN (a.col, b.col)` in a correlated subquery scans the table
+
+`NOT EXISTS (SELECT 1 FROM users u WHERE u.id IN (cm.userid, m.fromuser) AND ...)` reads as two key
+lookups. MySQL plans it as an index scan of `users` (2.96M rows, through `tnuserid`) for every outer row,
+so the confirm-reply sizing query ran for over seven minutes on the read node holding the experiments lock.
+Write one `NOT EXISTS ... WHERE u.id = <col>` per column: each is `eq_ref` on the primary key. Small test
+tables never show the difference; `EXPLAIN` against production does.
+
+## `GET_LOCK` works in every test and fails on the live cluster
+
+Percona XtraDB Cluster runs with `pxc_strict_mode = ENFORCING`, which refuses `GET_LOCK` and
+`RELEASE_LOCK` outright (error 1105). The test database is a single server, so the whole suite passes.
+The UX experiments engine took its writer lock that way and could not start a single experiment on
+production. Use `Cache::lock()`: the live cache store is the database, so it is a row in `cache_locks`,
+which the cluster replicates like any other write.
+
+## A cache lock on the split connection is never released
+
+`DatabaseLock::release()` reads the owner back before it deletes the row, and on `mysql` that read goes
+to the read host. With `wsrep_sync_wait = 0` the read node may not have the row it was just given, so
+`release()` returns false, deletes nothing, and the lock stays held until it expires. The UX experiments
+tick took its lock, left it held, and failed on its next lock in the same run in four hours of six on
+20 October 2026; `withoutOverlapping` and `SingleInstanceLock` are the same kind of lock. Cache locks use
+`mysql_write` (`config/cache.php`), which has the write host only. Anything else that writes a row and
+reads it straight back to decide what to do needs the write PDO too.
+
+## A promise that names nobody is mostly a Trash Nothing promise
+
+A promise with no promisee is stored against the poster (`messages_promises.userid = fromuser`, and
+`userid: 0` in the `message_promised` task). It reads as "promised to someone outside Freegle", and
+Freegle's "Someone else" choice does make it, but in the week after 29 October 2026 it was 1,495 Trash
+Nothing promises to 46 of those. Trash Nothing never says who it promised to, so the member it went to is
+usually one of the repliers. The "promised to someone else" notice assumed otherwise and told that member
+the item had gone, in the giver's name (Discourse 10305). Anything that tells repliers about a promise
+must decide what a Trash Nothing promise naming nobody means; `handleMessagePromised` sends nothing.
+
+## A sub-minute task with `withoutOverlapping()` runs once a minute
+
+`everyTenSeconds()` plus `withoutOverlapping()` lists as `10s` in `schedule:list` and runs once a minute.
+The scheduler's overlap lock is `FlockEventMutex` (the default `LOCK_STORE`, and what production uses): a
+flock taken by the `schedule:run` process. With a repeating task in the schedule, `schedule:run` stays up
+until the end of the minute, and `schedule:finish`, which runs in a different process when a background
+task ends, cannot release a flock it does not hold. So every repeat finds the lock taken and is skipped
+in silence. `tn:sync` was built that way and never repeated, on 5 November 2026. A sub-minute task keeps
+itself one at a time with its own lock instead, as `tn:sync` does with `PreventsOverlapping`. Check a
+change of cadence by running `schedule:run` for a minute and counting the starts.
 
 ## See also
 

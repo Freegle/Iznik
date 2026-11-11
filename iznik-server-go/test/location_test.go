@@ -157,7 +157,7 @@ func TestAddresses(t *testing.T) {
 
 func TestCreateLocation(t *testing.T) {
 	prefix := uniquePrefix("locwr_create")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	body := fmt.Sprintf(`{"name":"Test Location %s","polygon":"POLYGON((-3.21 55.94, -3.21 55.97, -3.18 55.97, -3.18 55.94, -3.21 55.94))"}`, prefix)
@@ -190,7 +190,7 @@ func TestCreateLocation(t *testing.T) {
 
 func TestCreateLocationNotAdmin(t *testing.T) {
 	prefix := uniquePrefix("locwr_notadm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"name":"Test Location","polygon":"POLYGON((-3.21 55.94, -3.21 55.97, -3.18 55.97, -3.18 55.94, -3.21 55.94))"}`
@@ -214,7 +214,7 @@ func TestCreateLocationNotLoggedIn(t *testing.T) {
 // ST_Simplify(polygon, 0.001) removes because it lies within ~111 m of the original edge.
 func TestUpdateLocationPreservesNearbyVertex(t *testing.T) {
 	prefix := uniquePrefix("locwr_nearvert")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -255,7 +255,7 @@ func TestUpdateLocationPreservesNearbyVertex(t *testing.T) {
 // survive the exact round-trip the editor uses: PATCH save -> GET areas reload.
 func TestUpdateLocationMidpointVertexSurvivesAreasReload(t *testing.T) {
 	prefix := uniquePrefix("locwr_reload")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -320,7 +320,7 @@ func TestUpdateLocationMidpointVertexSurvivesAreasReload(t *testing.T) {
 
 func TestUpdateLocation(t *testing.T) {
 	prefix := uniquePrefix("locwr_upd")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Create a location first.
@@ -396,7 +396,7 @@ func TestUpdateLocation(t *testing.T) {
 
 func TestUpdateLocationInvalidGeometry(t *testing.T) {
 	prefix := uniquePrefix("locwr_invgeo")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -419,7 +419,7 @@ func TestUpdateLocationInvalidGeometry(t *testing.T) {
 
 func TestUpdateLocationNotAdmin(t *testing.T) {
 	prefix := uniquePrefix("locwr_updna")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"id":1,"name":"Hacked"}`
@@ -431,9 +431,9 @@ func TestUpdateLocationNotAdmin(t *testing.T) {
 
 func TestExcludeLocation(t *testing.T) {
 	prefix := uniquePrefix("locwr_excl")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a test location.
@@ -462,9 +462,9 @@ func TestExcludeLocation(t *testing.T) {
 
 func TestExcludeLocationQueuesRemapTask(t *testing.T) {
 	prefix := uniquePrefix("locwr_exclrmp")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a test location with a polygon. The remap task needs the
@@ -508,9 +508,9 @@ func TestExcludeLocationQueuesRemapTask(t *testing.T) {
 
 func TestExcludeLocationNotMod(t *testing.T) {
 	prefix := uniquePrefix("locwr_exclnm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body := fmt.Sprintf(`{"id":1,"groupid":%d,"action":"Exclude"}`, groupID)
@@ -522,7 +522,7 @@ func TestExcludeLocationNotMod(t *testing.T) {
 
 func TestConvertKML(t *testing.T) {
 	prefix := uniquePrefix("locwr_kml")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	kml := `<?xml version="1.0" encoding="UTF-8"?>
@@ -568,7 +568,7 @@ func TestConvertKMLNotLoggedIn(t *testing.T) {
 
 func TestConvertKMLInvalidXML(t *testing.T) {
 	prefix := uniquePrefix("locwr_kmlbad")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json2.Marshal(map[string]interface{}{
@@ -583,7 +583,7 @@ func TestConvertKMLInvalidXML(t *testing.T) {
 
 func TestConvertKMLEmptyKML(t *testing.T) {
 	prefix := uniquePrefix("locwr_kmlempty")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json2.Marshal(map[string]interface{}{
@@ -601,7 +601,7 @@ func TestConvertKMLEmptyKML(t *testing.T) {
 func TestCreateLocationQueuesTaskRemapPostcodes(t *testing.T) {
 	// Test that creating a location with polygon geometry queues TaskRemapPostcodes
 	prefix := uniquePrefix("locwr_queuetask")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -631,7 +631,7 @@ func TestCreateLocationQueuesTaskRemapPostcodes(t *testing.T) {
 func TestUpdateLocationQueuesTaskRemapPostcodes(t *testing.T) {
 	// Test that updating a location's geometry queues TaskRemapPostcodes
 	prefix := uniquePrefix("locwr_updatetask")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -668,7 +668,7 @@ func TestUpdateLocationQueuesTaskRemapPostcodes(t *testing.T) {
 func TestLocationCreateWithBoundaryValidation(t *testing.T) {
 	// Test that location creation validates polygon boundaries
 	prefix := uniquePrefix("locwr_boundary")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	// Valid polygon with closed ring
@@ -703,7 +703,7 @@ func TestLocationCreateWithBoundaryValidation(t *testing.T) {
 func TestLocationTaskRemapPostcodesDataStructure(t *testing.T) {
 	// Test that TaskRemapPostcodes has correct data structure with location_id
 	prefix := uniquePrefix("locwr_taskdata")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -743,7 +743,7 @@ func TestLocationTaskRemapPostcodesDataStructure(t *testing.T) {
 func TestCreateLocationWithMissingName(t *testing.T) {
 	// Test that CreateLocation requires name field
 	prefix := uniquePrefix("locwr_noname")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	body := `{"polygon":"POLYGON((-0.21 51.5, -0.21 51.6, -0.10 51.6, -0.10 51.5, -0.21 51.5))"}`
@@ -756,7 +756,7 @@ func TestCreateLocationWithMissingName(t *testing.T) {
 func TestCreateLocationWithMissingPolygon(t *testing.T) {
 	// Test that CreateLocation requires polygon field
 	prefix := uniquePrefix("locwr_nopoly")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	body := fmt.Sprintf(`{"name":"Test %s"}`, prefix)
@@ -769,7 +769,7 @@ func TestCreateLocationWithMissingPolygon(t *testing.T) {
 func TestUpdateLocationNonExistentLocation(t *testing.T) {
 	// Test that UpdateLocation handles non-existent location gracefully
 	prefix := uniquePrefix("locwr_notexist")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	nonExistentID := uint64(999999999)
@@ -783,7 +783,7 @@ func TestUpdateLocationNonExistentLocation(t *testing.T) {
 func TestLocationSpatialIndexSync(t *testing.T) {
 	// Test that CreateLocation syncs to locations_spatial table
 	prefix := uniquePrefix("locwr_spatial")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -814,7 +814,7 @@ func TestLocationSpatialIndexSync(t *testing.T) {
 func TestCreateLocationCanonSetting(t *testing.T) {
 	// Test that CreateLocation sets canon field to lowercase name
 	prefix := uniquePrefix("locwr_canon")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	locationName := "Test LoC" + prefix
@@ -841,7 +841,7 @@ func TestCreateLocationCanonSetting(t *testing.T) {
 func TestLocationUpdateWithNilPolygon(t *testing.T) {
 	// Test that updating a location without polygon field is handled gracefully (no error)
 	prefix := uniquePrefix("locwr_nilpoly")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -882,7 +882,7 @@ func TestLocationUpdateWithNilPolygon(t *testing.T) {
 func TestLocationTaskProcessingVerificationFields(t *testing.T) {
 	// Test that TaskRemapPostcodes task has all required fields for backend handler
 	prefix := uniquePrefix("locwr_taskfields")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -930,7 +930,7 @@ func TestLocationTaskProcessingVerificationFields(t *testing.T) {
 func TestLocationRemapMultipleTasksOnNonOverlappingUpdate(t *testing.T) {
 	// Test that updating a location with non-overlapping geometry queues both old and new remap tasks
 	prefix := uniquePrefix("locwr_multiupdate")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -975,7 +975,7 @@ func TestLocationRemapMultipleTasksOnNonOverlappingUpdate(t *testing.T) {
 func TestLocationTaskQueueStalePrecondition(t *testing.T) {
 	// Test that TaskRemapPostcodes tasks are properly cleaned up before new ones are created
 	prefix := uniquePrefix("locwr_taskclean")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -1019,7 +1019,7 @@ func TestLocationTaskRemapIntegrationWithPostgresSync(t *testing.T) {
 	// Integration test: Verify that location geometry is synced to PostgreSQL after creation
 	// This is a precondition for PostcodeRemapService KNN queries
 	prefix := uniquePrefix("locwr_postgresync")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	db := database.DBConn

@@ -149,6 +149,7 @@ import PinchMe from '~/components/PinchMe.vue'
 import ConfirmModal from '~/components/ConfirmModal.vue'
 import AiImageRemoveModal from '~/components/AiImageRemoveModal.vue'
 import 'zoompinch/style.css'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
   // A posted message, whose photos we read from the store.
@@ -196,7 +197,7 @@ const canRemove = computed(() => {
   if (!props.id || props.attachments || !message.value) return false
   if (supportOrAdmin.value) return true
   return (message.value.groups || []).some((g) =>
-    ['Moderator', 'Owner'].includes(authStore.member(g.groupid))
+    [ROLE_MODERATOR, ROLE_OWNER].includes(authStore.member(g.groupid))
   )
 })
 

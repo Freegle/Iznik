@@ -158,10 +158,21 @@ type Address struct {
 	Thoroughfaredescriptor          string  `json:"thoroughfaredescriptor"`
 	Dependentthoroughfaredescriptor string  `json:"dependentthoroughfaredescriptor"`
 	Buildingname                    string  `json:"buildingname"`
+	Buildingnumber                  string  `json:"buildingnumber"`
 	Subbuildingname                 string  `json:"subbuildingname"`
 	Pobox                           string  `json:"pobox"`
 	Departmentname                  string  `json:"departmentname"`
 	Organisationname                string  `json:"organisationname"`
+}
+
+// Some PAF rows carry the number as the building name too; showing both would read "66 66 Old Road".
+// The address list for a postcode applies the same rule.
+func dedupeBuildingNumber(addresses []Address) {
+	for i := range addresses {
+		if addresses[i].Buildingnumber == addresses[i].Buildingname {
+			addresses[i].Buildingnumber = ""
+		}
+	}
 }
 
 func ListForUser(c *fiber.Ctx) error {
@@ -179,7 +190,7 @@ func ListForUser(c *fiber.Ctx) error {
 			"COALESCE(users_addresses.lat, locations.lat) AS lat, "+
 			"COALESCE(users_addresses.lng, locations.lng) AS lng, "+
 			"locations.name AS postcode, "+
-			"posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,subbuildingname,pobox,departmentname,organisationname").
+			"posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,paf_addresses.buildingnumber,subbuildingname,pobox,departmentname,organisationname").
 		Joins("INNER JOIN paf_addresses ON paf_addresses.id = users_addresses.pafid").
 		Joins("INNER JOIN locations ON locations.id = paf_addresses.postcodeid").
 		Joins("LEFT JOIN paf_posttown ON paf_posttown.id = paf_addresses.posttownid").
@@ -194,6 +205,8 @@ func ListForUser(c *fiber.Ctx) error {
 		Joins("LEFT JOIN paf_organisationname ON paf_organisationname.id = paf_addresses.organisationnameid").
 		Where("users_addresses.userid = ?", myid).
 		Scan(&r)
+
+	dedupeBuildingNumber(r)
 
 	if len(r) == 0 {
 		// Force [] rather than null to be returned.
@@ -218,7 +231,7 @@ func GetAddress(c *fiber.Ctx) error {
 				"COALESCE(users_addresses.lat, locations.lat) AS lat, "+
 				"COALESCE(users_addresses.lng, locations.lng) AS lng, "+
 				"locations.name AS postcode, "+
-				"posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,subbuildingname,pobox,departmentname,organisationname").
+				"posttown,dependentlocality,doubledependentlocality,thoroughfaredescriptor,dependentthoroughfaredescriptor,buildingname,paf_addresses.buildingnumber,subbuildingname,pobox,departmentname,organisationname").
 			Joins("LEFT JOIN chat_rooms ON chat_rooms.user1 = ? OR chat_rooms.user2 = ?", myid, myid).
 			Joins("LEFT JOIN chat_messages ON chat_messages.chatid = chat_rooms.id").
 			Joins("LEFT JOIN users ON users.id = ?", myid).
@@ -242,6 +255,8 @@ func GetAddress(c *fiber.Ctx) error {
 				id, myid, utils.CHAT_MESSAGE_ADDRESS, id, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT).
 			Limit(1).
 			Scan(&r)
+
+		dedupeBuildingNumber(r)
 	}
 
 	if len(r) == 0 {

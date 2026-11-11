@@ -82,15 +82,6 @@
                 </a>
               </template>
             </div>
-
-            <b-button variant="primary" class="mt-3" @click="added">
-              <v-icon icon="check" /> I put up a poster!
-            </b-button>
-            <p class="small-text mt-2">
-              <nuxt-link no-prefetch to="/noticeboards">
-                See where others have put posters
-              </nuxt-link>
-            </p>
           </div>
         </div>
 
@@ -173,7 +164,6 @@
       </b-col>
       <b-col cols="0" md="3" />
     </b-row>
-    <PosterModal v-if="showPosterModal" @hidden="showPosterModal = false" />
   </div>
 </template>
 
@@ -181,7 +171,6 @@
 import { useMobileStore } from '@/stores/mobile'
 import {
   ref,
-  defineAsyncComponent,
   definePageMeta,
   useHead,
   useRuntimeConfig,
@@ -189,10 +178,6 @@ import {
 } from '#imports'
 import InviteSomeone from '~/components/InviteSomeone'
 import { buildHead } from '~/composables/useBuildHead'
-
-const PosterModal = defineAsyncComponent(
-  () => import('~/components/PosterModal')
-)
 
 definePageMeta({
   layout: 'login',
@@ -214,7 +199,6 @@ useHead(
 )
 
 const language = ref('English')
-const showPosterModal = ref(false)
 
 const englishPosters = [
   { size: 'A4', url: 'https://freegle.in/A4Poster', img: '/posters/A4.jpg' },
@@ -243,10 +227,6 @@ const welshPosters = [
     img: '/posters/A5x2Welsh.jpg',
   },
 ]
-
-function added() {
-  showPosterModal.value = true
-}
 </script>
 
 <style scoped lang="scss">
@@ -374,10 +354,5 @@ function added() {
   max-width: 200px;
   border: 1px solid var(--color-gray-600);
   border-radius: var(--radius-sm, 0.375rem);
-}
-
-.small-text {
-  font-size: 0.85rem;
-  color: var(--color-gray-600);
 }
 </style>

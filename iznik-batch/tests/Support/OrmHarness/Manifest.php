@@ -3,9 +3,8 @@
 namespace Tests\Support\OrmHarness;
 
 /**
- * Loads tools/orm-migration/services/laravel/manifest.json - the same
- * manifest tools/orm-migration/php-extractor/extract.php generates and
- * the extractor writes. This is the ONE place the harness reads
+ * Loads tools/orm-migration/services/laravel/manifest.json, which the ORM
+ * migration extractor generated. This is the ONE place the harness reads
  * it from, so GoldenSql and ResultParity agree on the path and on caching.
  *
  * READS FROM A CONTAINER BIND MOUNT, NOT A RELATIVE PATH ESCAPE - found the

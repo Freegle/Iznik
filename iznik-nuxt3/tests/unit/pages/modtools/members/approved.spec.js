@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import ApprovedPage from '~/modtools/pages/members/approved/[[id]]/[[term]].vue'
+import { ROLE_MODERATOR } from '~/constants'
 
 // Mock refs that will be shared between tests
 const mockBusy = ref(false)
@@ -14,6 +15,7 @@ const mockShow = ref(0)
 const mockCollection = ref(null)
 const mockSearch = ref('')
 const mockFilter = ref('')
+const mockOrder = ref('newest')
 const mockSort = ref(true)
 const mockDistance = ref(10)
 const mockMembers = ref([])
@@ -33,6 +35,7 @@ vi.mock('~/composables/useModMembers', () => ({
     collection: mockCollection,
     search: mockSearch,
     filter: mockFilter,
+    order: mockOrder,
     sort: mockSort,
     distance: mockDistance,
     members: mockMembers,
@@ -65,7 +68,7 @@ vi.mock('@/stores/misc', () => ({
 // Mock useMe composable
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    myGroups: ref([{ id: 1, role: 'Moderator' }]),
+    myGroups: ref([{ id: 1, role: ROLE_MODERATOR }]),
   }),
 }))
 
@@ -123,6 +126,10 @@ describe('members/approved/[[id]]/[[term]].vue page', () => {
           },
           ModMemberTypeSelect: {
             template: '<div class="mod-member-type-select" />',
+            props: ['modelValue'],
+          },
+          ModMemberOrderSelect: {
+            template: '<div class="mod-member-order-select" />',
             props: ['modelValue'],
           },
           ModMemberSearchbox: {
@@ -191,6 +198,8 @@ describe('members/approved/[[id]]/[[term]].vue page', () => {
     mockCollection.value = null
     mockSearch.value = ''
     mockFilter.value = ''
+    mockOrder.value = 'newest'
+    mockMemberStore.order = undefined
     mockSort.value = true
     mockMembers.value = []
     mockVisibleMembers.value = []
@@ -309,6 +318,44 @@ describe('members/approved/[[id]]/[[term]].vue page', () => {
       expect(mockMemberStore.clear).toHaveBeenCalled()
       // Bump should have increased (don't check exact value as other tests may affect it)
       expect(mockBump.value).toBeGreaterThan(initialBump)
+    })
+
+    it('clears and bumps when the order changes', async () => {
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      const initialBump = mockBump.value
+      vi.clearAllMocks()
+
+      mockOrder.value = 'oldest'
+      await wrapper.vm.$nextTick()
+
+      expect(mockContext.value).toBe(null)
+      expect(mockMemberStore.clear).toHaveBeenCalled()
+      expect(mockBump.value).toBeGreaterThan(initialBump)
+    })
+
+    it('says so when the server listed newest first after oldest was asked for', async () => {
+      mockRouteParams.value = { id: '123', term: undefined }
+      mockOrder.value = 'oldest'
+      mockMemberStore.order = null
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.orderIgnored).toBe(true)
+      expect(wrapper.text()).toContain('Oldest first is not available yet')
+    })
+
+    it('says nothing when the server honoured the order, before any answer, or for mod mails', async () => {
+      mockRouteParams.value = { id: '123', term: undefined }
+      mockOrder.value = 'oldest'
+      mockMemberStore.order = 'oldest'
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.orderIgnored).toBe(false)
+      mockMemberStore.order = undefined
+      expect(mountComponent().vm.orderIgnored).toBe(false)
+      mockMemberStore.order = null
+      mockFilter.value = '6'
+      expect(mountComponent().vm.orderIgnored).toBe(false)
     })
 
     it('navigates when chosengroupid changes to 0', async () => {
