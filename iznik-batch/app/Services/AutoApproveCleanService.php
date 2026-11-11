@@ -38,7 +38,8 @@ use Illuminate\Support\Facades\Log;
  * arrive inside it are read again at publish (AutomodFactsService::liveVeto), the lockdown
  * switch is honoured like every other way a post goes live by itself, and the write itself
  * carries the whole decision: it lands only on a copy that is still Pending, unheld, not
- * pulled back, past any hold, not in the quality sample, and whose approve is still current
+ * pulled back, past any hold, not in the quality sample, from a member who is still
+ * auto-moderated on the community, and whose approve is still current
  * (recorded in approve mode, strictly later than the last edit and the last content check,
  * and at least the delay old). A decision goes stale the moment the post is edited after the
  * chart read it, or the content check runs again.
@@ -352,8 +353,9 @@ class AutoApproveCleanService
     /**
      * The one atomic write. Lands only on a copy that is still, right now, an unheld Pending row
      * that nobody pulled back, past any hold, outside the quality sample, with no message-level
-     * hold, spam reason or deletion, no microvolunteer reject and no open lockdown hold, and
-     * whose chart approve is current (see currentApprove). Everything the candidate select
+     * hold, spam reason or deletion, from a member who is not deleted and still has no posting
+     * status on the community, no microvolunteer reject and no open lockdown hold, and whose
+     * chart approve is current (see currentApprove). Everything the candidate select
      * checked is checked again here, in the statement itself, so a change landing in the gap
      * between the read and this write stands. Side effects follow only when the row changed.
      *
@@ -381,6 +383,19 @@ class AutoApproveCleanService
                         ->whereNull('wm.heldby')
                         ->whereNull('wm.spamreason')
                         ->whereNull('wm.deleted');
+                })
+                // The member is still auto-moderated here: a moderator who sets a posting status, or
+                // removes the member, after the candidate select stops the publish.
+                ->whereExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('messages as pm')
+                        ->join('users as pu', 'pu.id', '=', 'pm.fromuser')
+                        ->join('memberships as pmem', function ($j) {
+                            $j->on('pmem.userid', '=', 'pm.fromuser')->on('pmem.groupid', '=', 'mg.groupid');
+                        })
+                        ->whereColumn('pm.id', 'mg.msgid')
+                        ->whereNull('pu.deleted')
+                        ->whereNull('pmem.ourPostingStatus');
                 })
                 ->whereNotExists(function ($q) {
                     $q->select(DB::raw(1))

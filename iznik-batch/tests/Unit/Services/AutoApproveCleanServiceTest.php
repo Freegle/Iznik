@@ -871,6 +871,25 @@ class AutoApproveCleanServiceTest extends TestCase
         }
     }
 
+    public function test_a_posting_status_or_a_deleted_member_in_the_gap_blocks_the_write(): void
+    {
+        $arrangements = [
+            'moderated' => fn ($u, $g) => DB::table('memberships')->where('userid', $u->id)->where('groupid', $g->id)->update(['ourPostingStatus' => 'MODERATED']),
+            'prohibited' => fn ($u, $g) => DB::table('memberships')->where('userid', $u->id)->where('groupid', $g->id)->update(['ourPostingStatus' => 'PROHIBITED']),
+            'removed' => fn ($u, $g) => DB::table('memberships')->where('userid', $u->id)->where('groupid', $g->id)->delete(),
+            'deleted member' => fn ($u, $g) => DB::table('users')->where('id', $u->id)->update(['deleted' => now()]),
+        ];
+
+        foreach ($arrangements as $label => $arrange) {
+            [$user, $group, $message] = $this->makeApprovable();
+            $arrange($user, $group);
+
+            $this->assertFalse($this->writeSelectedRow($message, $group, $user), $label);
+
+            $this->assertNothingPublished($message->id, $group->id, MessageGroup::COLLECTION_PENDING);
+        }
+    }
+
     public function test_a_microvolunteer_reject_in_the_gap_blocks_the_write(): void
     {
         [$user, $group, $message] = $this->makeApprovable();
