@@ -53,9 +53,6 @@ class ExtractPromiseDatasetCommand extends Command
 
         $this->info("Extracting promise dataset since {$since}...");
 
-        // The dataset is member chat text: keep it readable by the batch user only. The umask makes
-        // the file owner-only from the moment it is created.
-        $previousUmask = umask(0077);
         $outDir = dirname($outFile);
         if (!is_dir($outDir)) {
             mkdir($outDir, 0700, true);
@@ -78,13 +75,16 @@ class ExtractPromiseDatasetCommand extends Command
 
         $this->info("Found {$rooms->count()} rooms to process");
 
-        // Open CSV file
+        // Open CSV file. The dataset is member chat text: keep it readable by the batch user only.
+        // The umask makes the file owner-only from the moment it is created, and is put back
+        // straight after, whether or not the open worked.
+        $previousUmask = umask(0077);
         $fp = fopen($outFile, 'w');
+        umask($previousUmask);
         if (!$fp) {
             $this->error("Failed to open output file: {$outFile}");
             return 1;
         }
-        umask($previousUmask);
         chmod($outFile, 0600); // a file left over from an earlier run keeps its old mode otherwise
 
         // Write BOM-free UTF-8 header. escape: '' = RFC-4180 quoting (double the quotes,

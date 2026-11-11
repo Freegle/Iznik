@@ -212,13 +212,14 @@ class TrainPromiseClassifierCommand extends Command
             chmod($modelPath, 0600);
 
             $this->info("Model saved to: $modelPath");
-            umask($previousUmask);
 
             return Command::SUCCESS;
         } catch (\Exception $e) {
             $this->error('Error: ' . $e->getMessage());
             $this->error($e->getTraceAsString());
             return Command::FAILURE;
+        } finally {
+            umask($previousUmask);
         }
     }
 
@@ -233,7 +234,7 @@ class TrainPromiseClassifierCommand extends Command
         // on any PHP version, and the global random generator is left alone.
         $uniqueRooms = array_values(array_unique($dataset['groups']));
         usort($uniqueRooms, function ($a, $b) use ($seed) {
-            return crc32($seed . ':' . $a) <=> crc32($seed . ':' . $b) ?: $a <=> $b;
+            return strcmp(md5($seed . ':' . $a), md5($seed . ':' . $b)) ?: $a <=> $b;
         });
 
         $testCount = (int)ceil(count($uniqueRooms) * $testFraction);
