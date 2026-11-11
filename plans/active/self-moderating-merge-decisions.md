@@ -104,3 +104,13 @@ Batch test tally, against master's batch tests (5,116):
 - Maintenance and deploy scripts and runbooks checked the API with `GET /api/group`, a route the branch lacks: they use `GET /api/authority?search=a`.
 - ModTools Support Tools: the Community tab (find, list, contact, add community) used deleted components: replaced by a Volunteers tab holding Check Volunteers; `?tab=community` is now `?tab=volunteers`.
 - ModTools members list: rows from `GET /modtools/members` carry the user's id as `id`, and the member card reads `userid`: the store now carries both.
+
+### Master changes deliberately not carried (checked with the dropped-changes script on the merge)
+
+- Spam fuzzy worry-word match fix (one-letter substitution is not a typo): the branch has no worry-word or concern-keyword matching at all (the judgement service replaced the word lists), so there is no `matchesFuzzy` or `matchesFuzzyToken` to fix and nothing to carry. The master tests for it (`isSingleSubstitution`) stay out with the code.
+- Browse donation opt-out in the birthday modal: the birthday appeal is a community anniversary appeal and is gone, so the check has nothing to guard. `askForDonations` in `useMe` and every other ask keep it.
+- Required-reply alerts and alert attachments (alert Go, AlertService, AlertMail, EmailSpoolerService attachments, the alert template, AlertAPI, the alert store, ModAlertHistory and their tests), as Edward decided.
+- Rippling between communities: duplicate-repost check in ExpandService, `implicit = 0` in rippling attribution, analytics and metrics, ReengageContentService and story queries, and the Membership role constants.
+- Membership origin and implicit: `added_origin` on message submit, TrashNothing placement flags.
+- Approved-members sort order (`useModMembers`, member store, approved page spec), the multi-community report modal (`MessageReportModal`), and the "Hide held posts" switch (`useModMessages`).
+- Carried across, not dropped: the auto-split banner now shows in the branch's `ModMessage`.

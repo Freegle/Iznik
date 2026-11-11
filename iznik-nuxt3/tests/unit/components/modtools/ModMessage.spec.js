@@ -121,6 +121,23 @@ describe('ModMessage', () => {
     expect(wrapper.text()).toContain('Published')
   })
 
+  it('says when a post was split automatically into items', () => {
+    setMessage({ autosplit: 1, bulkcount: 3 })
+    setUser()
+    const wrapper = mountComponent()
+
+    expect(wrapper.text()).toContain('Split automatically into 3 items.')
+    expect(wrapper.text()).toContain('The member can undo it.')
+  })
+
+  it('does not mention a split on an ordinary post', () => {
+    setMessage()
+    setUser()
+    const wrapper = mountComponent()
+
+    expect(wrapper.text()).not.toContain('Split automatically')
+  })
+
   it('never says pending, awaiting or queue', () => {
     setMessage()
     setUser()

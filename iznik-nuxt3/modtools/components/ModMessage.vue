@@ -18,6 +18,17 @@
     </NoticeMessage>
 
     <NoticeMessage
+      v-if="isSplit"
+      variant="info"
+      class="mt-2"
+      data-testid="autosplit-banner"
+    >
+      <strong>Split automatically into {{ message.bulkcount }} items.</strong>
+      The member posted these as one post and Freegle listed them separately, so
+      people can say which they want. The member can undo it.
+    </NoticeMessage>
+
+    <NoticeMessage
       v-for="(reason, index) in contentCheckReasons"
       :key="'ccr-' + index"
       variant="warning"
@@ -121,6 +132,7 @@ import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
 import { datetimeshort } from '~/composables/useTimeFormat'
+import { isAutoSplit } from '~/composables/useAutoSplit'
 import NoticeMessage from '~/components/NoticeMessage'
 
 const ModPhoto = defineAsyncComponent(
@@ -178,6 +190,8 @@ const fromUser = computed(() => {
   if (!fromUserId.value) return null
   return userStore.byId(fromUserId.value) || null
 })
+
+const isSplit = computed(() => isAutoSplit(message.value))
 
 const attachments = computed(() => message.value?.attachments || [])
 
