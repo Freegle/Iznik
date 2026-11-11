@@ -1,6 +1,3 @@
-// The slider takes the density cap for a place, unless the poster has set it
-themselves. async function adoptCap(at) { try { const r = await
-apiInstance.town.fetchNear( at.lat, at.lng,
 <template>
   <div class="reach-picker">
     <p v-if="online" class="text-muted small mb-0">

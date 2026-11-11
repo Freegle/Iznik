@@ -1,5 +1,3 @@
-// Notes are national, so they show in the order the server gives them. const
-sortedComments = computed(() => (user.value ? user.value.comments : []) || [])
 <template>
   <div v-if="user">
     <ModComment
@@ -53,26 +51,10 @@ const showMore = computed(() => {
   return pluralize('more note', sortedComments.value.length - 1, true)
 })
 
-const sortedComments = computed(() => {
-  const ret = user.value ? user.value.comments : []
-
-  if (ret) {
-    ret.sort((a, b) => {
-      const aone = oneOfMyGroups(a.groupid)
-      const bone = oneOfMyGroups(b.groupid)
-
-      if (aone && !bone) {
-        return -1
-      } else if (bone && !aone) {
-        return 1
-      } else {
-        return 0
-      }
-    })
-  }
-
-  return ret || []
-})
+// Notes are national, so they show in the order the server gives them.
+const sortedComments = computed(
+  () => (user.value ? user.value.comments : []) || []
+)
 
 const comments = computed(() => {
   if (showAll.value) {
