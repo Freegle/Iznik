@@ -67,15 +67,16 @@ const ourFetch = fetchRetry(fetch)
 // not answer are one issue (api-unreachable), and every other failure is one issue per method,
 // normalised path and status. Returns whether an event was sent.
 function reportApiFailure(disposition, { status, method, path, detail }) {
-  const fingerprint = apiFailureFingerprint(disposition, method, path, status)
-
-  if (!underSessionCap(fingerprint)) {
-    logDroppedApiFailure({ status, method, path, reason: 'session_cap' })
+  // Sentry is only initialized on the client, so check before calling, and before counting: a
+  // server render that cannot send must not use up the session's allowance.
+  if (typeof Sentry?.captureMessage !== 'function') {
     return false
   }
 
-  // Sentry is only initialized on the client, so check before calling.
-  if (typeof Sentry?.captureMessage !== 'function') {
+  const fingerprint = apiFailureFingerprint(disposition, method, path, status)
+
+  if (!underSessionCap(fingerprint, method + ' ' + normaliseApiPath(path))) {
+    logDroppedApiFailure({ status, method, path, reason: 'session_cap' })
     return false
   }
 

@@ -11,6 +11,7 @@
 // method and normalised path, so it stays visible as a rate.
 
 import { warn } from '~/composables/useClientLog'
+import { APIError } from '~/api/APIErrors'
 
 // Statuses that are an answer, not a fault.
 const EXPECTED_STATUSES = new Set([401, 403, 404, 409, 410, 429])
@@ -75,10 +76,12 @@ export function apiFailureFingerprint(disposition, method, path, status) {
 }
 
 /**
- * True while this fingerprint is under its limit for the session, and counts the event.
+ * True while this fingerprint is under its limit for the session, and counts the event. Calls with
+ * no reply share one fingerprint across every endpoint, so the endpoint is part of the count: a
+ * new endpoint failing after ten others has still not been reported.
  */
-export function underSessionCap(fingerprint) {
-  const key = fingerprint.join('|')
+export function underSessionCap(fingerprint, endpoint = '') {
+  const key = fingerprint.join('|') + '|' + endpoint
   const sent = sentThisSession.get(key) || 0
 
   if (sent >= MAX_EVENTS_PER_FINGERPRINT) {
@@ -115,17 +118,14 @@ export function logDroppedApiFailure({ status, method, path, reason }) {
  * Pull the call out of an APIError, or null if this is not one.
  */
 function failedCall(err) {
-  const request = err?.request
-  const response = err?.response
-
-  if (!request && !response) {
+  if (!(err instanceof APIError)) {
     return null
   }
 
   return {
-    status: response?.status ?? null,
-    method: request?.method || '',
-    path: request?.path || '',
+    status: err.response?.status ?? null,
+    method: err.request?.method || '',
+    path: err.request?.path || '',
   }
 }
 
@@ -161,7 +161,12 @@ export function applyApiFailurePolicy(event, hint) {
     call.status
   )
 
-  if (!underSessionCap(fingerprint)) {
+  if (
+    !underSessionCap(
+      fingerprint,
+      call.method + ' ' + normaliseApiPath(call.path)
+    )
+  ) {
     return false
   }
 

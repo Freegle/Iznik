@@ -91,7 +91,31 @@ describe('useApiFailurePolicy', () => {
     })
   })
 
+  describe('underSessionCap for calls with no reply', () => {
+    it('counts each endpoint separately under the shared fingerprint', () => {
+      const fp = ['api-unreachable']
+
+      for (let i = 0; i < MAX_EVENTS_PER_FINGERPRINT; i++) {
+        expect(underSessionCap(fp, 'GET /chat')).toBe(true)
+      }
+
+      expect(underSessionCap(fp, 'GET /chat')).toBe(false)
+      expect(underSessionCap(fp, 'GET /newsfeedcount')).toBe(true)
+    })
+  })
+
   describe('applyApiFailurePolicy', () => {
+    it('treats only an APIError as an API failure, whatever fields something else has', () => {
+      const lookalike = Object.assign(new Error('x'), {
+        request: { method: 'GET', path: '/a' },
+        response: { status: 404 },
+      })
+      expect(applyApiFailurePolicy({}, { originalException: lookalike })).toBe(
+        true
+      )
+      expect(mockWarn).not.toHaveBeenCalled()
+    })
+
     it('leaves an event that is not an API error alone', () => {
       const event = {}
       expect(
