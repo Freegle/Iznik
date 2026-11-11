@@ -44,6 +44,40 @@ func insertAutomodRow(t *testing.T, msgid uint64, groupid uint64, verdict string
 	assert.NoError(t, res.Error)
 }
 
+// The hold is not extended for ever: a post 48 hours old or more is left alone, so a tab that
+// keeps loading the Pending queue cannot keep a post out of the 48 hour sweep.
+func TestListMessagesMTPendingHoldStopsAtTheSweepAge(t *testing.T) {
+	prefix := uniquePrefix("hold_cap")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+
+	fresh := CreateTestMessage(t, poster, groupID, prefix+" fresh pending", 52.0, -1.0)
+	old := CreateTestMessage(t, poster, groupID, prefix+" old pending", 52.0, -1.0)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", fresh, old)
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", fresh, old)
+	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW(), contentcheck_checked_at=NOW(), autoapprove_hold_until=NULL WHERE msgid=?", fresh)
+	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 49 HOUR, contentcheck_checked_at=NOW() - INTERVAL 49 HOUR, autoapprove_hold_until=NULL WHERE msgid=?", old)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var freshHeld, oldHeld int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid=? AND groupid=? AND autoapprove_hold_until IS NOT NULL", fresh, groupID).Scan(&freshHeld)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid=? AND groupid=? AND autoapprove_hold_until IS NOT NULL", old, groupID).Scan(&oldHeld)
+	assert.Equal(t, int64(1), freshHeld, "a fresh post is held while the queue is open")
+	assert.Equal(t, int64(0), oldHeld, "a post past the sweep age is no longer extended")
+}
+
 // A3: loading the Pending queue bumps autoapprove_hold_until to >= NOW()+10m
 // (extend-only — an existing longer hold is never shortened).
 func TestListMessagesMTPendingBumpsHold(t *testing.T) {

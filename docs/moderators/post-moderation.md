@@ -418,7 +418,9 @@ These are known and not fully solved:
   still waiting after that was held back for a reason the card cannot show.
 - **Opening Pending guarantees you a look.** Every post on the queue gets at least 10
   more minutes before it can auto-approve, extended each time you load the page.
-  Nothing publishes out from under you while you are reading it.
+  Nothing publishes out from under you while you are reading it. The 48-hour sweep
+  honours the same pause, but a post stops being extended once it is 48 hours old, so
+  a page left open cannot hold a post back for ever.
 
   ![The Pending queue on a community in the trial: the help box, and automated review's line on a post it is holding](assets/pending.png)
 - **One oversight queue, Check**, sits under Approved in the menu, indented and joined

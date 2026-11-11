@@ -455,14 +455,24 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	// only the communities in the request that are in the post-moderation trial: nothing reads
 	// the hold anywhere else, so outside the trial this would be a write to the hottest ModTools
 	// page's rows for nothing.
+	//
+	// A post stops being extended once it is pendingHoldMaxAgeHours old, so a moderator tab that
+	// keeps refreshing, or a script that keeps polling, cannot keep a post out of the 48 hour
+	// sweep for ever: the last hold lapses 10 minutes later and the sweep then publishes it.
 	if collection == utils.COLLECTION_PENDING {
 		if trialGroupIDs := utils.AutoapproveTrialGroups(groupIDs); len(trialGroupIDs) > 0 {
-			db.Table("messages_groups").
+			res := db.Table("messages_groups").
 				Where("groupid IN ? AND collection = 'Pending' AND heldby IS NULL AND deleted = 0 AND rippled_in = 0 "+
-					"AND (contentcheck_checked_at IS NOT NULL OR arrival < NOW() - INTERVAL 30 MINUTE)",
-					trialGroupIDs).
+					"AND (contentcheck_checked_at IS NOT NULL OR arrival < NOW() - INTERVAL 30 MINUTE) "+
+					"AND arrival > NOW() - INTERVAL ? HOUR",
+					trialGroupIDs, pendingHoldMaxAgeHours).
 				Update("autoapprove_hold_until",
 					gorm.Expr("GREATEST(COALESCE(autoapprove_hold_until, NOW()), NOW() + INTERVAL 10 MINUTE)"))
+			if res.Error != nil {
+				// The list is still returned. Without the hold a post can publish under a moderator
+				// who has the queue open, so say so.
+				log.Printf("ListMessagesMT: could not set the auto-approve hold for groups %v: %v", trialGroupIDs, res.Error)
+			}
 		}
 	}
 
@@ -491,6 +501,11 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		"context":  respCtx,
 	})
 }
+
+// pendingHoldMaxAgeHours is how old a Pending post can be and still have its auto-approve hold
+// extended by a moderator loading the queue. It matches the age after which the 48 hour sweep
+// (AutoApproveService, PENDING_HOURS) takes a post.
+const pendingHoldMaxAgeHours = 48
 
 // GetMessagesWithHistory handles GET /message/:ids - fetches one or more messages.
 // Message history is now returned via the user endpoint (GET /user/fetchmt?modtools=true).
