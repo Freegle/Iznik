@@ -86,7 +86,7 @@ the click.
    `?monthly=1`), clamps it to what the API accepts (£1–£250), and holds the
    payment buttons back for up to 5s while the auto-login from `app.vue`
    completes, so a fast tap cannot race the login into a 401. The payment section follows an edited
-   amount 700 ms after the last keystroke, and in the app `StripeDonate` only creates its payment
+   amount 700 ms after the last keystroke (and is hidden until then, so a tap cannot pay an old amount), and in the app `StripeDonate` only creates its payment
    intent in advance when there is a session; without one the intent is created on the button press.
 
 ## Donors who asked not to be asked
