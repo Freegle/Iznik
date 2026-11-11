@@ -2249,7 +2249,10 @@ class ChatNotificationTest extends TestCase
             $this->createTestChatMessage($room, $member, ['message' => 'A reply from the member.', 'date' => now()->subMinutes(15)]),
             $this->createTestChatMessage($room, $moderator, ['message' => 'Second earlier volunteer note.', 'date' => now()->subMinutes(10)]),
         ]);
-        $latest = $this->createTestChatMessage($room, $moderator, ['message' => 'The new volunteer message.']);
+        // Long enough that the hidden preview line, which is cut at 75 characters, ends before the
+        // sign-off and does not count as a second copy of it.
+        $newText = 'The new volunteer message, which is long enough to fill the whole of the preview line on its own.';
+        $latest = $this->createTestChatMessage($room, $moderator, ['message' => $newText]);
 
         $mail = new ChatNotification($member, $moderator, $room, $latest, ChatRoom::TYPE_USER2MOD, $earlier);
         $mail->build();
@@ -2258,7 +2261,7 @@ class ChatNotificationTest extends TestCase
         $html = $mail->render();
         $this->assertStringContainsString('First earlier volunteer note.', $html);
         $this->assertStringContainsString('Second earlier volunteer note.', $html);
-        $this->assertStringContainsString('The new volunteer message.', $html);
+        $this->assertStringContainsString($newText, $html);
         $this->assertSame(1, substr_count($html, e($signOff)), 'the new message is signed once and the quoted ones not at all');
 
         $text = $this->renderTextEmail($mail);

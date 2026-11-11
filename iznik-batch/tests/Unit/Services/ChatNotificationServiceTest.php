@@ -1876,11 +1876,15 @@ class ChatNotificationServiceTest extends TestCase
         $msg = $this->createTestChatMessage($room, $sender, [
             'message' => 'Send me £20 first',
             'type' => \App\Models\ChatMessage::TYPE_IMAGE,
-            'imageid' => 12345,
             'date' => now()->subMinutes(5),
             'reviewrequired' => 1,
         ]);
-        DB::table('chat_messages')->where('id', $msg->id)->update(['reportreason' => 'Money']);
+        $imageId = DB::table('chat_images')->insertGetId([
+            'chatmsgid' => $msg->id,
+            'hash' => 'warnedimagehash01',
+            'contenttype' => 'image/jpeg',
+        ]);
+        DB::table('chat_messages')->where('id', $msg->id)->update(['imageid' => $imageId, 'reportreason' => 'Money']);
 
         $mail = new \App\Mail\Chat\ChatNotification(
             $recipient->fresh(), $sender->fresh(), $room->fresh(), $msg->fresh(), ChatRoom::TYPE_USER2USER

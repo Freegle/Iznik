@@ -103,15 +103,16 @@ class AuthorityStatsCommandTest extends TestCase
         $sheet = (new XlsxReader())->load($files[0]);
         $standard = $sheet->getSheetByName('Standard report');
 
-        // First month: 150 kg and 14 gifts. 213.30 + 14 x 0.7297 = 223.52.
+        // The scenario has one gift of 25 kg, in the last month. 25 x 1.422 + 0.73 = 36.28.
         $this->assertSame('Benefit*', $standard->getCell('A12')->getValue());
-        $this->assertEqualsWithDelta(223.5, (float) $standard->getCell('B12')->getValue(), 0.001);
-        // The quarter: 600 kg and 53 gifts. 853.20 + 53 x 0.7297 = 891.87.
-        $this->assertEqualsWithDelta(891.9, (float) $standard->getCell('E12')->getValue(), 0.001);
+        $this->assertEqualsWithDelta(0.0, (float) $standard->getCell('B12')->getValue(), 0.001);
+        $this->assertEqualsWithDelta(36.3, (float) $standard->getCell('D12')->getValue(), 0.001);
+        // The quarter has the same single gift.
+        $this->assertEqualsWithDelta(36.3, (float) $standard->getCell('E12')->getValue(), 0.001);
 
-        // 53 gifts at £0.73 each.
+        // One gift at £0.73.
         $this->assertSame(
-            '* Includes £39 saved on clearing up fly-tipping, based on a 2020 study of Freegle data by DEFRA volunteers.',
+            '* Includes £1 saved on clearing up fly-tipping, based on a 2020 study of Freegle data by DEFRA volunteers.',
             $standard->getCell('A14')->getValue()
         );
 

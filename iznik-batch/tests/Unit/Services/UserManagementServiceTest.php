@@ -207,6 +207,7 @@ class UserManagementServiceTest extends TestCase
             'type' => 'Message',
             'message' => 'A post',
             'timestamp' => now()->subYears(1),
+            'position' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
         ]);
 
         $this->service->forgetInactiveUsers();

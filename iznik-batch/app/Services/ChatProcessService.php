@@ -288,7 +288,7 @@ class ChatProcessService
      *
      * Delivered is what the poster's chat fetch needs to show the reply: processed and successful,
      * and neither held for review (a Fully moderated sender, a Moderated sender whose text trips a
-     * check, a message after a held one) nor dropped by a block keyword. A held or dropped reply is
+     * check, a message after a held one). A held reply is
      * processed and successful too, and the poster is shown nothing of it, so its question stays
      * hidden as well, and is not emailed. If a moderator approves the reply, the Go API shows the
      * question with it (chat/replyconfirm.go, revealQuestionOfApprovedReply).

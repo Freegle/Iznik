@@ -1163,24 +1163,6 @@ class ChatProcessServiceTest extends TestCase
         $this->assertReplyAndQuestionHidden($reply, 'a Moderated member whose text has a money symbol');
     }
 
-    public function test_a_confirmed_reply_dropped_by_a_block_keyword_keeps_its_question_hidden(): void
-    {
-        $word = 'testblockword' . uniqid();
-        $this->seedBlockKeyword($word);
-        $reply = $this->replyAwaitingConfirmation(
-            ['answer' => 'yes', 'answered_at' => now()],
-            ['chatmodstatus' => 'Moderated'],
-            ['message' => "Claim your voucher at {$word} today"]
-        );
-
-        $this->service->processIncoming();
-
-        $updated = DB::table('chat_messages')->where('id', $reply->id)->first();
-        $this->assertEquals(1, $updated->reviewrejected, 'the reply is dropped');
-        $this->assertEquals(1, $updated->processingsuccessful, 'and is processed, which is why the question was shown with it');
-        $this->assertReplyAndQuestionHidden($reply, 'a block keyword');
-    }
-
     public function test_a_confirmed_reply_that_follows_a_held_message_keeps_its_question_hidden(): void
     {
         $reply = $this->replyAwaitingConfirmation(

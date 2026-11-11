@@ -328,7 +328,7 @@ class EngagementServiceTest extends TestCase
     {
         // A reply confirmation names one post, and the reply it holds is the other member's reply that the sweep reads as
         // "this question has stopped applying". Retiring it would drop the held reply, and the replier's yes would be refused.
-        [, , $posts] = $this->seedMemberWithPosts(2);
+        [, $posts] = $this->seedMemberWithPosts(2);
         $this->service()->run();
         $deliveryId = DB::table('chat_prompts')->where('kind', '<>', 'confirm_reply')->orderByDesc('chatmsgid')->value('chatmsgid');
         $this->assertNotNull($deliveryId, 'the run asked the poster a question about the posts');
