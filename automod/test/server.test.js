@@ -3,6 +3,7 @@
 // connection. Uses FakeBackend so these run fast and without a model.
 import { test, describe, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../src/server.js';
@@ -183,6 +184,41 @@ describe('POST /review', () => {
     assert.match((await res.json()).error, /deadline_ms/);
   });
 
+  test('400s when msgid or groupid is not a positive whole number or a short string', async () => {
+    for (const bad of [{ a: 1 }, 'x'.repeat(65), -1, 1.5, [1], true]) {
+      let res = await review(baseUrl, { msgid: bad, groupid: 1 });
+      assert.equal(res.status, 400, JSON.stringify(bad));
+      res = await review(baseUrl, { msgid: 1, groupid: bad });
+      assert.equal(res.status, 400, JSON.stringify(bad));
+    }
+  });
+
+  test('keeps a multi-byte character that is split across two chunks of the request body', async () => {
+    const seen = [];
+    const spy = { setQuestions() {}, async ask(question, text) { seen.push(text); return { p: 0.05, answer: 'no', model: 'spy' }; } };
+    const { app, url } = await listen({ backend: spy });
+    const log = mock.method(console, 'log', () => {});
+    try {
+      const bytes = Buffer.from(JSON.stringify({ msgid: 1, groupid: 1, subject: 'OFFER: Sofa', body: 'Caf\u00e9 table', type: 'Offer', facts: completeFacts() }));
+      // Split inside the two bytes of the e-acute.
+      const cut = bytes.indexOf(Buffer.from('\u00e9')) + 1;
+      await new Promise((resolve, reject) => {
+        const req = http.request(`${url}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res) => {
+          res.resume();
+          res.on('end', resolve);
+        });
+        req.on('error', reject);
+        req.write(bytes.subarray(0, cut));
+        setTimeout(() => req.end(bytes.subarray(cut)), 30);
+      });
+      assert.ok(seen.length > 0);
+      assert.ok(seen.every((text) => text.includes('Caf\u00e9 table') && !text.includes('\ufffd')), 'the text the model sees is what the member wrote');
+    } finally {
+      log.mock.restore();
+      await new Promise((resolve) => app.close(resolve));
+    }
+  });
+
   test('400s on an oversized body', async () => {
     const hugeBody = 'x'.repeat(1_000_001);
     const res = await review(baseUrl, { msgid: 1, groupid: 1, body: hugeBody });
@@ -204,10 +240,15 @@ describe('POST /review - the request must carry the facts', () => {
       assert.equal(body.verdict, 'hold');
       assert.equal(body.end, 'UNAVAILABLE');
 
-      // It counts against the backend's health, so a batch that has stopped sending a fact shows.
+      // The defect is in the request, not the backend, so it does not count against the
+      // backend's health. It shows in the metrics, and the cause is on stderr.
       const health = await (await fetch(`${url}/health`)).json();
-      assert.equal(health.consecutive_failures, 1);
-      assert.match(health.last_error, /mod_note/);
+      assert.equal(health.consecutive_failures, 0);
+      assert.equal(health.status, 'ok');
+      const metrics = await (await fetch(`${url}/metrics`)).json();
+      assert.equal(metrics.bad_requests, 1);
+      assert.equal(metrics.unavailable, 0);
+      assert.match(err.mock.calls[0].arguments[0], /mod_note/);
     } finally {
       err.mock.restore();
       log.mock.restore();
@@ -286,6 +327,40 @@ describe('concurrency', () => {
 });
 
 describe('deadline', () => {
+  test('the caller\'s deadline includes the wait in the queue', async () => {
+    // The first question of the first review takes a while; every other question is instant.
+    let calls = 0;
+    const late = {
+      setQuestions() {},
+      async ask(question, text, opts) {
+        if (opts.deadline && Date.now() > opts.deadline) throw new Error('the deadline passed before the model was asked');
+        calls += 1;
+        if (calls === 1) await new Promise((resolve) => setTimeout(resolve, 200));
+        return { p: 0.05, answer: 'no', model: 'late' };
+      },
+    };
+    const { app, url } = await listen({ backend: late, concurrency: 1, queueMax: 5 });
+    const log = mock.method(console, 'log', () => {});
+    const err = mock.method(console, 'error', () => {});
+    try {
+      const post = { msgid: 40, groupid: 1, subject: 'Sofa', body: 'Brown sofa', type: 'Offer', facts: completeFacts() };
+      const first = review(url, post);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      // Received behind the first review with 60ms to spend; by the time it starts that has gone.
+      const second = await review(url, { ...post, msgid: 41, deadline_ms: 60 });
+      assert.equal((await first).status, 200);
+      const body = await second.json();
+      assert.equal(body.end, 'UNAVAILABLE', 'a request whose caller has already given up asks the model nothing');
+      assert.match(body.path.at(-1).error, /deadline/);
+      const line = JSON.parse(log.mock.calls.at(-1).arguments[0]);
+      assert.equal(line.over_budget, true, 'and the time spent waiting counts towards being over budget');
+    } finally {
+      log.mock.restore();
+      err.mock.restore();
+      await new Promise((resolve) => app.close(resolve));
+    }
+  });
+
   test('a review that overran the caller\'s deadline is logged as over budget', async () => {
     const { app, url } = await listen({ backend: slowBackend(30) });
     const log = mock.method(console, 'log', () => {});

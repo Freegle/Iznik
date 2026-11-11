@@ -127,8 +127,10 @@ function canReachEnd(workflow, stateId, seenOnThisPath) {
  * rule gating, when-skips, keyword flags, hints from Freegle's own checks - is decided here,
  * so a backend only ever has to answer the narrow text questions.
  *
- * A request may carry `deadline_ms`: how long the caller will wait. No model call starts after
- * that and one in flight is cut off, so the caller's timeout and the service's agree.
+ * A request may carry `deadline_ms`: how long the caller will wait, counted from `received_at`
+ * (when the request arrived, in epoch milliseconds; the start of the review if it is absent).
+ * No model call starts after that and one in flight is cut off, so the caller's timeout and the
+ * service's agree, even when the request waited its turn first.
  *
  * Every fact the chart reads must be in the request as true or false. One that is missing, or is
  * anything else, is not a "no": the question holds the post as unavailable and names the fact,
@@ -159,7 +161,8 @@ export function createReviewer({ backend, chartPath } = {}) {
   async function review(request) {
     const started = Date.now();
     const { msgid, groupid, subject, body, type, rules = {}, backend: backendName, deadline_ms } = request;
-    const deadline = Number.isFinite(deadline_ms) && deadline_ms > 0 ? started + deadline_ms : undefined;
+    const received = Number.isFinite(request.received_at) ? request.received_at : started;
+    const deadline = Number.isFinite(deadline_ms) && deadline_ms > 0 ? received + deadline_ms : undefined;
     const acct = newAccount();
     const { text, truncated } = postTextInfo({ type, subject, body });
     const flags = keywordFlags(text);
@@ -270,7 +273,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, flags, hints, r
 
   // The backend could not answer: hold, keep the cause on the step, and say so on stderr, since
   // a service that holds every post with no word of why cannot be put right.
-  const unavailable = (err) => {
+  const unavailable = (err, badRequest = false) => {
     const error = String(err?.message || err || 'unknown error').slice(0, ERROR_CHARS);
     console.error(JSON.stringify({
       ts: new Date().toISOString(),
@@ -281,7 +284,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, flags, hints, r
       backend: backendName || null,
       error,
     }));
-    return timed({ ...base, answer: 'yes', p: 1, threshold: check.threshold, model: 'unavailable', evidence: '', error });
+    return timed({ ...base, answer: 'yes', p: 1, threshold: check.threshold, model: 'unavailable', evidence: '', error, ...(badRequest ? { bad_request: true } : {}) });
   };
 
   // A question that only applies where the community has the rule switched on.
@@ -294,7 +297,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, flags, hints, r
     try {
       value = factValue(facts, check.fact);
     } catch (err) {
-      return unavailable(err);
+      return unavailable(err, true);
     }
     return timed({
       ...base,
@@ -315,7 +318,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, flags, hints, r
     try {
       applies = factValue(facts, check.when);
     } catch (err) {
-      return unavailable(err);
+      return unavailable(err, true);
     }
     if (!applies) {
       return timed({ ...base, answer: 'no', threshold: check.threshold, model: 'skipped', evidence: 'Does not apply to this post' });
@@ -327,7 +330,7 @@ async function evaluateCheck(nodeId, node, { facts, rules, text, flags, hints, r
   if (check.context) {
     // What the question is about is not in the request: asking it blind would answer "no".
     if (!request[check.context] || (Array.isArray(request[check.context]) && request[check.context].length === 0)) {
-      return unavailable(new Error(`the request carries no '${check.context}' for this question`));
+      return unavailable(new Error(`the request carries no '${check.context}' for this question`), true);
     }
     context = contextText(check.context, request[check.context]);
   }

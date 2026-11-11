@@ -33,7 +33,10 @@ function sendJson(res, status, body) {
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let data = '';
+    // Chunks are kept as bytes and decoded once: decoding each on its own would break a
+    // multi-byte character that straddles two chunks.
+    const chunks = [];
+    let size = 0;
     let tooLarge = false;
     req.on('data', (chunk) => {
       // Once oversized, drop further chunks instead of destroying the
@@ -41,17 +44,23 @@ function readBody(req) {
       // client can read the 400 response, so it sees a network error rather
       // than a clean rejection.
       if (tooLarge) return;
-      data += chunk;
-      if (data.length > MAX_BODY_BYTES) {
+      chunks.push(chunk);
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
         tooLarge = true;
         reject(new Error('Request body too large'));
       }
     });
     req.on('end', () => {
-      if (!tooLarge) resolve(data);
+      if (!tooLarge) resolve(Buffer.concat(chunks).toString('utf8'));
     });
     req.on('error', reject);
   });
+}
+
+// A message or community id: a positive whole number, or a short string.
+function isId(value) {
+  return (Number.isSafeInteger(value) && value > 0) || (typeof value === 'string' && value.length > 0 && value.length <= 64);
 }
 
 function isPlainObject(value) {
@@ -125,6 +134,7 @@ export function createApp({ backend, chartPath, env = process.env, concurrency, 
     consecutiveFailures: 0,
     reviews: 0,
     unavailable: 0,
+    badRequests: 0,
     errors: 0,
     cacheHits: 0,
     byEnd: {},
@@ -138,7 +148,8 @@ export function createApp({ backend, chartPath, env = process.env, concurrency, 
   }
 
   // A review that could not get an answer counts as a failure of the backend; any decided
-  // review, hold or approve, means it is answering again.
+  // review, hold or approve, means it is answering again. A review held because the request
+  // itself was incomplete says nothing about the backend either way, so it is counted apart.
   function recordResult(result) {
     state.reviews += 1;
     state.byEnd[result.end] = (state.byEnd[result.end] || 0) + 1;
@@ -147,8 +158,12 @@ export function createApp({ backend, chartPath, env = process.env, concurrency, 
     recordLatency(result.ms);
     if (result.end === 'UNAVAILABLE') {
       const failed = result.path[result.path.length - 1];
-      recordFailure(failed?.error || 'backend unavailable');
-      state.unavailable += 1;
+      if (failed?.bad_request) {
+        state.badRequests += 1;
+      } else {
+        recordFailure(failed?.error || 'backend unavailable');
+        state.unavailable += 1;
+      }
     } else {
       state.consecutiveFailures = 0;
       state.lastSuccessAt = new Date().toISOString();
@@ -173,6 +188,8 @@ export function createApp({ backend, chartPath, env = process.env, concurrency, 
   }
 
   async function handleReview(req, res) {
+    // The caller's deadline runs from here, so it includes any wait in the queue below.
+    const receivedAt = Date.now();
     let payload;
     try {
       const raw = await readBody(req);
@@ -192,7 +209,7 @@ export function createApp({ backend, chartPath, env = process.env, concurrency, 
     const emptyList = (v) => Array.isArray(v) && v.length === 0;
     const facts = emptyList(payload.facts) ? {} : payload.facts;
     const rules = emptyList(payload.rules) ? {} : payload.rules;
-    if (!msgid || !groupid) {
+    if (!isId(msgid) || !isId(groupid)) {
       sendJson(res, 400, { error: 'msgid and groupid are required' });
       return;
     }
@@ -240,6 +257,7 @@ export function createApp({ backend, chartPath, env = process.env, concurrency, 
         other_posts: payload.other_posts,
         backend: backendName,
         deadline_ms,
+        received_at: receivedAt,
       });
       recordResult(result);
       const failed = result.end === 'UNAVAILABLE' ? result.path[result.path.length - 1] : null;
@@ -253,7 +271,7 @@ export function createApp({ backend, chartPath, env = process.env, concurrency, 
         tokens: result.tokens,
         cost_usd: result.cost_usd,
         ...(failed ? { error: failed.error, node: failed.node } : {}),
-        ...(deadline_ms && result.ms > deadline_ms ? { over_budget: true, deadline_ms } : {}),
+        ...(deadline_ms && Date.now() - receivedAt > deadline_ms ? { over_budget: true, deadline_ms } : {}),
       });
       sendJson(res, 200, result);
     } catch (err) {
@@ -294,6 +312,7 @@ export function createApp({ backend, chartPath, env = process.env, concurrency, 
       by_end: state.byEnd,
       by_verdict: state.byVerdict,
       unavailable: state.unavailable,
+      bad_requests: state.badRequests,
       errors: state.errors,
       cache_hits: state.cacheHits,
       cache_hit_rate: state.reviews ? state.cacheHits / state.reviews : null,
