@@ -654,7 +654,8 @@ func TestSupportCaseMemberChoice(t *testing.T) {
 
 	// Mod2Mod has none either.
 	w := scSetup(t, "scmember2")
-	m2m := CreateTestChatRoom(t, w.mod, nil, "Mod2Mod")
+	m2m := CreateTestMod2ModRoom(t)
+	t.Cleanup(func() { database.DBConn.Exec("DELETE FROM chat_rooms WHERE id = ?", m2m) })
 	assert.Nil(t, memberOf(scReferOK(t, w.modToken, m2m, "")))
 
 	// The list shows such a case with no member.
