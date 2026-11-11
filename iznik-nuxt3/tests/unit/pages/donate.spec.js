@@ -147,10 +147,14 @@ describe('donate page', () => {
 
     // Typing 25: the section must not be rebuilt for the amount as it was a moment ago.
     await wrapper.find('input').setValue('25')
-    expect(stripe().props('price')).toBe(2)
+
+    // In between, the buttons are hidden, so nothing can be paid for an amount that is not the one on show.
+    expect(stripe().exists()).toBe(false)
+    expect(wrapper.text()).toContain('£25')
 
     vi.advanceTimersByTime(800)
     await flushPromises()
+    expect(stripe().exists()).toBe(true)
     expect(stripe().props('price')).toBe(25)
   })
 

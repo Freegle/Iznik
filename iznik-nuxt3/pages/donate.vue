@@ -51,7 +51,10 @@
             >
               Signing you in...
             </div>
-            <div v-else-if="parseFloat(payAmount)" class="payment-section">
+            <div
+              v-else-if="parseFloat(payAmount) && amountSettled"
+              class="payment-section"
+            >
               <DonationButton
                 v-if="payPalFallback && !isApp"
                 :key="payAmount + '-fallback'"
@@ -226,6 +229,13 @@ const amount = ref(amountFromQuery(route.query.amount))
 const PAY_AMOUNT_DELAY_MS = 700
 const payAmount = ref(amount.value)
 let payAmountTimer = null
+
+// While the two differ the heading shows the new amount and the buttons still carry the old one, so
+// the payment section is hidden until they agree: a quick tap must not pay an amount that is not
+// the one on show.
+const amountSettled = computed(
+  () => String(payAmount.value) === String(amount.value)
+)
 
 watch(amount, (value) => {
   clearTimeout(payAmountTimer)
