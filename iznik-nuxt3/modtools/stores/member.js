@@ -10,6 +10,12 @@ import { useUserStore } from '~/stores/user'
 // through ModMembersAPI.js (api().modmembers), which is national — no
 // groupid anywhere in this file any more. Merge (askMerge/ignoreMerge) was
 // already national via api().merge and is unchanged.
+// The members list is national: a row's id is the user's id, and the member card reads it as
+// userid, so carry it under both names.
+function withUserid(member) {
+  return { ...member, userid: member.userid ?? member.id }
+}
+
 export const useMemberStore = defineStore('member', {
   state: () => ({
     list: {}, // id: member
@@ -28,7 +34,7 @@ export const useMemberStore = defineStore('member', {
         params
       )
       members.forEach((member) => {
-        this.list[member.id] = member
+        this.list[member.id] = withUserid(member)
       })
       if (ratings && ratings.length) {
         this.ratings = ratings
@@ -37,7 +43,7 @@ export const useMemberStore = defineStore('member', {
     },
     async fetch(id) {
       const { member } = await api(this.config).modmembers.fetchOne(id)
-      this.list[member.id] = member
+      this.list[member.id] = withUserid(member)
     },
     async ban(id, reason) {
       await api(this.config).modmembers.ban(id, reason)

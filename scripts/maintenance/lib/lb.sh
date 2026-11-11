@@ -10,7 +10,7 @@
 MAINT_LB_ALLOW_REBOOT="${MAINT_LB_ALLOW_REBOOT:-1}"
 MAINT_LB_APT_EXCLUDE="${MAINT_LB_APT_EXCLUDE:-^haproxy}"
 MAINT_LB_BACKENDS="${MAINT_LB_BACKENDS:-api_server_backend spatial_backend}"
-MAINT_LB_PROBE_URLS="${MAINT_LB_PROBE_URLS:-https://api.ilovefreegle.org/api/group}"
+MAINT_LB_PROBE_URLS="${MAINT_LB_PROBE_URLS:-https://api.ilovefreegle.org/api/authority?search=a}"
 
 lb_backends_up() {
   local b ups

@@ -171,7 +171,7 @@ and before the morning digest, outside the WhatJobs syncs, and tell whoever is o
    `/health`, which takes about five minutes while routing builds its graph. Only then
    `monit start iznik-server-go`: the load balancer sends members to the API as soon as it
    answers, and without routing it fails every reach question. Verify by hand rather than by
-   monit: the API answers `/api/group` with 200 on its port and keeps the same process for a
+   monit: the API answers `/api/authority?search=a` with 200 on its port and keeps the same process for a
    couple of minutes (monit's check can restart it once straight after a start), the API log
    has no panics or "Error 1" lines since the start, and `monit summary` shows every service
    OK and none "Not monitored".
@@ -339,7 +339,7 @@ script's node list on the Docker host names only the data nodes.
    answers after about five minutes.
 5. Spatial. `monit monitor iznik-spatial-go`. It reopens the indexes under `/data` and
    refreshes them from the local database; an index whose schema moved rebuilds itself.
-6. API. `monit monitor iznik-server-go`, then `curl -s http://127.0.0.1:8192/api/group`. Its
+6. API. `monit monitor iznik-server-go`, then `curl -s http://127.0.0.1:8192/api/authority?search=a`. Its
    `.env` still points writes and reads at the data nodes, which is right.
 7. Deploy. Add `db1-internal` back to `DEPLOY_NODES` in `scripts/deploy-prod.env` on the
    Docker host and run a deploy: the binaries on db1 are frozen at the last deploy before it was

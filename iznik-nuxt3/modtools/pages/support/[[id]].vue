@@ -11,49 +11,12 @@
             <ModSupportFindUser :id="id" />
           </b-tab>
 
-          <!-- Community Tab with sub-tabs -->
-          <b-tab @click="onCommunityTab">
+          <!-- Volunteers Tab -->
+          <b-tab>
             <template #title>
-              <h2 class="ms-2 me-2">Community</h2>
+              <h2 class="ms-2 me-2">Volunteers</h2>
             </template>
-            <div class="subtabs-wrapper">
-              <b-tabs
-                v-model="communitySubTab"
-                content-class="mt-3"
-                class="subtabs"
-              >
-                <b-tab @click="onFindCommunityTab">
-                  <template #title>
-                    <span class="subtab-title">Find</span>
-                  </template>
-                  <ModSupportFindGroup ref="findGroupComponent" />
-                </b-tab>
-                <b-tab @click="onListCommunitiesTab">
-                  <template #title>
-                    <span class="subtab-title">List</span>
-                  </template>
-                  <ModSupportListGroups ref="listGroupsComponent" />
-                </b-tab>
-                <b-tab>
-                  <template #title>
-                    <span class="subtab-title">Contact</span>
-                  </template>
-                  <ModSupportContactGroup />
-                </b-tab>
-                <b-tab>
-                  <template #title>
-                    <span class="subtab-title">Add</span>
-                  </template>
-                  <ModSupportAddGroup />
-                </b-tab>
-                <b-tab>
-                  <template #title>
-                    <span class="subtab-title">Check Volunteers</span>
-                  </template>
-                  <ModSupportCheckVolunteers />
-                </b-tab>
-              </b-tabs>
-            </div>
+            <ModSupportCheckVolunteers />
           </b-tab>
 
           <!-- Message Tab -->
@@ -165,8 +128,6 @@ const { supportOrAdmin } = useMe()
 const route = useRoute()
 
 // Template refs
-const findGroupComponent = ref(null)
-const listGroupsComponent = ref(null)
 
 // Local state (formerly data())
 const error = ref(false)
@@ -174,12 +135,11 @@ const messageTerm = ref(null)
 const id = ref('id' in route.params ? parseInt(route.params.id) : 0)
 const showAIAssistant = ref(false)
 const aiAssistantBump = ref(0)
-const communitySubTab = ref(0)
 
 // Tab name to index mapping
 const topTabMap = {
   user: 0,
-  community: 1,
+  volunteers: 1,
   message: 2,
   ai: 3,
   lockdown: 4,
@@ -222,14 +182,6 @@ watch(
   }
 )
 
-const communitySubTabMap = {
-  find: 0,
-  list: 1,
-  contact: 2,
-  add: 3,
-  volunteers: 4,
-}
-
 // Computed properties
 const messages = computed(() => {
   return messageStore.all
@@ -243,24 +195,12 @@ messageStore.clear()
 onMounted(() => {
   // Handle tab query parameter after component is mounted.
   const tabParam = route.query.tab
-  const subTabParam = route.query.subtab
 
   if (tabParam && topTabMap[tabParam] !== undefined) {
     nextTick(() => {
       activeTab.value = topTabMap[tabParam]
 
-      // Handle sub-tabs.
-      if (tabParam === 'community') {
-        onCommunityTab()
-        if (subTabParam && communitySubTabMap[subTabParam] !== undefined) {
-          communitySubTab.value = communitySubTabMap[subTabParam]
-          if (subTabParam === 'find') {
-            onFindCommunityTab()
-          } else if (subTabParam === 'list') {
-            onListCommunitiesTab()
-          }
-        }
-      } else if (tabParam === 'ai') {
+      if (tabParam === 'ai') {
         onAITab()
       }
     })
@@ -312,27 +252,6 @@ async function searchBySubject(subj) {
   await messageStore.searchMT({ term: subj, groupid: undefined })
 }
 
-function onCommunityTab() {
-  // Initialize community tab - load find communities by default.
-  nextTick(() => {
-    onFindCommunityTab()
-  })
-}
-
-async function onFindCommunityTab() {
-  // Load communities when tab is selected
-  if (findGroupComponent.value) {
-    await findGroupComponent.value.loadCommunities()
-  }
-}
-
-async function onListCommunitiesTab() {
-  // Fetch communities when tab is selected
-  if (listGroupsComponent.value) {
-    await listGroupsComponent.value.fetchCommunities()
-  }
-}
-
 function onAITab() {
   // Initialize AI Support Helper tab.
   nextTick(() => {
@@ -351,65 +270,5 @@ function onAIAssistantTab() {
 <style scoped>
 .max {
   max-width: 300px;
-}
-
-/* Subtab container - visually distinct grouped panel */
-:deep(.subtabs) {
-  background-color: #f8f9fa;
-  border: 1px solid #dee2e6;
-  padding: 0.75rem;
-  margin-bottom: 1rem;
-}
-
-/* Subtab navigation - segmented control style */
-:deep(.subtabs .nav-tabs) {
-  border: 1px solid #adb5bd !important;
-  background-color: #e9ecef !important;
-  padding: 3px !important;
-  display: inline-flex !important;
-  gap: 0 !important;
-}
-
-:deep(.subtabs .nav-item) {
-  margin-bottom: 0 !important;
-}
-
-:deep(.subtabs .nav-link) {
-  border: none !important;
-  border-right: 1px solid #adb5bd !important;
-  border-radius: 0 !important;
-  padding: 0.5rem 1rem !important;
-  color: #495057 !important;
-  font-weight: 500 !important;
-  background-color: transparent !important;
-  transition: all 0.15s ease-in-out !important;
-}
-
-:deep(.subtabs .nav-item:last-child .nav-link) {
-  border-right: none !important;
-}
-
-:deep(.subtabs .nav-link:hover) {
-  color: #28a745 !important;
-  background-color: rgba(255, 255, 255, 0.5) !important;
-}
-
-:deep(.subtabs .nav-link.active) {
-  color: #fff !important;
-  background-color: #28a745 !important;
-  font-weight: 600 !important;
-}
-
-/* Subtab content area */
-:deep(.subtabs .tab-content) {
-  background-color: #fff;
-  border: 1px solid #dee2e6;
-  padding: 1rem;
-  margin-top: 0.75rem;
-}
-
-.subtab-title {
-  font-size: 0.9rem;
-  letter-spacing: 0.01em;
 }
 </style>

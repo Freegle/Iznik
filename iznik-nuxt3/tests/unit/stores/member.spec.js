@@ -114,6 +114,19 @@ describe('member store', () => {
       expect(store.list[2].displayname).toBe('Bob')
     })
 
+    it('carries the id as userid, which the member card reads', async () => {
+      mockFetch.mockResolvedValueOnce({
+        members: [{ id: 7, displayname: 'Dee' }],
+        ratings: [],
+      })
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.fetchMembers({})
+
+      expect(store.list[7].userid).toBe(7)
+    })
+
     it('stores ratings when the response includes them', async () => {
       mockFetch.mockResolvedValueOnce({
         members: [{ id: 1 }],

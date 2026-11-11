@@ -281,7 +281,9 @@ type cronJobStatus struct {
 // host maintenance jobs that report through `artisan cron:record` (at the end).
 //
 // To keep the Laravel entries in sync with the live scheduler, run:
-//   docker exec freegledocker-batch-prod php artisan schedule:list
+//
+//	docker exec freegledocker-batch-prod php artisan schedule:list
+//
 // and update the entries below to match.
 var cronJobs = []CronJob{
 	// System
@@ -298,9 +300,7 @@ var cronJobs = []CronJob{
 	{Command: "mail:notifications:chaseup", Name: "Notification Chase-up", Description: "Sends emails for unseen, unmailed site notifications", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Email — Engagement", Active: true},
 
 	// Email — Admin
-	{Command: "mail:admin:copy", Name: "Admin Copy", Description: "Creates per-group copies of suggested admin emails for moderator approval", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Admin", Active: true},
 	{Command: "mail:admin:send", Name: "Admin Send", Description: "Sends approved admin emails to group members", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Admin", Active: true},
-	{Command: "mail:admin:chase", Name: "Admin Chase", Description: "Reminds moderators about pending suggested admin emails (after 48h)", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Admin", Active: true},
 
 	// Email — Bounces
 	{Command: "mail:bounced", Name: "Bounce Processing", Description: "Processes bounced emails and marks addresses as invalid", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Bounces", Active: true},
@@ -351,15 +351,11 @@ var cronJobs = []CronJob{
 	{Command: "data:git-summary", Name: "Git Summary", Description: "Sends AI-powered summary of weekly code changes to Discourse", Schedule: "Weekly (Wed 6pm)", IntervalMinutes: 10080, Category: "AI & Analytics", Active: true},
 
 	// Groups & Chats
-	{Command: "groups:update-counts", Name: "Group Member Counts", Description: "Hourly group member/mod count refresh", Schedule: "Hourly", IntervalMinutes: 60, Category: "Groups & Chats", Active: true},
-	{Command: "groups:update-stats", Name: "Group Stats", Description: "Daily group stats: repost settings, polyindex, activity/funding, mod counts, stats_outcomes", Schedule: "Daily at 2am", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
 	{Command: "chats:update-counts", Name: "Chat Counts", Description: "Hourly chat-room message count refresh + reopens closed User2Mod chats with unseen mod replies", Schedule: "Hourly", IntervalMinutes: 60, Category: "Groups & Chats", Active: true},
 	{Command: "chats:update-expected", Name: "Chat Reply Expected", Description: "Updates chat reply-expectation tracking and per-user reply-time metrics", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Groups & Chats", Active: true},
 	{Command: "chats:process-incoming", Name: "Process Incoming Chats", Description: "Processes pending chat messages (processingrequired=1) — spam checks, roster update, reopen closed chats", Schedule: "Every minute", IntervalMinutes: 1, Category: "Groups & Chats", Active: true},
-	{Command: "memberships:process", Name: "Process Memberships", Description: "Processes pending membership history entries — sends per-group welcome emails, flags reviewed members", Schedule: "Every minute", IntervalMinutes: 1, Category: "Groups & Chats", Active: true},
 
 	// Locations
-	{Command: "locations:fix-skewed", Name: "Fix Skewed Locations", Description: "Fixes locations where latitude and longitude are swapped (and updates referenced messages)", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "Locations", Active: true},
 
 	// User Management
 	{Command: "users:update-ratings", Name: "Rating Visibility", Description: "Updates rating visibility based on whether the rater and ratee actually had chat interaction", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "User Management", Active: true},
@@ -384,16 +380,9 @@ var cronJobs = []CronJob{
 	{Command: "messages:update-visualise", Name: "Update Visualise", Description: "Records taken-OFFER messages into the visualise table for the map view (one row per from→to within 30 km)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Index", Active: true},
 
 	// Groups & Chats additions
-	{Command: "groups:check-boundaries", Name: "Boundary Geometry Check", Description: "Validates each Freegle group's CGA/DPA polygon intersection against authority 74579; emails geeks on error", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Groups & Chats", Active: true},
-	{Command: "groups:check-mod-welfare", Name: "Mod Welfare Check", Description: "Detects inactive moderators (no activity for 6 months); emails group owners or mentors", Schedule: "Weekly (Mon 3pm)", IntervalMinutes: 10080, Category: "Groups & Chats", Active: true},
-	{Command: "groups:welcome-review", Name: "Welcome Mail Review", Description: "Sends each group's welcome email to its mods once a year for review (dedupes via groups.welcomereview)", Schedule: "Daily at 3pm", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
-	{Command: "groups:remind-customisation", Name: "Customisation Reminder", Description: "Reminds mods about missing group profile/tagline/welcome customisation", Schedule: "Retired 2026-06-02", IntervalMinutes: 43200, Category: "Groups & Chats", Active: false}, // RETIRED: schedule commented out in console.php; Active:false so it can't false-alarm.
-	{Command: "groups:alert-no-messages", Name: "Stale Group Alert", Description: "Alerts mentors about active groups that haven't received messages in 7+ days (excludes test groups)", Schedule: "Daily at 7am", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
-	{Command: "chats:chaseup-mods", Name: "Chase Up Mods on Chats", Description: "Notifies group mods about User2Mod chats where the member has had no reply for 6.55+ days", Schedule: "Daily at 3:30pm", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
 
 	// Newsfeed additions
 	{Command: "newsfeed:generate-link-previews", Name: "Newsfeed Link Previews", Description: "Fetches and caches link previews for URLs in newsfeed posts from the last 2 days", Schedule: "Every minute", IntervalMinutes: 1, Category: "Newsfeed", Active: true},
-	{Command: "mail:newsfeed-mod-notif", Name: "Newsfeed Mod Notify", Description: "Notifies group mods about new chitchat (newsfeed) posts from their members since they last looked", Schedule: "Daily at 1:30pm", IntervalMinutes: 1440, Category: "Newsfeed", Active: true},
 
 	// Stories
 	{Command: "stories:send-to-central", Name: "Stories → Central", Description: "Sends reviewed unsent stories to the central team for newsletter voting", Schedule: "Weekly (Fri 2pm)", IntervalMinutes: 10080, Category: "Stories", Active: true},
@@ -411,7 +400,6 @@ var cronJobs = []CronJob{
 	{Command: "integrations:sync-repaircafewales", Name: "Repair Cafe Wales Sync", Description: "Imports upcoming Repair Cafe Wales iCal events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
 
 	// Email — Engagement additions
-	{Command: "birthday:send-emails", Name: "Birthday Emails", Description: "Sends birthday celebration emails to members of groups founded on today's date", Schedule: "Daily at noon", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
 	{Command: "mail:engage", Name: "Engage Emails", Description: "Sends engagement emails to at-risk (about to be inactive) and inactive users", Schedule: "Daily at 4pm", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
 	{Command: "mail:donations:summary", Name: "Donation Summary", Description: "Sends a running summary of today's donations to the fundraising address", Schedule: "Hourly 6am–10pm", IntervalMinutes: 480, Category: "Email — Engagement", Active: true}, // interval covers the ~8h overnight gap (hourly 06:00-22:00 -> nothing until 06:00) so it doesn't false-alarm each night.
 	{Command: "lovejunk:send-tn-invoice", Name: "LoveJunk → TN Invoice", Description: "Calculates the previous month's LoveJunk/TrashNothing split and emails the invoice to TN", Schedule: "Monthly (1st 3pm)", IntervalMinutes: 43200, Category: "Email — Engagement", Active: true},
@@ -424,7 +412,6 @@ var cronJobs = []CronJob{
 	{Command: "chats:process-spam", Name: "Chat Spam Processing", Description: "Warns innocent users who chatted with spammers; auto-rejects pending chat messages from probable spammers (>5 rejects/31 days, no approved messages, not a mod)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Spam / Abuse", Active: true},
 
 	// Email — Admin / Engagement
-	{Command: "mail:mod-notifs", Name: "Mod Notifications", Description: "Hourly digest of pending mod work to each moderator (08:00-21:00 only); dedup against last summary or 24h gap", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Admin", Active: true},
 
 	// Data & Integrations additions
 	{Command: "donations:update-giftaid", Name: "Gift Aid Update", Description: "Identifies postcodes/house numbers on giftaid records, marks eligible donations as giftaidconsent, and sends one-off chase-up emails to donors 2-30 days post-donation", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Data", Active: true},
@@ -466,7 +453,6 @@ var cronJobs = []CronJob{
 	{Command: "volunteering:maintain", Name: "Volunteering Maintenance", Description: "Maintains volunteering opportunities (expiry/renewal upkeep)", Schedule: "Daily at 10pm", IntervalMinutes: 1440, Category: "Data", Active: true},
 	{Command: "integrations:sync-reachvolunteering", Name: "Reach Volunteering Sync", Description: "Imports Reach volunteering opportunities", Schedule: "Daily at 9pm", IntervalMinutes: 1440, Category: "Data", Active: true},
 	{Command: "eee:sync-mv-labels", Name: "EEE MV Label Sync", Description: "Syncs microvolunteering item-type labels for the EEE classifier", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "AI & Analytics", Active: true},
-	{Command: "groups:remind-closed", Name: "Closed-Group Reminder", Description: "Reminds owners of groups closed to new members", Schedule: "Weekly (Mon 9am)", IntervalMinutes: 10080, Category: "Groups & Chats", Active: true},
 	{Command: "locations:remap-postcodes", Name: "Postcode Remap", Description: "Remaps messages/users to their nearest current postcode", Schedule: "Daily at 1am", IntervalMinutes: 1440, Category: "Locations", Active: true},
 	{Command: "paf:import-run", Name: "PAF Address Import", Description: "Downloads and applies a Royal Mail address data release requested from the PAF update on SysAdmin Housekeeping; does nothing until one is requested", Schedule: "Every minute", IntervalMinutes: 1, Category: "Locations", Active: true},
 	{Command: "paf:check-latest", Name: "PAF Latest Release", Description: "Records which Royal Mail address data release is on the AFD site, for the PAF update on SysAdmin Housekeeping to show", Schedule: "Hourly", IntervalMinutes: 60, Category: "Locations", Active: true},
@@ -483,7 +469,6 @@ var cronJobs = []CronJob{
 	// they can't false-alarm while the engine is dark. Flip to true at launch.
 	{Command: "ripple:expand", Name: "Rippling Expand", Description: "Maintains rippling-out reach for active posts (gated by ripple.enabled / within_groups)", Schedule: "Every minute (when rippling on)", IntervalMinutes: 1, Category: "Rippling", Active: false},
 	{Command: "ripple:release-replies", Name: "Rippling Release Replies", Description: "Releases/expires held external replies as posts ripple out", Schedule: "Every minute (when rippling on)", IntervalMinutes: 1, Category: "Rippling", Active: false},
-	{Command: "ripple:proximity-notes", Name: "Rippling Proximity Notes", Description: "Computes \"quicker to get to\" mod notes for rippled-in posts (gated by ripple.proximity_notes)", Schedule: "Every 5 minutes (when on)", IntervalMinutes: 5, Category: "Rippling", Active: false},
 
 	// Host maintenance - not Laravel: systemd timers on the Docker host run
 	// scripts/maintenance/freegle-maint, which records each run here through

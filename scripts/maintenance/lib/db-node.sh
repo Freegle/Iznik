@@ -140,7 +140,7 @@ db_preflight() {
   # Every service on both nodes answering, the peer's included: it serves alone.
   local h c
   for h in "$T" "$P"; do
-    c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_API_PORT/api/group"); [ "$c" = 200 ] || die "$h: API answers $c"
+    c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_API_PORT/api/authority?search=a"); [ "$c" = 200 ] || die "$h: API answers $c"
     c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_SPATIAL_PORT/health"); [ "$c" = 200 ] || die "$h: spatial answers $c"
     c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_ROUTING_PORT/health"); [ "$c" = 200 ] || die "$h: routing answers $c"
     c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_ROUTING_INTERNAL_PORT$MAINT_DB_ROUTING_PROBE"); [ "$c" = 200 ] || die "$h: routing internal route answers $c"
@@ -212,7 +212,7 @@ api_restart_verify() {  # <host> <expected write address>
     # shellcheck disable=SC2086
     set -- $new
     [ "${1:-0}" = 1 ] && [ "${2:-}" != "$old" ] || continue
-    c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_API_PORT/api/group"); [ "$c" = 200 ] || continue
+    c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_API_PORT/api/authority?search=a"); [ "$c" = 200 ] || continue
     line=$(rq "$h" "grep -a 'Connecting to database' $MAINT_DB_API_LOG | tail -1")
     new=$2
     case "$line" in *"$w"*) info "$h: API restarted (pid $old -> $new), writes to $(name_of_addr "$w")"; api_stable "$h" "$new" "$w"; return 0;; esac
@@ -239,7 +239,7 @@ api_stable() {  # <host> <pid> <expected write address>
       pid=$p; since=$now; sleep 5; continue
     fi
     st=$(monit_summary "$h" | awk -F'|' '$1=="iznik-server-go" {print $2}')
-    c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_API_PORT/api/group")
+    c=$(http_code "$h" "http://127.0.0.1:$MAINT_DB_API_PORT/api/authority?search=a")
     if [ "$st" = OK ] && [ "$c" = 200 ] && [ $(( now - since )) -ge "$MAINT_DB_API_STABLE_S" ]; then
       line=$(rq "$h" "grep -a 'Connecting to database' $MAINT_DB_API_LOG | tail -1")
       case "$line" in *"$w"*) ;; *) die "$h: API settled but its boot line does not name the expected write node";; esac
@@ -323,7 +323,7 @@ db_wait_rejoin() {
 
 db_verify_services() {
   local api_w line p
-  # The spatial and routing servers first: an API without them answers /api/group but
+  # The spatial and routing servers first: an API without them answers /api/authority?search=a but
   # fails every reach question, and the load balancer would send members to it.
   start_if_down "$T" iznik-spatial-go iznik-spatial-g
   start_if_down "$T" iznik-routing-go iznik-routing-g
@@ -334,7 +334,7 @@ db_verify_services() {
   # Only now the API, which the load balancer marks UP as soon as it answers.
   start_if_down "$T" iznik-server-go iznik-server-go
   monit_monitor "$T" iznik-server-go
-  wait_http "$T" "http://127.0.0.1:$MAINT_DB_API_PORT/api/group" 300 "API"
+  wait_http "$T" "http://127.0.0.1:$MAINT_DB_API_PORT/api/authority?search=a" 300 "API"
   $DRY && return 0
   api_w=$(envval "$ENV_T" MYSQL_HOST)
   api_stable "$T" "$(rq "$T" "pgrep -o -x iznik-server-go")" "$api_w"

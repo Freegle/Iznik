@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -143,7 +142,8 @@ func Single(c *fiber.Ctx) error {
 		}
 	}
 
-	responseGroups := GroupsForAuthority(id)
+	// There are no communities to list: the response keeps its shape with an empty list.
+	responseGroups := []Group{}
 
 	authority := Authority{
 		ID:       authRow.ID,
@@ -166,121 +166,6 @@ func Single(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(authority)
-}
-
-// GroupsForAuthority returns the live Freegle groups whose catchment meaningfully
-// overlaps an authority's boundary. "Meaningfully" means at least 5% of the group sits
-// inside the authority, or the authority is at least 5% of the group - so a small
-// authority inside a big group still counts.
-//
-// Shared with the Partnerships page, which uses it to work out which groups a council
-// sponsorship covers.
-func GroupsForAuthority(id uint64) []Group {
-	db := database.DBConn
-
-	var groups []struct {
-		ID        uint64  `gorm:"column:id"`
-		Nameshort string  `gorm:"column:nameshort"`
-		Namefull  *string `gorm:"column:namefull"`
-		Lat       float64 `gorm:"column:lat"`
-		Lng       float64 `gorm:"column:lng"`
-		Poly      *string `gorm:"column:poly"`
-		Overlap   float64 `gorm:"column:overlap"`
-		Overlap2  float64 `gorm:"column:overlap2"`
-		Coverage  float64 `gorm:"column:coverage"`
-	}
-
-	// ST_Area errors on anything that isn't a polygon, and a single such group aborts the
-	// whole query rather than being skipped - so the geometry-type check has to guard the
-	// area calls themselves, not just filter rows. A group whose catchment is not an area
-	// cannot meaningfully overlap an authority anyway, so it scores zero.
-	const polygonal = "ST_GeometryType(polyindex) IN ('POLYGON', 'MULTIPOLYGON') " +
-		"AND ST_GeometryType(Coalesce(simplified, polygon)) IN ('POLYGON', 'MULTIPOLYGON')"
-
-	db.Table("groups").
-		Select("groups.id, nameshort, namefull, lat, lng, "+
-			"CASE WHEN poly IS NOT NULL THEN poly ELSE polyofficial END AS poly, "+
-			"CASE WHEN NOT ("+polygonal+") THEN 0 "+
-			"WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
-			"CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1 "+
-			"ELSE St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) / St_area(polyindex) "+
-			"END "+
-			"ELSE 0 "+
-			"END AS overlap, "+
-			"CASE WHEN NOT ("+polygonal+") THEN 0 "+
-			"WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
-			"CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1 "+
-			"ELSE St_area(polyindex) / St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) "+
-			"END "+
-			"ELSE 0 "+
-			"END AS overlap2, "+
-			"CASE WHEN NOT ("+polygonal+") THEN 0 "+
-			"WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
-			"CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1 "+
-			"ELSE St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) / St_area(Coalesce(simplified, polygon)) "+
-			"END "+
-			"ELSE 0 "+
-			"END AS coverage").
-		Joins("INNER JOIN authorities ON ( polyindex = Coalesce(simplified, polygon) OR St_intersects(polyindex, Coalesce(simplified, polygon)) )").
-		Where("type = ? AND publish = 1 AND onmap = 1 AND authorities.id = ?", utils.GROUP_TYPE_FREEGLE, id).
-		Scan(&groups)
-
-	// Build response groups, filtering by overlap threshold.
-	var responseGroups []Group
-	for _, g := range groups {
-		overlap := g.Overlap
-		if overlap > 0.95 {
-			overlap = 1
-		}
-
-		// Exclude minor overlaps. Overlap2 is area(group) / area(intersection), never below 1 for
-		// a group that touches the authority, so this keeps every touching group and the stats
-		// page weights each by its share. That is intended (see 55a0e407e); the Partnerships
-		// list narrows it with SignificantGroupsForAuthority.
-		if overlap >= 0.05 || g.Overlap2 >= 0.05 {
-			namedisplay := g.Nameshort
-			if g.Namefull != nil && len(*g.Namefull) > 0 {
-				namedisplay = *g.Namefull
-			}
-
-			responseGroups = append(responseGroups, Group{
-				ID:          g.ID,
-				Nameshort:   g.Nameshort,
-				Namefull:    g.Namefull,
-				Namedisplay: namedisplay,
-				Lat:         g.Lat,
-				Lng:         g.Lng,
-				Poly:        g.Poly,
-				Overlap:     overlap,
-				Overlap2:    g.Overlap2,
-				Coverage:    g.Coverage,
-				Significant: Significant(overlap, g.Coverage),
-			})
-		}
-	}
-
-	if responseGroups == nil {
-		responseGroups = []Group{}
-	}
-
-	return responseGroups
-}
-
-// SignificantGroupsForAuthority is GroupsForAuthority without the groups that only graze the
-// boundary. The Partnerships page lists these as the communities a council deal covers.
-func SignificantGroupsForAuthority(id uint64) []Group {
-	var groups []Group
-	for _, g := range GroupsForAuthority(id) {
-		if g.Significant {
-			groups = append(groups, g)
-		}
-	}
-
-	if groups == nil {
-		groups = []Group{}
-	}
-
-	return groups
 }
 
 // Search searches authorities by name.

@@ -122,7 +122,7 @@ around a reboot. No step lets writes or reads fail while the node is down.
 
 1. Move the other node's API off this node: change `MYSQL_HOST` or `MYSQL_HOST_READ` in
    its `.env` wherever it names this node, and restart it through monit. The check is a
-   new process, 200 on `/api/group`, and the boot line naming the expected database.
+   new process, 200 on `/api/authority?search=a`, and the boot line naming the expected database.
 2. Move the batch off this node: the same for `DB_HOST_IP` or `DB_HOST_READ_IP` in the
    repo `.env`, then recreate batch-prod. It waits for no `ripple:expand` to be running
    first. Afterwards it checks the container's database aliases, a query, every

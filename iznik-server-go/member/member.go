@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -179,6 +180,9 @@ func BanMember(c *fiber.Ctx) error {
 			"banned":   gorm.Expr("NOW()"),
 			"bannedby": myid,
 		})
+
+	// A ban stops someone posting, so the posts already up come down too.
+	message.WithdrawPostsOnBan(db, id, myid)
 
 	reason := req.Reason
 	log.Log(log.LogEntry{

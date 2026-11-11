@@ -503,15 +503,6 @@ Schedule::command('google:ads-check')
     ->appendOutputTo(cronLog('google:ads-check'))
     ->runInBackground();
 
-// Moderator work notifications — tells mods about pending messages, events, etc.
-// Only runs 08:00–21:00; deduplicates against last sent summary.
-// V1: cron/mod_notifs.php (hourly)
-Schedule::command('mail:mod-notifs')
-    ->hourly()
-    ->withoutOverlapping(120)
-    ->appendOutputTo(cronLog('mail:mod-notifs'))
-    ->runInBackground();
-
 // Site-wide / per-group alerts to mods — processes incomplete rows in the
 // `alerts` table (broadcasts from the central team, with read receipts and
 // escalation). Batches 50 groups per pass via groupprogress, so the 10-min
@@ -771,14 +762,6 @@ Schedule::command('chats:send-tryst-reminders')
     ->everyMinute()
     ->withoutOverlapping(15)
     ->appendOutputTo(cronLog('chats:send-tryst-reminders'))
-    ->runInBackground();
-
-// Chase up mods about User2Mod chats with no mod reply older than 6.55 days.
-// V1: cron/chat_chaseupmods.php (daily 15:30)
-Schedule::command('chats:chaseup-mods')
-    ->dailyAt('15:30')
-    ->withoutOverlapping(360)
-    ->appendOutputTo(cronLog('chats:chaseup-mods'))
     ->runInBackground();
 
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
@@ -1244,14 +1227,6 @@ Schedule::command('mail:cleanup-archive')
     ->hourly()
     ->withoutOverlapping(120)
     ->appendOutputTo(cronLog('mail:cleanup-archive'))
-    ->runInBackground();
-
-// Send birthday emails to members of groups founded on today's date.
-// V1: cron/birthday.php (daily 12:00)
-Schedule::command('birthday:send-emails')
-    ->dailyAt('12:00')
-    ->withoutOverlapping(360)
-    ->appendOutputTo(cronLog('birthday:send-emails'))
     ->runInBackground();
 
 // Calculate and send the monthly LoveJunk/TrashNothing invoice split to TN.
@@ -1729,14 +1704,6 @@ Schedule::command('embeddings:searches')
 //     ->hourly()
 //     ->withoutOverlapping()
 //     ->appendOutputTo(cronLog('chats:process-spam'))
-//     ->runInBackground();
-
-// Send mod notifications.
-// V1: cron/mod_notifs.php
-// Schedule::command('mail:mod-notifs')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->appendOutputTo(cronLog('mail:mod-notifs'))
 //     ->runInBackground();
 
 // Update GiftAid donations.

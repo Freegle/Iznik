@@ -85,3 +85,22 @@ Batch test tally, against master's batch tests (5,116):
 - Open questions for Edward: (1) should required-reply alerts exist for the national moderator pool; (2) should a site-wide ban withdraw the member's open posts; (3) should an admin be stopped from deleting a moderator (master stops it for community moderators); (4) `tn:sync` still runs every ten seconds as master set it, the branch's old once a minute may be enough without post ingestion.
 - Also dropped with the community model: the "When Support needs you to reply" page section (required-reply alerts), master's "Hide held posts" switch.
 - Browse page root is one stable `div` around the member-only content: a root that flipped between a comment and a fragment threw insertBefore errors in the bulk-offer Playwright flow when sign-in landed during the redirect to Browse.
+
+### Edward's answers, 2026-11-11 (the questions above)
+
+- Required-reply alerts: dropped, as done.
+- A site-wide ban withdraws the member's open posts, as master's community ban does: an approved post gets a Withdrawn outcome ("Marked as withdrawn by ban"), a pending post is deleted, posts that already have an outcome stay, nobody who replied is told. Built on the site-wide ban in `member.BanMember` (`message.WithdrawPostsOnBan`), test in `test/ban_withdraw_test.go`.
+- An admin cannot delete an account whose system role is Moderator, Support or Admin (master's guard on the branch's roles). `LimboUser` already refused it through `auth.IsModerator`; the test `TestLimboUserCannotDeleteSystemRoleHolders` now pins all three roles.
+- `tn:sync` stays at every ten seconds as merged.
+- The two TrashNothing membership sections stay removed from `.claude/rules/conventions.md`; "TrashNothing accounts are never moderators, and are never merged" stays.
+- The support referral mail's Reply-To is the no-reply address on this branch (there is no community volunteers address).
+
+### Things that failed when run, repaired or removed with their feature
+
+- Go `GroupsForAuthority` and `SignificantGroupsForAuthority` read the dropped `groups` table and swallowed the error: removed; `GET /authority/:id` returns an empty `groups` list.
+- Housekeeper cron list: the 17 entries for batch commands that no longer exist are removed (birthday emails, chase up mods, groups:*, memberships:process, mod notifications, newsfeed mod notifications, admin chase and copy, locations:fix-skewed, ripple:proximity-notes).
+- Batch: `birthday:send-emails`, `chats:chaseup-mods` and `mail:mod-notifs` called services the branch deleted (groups' birthdays, per-community chase-up, per-community mod work digests): commands and schedules removed.
+- Batch: `concierge:run` named `LlmExtractor`, `RuleBasedExtractor` and `TemplateDrafter`, which lived inside other classes' files and so could not autoload: each class is now in its own file.
+- Maintenance and deploy scripts and runbooks checked the API with `GET /api/group`, a route the branch lacks: they use `GET /api/authority?search=a`.
+- ModTools Support Tools: the Community tab (find, list, contact, add community) used deleted components: replaced by a Volunteers tab holding Check Volunteers; `?tab=community` is now `?tab=volunteers`.
+- ModTools members list: rows from `GET /modtools/members` carry the user's id as `id`, and the member card reads `userid`: the store now carries both.

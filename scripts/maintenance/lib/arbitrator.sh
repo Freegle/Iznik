@@ -24,7 +24,7 @@ arb_run() {
   for n in $MAINT_DB_NODES; do
     check_reachable "$n"
     wsrep_healthy "$n" "$MAINT_DB_CLUSTER_SIZE"
-    [ "$(http_code "$n" "http://127.0.0.1:$MAINT_DB_API_PORT/api/group")" = 200 ] || die "$n: API is not answering 200"
+    [ "$(http_code "$n" "http://127.0.0.1:$MAINT_DB_API_PORT/api/authority?search=a")" = 200 ] || die "$n: API is not answering 200"
   done
   local hm; hm=$((10#$(date -u +%H%M)))
   { [ "$hm" -ge 345 ] && [ "$hm" -le 435 ]; } && die "inside the backup drain window"

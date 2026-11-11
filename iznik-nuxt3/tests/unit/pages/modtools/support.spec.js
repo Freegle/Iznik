@@ -89,20 +89,6 @@ describe('support/[[id]].vue page', () => {
             template: '<div class="mod-support-find-user" />',
             props: ['id'],
           },
-          ModSupportFindGroup: {
-            template: '<div class="mod-support-find-group" />',
-            methods: { loadCommunities: vi.fn() },
-          },
-          ModSupportListGroups: {
-            template: '<div class="mod-support-list-groups" />',
-            methods: { fetchCommunities: vi.fn() },
-          },
-          ModSupportContactGroup: {
-            template: '<div class="mod-support-contact-group" />',
-          },
-          ModSupportAddGroup: {
-            template: '<div class="mod-support-add-group" />',
-          },
           ModSupportCheckVolunteers: {
             template: '<div class="mod-support-check-volunteers" />',
           },
@@ -282,7 +268,7 @@ describe('support/[[id]].vue page', () => {
 
   describe('tab query parameter handling', () => {
     it('sets activeTab from query param', async () => {
-      mockRouteQuery.value = { tab: 'community' }
+      mockRouteQuery.value = { tab: 'volunteers' }
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       await flushPromises()
