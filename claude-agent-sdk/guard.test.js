@@ -57,3 +57,13 @@ test('guardSelect enforces a custom maxRows cap', () => {
   assert.throws(() => guardSelect('SELECT id FROM users LIMIT 50', 10))
   assert.doesNotThrow(() => guardSelect('SELECT id FROM users LIMIT 5', 10))
 })
+
+test('a query written in the code may name the login table, and is still read-only and bounded', () => {
+  // identify_user asks whether a member has a password. Its own query names users_logins and credentials but
+  // returns only a yes or no; db_query never passes this option, so the model cannot use it.
+  const sql = 'SELECT type, credentials IS NOT NULL AS has_password, lastaccess FROM users_logins WHERE userid=42'
+  assert.throws(() => guardSelect(sql))
+  assert.match(guardSelect(sql, 500, { allowSecretNames: true }), /LIMIT 500$/)
+  assert.throws(() => guardSelect('UPDATE users_logins SET credentials=NULL', 500, { allowSecretNames: true }))
+  assert.throws(() => guardSelect('SELECT 1 FROM users_logins LIMIT 999999', 500, { allowSecretNames: true }))
+})
