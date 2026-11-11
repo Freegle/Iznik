@@ -572,8 +572,14 @@ class UserChangesSyncer
             'other'      => $other,
         ]);
 
-        if (!$this->dryRun && !empty($change['account_removed']) && Cache::add("tn-sync:removal-skipped:{$userId}:{$tnId}", true, now()->addDay()) && app()->bound('sentry')) {
-            app('sentry')->captureMessage("TN member {$tnId} has left, but their removal was not applied to user {$userId} ({$reason}, {$other})");
+        // Keyed by reason too: a held-elsewhere report must not use up a real skip's for the day.
+        if (!$this->dryRun && !empty($change['account_removed']) && Cache::add("tn-sync:removal-skipped:{$reason}:{$userId}:{$tnId}", true, now()->addDay()) && app()->bound('sentry')) {
+            // Held elsewhere, the removal is not skipped: it goes ahead on the holder. Only the
+            // account TN named is left, and it may be the member's old one.
+            $message = $reason === 'tn-user-id-held-elsewhere'
+                ? "TN member {$tnId} has left and was removed from user {$other}, which holds their TN id; user {$userId}, which TN named, was left alone and may be their old account"
+                : "TN member {$tnId} has left, but their removal was not applied to user {$userId} ({$reason}, {$other})";
+            app('sentry')->captureMessage($message);
         }
     }
 

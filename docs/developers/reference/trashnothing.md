@@ -1000,7 +1000,9 @@ too, because it looks the same.
 **A skipped removal needs a person.** The sync date moves past a skipped change and it is not
 retried, so a member who has left TN keeps their data here until someone acts. Each skipped removal
 is reported to Sentry once a day, naming the TN user id and the account. Split the account if it
-holds two members, then forget the member who left.
+holds two members, then forget the member who left. A `tn-user-id-held-elsewhere` removal is not
+skipped: it is reported as having gone ahead on the account holding the id, with the account TN
+named left alone, and under its own daily key so that it cannot hide a real skip.
 
 **A feed that cannot be read holds the stored date, for an hour.** `tn:sync` stores one date for
 ratings, user changes and posts: the latest any of them saw. When a page of the ratings or the

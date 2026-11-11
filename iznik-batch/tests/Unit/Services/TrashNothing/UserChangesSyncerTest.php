@@ -1026,7 +1026,7 @@ class UserChangesSyncerTest extends TestCase
     {
         $sentry = $this->recordSentry();
         $named = $this->tnUserWithId(null);
-        $this->tnUserWithId(99130020);
+        $holder = $this->tnUserWithId(99130020);
 
         $this->syncChanges([[
             'fd_user_id'      => $named->id,
@@ -1037,6 +1037,38 @@ class UserChangesSyncerTest extends TestCase
 
         $this->assertCount(1, $this->skipEvents('tn-user-id-held-elsewhere'));
         $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+
+        // The removal went ahead on the holder, so the report must not say it was not applied.
+        $this->assertSame('Deleted User #' . $holder->id, $holder->fresh()->fullname);
+        $this->assertStringNotContainsString('not applied', $sentry->calls[0]);
+        $this->assertStringContainsString("removed from user {$holder->id}", $sentry->calls[0]);
+    }
+
+    /** A held-elsewhere report must not use up the day's report of a real skip for the same account and id. */
+    public function test_a_held_elsewhere_report_does_not_hide_a_real_skip_of_the_same_removal(): void
+    {
+        $sentry = $this->recordSentry();
+        $named = $this->tnUserWithId(null);
+        $holder = $this->tnUserWithId(99130025);
+        $change = [
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130025,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ];
+
+        $this->syncChanges([$change]);
+
+        // The id is no longer held, and the named account now holds two TN usernames, so the
+        // same removal is a real skip on it.
+        DB::table('users')->where('id', $holder->id)->update(['tnuserid' => null]);
+        UserEmail::create(['userid' => $named->id, 'email' => $this->username('second') . '-g1' . self::TN_DOMAIN, 'preferred' => 0]);
+
+        $this->syncChanges([$change]);
+
+        $this->assertCount(1, $this->skipEvents('tn-two-usernames'));
+        $this->assertCount(2, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('not applied', $sentry->calls[1]);
     }
 
     /** Only a removal is lost for good by being skipped, so only a removal needs a person. */
