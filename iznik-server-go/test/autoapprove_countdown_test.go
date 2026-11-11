@@ -1384,7 +1384,11 @@ func TestAutoapproveatNoCountdownWhileTheLockdownHoldsPosts(t *testing.T) {
 		db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", m)
 		insertAutomodRow(t, m, groupID, "approve", 0)
 	}
-	db.Exec("UPDATE messages_groups SET collection='Pending', rippled_in=1, arrival=NOW() - INTERVAL 30 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 29 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", rippled)
+	// The rippled copy's post started on another community, where it is Approved: without that
+	// it is not on the short path and has no countdown to lose.
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 0)", rippled, originGroup)
+	db.Exec("UPDATE messages_groups SET collection='Pending', rippled_in=1, arrival=NOW() - INTERVAL 30 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 29 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=? AND groupid=?", rippled, groupID)
 
 	counts := func() (c, o, r bool) {
 		return getAutoapproveatField(t, clean, groupID, modToken) != nil,

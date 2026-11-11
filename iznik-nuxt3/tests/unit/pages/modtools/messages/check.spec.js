@@ -271,6 +271,8 @@ describe('messages/check/[[id]].vue page', () => {
       mockMessages.value = [{ id: 101 }]
       mockMessageStore.markChecked.mockRejectedValueOnce(new Error('timeout'))
       const wrapper = mountComponent()
+      // The page clears the store once as it mounts.
+      mockMessageStore.clear.mockClear()
       await bulk(wrapper).trigger('click')
       await wrapper.find('.confirm-yes').trigger('click')
       await flushPromises()
