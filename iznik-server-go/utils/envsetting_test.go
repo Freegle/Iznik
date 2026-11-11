@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// The cases for EnvSwitch, EnvPositiveInt and EnvGroupIDs are those of the batch's
+// The cases for EnvSwitch, EnvPositiveInt, EnvWholeNumber and EnvGroupIDs are those of the batch's
 // tests/Unit/Support/EnvSettingTest.php, which pins the same rule on its side. A case added to one
 // belongs in the other.
 
@@ -75,6 +75,41 @@ func TestEnvPositiveInt(t *testing.T) {
 
 	os.Unsetenv("ENV_SETTING_NEVER_SET_FOR_TEST")
 	assert.Equal(t, 30, EnvPositiveInt("ENV_SETTING_NEVER_SET_FOR_TEST", 30), "unset is the default")
+}
+
+func TestEnvWholeNumber(t *testing.T) {
+	// The default is 30 here so that a fall back to it cannot be mistaken for a value.
+	cases := []struct {
+		name  string
+		value string
+		want  int
+	}{
+		{"plain", "20", 20},
+		{"padded", " 15 ", 15},
+		{"plus sign", "+7", 7},
+		{"leading zeros", "007", 7},
+		{"zero is a real setting", "0", 0},
+		{"padded zero", " 0 ", 0},
+		{"plus zero", "+0", 0},
+		{"negative", "-5", 30},
+		{"letters", "abc", 30},
+		{"units suffix", "20min", 30},
+		{"decimal", "12.5", 30},
+		{"exponent", "1e3", 30},
+		{"empty", "", 30},
+		{"blank", "   ", 30},
+		{"non ascii digits", "٢٠", 30},
+		{"nine digits", "123456789", 123456789},
+		{"ten digits", "1234567890", 30},
+	}
+
+	for _, c := range cases {
+		t.Setenv("ENV_SETTING_FOR_TEST", c.value)
+		assert.Equal(t, c.want, EnvWholeNumber("ENV_SETTING_FOR_TEST", 30), "%s: %q", c.name, c.value)
+	}
+
+	os.Unsetenv("ENV_SETTING_NEVER_SET_FOR_TEST")
+	assert.Equal(t, 30, EnvWholeNumber("ENV_SETTING_NEVER_SET_FOR_TEST", 30), "unset is the default")
 }
 
 func TestEnvGroupIDs(t *testing.T) {

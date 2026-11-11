@@ -2,9 +2,6 @@ package message
 
 import (
 	"encoding/json"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/lockdown"
@@ -44,13 +41,10 @@ func reasonsHoldByGroupOwnRules(raw *json.RawMessage) bool {
 
 // rippledInPendingHours mirrors config('freegle.ripple.rippled_in_pending_hours'): how long
 // AutoApproveService leaves a rippled-in copy Pending for the receiving group's veto before
-// approving it. Read from the same variable the batch container reads.
+// approving it. Read from the same variable the batch container reads, by the same rule
+// (EnvSetting::wholeNumber): a number of more than nine digits is the default 0 on both sides.
 func rippledInPendingHours() int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("RIPPLE_RIPPLED_IN_PENDING_HOURS"))); err == nil && v > 0 {
-		return v
-	}
-
-	return 0
+	return utils.EnvWholeNumber("RIPPLE_RIPPLED_IN_PENDING_HOURS", 0)
 }
 
 // automodApproved returns when the latest messages_automod row for (msgid, groupid) said

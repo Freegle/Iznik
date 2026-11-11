@@ -12,8 +12,8 @@ import (
 // as off means posts that publish themselves with nothing on screen to say so, or a countdown for
 // a post nothing will publish.
 //
-// EnvSwitch, EnvPositiveInt and EnvGroupIDs are the batch's App\Support\EnvSetting::flag,
-// positiveInt and groupIds, case for case. utils/envsetting_test.go holds the same cases as the
+// EnvSwitch, EnvPositiveInt, EnvWholeNumber and EnvGroupIDs are the batch's App\Support\EnvSetting::flag,
+// positiveInt, wholeNumber and groupIds, case for case. utils/envsetting_test.go holds the same cases as the
 // batch's tests/Unit/Support/EnvSettingTest.php; a case added to one belongs in the other.
 // Every switch the two sides share goes through these; a `(bool) env()` read on the batch side
 // is a bug, not a second rule.
@@ -44,6 +44,24 @@ func EnvPositiveInt(name string, def int) int {
 
 	n, err := strconv.Atoi(v)
 	if err != nil || n <= 0 {
+		return def
+	}
+
+	return n
+}
+
+// EnvWholeNumber reads the named variable as a whole number from zero up, else def: for a setting
+// where zero is a real choice but a blank is not one. Blank, negative, fractional, exponent and
+// non-numeric values all mean the default, as does a number of more than nine digits. A leading
+// plus sign and leading zeros are allowed, and an explicit "0" is 0. Mirrors EnvSetting::wholeNumber.
+func EnvWholeNumber(name string, def int) int {
+	v := strings.TrimPrefix(strings.Trim(os.Getenv(name), phpTrimChars), "+")
+	if len(v) == 0 || len(v) > 9 || !asciiDigits(v) {
+		return def
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil {
 		return def
 	}
 

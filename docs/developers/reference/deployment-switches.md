@@ -164,7 +164,9 @@ a positive whole number or the default; blank, zero, negative, fractional and no
 mean the default. A group list keeps only plain-digit ids, so `12abc` is not community 12. The
 two earned-reach numbers (`RIPPLE_AUTOAPPROVE_HOLD_SECONDS` and `RIPPLE_CLEAN_VIEWS_PER_GROUP`)
 are counts where `0` is a real setting (hold off, cap off): blank or unset means the default,
-and only an explicit `0` turns them off.
+and only an explicit `0` turns them off. `RIPPLE_RIPPLED_IN_PENDING_HOURS` is read the same way on
+both sides (`EnvWholeNumber` in Go), so a typo or a number of more than nine digits is the default
+`0` for the cron and for the countdown alike.
 
 ### The automated review service's own settings
 
