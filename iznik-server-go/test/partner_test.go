@@ -138,7 +138,8 @@ func TestFindTNCandidatesTwinAccounts(t *testing.T) {
 // tnuserid-first resolution acted as the other account and the promise 403'd
 // "Not your message". Only a TN id says who someone is, and this account has
 // none, so it is not merged: the alias moves to the member, and TN can still
-// act on its own post, which stays where it was filed.
+// act on its own post, which stays where it was filed. What says the post is
+// this member's is its other copy, on the account holding their TN id.
 func TestPartnerPromiseActsOnATNPostOnAnAccountWithNoTNId(t *testing.T) {
 	prefix := uniquePrefix("partner_promise")
 	db := database.DBConn
@@ -159,6 +160,9 @@ func TestPartnerPromiseActsOnATNPostOnAnAccountWithNoTNId(t *testing.T) {
 	msgID := CreateTestMessage(t, emailTwin, groupID, prefix+" subject", 51.5, -0.1)
 	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", 424242, msgID)
 	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", msgID)
+	ownCopy := CreateTestMessage(t, tnTwin, CreateTestGroup(t, prefix+"_2"), prefix+" subject", 51.5, -0.1)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", 424242, ownCopy)
+	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", ownCopy)
 
 	body := `{"tnpostid":"424242","action":"Promise"}`
 	req := httptest.NewRequest("POST",
@@ -211,7 +215,8 @@ func TestEnsurePartnerIdentifiersAttachesNewAlias(t *testing.T) {
 // minted a second Freegle account, and 96 such pairs are still live.
 //
 // The third account has no TN id, so nothing says it is another member, and the
-// post is TN's own. Its username differs on purpose: a username plays no part.
+// post is TN's own, with a copy on the member's account. Its username differs on
+// purpose: a username plays no part.
 func TestPartnerPromiseActsOnATNPostOnAnotherAccountWithNoTNId(t *testing.T) {
 	prefix := uniquePrefix("partner_sibling")
 	db := database.DBConn
@@ -238,6 +243,9 @@ func TestPartnerPromiseActsOnATNPostOnAnotherAccountWithNoTNId(t *testing.T) {
 	msgID := CreateTestMessage(t, sibling, groupID, prefix+" subject", 51.5, -0.1)
 	db.Exec("UPDATE messages SET tnpostid = ?, fromaddr = ? WHERE id = ?", 474747, siblingAlias, msgID)
 	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", msgID)
+	ownCopy := CreateTestMessage(t, stamped, CreateTestGroup(t, prefix+"_2"), prefix+" subject", 51.5, -0.1)
+	db.Exec("UPDATE messages SET tnpostid = ?, fromaddr = ? WHERE id = ?", 474747, sentAlias, ownCopy)
+	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", ownCopy)
 
 	body := `{"tnpostid":"474747","action":"Promise"}`
 	req := httptest.NewRequest("POST",
@@ -509,6 +517,9 @@ func TestPartnerPromiseReachesAPostAfterItsAliasMoved(t *testing.T) {
 	msgID := CreateTestMessage(t, holder, groupID, prefix+" subject", 51.5, -0.1)
 	db.Exec("UPDATE messages SET tnpostid = ?, fromaddr = ? WHERE id = ?", 484848, alias, msgID)
 	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", msgID)
+	ownCopy := CreateTestMessage(t, member, CreateTestGroup(t, prefix+"_2"), prefix+" subject", 51.5, -0.1)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", 484848, ownCopy)
+	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", ownCopy)
 
 	require.Equal(t, 200, partnerJoin(t, key, 66708, alias, groupID))
 	require.Equal(t, member, addressOwner(alias))
@@ -516,8 +527,53 @@ func TestPartnerPromiseReachesAPostAfterItsAliasMoved(t *testing.T) {
 	assert.Equal(t, 200, partnerPromise(t, key, 66708, alias, 484848))
 
 	var count int64
-	db.Table("messages_promises").Where("msgid = ?", msgID).Count(&count)
+	db.Table("messages_promises").Where("msgid = ? AND userid = ?", msgID, holder).Count(&count)
 	assert.Equal(t, int64(1), count)
+}
+
+// A post on an account with no TN id is nobody's in particular, so being TN's own post is not
+// enough: a wrong message id in a call, from a TN bug or a replayed call, must not hand the member
+// somebody else's post. With no copy of it on the member's account, nothing ties it to them.
+func TestPartnerActionNeedsACopyOnTheMembersAccountToActOnAPostWithNoTNId(t *testing.T) {
+	prefix := uniquePrefix("partner_untied")
+	db := database.DBConn
+	key := insertTestPartnerKey(t, prefix, "test.com")
+
+	member := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
+	other := CreateTestUser(t, prefix+"_o", utils.SYSTEMROLE_USER)
+	stampTN(member, 66721)
+	alias := prefix + "-g7@test.com"
+	giveTNAddress(member, alias)
+	giveTNAddress(other, "other"+prefix+"-g7@test.com")
+	groupID := CreateTestGroup(t, prefix)
+
+	msgID := CreateTestMessage(t, other, groupID, prefix+" subject", 51.5, -0.1)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", 545454, msgID)
+	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", msgID)
+
+	// A copy of a different TN post on the member's account ties nothing.
+	unrelated := CreateTestMessage(t, member, groupID, prefix+" other", 51.5, -0.1)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", 545455, unrelated)
+	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", unrelated)
+
+	assert.Equal(t, 403, partnerAction(t, key, 66721, alias, fmt.Sprintf(`{"id":%d,"action":"Promise"}`, msgID)))
+	assert.Equal(t, 403, partnerPromise(t, key, 66721, alias, 545454))
+
+	patch := httptest.NewRequest("PATCH",
+		fmt.Sprintf("/api/message?partner=%s&tnuserid=66721&email=%s", key, url.QueryEscape(alias)),
+		strings.NewReader(fmt.Sprintf(`{"id":%d,"subject":"OFFER: hijacked"}`, msgID)))
+	patch.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(patch, -1)
+	require.NoError(t, err)
+	assert.NotEqual(t, 200, resp.StatusCode)
+
+	var count int64
+	db.Table("messages_promises").Where("msgid = ?", msgID).Count(&count)
+	assert.Equal(t, int64(0), count)
+
+	var subject string
+	db.Table("messages").Select("subject").Where("id = ?", msgID).Scan(&subject)
+	assert.Equal(t, prefix+" subject", subject)
 }
 
 // An account holding a different TN id is another member, whatever address or username it shares
@@ -641,9 +697,10 @@ func TestPartnerJoinNeverStampsAnAccountFoundByItsAddress(t *testing.T) {
 	assert.Len(t, *reports, 1)
 }
 
-// A member we have not met can still act on TN's own post: they get an account, and the post stays
-// on the account it was filed on, which holds no TN id.
-func TestPartnerPromiseByAnUnknownTNMemberReachesTheirPost(t *testing.T) {
+// A member we have not met gets an account of their own, and the post stays on the account it was
+// filed on, which holds no TN id. The new account has no copy of the post, so nothing ties it to
+// this member and TN cannot act on it until tn:split-shared-account moves it.
+func TestPartnerPromiseByAnUnknownTNMemberDoesNotReachAPostOnlyOnAnotherAccount(t *testing.T) {
 	prefix := uniquePrefix("partner_unknown_post")
 	db := database.DBConn
 	key := insertTestPartnerKey(t, prefix, "test.com")
@@ -659,11 +716,11 @@ func TestPartnerPromiseByAnUnknownTNMemberReachesTheirPost(t *testing.T) {
 	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", 515151, msgID)
 	defer db.Exec("UPDATE messages SET tnpostid = NULL WHERE id = ?", msgID)
 
-	assert.Equal(t, 200, partnerPromise(t, key, 66718, alias, 515151))
+	assert.Equal(t, 403, partnerPromise(t, key, 66718, alias, 515151))
 
 	var count int64
-	db.Table("messages_promises").Where("msgid = ? AND userid = ?", msgID, holder).Count(&count)
-	assert.Equal(t, int64(1), count)
+	db.Table("messages_promises").Where("msgid = ?", msgID).Count(&count)
+	assert.Equal(t, int64(0), count)
 
 	var created uint64
 	db.Raw("SELECT COALESCE(id, 0) FROM users WHERE tnuserid = ?", 66718).Scan(&created)

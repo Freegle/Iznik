@@ -4375,11 +4375,14 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, uint64, error) {
 // actAsOwnerCandidate returns the id to act on a message as, which is the primary id
 // unless the owner is one of the partner-resolved candidates.
 //
-// TN can also act on its own post filed on an account with no TN id. The post's address
-// or username says nothing about whose it is, so that is decided by ids alone: the call
-// names a TN id, the caller's account holds exactly that id, and the post's account holds
-// none, so nothing says it is another member's. A post on an account holding a different
-// TN id is that member's until tn:split-shared-account moves it.
+// TN can also act on a copy of its own post filed on an account with no TN id. The post's
+// address or username says nothing about whose it is, so that is decided by ids alone: the
+// call names a TN id, the caller's account holds exactly that id, the post's account holds
+// none, and another copy of the same TN post is on the caller's account. That last is what
+// ties the post to this member: an account with no TN id is not anyone's in particular, so
+// without it a wrong message id would hand the member somebody else's post. A post with no
+// copy on the member's account, or on an account holding a different TN id, waits for
+// tn:split-shared-account to move it.
 func actAsOwnerCandidate(db *gorm.DB, primary uint64, candidates []uint64, tnuserid uint64, msgID uint64) uint64 {
 	if len(candidates) == 0 {
 		return primary
@@ -4397,11 +4400,20 @@ func actAsOwnerCandidate(db *gorm.DB, primary uint64, candidates []uint64, tnuse
 	}
 
 	isTNPost := msg.Tnpostid != nil && *msg.Tnpostid != ""
-	if isTNPost && tnuserid != 0 && user.TNIdOf(db, primary) == tnuserid && user.TNIdOf(db, msg.Fromuser) == 0 {
+	if isTNPost && tnuserid != 0 && user.TNIdOf(db, primary) == tnuserid && user.TNIdOf(db, msg.Fromuser) == 0 &&
+		tnPostHasCopyOn(db, *msg.Tnpostid, msgID, primary) {
 		return msg.Fromuser
 	}
 
 	return primary
+}
+
+// tnPostHasCopyOn says whether a copy of a TN post other than msgID is filed on the account.
+func tnPostHasCopyOn(db *gorm.DB, tnpostid string, msgID uint64, userid uint64) bool {
+	var n int64
+	db.Table("messages").Where("tnpostid = ? AND id != ? AND fromuser = ?", tnpostid, msgID, userid).Count(&n)
+
+	return n > 0
 }
 
 // effLat/effLng are the CALLER's already-resolved coordinates, i.e. after

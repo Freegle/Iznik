@@ -127,8 +127,9 @@ func FindTNCandidates(db *gorm.DB, tnuserid uint64, email string) []uint64 {
 //
 // Only a TN id says who someone is. The other account is never merged, because
 // nothing proves it is this member's, whatever usernames or addresses it holds. It
-// just loses the address. Its posts stay on it, and actAsOwnerCandidate lets TN act
-// on them.
+// just loses the address. Its posts stay on it. actAsOwnerCandidate lets TN act on one
+// that has another copy on the member's own account; the rest wait for
+// tn:split-shared-account.
 //
 // Returns the updated candidate set: the account holding the tnuserid on success, or
 // the original candidates if it fails (per-message owner arbitration still copes

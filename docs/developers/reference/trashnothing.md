@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -122,9 +122,12 @@ counts. The line holds ids only. It ends by printing how many accounts still hav
 no TN id. How far back the feed goes decides how many it can reach.
 
 TN can act on a post the member's account does not own only by ids (`actAsOwnerCandidate`): the post
-has a `tnpostid`, the call names a `tnuserid`, the caller's account holds exactly that id, and the
-post's account holds none. A post on an account holding a different TN user id answers
-"Not your message" until `tn:split-shared-account` moves it, because no id says it is this member's.
+has a `tnpostid`, the call names a `tnuserid`, the caller's account holds exactly that id, the
+post's account holds none, and another copy of the same TN post is on the caller's account. That copy
+is what ties the post to the member; without it a wrong message id in a call would hand them a
+stranger's post. A post with no copy on the member's account, or on an account holding a different
+TN user id, answers "Not your message" until `tn:split-shared-account` moves it, because no id says
+it is this member's.
 A call with the partner key alone acts as the owner of TN's own post, found by its `tnpostid`.
 
 ### Email Canonicalization
