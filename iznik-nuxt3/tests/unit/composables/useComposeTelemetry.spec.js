@@ -209,6 +209,25 @@ describe('watchComposeFields', () => {
   })
 })
 
+describe('watchComposeFields with a store that is not in shape', () => {
+  it('does not throw when the messages are not an array, and recovers when they are', async () => {
+    setActivePinia(createPinia())
+    _resetFlowTelemetryForTests()
+    const store = useComposeStore()
+    store.messages = { 0: { id: 0, type: 'Offer', item: 'Sofa' } }
+
+    const scope = effectScope()
+    expect(() => scope.run(() => watchComposeFields('Offer'))).not.toThrow()
+
+    store.messages = [{ id: 0, type: 'Offer', item: 'Sofa' }]
+    await nextTick()
+    store.messages[0].item = 'Sofa bed'
+    await nextTick()
+
+    scope.stop()
+  })
+})
+
 describe('watchOptionChoices', () => {
   let delivery
   let deadline
