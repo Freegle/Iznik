@@ -172,6 +172,18 @@ class AutoApproveCleanServiceLockdownTest extends TestCase
         $this->assertContains('auto-approve-clean', LockdownService::ACK_LOOPS, 'lockdown:report lists a loop that never ticked');
     }
 
+    public function test_acks_the_press_even_while_the_feature_is_dark(): void
+    {
+        config(['freegle.autoapprove.enabled' => false, 'freegle.autoapprove.trial_group_ids' => '']);
+        $this->lockdown->press(null, 'test');
+
+        $this->service->process();
+
+        $ack = DB::table('lockdown_acks')->where('loop', 'auto-approve-clean')->first();
+        $this->assertNotNull($ack, 'a dark loop still acks, or lockdown:report shows it as never seen');
+        $this->assertSame((int) $this->lockdown->current()->id, (int) $ack->lockdownrowid);
+    }
+
     private function hold(int $msgid, int $userid, ?string $outcome): void
     {
         DB::table('lockdown_holds')->insert([

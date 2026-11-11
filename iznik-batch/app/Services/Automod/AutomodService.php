@@ -344,14 +344,17 @@ class AutomodService
     {
         $stats = ['reviewed' => 0, 'unavailable' => 0, 'errors' => 0, 'timeboxed' => 0, 'busy' => 0, 'lockdown' => 0, 'breaker' => 0];
 
+        // The loop acknowledges a lockdown press even while automod is dark, so lockdown:report
+        // does not list it as never seen.
+        $lockdown = $this->lockdown();
+        $lockdown->ack(self::LOCKDOWN_LOOP);
+
         $eligibleGroupIds = AutomodMode::eligibleGroupIds();
         if ($eligibleGroupIds === []) {
             // Automod is dark everywhere - nothing to do.
             return $stats;
         }
 
-        $lockdown = $this->lockdown();
-        $lockdown->ack(self::LOCKDOWN_LOOP);
         if ($lockdown->held('posts')) {
             $stats['lockdown'] = 1;
             Log::info('AutomodService: posts are held by the lockdown; no reviews this run');

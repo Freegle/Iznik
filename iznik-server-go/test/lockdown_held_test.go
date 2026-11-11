@@ -163,7 +163,7 @@ func TestGetModtoolsLockdownStatsAcksListEveryLoop(t *testing.T) {
 	require.Equal(t, 200, status)
 	acks, ok := result["acks"].([]interface{})
 	require.True(t, ok, "%v", result)
-	require.Len(t, acks, 8)
+	require.Len(t, acks, 10)
 
 	loops := map[string]map[string]interface{}{}
 	for _, a := range acks {
@@ -174,6 +174,8 @@ func TestGetModtoolsLockdownStatsAcksListEveryLoop(t *testing.T) {
 	assert.False(t, hasTriage, "the batch loop is lockdown:tick now")
 	require.Contains(t, loops, "tick")
 	assert.Equal(t, true, loops["tick"]["caughtup"])
+	assert.Contains(t, loops, "auto-approve-clean", "the post-moderation publish loop is listed, as the batch lists it")
+	assert.Contains(t, loops, "automod", "the automated review loop is listed, as the batch lists it")
 }
 
 func TestCommunityEventCreatedWhileEventsHeldIsCounted(t *testing.T) {

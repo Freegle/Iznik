@@ -117,6 +117,23 @@ class AutomodServiceLockdownTest extends TestCase
         $this->assertContains('automod', LockdownService::ACK_LOOPS);
     }
 
+    public function test_acks_the_press_even_while_automod_is_dark(): void
+    {
+        config([
+            'freegle.autoapprove.enabled' => false,
+            'freegle.autoapprove.trial_group_ids' => '',
+            'freegle.automod.shadow_group_ids' => '',
+        ]);
+        $this->lockdown->press(null, 'test');
+
+        (new AutomodService(null, $this->loki, $this->lockdown))->process();
+
+        $this->assertNotNull(
+            DB::table('lockdown_acks')->where('loop', 'automod')->first(),
+            'a dark loop still acks, or lockdown:report shows it as never seen'
+        );
+    }
+
     public function test_stops_taking_candidates_once_pressed_mid_run(): void
     {
         $this->fakeApprove();

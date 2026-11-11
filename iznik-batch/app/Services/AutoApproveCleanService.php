@@ -110,6 +110,11 @@ class AutoApproveCleanService
     {
         $stats = ['approved' => 0, 'held_quality' => 0, 'skipped' => 0, 'errors' => 0, 'capped' => 0];
 
+        // The loop acknowledges a lockdown press even while the feature is dark, so lockdown:report
+        // does not list it as never seen.
+        $lockdown = $this->lockdown();
+        $lockdown->ack(self::LOCKDOWN_LOOP);
+
         if ($this->enabledGroupIds() === []) {
             // Feature dark (default): posts follow the pre-existing behaviour: Pending
             // until a moderator acts or the 48h AutoApproveService fallback fires.
@@ -118,8 +123,6 @@ class AutoApproveCleanService
 
         // While posts are held nothing publishes by itself: ContentCheckService keeps new posts
         // Pending, and a post this cron published behind its back would defeat the press.
-        $lockdown = $this->lockdown();
-        $lockdown->ack(self::LOCKDOWN_LOOP);
         if ($lockdown->held('posts')) {
             $this->loki()->logEvent('autoapprove', 'skipped', ['reason' => 'lockdown', 'scope' => 'run']);
 
