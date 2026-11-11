@@ -3721,7 +3721,10 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	// Table()+Delete(nil) carries no
 	// model, so User.Deleted (a plain *time.Time, not gorm.DeletedAt) can never
 	// turn this into a soft-delete UPDATE.
-	db.Table("users").Where("id = ?", id1).Delete(nil)
+	// A deadlock here would leave the merged-away account behind, so run it again.
+	_ = database.RetryOnDeadlock("merge delete", func() error {
+		return db.Table("users").Where("id = ?", id1).Delete(nil).Error
+	})
 
 	// A moderator's Discourse account may be linked to the account that just went. Move it to the
 	// kept one now, in the background, rather than at their next sign-in, so their email and name

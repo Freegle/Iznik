@@ -1214,8 +1214,10 @@ func Post(c *fiber.Ctx) error {
 			db.Table("newsfeed_users").Select("newsfeedid").Where("userid = ?", myid).Scan(&currentSeenID)
 
 			if currentSeenID == 0 || req.ID > currentSeenID {
-				db.Table("newsfeed_users").Clauses(clause.Insert{Modifier: "REPLACE"}).
-					Create(map[string]interface{}{"userid": myid, "newsfeedid": req.ID})
+				_ = database.RetryOnDeadlock("newsfeed seen", func() error {
+					return db.Table("newsfeed_users").Clauses(clause.Insert{Modifier: "REPLACE"}).
+						Create(map[string]interface{}{"userid": myid, "newsfeedid": req.ID}).Error
+				})
 			}
 			db.Table("users_notifications").Where("touser = ? AND newsfeedid = ?", myid, req.ID).
 				Update("seen", gorm.Expr("1"))
@@ -1236,8 +1238,10 @@ func Post(c *fiber.Ctx) error {
 		db.Table("newsfeed").Select("COALESCE(MAX(id), 0)").Row().Scan(&highestNewsfeedID)
 
 		if highestNewsfeedID > 0 {
-			db.Table("newsfeed_users").Clauses(clause.Insert{Modifier: "REPLACE"}).
-				Create(map[string]interface{}{"userid": myid, "newsfeedid": highestNewsfeedID})
+			_ = database.RetryOnDeadlock("newsfeed seen all", func() error {
+				return db.Table("newsfeed_users").Clauses(clause.Insert{Modifier: "REPLACE"}).
+					Create(map[string]interface{}{"userid": myid, "newsfeedid": highestNewsfeedID}).Error
+			})
 		}
 	case "Follow":
 		if req.ID > 0 {
