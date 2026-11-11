@@ -208,6 +208,24 @@ class FeaturePipelineTest extends TestCase
         }
     }
 
+    public function test_token_stats_are_kept_for_vocabulary_terms_only(): void
+    {
+        $pipeline = $this->trainedPipeline();
+
+        $property = new \ReflectionProperty(FeaturePipeline::class, 'tokenStats');
+        $property->setAccessible(true);
+        $stats = $property->getValue($pipeline);
+
+        // 'yes' is in the vocabulary. 'definitely' is in one span only, below the
+        // vectorizer's minimum document count, so it is not.
+        $this->assertArrayHasKey('yes', $stats);
+        $this->assertArrayNotHasKey('definitely', $stats);
+
+        foreach ($stats as $stat) {
+            $this->assertGreaterThanOrEqual(3, $stat['doc']);
+        }
+    }
+
     public function test_top_ngrams_pos_rate_reflects_label_purity(): void
     {
         $pipeline = $this->trainedPipeline();

@@ -30,7 +30,7 @@ class FeaturePipeline
     private LogisticRegression $classifier;
     private bool $fitted = false;
 
-    /** token => ['doc' => int, 'pos' => int] over the training set (for n-gram direction) */
+    /** token => ['doc' => int, 'pos' => int] over the training set, for vocabulary terms only */
     private array $tokenStats = [];
 
     public function __construct()
@@ -67,6 +67,13 @@ class FeaturePipeline
 
         // Fit + apply the transformers in place.
         $this->vectorizer->fit(new Unlabeled($samples));
+
+        // Only vocabulary terms are ever reported, so drop the stats of every other
+        // n-gram. Otherwise the saved model carries a count for every fragment of
+        // the training text.
+        $vocabulary = array_flip($this->vectorizer->vocabularies()[0] ?? []);
+        $this->tokenStats = array_intersect_key($this->tokenStats, $vocabulary);
+
         $this->vectorizer->transform($samples);
         $this->tfidf->fit(new Unlabeled($samples));
         $this->tfidf->transform($samples);
