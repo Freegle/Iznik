@@ -5,6 +5,7 @@
         <b-col cols="12" lg="6" class="p-0" offset-lg="3">
           <ScrollGrid
             :items="stories"
+            single-column
             key-field="id"
             empty-icon="book-open"
             empty-text="No stories yet."
