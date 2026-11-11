@@ -1,7 +1,7 @@
 # Candidate: move the archived images off Azure
 
-Status: draft
-Last reviewed: 2026-10-28
+Status: running (build plan: plans/active/2026-11-11-azure-archive-migration.md)
+Last reviewed: 2026-11-11
 
 ## Goal
 
@@ -80,11 +80,11 @@ it already has.
 
 ## Open questions for Edward
 
-- Does the Azure account hold the nonprofit $2,000 sponsorship, and what is its balance and renewal date? Recommended: check the Azure Sponsorships portal; if the balance covers the measured egress, no slow copy is needed.
-- Where is the Azure account and who holds the key? Recommended: Edward supplies a read-and-delete scoped key per session, as with the Krystal object-storage token; it is never stored in the repo.
-- Is the destination the same bucket as the images migration or a separate `archive` bucket? Recommended: separate bucket, public read, so its lifecycle and cost are visible on their own.
-- If the measured size is small (under about 200 GB), still move it, or leave it on Azure and only tidy the code? Recommended: still move it; the point is one storage system fewer.
-- Delete from Azure after how long serving from the new place? Recommended: 14 days of sampled checks with no misses.
+None. Answered on 2026-11-11 and recorded in the build plan: pace to the free allowance, a
+read-only Azure app for the monitoring, thumbnails made by the resizer rather than copied, nothing
+deleted from Azure until the end, the existing images bucket under archive/, stored with the best
+lossless JPEG optimisation. Measured the same day: about 7.56 million rows and 980 GB, in North
+Europe, already served straight from Azure to members.
 
 ## External prerequisites
 

@@ -248,6 +248,23 @@ func TestIsValidRedirectURL(t *testing.T) {
 	}
 }
 
+func TestIsValidRedirectURLArchivedDomainWithAPath(t *testing.T) {
+	// The archive is served from a path on a host (images.ilovefreegle.org/archive), and before
+	// that from freegle.blob.core.windows.net/images. Hosts are compared, so the path must not
+	// stop the host matching.
+	for _, domain := range []string{"archive.example.com/archive", "freegle.blob.core.windows.net/images"} {
+		t.Setenv("IMAGE_ARCHIVED_DOMAIN", domain)
+		host := domain[:strings.Index(domain, "/")]
+
+		if !isValidRedirectURL("https://" + domain + "/img_1.jpg") {
+			t.Errorf("%s: an archived image must be allowed", domain)
+		}
+		if isValidRedirectURL("https://evil.com/" + host) {
+			t.Errorf("%s: the host in a path must not be allowed", domain)
+		}
+	}
+}
+
 func TestIsValidRedirectURLEmptyEnv(t *testing.T) {
 	origUser := os.Getenv("USER_SITE")
 	origMod := os.Getenv("MOD_SITE")

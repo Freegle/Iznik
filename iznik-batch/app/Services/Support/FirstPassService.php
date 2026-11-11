@@ -3,6 +3,7 @@
 namespace App\Services\Support;
 
 use App\Mail\Chat\ReferToSupportMail;
+use App\Services\AzureArchive\ArchivedImageUrl;
 use App\Models\Membership;
 use App\Models\User;
 use Illuminate\Http\Client\ConnectionException;
@@ -241,11 +242,11 @@ class FirstPassService
 
             return $url;
         }
-        $domain = (int) ($img->archived ?? 0) > 0
-            ? rtrim((string) config('freegle.images.archived_domain'), '/')
-            : rtrim((string) config('freegle.images.domain'), '/');
+        if ((int) ($img->archived ?? 0) > 0) {
+            return ArchivedImageUrl::path('mimg', (int) $img->id);
+        }
 
-        return $domain.'/mimg_'.$img->id.'.jpg';
+        return rtrim((string) config('freegle.images.domain'), '/').'/mimg_'.$img->id.'.jpg';
     }
 
     /**

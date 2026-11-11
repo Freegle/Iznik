@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\AzureArchive\ArchivedImageUrl;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Log;
@@ -51,10 +52,12 @@ class GroupAttachment extends Model
             return null;
         }
 
+        if ($this->archived) {
+            return $thumb ? ArchivedImageUrl::thumb('gimg', (int) $imageId) : ArchivedImageUrl::path('gimg', (int) $imageId);
+        }
+
         $prefix = $thumb ? 'tgimg' : 'gimg';
-        $domain = $this->archived
-            ? rtrim(config('freegle.images.archived_domain', 'https://freegle.blob.core.windows.net'), '/')
-            : rtrim(config('freegle.images.domain', 'https://images.ilovefreegle.org'), '/');
+        $domain = rtrim(config('freegle.images.domain', 'https://images.ilovefreegle.org'), '/');
 
         return "{$domain}/{$prefix}_{$imageId}.jpg";
     }

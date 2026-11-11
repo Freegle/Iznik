@@ -16,12 +16,10 @@ func BuildChatImageUrl(imageid uint64, imageuid string, imagemods string, archiv
 		url := GetImageDeliveryUrl(imageuid, imagemods)
 		return url, url
 	}
-	idStr := fmt.Sprintf("%d", imageid)
 	if archived > 0 {
-		domain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
-		return "https://" + domain + "/mimg_" + idStr + ".jpg",
-			"https://" + domain + "/tmimg_" + idStr + ".jpg"
+		return ArchivedImageUrls("mimg", imageid)
 	}
+	idStr := fmt.Sprintf("%d", imageid)
 	domain := os.Getenv("IMAGE_DOMAIN")
 	return "https://" + domain + "/mimg_" + idStr + ".jpg",
 		"https://" + domain + "/tmimg_" + idStr + ".jpg"
@@ -176,6 +174,19 @@ func rotateParam(mods string) string {
 // images referenced by messages_attachments.externalurl).
 func GetExternalImageDeliveryUrl(externalurl string, mods string) string {
 	return deliveryBase() + "?" + rotateParam(mods) + "url=" + url.QueryEscape(externalurl)
+}
+
+// ArchivedThumbSize is the box a thumbnail of an archived image is resized into, the size the
+// images.ilovefreegle.org t*img_ rewrites ask for.
+const ArchivedThumbSize = 250
+
+// ArchivedImageUrls builds the full-size and thumbnail URLs for an image V1 archived
+// (archived > 0) under prefix: the full image from IMAGE_ARCHIVED_DOMAIN, and a thumbnail the
+// delivery resizer makes from it. V1 also wrote t-prefixed thumbnail blobs, but those are not
+// copied off Azure (docs/ops/runbooks/azure-archive-migration.md), so nothing may link to them.
+func ArchivedImageUrls(prefix string, id uint64) (path string, paththumb string) {
+	return fmt.Sprintf("https://%s/%s_%d.jpg", os.Getenv("IMAGE_ARCHIVED_DOMAIN"), prefix, id),
+		GetArchivedImageDeliveryUrl(prefix, id, ArchivedThumbSize, ArchivedThumbSize)
 }
 
 // GetArchivedImageDeliveryUrl builds the delivery URL for a legacy attachment
