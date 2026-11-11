@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-16
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxIdeasService.php
@@ -25,6 +25,7 @@ covers:
   - iznik-batch/tests/Feature/Ux/UxIdeasSyncTest.php
   - iznik-batch/tests/Feature/Ux/UxIdeaScheduleTest.php
   - iznik-batch/tests/Feature/Ux/UxIdeasBoundaryTest.php
+  - iznik-batch/tests/Unit/Console/UxIdeasCronTest.php
   - iznik-batch/tests/Support/MakesSurveyTables.php
   - iznik-server-go/test/ux_ideas_test.go
   - claude-agent-sdk/ux-ideas.test.js
@@ -89,8 +90,10 @@ One row of `ux_ideas` (`iznik-batch/database/migrations/2026_10_15_000002_create
   tests of it that ended without a decision.
 
 An idea is never filed twice. A title that matches **any** idea of the funnel in **any** status, or
-any experiment of it, is skipped, with case and spacing ignored. The brief lists all of them as
-tried, with their outcome, so the helper is told not to propose them again.
+any experiment of it, is skipped, with case and spacing ignored. The brief lists the newest 80
+experiments and the newest 80 ideas of the funnel as tried, with their outcome, so the helper is told
+not to propose them again. The check when ideas are filed reads every row, so an older one the helper
+proposes anyway is skipped and counted in the skipped total, and takes one of the slots asked for.
 
 ## The generator
 
@@ -117,8 +120,12 @@ writes down what it knows and the helper adds what only it has, the code and its
   best" and "N said most needs improving". Comments are left out.
 - *Reports*: the first posts of the Tech and ModTools, Development and Bug Reports categories on
   Discourse (when its API key is set; the slugs are `UX_IDEAS_DISCOURSE_CATEGORIES`) and the titles of
-  the repository's open issues. Text is cut short and **scrubbed of email addresses, phone numbers and
-  postcodes by the survey scrubber (`UxScrub`) before it leaves the batch**. Text that cannot be scrubbed
+  the repository's open issues. A category is read only when Discourse says it is public, because the
+  key can also read staff-only ones; a category that is not public or whose visibility is not stated is
+  skipped, and one category or topic failing does not stop the others. Text is cut short and **scrubbed
+  of email addresses, phone numbers and postcodes by the survey scrubber (`UxScrub`) before it leaves
+  the batch**. A pattern cannot find a name or a street, so a forum post that names a member still
+  carries the name: these are volunteers' words, sent as words, unlike the members' themes. Text that cannot be scrubbed
   is never sent, so without the scrubber nothing is fetched and the brief says `no reports`. Before the
   scrubber sees it, every link loses its query string and fragment, and any pair named like a key
   (`u=`, `k=`, `key=`, `token=`) is replaced wherever it is written, because a link in a Freegle email
@@ -136,7 +143,13 @@ check, and nothing here writes to such a table.
 
 **The helper** (`claude-agent-sdk/ux-ideas.js`, `POST /internal/ux-ideas`, see
 [ai-support-helper.md](ai-support-helper.md)) reads the funnel's files and follows their imports with
-Read, Grep and Glob confined to front-end source, and no other tool. It asks for problems first and
+Read, Grep and Glob confined to front-end source, and no other tool. The guard allows the source
+directories under `iznik-nuxt3` (components, composables, stores, pages, layouts, plugins, utils,
+mixins, api and constants) and `constants.js`, so the imports a component follows can be read; a file
+must have a source extension and not be a dotfile, and a Grep over a directory must name source
+files by a glob or a type, so a search cannot return the lines of a data or configuration file. What
+the model returns is bounded before it is stored: each text field is cut at 1,000 characters and an
+idea keeps at most ten file names, all under `iznik-nuxt3/`. It asks for problems first and
 ideas second, and returns them checked. The prompt and the output contract are in
 `claude-agent-sdk/ux-ideas-prompt.js`, one file shared by the live route and the backtest, so the
 thing tested is the thing that runs. It must stay free of `require()`, because `node --test` in CI
@@ -162,7 +175,8 @@ claude-agent-sdk/ux-ideas-prompt-cli.js brief.json` prints the prompt a brief wo
 - *One run at a time.* The helper runs one model call at a time across every internal route. While
   the 05:17 run is going, any other internal call is told to come back later.
 - *The secret.* The batch sends `UX_INTERNAL_SECRET` and the helper refuses a call without it. With
-  the secret unset `ux:ideas-refresh` stops with "UX_INTERNAL_SECRET is not set".
+  the secret unset `ux:ideas-refresh` stops with "UX_INTERNAL_SECRET is not set" and exits non-zero. It
+  asks nothing and records no back-off, so the first run after the secret is set tries every funnel.
 
 ## Turning an idea into an experiment
 
@@ -234,29 +248,43 @@ surveys, the surveys section and this change are all merged and green.
 A generator that cannot come up with ideas we have already come up with is deficient, so it is tested
 against our own history:
 
-1. `scripts/ux-ideas-snapshot.sh <commit> <flow> <outdir>` freezes one funnel as it was at a past
-   commit. `brief.json` holds what the generator may see (the files at that commit and the area's
-   commit subjects before it) and `truth.json` holds what it must not (the commits after it, with
-   diffs). The snapshot carries no member data, so it tests the part of the generator that works from
-   code and history.
+1. `scripts/ux-ideas-snapshot.sh <commit> <flow> <outdir> [months]` freezes one funnel as it was at a
+   past commit. `<outdir>/code` holds the front-end source directories the live generator may read, as
+   they were at that commit, with repository paths, so the generator reads whole files and follows
+   imports as it does live. `brief.json` holds what the generator may see besides the code: its
+   `codeDir` and the area's commit subjects before the commit. `truth.json` holds what it must not
+   see: the commits after it, with diffs, for a fixed window (six months by default, recorded as
+   `until`, with a `count` of the commits) so a score does not depend on how old the snapshot is. The
+   snapshot carries no member data and no figures, survey answers, reports or open issues, so the
+   prompt prints those sections as `(none)` and the backtest tests the part of the generator that works
+   from code and history.
 2. `.claude/workflows/ux-ideas-backtest.js` labels each later commit as a change a member would notice
-   or not, has the generator answer its own prompt over the snapshot, and has a strict and a generous
-   judge decide which changes an idea anticipates. A match only the generous judge accepts must survive
-   a refuter.
+   or not, and checks it was given every commit in `truth.json`, asking again for any it left out and
+   reporting any still missing as `truthGaps`. It has the generator answer its own prompt over the
+   snapshot, and has a strict and a generous judge decide which changes an idea anticipates. A match
+   only the generous judge accepts must survive a refuter.
 3. **Recall** is the share of member-visible later changes (not refactors, tests, lint, or bug fixes
    nobody asked for) that at least one idea anticipated. It answers: if this generator had existed
    then, how much of what we went on to build would it have proposed? The default bar is 25 percent and
    it runs up to three rounds. Below the bar it rewrites the prompt builder from the kinds of change it
    missed, and it must not copy the missed changes into the prompt, because the prompt is also used on
-   code nobody has changed yet.
+   code nobody has changed yet. After each round the builder is copied aside, and an edit that scored
+   lower is put back before the next edit, so the version kept is the best round's, not the last. The
+   result gives the prompt's diff, and a check names any added text that copies a missed change.
+4. **Held out.** The improver is shown the missed changes of the snapshots it is scored on, so recall on
+   those is training recall once an edit has been made. Snapshots given as `heldOut` are never shown to
+   the improver and are scored once, with the kept prompt: `heldOutRecall` is the figure to quote.
+   `tuneRecall` is the best round on the snapshots the improver saw, and `baselineRecall` is the first
+   round, before any edit.
 
-Measured so far: on the set it was tuned on, 15 percent strict and 36 percent generous. On a set it had
-not seen, 17 percent strict and 46 percent generous. It finds no wording change and no removal, so
-those two kinds are the likeliest to be missing from the list. Backtest again after any change to
-`ux-ideas-prompt.js`.
+Measured by hand before the workflow had a held-out step: on the set it was tuned on, 15 percent strict
+and 36 percent generous. On a set it had not seen, 17 percent strict and 46 percent generous. It finds
+no wording change and no removal, so those two kinds are the likeliest to be missing from the list.
+Backtest again after any change to `ux-ideas-prompt.js`.
 
-Those numbers were measured on the prompt before it asked for plain words and before the figures and
-the survey answers were fenced. Neither change touches the rules the backtest depends on, but the
+Those numbers were measured on the prompt before it asked for plain words, before the figures and
+the survey answers were fenced, and before the snapshot held the source directories instead of a
+clipped list of files. Neither change touches the rules the backtest depends on, but the
 backtest has not been run since. Run it before the hourly loop is switched on.
 
 ## The Ideas section of the tab
@@ -271,7 +299,8 @@ reads: an idea is queued, set aside or put back with `ux:idea`.
   it says what the score is: the expected gain, times how sure, times how small the change is, and the
   highest is listed first.
 - With Waiting chosen and no funnel, there is one line for each funnel: how many are waiting and the
-  best, with its score. Choosing a funnel lists its ideas, best score first. Any other status lists its
+  best, with its score. Those lines count both types, and when a type is kept in the address a note
+  says it applies once a funnel is opened. Choosing a funnel lists its ideas, best score first. Any other status lists its
   ideas straight away, naming the funnel on each row. Every list has a Funnel select (All funnels, or
   one) and a Type select (All, Fix, Experiment). With a funnel chosen it says "Showing Offering only.
   Show all", as the other sections do.
