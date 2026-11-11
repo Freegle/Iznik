@@ -286,11 +286,13 @@ for (let round = 1; round <= maxRounds; round++) {
   }
 
   phase('Improve')
-  const perFlow = stats.perFlow
+  // The improver builds on the best version, so it is shown what that version missed.
+  const basis = rounds[best.round - 1]
+  const perFlow = basis.perFlow
   const missedAll = perFlow.flatMap((f) => f.missed.map((m) => `${f.flow}@${f.date}: ${m}`)).join('\n')
   const ideasAll = perFlow.map((f) => `${f.flow}@${f.date}:\n  ${f.ideas.join('\n  ')}`).join('\n')
   const improved = await agent(
-    `The UX idea generator's prompt builder is ${builder}. In a backtest over past snapshots it anticipated ${stats.matched} of ${stats.truth} changes the team later made (recall ${(stats.recall * 100).toFixed(0)}%, bar ${(bar * 100).toFixed(0)}%).
+    `The UX idea generator's prompt builder is ${builder}. In a backtest over past snapshots it anticipated ${basis.matched} of ${basis.truth} changes the team later made (recall ${(basis.recall * 100).toFixed(0)}%, bar ${(bar * 100).toFixed(0)}%).
 
 What it MISSED (ground truth, by funnel and snapshot date):
 ${missedAll}

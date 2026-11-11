@@ -40,6 +40,11 @@ for d in "${READABLE[@]}"; do
   fi
 done
 
+if [ "${#SRC[@]}" -eq 0 ]; then
+  echo "none of the front-end source directories exist at $SHA" >&2
+  exit 2
+fi
+
 rm -rf "$OUT/code"
 mkdir -p "$OUT/code"
 git archive "$SHA" -- "${SRC[@]}" | tar -x -C "$OUT/code"
