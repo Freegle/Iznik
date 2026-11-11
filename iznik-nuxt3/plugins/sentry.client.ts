@@ -5,6 +5,7 @@ import { useRouter } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
 import {
+  isLocalStack,
   suppressException,
   suppressSentryEvent,
 } from '~/composables/useSuppressException'
@@ -400,6 +401,16 @@ export default defineNuxtPlugin((nuxtApp) => {
           // check above misses it, and CI runs sent Google sign-in errors to the live project
           // as 'production'. The console line above stays: the e2e fixtures read it.
           if (window.navigator.webdriver) {
+            return null
+          }
+
+          // A local or CI stack (freegle-prod-local.localhost, modtools-prod-local.localhost:9080,
+          // a dev server on http://localhost:3000) is not production, however it was built, and
+          // the ModTools DSN is fixed in config.js so every local ModTools reported to the live
+          // project: 2,033 events in the 14 days to 2026-11-11, labelled production. The app is
+          // served from https://localhost (Android) or capacitor://localhost (iOS), so a bare
+          // localhost counts as local only over plain http.
+          if (isLocalStack(window.location)) {
             return null
           }
 

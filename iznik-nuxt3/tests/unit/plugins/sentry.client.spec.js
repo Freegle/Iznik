@@ -22,7 +22,9 @@ vi.mock('@sentry/vue', () => ({
 
 vi.mock('~/stores/misc', () => ({ useMiscStore: vi.fn(() => ({})) }))
 vi.mock('~/stores/auth', () => ({ useAuthStore: vi.fn(() => ({})) }))
+const isLocalStackMock = vi.hoisted(() => vi.fn(() => false))
 vi.mock('~/composables/useSuppressException', () => ({
+  isLocalStack: isLocalStackMock,
   suppressException: vi.fn(() => false),
   suppressSentryEvent: vi.fn(() => false),
 }))
@@ -245,6 +247,37 @@ describe('plugins/sentry.client', () => {
       expect(
         options.beforeSend(event, { originalException: new Error('pa') })
       ).toBe(event)
+    })
+  })
+
+  // Sentry MODTOOLS: 2,033 events in the 14 days to 2026-11-11 came from
+  // *.localhost stacks labelled production.
+  describe('beforeSend from a local or CI stack', () => {
+    afterEach(() => {
+      isLocalStackMock.mockReturnValue(false)
+      vi.restoreAllMocks()
+    })
+
+    it('logs the exception to the console but does not send it', async () => {
+      isLocalStackMock.mockReturnValue(true)
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      await runPlugin()
+      const options = mockInit.mock.calls[0][0]
+
+      const result = options.beforeSend(
+        { extra: {}, exception: {} },
+        { originalException: new Error('boom') }
+      )
+
+      expect(result).toBeNull()
+      expect(isLocalStackMock).toHaveBeenCalledWith(window.location)
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Exception for Sentry]: (Error: boom)',
+        expect.anything()
+      )
     })
   })
 })

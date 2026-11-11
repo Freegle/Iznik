@@ -2,22 +2,26 @@ const ADS_SMALL_BANNER_SIZES = [[320, 50]]
 const ADS_MEDIUM_BANNER_SIZES = [[728, 90]]
 const ADS_SQUARISH_SIZES = [[300, 250]]
 
+export function sentryEnvironment(env) {
+  if (env.ENVIRONMENT) return env.ENVIRONMENT
+  if (env.APP_ENV === 'production') return 'production'
+  if (env.APP_ENV === 'development') return 'dev'
+  if (env.CIRCLECI) return 'ci'
+  return env.NODE_ENV === 'production' ? 'production' : 'dev'
+}
+
 const CONFIG = {
   IS_MT: process.env.MT === 'true', // For MT set in modtools/nuxt.config.ts
   APP_ENV: process.env.APP_ENV,
   NODE_ENV: process.env.NODE_ENV,
 
-  // Sentry environment. An explicit ENVIRONMENT wins; otherwise CI builds are
-  // 'ci', production builds (nuxt build/generate, which includes the app) are
-  // 'production' and the dev server is 'dev'. Without this every build,
-  // including the app in members' hands, reported itself to Sentry as 'dev'.
-  ENVIRONMENT:
-    process.env.ENVIRONMENT ||
-    (process.env.CIRCLECI
-      ? 'ci'
-      : process.env.NODE_ENV === 'production'
-        ? 'production'
-        : 'dev'),
+  // Sentry environment. An explicit ENVIRONMENT wins. The app is built on
+  // CircleCI, so APP_ENV is read before CIRCLECI: the store builds set
+  // APP_ENV=production and the debug builds APP_ENV=development. Read the
+  // other way round, the app in members' hands reported itself as 'ci'.
+  // Otherwise CI builds are 'ci', production builds (nuxt build/generate) are
+  // 'production' and the dev server is 'dev'.
+  ENVIRONMENT: sentryEnvironment(process.env),
   USE_COOKIES: process.env.USE_COOKIES === 'True', // 'True' or 'False'
 
   // Go API for all operations.

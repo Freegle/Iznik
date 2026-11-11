@@ -6,6 +6,18 @@
 // exception is reconstructed before beforeSend sees it). A frame whose filename
 // is ftUtils.js AND whose function is one of Freestar's known null-property
 // sites is a narrow Freestar signature — won't mask real bugs in our own code.
+// A page served by a local or CI stack (freegle-prod-local.localhost,
+// modtools-prod-local.localhost:9080, a dev server on http://localhost:3000).
+// The app is served from https://localhost on Android and capacitor://localhost
+// on iOS, so a bare localhost is local only over plain http.
+export function isLocalStack({ hostname, protocol }) {
+  return (
+    hostname.endsWith('.localhost') ||
+    hostname === '127.0.0.1' ||
+    (hostname === 'localhost' && protocol === 'http:')
+  )
+}
+
 export function suppressSentryEvent(event) {
   if (!event?.exception?.values) {
     return false

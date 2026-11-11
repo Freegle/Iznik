@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
+  isLocalStack,
   suppressException,
   suppressSentryEvent,
 } from '~/composables/useSuppressException'
@@ -444,4 +445,28 @@ describe('suppressSentryEvent', () => {
     }
     expect(suppressSentryEvent(event)).toBe(false)
   })
+})
+
+describe('isLocalStack', () => {
+  it.each([
+    ['modtools-prod-local.localhost', 'http:'],
+    ['freegle-prod-local.localhost', 'https:'],
+    ['localhost', 'http:'],
+    ['127.0.0.1', 'http:'],
+  ])('treats %s over %s as a local stack', (hostname, protocol) => {
+    expect(isLocalStack({ hostname, protocol })).toBe(true)
+  })
+
+  it.each([
+    ['localhost', 'https:'],
+    ['localhost', 'capacitor:'],
+    ['www.ilovefreegle.org', 'https:'],
+    ['modtools.org', 'https:'],
+    ['ilovefreegle.org', 'https:'],
+  ])(
+    'treats %s over %s as live (the app and the sites)',
+    (hostname, protocol) => {
+      expect(isLocalStack({ hostname, protocol })).toBe(false)
+    }
+  )
 })
