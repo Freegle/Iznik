@@ -22,7 +22,7 @@ import (
 func TestPatchGroupClearDPASucceedsAndFallsBackToCGA(t *testing.T) {
 	prefix := uniquePrefix("PatchGrpClearDPA")
 	groupID := CreateTestGroup(t, prefix)
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -65,7 +65,7 @@ func TestPatchGroupClearDPASucceedsAndFallsBackToCGA(t *testing.T) {
 func TestPatchGroupSetValidDPAUpdatesPolyindex(t *testing.T) {
 	prefix := uniquePrefix("PatchGrpSetDPA")
 	groupID := CreateTestGroup(t, prefix)
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -97,7 +97,7 @@ func TestPatchGroupSetValidDPAUpdatesPolyindex(t *testing.T) {
 func TestPatchGroupInvalidDPAStillRejected(t *testing.T) {
 	prefix := uniquePrefix("PatchGrpBadDPA")
 	groupID := CreateTestGroup(t, prefix)
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn

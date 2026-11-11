@@ -12,6 +12,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,7 +101,7 @@ func TestUxPromptChallengeAndResponse(t *testing.T) {
 	prefix := uniquePrefix("uxprompt")
 	uxPromptClean(t, prefix)
 	db := database.DBConn
-	userID := CreateTestUser(t, uniquePrefix("uxpromptuser"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxpromptuser"), utils.SYSTEMROLE_USER)
 	token := getToken(t, userID)
 
 	// Nothing open: no challenge of this type.
@@ -113,7 +114,7 @@ func TestUxPromptChallengeAndResponse(t *testing.T) {
 	awID := insertPrompt(t, "awareness", prefix+" do you know how?", `[{"key":"yes","label":"Yes"},{"key":"no","label":"No"},{"key":"not_sure","label":"Not sure"}]`)
 	surveyID := insertPrompt(t, "survey", prefix+" best and worst?", `[{"key":"give","label":"Posting"},{"key":"reply","label":"Replying"},{"key":"login","label":"Signing in"}]`)
 	// The survey already has one answer, so the awareness question (fewest answers) comes first.
-	other := CreateTestUser(t, uniquePrefix("uxpromptother"), "User")
+	other := CreateTestUser(t, uniquePrefix("uxpromptother"), utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, '{\"best\":\"give\",\"worst\":\"login\"}')", surveyID, other)
 
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=UxPrompt", nil))
@@ -147,13 +148,13 @@ func TestUxPromptChallengeAndResponse(t *testing.T) {
 
 	// A survey answer needs best, and worst only from the options; a closed prompt takes nothing.
 	otherToken := getToken(t, other)
-	third := CreateTestUser(t, uniquePrefix("uxpromptthird"), "User")
+	third := CreateTestUser(t, uniquePrefix("uxpromptthird"), utils.SYSTEMROLE_USER)
 	thirdToken := getToken(t, third)
 	sid := strconv.Itoa(int(surveyID))
 	assert.Equal(t, 400, uxPostMicro(t, thirdToken, `{"ux_prompt_id":`+sid+`,"ux_answer":{"worst":"give"}}`), "worst on its own is not an answer")
 	assert.Equal(t, 400, uxPostMicro(t, thirdToken, `{"ux_prompt_id":`+sid+`,"ux_answer":{"best":"reply","worst":"reply"}}`))
 	assert.Equal(t, 200, uxPostMicro(t, thirdToken, `{"ux_prompt_id":`+sid+`,"ux_answer":{"best":"reply","worst":"login"}}`))
-	fourth := CreateTestUser(t, uniquePrefix("uxpromptfourth"), "User")
+	fourth := CreateTestUser(t, uniquePrefix("uxpromptfourth"), utils.SYSTEMROLE_USER)
 	assert.Equal(t, 200, uxPostMicro(t, getToken(t, fourth), `{"ux_prompt_id":`+sid+`,"ux_answer":{"choice":"dont_understand"}}`))
 	db.Exec("UPDATE ux_prompts SET status = 'closed' WHERE id = ?", awID)
 	assert.Equal(t, 400, uxPostMicro(t, otherToken, `{"ux_prompt_id":`+id+`,"ux_answer":{"choice":"yes"}}`))
@@ -200,7 +201,7 @@ func TestUxPromptAnswerIsRefusedWhereTheOfferWouldBe(t *testing.T) {
 	promptID := insertPrompt(t, "awareness", prefix+" do you know how?", options)
 
 	for _, level := range []string{microvolunteering.TrustDeclined, microvolunteering.TrustExcluded} {
-		u := CreateTestUser(t, uniquePrefix("uxelig"+level), "User")
+		u := CreateTestUser(t, uniquePrefix("uxelig"+level), utils.SYSTEMROLE_USER)
 		db.Exec("UPDATE users SET trustlevel = ? WHERE id = ?", level, u)
 		assert.Equal(t, 403, uxAnswer(t, getToken(t, u), promptID, `{"choice":"yes"}`), level+" members are not asked, so cannot answer")
 		var n int64
@@ -212,7 +213,7 @@ func TestUxPromptAnswerIsRefusedWhereTheOfferWouldBe(t *testing.T) {
 	db.Exec("UPDATE ux_prompts SET max_responses = 2 WHERE id = ?", promptID)
 	var codes []int
 	for i := 0; i < 3; i++ {
-		u := CreateTestUser(t, uniquePrefix("uxeligcap"), "User")
+		u := CreateTestUser(t, uniquePrefix("uxeligcap"), utils.SYSTEMROLE_USER)
 		codes = append(codes, uxAnswer(t, getToken(t, u), promptID, `{"choice":"yes"}`))
 	}
 	assert.Equal(t, []int{200, 200, 400}, codes)
@@ -221,7 +222,7 @@ func TestUxPromptAnswerIsRefusedWhereTheOfferWouldBe(t *testing.T) {
 	assert.Equal(t, int64(2), stored)
 
 	// A skip is not an answer and is not held to the cap.
-	u := CreateTestUser(t, uniquePrefix("uxeligskip"), "User")
+	u := CreateTestUser(t, uniquePrefix("uxeligskip"), utils.SYSTEMROLE_USER)
 	assert.Equal(t, 200, uxAnswer(t, getToken(t, u), promptID, `{"skipped":true}`))
 }
 
@@ -229,7 +230,7 @@ func TestUxPromptOpenQuestion(t *testing.T) {
 	prefix := uniquePrefix("uxopen")
 	uxPromptClean(t, prefix)
 	db := database.DBConn
-	userID := CreateTestUser(t, uniquePrefix("uxopenuser"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxopenuser"), utils.SYSTEMROLE_USER)
 	token := getToken(t, userID)
 
 	openID := insertPrompt(t, "open", prefix+" did you have a problem?", `[]`)
@@ -270,7 +271,7 @@ func TestUxPromptOpenQuestion(t *testing.T) {
 
 	// Exactly 3 and exactly 1000 characters are allowed; the escapes are answers in their own right.
 	for i, body := range []string{`{"text":"abc"}`, `{"text":"` + strings.Repeat("y", 1000) + `"}`, `{"choice":"nothing"}`, `{"choice":"dont_understand"}`, `{"skipped":true}`} {
-		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxopenuser%d", i+2)), "User")
+		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxopenuser%d", i+2)), utils.SYSTEMROLE_USER)
 		assert.Equal(t, 200, uxPostMicro(t, getToken(t, u), `{"ux_prompt_id":`+id+`,"ux_answer":`+body+`}`), body[:10])
 	}
 
@@ -312,7 +313,7 @@ func TestUxPromptSurveySettingsPassThrough(t *testing.T) {
 	prefix := uniquePrefix("uxset")
 	uxPromptClean(t, prefix)
 	db := database.DBConn
-	userID := CreateTestUser(t, uniquePrefix("uxsetuser"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxsetuser"), utils.SYSTEMROLE_USER)
 	token := getToken(t, userID)
 
 	id := insertPrompt(t, "survey", prefix+" which part works best?", `[{"key":"give","label":"Offering something"},{"key":"reply","label":"Replying to a post"}]`)
@@ -341,7 +342,7 @@ func TestUxPromptChallengeDoesNotSendServerOnlySettings(t *testing.T) {
 	prefix := uniquePrefix("uxserver")
 	uxPromptClean(t, prefix)
 	db := database.DBConn
-	token := getToken(t, CreateTestUser(t, uniquePrefix("uxserveruser"), "User"))
+	token := getToken(t, CreateTestUser(t, uniquePrefix("uxserveruser"), utils.SYSTEMROLE_USER))
 
 	id := insertPrompt(t, "awareness", prefix+" do you know how?", `[{"key":"yes","label":"Yes"},{"key":"no","label":"No"},{"key":"not_sure","label":"Not sure"}]`)
 	db.Exec("UPDATE ux_prompts SET settings = ? WHERE id = ?",
@@ -366,7 +367,7 @@ func TestUxPromptIsNotInTheDefaultChallengeTypes(t *testing.T) {
 	prefix := uniquePrefix("uxdefault")
 	uxPromptClean(t, prefix)
 	db := database.DBConn
-	userID := CreateTestUser(t, uniquePrefix("uxdefaultuser"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxdefaultuser"), utils.SYSTEMROLE_USER)
 	token := getToken(t, userID)
 	id := insertPrompt(t, "open", prefix+" did you have a problem?", `[]`)
 
@@ -395,7 +396,7 @@ func TestUxPromptSkipIsRecordedAndNotOfferedAgain(t *testing.T) {
 	prefix := uniquePrefix("uxskip")
 	uxPromptClean(t, prefix)
 	db := database.DBConn
-	userID := CreateTestUser(t, uniquePrefix("uxskipuser"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxskipuser"), utils.SYSTEMROLE_USER)
 	token := getToken(t, userID)
 
 	first := insertPrompt(t, "survey", prefix+" first?", `[{"key":"give","label":"Posting"},{"key":"reply","label":"Replying"}]`)
@@ -421,12 +422,12 @@ func TestUxPromptSkipIsRecordedAndNotOfferedAgain(t *testing.T) {
 	assert.Equal(t, float64(second), offered["id"])
 
 	// A skip is not an answer: it does not use up the prompt's cap of 1, so someone else can still answer it.
-	other := CreateTestUser(t, uniquePrefix("uxskipother"), "User")
+	other := CreateTestUser(t, uniquePrefix("uxskipother"), utils.SYSTEMROLE_USER)
 	otherToken := getToken(t, other)
 	offered = uxChallenge(t, otherToken)["uxprompt"].(map[string]interface{})
 	assert.Equal(t, float64(first), offered["id"], "the skipped prompt still has room")
 	assert.Equal(t, 200, uxPostMicro(t, otherToken, `{"ux_prompt_id":`+strconv.Itoa(int(first))+`,"ux_answer":{"best":"give","worst":"reply"}}`))
-	third := CreateTestUser(t, uniquePrefix("uxskipthird"), "User")
+	third := CreateTestUser(t, uniquePrefix("uxskipthird"), utils.SYSTEMROLE_USER)
 	assert.Equal(t, float64(second), uxChallenge(t, getToken(t, third))["uxprompt"].(map[string]interface{})["id"], "now the cap is reached by real answers")
 
 	// Skips are left out of every tally.
@@ -455,7 +456,7 @@ func TestUxAwarenessDontUnderstandRowCarriesTheCount(t *testing.T) {
 	id := insertPrompt(t, "awareness", prefix+" did you know?", `[{"key":"yes","label":"Yes"},{"key":"no","label":"No"},{"key":"dont_understand","label":"I don't understand"}]`)
 	db := database.DBConn
 	for i, a := range []string{`{"choice":"yes"}`, `{"choice":"dont_understand"}`, `{"choice":"dont_understand"}`} {
-		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxawuser%d", i)), "User")
+		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxawuser%d", i)), utils.SYSTEMROLE_USER)
 		db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, ?)", id, u, a)
 	}
 	var all ux.QuestionsResponse
@@ -494,7 +495,7 @@ func TestUxSurveyShowsFourAtATimeLeastShownFirst(t *testing.T) {
 	}
 
 	// Nothing shown yet: four distinct option keys, in some order.
-	u := CreateTestUser(t, uniquePrefix("uxdispuser"), "User")
+	u := CreateTestUser(t, uniquePrefix("uxdispuser"), utils.SYSTEMROLE_USER)
 	display := keysOf(uxChallenge(t, getToken(t, u)))
 	assert.Len(t, display, 4)
 	seen := map[string]bool{}
@@ -507,11 +508,11 @@ func TestUxSurveyShowsFourAtATimeLeastShownFirst(t *testing.T) {
 	// a, b and c have been shown 5 times and d once; e and f never. Whoever comes next is shown
 	// e and f (never seen) and d (once) first, and one of a, b or c to make up the four.
 	for i, shown := range []string{`["a","b","c","d"]`, `["a","b","c"]`, `["a","b","c"]`, `["a","b","c"]`, `["a","b","c"]`} {
-		other := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxdispo%d", i)), "User")
+		other := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxdispo%d", i)), utils.SYSTEMROLE_USER)
 		db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, ?)", id, other, `{"best":"a","shown":`+shown+`}`)
 	}
 	for i := 0; i < 5; i++ {
-		next := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxdispn%d", i)), "User")
+		next := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxdispn%d", i)), utils.SYSTEMROLE_USER)
 		display = keysOf(uxChallenge(t, getToken(t, next)))
 		require.Len(t, display, 4)
 		assert.Subset(t, display, []string{"d", "e", "f"}, "the least shown come first")
@@ -519,11 +520,11 @@ func TestUxSurveyShowsFourAtATimeLeastShownFirst(t *testing.T) {
 
 	// settings.show changes the count, and a survey with fewer options shows them all.
 	db.Exec("UPDATE ux_prompts SET settings = ? WHERE id = ?", `{"show":3}`, id)
-	next := CreateTestUser(t, uniquePrefix("uxdispshow"), "User")
+	next := CreateTestUser(t, uniquePrefix("uxdispshow"), utils.SYSTEMROLE_USER)
 	assert.Len(t, keysOf(uxChallenge(t, getToken(t, next))), 3)
 	small := insertPrompt(t, "survey", prefix+" small?", `[{"key":"x","label":"X"},{"key":"y","label":"Y"}]`)
 	db.Exec("UPDATE ux_prompts SET status = 'closed' WHERE id = ?", id)
-	next = CreateTestUser(t, uniquePrefix("uxdispsmall"), "User")
+	next = CreateTestUser(t, uniquePrefix("uxdispsmall"), utils.SYSTEMROLE_USER)
 	ch := uxChallenge(t, getToken(t, next))
 	assert.Equal(t, float64(small), ch["uxprompt"].(map[string]interface{})["id"])
 	assert.ElementsMatch(t, []string{"x", "y"}, keysOf(ch))
@@ -531,7 +532,7 @@ func TestUxSurveyShowsFourAtATimeLeastShownFirst(t *testing.T) {
 	// Other kinds carry no display.
 	aw := insertPrompt(t, "awareness", prefix+" do you know how?", `[{"key":"yes","label":"Yes"},{"key":"no","label":"No"},{"key":"not_sure","label":"Not sure"}]`)
 	db.Exec("UPDATE ux_prompts SET status = 'closed' WHERE id = ?", small)
-	next = CreateTestUser(t, uniquePrefix("uxdispaw"), "User")
+	next = CreateTestUser(t, uniquePrefix("uxdispaw"), utils.SYSTEMROLE_USER)
 	ch = uxChallenge(t, getToken(t, next))
 	require.Equal(t, float64(aw), ch["uxprompt"].(map[string]interface{})["id"])
 	assert.NotContains(t, ch["uxprompt"], "display")
@@ -542,7 +543,7 @@ func TestUxSurveyAnswerShapesAndShownValidation(t *testing.T) {
 	uxPromptClean(t, prefix)
 	id := insertPrompt(t, "survey", prefix+" which most?", uxSixOptions)
 	fresh := func(name string) (uint64, string) {
-		u := CreateTestUser(t, uniquePrefix(name), "User")
+		u := CreateTestUser(t, uniquePrefix(name), utils.SYSTEMROLE_USER)
 		return u, getToken(t, u)
 	}
 
@@ -595,7 +596,7 @@ func TestUxFollowupAnswerTakesOnePick(t *testing.T) {
 	id := insertPrompt(t, "survey", prefix+" which has been your biggest problem?", `[{"key":"problem:1","label":"Photos are slow"},{"key":"problem:2","label":"Too many emails"},{"key":"problem:3","label":"Chats are hard to find"},{"key":"problem:4","label":"Posts wait too long"}]`)
 	db.Exec("UPDATE ux_prompts SET settings = ? WHERE id = ?", `{"show":3,"none_label":"None of these","followup_of":7}`, id)
 	fresh := func(name string) (uint64, string) {
-		u := CreateTestUser(t, uniquePrefix(name), "User")
+		u := CreateTestUser(t, uniquePrefix(name), utils.SYSTEMROLE_USER)
 		return u, getToken(t, u)
 	}
 
@@ -647,7 +648,7 @@ func TestUxAwarenessAnswers(t *testing.T) {
 	prefix := uniquePrefix("uxawans")
 	uxPromptClean(t, prefix)
 	fresh := func(name string) (uint64, string) {
-		u := CreateTestUser(t, uniquePrefix(name), "User")
+		u := CreateTestUser(t, uniquePrefix(name), utils.SYSTEMROLE_USER)
 		return u, getToken(t, u)
 	}
 
@@ -688,7 +689,7 @@ func TestUxPromptCadenceIsWeeklyAndBacksOffAfterTwoSkips(t *testing.T) {
 	}
 
 	// An answer blocks a prompt for a week, not a day.
-	u := CreateTestUser(t, uniquePrefix("uxcadu"), "User")
+	u := CreateTestUser(t, uniquePrefix("uxcadu"), utils.SYSTEMROLE_USER)
 	tok := getToken(t, u)
 	require.True(t, offered(tok))
 	require.Equal(t, 200, uxAnswer(t, tok, ids[0], `{"text":"something"}`))
@@ -701,7 +702,7 @@ func TestUxPromptCadenceIsWeeklyAndBacksOffAfterTwoSkips(t *testing.T) {
 	assert.True(t, offered(tok))
 
 	// Two skips in a row: nothing for 30 days after the later one.
-	s := CreateTestUser(t, uniquePrefix("uxcads"), "User")
+	s := CreateTestUser(t, uniquePrefix("uxcads"), utils.SYSTEMROLE_USER)
 	stok := getToken(t, s)
 	require.Equal(t, 200, uxAnswer(t, stok, ids[0], `{"skipped":true}`))
 	age(s, ids[0], 8)
@@ -716,7 +717,7 @@ func TestUxPromptCadenceIsWeeklyAndBacksOffAfterTwoSkips(t *testing.T) {
 	assert.True(t, offered(stok), "a month after the second skip they are asked again")
 
 	// An answer between skips breaks the run.
-	m := CreateTestUser(t, uniquePrefix("uxcadm"), "User")
+	m := CreateTestUser(t, uniquePrefix("uxcadm"), utils.SYSTEMROLE_USER)
 	mtok := getToken(t, m)
 	require.Equal(t, 200, uxAnswer(t, mtok, ids[0], `{"skipped":true}`))
 	age(m, ids[0], 20)
@@ -733,7 +734,7 @@ func TestUxAwarenessWithoutRevealIsServedAndAnswered(t *testing.T) {
 	prefix := uniquePrefix("uxawnoreveal")
 	uxPromptClean(t, prefix)
 	db := database.DBConn
-	userID := CreateTestUser(t, uniquePrefix("uxawnorevealuser"), "User")
+	userID := CreateTestUser(t, uniquePrefix("uxawnorevealuser"), utils.SYSTEMROLE_USER)
 	token := getToken(t, userID)
 
 	awID := insertPrompt(t, "awareness", prefix+" Do you know how to promise an item to someone?", `[{"key":"yes","label":"Yes"},{"key":"no","label":"No"},{"key":"not_sure","label":"Not sure"}]`)
@@ -759,7 +760,7 @@ func TestUxAwarenessWithoutRevealIsServedAndAnswered(t *testing.T) {
 // ---- problems, values and groups ----
 
 func TestUxSurveyRoutesRequireSupport(t *testing.T) {
-	member := getToken(t, CreateTestUser(t, uniquePrefix("uxsurvmember"), "User"))
+	member := getToken(t, CreateTestUser(t, uniquePrefix("uxsurvmember"), utils.SYSTEMROLE_USER))
 	support := uxSupportToken(t, "uxsurvsup")
 
 	for _, path := range []string{"problem-groups", "problems", "values", "questions"} {
@@ -1166,7 +1167,7 @@ func TestUxProblemsCarryTheBaseOfTheirOwnQuestion(t *testing.T) {
 	db.Exec("UPDATE ux_prompts SET settings = JSON_OBJECT('analysed_answers', 3) WHERE id = ?", q1)
 
 	add := func(prompt uint64, answer string) {
-		u := CreateTestUser(t, uniquePrefix("uxbaseuser"), "User")
+		u := CreateTestUser(t, uniquePrefix("uxbaseuser"), utils.SYSTEMROLE_USER)
 		db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, ?)", prompt, u, answer)
 	}
 	for i := 0; i < 3; i++ {
@@ -1230,7 +1231,7 @@ func TestUxQuestionsCarryTimesShownAndAwarenessFigures(t *testing.T) {
 		`{"choice":"none","shown":["b","d","e","f"]}`,
 	}
 	for i, a := range answers {
-		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxreadu%d", i)), "User")
+		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxreadu%d", i)), utils.SYSTEMROLE_USER)
 		db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, ?)", survey, u, a)
 	}
 
@@ -1240,11 +1241,11 @@ func TestUxQuestionsCarryTimesShownAndAwarenessFigures(t *testing.T) {
 	db.Exec("UPDATE ux_prompts SET settings = ? WHERE id = ?", `{"decoy":true,"reveal":"Freegle does not do this."}`, decoy)
 	db.Exec("UPDATE ux_prompts SET settings = ? WHERE id = ?", `{"decoy":false,"reveal":"Yes."}`, real)
 	for i, c := range []string{"yes", "yes", "no", "not_sure"} {
-		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxreadr%d", i)), "User")
+		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxreadr%d", i)), utils.SYSTEMROLE_USER)
 		db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, ?)", real, u, `{"choice":"`+c+`"}`)
 	}
 	for i, c := range []string{"yes", "no", "no", "no", "skipped"} {
-		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxreadd%d", i)), "User")
+		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxreadd%d", i)), utils.SYSTEMROLE_USER)
 		answer := `{"choice":"` + c + `"}`
 		if c == "skipped" {
 			answer = `{"skipped":true}`
@@ -1337,7 +1338,7 @@ func TestUxQuestionsHaveNoBestAndWorstAliases(t *testing.T) {
 	uxPromptClean(t, prefix)
 	db := database.DBConn
 	id := insertPrompt(t, "survey", prefix+" which most?", uxSixOptions)
-	u := CreateTestUser(t, uniquePrefix("uxaliasuser"), "User")
+	u := CreateTestUser(t, uniquePrefix("uxaliasuser"), utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, ?)", id, u, `{"best":"a","worst":"b","shown":["a","b"]}`)
 
 	var raw struct {
@@ -1384,10 +1385,10 @@ func TestUxQuestionsListCommentsOnQuestionsWithOptionsOnly(t *testing.T) {
 		comments = append(comments, fmt.Sprintf("comment %02d", i))
 	}
 	for i, c := range comments {
-		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxcommentu%d", i)), "User")
+		u := CreateTestUser(t, uniquePrefix(fmt.Sprintf("uxcommentu%d", i)), utils.SYSTEMROLE_USER)
 		db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer, comment, timestamp) VALUES (?, ?, '{\"choice\":\"yes\"}', ?, NOW() - INTERVAL ? MINUTE)", aware, u, c, i)
 	}
-	u := CreateTestUser(t, uniquePrefix("uxcommentopen"), "User")
+	u := CreateTestUser(t, uniquePrefix("uxcommentopen"), utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer, comment) VALUES (?, ?, '{\"text\":\"it broke\"}', 'not for the list')", open, u)
 
 	var all ux.QuestionsResponse
@@ -1494,7 +1495,7 @@ func TestUxOpenQuestionsSayWhereTheEmptyListStands(t *testing.T) {
 	db.Exec("UPDATE ux_prompts SET settings = ? WHERE id = ?", `{"preset":"values"}`, values)
 
 	add := func(prompt uint64, answer string) {
-		u := CreateTestUser(t, uniquePrefix("uxstanduser"), "User")
+		u := CreateTestUser(t, uniquePrefix("uxstanduser"), utils.SYSTEMROLE_USER)
 		db.Exec("INSERT INTO ux_prompt_responses (prompt_id, userid, answer) VALUES (?, ?, ?)", prompt, u, answer)
 	}
 	for i := 0; i < 2; i++ {

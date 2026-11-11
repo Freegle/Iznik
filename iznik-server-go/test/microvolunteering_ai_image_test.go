@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,7 +19,7 @@ import (
 func TestAIImageReview_TypesParameter(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_aitype")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	blockInviteChallenge(t, userID)
 
@@ -72,7 +73,7 @@ func blockInviteChallenge(t *testing.T, userID uint64) {
 func TestAIImageReview_GetChallenge(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_aiimg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Block invite + ensure no group (so no CheckMessage/PhotoRotate challenges).
@@ -107,7 +108,7 @@ func TestAIImageReview_GetChallenge(t *testing.T) {
 func TestAIImageReview_UsageCountOrder(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_aiord")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	blockInviteChallenge(t, userID)
 
@@ -132,7 +133,7 @@ func TestAIImageReview_UsageCountOrder(t *testing.T) {
 func TestAIImageReview_PostResponse(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_aipost")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	imgID := createTestAIImage(t, "test-chair-"+prefix, 50)
@@ -164,7 +165,7 @@ func TestAIImageReview_PostResponse(t *testing.T) {
 func TestAIImageReview_PostResponseWithPeople(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_aipeople")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	imgID := createTestAIImage(t, "test-desk-"+prefix, 30)
@@ -191,7 +192,7 @@ func TestAIImageReview_PostResponseWithPeople(t *testing.T) {
 func TestAIImageReview_NoDuplicateVote(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_aidedup")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	blockInviteChallenge(t, userID)
 
@@ -234,13 +235,13 @@ func TestAIImageReview_QuorumReached(t *testing.T) {
 	var voters []uint64
 	var voterTokens []string
 	for i := 0; i < 5; i++ {
-		uid := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), "User")
+		uid := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), utils.SYSTEMROLE_USER)
 		_, tok := CreateTestSession(t, uid)
 		voters = append(voters, uid)
 		voterTokens = append(voterTokens, tok)
 	}
 
-	checkerID := CreateTestUser(t, prefix+"_checker", "User")
+	checkerID := CreateTestUser(t, prefix+"_checker", utils.SYSTEMROLE_USER)
 	_, checkerToken := CreateTestSession(t, checkerID)
 	blockInviteChallenge(t, checkerID)
 
@@ -284,7 +285,7 @@ func TestAIImageReview_QuorumReached(t *testing.T) {
 func TestAIImageReview_SkipAlreadyReviewed(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_aiskip")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	blockInviteChallenge(t, userID)
 
@@ -318,12 +319,12 @@ func TestAIImageReview_RandomizationWithCheckMessage(t *testing.T) {
 	prefix := uniquePrefix("mv_airand")
 
 	// Create the reviewing user.
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	blockInviteChallenge(t, userID)
 
 	// Create a sender (different user) and a group with microvolunteering.
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	var groupID uint64
 	db.Exec("INSERT INTO `groups` (nameshort, namefull, type, microvolunteering, polyindex) VALUES (?, ?, 'Freegle', 1, ST_GeomFromText('POINT(0 0)', 3857))",
 		"testgroup-"+prefix, "Test Group "+prefix)
@@ -392,7 +393,7 @@ func TestAIImageReview_RandomizationWithCheckMessage(t *testing.T) {
 func TestGetChallenge_SkipsRejectedImages(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_airejected")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	blockInviteChallenge(t, userID)
 
@@ -428,7 +429,7 @@ func TestGetChallenge_SkipsRejectedImages(t *testing.T) {
 func TestGetChallenge_SkipsSuppressedImages(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_aisuppressed")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	blockInviteChallenge(t, userID)
 
@@ -467,7 +468,7 @@ func TestAIImageReview_SuppressQuorumReached(t *testing.T) {
 
 	var voterTokens []string
 	for i := 0; i < 5; i++ {
-		uid := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), "User")
+		uid := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), utils.SYSTEMROLE_USER)
 		_, tok := CreateTestSession(t, uid)
 		voterTokens = append(voterTokens, tok)
 	}

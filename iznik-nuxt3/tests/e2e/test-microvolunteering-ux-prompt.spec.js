@@ -210,7 +210,7 @@ async function installCannedApi(page, queue, posted, groupId) {
       if (!groups.length) {
         groups.push({
           groupid: groupId || 1,
-          role: 'Member',
+          role: 'Member', // role-literal-ok: Playwright runs without the app source, so it cannot import constants.js
           emailfrequency: 24,
           eventsallowed: 1,
           volunteeringallowed: 1,

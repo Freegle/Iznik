@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -59,7 +60,7 @@ func requireReplyAlert(t *testing.T, creator uint64, groupID uint64, subject str
 
 func TestCreateAlertWithQuoteAttachmentAndRequiredReply(t *testing.T) {
 	prefix := uniquePrefix("AlertQuote")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 	groupID := CreateTestGroup(t, prefix)
 
@@ -97,7 +98,7 @@ func TestCreateAlertWithQuoteAttachmentAndRequiredReply(t *testing.T) {
 
 func TestCreateAlertRefusesExtrasForAllCommunities(t *testing.T) {
 	prefix := uniquePrefix("AlertAll")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	for _, extra := range []string{`"requirereply":1`, `"quoted":"x"`, `"attachments":[{"name":"a.png","mime":"image/png","data":"AAAA"}]`} {
@@ -108,7 +109,7 @@ func TestCreateAlertRefusesExtrasForAllCommunities(t *testing.T) {
 
 func TestCreateAlertRefusesBadAttachments(t *testing.T) {
 	prefix := uniquePrefix("AlertBadAtt")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 	groupID := CreateTestGroup(t, prefix)
 
@@ -126,17 +127,17 @@ func TestCreateAlertRefusesBadAttachments(t *testing.T) {
 
 func TestPendingAlertOnlyForTheCommunitysModerators(t *testing.T) {
 	prefix := uniquePrefix("AlertPend")
-	creator := CreateTestUser(t, prefix+"_creator", "Support")
+	creator := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_SUPPORT)
 	groupID := CreateTestGroup(t, prefix)
 	otherGroup := CreateTestGroup(t, prefix+"_other")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, groupID, "Moderator")
-	owner := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, owner, groupID, "Owner")
-	member := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, member, groupID, "Member")
-	elsewhere := CreateTestUser(t, prefix+"_elsewhere", "User")
-	CreateTestMembership(t, elsewhere, otherGroup, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, groupID, utils.ROLE_MODERATOR)
+	owner := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, owner, groupID, utils.ROLE_OWNER)
+	member := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, member, groupID, utils.ROLE_MEMBER)
+	elsewhere := CreateTestUser(t, prefix+"_elsewhere", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, elsewhere, otherGroup, utils.ROLE_MODERATOR)
 
 	id := requireReplyAlert(t, creator, groupID, prefix)
 
@@ -162,10 +163,10 @@ func idInList(ids []uint64, id uint64) bool {
 
 func TestPendingAlertExpiresAndCancels(t *testing.T) {
 	prefix := uniquePrefix("AlertExp")
-	creator := CreateTestUser(t, prefix+"_creator", "Support")
+	creator := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_SUPPORT)
 	groupID := CreateTestGroup(t, prefix)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, groupID, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	_, creatorToken := CreateTestSession(t, creator)
 
@@ -186,10 +187,10 @@ func TestPendingAlertExpiresAndCancels(t *testing.T) {
 
 func TestReplyToAlertSendsChatAndReleases(t *testing.T) {
 	prefix := uniquePrefix("AlertReply")
-	creator := CreateTestUser(t, prefix+"_creator", "Support")
+	creator := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_SUPPORT)
 	groupID := CreateTestGroup(t, prefix)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, groupID, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	id := requireReplyAlert(t, creator, groupID, prefix)
 
@@ -223,10 +224,10 @@ func TestReplyToAlertSendsChatAndReleases(t *testing.T) {
 
 func TestSnoozeAlertOnlyOnce(t *testing.T) {
 	prefix := uniquePrefix("AlertSnooze")
-	creator := CreateTestUser(t, prefix+"_creator", "Support")
+	creator := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_SUPPORT)
 	groupID := CreateTestGroup(t, prefix)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, groupID, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	id := requireReplyAlert(t, creator, groupID, prefix)
 
@@ -259,8 +260,8 @@ func TestSnoozeAlertOnlyOnce(t *testing.T) {
 	assert.Equal(t, 403, status)
 
 	// Another moderator has their own snooze.
-	mod2 := CreateTestUser(t, prefix+"_mod2", "User")
-	CreateTestMembership(t, mod2, groupID, "Moderator")
+	mod2 := CreateTestUser(t, prefix+"_mod2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod2, groupID, utils.ROLE_MODERATOR)
 	_, mod2Token := CreateTestSession(t, mod2)
 	status, _ = postAlertAction(t, mod2Token, id, "snooze", "")
 	assert.Equal(t, 200, status)

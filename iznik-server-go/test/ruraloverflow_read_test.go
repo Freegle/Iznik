@@ -15,6 +15,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -111,9 +112,9 @@ func TestBrowseScopedSearch_RingAdmittedPostSearchable(t *testing.T) {
 	ringSchemaExec(t)
 
 	prefix := uniquePrefix("ringsearch")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, posterID, group, utils.ROLE_MEMBER)
 	subject := "Quibblewick Chair ring admits viewer (ringsearch)"
 	ringed := CreateTestMessage(t, posterID, group, subject, 51.5, -0.1)
 	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", ringed)
@@ -182,15 +183,15 @@ func TestReachBlocked_RingAdmittedViewerNotBlocked(t *testing.T) {
 	ringSchemaExec(t)
 
 	prefix := uniquePrefix("ringblocked")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, posterID, group, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, group, "OFFER: ring blocked test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	farReachWithSparseRing(t, msgID)
 
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), "+
 		"'$.browseDensityBand', 'sparse') WHERE id = ?", viewerID)
 	stubRingIndex(t, "$.rural.sparse", msgID)
@@ -225,9 +226,9 @@ func TestReachBlocked_ClusterRingNeverRescuesTheMailer(t *testing.T) {
 	ringSchemaExec(t)
 
 	prefix := uniquePrefix("clustermailer")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, posterID, group, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, group, "OFFER: cluster mailer test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
@@ -255,7 +256,7 @@ func TestReachBlocked_ClusterRingNeverRescuesTheMailer(t *testing.T) {
 		"a cluster wedge must never admit a viewer-less caller: postmatches feeds the matched-posts email")
 
 	// The same wedge, same point, with a real viewer: browse and reply DO admit.
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	blocked = message.ReachBlockedSet(viewerID, []uint64{msgID}, 51.5, -0.1)
 	assert.False(t, blocked[msgID],
 		"the same wedge admits a real viewer, so the lane is on and the fixture is sound")
@@ -281,10 +282,10 @@ func TestCreateChatMessage_RingAdmittedReplyNotHeld(t *testing.T) {
 
 	prefix := uniquePrefix("ringreply")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, replierID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), "+
 		"'$.mylocation', JSON_OBJECT('lat', 51.5, 'lng', -0.1), "+
 		"'$.browseDensityBand', 'sparse') WHERE id = ?", replierID)
@@ -330,13 +331,13 @@ func TestReachBlocked_FrozenReachStillBlocksThoseOutsideIt(t *testing.T) {
 	ringSchemaExec(t)
 
 	prefix := uniquePrefix("heldreach")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, posterID, group, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, group, "OFFER: frozen reach test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 
 	// A live reach far from the viewer: they are genuinely not reached yet.
 	// Stubbed to a real OUT verdict, because an UNDECIDED one does not block:

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -156,8 +157,8 @@ func TestGetDashboardDiscourseTopicsNoConfig(t *testing.T) {
 	// A moderator gets nil when DISCOURSE_API/DISCOURSE_APIKEY are not set.
 	prefix := uniquePrefix("DashDiscNC")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=DiscourseTopics&group=%d&jwt=%s", groupID, token), nil)
@@ -177,9 +178,9 @@ func TestDashboardNewMessagesNoDoubleCount(t *testing.T) {
 	prefix := uniquePrefix("DashNoDup")
 	groupA := CreateTestGroup(t, prefix+"A")
 	groupB := CreateTestGroup(t, prefix+"B")
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupA, "Moderator")
-	CreateTestMembership(t, userID, groupB, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, userID, groupB, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -221,9 +222,9 @@ func TestDashboardWideRangeBoundedWalk(t *testing.T) {
 	prefix := uniquePrefix("DashWide")
 	groupA := CreateTestGroup(t, prefix+"A")
 	groupB := CreateTestGroup(t, prefix+"B")
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupA, "Moderator")
-	CreateTestMembership(t, userID, groupB, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, userID, groupB, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -299,8 +300,8 @@ func createModDashboardFixtures(t *testing.T, prefix string) (uint64, uint64, st
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	userID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message in the group so components have data.
@@ -311,8 +312,8 @@ func createModDashboardFixtures(t *testing.T, prefix string) (uint64, uint64, st
 		userID, msgID, groupID)
 
 	// Create a chat reply referencing the message.
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
 	var chatID uint64
 	db.Exec("INSERT INTO chat_rooms (user1, user2, chattype) VALUES (?, ?, 'User2User')", userID, poster)
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&chatID)
@@ -500,9 +501,9 @@ func TestGetDashboardHappinessCountsOneVotePerRating(t *testing.T) {
 	// The same post also sits on a second group the moderator runs, and has rippled
 	// into a third. Neither may make the one rating count again.
 	groupB := CreateTestGroup(t, prefix+"B")
-	CreateTestMembership(t, userID, groupB, "Moderator")
+	CreateTestMembership(t, userID, groupB, utils.ROLE_MODERATOR)
 	groupC := CreateTestGroup(t, prefix+"C")
-	CreateTestMembership(t, userID, groupC, "Moderator")
+	CreateTestMembership(t, userID, groupC, utils.ROLE_MODERATOR)
 
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
 		"VALUES (?, ?, 'Approved', NOW(), 0, 0)", msgID, groupB)
@@ -564,9 +565,9 @@ func TestGetDashboardPopularPostsNoDuplicateAcrossRippledGroups(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"A")
 	groupB := CreateTestGroup(t, prefix+"B")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Native post on groupA (origin row, rippled_in defaults to 0).
@@ -577,8 +578,8 @@ func TestGetDashboardPopularPostsNoDuplicateAcrossRippledGroups(t *testing.T) {
 		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupB)
 
 	// Give it a couple of views so it ranks.
-	viewer1 := CreateTestUser(t, prefix+"_v1", "User")
-	viewer2 := CreateTestUser(t, prefix+"_v2", "User")
+	viewer1 := CreateTestUser(t, prefix+"_v1", utils.SYSTEMROLE_USER)
+	viewer2 := CreateTestUser(t, prefix+"_v2", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View')", msgID, viewer1)
 	db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View')", msgID, viewer2)
 	t.Cleanup(func() {
@@ -616,9 +617,9 @@ func TestGetDashboardPopularPostsExcludesRippledIn(t *testing.T) {
 
 	origin := CreateTestGroup(t, prefix+"Origin")
 	rippledTo := CreateTestGroup(t, prefix+"RippledTo")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, rippledTo, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, rippledTo, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Native post on the origin group (mod does not moderate it).
@@ -628,7 +629,7 @@ func TestGetDashboardPopularPostsExcludesRippledIn(t *testing.T) {
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
 		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, rippledTo)
 
-	viewer := CreateTestUser(t, prefix+"_v", "User")
+	viewer := CreateTestUser(t, prefix+"_v", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View')", msgID, viewer)
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM messages_likes WHERE msgid = ?", msgID)
@@ -770,19 +771,19 @@ func TestGetDashboardModeratorsActiveOnePerModeratorMostRecentFirst(t *testing.T
 	groupB := CreateTestGroup(t, prefix+"_b")
 
 	// The viewer moderates both, so allgroups=true spans A and B. They approved nothing.
-	viewer := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, viewer, groupA, "Moderator")
-	CreateTestMembership(t, viewer, groupB, "Moderator")
+	viewer := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, viewer, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, viewer, groupB, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, viewer)
 
 	// Moderates both: last approved ten days ago in A and an hour ago in B.
-	twoGroups := CreateTestUser(t, prefix+"_two", "User")
-	CreateTestMembership(t, twoGroups, groupA, "Moderator")
-	CreateTestMembership(t, twoGroups, groupB, "Moderator")
+	twoGroups := CreateTestUser(t, prefix+"_two", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, twoGroups, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, twoGroups, groupB, utils.ROLE_MODERATOR)
 
 	// Moderates A only: last approved five days ago.
-	oneGroup := CreateTestUser(t, prefix+"_one", "User")
-	CreateTestMembership(t, oneGroup, groupA, "Moderator")
+	oneGroup := CreateTestUser(t, prefix+"_one", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, oneGroup, groupA, utils.ROLE_MODERATOR)
 
 	approve := func(mod, group uint64, hoursAgo int, subject string) {
 		msg := CreateTestMessage(t, mod, group, subject, 52.5, -1.8)
@@ -889,7 +890,7 @@ func TestGetDashboardPopularPostsSystemwideCountsSinceTheLastRunLive(t *testing.
 	setArrival(recent, 1)
 	storeViewCount(t, recent, 1, 2000000000, 2)
 	for i := 0; i < 3; i++ {
-		viewer := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), "User")
+		viewer := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), utils.SYSTEMROLE_USER)
 		db.Table("messages_likes").Create(map[string]interface{}{"msgid": recent, "userid": viewer, "type": "View"})
 	}
 	t.Cleanup(func() { db.Table("messages_likes").Where("msgid = ?", recent).Delete(nil) })

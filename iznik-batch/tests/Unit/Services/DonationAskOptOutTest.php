@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Membership;
 use App\Mail\Chat\ChatNotification;
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Volunteering\VolunteeringDigestMail;
@@ -123,7 +124,7 @@ class DonationAskOptOutTest extends TestCase
         foreach ([$asked, $optedOut] as $user) {
             DB::table('memberships')->insert([
                 'userid' => $user->id, 'groupid' => $group->id,
-                'role' => 'Member', 'collection' => 'Approved', 'rippled' => 0, 'added' => now(),
+                'role' => Membership::ROLE_MEMBER, 'collection' => 'Approved', 'rippled' => 0, 'added' => now(),
             ]);
         }
 

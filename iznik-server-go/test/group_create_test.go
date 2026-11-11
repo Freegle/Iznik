@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,8 +30,8 @@ func TestCreateGroupMissingName(t *testing.T) {
 	// Logged-in moderator but missing name field — 400.
 	prefix := uniquePrefix("CGrpNoName")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	body := `{"name":""}`
@@ -43,7 +44,7 @@ func TestCreateGroupMissingName(t *testing.T) {
 func TestCreateGroupRegularUserForbidden(t *testing.T) {
 	// A plain user with no moderator/owner membership must get 403.
 	prefix := uniquePrefix("CGrpRegUser")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := fmt.Sprintf(`{"name":"%s_group"}`, prefix)
@@ -57,8 +58,8 @@ func TestCreateGroupByModerator(t *testing.T) {
 	// A moderator of any existing group can create a new one.
 	prefix := uniquePrefix("CGrpMod")
 	existingGroupID := CreateTestGroup(t, prefix+"_existing")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, existingGroupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, existingGroupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	newName := prefix + "_newgrp"
@@ -92,8 +93,8 @@ func TestCreateGroupByOwner(t *testing.T) {
 	// An Owner of any existing group can also create a new one.
 	prefix := uniquePrefix("CGrpOwner")
 	existingGroupID := CreateTestGroup(t, prefix+"_existing")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, existingGroupID, "Owner")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, existingGroupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, ownerID)
 
 	newName := prefix + "_newgrp"
@@ -117,7 +118,7 @@ func TestCreateGroupByOwner(t *testing.T) {
 func TestCreateGroupByAdmin(t *testing.T) {
 	// Admin can create a group without needing existing group membership.
 	prefix := uniquePrefix("CGrpAdmin")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	newName := prefix + "_admingrp"
@@ -143,8 +144,8 @@ func TestCreateGroupDefaultType(t *testing.T) {
 	// When grouptype is omitted, type should default to "Freegle".
 	prefix := uniquePrefix("CGrpDefType")
 	existingGroupID := CreateTestGroup(t, prefix+"_base")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, existingGroupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, existingGroupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	newName := prefix + "_deftype"
@@ -173,8 +174,8 @@ func TestCreateGroupCustomType(t *testing.T) {
 	// A custom grouptype should be stored as-is.
 	prefix := uniquePrefix("CGrpCustomType")
 	existingGroupID := CreateTestGroup(t, prefix+"_base")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, existingGroupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, existingGroupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	newName := prefix + "_customtype"
@@ -203,8 +204,8 @@ func TestCreateGroupCreatorBecomesOwner(t *testing.T) {
 	// The creator should automatically become an Owner member of the new group.
 	prefix := uniquePrefix("CGrpOwnerRole")
 	existingGroupID := CreateTestGroup(t, prefix+"_base")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, existingGroupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, existingGroupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	newName := prefix + "_ownrole"
@@ -223,7 +224,7 @@ func TestCreateGroupCreatorBecomesOwner(t *testing.T) {
 	db := database.DBConn
 	var role string
 	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", modID, newID).Scan(&role)
-	assert.Equal(t, "Owner", role, "creator should have Owner role in the new group")
+	assert.Equal(t, utils.ROLE_OWNER, role, "creator should have Owner role in the new group")
 	assert.Equal(t, "moderator", addedOriginOf(t, "memberships", modID, newID))
 
 	db.Exec("DELETE FROM memberships WHERE groupid = ?", newID)
@@ -233,7 +234,7 @@ func TestCreateGroupCreatorBecomesOwner(t *testing.T) {
 func TestCreateGroupAdminSetsLatLng(t *testing.T) {
 	// An admin can set lat/lng on the new group.
 	prefix := uniquePrefix("CGrpLatLng")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	newName := prefix + "_latlng"
@@ -268,8 +269,8 @@ func TestCreateGroupModeratorLatLngIgnored(t *testing.T) {
 	// (the handler only applies lat/lng for admins/support).
 	prefix := uniquePrefix("CGrpModLatLng")
 	existingGroupID := CreateTestGroup(t, prefix+"_base")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, existingGroupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, existingGroupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	newName := prefix + "_modlatlng"
@@ -298,7 +299,7 @@ func TestCreateGroupModeratorLatLngIgnored(t *testing.T) {
 func TestCreateGroupV2Path(t *testing.T) {
 	// Verify the /apiv2 path also works (same handler registered on both prefixes).
 	prefix := uniquePrefix("CGrpV2")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	newName := prefix + "_v2grp"
@@ -322,7 +323,7 @@ func TestCreateGroupV2Path(t *testing.T) {
 func TestCreateGroupSupportCanCreate(t *testing.T) {
 	// Support role (like Admin) can create groups without existing group membership.
 	prefix := uniquePrefix("CGrpSupport")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	newName := prefix + "_suppgrp"
@@ -347,7 +348,7 @@ func TestCreateGroupSupportCanCreate(t *testing.T) {
 func TestCreateGroupReturnsNonZeroID(t *testing.T) {
 	// Basic smoke test: the returned id must be non-zero.
 	prefix := uniquePrefix("CGrpID")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	body := fmt.Sprintf(`{"name":"%s_smoke"}`, prefix)

@@ -142,7 +142,7 @@ class MembershipsProcessingService
 
         // Whitelist mods/staff, exactly as V1 ($u->isModerator()).
         if ($user->isModerator()
-            || in_array($user->systemrole, ['Moderator', 'Support', 'Admin'], true)) {
+            || in_array($user->systemrole, [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN], true)) {
             return;
         }
 

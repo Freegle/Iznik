@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -89,7 +90,7 @@ func TestClientLogEndpointWithAuthenticatedUser(t *testing.T) {
 	prefix := uniquePrefix("ClientLog")
 
 	// Create a user with a session
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"logs":[{"timestamp":"2024-01-01T00:00:00Z","level":"info","message":"Authenticated user log"}]}`

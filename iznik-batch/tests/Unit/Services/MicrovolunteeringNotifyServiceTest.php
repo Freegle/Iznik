@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Membership;
 use App\Services\MicrovolunteeringNotifyService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -62,7 +63,7 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
         return $userId;
     }
 
-    private function addMembership(int $userId, int $groupId, string $role = 'Member'): void
+    private function addMembership(int $userId, int $groupId, string $role = Membership::ROLE_MEMBER): void
     {
         DB::table('memberships')->insert([
             'userid'     => $userId,

@@ -80,6 +80,11 @@ import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useAuthStore } from '~/stores/auth'
 import NewsRefer from '~/components/NewsRefer'
 import NewsUnreadDivider from '~/components/NewsUnreadDivider'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const NewsReply = defineAsyncComponent(
   () => import('~/components/NewsReply.vue')
@@ -141,9 +146,9 @@ const me = authStore.user
 const mod = computed(() => {
   return (
     me &&
-    (me.systemrole === 'Moderator' ||
-      me.systemrole === 'Support' ||
-      me.systemrole === 'Admin')
+    (me.systemrole === SYSTEMROLE_MODERATOR ||
+      me.systemrole === SYSTEMROLE_SUPPORT ||
+      me.systemrole === SYSTEMROLE_ADMIN)
   )
 })
 

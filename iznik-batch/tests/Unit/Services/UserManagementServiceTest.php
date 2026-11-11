@@ -167,7 +167,7 @@ class UserManagementServiceTest extends TestCase
             'fullname' => 'Inactive User',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subMonths(7),
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
         ]);
 
         $count = $this->service->forgetInactiveUsers();
@@ -190,7 +190,7 @@ class UserManagementServiceTest extends TestCase
             'fullname' => 'Deleted User #12345',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subMonths(7),
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'forgotten' => now()->subDays(30),
         ]);
 
@@ -208,7 +208,7 @@ class UserManagementServiceTest extends TestCase
             'fullname' => 'Member User',
             'added' => now()->subYears(2),
             'lastaccess' => now()->subMonths(7),
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
         ]);
 
         $group = $this->createTestGroup();
@@ -821,7 +821,7 @@ class UserManagementServiceTest extends TestCase
 
         // Set user to Moderator role.
         DB::table('users')->where('id', $user->id)->update([
-            'systemrole' => 'Moderator',
+            'systemrole' => User::SYSTEMROLE_MODERATOR,
         ]);
 
         // Create a team with supporttools=1.
@@ -841,7 +841,7 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals(1, $stats['granted']);
 
         $user->refresh();
-        $this->assertEquals('Support', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_SUPPORT, $user->systemrole);
     }
 
     public function test_update_support_roles_removes_access(): void
@@ -850,7 +850,7 @@ class UserManagementServiceTest extends TestCase
 
         // Set user to Support role but don't put them in any support team.
         DB::table('users')->where('id', $user->id)->update([
-            'systemrole' => 'Support',
+            'systemrole' => User::SYSTEMROLE_SUPPORT,
         ]);
 
         $stats = $this->service->updateSupportRoles();
@@ -858,7 +858,7 @@ class UserManagementServiceTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $stats['removed']);
 
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
     }
 
     public function test_update_support_roles_does_not_downgrade_admin(): void
@@ -867,14 +867,14 @@ class UserManagementServiceTest extends TestCase
 
         // Set user to Admin role.
         DB::table('users')->where('id', $user->id)->update([
-            'systemrole' => 'Admin',
+            'systemrole' => User::SYSTEMROLE_ADMIN,
         ]);
 
         $stats = $this->service->updateSupportRoles();
 
         // Admin should not be downgraded even if not in a support team.
         $user->refresh();
-        $this->assertEquals('Admin', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_ADMIN, $user->systemrole);
     }
 
     public function test_update_support_roles_ignores_non_support_teams(): void
@@ -882,7 +882,7 @@ class UserManagementServiceTest extends TestCase
         $user = $this->createTestUser();
 
         DB::table('users')->where('id', $user->id)->update([
-            'systemrole' => 'Moderator',
+            'systemrole' => User::SYSTEMROLE_MODERATOR,
         ]);
 
         // Create a team WITHOUT supporttools.
@@ -901,7 +901,7 @@ class UserManagementServiceTest extends TestCase
 
         // Should not grant support role.
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
     }
 
     // --- Email validation tests ---
@@ -1076,58 +1076,58 @@ class UserManagementServiceTest extends TestCase
     public function test_backfill_demotes_stale_moderator(): void
     {
         // systemrole Moderator but no Owner/Moderator membership anywhere.
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $stats = $this->service->backfillModeratorSystemRoles();
 
         $user->refresh();
-        $this->assertEquals('User', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_USER, $user->systemrole);
         $this->assertGreaterThanOrEqual(1, $stats['demoted']);
     }
 
     public function test_backfill_keeps_moderator_with_mod_membership(): void
     {
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
         $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => 'Moderator']);
+        $this->createMembership($user, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $this->service->backfillModeratorSystemRoles();
 
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
     }
 
     public function test_backfill_keeps_moderator_with_owner_membership(): void
     {
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
         $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['role' => 'Owner']);
+        $this->createMembership($user, $group, ['role' => Membership::ROLE_OWNER]);
 
         $this->service->backfillModeratorSystemRoles();
 
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
     }
 
     public function test_backfill_leaves_support_untouched(): void
     {
         // Support outranks Moderator and is set deliberately — never auto-demoted.
-        $user = $this->createTestUser(['systemrole' => 'Support']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_SUPPORT]);
 
         $this->service->backfillModeratorSystemRoles();
 
         $user->refresh();
-        $this->assertEquals('Support', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_SUPPORT, $user->systemrole);
     }
 
     public function test_backfill_dry_run_does_not_change(): void
     {
-        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $user = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
         $stats = $this->service->backfillModeratorSystemRoles(true);
 
         $user->refresh();
-        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertEquals(User::SYSTEMROLE_MODERATOR, $user->systemrole);
         $this->assertGreaterThanOrEqual(1, $stats['demoted']);
     }
 }

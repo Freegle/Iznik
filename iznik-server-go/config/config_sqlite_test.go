@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
@@ -182,13 +183,11 @@ func TestGet_PublicKey(t *testing.T) {
 
 func TestRequireSupportOrAdminMiddleware_DBPaths(t *testing.T) {
 	sqlDB := useSQLite(t)
-	for _, s := range []string{
-		"INSERT INTO users (id, systemrole) VALUES (1, 'User'), (2, 'Support'), (3, 'Admin'), (4, 'Moderator')",
-		"INSERT INTO sessions (id, userid) VALUES (10, 1), (20, 2), (30, 3), (40, 4)",
-	} {
-		_, err := sqlDB.Exec(s)
-		require.NoError(t, err)
-	}
+	_, err := sqlDB.Exec("INSERT INTO users (id, systemrole) VALUES (1, ?), (2, ?), (3, ?), (4, ?)",
+		utils.SYSTEMROLE_USER, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_MODERATOR)
+	require.NoError(t, err)
+	_, err = sqlDB.Exec("INSERT INTO sessions (id, userid) VALUES (10, 1), (20, 2), (30, 3), (40, 4)")
+	require.NoError(t, err)
 
 	tests := []struct {
 		name    string

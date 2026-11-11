@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import ApprovedPage from '~/modtools/pages/members/approved/[[id]]/[[term]].vue'
+import { ROLE_MODERATOR } from '~/constants'
 
 // Mock refs that will be shared between tests
 const mockBusy = ref(false)
@@ -67,7 +68,7 @@ vi.mock('@/stores/misc', () => ({
 // Mock useMe composable
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    myGroups: ref([{ id: 1, role: 'Moderator' }]),
+    myGroups: ref([{ id: 1, role: ROLE_MODERATOR }]),
   }),
 }))
 

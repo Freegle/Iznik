@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Membership;
 use App\Services\SpamCleanupService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -69,7 +70,7 @@ class SpamCleanupServiceTest extends TestCase
         $spammerId = $this->makeSpammer();
         $group = $this->createTestGroup();
         $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group, ['role' => 'Member']);
+        $this->createMembership($spammer, $group, ['role' => Membership::ROLE_MEMBER]);
 
         $this->service->removeSpamMemberships();
 
@@ -86,7 +87,7 @@ class SpamCleanupServiceTest extends TestCase
         $spammerId = $this->makeSpammer();
         $group = $this->createTestGroup();
         $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group, ['role' => 'Moderator']);
+        $this->createMembership($spammer, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $this->service->removeSpamMemberships();
 
@@ -103,7 +104,7 @@ class SpamCleanupServiceTest extends TestCase
         $spammerId = $this->makeSpammer();
         $group = $this->createTestGroup();
         $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group, ['role' => 'Member']);
+        $this->createMembership($spammer, $group, ['role' => Membership::ROLE_MEMBER]);
 
         $this->service->removeSpamMemberships();
 
@@ -120,7 +121,7 @@ class SpamCleanupServiceTest extends TestCase
         $spammerId = $this->makeSpammer();
         $group = $this->createTestGroup();
         $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group, ['role' => 'Member']);
+        $this->createMembership($spammer, $group, ['role' => Membership::ROLE_MEMBER]);
 
         $this->service->removeSpamMemberships();
 
@@ -140,8 +141,8 @@ class SpamCleanupServiceTest extends TestCase
         $group1 = $this->createTestGroup();
         $group2 = $this->createTestGroup();
         $spammer = \App\Models\User::find($spammerId);
-        $this->createMembership($spammer, $group1, ['role' => 'Member']);
-        $this->createMembership($spammer, $group2, ['role' => 'Member']);
+        $this->createMembership($spammer, $group1, ['role' => Membership::ROLE_MEMBER]);
+        $this->createMembership($spammer, $group2, ['role' => Membership::ROLE_MEMBER]);
 
         $count = $this->service->removeSpamMemberships();
 
@@ -427,7 +428,7 @@ class SpamCleanupServiceTest extends TestCase
         $spammerId = $this->makeSpammer();
         $spammer = \App\Models\User::find($spammerId);
         $group = $this->createTestGroup();
-        $this->createMembership($spammer, $group, ['role' => 'Member']);
+        $this->createMembership($spammer, $group, ['role' => Membership::ROLE_MEMBER]);
         $this->createTestMessage($spammer, $group);
 
         $count = $this->service->removeSpamMembers();

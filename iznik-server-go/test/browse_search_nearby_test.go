@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -42,9 +43,9 @@ func TestBrowseScopedSearchNearby(t *testing.T) {
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("browsesearchnearby")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, posterID, group, utils.ROLE_MEMBER)
 	inReach := CreateTestMessage(t, posterID, group, "Zorbnak Sofa reach covers viewer (browsesearchnearby)", 51.5, -0.1)
 	outOfReach := CreateTestMessage(t, posterID, group, "Zorbnak Sofa reach excludes viewer (browsesearchnearby)", 51.5, -0.1)
 	// The browse feed only searches open posts (messages_spatial.successful = 0); the

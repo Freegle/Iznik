@@ -13,6 +13,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,8 +44,8 @@ func TestBulkOfferPutCreatesCatalogue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkput")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	grantClearance(t, userID)
 	token := getToken(t, userID)
 
@@ -102,10 +103,10 @@ func TestBulkOfferGetReturnsCatalogue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkget")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Office desk", 4, "Good")
@@ -167,9 +168,9 @@ func TestBulkInterest(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkint")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
@@ -250,9 +251,9 @@ func TestBulkInterestCreatesRoster(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkroster")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
@@ -297,9 +298,9 @@ func TestBulkInterestMessageIsStructured(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkstruct")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
 	// Three items: ref #1, #2, #3 in insertion (id) order.
@@ -346,10 +347,10 @@ func TestBulkInterestOnBehalf(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkonbehalf")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
@@ -399,10 +400,10 @@ func TestBulkInterestState(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkstate")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	strangerID := CreateTestUser(t, prefix+"_stranger", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
@@ -438,9 +439,9 @@ func TestBulkInterestPreservesReservedState(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkreserve")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
@@ -488,8 +489,8 @@ func TestBulkOfferPatchRebuildsCatalogue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkpatch")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	grantClearance(t, ownerID)
 	token := getToken(t, ownerID)
 
@@ -532,8 +533,8 @@ func TestBulkOfferSlots(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkslots")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	grantClearance(t, ownerID)
 	token := getToken(t, ownerID)
 
@@ -588,8 +589,8 @@ func TestBulkItemPhotoIngestion(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkphoto")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
@@ -644,9 +645,9 @@ func TestBulkItemUploadedPhotoDeliveryURL(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkphotourl")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Office desk", 4, "Good")
@@ -695,10 +696,10 @@ func TestBulkOfferAccessInstructions(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkaccess")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	grantClearance(t, ownerID)
 	ownerToken := getToken(t, ownerID)
 
@@ -793,9 +794,9 @@ func TestBulkInterestStateCollectedWritesMessagesByAndDecrementsAvailableNow(t *
 	db := database.DBConn
 	prefix := uniquePrefix("bulkcollected1")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
@@ -839,9 +840,9 @@ func TestBulkInterestStateCollectedAccumulatesMultipleItems(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkcollected2")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
@@ -887,9 +888,9 @@ func TestBulkOfferPatchAccessInstructions(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkpatchaccess")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	grantClearance(t, ownerID)
 	ownerToken := getToken(t, ownerID)
 

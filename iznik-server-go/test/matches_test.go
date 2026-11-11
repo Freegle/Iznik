@@ -78,7 +78,7 @@ func TestMatchesNoLocation(t *testing.T) {
 
 func TestMatchesExcludesOwnPosts(t *testing.T) {
 	prefix := uniquePrefix("matchesown")
-	poster := CreateTestUser(t, prefix, "Member")
+	poster := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 	token := getToken(t, poster)
 
 	queryVec := makeTestVec(0.5)
@@ -112,7 +112,7 @@ func TestMatchesReachFilter(t *testing.T) {
 
 	prefix := uniquePrefix("matchesreach")
 	groupID := CreateTestGroup(t, prefix)
-	posterOut := CreateTestUser(t, prefix+"po", "Member")
+	posterOut := CreateTestUser(t, prefix+"po", "Member") // role-literal-ok: not a system role, see #2023
 	// Out-of-reach candidate needs a real message (rippling_reach FK to messages).
 	outID := CreateTestMessage(t, posterOut, groupID, "out of reach sofa", 51.5, -0.1)
 

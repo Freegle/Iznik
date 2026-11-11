@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -83,7 +84,7 @@ func TestDeleteUserSearchWrongUser(t *testing.T) {
 	prefix := uniquePrefix("DeleteSearchWrong")
 
 	// Create a user who owns the search.
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	searchID := createTestSearch(t, ownerID, prefix+"_search")
 
 	// Create a different user who tries to delete it.

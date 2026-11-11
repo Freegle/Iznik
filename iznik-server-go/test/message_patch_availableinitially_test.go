@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,8 +39,8 @@ func patchQuantitySetup(t *testing.T, prefix string, initial, now int) (msgID ui
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken = CreateTestSession(t, ownerID)
 	msgID = CreateTestMessage(t, ownerID, groupID, "OFFER: Jars "+prefix, 55.0, -1.0)
 
@@ -122,7 +123,7 @@ func TestPatchMessageWithoutQuantityLeavesBothAlone(t *testing.T) {
 func TestAddByLeavesAvailableInitiallyAlone(t *testing.T) {
 	prefix := uniquePrefix("patchqty_giveaway")
 	msgID, ownerToken := patchQuantitySetup(t, prefix, 5, 5)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 
 	require.Equal(t, 200, postMessageAction(t, ownerToken, map[string]interface{}{
 		"id": msgID, "action": "AddBy", "userid": takerID, "count": 2,
@@ -141,7 +142,7 @@ func TestAddByLeavesAvailableInitiallyAlone(t *testing.T) {
 func TestQuantityEditedUpThenTakenDoesNotCollapse(t *testing.T) {
 	prefix := uniquePrefix("patchqty_editup")
 	msgID, ownerToken := patchQuantitySetup(t, prefix, 1, 1)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 
 	edit := fmt.Sprintf(`{"id":%d,"availablenow":5,"availableinitially":5}`, msgID)
 	require.Equal(t, 200, patchQuantity(t, ownerToken, edit))

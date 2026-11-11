@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\User;
 use App\Mail\Donation\DonationThankPrepMail;
 use App\Models\Group;
 use App\Support\EmojiUtils;
@@ -383,7 +384,7 @@ class DonationThankPrepService
             'displayName' => $displayName ?: 'Unknown',
             'added'       => $user->added ? Carbon::parse($user->added) : null,
             'deleted'     => $user->deleted !== null,
-            'systemrole'  => (string) ($user->systemrole ?? 'User'),
+            'systemrole'  => (string) ($user->systemrole ?? User::SYSTEMROLE_USER),
         ];
 
         // Just the preferred external email. Drop Freegle-internal synthetic

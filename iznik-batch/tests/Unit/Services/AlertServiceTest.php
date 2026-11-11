@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Membership;
 use App\Services\AlertService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -71,7 +72,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Insert a completed alert — should be ignored.
         $this->insertAlert(['complete' => now()]);
@@ -89,7 +90,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Owner']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_OWNER]);
 
         $this->insertAlert();
 
@@ -103,7 +104,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert(['groupprogress' => 0]);
 
@@ -117,7 +118,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert();
 
@@ -131,7 +132,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert();
 
@@ -149,7 +150,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Confine processing to this test's own group. processAlerts() scans ALL
         // published Freegle groups, and other test classes create groups via
@@ -169,7 +170,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $owner = $this->createTestUser();
-        $this->createMembership($owner, $group, ['role' => 'Owner']);
+        $this->createMembership($owner, $group, ['role' => Membership::ROLE_OWNER]);
 
         $this->insertAlert(['groupprogress' => $group->id - 1]);
 
@@ -182,7 +183,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $member = $this->createTestUser();
-        $this->createMembership($member, $group, ['role' => 'Member']);
+        $this->createMembership($member, $group, ['role' => Membership::ROLE_MEMBER]);
 
         $this->insertAlert(['groupprogress' => $group->id - 1]);
 
@@ -196,7 +197,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // groupprogress starts just below our group so only it is processed,
         // and should advance to exactly our group's id afterwards.
@@ -212,7 +213,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert(['groupprogress' => $group->id - 1]);
 
@@ -226,7 +227,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert(['groupprogress' => $group->id - 1]);
 
@@ -251,8 +252,8 @@ class AlertServiceTest extends TestCase
         $group1 = $this->createTestGroup();
         $group2 = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group1, ['role' => 'Moderator']);
-        $this->createMembership($mod, $group2, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group1, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($mod, $group2, ['role' => Membership::ROLE_MODERATOR]);
 
         // Confine to our two groups (lowest of the pair minus one) so leaked
         // groups from other suites can't fan out the alert.
@@ -273,8 +274,8 @@ class AlertServiceTest extends TestCase
         $group = $this->createTestGroup();
         $mod1 = $this->createTestUser();
         $mod2 = $this->createTestUser();
-        $this->createMembership($mod1, $group, ['role' => 'Moderator']);
-        $this->createMembership($mod2, $group, ['role' => 'Owner']);
+        $this->createMembership($mod1, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($mod2, $group, ['role' => Membership::ROLE_OWNER]);
 
         $this->insertAlert(['groupprogress' => $group->id - 1]);
 
@@ -287,7 +288,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $this->insertAlert(['groupprogress' => $group->id - 1]);
         $this->insertAlert(['subject' => 'Second Alert', 'groupprogress' => $group->id - 1]);
@@ -313,8 +314,8 @@ class AlertServiceTest extends TestCase
         }
 
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group1, ['role' => 'Moderator']);
-        $this->createMembership($mod, $group2, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group1, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($mod, $group2, ['role' => Membership::ROLE_MODERATOR]);
 
         // groupprogress already past group1.id → only group2 should receive.
         $this->insertAlert(['groupprogress' => $group1->id]);
@@ -332,7 +333,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Mark user as deleted.
         DB::table('users')->where('id', $mod->id)->update(['deleted' => now()]);
@@ -349,7 +350,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // Mark the user's email as bounced.
         DB::table('users_emails')->where('userid', $mod->id)->update(['bounced' => now()]);
@@ -382,7 +383,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup(['publish' => 0]);
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $this->insertAlert(['groupprogress' => $group->id - 1]);
 
@@ -410,7 +411,7 @@ class AlertServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid' => $mod->id,
             'groupid' => $nonFreegleGroupId,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
             'collection' => 'Approved',
             'emailfrequency' => -1,
             'added' => now(),
@@ -431,7 +432,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $this->insertAlert([
             'html' => '<b>HTML body</b>',
@@ -449,7 +450,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $this->insertAlert([
             'html' => '',
@@ -472,8 +473,8 @@ class AlertServiceTest extends TestCase
         $group2 = $this->createTestGroup();
         $mod1 = $this->createTestUser();
         $mod2 = $this->createTestUser();
-        $this->createMembership($mod1, $group1, ['role' => 'Moderator']);
-        $this->createMembership($mod2, $group2, ['role' => 'Moderator']);
+        $this->createMembership($mod1, $group1, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($mod2, $group2, ['role' => Membership::ROLE_MODERATOR]);
 
         // groupid set → only group1's mod should be mailed, group2 ignored,
         // regardless of groupprogress.
@@ -493,7 +494,7 @@ class AlertServiceTest extends TestCase
 
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         // from='geeks' (insertAlert default) → cc copy goes to the geeks address.
         $this->insertAlert(['groupid' => $group->id]);
@@ -509,7 +510,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert([
             'groupid' => $group->id,
@@ -539,7 +540,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert(['groupid' => $group->id]);
 
@@ -553,7 +554,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert(['groupid' => $group->id]);
 
@@ -573,7 +574,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup(['contactmail' => 'volunteers@example.org']);
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert(['groupprogress' => $group->id - 1]);
 
@@ -595,7 +596,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup(); // no contactmail
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $alertId = $this->insertAlert(['groupprogress' => $group->id - 1]);
 
@@ -613,7 +614,7 @@ class AlertServiceTest extends TestCase
     {
         $group = $this->createTestGroup(['contactmail' => 'not-an-email']);
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $this->insertAlert(['groupprogress' => $group->id - 1]);
 

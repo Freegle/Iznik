@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\Membership;
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Ripple\RippleIntroMail;
 use App\Models\Message;
@@ -188,7 +189,7 @@ class ResumedReachTest extends TestCase
     private function rippleJoin(int $posterId, int $groupId): void
     {
         DB::table('memberships')->insert([
-            'userid' => $posterId, 'groupid' => $groupId, 'role' => 'Member', 'collection' => 'Approved',
+            'userid' => $posterId, 'groupid' => $groupId, 'role' => Membership::ROLE_MEMBER, 'collection' => 'Approved',
             'emailfrequency' => 24, 'eventsallowed' => 1, 'volunteeringallowed' => 1, 'rippled' => 1, 'added' => now(),
         ]);
         $this->recordRippleJoinLog($posterId, $groupId);

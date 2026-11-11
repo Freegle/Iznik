@@ -108,11 +108,11 @@ class StatsGenerationServiceTest extends TestCase
         $u4 = $this->createTestUser();
 
         DB::table('memberships')->insert([
-            ['userid' => $u1->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => '2026-01-01 10:00:00'],
-            ['userid' => $u2->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => '2026-02-01 10:00:00'],
-            ['userid' => $u3->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => $this->date.' 10:00:00'],
+            ['userid' => $u1->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'added' => '2026-01-01 10:00:00'],
+            ['userid' => $u2->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'added' => '2026-02-01 10:00:00'],
+            ['userid' => $u3->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'added' => $this->date.' 10:00:00'],
             // Joined after — not counted.
-            ['userid' => $u4->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => '2026-04-02 10:00:00'],
+            ['userid' => $u4->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'added' => '2026-04-02 10:00:00'],
         ]);
 
         $this->service->generate($group->id, $this->date);
@@ -885,8 +885,8 @@ class StatsGenerationServiceTest extends TestCase
         $u1 = $this->createTestUser();
         $u2 = $this->createTestUser();
         DB::table('memberships')->insert([
-            ['userid' => $u1->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'ourPostingStatus' => 'MODERATED'],
-            ['userid' => $u2->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'ourPostingStatus' => 'DEFAULT'],
+            ['userid' => $u1->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'ourPostingStatus' => 'MODERATED'],
+            ['userid' => $u2->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'ourPostingStatus' => 'DEFAULT'],
         ]);
 
         $this->service->generate($group->id, $this->date);

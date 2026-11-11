@@ -22,7 +22,7 @@ class RippleMembershipBackfillServiceTest extends TestCase
         $group = $this->createTestGroup();
 
         DB::table('memberships')->insert([
-            'userid' => $user->id, 'groupid' => $group->id, 'role' => 'Member',
+            'userid' => $user->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => -1, 'rippled' => 0, 'added' => now(),
         ]);
         DB::table('logs')->insert([
@@ -96,7 +96,7 @@ class RippleMembershipBackfillServiceTest extends TestCase
         DB::table('groups')->where('id', $group->id)
             ->update(['onhere' => 1, 'welcomemail' => 'Welcome to our community!']);
         DB::table('memberships')->insert([
-            'userid' => $user->id, 'groupid' => $group->id, 'role' => 'Member',
+            'userid' => $user->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => -1, 'rippled' => 0, 'added' => now(),
         ]);
         DB::table('logs')->insert([

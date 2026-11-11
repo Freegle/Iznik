@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-20
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - paf-extractor/server.mjs

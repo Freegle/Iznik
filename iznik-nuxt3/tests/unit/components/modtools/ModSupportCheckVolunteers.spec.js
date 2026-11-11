@@ -3,6 +3,12 @@ import { mount, flushPromises } from '@vue/test-utils'
 
 // Import the component after mocking
 import ModSupportCheckVolunteers from '~/modtools/components/ModSupportCheckVolunteers.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Mock user store
 const mockUserStore = {
@@ -159,7 +165,7 @@ describe('ModSupportCheckVolunteers', () => {
       wrapper.vm.emails = 'admin@example.com'
 
       mockUserStore.searchUsers.mockResolvedValue([
-        { id: 1, email: 'admin@example.com', systemrole: 'Admin' },
+        { id: 1, email: 'admin@example.com', systemrole: SYSTEMROLE_ADMIN },
       ])
 
       wrapper.vm.check()
@@ -176,7 +182,7 @@ describe('ModSupportCheckVolunteers', () => {
       wrapper.vm.emails = 'mod@example.com'
 
       mockUserStore.searchUsers.mockResolvedValue([
-        { id: 2, email: 'mod@example.com', systemrole: 'Moderator' },
+        { id: 2, email: 'mod@example.com', systemrole: SYSTEMROLE_MODERATOR },
       ])
 
       wrapper.vm.check()
@@ -193,7 +199,7 @@ describe('ModSupportCheckVolunteers', () => {
       wrapper.vm.emails = 'support@example.com'
 
       mockUserStore.searchUsers.mockResolvedValue([
-        { id: 3, email: 'support@example.com', systemrole: 'Support' },
+        { id: 3, email: 'support@example.com', systemrole: SYSTEMROLE_SUPPORT },
       ])
 
       wrapper.vm.check()
@@ -210,7 +216,7 @@ describe('ModSupportCheckVolunteers', () => {
       wrapper.vm.emails = 'user@example.com'
 
       mockUserStore.searchUsers.mockResolvedValue([
-        { id: 4, email: 'user@example.com', systemrole: 'User' },
+        { id: 4, email: 'user@example.com', systemrole: SYSTEMROLE_USER },
       ])
 
       wrapper.vm.check()
@@ -227,8 +233,8 @@ describe('ModSupportCheckVolunteers', () => {
       wrapper.vm.emails = 'multi@example.com'
 
       mockUserStore.searchUsers.mockResolvedValue([
-        { id: 5, email: 'multi@example.com', systemrole: 'User' },
-        { id: 6, email: 'multi@example.com', systemrole: 'Moderator' },
+        { id: 5, email: 'multi@example.com', systemrole: SYSTEMROLE_USER },
+        { id: 6, email: 'multi@example.com', systemrole: SYSTEMROLE_MODERATOR },
       ])
 
       wrapper.vm.check()
@@ -261,10 +267,10 @@ describe('ModSupportCheckVolunteers', () => {
 
       mockUserStore.searchUsers
         .mockResolvedValueOnce([
-          { id: 1, email: 'first@example.com', systemrole: 'Admin' },
+          { id: 1, email: 'first@example.com', systemrole: SYSTEMROLE_ADMIN },
         ])
         .mockResolvedValueOnce([
-          { id: 2, email: 'second@example.com', systemrole: 'User' },
+          { id: 2, email: 'second@example.com', systemrole: SYSTEMROLE_USER },
         ])
 
       wrapper.vm.check()

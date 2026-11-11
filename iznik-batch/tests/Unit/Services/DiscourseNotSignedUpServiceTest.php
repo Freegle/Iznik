@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Membership;
 use App\Mail\Housekeeper\DiscourseReportMail;
 use App\Services\DiscourseClient;
 use App\Services\DiscourseNotSignedUpService;
@@ -41,7 +42,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
                 $q->select('memberships.userid')
                     ->from('memberships')
                     ->join('groups', 'groups.id', '=', 'memberships.groupid')
-                    ->whereIn('memberships.role', ['Owner', 'Moderator'])
+                    ->whereIn('memberships.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
                     ->where('groups.type', 'Freegle');
             })
             ->update(['lastaccess' => Carbon::now()->subYears(2)]);
@@ -75,7 +76,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
 
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Owner']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_OWNER]);
 
         // No users on Discourse at all → the mod isn't signed up and the group
         // has no active representation.
@@ -98,7 +99,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
 
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Owner']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_OWNER]);
 
         $client = $this->mockClient(
             [['id' => 200, 'username' => 'themod']],
@@ -120,7 +121,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
 
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Owner']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_OWNER]);
         DB::table('users_emails')->where('userid', $mod->id)->update(['preferred' => 0]);
         DB::table('users_emails')->insert([
             'userid' => $mod->id,
@@ -147,14 +148,14 @@ class DiscourseNotSignedUpServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         $owner = $this->createTestUser();
-        $this->createMembership($owner, $group, ['role' => 'Owner']);
+        $this->createMembership($owner, $group, ['role' => Membership::ROLE_OWNER]);
 
         $tn = $this->createTestUser();
         DB::table('users')->where('id', $tn->id)->update([
             'tnuserid' => 900000000 + $tn->id,
             'lastaccess' => Carbon::now()->subYears(3),
         ]);
-        $this->createMembership($tn, $group, ['role' => 'Moderator']);
+        $this->createMembership($tn, $group, ['role' => Membership::ROLE_MODERATOR]);
 
         $client = $this->mockClient(
             [['id' => 200, 'username' => 'owner']],
@@ -179,7 +180,7 @@ class DiscourseNotSignedUpServiceTest extends TestCase
 
         $group = $this->createTestGroup();
         $mod = $this->createTestUser();
-        $this->createMembership($mod, $group, ['role' => 'Owner']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_OWNER]);
         DB::table('users_emails')->insert([
             'userid' => $mod->id,
             'email' => 'alsouses@user.trashnothing.com',

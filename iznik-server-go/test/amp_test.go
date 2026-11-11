@@ -15,6 +15,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -151,10 +152,10 @@ func TestAMPGetChatMessagesValidToken(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("ampget")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	// Create user-to-user chat
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -199,12 +200,12 @@ func TestAMPGetChatMessagesNotInChat(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("ampnotinchat")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	user3ID := CreateTestUser(t, prefix+"_3", "User") // Not in chat
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
-	CreateTestMembership(t, user3ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	user3ID := CreateTestUser(t, prefix+"_3", utils.SYSTEMROLE_USER) // Not in chat
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user3ID, groupID, utils.ROLE_MEMBER)
 
 	// Create chat between user1 and user2
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -264,10 +265,10 @@ func TestAMPPostChatReplyExpiredToken(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("ampexpired")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -305,10 +306,10 @@ func TestAMPPostChatReplyValidToken(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("ampreplyvalid")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -353,10 +354,10 @@ func TestAMPPostChatReplyTokenCanBeReused(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("ampreplyreuse")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -403,10 +404,10 @@ func TestAMPPostChatReplyEmptyMessage(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("ampreplyempty")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -444,12 +445,12 @@ func TestAMPPostChatReplyTokenMismatchChatID(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("ampmismatch")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	user3ID := CreateTestUser(t, prefix+"_3", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
-	CreateTestMembership(t, user3ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	user3ID := CreateTestUser(t, prefix+"_3", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user3ID, groupID, utils.ROLE_MEMBER)
 
 	// Create two different chats
 	chatID1 := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -491,10 +492,10 @@ func TestAMPPostChatReplyWithTracking(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("ampreplytrack")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -532,10 +533,10 @@ func TestAMPChatRosterMembershipScan(t *testing.T) {
 	// Create test data
 	prefix := uniquePrefix("amproster")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)
@@ -554,7 +555,7 @@ func TestAMPChatRosterMembershipScan(t *testing.T) {
 
 	// Test with user not in roster
 	var notMemberUserID uint64
-	user3ID := CreateTestUser(t, prefix+"_3", "User")
+	user3ID := CreateTestUser(t, prefix+"_3", utils.SYSTEMROLE_USER)
 	result = db.Raw(`
 		SELECT userid FROM chat_roster
 		WHERE chatid = ? AND userid = ?
@@ -609,10 +610,10 @@ func TestAMPPostChatReplyIsHeldForProcessing(t *testing.T) {
 
 	prefix := uniquePrefix("ampreplyheld")
 	groupID := CreateTestGroup(t, prefix)
-	user1ID := CreateTestUser(t, prefix+"_1", "User")
-	user2ID := CreateTestUser(t, prefix+"_2", "User")
-	CreateTestMembership(t, user1ID, groupID, "Member")
-	CreateTestMembership(t, user2ID, groupID, "Member")
+	user1ID := CreateTestUser(t, prefix+"_1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatRoster(t, chatID, user1ID)

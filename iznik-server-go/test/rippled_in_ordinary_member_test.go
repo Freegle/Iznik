@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -21,11 +22,11 @@ import (
 func rippledInPostToOrdinaryMember(t *testing.T, prefix string, collection string) (posterID, rippled, msgID uint64, modToken string) {
 	t.Helper()
 
-	posterID = CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID = CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, rippled, msgID = rippledInPost(t, prefix, posterID, collection)
-	CreateTestMembership(t, posterID, rippled, "Member")
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, posterID, rippled, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken = CreateTestSession(t, modID)
 
 	return posterID, rippled, msgID, modToken
@@ -95,11 +96,11 @@ func TestMessageGroupsSayWhetherModsCanWriteToThePoster(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("canmsg")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	origin, rippled, msgID := rippledInPost(t, prefix, posterID, "Approved")
-	CreateTestMembership(t, modID, origin, "Moderator")
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, modID, origin, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	canMessage := func() map[uint64]interface{} {
@@ -120,7 +121,7 @@ func TestMessageGroupsSayWhetherModsCanWriteToThePoster(t *testing.T) {
 	assert.Equal(t, true, got[origin], "the home community may always write to its poster")
 	assert.Equal(t, false, got[rippled], "the poster has nothing to do with the community it rippled into")
 
-	CreateTestMembership(t, posterID, rippled, "Member")
+	CreateTestMembership(t, posterID, rippled, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", posterID, rippled)
 	assert.Equal(t, false, canMessage()[rippled], "a membership rippling made does not change that")
 

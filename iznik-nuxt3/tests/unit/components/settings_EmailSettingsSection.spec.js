@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import EmailSettingsSection from '~/components/settings/EmailSettingsSection.vue'
+import { ROLE_MEMBER, ROLE_MODERATOR } from '~/constants'
 
-const { mockMe, mockMyGroups } = vi.hoisted(() => {
+const { mockMe, mockMyGroups } = await vi.hoisted(async () => {
+  const { ROLE_MEMBER } = await import('~/constants')
   const { ref } = require('vue')
   return {
     mockMe: ref({
@@ -27,7 +29,7 @@ const { mockMe, mockMyGroups } = vi.hoisted(() => {
         nameshort: 'testgroup',
         namedisplay: 'Test Group',
         profile: 'https://example.com/group.jpg',
-        role: 'Member',
+        role: ROLE_MEMBER,
         emailfrequency: 24,
         eventsallowed: true,
         volunteeringallowed: true,
@@ -80,7 +82,7 @@ describe('EmailSettingsSection', () => {
         nameshort: 'testgroup',
         namedisplay: 'Test Group',
         profile: 'https://example.com/group.jpg',
-        role: 'Member',
+        role: ROLE_MEMBER,
         emailfrequency: 24,
         eventsallowed: true,
         volunteeringallowed: true,
@@ -311,7 +313,7 @@ describe('EmailSettingsSection', () => {
     })
 
     it('shows crown icon for moderators', async () => {
-      mockMyGroups.value = [{ ...mockMyGroups.value[0], role: 'Moderator' }]
+      mockMyGroups.value = [{ ...mockMyGroups.value[0], role: ROLE_MODERATOR }]
       const wrapper = createWrapper()
       wrapper.vm.showAdvanced = true
       await wrapper.vm.$nextTick()
@@ -328,7 +330,7 @@ describe('EmailSettingsSection', () => {
     // Leaving would drop the role, and the server now refuses that, so a moderator or
     // owner is not offered Leave here at all (Discourse 10148).
     it('does not offer Leave to a moderator', async () => {
-      mockMyGroups.value = [{ ...mockMyGroups.value[0], role: 'Moderator' }]
+      mockMyGroups.value = [{ ...mockMyGroups.value[0], role: ROLE_MODERATOR }]
       const wrapper = createWrapper()
       wrapper.vm.showAdvanced = true
       await wrapper.vm.$nextTick()

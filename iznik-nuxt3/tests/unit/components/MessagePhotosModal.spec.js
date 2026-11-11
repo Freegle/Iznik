@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref, nextTick } from 'vue'
 import MessagePhotosModal from '~/components/MessagePhotosModal.vue'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const mockMessageStore = {
   byId: vi.fn(),
@@ -596,7 +597,7 @@ describe('MessagePhotosModal', () => {
         groups: [{ groupid: 5, collection: 'Approved' }],
         attachments: makeAttachments(3),
       })
-      mockAuthMember.mockReturnValue('Member')
+      mockAuthMember.mockReturnValue(ROLE_MEMBER)
       mockSupportOrAdmin.value = false
     })
 
@@ -606,7 +607,7 @@ describe('MessagePhotosModal', () => {
     })
 
     it('offers it to a moderator of a group the post is on', () => {
-      mockAuthMember.mockReturnValue('Moderator')
+      mockAuthMember.mockReturnValue(ROLE_MODERATOR)
       const wrapper = mountForRemoval()
       expect(wrapper.find('.remove-button').exists()).toBe(true)
       expect(mockAuthMember).toHaveBeenCalledWith(5)
@@ -619,7 +620,7 @@ describe('MessagePhotosModal', () => {
     })
 
     it('never offers it for photos that are not yet a post', () => {
-      mockAuthMember.mockReturnValue('Owner')
+      mockAuthMember.mockReturnValue(ROLE_OWNER)
       const wrapper = mountForRemoval({
         id: null,
         attachments: makeAttachments(2),
@@ -628,7 +629,7 @@ describe('MessagePhotosModal', () => {
     })
 
     it('asks for confirmation on an ordinary photo, then patches the rest', async () => {
-      mockAuthMember.mockReturnValue('Moderator')
+      mockAuthMember.mockReturnValue(ROLE_MODERATOR)
       const wrapper = mountForRemoval({ initialIndex: 1 })
       await wrapper.find('.remove-button').trigger('click')
       expect(mockMessageStore.patch).not.toHaveBeenCalled()
@@ -644,7 +645,7 @@ describe('MessagePhotosModal', () => {
     })
 
     it('asks why on an AI image and flags it when told it is bad for any post', async () => {
-      mockAuthMember.mockReturnValue('Moderator')
+      mockAuthMember.mockReturnValue(ROLE_MODERATOR)
       const attachments = makeAttachments(3)
       attachments[1].externalmods = JSON.stringify({ ai: true })
       mockMessageStore.byId.mockReturnValue({
@@ -672,7 +673,7 @@ describe('MessagePhotosModal', () => {
     })
 
     it('closes the viewer when the last photo goes', async () => {
-      mockAuthMember.mockReturnValue('Moderator')
+      mockAuthMember.mockReturnValue(ROLE_MODERATOR)
       mockMessageStore.byId.mockReturnValue({
         id: 1,
         groups: [{ groupid: 5, collection: 'Approved' }],

@@ -6,6 +6,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/hostingad"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -165,7 +166,7 @@ func TestHostingAdNeedsAWordPressSiteNotOnKrystal(t *testing.T) {
 
 func TestHostingAdAMemberWithNoKnownDomainIsNotDecided(t *testing.T) {
 	prefix := uniquePrefix("hostingad_unknown")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	writeServerArmConfig(t, `{"krystal-hosting-ad":{"arms":{"ad":[0,99]},"adopted":true}}`, "1", true)
 

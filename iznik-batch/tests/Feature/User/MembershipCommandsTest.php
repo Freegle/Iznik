@@ -35,7 +35,7 @@ class MembershipCommandsTest extends TestCase
         $this->assertDatabaseHas('memberships', [
             'userid' => $user->id,
             'groupid' => $group->id,
-            'role' => 'Member',
+            'role' => Membership::ROLE_MEMBER,
         ]);
     }
 
@@ -51,7 +51,7 @@ class MembershipCommandsTest extends TestCase
         $this->assertDatabaseHas('memberships', [
             'userid' => $user->id,
             'groupid' => $group->id,
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
         ]);
     }
 

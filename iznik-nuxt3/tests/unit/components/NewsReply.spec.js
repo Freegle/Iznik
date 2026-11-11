@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import NewsReply from '~/components/NewsReply.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Mock stores
 const mockNewsfeedById = vi.fn()
@@ -40,7 +45,7 @@ const mockAuthUser = ref({
   id: 1,
   displayname: 'Current User',
   profile: { path: '/images/me.jpg' },
-  systemrole: 'User',
+  systemrole: SYSTEMROLE_USER,
   settings: { enterNewLine: false },
 })
 
@@ -263,7 +268,7 @@ describe('NewsReply', () => {
       id: 1,
       displayname: 'Current User',
       profile: { path: '/images/me.jpg' },
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
       settings: { enterNewLine: false },
     }
   })
@@ -299,7 +304,7 @@ describe('NewsReply', () => {
 
   describe('hidden replies', () => {
     it('shows hidden reply for moderators', () => {
-      mockAuthUser.value.systemrole = 'Moderator'
+      mockAuthUser.value.systemrole = SYSTEMROLE_MODERATOR
       const hiddenReply = { ...mockReply, hidden: true }
       const wrapper = createWrapper({}, hiddenReply)
       expect(wrapper.find('.reply').exists()).toBe(true)
@@ -319,7 +324,7 @@ describe('NewsReply', () => {
     })
 
     it('shows hidden notice for moderators', () => {
-      mockAuthUser.value.systemrole = 'Moderator'
+      mockAuthUser.value.systemrole = SYSTEMROLE_MODERATOR
       const hiddenReply = { ...mockReply, hidden: true }
       const wrapper = createWrapper({}, hiddenReply)
       expect(wrapper.text()).toContain('has been hidden')
@@ -382,13 +387,13 @@ describe('NewsReply', () => {
     })
 
     it('shows dropdown for moderators', () => {
-      mockAuthUser.value.systemrole = 'Moderator'
+      mockAuthUser.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = createWrapper()
       expect(wrapper.find('.b-dropdown').exists()).toBe(true)
     })
 
     it('shows dropdown for admins', () => {
-      mockAuthUser.value.systemrole = 'Admin'
+      mockAuthUser.value.systemrole = SYSTEMROLE_ADMIN
       const wrapper = createWrapper()
       expect(wrapper.find('.b-dropdown').exists()).toBe(true)
     })
@@ -405,7 +410,7 @@ describe('NewsReply', () => {
     // Edit/Delete are a different gate (own-content / chitchat surface) and
     // must not be affected by modsHeld.
     it('hides the Hide action for moderators when mods held', () => {
-      mockAuthUser.value.systemrole = 'Moderator'
+      mockAuthUser.value.systemrole = SYSTEMROLE_MODERATOR
       mockModsHeld.value = true
       const wrapper = createWrapper()
       const hideItem = wrapper
@@ -415,7 +420,7 @@ describe('NewsReply', () => {
     })
 
     it('shows the Hide action for moderators when not held', () => {
-      mockAuthUser.value.systemrole = 'Moderator'
+      mockAuthUser.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = createWrapper()
       const hideItem = wrapper
         .findAll('.dropdown-item')
@@ -424,7 +429,7 @@ describe('NewsReply', () => {
     })
 
     it('keeps Unhide visible for moderators even when mods held', () => {
-      mockAuthUser.value.systemrole = 'Moderator'
+      mockAuthUser.value.systemrole = SYSTEMROLE_MODERATOR
       mockModsHeld.value = true
       const hiddenReply = { ...mockReply, hidden: true }
       const wrapper = createWrapper({}, hiddenReply)
@@ -435,7 +440,7 @@ describe('NewsReply', () => {
     })
 
     it('leaves Edit and Delete visible while mods held', () => {
-      mockAuthUser.value.systemrole = 'Admin'
+      mockAuthUser.value.systemrole = SYSTEMROLE_ADMIN
       mockModsHeld.value = true
       const wrapper = createWrapper()
       const items = wrapper.findAll('.dropdown-item')

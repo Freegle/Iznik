@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,11 +26,11 @@ func createTestSpammer(t *testing.T, userID uint64, collection string, reason st
 func TestGetSpammers(t *testing.T) {
 	prefix := uniquePrefix("SpamGet")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator") // System-level mod needed for auth.IsSystemMod check
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR) // System-level mod needed for auth.IsSystemMod check
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	createTestSpammer(t, targetID, "Spammer", "Test spam reason")
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/spammers?collection=Spammer&jwt=%s", token), nil)
@@ -45,7 +46,7 @@ func TestGetSpammers(t *testing.T) {
 
 func TestGetSpammersNotModerator(t *testing.T) {
 	prefix := uniquePrefix("SpamNoMod")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/spammers?jwt=%s", token), nil)
@@ -57,11 +58,11 @@ func TestGetSpammersNotModerator(t *testing.T) {
 func TestPostSpammer(t *testing.T) {
 	prefix := uniquePrefix("SpamPost")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	// Any user can report as PendingAdd.
 	body := fmt.Sprintf(`{"userid":%d,"collection":"PendingAdd","reason":"Looks like spam"}`, targetID)
@@ -78,10 +79,10 @@ func TestPostSpammer(t *testing.T) {
 
 func TestPostSpammerAdminOnly(t *testing.T) {
 	prefix := uniquePrefix("SpamAdm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	// Regular user cannot add as Spammer (only PendingAdd).
 	body := fmt.Sprintf(`{"userid":%d,"collection":"Spammer","reason":"Spam"}`, targetID)
@@ -93,10 +94,10 @@ func TestPostSpammerAdminOnly(t *testing.T) {
 
 func TestPatchSpammer(t *testing.T) {
 	prefix := uniquePrefix("SpamPatch")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Suspicious")
 
 	body := fmt.Sprintf(`{"id":%d,"collection":"Spammer","reason":"Confirmed spam"}`, spamID)
@@ -117,11 +118,11 @@ func TestPatchSpammerPreservesReporterAndReason(t *testing.T) {
 	// fix, any PATCH overwrote byuserid = myid and reason = req.Reason (which
 	// was empty for a Hold action), losing the original reporter's evidence.
 	prefix := uniquePrefix("SpamPatchPreserve")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
-	reporterID := CreateTestUser(t, prefix+"_reporter", "User")
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	reporterID := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	db.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid) VALUES (?, ?, ?, ?)",
@@ -153,11 +154,11 @@ func TestPatchSpammerPendingRemoveTracksRequester(t *testing.T) {
 	// V1 parity: moving a confirmed Spammer to PENDING_REMOVE sets byuserid to
 	// the mod requesting removal, so the audit trail shows who's asking.
 	prefix := uniquePrefix("SpamPatchRemove")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
-	originalReporter := CreateTestUser(t, prefix+"_reporter", "User")
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	originalReporter := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	db.Exec("REPLACE INTO spam_users (userid, collection, reason, byuserid) VALUES (?, ?, ?, ?)",
@@ -183,10 +184,10 @@ func TestPatchSpammerPendingRemoveTracksRequester(t *testing.T) {
 
 func TestDeleteSpammer(t *testing.T) {
 	prefix := uniquePrefix("SpamDel")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "Spammer", "Bad actor")
 
 	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/spammers?id=%d&jwt=%s", spamID, token), nil)
@@ -207,10 +208,10 @@ func TestDeleteSpammer(t *testing.T) {
 func TestDeleteSpammerJSONBody(t *testing.T) {
 	// Frontend sends id in JSON body, not query params.
 	prefix := uniquePrefix("SpamDelJ")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "Spammer", "Bad actor body")
 
 	body := strings.NewReader(fmt.Sprintf(`{"id":%d}`, spamID))
@@ -228,11 +229,11 @@ func TestDeleteSpammerJSONBody(t *testing.T) {
 func TestDeleteSpammerNotAdmin(t *testing.T) {
 	prefix := uniquePrefix("SpamDelNA")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "Spammer", "Test")
 
 	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/spammers?id=%d&jwt=%s", spamID, token), nil)
@@ -249,7 +250,7 @@ func TestGetSpammersPartnerKey(t *testing.T) {
 	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	createTestSpammer(t, targetID, "Spammer", "Partner test")
 
 	// Valid partner key should return spammers without a user session.
@@ -280,7 +281,7 @@ func TestGetSpammersV2Path(t *testing.T) {
 // createSpamAdminUser creates a system-level moderator with SpamAdmin permission.
 func createSpamAdminUser(t *testing.T, prefix string) (uint64, string) {
 	db := database.DBConn
-	modID := CreateTestUser(t, prefix, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	db.Exec("UPDATE users SET permissions = 'SpamAdmin' WHERE id = ?", modID)
 	_, token := CreateTestSession(t, modID)
 	return modID, token
@@ -290,7 +291,7 @@ func TestPatchSpammerHoldBySpamAdmin(t *testing.T) {
 	prefix := uniquePrefix("SpamHold")
 	modID, token := createSpamAdminUser(t, prefix)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Suspicious")
 
 	// SpamAdmin should be able to hold a PendingAdd entry.
@@ -316,7 +317,7 @@ func TestPatchSpammerConfirmBySpamAdmin(t *testing.T) {
 	prefix := uniquePrefix("SpamConf")
 	_, token := createSpamAdminUser(t, prefix)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Suspicious")
 
 	// SpamAdmin should be able to confirm a PendingAdd entry as Spammer.
@@ -341,7 +342,7 @@ func TestDeleteSpammerBySpamAdmin(t *testing.T) {
 	prefix := uniquePrefix("SpamDelSA")
 	_, token := createSpamAdminUser(t, prefix)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Bad actor")
 
 	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/spammers?id=%d&jwt=%s", spamID, token), nil)
@@ -363,7 +364,7 @@ func TestPostSpammerSafelistBySpamAdmin(t *testing.T) {
 	prefix := uniquePrefix("SpamSafe")
 	_, token := createSpamAdminUser(t, prefix)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 
 	// SpamAdmin should be able to add directly as Whitelisted (safelist action).
 	body := fmt.Sprintf(`{"userid":%d,"collection":"Whitelisted","reason":"Known good user"}`, targetID)
@@ -387,10 +388,10 @@ func TestPostSpammerSafelistBySpamAdmin(t *testing.T) {
 func TestPatchSpammerModWithoutSpamAdminBlocked(t *testing.T) {
 	prefix := uniquePrefix("SpamNoSA")
 	// System mod without SpamAdmin permission.
-	modID := CreateTestUser(t, prefix, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Suspicious")
 
 	// System mod without SpamAdmin cannot confirm a PendingAdd entry as Spammer.

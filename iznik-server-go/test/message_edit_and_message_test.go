@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -52,9 +53,9 @@ func logStdmsgid(msgid uint64, subtype string) uint64 {
 func TestEditAndMessageEditsThePostAndMessagesThePoster(t *testing.T) {
 	prefix := uniquePrefix("editmsg")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	msg := CreateTestMessage(t, poster, group, "OFFER: Kitchen knives "+prefix, 51.5, -0.1)
 
@@ -86,9 +87,9 @@ func TestEditAndMessageEditsThePostAndMessagesThePoster(t *testing.T) {
 func TestPlainEditStillSendsNothing(t *testing.T) {
 	prefix := uniquePrefix("editonly")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	msg := CreateTestMessage(t, poster, group, "OFFER: Firewood "+prefix, 51.5, -0.1)
 
@@ -103,9 +104,9 @@ func TestPlainEditStillSendsNothing(t *testing.T) {
 func TestEditAndMessageOnAnUnaddressedPostChangesNothing(t *testing.T) {
 	prefix := uniquePrefix("editmsgtn")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	msg := CreateTestMessage(t, poster, group, "OFFER: Knives "+prefix, 51.5, -0.1)
 	makeUnaddressed(msg)
@@ -122,10 +123,10 @@ func TestEditAndMessageOnAnUnaddressedPostChangesNothing(t *testing.T) {
 
 func TestEditAndMessageFromARippledInCommunityChangesNothing(t *testing.T) {
 	prefix := uniquePrefix("editmsgrip")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, rippled, msg := rippledInPost(t, prefix, poster, "Approved")
-	CreateTestMembership(t, mod, rippled, "Moderator")
+	CreateTestMembership(t, mod, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	before := messageTextbody(msg)
 
@@ -141,9 +142,9 @@ func TestEditAndMessageFromARippledInCommunityChangesNothing(t *testing.T) {
 func TestEditAndMessageWithAnEmptyMessageChangesNothing(t *testing.T) {
 	prefix := uniquePrefix("editmsgempty")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 	msg := CreateTestMessage(t, poster, group, "OFFER: Knives "+prefix, 51.5, -0.1)
 	before := messageTextbody(msg)
@@ -160,8 +161,8 @@ func TestEditAndMessageWithAnEmptyMessageChangesNothing(t *testing.T) {
 func TestEditAndMessageByTheOwnerWhoIsNotAModIsRefused(t *testing.T) {
 	prefix := uniquePrefix("editmsgowner")
 	group := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, poster, group, "Member")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, group, utils.ROLE_MEMBER)
 	_, posterToken := CreateTestSession(t, poster)
 	msg := CreateTestMessage(t, poster, group, "OFFER: Knives "+prefix, 51.5, -0.1)
 	before := messageTextbody(msg)
