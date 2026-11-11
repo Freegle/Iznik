@@ -496,14 +496,22 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					"messages.collection, messages.approvedat, messages.rejectedat, messages.autoreposts, messages.lastautopostwarning, messages.lastchaseup, " +
 					"messages.contentcheck_checked_at AS contentcheck_checked_at, messages.contentcheck_reasons AS contentcheck_reasons, "
 				if isMod {
-					selectCols += "messages.message, messages.approvedby, messages.deleted, "
+					// The raw source is not returned for a post that is down: a moderator
+					// needs to see it and restore it, not to take its text away.
+					selectCols += "CASE WHEN messages.deleted IS NULL THEN messages.message ELSE NULL END AS message, " +
+						"messages.approvedby, messages.deleted, "
 				}
 				selectCols += "CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen"
 
-				// A moderator can read a post that has been taken down, to restore it.
+				// A moderator can also read a post that has been taken down (Rejected), to restore
+				// it. A post the poster withdrew or deleted, or that a ban or erasure removed,
+				// stays unreadable.
 				whereSQL := "messages.id = ?"
 				whereArgs := []interface{}{id}
-				if !isMod {
+				if isMod {
+					whereSQL += " AND (messages.deleted IS NULL OR messages.collection = ?)"
+					whereArgs = append(whereArgs, utils.COLLECTION_REJECTED)
+				} else {
 					whereSQL += " AND messages.deleted IS NULL AND users.deleted IS NULL"
 				}
 
