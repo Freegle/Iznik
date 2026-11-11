@@ -273,6 +273,8 @@ import { useMe } from '~/composables/useMe'
 import Api from '~/api'
 import { useMobileStore } from '@/stores/mobile' // APP
 import { useLoginTelemetry } from '~/composables/useLoginTelemetry'
+import { socialLoginOutcome } from '~/composables/useSocialLoginOutcome'
+import { action } from '~/composables/useClientLog'
 import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 
 const NoticeMessage = defineAsyncComponent(
@@ -476,7 +478,11 @@ onMounted(() => {
 function socialLoginFailed(provider, message, error, cancelled) {
   socialLoginError.value = message
 
-  if (cancelled) {
+  const outcome = cancelled
+    ? 'cancelled'
+    : socialLoginOutcome(error?.message ?? message)
+
+  if (outcome === 'cancelled') {
     // The member changed their mind. Not a fault.
     return
   }
@@ -485,6 +491,16 @@ function socialLoginFailed(provider, message, error, cancelled) {
 
   if (isApp.value) {
     platform = isiOS.value ? 'ios-app' : 'android-app'
+  }
+
+  if (outcome === 'device') {
+    // This phone cannot sign in with that provider. Count it in the logs; there is nothing to fix.
+    action('social_login_device_unavailable', {
+      provider,
+      platform,
+      reason: error?.message ?? message,
+    })
+    return
   }
 
   Sentry.captureException(error instanceof Error ? error : new Error(message), {

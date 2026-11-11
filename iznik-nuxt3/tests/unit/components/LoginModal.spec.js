@@ -3,6 +3,7 @@ import { shallowMount, flushPromises } from '@vue/test-utils'
 import { ref, defineComponent } from 'vue'
 import LoginModal from '~/components/LoginModal.vue'
 import { SocialLogin } from '@capgo/capacitor-social-login'
+import { action } from '~/composables/useClientLog'
 import * as Sentry from '@sentry/browser'
 import { LoginError, SignUpError } from '~/api/APIErrors'
 
@@ -64,6 +65,7 @@ const {
   }
 })
 
+vi.mock('~/composables/useClientLog', () => ({ action: vi.fn() }))
 vi.mock('~/composables/useLoginTelemetry', () => ({
   useLoginTelemetry: (refs) => {
     mockLoginTele.used(refs)
@@ -1102,6 +1104,36 @@ describe('LoginModal', () => {
             social_login_provider: 'facebook',
             social_login_platform: 'ios-app',
           }),
+        })
+      )
+    })
+
+    it.each([
+      'Login cancelled',
+      'Google Sign-In cancelled by user',
+      'The user canceled the sign-in flow.',
+    ])('does not report a member backing out: %s', async (message) => {
+      mockIsiOS.value = true
+      SocialLogin.login.mockRejectedValue(new Error(message))
+
+      await clickFacebook()
+
+      expect(Sentry.captureException).not.toHaveBeenCalled()
+      expect(action).not.toHaveBeenCalled()
+    })
+
+    it('counts a phone with no Apple ID or Google account in the logs, not Sentry', async () => {
+      mockIsiOS.value = true
+      SocialLogin.login.mockRejectedValue(new Error('No credentials available'))
+
+      await clickFacebook()
+
+      expect(Sentry.captureException).not.toHaveBeenCalled()
+      expect(action).toHaveBeenCalledWith(
+        'social_login_device_unavailable',
+        expect.objectContaining({
+          provider: 'facebook',
+          platform: 'ios-app',
         })
       )
     })
