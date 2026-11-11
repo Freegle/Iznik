@@ -237,9 +237,10 @@ The frontend ships itself: green master merges to `production` and Netlify build
 rebuilt by hand, hours or days later. A key the new frontend fetches from `GET /config/<key>`, or an
 answer shape it sends, is therefore **live in the browser before the Go code that serves it**. For a
 key `isPublicConfigKey` (`iznik-server-go/config/config.go`) does not yet list, every page view gets
-a 403, and `BaseAPI` reports a failed API call to Sentry on each one: one event per page view for as
-long as the deploy takes, with a plausible-looking cause ("API2 request failed /config/..."). Nothing
-is wrong in either codebase taken alone, and both test suites pass.
+a 403. `BaseAPI` no longer sends a 403 to Sentry (it goes to the client log as
+`api_failure_dropped`), so the symptom is a feature that silently does nothing for as long as the
+deploy takes, not an alert. Nothing is wrong in either codebase taken alone, and both test suites
+pass.
 
 - Fetch such a key with `logError` off (`api(config).config.fetchv2(key, false)`), treat a refusal as
   "no value", and make the missing value mean the safe default (for an experiment, control).
