@@ -9,8 +9,7 @@ class PiiNormaliser
      * ambiguous ones (Drive, Close, Way, Walk, Park, Green, Hill, Row, Place) only match
      * after a capitalised name, so "20 min drive" or "5 minutes walk" stay as text.
      */
-    private const SAFE_SUFFIX = 'Street|St|Road|Rd|Lane|Ln|Avenue|Ave|Crescent|Cres|Gardens|Gdns'
-        . '|Terrace|Mews|Boulevard|Broadway';
+    private const SAFE_SUFFIX = 'Street|Road|Rd|Lane|Ln|Avenue|Crescent|Gardens|Terrace|Mews|Boulevard|Broadway';
 
     private const ALL_SUFFIX = 'Street|St|Road|Rd|Lane|Ln|Avenue|Ave|Close|Drive|Dr|Way|Court|Ct'
         . '|Crescent|Cres|Place|Pl|Gardens|Gdns|Terrace|Grove|Walk|Row|Square|Sq|Mews'
@@ -19,7 +18,7 @@ class PiiNormaliser
     /** Words that can follow a greeting without being a name ("Hi there", "Hello again"). */
     private const NOT_A_NAME = 'There|All|Everyone|Everybody|Again|Are|Is|Was|Can|Could|Would|Do|Did|Does'
         . '|Thanks|Thank|Just|Still|Sorry|Yes|No|Please|Ok|Okay|Sure|We|You|It|The|This|That'
-        . '|My|Our|Hope|How|Hows|What|When|Where|Why|Who|If|Im|Ive|Id|Its|Have|Has|Will|Not';
+        . '|My|Our|Hope|How|Hows|What|When|Where|Why|Who|If|Im|Ive|Id|Its|Have|Has|Will|Not|Great|Many|Lovely|Good';
 
     /**
      * Normalise PII in text, replacing with placeholder tokens.
@@ -30,7 +29,7 @@ class PiiNormaliser
      * - UK postcodes → <POSTCODE>
      * - Phone numbers (07…, +44…, 11-digit) → <PHONE>
      * - Street addresses and what3words triples → <ADDRESS>
-     * - A name after a greeting or a title ("Hi Sarah", "Mrs Patel") → <NAME>
+     * - A name after a greeting or a title ("Hi Sarah", "Mrs Patel") → "Hi <NAME>", "Mrs <NAME>"
      *
      * Names elsewhere in the text are NOT removed: a regex cannot tell a name from a word.
      * The output is still member chat text and belongs on controlled hosts only.
@@ -124,16 +123,16 @@ class PiiNormaliser
             $text
         );
 
-        // A name straight after a greeting or a title. A greeting only masks the next word
-        // when it is not an everyday word, so "Hi there" and "Hello again" are kept.
+        // A name straight after a greeting or a title. A greeting only masks a following word
+        // when it is not an everyday word, so "Hi there" and "Hi Sarah Thanks" keep their words.
         $text = preg_replace(
-            '/\b(Hi|Hello|Hey|Dear)\s+(?!(?:' . self::NOT_A_NAME . ')\b)[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/',
+            '/\b(Hi|Hello|Hey|Dear)\s+(?!(?:' . self::NOT_A_NAME . ')\b)[A-Z][a-z]+(?:\s+(?!(?:' . self::NOT_A_NAME . ')\b)[A-Z][a-z]+)?\b/',
             '$1 <NAME>',
             $text
         );
         $text = preg_replace(
-            '/\b(?:Mr|Mrs|Ms|Miss|Mx|Dr)\.?\s+[A-Z][a-z]+\b/',
-            '<NAME>',
+            '/\b(Mr|Mrs|Ms|Miss|Mx|Dr)\.?\s+[A-Z][a-z]+\b/',
+            '$1 <NAME>',
             $text
         );
 

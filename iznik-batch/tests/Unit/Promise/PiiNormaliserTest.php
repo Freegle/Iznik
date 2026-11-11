@@ -144,7 +144,7 @@ class PiiNormaliserTest extends TestCase
 
     public function test_lowercase_street_address_is_redacted()
     {
-        foreach (['I live at 12 elm road', 'flat 3 oakwood lane', 'it is 7 mill lane'] as $input) {
+        foreach (['I live at 12 elm road', 'flat 3 oakwood lane', 'it is 7 mill lane', 'try 12 elm rd'] as $input) {
             $result = $this->normaliser->normalise($input);
             $this->assertStringContainsString('<ADDRESS>', $result, "'$input' should be redacted");
             $this->assertDoesNotMatchRegularExpression('/\d/', $result, "'$input' leaked a number: $result");
@@ -153,7 +153,7 @@ class PiiNormaliserTest extends TestCase
 
     public function test_lowercase_durations_are_not_redacted_as_address()
     {
-        foreach (['it is a 20 min drive', 'about 5 minutes walk', '3 chairs in the park'] as $input) {
+        foreach (['it is a 20 min drive', 'about 5 minutes walk', '3 chairs in the park', '3 bags st'] as $input) {
             $this->assertStringNotContainsString('<ADDRESS>', $this->normaliser->normalise($input), $input);
         }
     }
@@ -180,6 +180,13 @@ class PiiNormaliserTest extends TestCase
         $this->assertStringNotContainsString('Jones', $result);
         $this->assertStringNotContainsString('Patel', $result);
         $this->assertStringContainsString('<NAME>', $result);
+    }
+
+    public function test_words_after_a_greeting_name_are_kept()
+    {
+        $this->assertEquals('Hi <NAME> Thanks for the offer', $this->normaliser->normalise('Hi Sarah Thanks for the offer'));
+        $this->assertEquals('Hi <NAME> Can you collect', $this->normaliser->normalise('Hi John Can you collect'));
+        $this->assertEquals('Mrs <NAME> will collect', $this->normaliser->normalise('Mrs Patel will collect'));
     }
 
     public function test_greeting_followed_by_a_common_word_is_kept()

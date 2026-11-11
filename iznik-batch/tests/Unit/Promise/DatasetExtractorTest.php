@@ -235,6 +235,18 @@ class DatasetExtractorTest extends TestCase
         $turns = collect($rows)->pluck('end_turn')->sort()->values()->all();
         $this->assertSame([0, 2], $turns);
     }
+    public function test_cap_below_one_is_refused()
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->extractor->extractRoom(
+            roomId: 142,
+            postType: 'Offer',
+            messages: [['type' => 'Default', 'role' => 'TAKER', 'text' => 'Turn 0']],
+            opts: ['negativesPerRoom' => 0]
+        );
+    }
+
     public function test_positives_never_dropped_by_cap()
     {
         $messages = [

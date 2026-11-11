@@ -30,6 +30,10 @@ class DatasetExtractor
         $tolerance = $opts['tolerance'] ?? 1;
         $negativesPerRoom = $opts['negativesPerRoom'] ?? null;
 
+        if ($negativesPerRoom !== null && $negativesPerRoom < 1) {
+            throw new \InvalidArgumentException('negativesPerRoom must be at least 1 when given');
+        }
+
         $eventTypes = ['Promised', 'Address', 'Reneged', 'Completed', 'System', 'Nudge', 'Reminder', 'Schedule', 'ModMail'];
         $realTextTypes = ['Default', 'Interested', 'Image'];
 

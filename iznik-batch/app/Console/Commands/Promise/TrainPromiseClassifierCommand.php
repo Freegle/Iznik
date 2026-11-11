@@ -47,7 +47,9 @@ class TrainPromiseClassifierCommand extends Command
             return Command::FAILURE;
         }
 
-        // The model and report hold fragments of member chat text: batch user only.
+        // The model and report hold fragments of member chat text: batch user only. The umask
+        // makes each file owner-only from the moment it is created.
+        $previousUmask = umask(0077);
         if (!is_dir($outDir)) {
             mkdir($outDir, 0700, true);
         }
@@ -210,6 +212,7 @@ class TrainPromiseClassifierCommand extends Command
             chmod($modelPath, 0600);
 
             $this->info("Model saved to: $modelPath");
+            umask($previousUmask);
 
             return Command::SUCCESS;
         } catch (\Exception $e) {
@@ -226,11 +229,12 @@ class TrainPromiseClassifierCommand extends Command
      */
     private function splitByRoom(array $dataset, float $testFraction, int $seed): array
     {
-        // Sorted, then shuffled from a fixed seed: the same CSV and seed give the same split.
+        // Rooms ordered by a hash of seed and room id: the same CSV and seed give the same split
+        // on any PHP version, and the global random generator is left alone.
         $uniqueRooms = array_values(array_unique($dataset['groups']));
-        sort($uniqueRooms);
-        mt_srand($seed);
-        shuffle($uniqueRooms);
+        usort($uniqueRooms, function ($a, $b) use ($seed) {
+            return crc32($seed . ':' . $a) <=> crc32($seed . ':' . $b) ?: $a <=> $b;
+        });
 
         $testCount = (int)ceil(count($uniqueRooms) * $testFraction);
         if ($testCount < 1 || $testCount >= count($uniqueRooms)) {
