@@ -168,7 +168,7 @@
       <p>The system sent the automatic reply.</p>
       <Spinner v-if="loadingMessagesToFreegle" :size="40" />
       <notice-message v-else-if="!messagesToFreegle.length">
-        No new messages to Freegle in this period.
+        No recent messages to Freegle.
       </notice-message>
       <div
         v-for="chat in messagesToFreegle"
@@ -321,7 +321,7 @@
             {{ spammer.user?.displayname }} ({{ spammer.user?.email }}) &mdash;
             {{ spammer.reason }}
           </span>
-          <div class="d-flex gap-1">
+          <div v-if="hasPermissionSpamAdmin" class="d-flex gap-1">
             <SpinButton
               variant="white"
               icon-name="check"
@@ -355,6 +355,7 @@ import { useChatStore } from '~/stores/chat'
 import { useCommunityEventStore } from '~/stores/communityevent'
 import { useVolunteeringStore } from '~/stores/volunteering'
 import { useSpammerStore } from '~/modtools/stores/spammer'
+import { useModMe } from '~/modtools/composables/useModMe'
 import api from '~/api'
 import { SYSTEMROLE_ADMIN, SYSTEMROLE_SUPPORT } from '~/constants'
 
@@ -373,6 +374,7 @@ const chatStore = useChatStore()
 const communityEventStore = useCommunityEventStore()
 const volunteeringStore = useVolunteeringStore()
 const spammerStore = useSpammerStore()
+const { hasPermissionSpamAdmin } = useModMe()
 const runtimeConfig = useRuntimeConfig()
 
 const { me } = useMe()
@@ -487,6 +489,8 @@ function rejectChatHandler(callback, id) {
   chatStore
     .rejectChat(id)
     .then(loadHeldChats)
+    // Loading the held chats empties the chat store that Messages to Freegle reads.
+    .then(loadMessagesToFreegle)
     .finally(() => callback())
 }
 
@@ -649,11 +653,15 @@ function removeEventOrVolunteeringHandler(callback, item) {
 
 const loadingSpammers = ref(false)
 
-const spammers = computed(() => spammerStore.list)
+// The store is shared with the Spammers page, so only the pending reports are shown here.
+const spammers = computed(() => spammerStore.getList('PendingAdd'))
 
 async function loadSpammers() {
   loadingSpammers.value = true
   try {
+    // The store keeps the cursor of its last fetch and appends to its list, so a refresh starts
+    // from nothing.
+    spammerStore.clear()
     await spammerStore.fetch({ collection: 'PendingAdd' })
   } catch (e) {
     console.log('Failed to fetch spammers', e)
