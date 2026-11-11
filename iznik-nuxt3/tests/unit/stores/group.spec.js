@@ -184,7 +184,7 @@ describe('group store', () => {
 
       const result = await store.fetch(1)
 
-      expect(mockFetch).toHaveBeenCalledWith(1, expect.any(Function))
+      expect(mockFetch).toHaveBeenCalledWith(1)
       expect(result).toEqual(group)
       expect(store.list[1]).toEqual(group)
     })
@@ -301,7 +301,7 @@ describe('group store', () => {
 
       const result = await store.fetch('123')
 
-      expect(mockFetch).toHaveBeenCalledWith(123, expect.any(Function))
+      expect(mockFetch).toHaveBeenCalledWith(123)
       expect(result.id).toBe(123)
     })
 
