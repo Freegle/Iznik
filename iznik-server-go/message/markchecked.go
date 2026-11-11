@@ -1,6 +1,7 @@
 package message
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -19,6 +20,11 @@ type MarkCheckedRequest struct {
 	IDs     []uint64 `json:"ids,omitempty"`    // specific messages, else mark the whole bucket
 	Reject  bool     `json:"reject,omitempty"` // true = pull the specified posts back to Pending, held, for a decision
 }
+
+// maxMarkCheckedIDs is the most posts one markchecked request may name. A page of the Check queue
+// is far smaller; the cap keeps one request from building a very long IN list and, for a reject,
+// from running a long loop of writes with no transaction.
+const maxMarkCheckedIDs = 1000
 
 // checkRejectReason is the spamreason on the copy a Check reject pulls back on the community
 // the moderator acted on, where "Check" is a word moderators know. Every other copy pulled
@@ -54,6 +60,10 @@ func MarkChecked(c *fiber.Ctx) error {
 	var req MarkCheckedRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if len(req.IDs) > maxMarkCheckedIDs {
+		return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("At most %d ids at a time", maxMarkCheckedIDs))
 	}
 
 	db := database.DBConn

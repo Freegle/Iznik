@@ -366,3 +366,28 @@ func TestCheckRejectPullsBackEveryCopyOfACrossPost(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM logs WHERE msgid = ? AND type = 'Message' AND subtype = 'Hold' AND text = 'Pulled back from Check'", msg).Scan(&holds)
 	assert.Equal(t, int64(2), holds, "one Hold log per community acted on, not two on each")
 }
+
+// One markchecked request names a bounded number of posts: a longer list is refused with a 400
+// before anything is read or written, whoever sends it.
+func TestMarkCheckedRefusesAnUnboundedIdList(t *testing.T) {
+	prefix := uniquePrefix("mc_cap")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	_, token := CreateTestSession(t, modID)
+
+	ids := make([]string, 1001)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%d", i+1)
+	}
+	for _, body := range []string{
+		fmt.Sprintf(`{"groupid": %d, "ids": [%s]}`, groupID, strings.Join(ids, ",")),
+		fmt.Sprintf(`{"groupid": %d, "reject": true, "ids": [%s]}`, groupID, strings.Join(ids, ",")),
+	} {
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/messages/markchecked?jwt=%s", token), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 400, resp.StatusCode, "more than 1000 ids is refused")
+	}
+}
