@@ -17,14 +17,22 @@
 //     Sentry and to the client log; a block also sets a per-session flag.
 //     Nothing is shown to the member: the tiles are too small for an
 //     explanation, and support can act on the report.
-//  3. Cap the per-image Sentry reports per session and ignore crawlers, whose
+//  3. Route the failure by what the probe found. The host answering with an error
+//     status (4xx or 5xx; it sends CORS headers on errors too, so the status is
+//     readable) is a fault in the image or the delivery service, so it goes to Sentry,
+//     fingerprinted by status and the delivery error message so an undecodable
+//     format, an over-size image and a missing file are separate issues. A host that
+//     answered 200 or opaquely, or one that did not answer, says nothing about the
+//     image itself (a renderer that does not paint images, a bad mobile network), so
+//     those go to the client log in Loki as a rate and never to Sentry.
+//  4. Cap the per-image reports per session and ignore crawlers, whose
 //     renderers fire these events by the thousand.
 import { ref } from 'vue'
 import { captureMessage } from '@sentry/browser'
 import { useRuntimeConfig } from '#app'
 import { warn as clientLogWarn } from '~/composables/useClientLog'
 
-// Individual image failures reported to Sentry per session before switching to
+// Individual image failures probed and reported per session before switching to
 // an aggregate count. One member scrolling a broken Browse page produced 452
 // events in a day, which buries the signal.
 export const MAX_INDIVIDUAL_REPORTS = 3
@@ -33,6 +41,50 @@ export const MAX_INDIVIDUAL_REPORTS = 3
 export const AGGREGATE_EVERY = 50
 
 const PROBE_TIMEOUT_MS = 8000
+
+// How much of a delivery error body is kept.
+const ERROR_MESSAGE_MAX = 200
+
+// The delivery service answers a failed request with JSON like
+// {"status":"error","code":400,"message":"..."}. Read its message when the response allows
+// it; a probe must never fail because the body could not be read.
+async function readDeliveryMessage(response) {
+  try {
+    if (typeof response.text !== 'function') {
+      return null
+    }
+
+    const body = await response.text()
+
+    try {
+      const parsed = JSON.parse(body)
+      if (typeof parsed?.message === 'string') {
+        return parsed.message.trim().slice(0, ERROR_MESSAGE_MAX)
+      }
+    } catch (e) {
+      // Not JSON: fall through to the raw text.
+    }
+
+    return String(body).trim().slice(0, ERROR_MESSAGE_MAX) || null
+  } catch (e) {
+    return null
+  }
+}
+
+// Numbers in a delivery message (sizes, codec versions) differ between images that fail for
+// the same reason, so they are masked to keep one reason as one Sentry issue.
+export function normaliseDeliveryMessage(message) {
+  return (
+    String(message || 'no message')
+      // A URL or an image id in the message would make every image its own issue.
+      .replace(/https?:\/\/\S+/g, 'URL')
+      .replace(/\b[0-9a-f]{8,}\b/gi, 'ID')
+      .replace(/\d+(\.\d+)?/g, 'N')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120) || 'no message'
+  )
+}
 
 const CRAWLER_RE =
   /bot|crawl|spider|slurp|bingpreview|headlesschrome|lighthouse|facebookexternalhit/i
@@ -100,11 +152,20 @@ export async function probeUrl(url, fetchImpl) {
         credentials: 'omit',
         signal: controller?.signal,
       })
-      return {
+      const result = {
         ok: true,
         status: response.status,
         opaque: response.type === 'opaque',
       }
+
+      if (response.status >= 400 && !result.opaque) {
+        const message = await readDeliveryMessage(response)
+        if (message) {
+          result.message = message
+        }
+      }
+
+      return result
     } catch (e) {
       return {
         ok: false,
@@ -120,7 +181,12 @@ export async function probeUrl(url, fetchImpl) {
   const cors = await attempt('cors')
 
   if (cors.ok) {
-    return { probed: true, reachable: true, status: cors.status }
+    return {
+      probed: true,
+      reachable: true,
+      status: cors.status,
+      ...(cors.message ? { message: cors.message } : {}),
+    }
   }
 
   if (cors.error === 'timeout') {
@@ -226,16 +292,31 @@ export async function reportImageFailure({ src, url }, fetchImpl) {
     individualReports++
 
     const probe = await probeUrl(url, fetchImpl)
+    const deliveryError = probe.probed && probe.reachable && probe.status >= 400
 
-    captureMessage('Failed to fetch image ' + src, {
-      level: 'warning',
-      extra: {
+    if (deliveryError) {
+      const reason = normaliseDeliveryMessage(probe.message)
+
+      captureMessage(`Image delivery error ${probe.status}: ${reason}`, {
+        level: 'warning',
+        fingerprint: ['image-delivery-error', String(probe.status), reason],
+        extra: {
+          src,
+          url,
+          probe,
+          failures_in_session: failures,
+          image_host_blocked: imageHostBlocked.value,
+        },
+      })
+    } else {
+      clientLogWarn('image_failed', {
+        src,
         url,
         probe,
         failures_in_session: failures,
         image_host_blocked: imageHostBlocked.value,
-      },
-    })
+      })
+    }
 
     if (probe.probed && probe.reachable === false) {
       await checkImageHost(fetchImpl)
@@ -245,14 +326,12 @@ export async function reportImageFailure({ src, url }, fetchImpl) {
   }
 
   if (failures % AGGREGATE_EVERY === 0) {
-    captureMessage('Image failures continuing: ' + failures + ' this session', {
-      level: 'warning',
-      extra: {
-        latest_src: src,
-        latest_url: url,
-        image_host_blocked: imageHostBlocked.value,
-        host_check: hostCheckResult,
-      },
+    clientLogWarn('image_failures_continuing', {
+      failures_in_session: failures,
+      latest_src: src,
+      latest_url: url,
+      image_host_blocked: imageHostBlocked.value,
+      host_check: hostCheckResult,
     })
   }
 

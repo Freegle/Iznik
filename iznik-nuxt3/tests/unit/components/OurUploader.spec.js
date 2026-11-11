@@ -1558,6 +1558,27 @@ describe('OurUploader', () => {
   })
 
   describe('timer management', () => {
+    it('logs a Loki action, not a Sentry event, when the modal stays open for 30s', async () => {
+      vi.useFakeTimers()
+      mockIsApp.value = false
+      await createWrapper()
+      mockAction.mockClear()
+
+      const openCall = mockUppy.on.mock.calls.find(
+        (c) => c[0] === 'dashboard:modal-open'
+      )
+      openCall[1]()
+
+      const { captureMessage } = await import('@sentry/browser')
+      vi.advanceTimersByTime(35000)
+      expect(captureMessage).not.toHaveBeenCalled()
+      expect(mockAction).toHaveBeenCalledWith('upload_modal_open_30s', {
+        uploader: 'our',
+      })
+
+      vi.useRealTimers()
+    })
+
     it('clears timer on complete event', async () => {
       vi.useFakeTimers()
       mockIsApp.value = false
