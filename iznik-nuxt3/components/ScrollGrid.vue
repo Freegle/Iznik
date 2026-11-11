@@ -3,9 +3,9 @@
     <slot name="header" />
 
     <div v-if="items?.length" class="scroll-grid">
-      <!-- Mobile/tablet portrait: 2-column grid -->
+      <!-- Mobile/tablet portrait: 2-column grid, unless singleColumn is set -->
       <VisibleWhen :at="['xs', 'sm', 'md']">
-        <template v-if="!isLandscape">
+        <template v-if="!isLandscape && !singleColumn">
           <div v-for="(item, ix) in visibleItems" :key="itemKey(item, ix)">
             <div v-if="ix % 2 === 0">
               <!-- Full-width slot before this row (only for first item in row) -->
@@ -32,7 +32,7 @@
             </div>
           </div>
         </template>
-        <!-- Mobile/tablet landscape: 1-column layout (list view) -->
+        <!-- Mobile/tablet landscape, or singleColumn: 1-column layout (list view) -->
         <template v-else>
           <div v-for="(item, ix) in visibleItems" :key="itemKey(item, ix)">
             <slot name="before-row" :item="item" :index="ix" />
@@ -115,6 +115,12 @@ const props = defineProps({
   initialCount: {
     type: Number,
     default: 10,
+  },
+  // One item per row on a phone too. For cards that carry a title, dates and a description,
+  // such as events and volunteering: half a phone's width cuts them off.
+  singleColumn: {
+    type: Boolean,
+    default: false,
   },
 })
 
