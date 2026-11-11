@@ -120,14 +120,14 @@ Batch test tally, against master's batch tests (5,116):
 What the code does now, where the review found it did not:
 
 - Warn-not-hold is off unless `CHAT_WARN_NOT_HOLD` is set, in the Go API as in the batch. With it on, only a hold for something in the text is delivered behind a warning (money, link, URL on a blocked list, email, language, worry word, known spammer or keyword, greetings spam, abuse). Every other reason stays hidden: shadow ban, blocked source, reused image, a chain from a hidden message. A message that follows one delivered with a warning is not held with it. A warned email carries no image, address map or item link.
-- Only Admin and Support can merge a Support or Admin account. A moderator can still merge two ordinary accounts. A merge keeps the stricter posting status.
+- Only Admin and Support can merge a Support account, and only an Admin can merge an Admin account. A moderator can still merge two ordinary accounts. A merge keeps the stricter posting status.
 - A ban needs an existing target who is not the caller. Only an Admin can ban a Moderator, Support or Admin account. The ban and the withdrawal of the member's posts are one transaction. Unban clears the ban and restores nothing: an approved post stays Withdrawn and a pending post stays deleted. Reopening them needs a record of which posts the ban took down, and that is a product decision, not built.
 - A graded answer on a settled post is final. The reply gate does not apply to a member the graded endpoint has nothing for (no settled post nearby, no known location, a declined trust level, a lockdown), so it cannot lock anyone out. The graded task skips posts that already have an outcome.
 - Reports count from after the post's last take-down, from accounts that are not banned, deleted or linked to the poster. A restore therefore sticks. There is no judge on the report path and no minimum account age.
 - Auto-approve skips banned and PROHIBITED posters. MODERATED posters are what the fallback is for.
 - Inactive account removal only forgets accounts that never posted or chatted, have no donation, Gift Aid, story, event, volunteering, rating or newsfeed record, and are not banned. This is wider than master, which forgot only accounts with no membership at all. Spam cleanup does not ban a moderator, support or admin account.
-- A moderator can read a taken-down post by id (`deleted` is returned to them), so the Taken down section and Restore work.
-- `GET /modtools/members` has a `related` filter. Member search reads the address from `users_emails`.
+- A moderator can read a taken-down post (collection Rejected) by id, with `deleted` and without its raw source, so the Taken down section and Restore work. A post that was withdrawn, deleted by its poster, or removed by a ban or erasure is not readable.
+- `GET /modtools/members` has a `related` filter. Member search reads the address from `users_emails`, from its start or by its domain, and treats % and _ as literal.
 - Digest, events and volunteering mail are off for a member with no membership when the group model is removed, and any one community that turned events or volunteering off turns them off.
 
 Open questions for Edward:
