@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -62,8 +63,8 @@ func TestGetShortlinkList(t *testing.T) {
 func TestPostShortlink(t *testing.T) {
 	prefix := uniquePrefix("ShortlinkPost")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"name":"%s_newlink","groupid":%d}`, prefix, groupID)
@@ -82,8 +83,8 @@ func TestPostShortlinkDuplicate(t *testing.T) {
 	prefix := uniquePrefix("ShortlinkDup")
 	groupID := CreateTestGroup(t, prefix)
 	createTestShortlink(t, prefix+"_dup", groupID)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"name":"%s_dup","groupid":%d}`, prefix, groupID)
@@ -124,8 +125,8 @@ func TestPostShortlinkNotLoggedIn(t *testing.T) {
 func TestPostShortlinkNotModOfGroup(t *testing.T) {
 	prefix := uniquePrefix("ShortlinkNonMod")
 	groupID := CreateTestGroup(t, prefix)
-	uID := CreateTestUser(t, prefix+"_u", "User")
-	CreateTestMembership(t, uID, groupID, "Member")
+	uID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, uID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, uID)
 	body := fmt.Sprintf(`{"name":"%s_x","groupid":%d}`, prefix, groupID)
 	req := httptest.NewRequest("POST", "/api/shortlink?jwt="+token, strings.NewReader(body))

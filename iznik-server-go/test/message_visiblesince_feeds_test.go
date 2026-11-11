@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -34,13 +35,13 @@ func visibleSinceFixture(t *testing.T, prefix string, word string) (viewerToken 
 	db := database.DBConn
 
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	origin := CreateTestGroup(t, prefix+"_origin")
 	rippled := CreateTestGroup(t, prefix+"_rippled")
 	gone := CreateTestGroup(t, prefix+"_gone")
-	CreateTestMembership(t, viewerID, origin, "Member")
-	CreateTestMembership(t, posterID, origin, "Member")
+	CreateTestMembership(t, viewerID, origin, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, origin, utils.ROLE_MEMBER)
 
 	msgID = CreateTestMessage(t, posterID, origin, "OFFER: "+word+" gadget", 51.5, -0.1)
 

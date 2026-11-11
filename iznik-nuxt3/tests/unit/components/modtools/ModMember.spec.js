@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import ModMember from '~/modtools/components/ModMember.vue'
+import { ROLE_MEMBER } from '~/constants'
 
 // Mock stores
 const mockUserStore = {
@@ -57,7 +58,7 @@ describe('ModMember', () => {
     joined: '2024-01-01T10:00:00Z',
     lastaccess: dayjs().subtract(10, 'days').toISOString(),
     groupid: 789,
-    role: 'Member',
+    role: ROLE_MEMBER,
     ourpostingstatus: 'MODERATED',
     emailfrequency: 24,
     bouncing: false,
@@ -946,7 +947,7 @@ describe('ModMember', () => {
       const wrapper = mountComponent({
         member: createMember({
           bandate: '2024-01-15T10:00:00Z',
-          role: 'Member',
+          role: ROLE_MEMBER,
         }),
       })
       expect(wrapper.find('.mod-role').exists()).toBe(false)

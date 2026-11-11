@@ -21,6 +21,12 @@ import cloneDeep from 'lodash.clonedeep'
 import { useMiscStore } from '~/stores/misc'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
+import {
+  ROLE_MODERATOR,
+  ROLE_OWNER,
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const props = defineProps({
   /**
@@ -213,7 +219,8 @@ const groupOptions = computed(() => {
     // Check we're allowed.
     if (
       me.value &&
-      (me.value.systemrole === 'Admin' || me.value.systemrole === 'Support')
+      (me.value.systemrole === SYSTEMROLE_ADMIN ||
+        me.value.systemrole === SYSTEMROLE_SUPPORT)
     ) {
       grps.push({
         value: -2,
@@ -224,7 +231,7 @@ const groupOptions = computed(() => {
   }
 
   for (const group of sortedGroups.value) {
-    const isMod = group.role === 'Owner' || group.role === 'Moderator'
+    const isMod = group.role === ROLE_OWNER || group.role === ROLE_MODERATOR
     if (
       props.listall ||
       ((!props.modonly || isMod) && (!props.memberonly || !isMod))

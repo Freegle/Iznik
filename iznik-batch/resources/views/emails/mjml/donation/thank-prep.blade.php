@@ -131,7 +131,7 @@
                     {{ $u['displayName'] }}
                     &nbsp;<a href="{{ $links['modtoolsUser'] ?? '#' }}" style="font-size:12px;">#{{ $u['id'] }}</a>
                     @if ($u['deleted']) <span class="flag-pill flag-pill-warn">Deleted user</span>@endif
-                    @if ($u['systemrole'] !== 'User') <span class="flag-pill">{{ $u['systemrole'] }}</span>@endif
+                    @if ($u['systemrole'] !== \App\Models\User::SYSTEMROLE_USER) <span class="flag-pill">{{ $u['systemrole'] }}</span>@endif
                   </td>
                 </tr>
                 @if (!empty($aliases))
@@ -225,7 +225,7 @@
                 <tr><td colspan="2" class="card-section-head">Groups ({{ count($members) }})</td></tr>
                 @foreach ($members as $m)
                   <tr class="mini-row">
-                    <td>{{ $m['name'] }} @if ($m['role'] !== 'Member') <span class="flag-pill">{{ $m['role'] }}</span>@endif</td>
+                    <td>{{ $m['name'] }} @if ($m['role'] !== \App\Models\Membership::ROLE_MEMBER) <span class="flag-pill">{{ $m['role'] }}</span>@endif</td>
                     <td style="color:#888;text-align:right;width:120px;">since {{ $m['memberSince'] }}</td>
                   </tr>
                 @endforeach

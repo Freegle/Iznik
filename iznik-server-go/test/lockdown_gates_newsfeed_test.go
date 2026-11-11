@@ -23,6 +23,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -58,9 +59,9 @@ func newsfeedAction(t *testing.T, token string, body map[string]interface{}) *ht
 
 func TestLockdownRefusesNewsfeedHide(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_hide")
-	userID := CreateTestUser(t, prefix+"_poster", "User")
+	userID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test hide "+prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	makeChitChatMod(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -78,9 +79,9 @@ func TestLockdownRefusesNewsfeedHide(t *testing.T) {
 
 func TestLockdownRefusesNewsfeedConvertedToPost(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_convpost")
-	userID := CreateTestUser(t, prefix+"_poster", "User")
+	userID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test convert "+prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	makeChitChatMod(t, modID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -99,7 +100,7 @@ func TestLockdownRefusesNewsfeedReferToActions(t *testing.T) {
 	for _, action := range []string{"ReferToWanted", "ReferToOffer", "ReferToTaken", "ReferToReceived"} {
 		t.Run(action, func(t *testing.T) {
 			prefix := uniquePrefix("ld_nf_" + action)
-			userID := CreateTestUser(t, prefix+"_poster", "User")
+			userID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 			nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test refer "+prefix)
 			_, token := CreateTestSession(t, userID)
 
@@ -118,8 +119,8 @@ func TestLockdownRefusesNewsfeedReferToActions(t *testing.T) {
 func TestLockdownRefusesNewsfeedAttachToThread(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_attach")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	nfID := CreateTestNewsfeed(t, modID, 52.2, -0.1, "Test attach "+prefix)
 	otherID := CreateTestNewsfeed(t, modID, 52.2, -0.1, "Test attach target "+prefix)
@@ -134,9 +135,9 @@ func TestLockdownRefusesNewsfeedAttachToThread(t *testing.T) {
 func TestLockdownRefusesNewsfeedConvertToStory(t *testing.T) {
 	prefix := uniquePrefix("ld_nf_story")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	nfID := CreateTestNewsfeed(t, posterID, 52.2, -0.1, "Test story "+prefix)
 

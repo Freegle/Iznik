@@ -3,6 +3,7 @@
 namespace App\Services\Support;
 
 use App\Mail\Chat\ReferToSupportMail;
+use App\Models\Membership;
 use App\Models\User;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
@@ -134,7 +135,7 @@ class FirstPassService
                 $q->whereNotNull('c.brief')
                     ->orWhereExists(function ($s) {
                         $s->select(DB::raw(1))->from('support_case_messages as m')
-                            ->whereColumn('m.caseid', 'c.id')->where('m.role', 'Support');
+                            ->whereColumn('m.caseid', 'c.id')->where('m.role', 'Support'); // role-literal-ok: support case message role
                     });
             })
             ->orderByDesc('c.id')
@@ -142,7 +143,7 @@ class FirstPassService
             ->get(['c.id', 'c.created_at', 'c.brief']);
 
         $replies = $rows->isEmpty() ? collect() : DB::table('support_case_messages')
-            ->whereIn('caseid', $rows->pluck('id'))->where('role', 'Support')
+            ->whereIn('caseid', $rows->pluck('id'))->where('role', 'Support') // role-literal-ok: support case message role
             ->orderBy('id')->get(['caseid', 'body'])->keyBy('caseid');
 
         return $rows->map(function ($r) use ($replies) {
@@ -194,9 +195,9 @@ class FirstPassService
         $authors = $rows->pluck('userid')->filter()->unique()->values()->all();
         $mods = [];
         if ($authors) {
-            $mods = DB::table('users')->whereIn('id', $authors)->whereIn('systemrole', ['Moderator', 'Support', 'Admin'])->pluck('id')->all();
+            $mods = DB::table('users')->whereIn('id', $authors)->whereIn('systemrole', [User::SYSTEMROLE_MODERATOR, User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])->pluck('id')->all();
             if ($chat->groupid) {
-                $mods = array_merge($mods, DB::table('memberships')->where('groupid', $chat->groupid)->whereIn('userid', $authors)->whereIn('role', ['Moderator', 'Owner'])->pluck('userid')->all());
+                $mods = array_merge($mods, DB::table('memberships')->where('groupid', $chat->groupid)->whereIn('userid', $authors)->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])->pluck('userid')->all());
             }
         }
         $mods = array_flip($mods);

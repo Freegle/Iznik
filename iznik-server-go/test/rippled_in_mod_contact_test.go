@@ -69,7 +69,7 @@ func TestHomeGroupsSurviveLateApproval(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("originlate")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	origin, rippled, msgID := rippledInPost(t, prefix, userID, "Approved")
 
 	// Received three days ago, held, then approved just now.
@@ -88,7 +88,7 @@ func TestHomeGroupsUnknownWhenEveryCopyIsRippledIn(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("originnone")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	origin, _, msgID := rippledInPost(t, prefix, userID, "Approved")
 
 	db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, origin)
@@ -103,10 +103,10 @@ func TestHomeGroupsUnknownWhenEveryCopyIsRippledIn(t *testing.T) {
 func TestRejectOnRippledInGroupDoesNotNotifyPoster(t *testing.T) {
 	prefix := uniquePrefix("ripreject")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	origin, rippled, msgID := rippledInPost(t, prefix, posterID, "Pending")
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -127,10 +127,10 @@ func TestRejectOnRippledInGroupDoesNotNotifyPoster(t *testing.T) {
 func TestDeleteOnRippledInGroupDoesNotNotifyPoster(t *testing.T) {
 	prefix := uniquePrefix("ripdelete")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, rippled, msgID := rippledInPost(t, prefix, posterID, "Approved")
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -148,10 +148,10 @@ func TestDeleteOnRippledInGroupDoesNotNotifyPoster(t *testing.T) {
 func TestApproveOnRippledInGroupDoesNotNotifyPoster(t *testing.T) {
 	prefix := uniquePrefix("ripapprove")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, rippled, msgID := rippledInPost(t, prefix, posterID, "Pending")
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -169,11 +169,11 @@ func TestApproveOnRippledInGroupDoesNotNotifyPoster(t *testing.T) {
 func TestRejectOnHomeGroupStillNotifiesPoster(t *testing.T) {
 	prefix := uniquePrefix("homereject")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	origin, _, msgID := rippledInPost(t, prefix, posterID, "Approved")
 	database.DBConn.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ? AND groupid = ?", msgID, origin)
-	CreateTestMembership(t, modID, origin, "Moderator")
+	CreateTestMembership(t, modID, origin, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -192,10 +192,10 @@ func TestRejectOnHomeGroupStillNotifiesPoster(t *testing.T) {
 func TestReplyFromRippledInGroupIsRefused(t *testing.T) {
 	prefix := uniquePrefix("ripreply")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, rippled, msgID := rippledInPost(t, prefix, posterID, "Approved")
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -213,10 +213,10 @@ func TestReplyFromRippledInGroupIsRefused(t *testing.T) {
 func TestReplyFromHomeGroupIsAllowed(t *testing.T) {
 	prefix := uniquePrefix("homereply")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	origin, _, msgID := rippledInPost(t, prefix, posterID, "Approved")
-	CreateTestMembership(t, modID, origin, "Moderator")
+	CreateTestMembership(t, modID, origin, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -235,10 +235,10 @@ func TestReplyFromHomeGroupIsAllowed(t *testing.T) {
 func TestReplyGroupidMustBeOneTheModAdministers(t *testing.T) {
 	prefix := uniquePrefix("replyspoof")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	origin, rippled, msgID := rippledInPost(t, prefix, posterID, "Approved")
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -260,10 +260,10 @@ func TestModCanStartChatWithRippleOnlyMember(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", memberID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -291,10 +291,10 @@ func TestModCanOpenChatTheRippleOnlyMemberStarted(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", memberID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -321,8 +321,8 @@ func TestRippleOnlyMemberCanStillStartChatWithMods(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", memberID, groupID)
 	_, memberToken := CreateTestSession(t, memberID)
 
@@ -345,8 +345,8 @@ func TestJoiningClearsTheRippledFlag(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1, implicit = 1 WHERE userid = ? AND groupid = ?", memberID, groupID)
 	_, memberToken := CreateTestSession(t, memberID)
 
@@ -374,11 +374,11 @@ func TestPostcodeMoveIntoGroupAreaClearsTheRippledFlag(t *testing.T) {
 
 	inside := CreateTestGroup(t, prefix+"_inside")
 	elsewhere := CreateTestGroup(t, prefix+"_elsewhere")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
 	// The member's post rippled into both groups, so both memberships are ripple-created.
-	CreateTestMembership(t, memberID, inside, "Member")
-	CreateTestMembership(t, memberID, elsewhere, "Member")
+	CreateTestMembership(t, memberID, inside, utils.ROLE_MEMBER)
+	CreateTestMembership(t, memberID, elsewhere, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1, implicit = 1 WHERE userid = ? AND groupid IN (?, ?)", memberID, inside, elsewhere)
 
 	// One group covers where they have moved to; the other is far away.
@@ -429,10 +429,10 @@ func TestDeleteOnRippledInGroupRecordsItSoItCannotRippleBack(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("ripdelclip")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, rippled, msgID := rippledInPost(t, prefix, posterID, "Approved")
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, status) VALUES (?, 51.5, -0.1, "+
@@ -457,10 +457,10 @@ func TestDeleteOnHomeGroupDoesNotRecordARejection(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("homedelclip")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	origin, _, msgID := rippledInPost(t, prefix, posterID, "Approved")
-	CreateTestMembership(t, modID, origin, "Moderator")
+	CreateTestMembership(t, modID, origin, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, status) VALUES (?, 51.5, -0.1, "+
@@ -485,10 +485,10 @@ func TestModCanModmailARippleOnlyMember(t *testing.T) {
 
 	prefix := uniquePrefix("ripmodmail")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", memberID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -518,10 +518,10 @@ func TestModCanModmailAnOrdinaryMember(t *testing.T) {
 
 	prefix := uniquePrefix("ordmodmail")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	payload, _ := json.Marshal(map[string]interface{}{
@@ -566,10 +566,10 @@ func TestRejectingARippleOnlyMemberTellsThem(t *testing.T) {
 
 	prefix := uniquePrefix("riprejmem")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1 WHERE userid = ? AND groupid = ?", memberID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -595,10 +595,10 @@ func TestRejectingARippleOnlyMemberTellsThem(t *testing.T) {
 func TestRejectingAnOrdinaryMemberStillTellsThem(t *testing.T) {
 	prefix := uniquePrefix("ordrejmem")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	payload, _ := json.Marshal(map[string]interface{}{
@@ -644,10 +644,10 @@ func crossPostedPost(t *testing.T, prefix string, posterID uint64, collection st
 func TestRejectOnSecondDirectCopyStillNotifiesPoster(t *testing.T) {
 	prefix := uniquePrefix("xpostreject")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, second, _, msgID := crossPostedPost(t, prefix, posterID, "Pending")
-	CreateTestMembership(t, modID, second, "Moderator")
+	CreateTestMembership(t, modID, second, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -664,10 +664,10 @@ func TestRejectOnSecondDirectCopyStillNotifiesPoster(t *testing.T) {
 func TestReplyFromSecondDirectCopyIsAllowed(t *testing.T) {
 	prefix := uniquePrefix("xpostreply")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, second, _, msgID := crossPostedPost(t, prefix, posterID, "Approved")
-	CreateTestMembership(t, modID, second, "Moderator")
+	CreateTestMembership(t, modID, second, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -684,10 +684,10 @@ func TestReplyFromSecondDirectCopyIsAllowed(t *testing.T) {
 func TestDeleteOnSecondDirectCopyStillNotifiesPoster(t *testing.T) {
 	prefix := uniquePrefix("xpostdelete")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, second, _, msgID := crossPostedPost(t, prefix, posterID, "Approved")
-	CreateTestMembership(t, modID, second, "Moderator")
+	CreateTestMembership(t, modID, second, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -704,10 +704,10 @@ func TestDeleteOnSecondDirectCopyStillNotifiesPoster(t *testing.T) {
 func TestRejectOnRippledCopyOfCrossPostStaysSilent(t *testing.T) {
 	prefix := uniquePrefix("xpostripple")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, _, rippled, msgID := crossPostedPost(t, prefix, posterID, "Pending")
-	CreateTestMembership(t, modID, rippled, "Moderator")
+	CreateTestMembership(t, modID, rippled, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status := postMessageAction(t, modToken, map[string]interface{}{
@@ -726,7 +726,7 @@ func TestHomeGroupsAreEveryDirectCopy(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("homeset")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	first, second, rippled, msgID := crossPostedPost(t, prefix, posterID, "Approved")
 
 	// Approving re-stamps arrival: the first copy now looks NEWEST of the three.

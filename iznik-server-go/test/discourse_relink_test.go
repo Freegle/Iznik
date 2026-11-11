@@ -19,6 +19,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -100,8 +101,8 @@ func newFakeDiscourse(t *testing.T) (*fakeDiscourse, *httptest.Server) {
 func mergedModerator(t *testing.T, prefix string, oldID uint64) uint64 {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	newID := CreateTestUser(t, prefix, "Moderator")
-	CreateTestMembership(t, newID, groupID, "Moderator")
+	newID := CreateTestUser(t, prefix, utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, newID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE users_emails SET preferred = 1 WHERE userid = ?", newID)
 	db.Exec("INSERT INTO logs (user, byuser, type, subtype, text, timestamp) VALUES (?, ?, 'User', 'Merged', ?, NOW())",
 		newID, newID, fmt.Sprintf("Merged %d into %d", oldID, newID))
@@ -161,9 +162,9 @@ func TestMergeRelinksAModeratorsDiscourseAccount(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("relink_merge")
 	groupID := CreateTestGroup(t, prefix)
-	oldID := CreateTestUser(t, prefix+"_old", "User")
-	newID := CreateTestUser(t, prefix+"_new", "Moderator")
-	CreateTestMembership(t, newID, groupID, "Moderator")
+	oldID := CreateTestUser(t, prefix+"_old", utils.SYSTEMROLE_USER)
+	newID := CreateTestUser(t, prefix+"_new", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, newID, groupID, utils.ROLE_MODERATOR)
 	f.mu.Lock()
 	f.external[fmt.Sprint(oldID)] = "Merged_Mod"
 	f.email["Merged_Mod"] = prefix + "_old@test.com"
@@ -194,14 +195,14 @@ func TestRelinkEndpointIsForSupportOnly(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]uint64{"userid": newID})
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	req := httptest.NewRequest("POST", "/api/discourse/relink?jwt="+modToken, bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 403, resp.StatusCode)
 
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
 	req = httptest.NewRequest("POST", "/api/discourse/relink?jwt="+supportToken, bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")

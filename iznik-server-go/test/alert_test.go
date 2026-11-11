@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -35,7 +36,7 @@ func createTestAlertTracking(t *testing.T, alertID uint64, userID uint64) uint64
 
 func TestGetAlert(t *testing.T) {
 	prefix := uniquePrefix("AlertGet")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	alertID := createTestAlert(t, userID, prefix+"_subject")
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/alert/%d", alertID), nil)
@@ -60,11 +61,11 @@ func TestGetAlert(t *testing.T) {
 
 func TestGetAlertWithAdminStats(t *testing.T) {
 	prefix := uniquePrefix("AlertAdmStat")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	alertID := createTestAlert(t, adminID, prefix+"_subject")
-	trackingUserID := CreateTestUser(t, prefix+"_tracked", "User")
+	trackingUserID := CreateTestUser(t, prefix+"_tracked", utils.SYSTEMROLE_USER)
 	createTestAlertTracking(t, alertID, trackingUserID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/alert/%d?jwt=%s", alertID, token), nil)
@@ -94,7 +95,7 @@ func TestGetAlertNotFound(t *testing.T) {
 
 func TestListAlerts(t *testing.T) {
 	prefix := uniquePrefix("AlertList")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	createTestAlert(t, adminID, prefix+"_alert1")
@@ -114,7 +115,7 @@ func TestListAlerts(t *testing.T) {
 
 func TestListAlertsNotAdmin(t *testing.T) {
 	prefix := uniquePrefix("AlertListNA")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/alert?jwt=%s", token), nil)
@@ -130,7 +131,7 @@ func TestListAlertsNotLoggedIn(t *testing.T) {
 
 func TestCreateAlert(t *testing.T) {
 	prefix := uniquePrefix("AlertCreate")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	body := fmt.Sprintf(`{"from":"Admin","to":"Mods","subject":"%s_subject","text":"Alert body text"}`, prefix)
@@ -163,7 +164,7 @@ func TestCreateAlert(t *testing.T) {
 
 func TestCreateAlertDefaults(t *testing.T) {
 	prefix := uniquePrefix("AlertDef")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	// Create with minimal fields - to and html should get defaults.
@@ -191,7 +192,7 @@ func TestCreateAlertDefaults(t *testing.T) {
 
 func TestCreateAlertNotAdmin(t *testing.T) {
 	prefix := uniquePrefix("AlertCreateNA")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"from":"User","subject":"Test","text":"Test text"}`
@@ -211,7 +212,7 @@ func TestCreateAlertNotLoggedIn(t *testing.T) {
 
 func TestRecordAlertClick(t *testing.T) {
 	prefix := uniquePrefix("AlertClick")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	alertID := createTestAlert(t, userID, prefix+"_subject")
 	trackID := createTestAlertTracking(t, alertID, userID)
 
@@ -247,7 +248,7 @@ func TestRecordAlertClickNoAction(t *testing.T) {
 
 func TestGetAlertV2Path(t *testing.T) {
 	prefix := uniquePrefix("AlertV2")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	alertID := createTestAlert(t, userID, prefix+"_subject")
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/apiv2/modtools/alert/%d", alertID), nil)

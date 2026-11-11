@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -17,7 +18,7 @@ import (
 func TestChatRosterUpdateRequiresParticipantOrMod(t *testing.T) {
 	prefix := uniquePrefix("RosterGate")
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 
 	// A User2Mod chat: user1 is the member corresponding with the group's mods.
 	roomID := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
@@ -25,7 +26,7 @@ func TestChatRosterUpdateRequiresParticipantOrMod(t *testing.T) {
 	body := fmt.Sprintf(`{"id":%d}`, roomID)
 
 	// An unrelated ordinary user (not a participant, not a system mod) is denied.
-	attackerID := CreateTestUser(t, prefix+"_attacker", "User")
+	attackerID := CreateTestUser(t, prefix+"_attacker", utils.SYSTEMROLE_USER)
 	_, attackerToken := CreateTestSession(t, attackerID)
 	req := httptest.NewRequest("POST", "/api/chatrooms?jwt="+attackerToken, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

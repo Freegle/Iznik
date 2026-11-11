@@ -23,6 +23,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/lockdown"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -40,10 +41,10 @@ func postsHeld() func() {
 func TestLockdownRefusesApproveWithSubject(t *testing.T) {
 	prefix := uniquePrefix("ld_msg_appr_subj")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
@@ -63,10 +64,10 @@ func TestLockdownRefusesApproveWithSubject(t *testing.T) {
 func TestLockdownRefusesApproveWithStdmsg(t *testing.T) {
 	prefix := uniquePrefix("ld_msg_appr_std")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
@@ -84,10 +85,10 @@ func TestLockdownRefusesApproveWithStdmsg(t *testing.T) {
 func TestLockdownDoesNotRefuseApproveBasic(t *testing.T) {
 	prefix := uniquePrefix("ld_msg_appr_ok")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
@@ -114,10 +115,10 @@ func TestLockdownRefusesPostMessageModeratorActions(t *testing.T) {
 		t.Run(action, func(t *testing.T) {
 			prefix := uniquePrefix("ld_msg_" + action)
 			groupID := CreateTestGroup(t, prefix)
-			posterID := CreateTestUser(t, prefix+"_poster", "User")
-			modID := CreateTestUser(t, prefix+"_mod", "User")
-			CreateTestMembership(t, posterID, groupID, "Member")
-			CreateTestMembership(t, modID, groupID, "Moderator")
+			posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+			modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+			CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 			_, modToken := CreateTestSession(t, modID)
 			msgID := createPendingMessage(t, posterID, groupID, prefix)
 
@@ -139,8 +140,8 @@ func TestLockdownForcesPutMessagePendingWhenPostsHeld(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Unmoderated (DEFAULT) member on a group that does not moderate all posts -
@@ -188,10 +189,10 @@ func TestLockdownForcesPutMessagePendingWhenPostsHeld(t *testing.T) {
 func TestLockdownRefusesModeratorEditOfOthersPost(t *testing.T) {
 	prefix := uniquePrefix("ld_msg_modedit")
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
@@ -215,8 +216,8 @@ func TestLockdownForcesReviewOnOwnEditWhenPostsHeld(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Unmoderated (DEFAULT) member, non-moderated group - same setup as

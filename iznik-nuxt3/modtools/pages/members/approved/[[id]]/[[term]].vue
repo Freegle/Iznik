@@ -99,6 +99,7 @@ import { useMemberStore } from '@/stores/member'
 import { setupModMembers } from '@/composables/useModMembers'
 import { useMe } from '~/composables/useMe'
 import { pluralise } from '~/composables/usePluralise'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Stores
 const memberStore = useMemberStore()
@@ -231,7 +232,7 @@ onMounted(() => {
     let countmod = 0
     let lastmod = null
     myGroups.value.forEach((g) => {
-      if (g.role === 'Moderator' || g.role === 'Owner') {
+      if (g.role === ROLE_MODERATOR || g.role === ROLE_OWNER) {
         countmod++
         lastmod = g.id
       }

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { computed } from 'vue'
 import ModSupportFindGroupVolunteer from '~/modtools/components/ModSupportFindGroupVolunteer.vue'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Default user data returned by the mock user store.
 const defaultStoreUser = {
@@ -32,7 +33,7 @@ describe('ModSupportFindGroupVolunteer', () => {
   const createVolunteer = (overrides = {}) => ({
     userid: 123,
     displayname: 'Test Volunteer',
-    role: 'Moderator',
+    role: ROLE_MODERATOR,
     settings: {
       active: true,
     },
@@ -137,14 +138,14 @@ describe('ModSupportFindGroupVolunteer', () => {
 
     it('renders ModRole with correct props', () => {
       const wrapper = mountComponent({
-        volunteer: createVolunteer({ userid: 111, role: 'Owner' }),
+        volunteer: createVolunteer({ userid: 111, role: ROLE_OWNER }),
         groupid: 222,
       })
       const modRole = wrapper.find('.mod-role')
       expect(modRole.exists()).toBe(true)
       expect(modRole.attributes('data-userid')).toBe('111')
       expect(modRole.attributes('data-groupid')).toBe('222')
-      expect(modRole.attributes('data-role')).toBe('Owner')
+      expect(modRole.attributes('data-role')).toBe(ROLE_OWNER)
     })
   })
 
@@ -302,7 +303,7 @@ describe('ModSupportFindGroupVolunteer', () => {
         volunteer: {
           userid: 1,
           displayname: '',
-          role: 'Member',
+          role: ROLE_MEMBER,
           settings: null,
         },
         groupid: 1,

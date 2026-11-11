@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,7 @@ func confirmReplyPostExposures(t *testing.T, posterID uint64) []map[string]inter
 func anotherReplier(t *testing.T, f replyConfirmFixture, name string) replyConfirmFixture {
 	t.Helper()
 	g := f
-	g.replierID = CreateTestUser(t, uniquePrefix(name), "User")
+	g.replierID = CreateTestUser(t, uniquePrefix(name), utils.SYSTEMROLE_USER)
 	g.chatID = CreateTestChatRoom(t, g.replierID, &g.posterID, nil, "User2User")
 	_, g.replierToken = CreateTestSession(t, g.replierID)
 

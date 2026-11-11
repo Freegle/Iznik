@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,9 +27,9 @@ import (
 // while Posted still reports the write time so the card can say "first posted N days".
 func TestFeedVisibleSinceIsOldestGroupArrival(t *testing.T) {
 	prefix := uniquePrefix("visiblesince")
-	userID := CreateTestUser(t, prefix+"_u", "User")
+	userID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	group := CreateTestGroup(t, prefix+"_member")
@@ -77,9 +78,9 @@ func TestFeedVisibleSinceIsOldestGroupArrival(t *testing.T) {
 // reach grew.
 func TestFeedVisibleSinceTakesEarliestOfSeveralGroups(t *testing.T) {
 	prefix := uniquePrefix("visiblesincemulti")
-	userID := CreateTestUser(t, prefix+"_u", "User")
+	userID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	origin := CreateTestGroup(t, prefix+"_origin")
@@ -123,7 +124,7 @@ func TestFeedVisibleSinceTakesEarliestOfSeveralGroups(t *testing.T) {
 // age silently changed the moment the store filled in - the state a member actually looks at.
 func TestMessageVisibleSinceOnFullMessage(t *testing.T) {
 	prefix := uniquePrefix("visiblesincefull")
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	db := database.DBConn
 
 	group := CreateTestGroup(t, prefix)

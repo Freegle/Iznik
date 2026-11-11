@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,13 +26,13 @@ func TestListMessagesMTEditExcludesRippledInCopies(t *testing.T) {
 
 	originGroup := CreateTestGroup(t, prefix+"_orig")
 	rippledGroup := CreateTestGroup(t, prefix+"_rip")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	originModID := CreateTestUser(t, prefix+"_omod", "User")
-	rippledModID := CreateTestUser(t, prefix+"_rmod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	originModID := CreateTestUser(t, prefix+"_omod", utils.SYSTEMROLE_USER)
+	rippledModID := CreateTestUser(t, prefix+"_rmod", utils.SYSTEMROLE_USER)
 
-	CreateTestMembership(t, posterID, originGroup, "Member")
-	CreateTestMembership(t, originModID, originGroup, "Moderator")
-	CreateTestMembership(t, rippledModID, rippledGroup, "Moderator")
+	CreateTestMembership(t, posterID, originGroup, utils.ROLE_MEMBER)
+	CreateTestMembership(t, originModID, originGroup, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, rippledModID, rippledGroup, utils.ROLE_MODERATOR)
 
 	_, originModToken := CreateTestSession(t, originModID)
 	_, rippledModToken := CreateTestSession(t, rippledModID)

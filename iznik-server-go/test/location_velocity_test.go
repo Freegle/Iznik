@@ -5,6 +5,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,8 +16,8 @@ func TestLocationChangeVelocityFlagsRapidHopper(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("locvel")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	db.Exec("UPDATE memberships SET reviewrequestedat = NULL, reviewreason = NULL WHERE userid = ?", userID)
 	db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", userID)
@@ -64,8 +65,8 @@ func TestLocationChangeVelocitySkipsMods(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("locvelmod")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
 	db.Exec("UPDATE memberships SET reviewrequestedat = NULL WHERE userid = ?", modID)
 	db.Exec("DELETE FROM logs WHERE user = ? AND subtype IN ('PostcodeChange', 'Suspect')", modID)

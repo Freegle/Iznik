@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\Coalesce;
 use App\Database\Expressions\Concat;
@@ -224,7 +225,7 @@ class GroupStatsService
             $ownerCount = DB::table('users')
                 ->join('memberships', 'memberships.userid', '=', 'users.id')
                 ->where('memberships.groupid', $groupId)
-                ->where('memberships.role', 'Owner')
+                ->where('memberships.role', Membership::ROLE_OWNER)
                 ->where('users.lastaccess', '>', $start)
                 ->distinct()
                 ->count('users.id');
@@ -232,7 +233,7 @@ class GroupStatsService
             $modCount = DB::table('users')
                 ->join('memberships', 'memberships.userid', '=', 'users.id')
                 ->where('memberships.groupid', $groupId)
-                ->where('memberships.role', 'Moderator')
+                ->where('memberships.role', Membership::ROLE_MODERATOR)
                 ->where('users.lastaccess', '>', $start)
                 ->distinct()
                 ->count('users.id');
@@ -240,7 +241,7 @@ class GroupStatsService
             // Owners active on OTHER groups but not this one.
             $backupOwners = DB::table('memberships')
                 ->where('memberships.groupid', $groupId)
-                ->whereIn('memberships.role', ['Owner'])
+                ->whereIn('memberships.role', [Membership::ROLE_OWNER])
                 ->whereNotIn('memberships.userid', function ($sub) use ($groupId, $start) {
                     $sub->select('approvedby')->from('messages_groups')
                         ->where('groupid', $groupId)->where('arrival', '>', $start)->whereNotNull('approvedby');
@@ -254,7 +255,7 @@ class GroupStatsService
 
             $backupMods = DB::table('memberships')
                 ->where('memberships.groupid', $groupId)
-                ->whereIn('memberships.role', ['Moderator'])
+                ->whereIn('memberships.role', [Membership::ROLE_MODERATOR])
                 ->whereNotIn('memberships.userid', function ($sub) use ($groupId, $start) {
                     $sub->select('approvedby')->from('messages_groups')
                         ->where('groupid', $groupId)->where('arrival', '>', $start)->whereNotNull('approvedby');

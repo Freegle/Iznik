@@ -320,6 +320,7 @@ import EmailValidator from '~/components/EmailValidator.vue'
 import SupportLink from '~/components/SupportLink.vue'
 import { useMe } from '~/composables/useMe'
 import { asRefusalMessage } from '~/api/refusal'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const ForgetFailModal = defineAsyncComponent(
   () => import('~/components/ForgetFailModal.vue')
@@ -395,7 +396,7 @@ const modCantLeave =
 
 const groupIsMine = computed(() => {
   const role = groupid.value ? myGroup(groupid.value)?.role : null
-  return role === 'Owner' || role === 'Moderator'
+  return role === ROLE_OWNER || role === ROLE_MODERATOR
 })
 
 watch(groupid, () => {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -35,9 +36,9 @@ func createTestMerge(t *testing.T, user1 uint64, user2 uint64, offeredby uint64)
 
 func TestGetMerge(t *testing.T) {
 	prefix := uniquePrefix("MergeGet")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
 
@@ -65,9 +66,9 @@ func TestGetMerge(t *testing.T) {
 
 func TestGetMergeInvalidUid(t *testing.T) {
 	prefix := uniquePrefix("MergeInvUID")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	mergeID, _ := createTestMerge(t, user1ID, user2ID, modID)
 
@@ -80,12 +81,12 @@ func TestGetMergeInvalidUid(t *testing.T) {
 func TestCreateMerge(t *testing.T) {
 	prefix := uniquePrefix("MergeCrt")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(`{"user1":%d,"user2":%d,"email":false}`, user1ID, user2ID)
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/merge?jwt=%s", token), strings.NewReader(body))
@@ -102,11 +103,11 @@ func TestCreateMerge(t *testing.T) {
 
 func TestCreateMergeNotMod(t *testing.T) {
 	prefix := uniquePrefix("MergeCrtNM")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	body := fmt.Sprintf(`{"user1":%d,"user2":%d}`, user1ID, user2ID)
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/merge?jwt=%s", token), strings.NewReader(body))
@@ -117,9 +118,9 @@ func TestCreateMergeNotMod(t *testing.T) {
 
 func TestPostMergeAccept(t *testing.T) {
 	prefix := uniquePrefix("MergeAcc")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
 
@@ -143,9 +144,9 @@ func TestPostMergeAccept(t *testing.T) {
 
 func TestPostMergeReject(t *testing.T) {
 	prefix := uniquePrefix("MergeRej")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
 
@@ -170,12 +171,12 @@ func TestPostMergeReject(t *testing.T) {
 func TestDeleteMerge(t *testing.T) {
 	prefix := uniquePrefix("MergeDel")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 
 	// Insert a users_related row to test the notified flag update.
 	db := database.DBConn
@@ -212,9 +213,9 @@ func TestGetMergeV2Path(t *testing.T) {
 // because V2 Go was omitting the field entirely.
 func TestGetMergeReturnsLoginsForBothUsers(t *testing.T) {
 	prefix := uniquePrefix("MergeLogins")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 
@@ -273,9 +274,9 @@ func TestGetMergeReturnsLoginsForBothUsers(t *testing.T) {
 // or missing field — otherwise forEach() would still crash the merge page.
 func TestGetMergeReturnsEmptyLoginsArrayForUserWithoutLogins(t *testing.T) {
 	prefix := uniquePrefix("MergeNoLogins")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	db := database.DBConn
 	db.Exec("DELETE FROM users_logins WHERE userid IN (?, ?)", user1ID, user2ID)

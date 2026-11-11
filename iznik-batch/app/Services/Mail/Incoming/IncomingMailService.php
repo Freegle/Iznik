@@ -1126,7 +1126,7 @@ class IncomingMailService
     {
         return DB::table('memberships')
             ->where('userid', $userId)
-            ->whereIn('role', ['Moderator', 'Owner'])
+            ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->exists();
     }
 
@@ -1207,7 +1207,7 @@ class IncomingMailService
             // Create a new user
             $user = User::create([
                 'fullname' => $email->fromName,
-                'systemrole' => 'User',
+                'systemrole' => User::SYSTEMROLE_USER,
                 'added' => now(),
                 'lastaccess' => now(),
             ]);
@@ -1275,7 +1275,7 @@ class IncomingMailService
         $membership = Membership::create([
             'userid' => $user->id,
             'groupid' => $group->id,
-            'role' => 'Member',
+            'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'added' => now(),
             'emailfrequency' => 24, // Daily digest by default
@@ -1383,7 +1383,7 @@ class IncomingMailService
             return $this->dropped("User not a member of group for unsubscribe");
         }
 
-        if (in_array($membership->role, ['Moderator', 'Owner'])) {
+        if (in_array($membership->role, [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])) {
             Log::info('Ignoring unsubscribe for moderator/owner', [
                 'user_id' => $user->id,
                 'group_id' => $group->id,

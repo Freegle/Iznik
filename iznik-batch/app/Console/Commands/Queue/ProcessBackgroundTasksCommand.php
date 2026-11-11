@@ -1450,7 +1450,7 @@ class ProcessBackgroundTasksCommand extends Command
             ? DB::table('users_emails')->where('userid', $author->id)->pluck('email')->map(fn ($e) => strtolower((string) $e))->all()
             : [];
 
-        if ($message->role === 'Support') {
+        if ($message->role === 'Support') { // role-literal-ok: support case message role
             $referrer = $case->referrerid ? User::find($case->referrerid) : null;
             $email = $referrer?->email_preferred;
 

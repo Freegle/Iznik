@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-08
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/AutoSplit/**

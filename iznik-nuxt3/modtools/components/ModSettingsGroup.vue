@@ -792,6 +792,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useModConfigStore } from '~/stores/modconfig'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
+import { ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
   initialGroup: {
@@ -1086,7 +1087,7 @@ const rulelist = [
 ]
 
 const readonly = computed(() => {
-  return group.value.myrole !== 'Owner'
+  return group.value.myrole !== ROLE_OWNER
 })
 
 const group = computed(() => {

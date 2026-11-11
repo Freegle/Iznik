@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,10 +31,10 @@ import (
 // member, returning (groupID, modToken, targetID).
 func setUpModAndTarget(t *testing.T, prefix string) (uint64, string, uint64) {
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	createPendingMember(t, targetID, groupID)
 	return groupID, modToken, targetID
 }
@@ -178,11 +179,11 @@ func TestLockdownRefusesPostMembershipsHappinessReviewed(t *testing.T) {
 func TestLockdownRefusesPostMembershipsDeleteApprovedMember(t *testing.T) {
 	prefix := uniquePrefix("ld_mem_delapproved")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
 
 	restore := modsHeld()
 	defer restore()
@@ -241,11 +242,11 @@ func TestLockdownRefusesPostMembershipsLeaveMember(t *testing.T) {
 func TestLockdownRefusesPostMembershipsLeaveApprovedMember(t *testing.T) {
 	prefix := uniquePrefix("ld_mem_leaveapproved")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
 
 	restore := modsHeld()
 	defer restore()
@@ -277,11 +278,11 @@ func TestLockdownDoesNotRefusePostMembershipsLeaveMemberWhenNotHeld(t *testing.T
 func TestLockdownRefusesDeleteMembershipsBan(t *testing.T) {
 	prefix := uniquePrefix("ld_mem_delban")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
 
 	restore := modsHeld()
 	defer restore()
@@ -297,11 +298,11 @@ func TestLockdownRefusesDeleteMembershipsBan(t *testing.T) {
 func TestLockdownRefusesDeleteMembershipsRemoveOther(t *testing.T) {
 	prefix := uniquePrefix("ld_mem_delother")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
-	targetID := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
 
 	restore := modsHeld()
 	defer restore()
@@ -317,8 +318,8 @@ func TestLockdownRefusesDeleteMembershipsRemoveOther(t *testing.T) {
 func TestLockdownDoesNotRefuseDeleteMembershipsSelfLeave(t *testing.T) {
 	prefix := uniquePrefix("ld_mem_selfleave_ok")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	restore := modsHeld()
@@ -338,27 +339,27 @@ func TestLockdownDoesNotRefuseDeleteMembershipsSelfLeave(t *testing.T) {
 func TestLockdownRefusesPatchMembershipsRole(t *testing.T) {
 	prefix := uniquePrefix("ld_mem_role")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Owner")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
 	restore := modsHeld()
 	defer restore()
 
-	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Moderator")
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, utils.ROLE_MODERATOR)
 	assertLockdownRefused(t, resp)
 }
 
 func TestLockdownRefusesPatchMembershipsOurPostingStatus(t *testing.T) {
 	prefix := uniquePrefix("ld_mem_postingstatus")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
 	restore := modsHeld()
 	defer restore()
@@ -374,8 +375,8 @@ func TestLockdownRefusesPatchMembershipsOurPostingStatus(t *testing.T) {
 func TestLockdownDoesNotRefusePatchMembershipsEmailfrequency(t *testing.T) {
 	prefix := uniquePrefix("ld_mem_emailfreq_ok")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	restore := modsHeld()

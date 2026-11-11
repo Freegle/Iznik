@@ -10,14 +10,15 @@ import (
 	"github.com/freegle/iznik-server-go/communityevent"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func TestCommunityEvent(t *testing.T) {
 	// Create test data for this test
 	prefix := uniquePrefix("event")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 
 	// Get non-existent event - should return 404
@@ -82,8 +83,8 @@ func TestCommunityEvent_PendingList(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create a regular user who creates a pending event
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	CreateTestMembership(t, creatorID, groupID, "Member")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, creatorID, groupID, utils.ROLE_MEMBER)
 
 	// Create a pending event directly (not using helper which creates non-pending)
 	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) VALUES (?, 'Pending Event', 'Test Location', 'Pending description', 1, 0)", creatorID)
@@ -94,8 +95,8 @@ func TestCommunityEvent_PendingList(t *testing.T) {
 	db.Exec("INSERT INTO communityevents_dates (eventid, `start`, `end`) VALUES (?, DATE_ADD(NOW(), INTERVAL 1 DAY), DATE_ADD(NOW(), INTERVAL 2 DAY))", pendingID)
 
 	// Create a moderator user for the same group
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Moderator should see pending events
@@ -106,8 +107,8 @@ func TestCommunityEvent_PendingList(t *testing.T) {
 	assert.Contains(t, ids, pendingID)
 
 	// Regular member should NOT see pending events (they're not a mod)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, memberToken := CreateTestSession(t, memberID)
 
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/communityevent?pending=true&jwt="+memberToken, nil))
@@ -130,8 +131,8 @@ func TestCommunityEvent_PendingListAdmin(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create a pending event on groupID.
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	CreateTestMembership(t, creatorID, groupID, "Member")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, creatorID, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) VALUES (?, 'Admin Pending Event', 'Test Location', 'Admin test', 1, 0)", creatorID)
 	var pendingID uint64
 	db.Raw("SELECT id FROM communityevents WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&pendingID)
@@ -139,8 +140,8 @@ func TestCommunityEvent_PendingListAdmin(t *testing.T) {
 	db.Exec("INSERT INTO communityevents_dates (eventid, `start`, `end`) VALUES (?, DATE_ADD(NOW(), INTERVAL 1 DAY), DATE_ADD(NOW(), INTERVAL 2 DAY))", pendingID)
 
 	// Admin who is also a Moderator on the group should see the event.
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, adminID, groupID, "Moderator")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, adminID, groupID, utils.ROLE_MODERATOR)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/communityevent?pending=true&jwt="+adminToken, nil))
@@ -157,8 +158,8 @@ func TestCommunityEvent_PendingListAdminNotOnGroup(t *testing.T) {
 	otherGroupID := CreateTestGroup(t, prefix+"_other")
 
 	// Create a pending event on groupID.
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	CreateTestMembership(t, creatorID, groupID, "Member")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, creatorID, groupID, utils.ROLE_MEMBER)
 	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) VALUES (?, 'Other Group Event', 'Test Location', 'Test', 1, 0)", creatorID)
 	var pendingID uint64
 	db.Raw("SELECT id FROM communityevents WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&pendingID)
@@ -166,8 +167,8 @@ func TestCommunityEvent_PendingListAdminNotOnGroup(t *testing.T) {
 	db.Exec("INSERT INTO communityevents_dates (eventid, `start`, `end`) VALUES (?, DATE_ADD(NOW(), INTERVAL 1 DAY), DATE_ADD(NOW(), INTERVAL 2 DAY))", pendingID)
 
 	// Admin who moderates a DIFFERENT group should NOT see events on groupID.
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, adminID, otherGroupID, "Moderator")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, adminID, otherGroupID, utils.ROLE_MODERATOR)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/communityevent?pending=true&jwt="+adminToken, nil))
@@ -183,8 +184,8 @@ func TestCommunityEvent_PendingListExcludesExpired(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
 
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	CreateTestMembership(t, creatorID, groupID, "Member")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, creatorID, groupID, utils.ROLE_MEMBER)
 
 	// Create a pending event with a PAST end date.
 	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) VALUES (?, 'Expired Event', 'Test Location', 'Past', 1, 0)", creatorID)
@@ -202,8 +203,8 @@ func TestCommunityEvent_PendingListExcludesExpired(t *testing.T) {
 	db.Exec("INSERT INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", futureID, groupID)
 	db.Exec("INSERT INTO communityevents_dates (eventid, `start`, `end`) VALUES (?, DATE_ADD(NOW(), INTERVAL 1 DAY), DATE_ADD(NOW(), INTERVAL 2 DAY))", futureID)
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/communityevent?pending=true&jwt="+modToken, nil))
@@ -216,9 +217,9 @@ func TestCommunityEvent_PendingListExcludesExpired(t *testing.T) {
 
 func TestCommunityEventCreate(t *testing.T) {
 	prefix := uniquePrefix("cewr_create")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body := fmt.Sprintf(`{"title":"Test Event %s","location":"Edinburgh","description":"A test community event","contactname":"Test","contactemail":"test@test.com","groupid":%d}`, prefix, groupID)
@@ -242,7 +243,7 @@ func TestCommunityEventCreateUnauthorized(t *testing.T) {
 
 func TestCommunityEventCreateMissingFields(t *testing.T) {
 	prefix := uniquePrefix("cewr_miss")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Missing title
@@ -269,9 +270,9 @@ func TestCommunityEventCreateMissingFields(t *testing.T) {
 
 func TestCommunityEventSave(t *testing.T) {
 	prefix := uniquePrefix("cewr_save")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -306,11 +307,11 @@ func TestCommunityEventSaveUnauthorized(t *testing.T) {
 
 func TestCommunityEventSaveNonOwner(t *testing.T) {
 	prefix := uniquePrefix("cewr_noown")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, ownerID, groupID)
 	_, otherToken := CreateTestSession(t, otherID)
 
@@ -323,11 +324,11 @@ func TestCommunityEventSaveNonOwner(t *testing.T) {
 
 func TestCommunityEventSaveByModerator(t *testing.T) {
 	prefix := uniquePrefix("cewr_mod")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	eventID := CreateTestCommunityEvent(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -340,11 +341,11 @@ func TestCommunityEventSaveByModerator(t *testing.T) {
 
 func TestCommunityEventAddGroup(t *testing.T) {
 	prefix := uniquePrefix("cewr_addg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	group2ID := CreateTestGroup(t, prefix+"_2")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMembership(t, userID, group2ID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userID, group2ID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -364,9 +365,9 @@ func TestCommunityEventAddGroup(t *testing.T) {
 
 func TestCommunityEventRemoveGroup(t *testing.T) {
 	prefix := uniquePrefix("cewr_remg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -379,9 +380,9 @@ func TestCommunityEventRemoveGroup(t *testing.T) {
 
 func TestCommunityEventAddDate(t *testing.T) {
 	prefix := uniquePrefix("cewr_addd")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -394,9 +395,9 @@ func TestCommunityEventAddDate(t *testing.T) {
 
 func TestCommunityEventRemoveDate(t *testing.T) {
 	prefix := uniquePrefix("cewr_remd")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -414,9 +415,9 @@ func TestCommunityEventRemoveDate(t *testing.T) {
 
 func TestCommunityEventSetPhoto(t *testing.T) {
 	prefix := uniquePrefix("cewr_photo")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -435,11 +436,11 @@ func TestCommunityEventSetPhoto(t *testing.T) {
 
 func TestCommunityEventHold(t *testing.T) {
 	prefix := uniquePrefix("cewr_hold")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	eventID := CreateTestCommunityEvent(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -459,11 +460,11 @@ func TestCommunityEventHold(t *testing.T) {
 
 func TestCommunityEventRelease(t *testing.T) {
 	prefix := uniquePrefix("cewr_rel")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	eventID := CreateTestCommunityEvent(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -486,9 +487,9 @@ func TestCommunityEventRelease(t *testing.T) {
 
 func TestCommunityEventDelete(t *testing.T) {
 	prefix := uniquePrefix("cewr_del")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -513,11 +514,11 @@ func TestCommunityEventDeleteUnauthorized(t *testing.T) {
 
 func TestCommunityEventDeleteNonOwner(t *testing.T) {
 	prefix := uniquePrefix("cewr_dno")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, ownerID, groupID)
 	_, otherToken := CreateTestSession(t, otherID)
 
@@ -527,11 +528,11 @@ func TestCommunityEventDeleteNonOwner(t *testing.T) {
 
 func TestCommunityEventDeleteByModerator(t *testing.T) {
 	prefix := uniquePrefix("cewr_dmod")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	eventID := CreateTestCommunityEvent(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -543,11 +544,11 @@ func TestCommunityEventPendingBool(t *testing.T) {
 	// Frontend sends pending as boolean (false), not integer (0).
 	// The Go PatchRequest.Pending field must be *bool to accept this.
 	prefix := uniquePrefix("cewr_pend")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	eventID := CreateTestCommunityEvent(t, ownerID, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -570,7 +571,7 @@ func TestCommunityEventPendingBool(t *testing.T) {
 
 func TestCommunityEventCreateWithoutGroup(t *testing.T) {
 	prefix := uniquePrefix("cewr_nogrp")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Regular user can create without a group (groups added separately via AddGroup).
@@ -583,10 +584,10 @@ func TestCommunityEventCreateWithoutGroup(t *testing.T) {
 
 func TestCommunityEventCreateNoGroupAdminAllowed(t *testing.T) {
 	prefix := uniquePrefix("cewr_admngrp")
-	adminID := CreateTestUser(t, prefix, "User")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, adminID)
 	db := database.DBConn
-	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", adminID)
+	db.Exec("UPDATE users SET systemrole = ? WHERE id = ?", utils.SYSTEMROLE_SUPPORT, adminID)
 
 	// Admin/support can create without a group.
 	body := `{"title":"Test Event","location":"Edinburgh","description":"A test community event"}`
@@ -598,7 +599,7 @@ func TestCommunityEventCreateNoGroupAdminAllowed(t *testing.T) {
 
 func TestCommunityEventCreateNonMemberGroupRejected(t *testing.T) {
 	prefix := uniquePrefix("cewr_nonmem")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	// No membership created.
 	_, token := CreateTestSession(t, userID)
@@ -612,10 +613,10 @@ func TestCommunityEventCreateNonMemberGroupRejected(t *testing.T) {
 
 func TestCommunityEventAddGroupNonMemberRejected(t *testing.T) {
 	prefix := uniquePrefix("cewr_addnm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	group2ID := CreateTestGroup(t, prefix + "_2")
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	// No membership in group2.
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
@@ -629,11 +630,11 @@ func TestCommunityEventAddGroupNonMemberRejected(t *testing.T) {
 
 func TestCommunityEventAddGroupMemberAllowed(t *testing.T) {
 	prefix := uniquePrefix("cewr_addmem")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	group2ID := CreateTestGroup(t, prefix + "_2")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMembership(t, userID, group2ID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userID, group2ID, utils.ROLE_MEMBER)
 	eventID := CreateTestCommunityEvent(t, userID, groupID)
 	_, token := CreateTestSession(t, userID)
 
@@ -664,8 +665,8 @@ func TestCommunityEventNullUserid(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 
 	// A moderator trying to PATCH should succeed via isModerator (not crash from NULL scan).
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"id":%d,"title":"Updated by mod"}`, eventID)
@@ -685,12 +686,12 @@ func TestCommunityEventListGroupPendingVisibility(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	creatorID := CreateTestUser(t, prefix+"_creator", "User")
-	CreateTestMembership(t, creatorID, groupID, "Member")
+	creatorID := CreateTestUser(t, prefix+"_creator", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, creatorID, groupID, utils.ROLE_MEMBER)
 	_, creatorToken := CreateTestSession(t, creatorID)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	// Create a pending event owned by creatorID.

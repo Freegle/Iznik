@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Donation;
 
+use App\Models\User;
 use App\Mail\Donation\DonationThankPrepMail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -60,7 +61,7 @@ class DonationThankPrepCommandTest extends TestCase
             'firstname'  => 'Test',
             'lastname'   => 'Donor',
             'fullname'   => 'Test Donor',
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'added'      => now()->subYears(2),
         ], $attributes);
         if ($id !== null) {

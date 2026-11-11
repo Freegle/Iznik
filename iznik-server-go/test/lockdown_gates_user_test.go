@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,11 +31,11 @@ func TestLockdownRefusesChatmodstatus(t *testing.T) {
 	prefix := uniquePrefix("ld_chatmod")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	// users.chatmodstatus defaults to 'Moderated' (create_users_table migration), not "" -
@@ -65,11 +66,11 @@ func TestLockdownRefusesNewsfeedmodstatus(t *testing.T) {
 	prefix := uniquePrefix("ld_newsfeedmod")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, targetID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	// users.newsfeedmodstatus defaults to 'Unmoderated' (create_users_table migration), not
@@ -100,8 +101,8 @@ func TestLockdownRefusesTrustlevelModOnOther(t *testing.T) {
 	prefix := uniquePrefix("ld_trustmod")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	_, modToken := CreateTestSession(t, modID)
 
 	restore := modsHeld()
@@ -129,7 +130,7 @@ func TestLockdownAllowsSelfTrustlevelWhenModsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_trustself")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	restore := modsHeld()
@@ -160,11 +161,11 @@ func TestLockdownRefusesRatingReviewed(t *testing.T) {
 	// every refusal (plan section 10.5, "Support/Admin callers are exempt from every
 	// refusal"), so a Support rater here would see 200, not 409, regardless of the gate -
 	// that would be proving the exemption, not the refusal this test is named for.
-	raterID := CreateTestUser(t, prefix+"_rater", "User")
-	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
+	raterID := CreateTestUser(t, prefix+"_rater", utils.SYSTEMROLE_USER)
+	rateeID := CreateTestUser(t, prefix+"_ratee", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, raterID, groupID, "Moderator")
-	CreateTestMembership(t, rateeID, groupID, "Member")
+	CreateTestMembership(t, raterID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, rateeID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, raterID)
 
 	db.Exec("INSERT INTO ratings (rater, ratee, rating, reason, text, timestamp, reviewrequired) VALUES (?, ?, 'Down', 'Other', 'Test', NOW(), 1)",
@@ -196,7 +197,7 @@ func TestLockdownRefusesDisplaynameWhenPostsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_dispname")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	restore := postsHeld()
@@ -220,7 +221,7 @@ func TestLockdownRefusesDisplaynameWhenPostsHeld(t *testing.T) {
 func TestLockdownRefusesAboutmeWhenPostsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_aboutme")
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	restore := postsHeld()

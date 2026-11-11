@@ -627,7 +627,7 @@ class TnUserProvisioner
     {
         $attributes = [
             'fullname'     => User::tnDisplayName($username),
-            'systemrole'   => 'User',
+            'systemrole'   => User::SYSTEMROLE_USER,
             'added'        => now(),
             'lastaccess'   => now(),
             'tnuserid'     => $tnUserId,

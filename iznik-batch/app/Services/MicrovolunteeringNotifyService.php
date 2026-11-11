@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -289,7 +290,7 @@ class MicrovolunteeringNotifyService
         if ($collection === 'Pending') {
             $query->whereIn('users.trustlevel', ['Moderate', 'Advanced']);
         } else {
-            $query->where('memberships.role', 'Member')
+            $query->where('memberships.role', Membership::ROLE_MEMBER)
                   ->whereIn('users.trustlevel', ['Basic', 'Moderate', 'Advanced']);
         }
 

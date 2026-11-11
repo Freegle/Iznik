@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import { APIError } from '~/api/APIErrors'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const mockFetchByUser = vi.fn()
 const mockSave = vi.fn()
@@ -667,7 +668,8 @@ describe('message store - refreshOrRemoveFromMTList()', () => {
     useAuthStore.mockReturnValue({
       user: { id: 99 },
       member: (gid) =>
-        ({ 1: 'Moderator', 2: 'Owner', 3: 'Member' })[parseInt(gid)] || null,
+        ({ 1: ROLE_MODERATOR, 2: ROLE_OWNER, 3: ROLE_MEMBER })[parseInt(gid)] ||
+        null,
     })
   })
 
@@ -866,7 +868,7 @@ describe('message store - acting on several communities', () => {
     vi.clearAllMocks()
     useAuthStore.mockReturnValue({
       user: { id: 99 },
-      member: () => 'Moderator',
+      member: () => ROLE_MODERATOR,
     })
     mockApprove.mockResolvedValue({})
     mockReject.mockResolvedValue({})

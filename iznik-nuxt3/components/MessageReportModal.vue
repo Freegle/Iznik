@@ -150,6 +150,11 @@ import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useOurModal } from '~/composables/useOurModal'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 // Unique per instance so label/for pairs never clash when the component renders twice.
 const formId = useId()
@@ -202,7 +207,11 @@ const modMessagingAllowed = computed(
 // team, since a post can be on several groups once it has rippled out.
 const isMod = computed(() => {
   const role = me.value?.systemrole
-  return role === 'Moderator' || role === 'Support' || role === 'Admin'
+  return (
+    role === SYSTEMROLE_MODERATOR ||
+    role === SYSTEMROLE_SUPPORT ||
+    role === SYSTEMROLE_ADMIN
+  )
 })
 
 // Every community the post is on, resolved to a display name via the group

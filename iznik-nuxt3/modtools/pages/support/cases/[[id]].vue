@@ -369,7 +369,7 @@ function suggestDraft() {
   if (!text || !text.trim()) return
   draftOffered.value = true
   if (reply.value.trim() !== '') return
-  if ((c.messages || []).some((m) => m.role === 'Support')) return
+  if ((c.messages || []).some((m) => m.role === 'Support')) return // role-literal-ok: support case message author, not a role
   draftText.value = text
   reply.value = text
 }
