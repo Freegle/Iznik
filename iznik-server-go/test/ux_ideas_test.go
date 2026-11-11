@@ -448,13 +448,14 @@ func TestUxIdeasAFailedTableQuestionIsAnErrorAndIsNotRemembered(t *testing.T) {
 
 	failing := "ux_ideas"
 	asked := map[string]int{}
-	restore := ux.SetTableCheckResult(func(table string) (bool, error) {
+	check := func(table string) (bool, error) {
 		asked[table]++
 		if table == failing {
 			return false, fmt.Errorf("lock wait timeout")
 		}
 		return true, nil
-	})
+	}
+	restore := ux.SetTableCheckResult(check)
 	defer restore()
 
 	// The ideas table question fails: a server error, not "not switched on".
@@ -467,6 +468,10 @@ func TestUxIdeasAFailedTableQuestionIsAnErrorAndIsNotRemembered(t *testing.T) {
 	assert.Equal(t, 2, asked["ux_ideas"])
 
 	// The experiment table question fails: the list is not sent with its experiments quietly missing.
+	// The answers just given are remembered for a minute, so forget them first.
+	restore()
+	restoreAgain := ux.SetTableCheckResult(check)
+	defer restoreAgain()
 	failing = "ux_experiments"
 	assert.Equal(t, 500, uxGet(t, token, "ideas", nil))
 }
