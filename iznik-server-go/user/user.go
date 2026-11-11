@@ -2341,8 +2341,38 @@ func PutUser(c *fiber.Ctx) error {
 	// The user and its address go in together. users_emails.email is unique, so when two
 	// signups for one address race, the loser's insert fails; inside a transaction that
 	// rolls its user row back too, instead of leaving an account with no address.
+	// Generate random password if none provided (for email-only signup).
+	// The client shows this to the user in the welcome modal.
+	password := req.Password
+	if password == "" {
+		password = utils.RandomHex(4) // 8 char random hex password
+	}
+
+	// Hash with sha1+salt and store.
+	salt := os.Getenv("PASSWORD_SALT")
+	if salt == "" {
+		salt = "zzzz"
+	}
+	h := sha1.New()
+	h.Write([]byte(password + salt))
+	hashed := hex.EncodeToString(h.Sum(nil))
+
 	canon := CanonicalizeEmail(email)
 	var newUserID uint64
+
+	// The password goes in with the account and its address. A signup that loses the race reads
+	// the winner as soon as its address commits and checks the password it was given, so the
+	// password must not arrive later than the address.
+	createLogin := func(tx *gorm.DB) error {
+		return tx.Table("users_logins").Create(map[string]interface{}{
+			"userid":      newUserID,
+			"type":        utils.LOGIN_TYPE_NATIVE,
+			"uid":         newUserID,
+			"credentials": hashed,
+			"salt":        salt,
+		}).Error
+	}
+
 	createUserAndAddress := func() error {
 		// Built afresh each time: GORM writes the new id back into this map.
 		row := map[string]interface{}{
@@ -2373,7 +2403,10 @@ func PutUser(c *fiber.Ctx) error {
 				"canon":     canon,
 				"backwards": reverseString(canon),
 			}).Error
-			if insertErr == nil || !isDuplicateEmail(insertErr) {
+			if insertErr == nil {
+				return createLogin(tx)
+			}
+			if !isDuplicateEmail(insertErr) {
 				return insertErr
 			}
 
@@ -2394,7 +2427,7 @@ func PutUser(c *fiber.Ctx) error {
 				return insertErr
 			}
 
-			return nil
+			return createLogin(tx)
 		})
 	}
 
@@ -2431,29 +2464,6 @@ func PutUser(c *fiber.Ctx) error {
 		}
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
 	}
-
-	// Generate random password if none provided (for email-only signup).
-	// The client shows this to the user in the welcome modal.
-	password := req.Password
-	if password == "" {
-		password = utils.RandomHex(4) // 8 char random hex password
-	}
-
-	// Hash with sha1+salt and store.
-	salt := os.Getenv("PASSWORD_SALT")
-	if salt == "" {
-		salt = "zzzz"
-	}
-	h := sha1.New()
-	h.Write([]byte(password + salt))
-	hashed := hex.EncodeToString(h.Sum(nil))
-	db.Table("users_logins").Create(map[string]interface{}{
-		"userid":      newUserID,
-		"type":        utils.LOGIN_TYPE_NATIVE,
-		"uid":         newUserID,
-		"credentials": hashed,
-		"salt":        salt,
-	})
 
 	// If groupid provided, add membership.
 	if req.GroupID > 0 {
