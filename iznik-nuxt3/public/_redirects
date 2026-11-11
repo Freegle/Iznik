@@ -32,7 +32,22 @@
 /api* https://api.ilovefreegle.org/api/:splat 200!
 
 # Old endpoints.
-/mygroups* /browse:splat 200!
+#
+# Addresses from the old site and its emails, which members and search engines still follow.
+# Each was a 404 in Sentry. They are redirects, not rewrites: a rewrite (200!) keeps the old
+# address in the browser, where the router has no page for it and shows the 404 anyway, which is
+# what /mygroups did. The targets are the final addresses, with the trailing slash Netlify adds
+# to prerendered pages. nuxt.config.ts routeRules repeat them for hosts that do not read this file.
+/mygroups /browse/ 301!
+/mygroups/* /browse/ 301!
+/groups /explore/ 301!
+/groups/* /explore/ 301!
+/search /browse/ 301!
+/ask/search /browse/ 301!
+/offer /give/ 301!
+/main.php / 301!
+/m.php / 301!
+/index.php / 301!
 # The WANTED flow was called "find" until Aug 2026.  Old emails, app shortcuts and
 # bookmarks still point here, so this redirect is permanent, not a migration shim.
 /find /ask/ 301!
