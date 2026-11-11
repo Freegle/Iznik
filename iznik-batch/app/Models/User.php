@@ -460,13 +460,25 @@ class User extends Model implements Auditable
      * Take a TN address from the account holding it, because TN's id says it is this member's.
      * users_emails.email is unique, so it cannot be on both. Posts and chats already filed stay
      * where they are. moveTNAlias in iznik-server-go/user/partner.go does the same.
+     *
+     * The address may have moved or gone since the caller looked. It is taken from whoever holds it
+     * now, or added when nobody does, so this member is never left without it.
      */
     public function takeTnAddress(string $email, int $fromUserId): void
     {
-        $row = UserEmail::where('email', $email)->where('userid', $fromUserId)->first();
+        $row = UserEmail::where('email', $email)->first();
         if ($row === NULL) {
+            Logger::info("TN address {$email} was no longer on user {$fromUserId}, so it was added to user {$this->id}");
+            $this->addEmail($email);
+
             return;
         }
+
+        if ((int) $row->userid === (int) $this->id) {
+            return;
+        }
+
+        $fromUserId = (int) $row->userid;
 
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$fromUserId} set=userid={$this->id}");
 

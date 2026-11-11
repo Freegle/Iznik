@@ -267,6 +267,33 @@ class TnUserProvisionerTest extends TestCase
         $this->assertStringNotContainsString($username, $sentry->calls[0][0], 'a report names ids, never an address');
     }
 
+    /**
+     * The address can move or go between the caller looking and the move. The member must
+     * still end up holding it, or the new account has a TN id and no TN address.
+     */
+    public function test_taking_an_address_that_has_gone_adds_it(): void
+    {
+        $bare  = $this->uniqueUsername('gone') . '@user.trashnothing.com';
+        $from  = $this->createTestUser();
+        $taker = $this->createTestUser();
+
+        $taker->takeTnAddress($bare, $from->id);
+
+        $this->assertSame($taker->id, (int) UserEmail::where('email', $bare)->value('userid'));
+    }
+
+    public function test_taking_an_address_that_has_moved_takes_it_from_its_holder_now(): void
+    {
+        $bare   = $this->uniqueUsername('moved') . '@user.trashnothing.com';
+        $from   = $this->createTestUser();
+        $holder = $this->createTestUser(['email_preferred' => $bare]);
+        $taker  = $this->createTestUser();
+
+        $taker->takeTnAddress($bare, $from->id);
+
+        $this->assertSame($taker->id, (int) UserEmail::where('email', $bare)->value('userid'));
+    }
+
     public function test_the_bare_address_moves_from_an_account_holding_another_tn_id(): void
     {
         $tnId     = $this->tnId();
