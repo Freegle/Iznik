@@ -996,7 +996,9 @@ export const useMessageStore = defineStore('message', {
         reject: true,
       })
       const rejected = data?.rejected ?? 0
-      this.pulledBack[id] = true
+      // Only a post the server really pulled back is marked: when it did nothing the card is
+      // still the published copy, and must not be re-anchored to some other pending copy.
+      if (rejected > 0) this.pulledBack[id] = true
       await this.refreshOrRemoveFromMTList(id, { keep: rejected === 0 })
       return rejected
     },

@@ -887,7 +887,7 @@ describe('message store - rejectFromOversight()', () => {
       id: 700,
       groups: [{ groupid: 3, collection: 'Approved' }],
     }
-    mockMarkChecked.mockResolvedValue({ success: true })
+    mockMarkChecked.mockResolvedValue({ success: true, rejected: 1 })
     store.fetchMT = vi.fn().mockResolvedValue({
       id: 700,
       groups: [{ groupid: 3, collection: 'Pending', heldby: 9 }],
@@ -938,6 +938,7 @@ describe('message store - rejectFromOversight()', () => {
 
     expect(await store.rejectFromOversight(702, 3)).toBe(0)
     expect(store.list[702]).toEqual(now)
+    expect(store.pulledBack[702]).toBeUndefined()
   })
 
   it('treats a response with no count as nothing pulled back', async () => {
@@ -955,6 +956,7 @@ describe('message store - rejectFromOversight()', () => {
 
     expect(await store.rejectFromOversight(703, 3)).toBe(0)
     expect(store.list[703]).toBeDefined()
+    expect(store.pulledBack[703]).toBeUndefined()
   })
 
   it('drops a card whose post can no longer be fetched, even when nothing was pulled back', async () => {
