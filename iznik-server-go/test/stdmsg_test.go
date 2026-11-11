@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,7 +25,7 @@ func createTestStdMsg(t *testing.T, configID uint64, title string) uint64 {
 
 func TestGetStdMsg(t *testing.T) {
 	prefix := uniquePrefix("StdMsg")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -46,8 +47,8 @@ func TestGetStdMsg(t *testing.T) {
 func TestPostStdMsg(t *testing.T) {
 	prefix := uniquePrefix("StdMsgPost")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -67,8 +68,8 @@ func TestPostStdMsg(t *testing.T) {
 func TestPatchStdMsg(t *testing.T) {
 	prefix := uniquePrefix("StdMsgPatch")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -88,8 +89,8 @@ func TestPatchStdMsg(t *testing.T) {
 func TestDeleteStdMsg(t *testing.T) {
 	prefix := uniquePrefix("StdMsgDel")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -112,8 +113,8 @@ func TestDeleteStdMsg(t *testing.T) {
 func TestPostStdMsgMissingTitle(t *testing.T) {
 	prefix := uniquePrefix("StdMsgNoTitle")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -132,9 +133,9 @@ func TestPostStdMsgMissingTitle(t *testing.T) {
 func TestDeleteStdMsgUnauthorized(t *testing.T) {
 	prefix := uniquePrefix("StdMsgDelUnauth")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	otherModID := CreateTestUser(t, prefix+"_other", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	otherModID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, otherToken := CreateTestSession(t, otherModID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -156,7 +157,7 @@ func TestDeleteStdMsgUnauthorized(t *testing.T) {
 
 func TestDeleteStdMsgNotFound(t *testing.T) {
 	prefix := uniquePrefix("StdMsgDelNotFound")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Try to delete with invalid ID
@@ -177,7 +178,7 @@ func TestGetStdMsgNotLoggedIn(t *testing.T) {
 
 func TestGetStdMsgNotMod(t *testing.T) {
 	prefix := uniquePrefix("StdMsgNonMod")
-	uID := CreateTestUser(t, prefix+"_u", "User")
+	uID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, uID)
 	req := httptest.NewRequest("GET", "/api/modtools/stdmsg?id=1&jwt="+token, nil)
 	resp, _ := getApp().Test(req)
@@ -186,7 +187,7 @@ func TestGetStdMsgNotMod(t *testing.T) {
 
 func TestGetStdMsgV2Path(t *testing.T) {
 	prefix := uniquePrefix("StdMsgV2")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 	req := httptest.NewRequest("GET", "/apiv2/modtools/stdmsg?id=0&jwt="+token, nil)
 	resp, _ := getApp().Test(req)
@@ -196,8 +197,8 @@ func TestGetStdMsgV2Path(t *testing.T) {
 func TestDeleteStdMsgWithJSONBody(t *testing.T) {
 	prefix := uniquePrefix("StdMsgDelJSON")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
@@ -223,8 +224,8 @@ func TestDeleteStdMsgWithJSONBody(t *testing.T) {
 func TestStdMsgEditAndMessageKeepsItsReplybody(t *testing.T) {
 	prefix := uniquePrefix("StdMsgReplybody")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, modID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)

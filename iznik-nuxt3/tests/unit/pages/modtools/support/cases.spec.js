@@ -562,7 +562,7 @@ describe('support/cases/[[id]].vue', () => {
               ...messages(),
               {
                 id: 2,
-                role: 'Support',
+                role: 'Support', // role-literal-ok: support case message author, not a role
                 userid: 1,
                 displayname: 'Sam Support',
                 body: 'Hello Rae, try this.',
@@ -639,7 +639,7 @@ describe('support/cases/[[id]].vue', () => {
               ...messages(),
               {
                 id: 2,
-                role: 'Support',
+                role: 'Support', // role-literal-ok: support case message author, not a role
                 userid: 9,
                 displayname: 'Sam Support',
                 body: 'Looking now',

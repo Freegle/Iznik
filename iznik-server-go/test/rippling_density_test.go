@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -96,10 +97,10 @@ func bandRow(t *testing.T, token string, band string) map[string]interface{} {
 // derived from it - and the result would still look entirely plausible.
 func TestRipplingDensityCountsAPostOnceHoweverManyHeldReplies(t *testing.T) {
 	prefix := uniquePrefix("densityonce")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_group")
 	msgID := CreateTestMessage(t, poster, groupID, prefix+" bookcase", 51.5, -0.1)
 
@@ -114,7 +115,7 @@ func TestRipplingDensityCountsAPostOnceHoweverManyHeldReplies(t *testing.T) {
 	// held-reply row hangs off a real reply, so inventing ids would fail the
 	// insert rather than the assertion.
 	for i := 0; i < 3; i++ {
-		replier := CreateTestUser(t, fmt.Sprintf("%s_r%d", prefix, i), "User")
+		replier := CreateTestUser(t, fmt.Sprintf("%s_r%d", prefix, i), utils.SYSTEMROLE_USER)
 		chatID := CreateTestChatRoom(t, replier, &poster, nil, "User2User")
 		chatMsgID := CreateTestChatMessage(t, chatID, replier, "Is this still available?")
 		mustExec(t, "INSERT INTO rippling_held_replies "+
@@ -139,10 +140,10 @@ func TestRipplingDensityCountsAPostOnceHoweverManyHeldReplies(t *testing.T) {
 // other would make an unconstrained band look like a working lever.
 func TestRipplingDensityReportsCapAskedAndDriveTimeReachedSeparately(t *testing.T) {
 	prefix := uniquePrefix("densitygap")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_group")
 	msgID := CreateTestMessage(t, poster, groupID, prefix+" table", 51.5, -0.1)
 
@@ -167,10 +168,10 @@ func TestRipplingDensityReportsCapAskedAndDriveTimeReachedSeparately(t *testing.
 // the spatial service is failing, and that is only visible if the row is there.
 func TestRipplingDensityKeepsUnmeasuredPostsAsUnknown(t *testing.T) {
 	prefix := uniquePrefix("densityunknown")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_group")
 	msgID := CreateTestMessage(t, poster, groupID, prefix+" chair", 51.5, -0.1)
 
@@ -195,10 +196,10 @@ func TestRipplingDensityKeepsUnmeasuredPostsAsUnknown(t *testing.T) {
 // while still looking like a 30-day comparison.
 func TestRipplingDensityExcludesReachRowsOutsideTheWindow(t *testing.T) {
 	prefix := uniquePrefix("densitywindow")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix+"_group")
 	old := CreateTestMessage(t, poster, groupID, prefix+" old", 51.5, -0.1)
 	recent := CreateTestMessage(t, poster, groupID, prefix+" recent", 51.5, -0.1)
@@ -222,7 +223,7 @@ func TestRipplingDensityExcludesReachRowsOutsideTheWindow(t *testing.T) {
 // how the whole network is being mailed.
 func TestRipplingDensityRequiresPrivilege(t *testing.T) {
 	prefix := uniquePrefix("densityauth")
-	userID := CreateTestUser(t, prefix+"_member", "User")
+	userID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET",

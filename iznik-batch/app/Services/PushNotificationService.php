@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\User;
@@ -180,7 +181,7 @@ class PushNotificationService
             ->distinct()
             ->select('userid')
             ->where('groupid', $groupId)
-            ->whereIn('role', ['Owner', 'Moderator'])
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->get()
             ->all();
 
@@ -578,7 +579,7 @@ class PushNotificationService
         $memberships = DB::table('memberships')
             ->select('groupid', 'settings')
             ->where('userid', $userId)
-            ->whereIn('role', ['Owner', 'Moderator'])
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->where('collection', 'Approved')
             ->get()
             ->all();
@@ -609,7 +610,7 @@ class PushNotificationService
             ->join('memberships as mem', function ($join) use ($userId) {
                 $join->on('mem.groupid', '=', 'mg.groupid')->where('mem.userid', '=', $userId);
             })
-            ->whereIn('mem.role', ['Owner', 'Moderator'])
+            ->whereIn('mem.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->where('mem.collection', 'Approved')
             ->where('mg.collection', 'Pending')
             ->whereIn('mg.groupid', $activeGroupIds)
@@ -629,7 +630,7 @@ class PushNotificationService
             ->join('memberships as mem', function ($join) use ($userId) {
                 $join->on('mem.groupid', '=', 'mg.groupid')->where('mem.userid', '=', $userId);
             })
-            ->whereIn('mem.role', ['Owner', 'Moderator'])
+            ->whereIn('mem.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->where('mem.collection', 'Approved')
             ->where('mg.collection', 'Spam')
             ->whereIn('mg.groupid', $activeGroupIds)
@@ -1272,7 +1273,7 @@ class PushNotificationService
             ->distinct()
             ->select('userid', 'settings')
             ->where('groupid', $groupId)
-            ->whereIn('role', ['Owner', 'Moderator'])
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->get()
             ->all();
 

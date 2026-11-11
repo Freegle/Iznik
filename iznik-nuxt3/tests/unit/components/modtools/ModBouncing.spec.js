@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createMockAuthStore } from '../../mocks/stores'
 import ModBouncing from '~/modtools/components/ModBouncing.vue'
+import { ROLE_MEMBER, ROLE_OWNER } from '~/constants'
 
 const mockAuthStore = createMockAuthStore()
 
@@ -19,7 +20,7 @@ vi.mock('~/composables/useMe', () => ({
 const defaultUser = {
   id: 123,
   email: 'test@example.com',
-  role: 'Member',
+  role: ROLE_MEMBER,
 }
 
 const mockUserStore = {
@@ -81,7 +82,7 @@ describe('ModBouncing', () => {
     })
 
     it('shows Reactivate button for Members', () => {
-      const wrapper = mountComponent({}, { role: 'Member' })
+      const wrapper = mountComponent({}, { role: ROLE_MEMBER })
       expect(wrapper.text()).toContain('Reactivate')
     })
 
@@ -118,7 +119,7 @@ describe('ModBouncing', () => {
 
   describe('role-based behavior', () => {
     it('shows cannot unbounce message for non-Member roles when not support', () => {
-      const wrapper = mountComponent({}, { role: 'Owner' })
+      const wrapper = mountComponent({}, { role: ROLE_OWNER })
       expect(wrapper.text()).toContain("You can't unbounce")
     })
   })

@@ -4,6 +4,7 @@ import ModMessage from '~/modtools/components/ModMessage.vue'
 // The real child, so tests can assert on what a moderator actually sees rather
 // than on the stub that hid duplicate hold reasons (Discourse 9989).
 import ModMessageWorry from '~/modtools/components/ModMessageWorry.vue'
+import { ROLE_MODERATOR } from '~/constants'
 
 // Hoisted mocks
 const {
@@ -195,7 +196,7 @@ describe('ModMessage', () => {
     microvolunteering: [],
     worry: null,
     spamreason: null,
-    myrole: 'Moderator',
+    myrole: ROLE_MODERATOR,
     edits: null,
     item: { name: 'Test Item' },
     ...overrides,

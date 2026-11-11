@@ -18,6 +18,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // Import AFTER mocks so vi.mock() factories are wired up.
 
 import { useMe, fetchMe } from '~/composables/useMe'
+import {
+  ROLE_MEMBER,
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // ============================================================
 // STORE MOCKS — must be declared before any imports that
@@ -71,7 +78,7 @@ vi.mock('wicket', () => ({
 function makeUser(overrides = {}) {
   return {
     id: 42,
-    systemrole: 'User',
+    systemrole: SYSTEMROLE_USER,
     trustlevel: null,
     settings: { mylocation: { name: 'Oxford' } },
     supporter: false,
@@ -85,7 +92,7 @@ function makeUser(overrides = {}) {
 /**
  * Build a minimal membership entry for authStore.groups.
  */
-function makeMembership(groupid, role = 'Member', extra = {}) {
+function makeMembership(groupid, role = ROLE_MEMBER, extra = {}) {
   return {
     groupid,
     role,
@@ -162,7 +169,7 @@ describe('useMe — me / realMe / myid / loggedIn', () => {
   })
 
   it('me is null when user has no id (falsy)', () => {
-    mockAuthState.user = { systemrole: 'User' } // no id
+    mockAuthState.user = { systemrole: SYSTEMROLE_USER } // no id
     const { me } = useMe()
     expect(me.value).toBeNull()
   })
@@ -240,7 +247,7 @@ describe('useMe — myGroups', () => {
   it('merges membership and group store data', () => {
     mockAuthState.user = makeUser()
     mockAuthState.groups = [
-      makeMembership(10, 'Member', { added: '2026-07-09T10:01:21Z' }),
+      makeMembership(10, ROLE_MEMBER, { added: '2026-07-09T10:01:21Z' }),
     ]
     mockGroupGet.mockImplementation((id) =>
       id === 10
@@ -253,7 +260,7 @@ describe('useMe — myGroups', () => {
 
     expect(groups).toHaveLength(1)
     expect(groups[0].id).toBe(10)
-    expect(groups[0].role).toBe('Member')
+    expect(groups[0].role).toBe(ROLE_MEMBER)
     // The join date rides along: the feed folds a community header up after the first week.
     expect(groups[0].added).toBe('2026-07-09T10:01:21Z')
     expect(groups[0].namedisplay).toBe('Freegle A')
@@ -352,10 +359,10 @@ describe('useMe — myLocation', () => {
 describe('useMe — role flags', () => {
   const roleTable = [
     // [systemrole, mod, support, admin, supportOrAdmin]
-    ['User', false, false, false, false],
-    ['Moderator', true, false, false, false],
-    ['Support', true, true, false, true],
-    ['Admin', true, false, true, true],
+    [SYSTEMROLE_USER, false, false, false, false],
+    [SYSTEMROLE_MODERATOR, true, false, false, false],
+    [SYSTEMROLE_SUPPORT, true, true, false, true],
+    [SYSTEMROLE_ADMIN, true, false, true, true],
     [null, false, false, false, false],
     [undefined, false, false, false, false],
   ]
@@ -399,21 +406,21 @@ describe('useMe — chitChatMod', () => {
   })
 
   it('is true for Admin (via supportOrAdmin)', () => {
-    mockAuthState.user = makeUser({ id: 1, systemrole: 'Admin' })
+    mockAuthState.user = makeUser({ id: 1, systemrole: SYSTEMROLE_ADMIN })
     mockTeamState.getTeam = vi.fn().mockReturnValue(null)
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(true)
   })
 
   it('is true for Support (via supportOrAdmin)', () => {
-    mockAuthState.user = makeUser({ id: 1, systemrole: 'Support' })
+    mockAuthState.user = makeUser({ id: 1, systemrole: SYSTEMROLE_SUPPORT })
     mockTeamState.getTeam = vi.fn().mockReturnValue(null)
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(true)
   })
 
   it('is true for regular user who is in the ChitChat Moderation team', () => {
-    mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
+    mockAuthState.user = makeUser({ id: 5, systemrole: SYSTEMROLE_USER })
     mockTeamState.getTeam = vi
       .fn()
       .mockReturnValue({ members: [{ id: 5 }, { id: 6 }] })
@@ -422,21 +429,21 @@ describe('useMe — chitChatMod', () => {
   })
 
   it('is false for regular user not in the ChitChat Moderation team', () => {
-    mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
+    mockAuthState.user = makeUser({ id: 5, systemrole: SYSTEMROLE_USER })
     mockTeamState.getTeam = vi.fn().mockReturnValue({ members: [{ id: 99 }] })
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(false)
   })
 
   it('is false when team is null (team not yet loaded)', () => {
-    mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
+    mockAuthState.user = makeUser({ id: 5, systemrole: SYSTEMROLE_USER })
     mockTeamState.getTeam = vi.fn().mockReturnValue(null)
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(false)
   })
 
   it('looks up ChitChat Moderation team by name', () => {
-    mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
+    mockAuthState.user = makeUser({ id: 5, systemrole: SYSTEMROLE_USER })
     mockTeamState.getTeam = vi.fn().mockReturnValue(null)
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(false) // trigger evaluation

@@ -10,6 +10,7 @@ import (
 
 	address2 "github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -75,7 +76,7 @@ func TestAddressModeratorAccess(t *testing.T) {
 
 	// Create Support user who can access any address
 	prefixSupport := uniquePrefix("addr_support")
-	supportUserID := CreateTestUser(t, prefixSupport, "Support")
+	supportUserID := CreateTestUser(t, prefixSupport, utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportUserID)
 
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/address/"+idstr+"?jwt="+supportToken, nil))
@@ -87,7 +88,7 @@ func TestAddressModeratorAccess(t *testing.T) {
 
 	// Create Admin user who can access any address
 	prefixAdmin := uniquePrefix("addr_admin")
-	adminUserID := CreateTestUser(t, prefixAdmin, "Admin")
+	adminUserID := CreateTestUser(t, prefixAdmin, utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminUserID)
 
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/address/"+idstr+"?jwt="+adminToken, nil))

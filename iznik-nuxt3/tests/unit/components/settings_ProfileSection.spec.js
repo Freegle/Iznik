@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ProfileSection from '~/components/settings/ProfileSection.vue'
+import { SYSTEMROLE_MODERATOR, SYSTEMROLE_USER } from '~/constants'
 
-const { mockMe, mockMyid } = vi.hoisted(() => {
+const { mockMe, mockMyid } = await vi.hoisted(async () => {
+  const { SYSTEMROLE_USER } = await import('~/constants')
   const { ref } = require('vue')
   return {
     mockMe: ref({
       id: 123,
       displayname: 'Test User',
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
       supporter: false,
       donated: null,
       settings: {
@@ -60,7 +62,7 @@ describe('ProfileSection', () => {
     mockMe.value = {
       id: 123,
       displayname: 'Test User',
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
       supporter: false,
       donated: null,
       settings: {
@@ -299,7 +301,7 @@ describe('ProfileSection', () => {
     })
 
     it('shows supporter section for moderators', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = createWrapper()
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.supporter-section').exists()).toBe(true)
@@ -349,7 +351,7 @@ describe('ProfileSection', () => {
       })
 
       it('returns true for moderators', async () => {
-        mockMe.value.systemrole = 'Moderator'
+        mockMe.value.systemrole = SYSTEMROLE_MODERATOR
         const wrapper = createWrapper()
         await wrapper.vm.$nextTick()
         expect(wrapper.vm.eligibleSupporter).toBe(true)

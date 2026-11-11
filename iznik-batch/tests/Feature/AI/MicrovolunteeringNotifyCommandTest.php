@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\AI;
 
+use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -45,7 +46,7 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
         return $userId;
     }
 
-    private function addMembership(int $userId, int $groupId, string $role = 'Member'): void
+    private function addMembership(int $userId, int $groupId, string $role = Membership::ROLE_MEMBER): void
     {
         DB::table('memberships')->insert([
             'userid'     => $userId,
@@ -134,7 +135,7 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
         $reviewer = $this->createUser('Basic');
 
         $this->addMembership($fromUser, $groupId);
-        $this->addMembership($reviewer, $groupId, 'Member');
+        $this->addMembership($reviewer, $groupId, Membership::ROLE_MEMBER);
 
         $msgId = $this->createMessage($groupId, $fromUser, 'Approved');
 

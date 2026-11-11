@@ -4919,7 +4919,7 @@ class IncomingMailServiceTest extends TestCase
         $mod = $this->createTestUser(['email_preferred' => $this->uniqueEmail('mod')]);
         $this->createMembership($mod, $group, [
             'ourPostingStatus' => 'DEFAULT',
-            'role' => 'Moderator',
+            'role' => Membership::ROLE_MODERATOR,
         ]);
         DB::table('users')->where('id', $mod->id)->update([
             'lastlocation' => $this->createLocation(51.5, -0.1),

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,8 +40,8 @@ func postChatMessageAs(t *testing.T, token string, chatID uint64, message string
 func TestOpeningExistingUser2ModChatRestoresMemberRosterRow(t *testing.T) {
 	prefix := uniquePrefix("roster_open")
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	chatID := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
 	_, token := CreateTestSession(t, memberID)
 	require.Equal(t, int64(0), rosterRowCount(chatID, memberID))
@@ -55,8 +56,8 @@ func TestOpeningExistingUser2ModChatRestoresMemberRosterRow(t *testing.T) {
 func TestWritingInUser2ModChatRestoresMemberRosterRow(t *testing.T) {
 	prefix := uniquePrefix("roster_u2m")
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	chatID := CreateTestChatRoom(t, memberID, nil, &groupID, "User2Mod")
 	_, token := CreateTestSession(t, memberID)
 
@@ -68,8 +69,8 @@ func TestWritingInUser2ModChatRestoresMemberRosterRow(t *testing.T) {
 
 func TestWritingInUser2UserChatRestoresSenderRosterRow(t *testing.T) {
 	prefix := uniquePrefix("roster_u2u")
-	user1 := CreateTestUser(t, prefix+"_u1", "User")
-	user2 := CreateTestUser(t, prefix+"_u2", "User")
+	user1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, user1, &user2, nil, "User2User")
 	CreateTestChatRoster(t, chatID, user1)
 	_, token := CreateTestSession(t, user2)
@@ -83,12 +84,12 @@ func TestWritingInUser2UserChatRestoresSenderRosterRow(t *testing.T) {
 func TestModWritingInMembersUser2UserChatGetsNoRosterRow(t *testing.T) {
 	prefix := uniquePrefix("roster_modu2u")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	user1 := CreateTestUser(t, prefix+"_u1", "User")
-	user2 := CreateTestUser(t, prefix+"_u2", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, user1, groupID, "Member")
-	CreateTestMembership(t, user2, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	user1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, user1, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2, groupID, utils.ROLE_MEMBER)
 	chatID := CreateTestChatRoom(t, user1, &user2, nil, "User2User")
 	_, token := CreateTestSession(t, modID)
 

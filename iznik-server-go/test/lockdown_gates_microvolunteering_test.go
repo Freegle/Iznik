@@ -24,6 +24,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -31,7 +32,7 @@ func TestLockdownNoChallengeWhenModsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_mv_mods")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Block the invite challenge, same as TestGetMicrovolunteering_NoChallenge, so
@@ -53,7 +54,7 @@ func TestLockdownNoChallengeWhenPostsHeld(t *testing.T) {
 	prefix := uniquePrefix("ld_mv_posts")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, score_negative) VALUES (?, ?, 4, 'Test block', NOW(), 0)", microvolunteering.ChallengeInvite, userID)
@@ -73,12 +74,12 @@ func TestLockdownRefusesModFeedback(t *testing.T) {
 	prefix := uniquePrefix("ld_mv_modfb")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
-	regularID := CreateTestUser(t, prefix+"_user", "User")
+	regularID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO microactions (userid, actiontype, result, timestamp, score_negative) VALUES (?, 'CheckMessage', 'Approve', NOW(), 0)", regularID)
 	var actionID uint64
 	db.Raw("SELECT id FROM microactions WHERE userid = ? ORDER BY id DESC LIMIT 1", regularID).Scan(&actionID)

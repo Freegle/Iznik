@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/group"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -154,8 +155,8 @@ func TestMessageRepostatStopsAtTheAutoRepostLimit(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix+"_group")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, posterID)
 
 	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)
@@ -202,8 +203,8 @@ func TestMessageRepostatIsNilForAPosterWhoTurnedAutoRepostOff(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix+"_group")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, posterID)
 
 	setSystemRepostsForTest(t, `{"offer":3,"wanted":7,"max":3,"chaseups":5}`)

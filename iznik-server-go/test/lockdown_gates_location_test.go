@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,7 +28,7 @@ func TestLockdownRefusesCreateLocation(t *testing.T) {
 	prefix := uniquePrefix("ld_loc_create")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	restore := modsHeld()
@@ -53,7 +54,7 @@ func TestLockdownRefusesUpdateLocation(t *testing.T) {
 	prefix := uniquePrefix("ld_loc_update")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Polygon', 55.95, -3.19)", prefix+"_loc")
@@ -84,9 +85,9 @@ func TestLockdownRefusesExcludeLocation(t *testing.T) {
 	prefix := uniquePrefix("ld_loc_excl")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Polygon', 55.95, -3.19)", prefix+"_loc")
@@ -118,9 +119,9 @@ func TestLockdownRefusesShortlinkCreate(t *testing.T) {
 	prefix := uniquePrefix("ld_shortlink")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	restore := modsHeld()

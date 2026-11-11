@@ -37,9 +37,9 @@
                   size="sm"
                   class="breakgrid"
                   :is-moderator="
-                    user.systemrole === 'Moderator' ||
-                    user.systemrole === 'Support' ||
-                    user.systemrole === 'Admin'
+                    user.systemrole === SYSTEMROLE_MODERATOR ||
+                    user.systemrole === SYSTEMROLE_SUPPORT ||
+                    user.systemrole === SYSTEMROLE_ADMIN
                   "
                 />
                 {{ user.displayname }}
@@ -77,6 +77,11 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useModDashboard } from '~/modtools/composables/useModDashboard'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const props = defineProps({
   groupid: {

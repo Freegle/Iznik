@@ -5,6 +5,7 @@ import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
 import { useMobileStore } from '~/stores/mobile'
 import { useLockdownStore } from '~/stores/lockdown'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Skip beep on the first checkWork() call after page load. The first call
 // establishes the baseline work count; beeping at that point would interrupt
@@ -70,7 +71,7 @@ export function useModMe() {
   function amAModOn(groupid) {
     const authStore = useAuthStore()
     const member = authStore.member(groupid)
-    return member === 'Moderator' || member === 'Owner'
+    return member === ROLE_MODERATOR || member === ROLE_OWNER
   }
   // SEE WORK EXPLANATION IN useModMessages.js
   /* function deferCheckWork() {

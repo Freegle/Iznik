@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func init() {
@@ -74,7 +75,7 @@ func do(t *testing.T, app *fiber.App, method, url, body, auth string) (int, []by
 
 func TestPaf_NotAdmin(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "User")
+	_, auth := session(t, tx, utils.SYSTEMROLE_USER)
 	app := newApp()
 
 	for _, tc := range []struct{ name, method, url, body string }{
@@ -92,7 +93,7 @@ func TestPaf_NotAdmin(t *testing.T) {
 
 func TestPaf_SupportIsNotAdmin(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Support")
+	_, auth := session(t, tx, utils.SYSTEMROLE_SUPPORT)
 	code, _ := do(t, newApp(), "GET", "/sysadmin/paf", "", auth)
 	assert.Equal(t, fiber.StatusForbidden, code)
 }
@@ -106,7 +107,7 @@ func TestPaf_BadSessionIsUnauthorised(t *testing.T) {
 
 func TestListImports(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Admin")
+	_, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	app := newApp()
 
 	// Empty table: an empty array, not null.
@@ -138,7 +139,7 @@ func TestListImports(t *testing.T) {
 
 func TestGetLatest(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Admin")
+	_, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	app := newApp()
 
 	get := func() Latest {
@@ -168,7 +169,7 @@ func TestGetLatest(t *testing.T) {
 
 func TestStartImport_InvalidBody(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Admin")
+	_, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	req := httptest.NewRequest("POST", "/sysadmin/paf", strings.NewReader("this is not json"))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization2", auth)
@@ -181,7 +182,7 @@ func TestStartImport_InvalidBody(t *testing.T) {
 
 func TestStartImport_KeyValidation(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Admin")
+	_, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	app := newApp()
 
 	tests := []struct {
@@ -222,7 +223,7 @@ func TestStartImport_KeyValidation(t *testing.T) {
 
 func TestStartImport_EditionValidation(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Admin")
+	_, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	app := newApp()
 
 	tests := []struct {
@@ -265,7 +266,7 @@ func TestStartImport_EditionValidation(t *testing.T) {
 
 func TestStartImport_Creates(t *testing.T) {
 	tx := withTx(t)
-	uid, auth := session(t, tx, "Admin")
+	uid, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	require.NoError(t, tx.Exec("DELETE FROM paf_imports").Error)
 
 	code, b := do(t, newApp(), "POST", "/sysadmin/paf", `{"key":"`+goodKey+`","edition":"Y26M08"}`, auth)
@@ -287,7 +288,7 @@ func TestStartImport_Creates(t *testing.T) {
 
 func TestStartImport_ActiveConflict(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Admin")
+	_, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	app := newApp()
 	body := `{"key":"` + goodKey + `"}`
 
@@ -307,7 +308,7 @@ func TestStartImport_ActiveConflict(t *testing.T) {
 
 func TestStartImport_FinishedImportsDoNotBlock(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Admin")
+	_, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	require.NoError(t, tx.Exec("DELETE FROM paf_imports").Error)
 	require.NoError(t, tx.Exec("INSERT INTO paf_imports (status, created_at, updated_at) VALUES ('done', NOW(), NOW()), ('failed', NOW(), NOW())").Error)
 
@@ -317,7 +318,7 @@ func TestStartImport_FinishedImportsDoNotBlock(t *testing.T) {
 
 func TestStartImport_StaleImportReplaced(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Admin")
+	_, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	require.NoError(t, tx.Exec("DELETE FROM paf_imports").Error)
 	stale := time.Now().Add(-staleAfter - 5*time.Minute).UTC().Format("2006-01-02 15:04:05")
 	require.NoError(t, tx.Exec("INSERT INTO paf_imports (status, unlock_key, created_at, updated_at) VALUES ('applying', 'OLDKEY', ?, ?)", stale, stale).Error)
@@ -347,7 +348,7 @@ func TestStartImport_StaleImportReplaced(t *testing.T) {
 
 func TestStartImport_StaleAndFreshStillConflicts(t *testing.T) {
 	tx := withTx(t)
-	_, auth := session(t, tx, "Admin")
+	_, auth := session(t, tx, utils.SYSTEMROLE_ADMIN)
 	require.NoError(t, tx.Exec("DELETE FROM paf_imports").Error)
 	stale := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02 15:04:05")
 	require.NoError(t, tx.Exec("INSERT INTO paf_imports (status, created_at, updated_at) VALUES ('applying', ?, ?)", stale, stale).Error)

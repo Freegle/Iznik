@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Mail;
 
+use App\Models\Membership;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\ChaseAdminMail;
 use App\Models\Group;
@@ -280,7 +281,7 @@ class ChaseAdminCommand extends Command
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->where('memberships.groupid', $groupId)
             ->where('memberships.collection', 'Approved')
-            ->whereIn('memberships.role', ['Moderator', 'Owner'])
+            ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->whereNull('users.deleted')
             ->get();
     }

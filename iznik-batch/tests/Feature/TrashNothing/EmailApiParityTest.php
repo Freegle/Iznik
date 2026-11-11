@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\TrashNothing;
 
+use App\Models\User;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\UserEmail;
@@ -774,7 +775,7 @@ class EmailApiParityTest extends TestCase
             // The fixture posts carry $id as TN's user_id; the API path resolves it via tnuserid.
             'tnuserid'     => $id,
             'fullname'     => 'TN Parity Test User ' . $id,
-            'systemrole'   => 'User',
+            'systemrole'   => User::SYSTEMROLE_USER,
             'added'        => now(),
             'lastlocation' => $this->fakeLocationId,
         ]);

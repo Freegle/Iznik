@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -20,8 +21,8 @@ func TestPatchMessage_RemoveAIAttachment_OwnerRecordsMicroaction(t *testing.T) {
 	prefix := uniquePrefix("ai_att_owner")
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, "Test AI Attachment Owner", 51.5, -1.0)
@@ -74,10 +75,10 @@ func TestPatchMessage_RemoveAIAttachment_ModRecordsMicroaction(t *testing.T) {
 	prefix := uniquePrefix("ai_att_mod")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, "Test AI Attachment Mod", 51.5, -1.0)
@@ -128,8 +129,8 @@ func TestPatchMessage_RemoveNonAIAttachment_NoMicroaction(t *testing.T) {
 	prefix := uniquePrefix("non_ai_att")
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, "Test Non-AI Attachment", 51.5, -1.0)
@@ -165,8 +166,8 @@ func TestPatchMessage_RemoveAIAttachmentSubset_OnlyDeletedRecorded(t *testing.T)
 	prefix := uniquePrefix("ai_att_subset")
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, "Test AI Subset", 51.5, -1.0)
@@ -225,8 +226,8 @@ func TestPatchMessage_RemoveBorrowedAIAttachment_RemovesAliasNotPicture(t *testi
 	prefix := uniquePrefix("ai_att_alias")
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	msgID := CreateTestMessage(t, ownerID, groupID, "Borrowed picture "+prefix, 51.5, -1.0)
 

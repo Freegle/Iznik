@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense, ref } from 'vue'
 import MicroVolunteeringCheckMessage from '~/components/MicroVolunteeringCheckMessage.vue'
+import { ROLE_MEMBER } from '~/constants'
 
 // Mock stores
 const mockMessageById = vi.fn()
@@ -30,7 +31,7 @@ vi.mock('~/stores/notification', () => ({
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
-    groups: [{ groupid: 456, role: 'Member' }],
+    groups: [{ groupid: 456, role: ROLE_MEMBER }],
   }),
 }))
 

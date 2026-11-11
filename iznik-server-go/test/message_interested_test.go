@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,8 +30,8 @@ func newInterestedFixture(t *testing.T, name string, arm string) interestedFixtu
 	prefix := uniquePrefix(name)
 	groupID := CreateTestGroup(t, prefix)
 	f := interestedFixture{}
-	f.posterID = CreateTestUser(t, prefix+"_poster", "User")
-	f.userID = CreateTestUser(t, prefix+"_member", "User")
+	f.posterID = CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	f.userID = CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	f.msgID = CreateTestMessage(t, f.posterID, groupID, "OFFER: lamp ("+prefix+")", 51.5, -0.1)
 	_, f.token = CreateTestSession(t, f.userID)
 
@@ -369,7 +370,7 @@ func TestInterested_MergeMovesMarksAndKeepsTheKeptAccountsOnAClash(t *testing.T)
 	f := newInterestedFixture(t, "intmerge", "button")
 	groupID := CreateTestGroup(t, uniquePrefix("intmergeg"))
 	other := CreateTestMessage(t, f.posterID, groupID, "OFFER: sofa ("+uniquePrefix("s")+")", 51.5, -0.1)
-	keptID := CreateTestUser(t, uniquePrefix("intmergekept"), "User")
+	keptID := CreateTestUser(t, uniquePrefix("intmergekept"), utils.SYSTEMROLE_USER)
 	db := database.DBConn
 	t.Cleanup(func() { db.Exec("DELETE FROM messages_interested WHERE userid = ?", keptID) })
 

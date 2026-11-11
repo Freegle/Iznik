@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,18 +17,18 @@ func TestMembersListCarriesImplicit(t *testing.T) {
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix)
 
-	rippled := CreateTestUser(t, prefix+"_rippled", "User")
-	rippledMembership := CreateTestMembership(t, rippled, group, "Member")
+	rippled := CreateTestUser(t, prefix+"_rippled", utils.SYSTEMROLE_USER)
+	rippledMembership := CreateTestMembership(t, rippled, group, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1, implicit = 1 WHERE id = ?", rippledMembership)
 
-	ordinary := CreateTestUser(t, prefix+"_ordinary", "User")
-	CreateTestMembership(t, ordinary, group, "Member")
+	ordinary := CreateTestUser(t, prefix+"_ordinary", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ordinary, group, utils.ROLE_MEMBER)
 
-	banned := CreateTestUser(t, prefix+"_banned", "User")
+	banned := CreateTestUser(t, prefix+"_banned", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_banned (userid, groupid, date) VALUES (?, ?, NOW())", banned, group)
 
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, group, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, group, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, mod)
 
 	type member struct {
@@ -64,14 +65,14 @@ func TestMembersListCarriesImplicit(t *testing.T) {
 func TestUserMembershipsCarryImplicit(t *testing.T) {
 	prefix := uniquePrefix("memimplicit_user")
 	db := database.DBConn
-	member := CreateTestUser(t, prefix, "User")
+	member := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
-	rippledMembership := CreateTestMembership(t, member, rippledGroup, "Member")
+	rippledMembership := CreateTestMembership(t, member, rippledGroup, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 1, implicit = 1 WHERE id = ?", rippledMembership)
 
 	ordinaryGroup := CreateTestGroup(t, prefix+"_ordinary")
-	CreateTestMembership(t, member, ordinaryGroup, "Member")
+	CreateTestMembership(t, member, ordinaryGroup, utils.ROLE_MEMBER)
 
 	byGroup := map[uint64]user.Membership{}
 	for _, m := range user.GetMemberships(member) {
@@ -90,8 +91,8 @@ func TestPartnerJoinClearsATrashNothingImplicitMembership(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	membershipID := CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	membershipID := CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET rippled = 0, implicit = 1, added_origin = 'tn_unaddressed' WHERE id = ?", membershipID)
 
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12346)

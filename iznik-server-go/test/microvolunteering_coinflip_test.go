@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,12 +31,12 @@ func TestMicrovolunteering_CoinFlipZeroFallsBackToMessage(t *testing.T) {
 	// setting `{"approvedmessages":true}` would filter the row out.
 	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
 
-	reviewerID := CreateTestUser(t, prefix+"_rev", "User")
-	CreateTestMembership(t, reviewerID, groupID, "Member")
+	reviewerID := CreateTestUser(t, prefix+"_rev", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, reviewerID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, reviewerID)
 	blockInviteChallenge(t, reviewerID)
 
-	senderID := CreateTestUser(t, prefix+"_snd", "User")
+	senderID := CreateTestUser(t, prefix+"_snd", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, senderID, groupID, "coinflip zero "+prefix, 55.9533, -3.1883)
 	// CreateTestMessage back-dates arrival by 15 minutes, and the approved-message review only
 	// offers posts whose arrival is today (DATE(arrival) = CURDATE()). Between 00:00 and 00:15
@@ -89,8 +90,8 @@ func TestMicrovolunteering_CoinFlipOneFallsBackToAIImage(t *testing.T) {
 	// Intentionally leave microvolunteering disabled on the group so
 	// getApprovedMessageChallenge returns nil (the SQL filter requires
 	// microvolunteering = 1).
-	reviewerID := CreateTestUser(t, prefix+"_rev", "User")
-	CreateTestMembership(t, reviewerID, groupID, "Member")
+	reviewerID := CreateTestUser(t, prefix+"_rev", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, reviewerID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, reviewerID)
 	blockInviteChallenge(t, reviewerID)
 

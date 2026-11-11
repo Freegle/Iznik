@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\AI;
 
+use App\Models\User;
 use App\Console\Commands\Mail\SendAIImageReviewDigestCommand;
 use App\Mail\AI\AIImageReviewDigestMail;
 use Illuminate\Support\Facades\DB;
@@ -150,7 +151,7 @@ class SendAIImageReviewDigestCommandTest extends TestCase
         DB::table('users')->insert([
             'firstname' => $name,
             'lastname' => 'Test',
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
         ]);
 
         return (int) DB::table('users')

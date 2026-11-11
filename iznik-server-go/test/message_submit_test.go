@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,7 +18,7 @@ import (
 func TestSubmitMessageSingleCall(t *testing.T) {
 	prefix := uniquePrefix("submit_single")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	// Deliberately NOT a member — the single call must auto-join (must stay).
 	_, token := CreateTestSession(t, userID)
 
@@ -94,7 +95,7 @@ func TestSubmitMessageSingleCall(t *testing.T) {
 func TestSubmitMessageLinksExistingAttachment(t *testing.T) {
 	prefix := uniquePrefix("submit_link")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -142,8 +143,8 @@ func TestSubmitMessageLinksExistingAttachment(t *testing.T) {
 func TestSubmitMessageApprovedForUnmoderatedMember(t *testing.T) {
 	prefix := uniquePrefix("submit_approved")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -187,8 +188,8 @@ func TestSubmitMessageApprovedForUnmoderatedMember(t *testing.T) {
 func TestSubmitMessageModeratedGroupStaysPending(t *testing.T) {
 	prefix := uniquePrefix("submit_modgroup")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -216,8 +217,8 @@ func TestSubmitMessageModeratedGroupStaysPending(t *testing.T) {
 func TestSubmitMessageModeratedMemberStaysPending(t *testing.T) {
 	prefix := uniquePrefix("submit_modmember")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -244,7 +245,7 @@ func TestSubmitMessageModeratedMemberStaysPending(t *testing.T) {
 func TestSubmitMessageAiDeclined(t *testing.T) {
 	prefix := uniquePrefix("submit_aidecl")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -270,7 +271,7 @@ func TestSubmitMessageAiDeclined(t *testing.T) {
 func TestSubmitMessageValidation(t *testing.T) {
 	prefix := uniquePrefix("submit_valid")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	cases := []struct {
@@ -347,7 +348,7 @@ func TestSubmitMessageExistingEmailLoggedOutRejected(t *testing.T) {
 // everywhere. The endpoint must now reject with 400 and create no orphan message.
 func TestSubmitMessageNonexistentGroup(t *testing.T) {
 	prefix := uniquePrefix("submit_nogroup")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -379,7 +380,7 @@ func TestSubmitMessageNonexistentGroup(t *testing.T) {
 func TestSubmitMessageLinksNewItem(t *testing.T) {
 	prefix := uniquePrefix("submit_item")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	itemName := "Freshitem " + prefix // unique, does not pre-exist in items

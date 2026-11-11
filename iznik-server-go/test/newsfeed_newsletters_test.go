@@ -74,7 +74,7 @@ func TestFeedAllNewslettersVisibleToChitChatMod(t *testing.T) {
 	userID, token := CreateFullTestUser(t, prefix)
 	makeChitChatMod(t, userID)
 
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	alertID := createTestAlertAt(t, poster, farAwayLat, farAwayLng, "Newsletter far away "+prefix, "Penzance")
 
 	// Without the flag the alert is out of area, on both feed paths.
@@ -94,7 +94,7 @@ func TestFeedAllNewslettersIgnoredForOrdinaryMember(t *testing.T) {
 	prefix := uniquePrefix("nlmember")
 	_, token := CreateFullTestUser(t, prefix)
 
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	alertID := createTestAlertAt(t, poster, farAwayLat, farAwayLng, "Newsletter far away "+prefix, "Penzance")
 
 	// The param is not a way for a member to escape the geographic filter.
@@ -111,7 +111,7 @@ func TestFeedAllNewslettersLeavesOrdinaryPostsAlone(t *testing.T) {
 	userID, token := CreateFullTestUser(t, prefix)
 	makeChitChatMod(t, userID)
 
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	chatID := CreateTestNewsfeed(t, poster, farAwayLat, farAwayLng, "Far away chatter "+prefix)
 	t.Cleanup(func() {
 		database.DBConn.Exec("DELETE FROM newsfeed WHERE id = ?", chatID)
@@ -127,7 +127,7 @@ func TestNewsfeedAlertLocationIsNotTruncated(t *testing.T) {
 	// ("Edinburgh" -> "Edinbur"). The Freegle system account that posts them has
 	// no lastlocation, so that fallback is exactly the path they take.
 	prefix := uniquePrefix("nlloc")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	alertID := createTestAlertAt(t, poster, 55.9533, -3.1883, "Newsletter local "+prefix, "Edinburgh")
 
 	id := strconv.FormatUint(alertID, 10)
@@ -144,7 +144,7 @@ func TestNewsfeedMessageLocationStillTruncated(t *testing.T) {
 	// The postcode fallback must survive for ordinary posts, which is what it
 	// was written for.
 	prefix := uniquePrefix("nlloc2")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	nfID := CreateTestNewsfeed(t, poster, 55.9533, -3.1883, "Ordinary post "+prefix)
 	database.DBConn.Exec("UPDATE newsfeed SET location = ? WHERE id = ?", "EH3 9DR", nfID)
 	t.Cleanup(func() {

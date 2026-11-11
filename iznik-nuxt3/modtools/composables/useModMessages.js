@@ -13,6 +13,7 @@ import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '@/stores/auth'
 // import { useModGroupStore } from '@/stores/modgroup'
 import { useMiscStore } from '@/stores/misc'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // All values need to be reset by one caller of setupModMessages()
 const summarykey = ref(false)
@@ -118,7 +119,7 @@ const messages = computed(() => {
   const authStore = useAuthStore()
   const moderates = (gid) =>
     typeof authStore?.member !== 'function' ||
-    ['Moderator', 'Owner'].includes(authStore.member(gid))
+    [ROLE_MODERATOR, ROLE_OWNER].includes(authStore.member(gid))
   if (collection.value && REAL_COLLECTIONS.includes(collection.value)) {
     const allowed =
       collection.value === 'Pending'
@@ -174,7 +175,7 @@ function administeredCopy(m) {
   const authStore = useAuthStore()
   const moderates = (gid) =>
     typeof authStore?.member !== 'function' ||
-    ['Moderator', 'Owner'].includes(authStore.member(gid))
+    [ROLE_MODERATOR, ROLE_OWNER].includes(authStore.member(gid))
   return (
     m.groups.find(
       (g) =>

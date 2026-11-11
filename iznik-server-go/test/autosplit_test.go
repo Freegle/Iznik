@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,8 +28,8 @@ func newSplitFixture(t *testing.T, prefix string) splitFixture {
 	db := database.DBConn
 	f := splitFixture{}
 	f.groupID = CreateTestGroup(t, prefix)
-	f.ownerID = CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, f.ownerID, f.groupID, "Member")
+	f.ownerID = CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, f.ownerID, f.groupID, utils.ROLE_MEMBER)
 	f.token = getToken(t, f.ownerID)
 	f.msgID = CreateTestMessage(t, f.ownerID, f.groupID, prefix+" sofa and bed", 52.5, -1.8)
 	db.Exec("UPDATE messages SET availableinitially = 2, availablenow = 2 WHERE id = ?", f.msgID)
@@ -104,8 +105,8 @@ func TestAutoSplitPostIsMarkedAndItsCropsSitOnTheirItems(t *testing.T) {
 func TestAClearanceIsNotMarkedAsASplit(t *testing.T) {
 	prefix := uniquePrefix("as_clr")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" clearance", 52.5, -1.8)
 	addBulkItem(t, msgID, "Desk", 3, "Good")
 
@@ -212,8 +213,8 @@ func TestChangingASplitPostToAWantedDropsAnItemListSentWithIt(t *testing.T) {
 func TestAModeratorChangingASplitPostToAWantedUndoesTheSplit(t *testing.T) {
 	prefix := uniquePrefix("as_to_wanted_mod")
 	f := newSplitFixture(t, prefix)
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, f.groupID, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, f.groupID, utils.ROLE_MODERATOR)
 
 	status, body := splitPatch(t, getToken(t, mod), map[string]interface{}{"id": f.msgID, "msgtype": "Wanted"})
 	require.Equal(t, 200, status, body)
@@ -248,7 +249,7 @@ func TestAutoSplitUndoIsTheOwnersOrAModerators(t *testing.T) {
 	status, _ := splitAction(t, "", map[string]interface{}{"id": f.msgID, "action": "AutoSplitUndo"})
 	assert.Equal(t, 401, status)
 
-	other := CreateTestUser(t, prefix+"_other", "User")
+	other := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	status, _ = splitAction(t, getToken(t, other), map[string]interface{}{"id": f.msgID, "action": "AutoSplitUndo"})
 	assert.Equal(t, 403, status)
 
@@ -256,8 +257,8 @@ func TestAutoSplitUndoIsTheOwnersOrAModerators(t *testing.T) {
 	db.Table("messages_autosplit").Select("state").Where("msgid = ?", f.msgID).Scan(&state)
 	assert.Equal(t, "Split", state, "a refused undo changes nothing")
 
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, mod, f.groupID, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, f.groupID, utils.ROLE_MODERATOR)
 	status, _ = splitAction(t, getToken(t, mod), map[string]interface{}{"id": f.msgID, "action": "AutoSplitUndo"})
 	assert.Equal(t, 200, status)
 }
@@ -274,8 +275,8 @@ func TestAutoSplitUndoIsRefusedOnceThePostHasAnOutcome(t *testing.T) {
 func TestUndoOnAPostThatWasNotSplitIsRefused(t *testing.T) {
 	prefix := uniquePrefix("as_undo_none")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" one thing", 52.5, -1.8)
 
 	status, _ := splitAction(t, getToken(t, userID), map[string]interface{}{"id": msgID, "action": "AutoSplitUndo"})
@@ -313,8 +314,8 @@ func TestBulkItemAvailableOnAClearanceRecordsTakenWhenTheLastGoes(t *testing.T) 
 	db := database.DBConn
 	prefix := uniquePrefix("as_avail_clr")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" clearance", 52.5, -1.8)
 	itemID := addBulkItem(t, msgID, "Desk", 1, "Good")
 
@@ -330,7 +331,7 @@ func TestBulkItemAvailableRefusesOthersAndOtherPostsItems(t *testing.T) {
 	f := newSplitFixture(t, prefix)
 	g := newSplitFixture(t, prefix+"b")
 
-	other := CreateTestUser(t, prefix+"_other", "User")
+	other := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	status, _ := splitAction(t, getToken(t, other), map[string]interface{}{"id": f.msgID, "action": "BulkItemAvailable", "bulkitemid": f.sofaID, "available": false})
 	assert.Equal(t, 403, status)
 
@@ -487,8 +488,8 @@ func TestAClearanceEditCannotTakeAnotherPostsPhotoOrItem(t *testing.T) {
 	victim := newSplitFixture(t, prefix+"v")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	grantClearance(t, userID)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" clearance", 52.5, -1.8)
 	deskID := addBulkItem(t, msgID, "Desk", 1, "Good")
@@ -535,8 +536,8 @@ func TestRemovingASplitItemRemovesItsCrop(t *testing.T) {
 func TestItemsOfAnOrdinaryPostStillNeedTheClearancePermission(t *testing.T) {
 	prefix := uniquePrefix("as_patch_gate")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" one thing", 52.5, -1.8)
 
 	status, _ := splitPatch(t, getToken(t, userID), map[string]interface{}{
@@ -562,8 +563,8 @@ func TestApprovingASplitPostQueuesFreebieAlerts(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("as_fa")
 	f := newSplitFixture(t, prefix)
-	mod := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, mod, f.groupID, "Moderator")
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, mod, f.groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", f.msgID)
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", f.msgID)
 

@@ -22,6 +22,11 @@
 <script setup>
 import { ref } from 'vue'
 import { useUserStore } from '~/stores/user'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const emails = ref(null)
 const results = ref([])
@@ -39,9 +44,9 @@ function check() {
 
       if (ret.length === 1) {
         if (
-          ret[0].systemrole === 'Admin' ||
-          ret[0].systemrole === 'Moderator' ||
-          ret[0].systemrole === 'Support'
+          ret[0].systemrole === SYSTEMROLE_ADMIN ||
+          ret[0].systemrole === SYSTEMROLE_MODERATOR ||
+          ret[0].systemrole === SYSTEMROLE_SUPPORT
         ) {
           results.value.push({
             text: email + ': Volunteer',

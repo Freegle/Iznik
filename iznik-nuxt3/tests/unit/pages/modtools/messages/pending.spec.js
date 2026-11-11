@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref, computed, reactive } from 'vue'
 import PendingPage from '~/modtools/pages/messages/pending/[[id]]/[[term]].vue'
+import { ROLE_OWNER } from '~/constants'
 
 // Mock refs that will be shared between tests
 const mockBusy = ref(false)
@@ -106,7 +107,7 @@ vi.mock('@/stores/modgroup', () => ({
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: ref({ id: 1, displayname: 'Test User' }),
-    myGroups: ref([{ id: 1, name: 'TestGroup', role: 'Owner' }]),
+    myGroups: ref([{ id: 1, name: 'TestGroup', role: ROLE_OWNER }]),
   }),
 }))
 

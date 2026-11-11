@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\User;
 
+use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -172,7 +173,7 @@ class RestoreUserCommand extends Command
                 'lastname'   => $userAttrs['lastname'],
                 'added'      => now(),
                 'lastaccess' => now(),
-                'systemrole' => $userAttrs['systemrole'] ?? 'User',
+                'systemrole' => $userAttrs['systemrole'] ?? User::SYSTEMROLE_USER,
             ]);
 
             DB::table('users_emails')->insert([

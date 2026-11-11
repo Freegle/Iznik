@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/paf"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -41,7 +42,7 @@ func TestPafImportsNeedAdmin(t *testing.T) {
 	status, _ := pafRequest(t, "GET", "", "")
 	assert.Equal(t, 401, status)
 
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	status, _ = pafRequest(t, "GET", supportToken, "")
@@ -54,7 +55,7 @@ func TestPafImportsNeedAdmin(t *testing.T) {
 func TestPafStartImportQueuesItAndHidesTheKey(t *testing.T) {
 	clearPafImports(t)
 	prefix := uniquePrefix("pafstart")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	status, body := pafRequest(t, "POST", token, `{"key":"`+pafTestKey+`","edition":"y26m08"}`)
@@ -89,7 +90,7 @@ func TestPafStartImportQueuesItAndHidesTheKey(t *testing.T) {
 func TestPafStartImportReplacesOneThatHasStalled(t *testing.T) {
 	clearPafImports(t)
 	prefix := uniquePrefix("pafstale")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -117,7 +118,7 @@ func TestPafStartImportReplacesOneThatHasStalled(t *testing.T) {
 func TestPafStartImportChecksItsInput(t *testing.T) {
 	clearPafImports(t)
 	prefix := uniquePrefix("pafinput")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	status, body := pafRequest(t, "POST", token, `{"key":"AB1 / CD2"}`)
@@ -139,7 +140,7 @@ func TestPafStartImportChecksItsInput(t *testing.T) {
 func TestPafListImportsIsEmptyListWhenNone(t *testing.T) {
 	clearPafImports(t)
 	prefix := uniquePrefix("pafempty")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	status, body := pafRequest(t, "GET", token, "")
@@ -160,7 +161,7 @@ func pafLatestRequest(t *testing.T, token string) (int, paf.Latest) {
 // The latest release on AFD's site is what paf:check-latest last stored in the config row.
 func TestPafLatestReadsWhatTheBatchStored(t *testing.T) {
 	prefix := uniquePrefix("paflatest")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 	db := database.DBConn
 	db.Exec("DELETE FROM config WHERE `key` = 'paf_latest'")
@@ -178,7 +179,7 @@ func TestPafLatestReadsWhatTheBatchStored(t *testing.T) {
 	assert.Equal(t, int64(440401920), latest.Size)
 	assert.Empty(t, latest.Error)
 
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
 	status, _ = pafLatestRequest(t, supportToken)
 	assert.Equal(t, 403, status)
@@ -188,7 +189,7 @@ func TestPafLatestReadsWhatTheBatchStored(t *testing.T) {
 func TestPafListImportsCarriesTheReleaseDate(t *testing.T) {
 	clearPafImports(t)
 	prefix := uniquePrefix("pafrelease")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 	database.DBConn.Exec("INSERT INTO paf_imports (status, release_published, created_at, updated_at) VALUES ('done', '2026-10-03', NOW(), NOW())")
 

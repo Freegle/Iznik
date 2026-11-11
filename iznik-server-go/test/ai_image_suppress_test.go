@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -31,7 +32,7 @@ func TestAIImageSuppress_RequiresAuth(t *testing.T) {
 
 func TestAIImageSuppress_RequiresAdminOrSupport(t *testing.T) {
 	prefix := uniquePrefix("aisup_norm")
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, tok := CreateTestSession(t, uid)
 	imgID := createTestAIImageWithStatus(t, "suppress-norm-"+prefix, "freegletusd-supnorm-"+prefix, "rejected")
 
@@ -42,7 +43,7 @@ func TestAIImageSuppress_RequiresAdminOrSupport(t *testing.T) {
 
 func TestAIImageSuppress_NotFound(t *testing.T) {
 	prefix := uniquePrefix("aisup_404")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	req := httptest.NewRequest("POST", "/api/admin/ai-images/999999999/suppress?jwt="+tok, nil)
@@ -55,7 +56,7 @@ func TestAIImageSuppress_NotFound(t *testing.T) {
 func TestAIImageSuppress_SetsStatusSuppressedAndClearsQueue(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("aisup_set")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	imgID := createTestAIImageWithStatus(t, "suppress-set-"+prefix, "freegletusd-supset-"+prefix, "rejected")
@@ -63,7 +64,7 @@ func TestAIImageSuppress_SetsStatusSuppressedAndClearsQueue(t *testing.T) {
 	// Pre-populate pending state + a review vote — both should be cleared on suppress.
 	db.Exec("UPDATE ai_images SET pending_externaluid = ?, regeneration_notes = ? WHERE id = ?",
 		"freegletusd-pending-"+prefix, "some notes", imgID)
-	voter := CreateTestUser(t, prefix+"_voter", "User")
+	voter := CreateTestUser(t, prefix+"_voter", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative) VALUES (?, ?, ?, 'Reject', 4, 0)",
 		microvolunteering.ChallengeAIImageReview, voter, imgID)
 
@@ -92,7 +93,7 @@ func TestAIImageSuppress_SetsStatusSuppressedAndClearsQueue(t *testing.T) {
 // excluded from the review list.
 func TestAIImageSuppress_RemovesFromReviewList(t *testing.T) {
 	prefix := uniquePrefix("aisup_list")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	imgID := createTestAIImageWithStatus(t, "suppress-list-"+prefix, "freegletusd-suplist-"+prefix, "regenerating")

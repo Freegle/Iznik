@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/spatial"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +20,7 @@ func TestHomeGroups(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("origin")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	group1 := CreateTestGroup(t, prefix+"a") // origin — CreateTestMessage sets arrival = NOW()
 	group2 := CreateTestGroup(t, prefix+"b") // rippled in later
 
@@ -56,7 +57,7 @@ func TestClipReachForRejectedGroup(t *testing.T) {
 	db := database.DBConn
 
 	prefix := uniquePrefix("clipreach")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	group1 := CreateTestGroup(t, prefix+"a") // origin (west)
 	group2 := CreateTestGroup(t, prefix+"b") // secondary group that rejects (east)
 	mid := CreateTestMessage(t, userID, group1, "OFFER: clip reach test item", 51.5, -0.1)
@@ -121,7 +122,7 @@ func TestClipReachForRejectedGroupClipsTheCellSet(t *testing.T) {
 		"rippling_reach.polygon_cells must exist - run scripts/setup-test-database.sh")
 
 	prefix := uniquePrefix("clipcells")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	group1 := CreateTestGroup(t, prefix+"a") // origin (west)
 	group2 := CreateTestGroup(t, prefix+"b") // secondary group that rejects (east)
 	mid := CreateTestMessage(t, userID, group1, "OFFER: clip cells test item", 51.5, -0.1)
@@ -188,7 +189,7 @@ func TestClipReachForRejectedGroupLeavesAbsentCellsNull(t *testing.T) {
 	require.Equal(t, 1, hasCells, "rippling_reach.polygon_cells must exist")
 
 	prefix := uniquePrefix("clipnocells")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	group1 := CreateTestGroup(t, prefix+"a")
 	group2 := CreateTestGroup(t, prefix+"b")
 	mid := CreateTestMessage(t, userID, group1, "OFFER: clip without cells", 51.5, -0.1)

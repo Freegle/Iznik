@@ -6,6 +6,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,9 +15,9 @@ import (
 func TestCountHonoursCommunityFilter(t *testing.T) {
 	prefix := uniquePrefix("countgroup")
 	db := database.DBConn
-	userID := CreateTestUser(t, prefix+"_u", "User")
+	userID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	g1 := CreateTestGroup(t, prefix+"_one")
 	g2 := CreateTestGroup(t, prefix+"_two")
 	other := CreateTestGroup(t, prefix+"_other")
