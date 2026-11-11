@@ -183,16 +183,6 @@
           :count="['pendingadmins']"
           @mobilehidemenu="mobilehidemenu"
         />
-        <ModMenuItemLeft
-          link="/spammers"
-          name="Spammers"
-          :count="
-            hasPermissionSpamAdmin
-              ? ['spammerpendingadd', 'spammerpendingremove']
-              : []
-          "
-          @mobilehidemenu="mobilehidemenu"
-        />
         <hr />
         <ModMenuItemLeft
           link="/logs"
@@ -226,16 +216,6 @@
             'maildeferrals',
             'uxexperiments',
           ]"
-          @mobilehidemenu="mobilehidemenu"
-        />
-        <ModMenuItemLeft
-          link="/rippling"
-          name="Rippling"
-          @mobilehidemenu="mobilehidemenu"
-        />
-        <ModMenuItemLeft
-          link="/settings"
-          name="Settings"
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
@@ -316,7 +296,6 @@ const persistent = authStore.auth.persistent
 const { supportOrAdmin, admin } = useMe()
 const {
   hasPermissionNewsletter,
-  hasPermissionSpamAdmin,
   hasPermissionGiftAid,
   hasPermissionClearance,
   checkWork,
