@@ -140,7 +140,7 @@ Three things make this worse than it sounds:
   UMD build, which ends `window.L = exports`. vue-leaflet does it when the global is unset, and
   `leaflet-control-geocoder` does it always. Bounds built from one copy then fail the other's
   `instanceof`, so `fitBounds` throws "Bounds are not valid" and `flyToBounds` reads
-  `_northEast.lat` of an empty object. No error names the cause. `build-plugins/leafletSingleInstance.js`
+  `_northEast.lat` of an empty object. No error names the cause. `build-plugins/leafletAlias.js`
   sends the bare specifier to the ES build; keep every import on `leaflet/dist/leaflet-src.esm`.
 - **`loadLeaflet()` must not skip the extensions when `window.L` is already set.** The vue-leaflet plugin
   sets it first, and wicket-leaflet then never loaded (`this.construct[this.type]`).

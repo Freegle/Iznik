@@ -41,8 +41,11 @@ function sources(dir) {
 // family). The app source scan below cannot see it, so the build maps the bare specifier itself.
 describe('single Leaflet instance', () => {
   it('the build sends bare leaflet imports from libraries to the ES module build', () => {
+    // nuxt.config.ts is too heavy to load in a unit test, so check it installs the alias module
+    // in vite.resolve.alias; the alias itself is exercised in build-plugins/leafletAlias.spec.js.
     const config = readFileSync(join(ROOT, 'nuxt.config.ts'), 'utf8')
-    expect(config).toContain('leafletSingleInstance()')
+    expect(config).toMatch(/resolve:\s*\{[^}]*alias:\s*\[leafletAlias\]/)
+    expect(config).not.toContain('leafletSingleInstance')
   })
 
   it('no app source imports the bare leaflet package', () => {
