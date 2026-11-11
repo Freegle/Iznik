@@ -870,15 +870,6 @@ LOCK TABLES `domains_common` WRITE;
 UNLOCK TABLES;
 
 --
--- Dumping data for table `ebay_favourites`
---
-
-LOCK TABLES `ebay_favourites` WRITE;
-/*!40000 ALTER TABLE `ebay_favourites` DISABLE KEYS */;
-/*!40000 ALTER TABLE `ebay_favourites` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Dumping data for table `eee_classified_attachments`
 --
 
@@ -1406,11 +1397,6 @@ INSERT  IGNORE INTO `items` (`id`, `name`, `popularity`, `weight`, `updated`, `s
 INSERT  IGNORE INTO `items` (`id`, `name`, `popularity`, `weight`, `updated`, `suggestfromphoto`, `suggestfromtypeahead`) VALUES (169,'PW_v2apipages Pending Bookshelf',0,NULL,'2026-07-09 10:02:20',1,1);
 INSERT  IGNORE INTO `items` (`id`, `name`, `popularity`, `weight`, `updated`, `suggestfromphoto`, `suggestfromtypeahead`) VALUES (170,'PW_v2apipages Rejected Chair',0,NULL,'2026-07-09 10:02:20',1,1);
 /*!40000 ALTER TABLE `items` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `items_non` WRITE;
-/*!40000 ALTER TABLE `items_non` DISABLE KEYS */;
-/*!40000 ALTER TABLE `items_non` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -4212,15 +4198,6 @@ LOCK TABLES `reengage` WRITE;
 UNLOCK TABLES;
 
 --
--- Dumping data for table `returnpath_seedlist`
---
-
-LOCK TABLES `returnpath_seedlist` WRITE;
-/*!40000 ALTER TABLE `returnpath_seedlist` DISABLE KEYS */;
-/*!40000 ALTER TABLE `returnpath_seedlist` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Dumping data for table `rippling_algorithm_metrics`
 --
 
@@ -4429,51 +4406,6 @@ INSERT  IGNORE INTO `shortlinks` (`id`, `name`, `type`, `url`, `clicks`, `create
 UNLOCK TABLES;
 
 --
--- Dumping data for table `simulation_message_isochrones_expansions`
---
-
-LOCK TABLES `simulation_message_isochrones_expansions` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_expansions` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_expansions` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Dumping data for table `simulation_message_isochrones_messages`
---
-
-LOCK TABLES `simulation_message_isochrones_messages` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_messages` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_messages` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Dumping data for table `simulation_message_isochrones_runs`
---
-
-LOCK TABLES `simulation_message_isochrones_runs` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_runs` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_runs` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Dumping data for table `simulation_message_isochrones_sessions`
---
-
-LOCK TABLES `simulation_message_isochrones_sessions` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_sessions` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_sessions` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Dumping data for table `simulation_message_isochrones_users`
---
-
-LOCK TABLES `simulation_message_isochrones_users` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_users` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_users` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Dumping data for table `spam_countries`
 --
 
@@ -4520,15 +4452,6 @@ UNLOCK TABLES;
 LOCK TABLES `spam_whitelist_subjects` WRITE;
 /*!40000 ALTER TABLE `spam_whitelist_subjects` DISABLE KEYS */;
 /*!40000 ALTER TABLE `spam_whitelist_subjects` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Dumping data for table `spatial_ref_sys`
---
-
-LOCK TABLES `spatial_ref_sys` WRITE;
-/*!40000 ALTER TABLE `spatial_ref_sys` DISABLE KEYS */;
-/*!40000 ALTER TABLE `spatial_ref_sys` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -4639,24 +4562,6 @@ LOCK TABLES `towns` WRITE;
 /*!40000 ALTER TABLE `towns` DISABLE KEYS */;
 INSERT  IGNORE INTO `towns` (`id`, `name`, `lat`, `lng`, `position`, `comment`) VALUES (1,'Edinburgh',55.9500,-3.2000,_binary '\0\0\0\0\0������	�������K@',NULL);
 /*!40000 ALTER TABLE `towns` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Dumping data for table `transport_duration_model`
---
-
-LOCK TABLES `transport_duration_model` WRITE;
-/*!40000 ALTER TABLE `transport_duration_model` DISABLE KEYS */;
-/*!40000 ALTER TABLE `transport_duration_model` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Dumping data for table `transport_mode_probabilities`
---
-
-LOCK TABLES `transport_mode_probabilities` WRITE;
-/*!40000 ALTER TABLE `transport_mode_probabilities` DISABLE KEYS */;
-/*!40000 ALTER TABLE `transport_mode_probabilities` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -4865,15 +4770,6 @@ UNLOCK TABLES;
 LOCK TABLES `users_comments` WRITE;
 /*!40000 ALTER TABLE `users_comments` DISABLE KEYS */;
 /*!40000 ALTER TABLE `users_comments` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Dumping data for table `users_dashboard`
---
-
-LOCK TABLES `users_dashboard` WRITE;
-/*!40000 ALTER TABLE `users_dashboard` DISABLE KEYS */;
-/*!40000 ALTER TABLE `users_dashboard` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -5527,15 +5423,6 @@ UNLOCK TABLES;
 LOCK TABLES `users_requests` WRITE;
 /*!40000 ALTER TABLE `users_requests` DISABLE KEYS */;
 /*!40000 ALTER TABLE `users_requests` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Dumping data for table `users_schedules`
---
-
-LOCK TABLES `users_schedules` WRITE;
-/*!40000 ALTER TABLE `users_schedules` DISABLE KEYS */;
-/*!40000 ALTER TABLE `users_schedules` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
