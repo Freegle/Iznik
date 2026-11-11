@@ -193,6 +193,25 @@ jobs:
           name: No cleanup note names a live switch
           command: node scripts/check-ux-cleanups.mjs
 
+  # The automod service (the flowchart review of Pending posts) has its own node:test suite. It
+  # guards the walker, the Claude backend, the HTTP server and the chart and its recorded
+  # version. npm ci builds the ai-flower git dependency, which needs the compiler toolchain
+  # this image carries.
+  test-automod:
+    docker:
+      - image: cimg/node:22.23.2
+    resource_class: medium
+    steps:
+      - checkout
+      - run:
+          name: Install automod dependencies
+          working_directory: automod
+          command: npm ci
+      - run:
+          name: Run automod tests
+          working_directory: automod
+          command: npm test
+
   mark-ci-passed:
     docker:
       - image: cimg/base:current
@@ -237,6 +256,7 @@ workflows:
       - check-role-literals
       - check-licences
       - check-ux-cleanups
+      - test-automod
       - freegle/build-and-test:
           use-executor:
             name: freegle/machine-executor-local
@@ -312,6 +332,7 @@ workflows:
       - check-role-literals
       - check-licences
       - check-ux-cleanups
+      - test-automod
       - freegle/build-and-test:
           post-steps:
             - run:
@@ -520,6 +541,7 @@ workflows:
       - check-role-literals
       - check-licences
       - check-ux-cleanups
+      - test-automod
       - freegle/build-and-test:
           use-executor:
             name: freegle/machine-executor-katapult
