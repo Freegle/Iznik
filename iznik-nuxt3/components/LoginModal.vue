@@ -462,6 +462,23 @@ const passwordError = computed(() => {
 // Lifecycle hooks
 watch([mounted, showModal, signUp], readExperimentArm)
 
+// The marketing consent box starts ticked the first time the form is shown. A member who then
+// unticks it keeps it unticked. Only a shown form does this: a member who is already signed in
+// never sees the box, so nothing is ticked for them.
+watch(
+  showModal,
+  (shown) => {
+    if (
+      shown &&
+      (miscStore.marketingConsentTicked === null ||
+        miscStore.marketingConsentTicked === undefined)
+    ) {
+      miscStore.setMarketingConsentTicked(true)
+    }
+  },
+  { immediate: true }
+)
+
 onMounted(() => {
   mounted.value = true
   document.addEventListener('cookieyes_consent_update', onCookieConsentChanged)
