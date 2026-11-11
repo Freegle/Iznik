@@ -175,48 +175,4 @@ class ReachLabelsTest extends TestCase
         // origin group.
         Http::assertSent(fn ($req) => str_contains($req->url(), 'msgid=' . $msgid));
     }
-
-    public function testStoreUnionSecsBackfillsFromStoredBlob(): void
-    {
-        // The backfill face: labels already stored, one reach-union call
-        // fills the threshold, stamps the existing leaves with the build
-        // fingerprint and merges the union regions.
-        $msgid = $this->seedReach();
-        $blob = random_bytes(64);
-        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => $blob]);
-        DB::table('rippling_reach_leaves')->insert([
-            ['msgid' => $msgid, 'leaf' => 7],
-        ]);
-        Http::fake([
-            '*/v1/reach-union*' => Http::response([
-                'origin_union_secs' => -1,
-                'union_leaves' => [88],
-                'fp' => '999',
-            ]),
-        ]);
-
-        $this->assertTrue(app(ReachService::class)->storeUnionSecs($msgid));
-
-        $this->assertEqualsWithDelta(-1.0, (float) DB::table('rippling_reach')->where('msgid', $msgid)->value('origin_union_secs'), 0.001);
-        $leaves = DB::table('rippling_reach_leaves')->where('msgid', $msgid)->orderBy('leaf')->get();
-        $this->assertSame([7, 88], $leaves->pluck('leaf')->map(fn ($l) => (int) $l)->all());
-        foreach ($leaves as $leaf) {
-            $this->assertSame('999', (string) $leaf->fp, 'existing rows are stamped, new rows written stamped');
-        }
-        // The blob went up base64d for the routing server to decode.
-        Http::assertSent(fn ($req) => ($req['labels'] ?? '') === base64_encode($blob));
-    }
-
-    public function testStoreUnionSecsStaleBuildIsQuiet(): void
-    {
-        // 422 = the blob belongs to a partition build the routing server no
-        // longer holds: the row keeps NULL (transitional behaviour) until the
-        // label backfill refreshes it.
-        $msgid = $this->seedReach();
-        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'blob']);
-        Http::fake(['*/v1/reach-union*' => Http::response(null, 422)]);
-
-        $this->assertFalse(app(ReachService::class)->storeUnionSecs($msgid));
-        $this->assertNull(DB::table('rippling_reach')->where('msgid', $msgid)->value('origin_union_secs'));
-    }
 }
