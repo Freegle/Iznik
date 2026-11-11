@@ -17,17 +17,14 @@ VALUES (990001, 'freegle@ilovefreegle.org', 1, NOW());
 -- tests never meet the question.
 INSERT IGNORE INTO messages (id, arrival, date, source, fromip, message, fromuser, fromname, fromaddr,
                              subject, type, textbody, lat, lng, locationid, availableinitially, availablenow,
-                             deliverypossible)
+                             deliverypossible, collection, autoreposts)
 SELECT 990101, arrival, date, source, fromip, 'Child car seat, group 1. Some wear on the straps.', fromuser,
        fromname, fromaddr, 'OFFER: Child car seat (EX1 1SR)', 'Offer', 'Child car seat, group 1. Some wear on the straps.',
-       lat, lng, locationid, 1, 1, 0
+       lat, lng, locationid, 1, 1, 0, 'Approved', 0
 FROM messages WHERE id = 150;
 
-INSERT IGNORE INTO messages_groups (msgid, groupid, arrival, collection, autoreposts)
-SELECT 990101, groupid, arrival, 'Approved', 0 FROM messages_groups WHERE msgid = 150;
-
-INSERT IGNORE INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype)
-SELECT 990101, point, 1, groupid, arrival, 'Offer' FROM messages_spatial WHERE msgid = 150;
+INSERT IGNORE INTO messages_spatial (msgid, point, successful, arrival, msgtype)
+SELECT 990101, point, 1, arrival, 'Offer' FROM messages_spatial WHERE msgid = 150;
 
 -- A database loaded before this offer was a car seat still has the armchair.
 UPDATE messages SET subject = 'OFFER: Child car seat (EX1 1SR)',
