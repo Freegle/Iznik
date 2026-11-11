@@ -2,10 +2,12 @@ package sentrylogpackage
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/go-sql-driver/mysql"
 )
 
 type tagsKey struct{}
@@ -36,23 +38,26 @@ func TagsFrom(ctx context.Context) map[string]string {
 	return t
 }
 
-// IsDeadlock reports whether err is a MySQL deadlock or lock wait timeout. This
-// mirrors database.IsDeadlockOrLockTimeout, which this package cannot import
-// because database imports this package.
+// IsDeadlock reports whether err is a MySQL deadlock (1213) or lock wait timeout (1205), by
+// the server's error number. The wording of the message differs between servers and
+// versions; the number does not.
 func IsDeadlock(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "deadlock") ||
-		strings.Contains(msg, "error 1213") ||
-		strings.Contains(msg, "lock wait timeout")
+	var me *mysql.MySQLError
+	return errors.As(err, &me) && (me.Number == 1213 || me.Number == 1205)
 }
 
 var (
-	quotedRe = regexp.MustCompile(`'(?:[^'\\]|\\.)*'`)
-	numberRe = regexp.MustCompile(`\b\d+\b`)
-	spaceRe  = regexp.MustCompile(`\s+`)
+	quotedRe  = regexp.MustCompile(`'(?:[^'\\]|\\.)*'`)
+	dquotedRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+	hexRe     = regexp.MustCompile(`\b0[xX][0-9a-fA-F]+\b`)
+	decimalRe = regexp.MustCompile(`\b\d+\.\d+\b`)
+	numberRe  = regexp.MustCompile(`\b\d+\b`)
+	spaceRe   = regexp.MustCompile(`\s+`)
+
+	// The value MySQL quotes in "Duplicate entry '...' for key" and "Incorrect ... value: '...' for
+	// column". Greedy, because the value is whatever a member typed and may contain a quote.
+	dupEntryRe = regexp.MustCompile(`(?s)(Duplicate entry )'.*'( for key)`)
+	badValueRe = regexp.MustCompile(`(?s)(value: )'.*'( for column)`)
 )
 
 const maxSQLSnippet = 200
@@ -61,12 +66,22 @@ const maxSQLSnippet = 200
 // says which query failed without carrying what a member typed into it.
 func SQLShape(sql string) string {
 	s := quotedRe.ReplaceAllString(sql, "?")
+	s = dquotedRe.ReplaceAllString(s, "?")
+	s = hexRe.ReplaceAllString(s, "?")
+	s = decimalRe.ReplaceAllString(s, "?")
 	s = numberRe.ReplaceAllString(s, "?")
 	s = strings.TrimSpace(spaceRe.ReplaceAllString(s, " "))
 	if len(s) > maxSQLSnippet {
 		s = s[:maxSQLSnippet]
 	}
 	return s
+}
+
+// ScrubMessage removes the member-supplied value from database errors that quote one. "Duplicate
+// entry 'someone@example.com' for key ..." would otherwise put an address into Sentry.
+func ScrubMessage(msg string) string {
+	msg = dupEntryRe.ReplaceAllString(msg, "${1}'?'${2}")
+	return badValueRe.ReplaceAllString(msg, "${1}'?'${2}")
 }
 
 // capture sends a database error to Sentry with the caller's tags and the shape
@@ -81,6 +96,6 @@ func capture(ctx context.Context, err error, fc func() (string, int64)) {
 				scope.SetExtra("sql_shape", SQLShape(sql))
 			}
 		}
-		sentry.CaptureMessage(err.Error())
+		sentry.CaptureMessage(ScrubMessage(err.Error()))
 	})
 }

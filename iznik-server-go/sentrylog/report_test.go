@@ -3,11 +3,13 @@ package sentrylogpackage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	logger2 "gorm.io/gorm/logger"
 )
@@ -33,9 +35,12 @@ func withRecorder(t *testing.T) *recordingTransport {
 }
 
 func TestIsDeadlock(t *testing.T) {
-	assert.True(t, IsDeadlock(errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")))
-	assert.True(t, IsDeadlock(errors.New("Error 1205: Lock wait timeout exceeded")))
-	assert.False(t, IsDeadlock(errors.New("context deadline exceeded")))
+	assert.True(t, IsDeadlock(&mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}))
+	assert.True(t, IsDeadlock(fmt.Errorf("wrapped: %w", &mysql.MySQLError{Number: 1205, Message: "Lock wait timeout exceeded"})))
+	// By number, not wording: a message that happens to say "deadlock" is not one.
+	assert.False(t, IsDeadlock(errors.New("Error 1213 (40001): Deadlock found")))
+	assert.False(t, IsDeadlock(&mysql.MySQLError{Number: 1062, Message: "Duplicate entry 'deadlock' for key 'email'"}))
+	assert.False(t, IsDeadlock(context.DeadlineExceeded))
 	assert.False(t, IsDeadlock(nil))
 }
 
@@ -47,13 +52,52 @@ func TestSQLShapeRemovesValues(t *testing.T) {
 	assert.LessOrEqual(t, len(SQLShape(strings.Repeat("a ", 400))), 200)
 }
 
+func TestSQLShapeRemovesEveryKindOfLiteral(t *testing.T) {
+	shape := SQLShape(`SELECT id FROM t WHERE a = "person@example.com" AND b = 0xDEADBEEF AND c = 12.50 AND d = 7 AND e = x'41'`)
+	for _, leaked := range []string{"person", "DEADBEEF", "12.50", "12", "x'41'"} {
+		assert.NotContains(t, shape, leaked)
+	}
+	assert.Contains(t, shape, "FROM t")
+}
+
+func TestScrubMessageRemovesTheQuotedValue(t *testing.T) {
+	msg := ScrubMessage("Error 1062 (23000): Duplicate entry 'person@example.com' for key 'users_emails.email'")
+	assert.NotContains(t, msg, "person")
+	assert.Equal(t, "Error 1062 (23000): Duplicate entry '?' for key 'users_emails.email'", msg)
+
+	// A value with a quote in it is still removed whole.
+	quoted := ScrubMessage("Duplicate entry 'o'brien@example.com' for key 'email'")
+	assert.NotContains(t, quoted, "brien")
+
+	bad := ScrubMessage("Incorrect string value: '\\xF0\\x9F' for column 'fullname' at row 1")
+	assert.NotContains(t, bad, "xF0")
+
+	assert.Equal(t, "context deadline exceeded", ScrubMessage("context deadline exceeded"))
+}
+
+func TestTraceSendsNoAddressToSentry(t *testing.T) {
+	rec := withRecorder(t)
+	l := newTestLogger(logger2.Error, 0, true)
+
+	captureStdout(func() {
+		l.Trace(context.Background(), time.Now(), func() (string, int64) { return "INSERT INTO users_emails (email) VALUES ('person@example.com')", 0 },
+			&mysql.MySQLError{Number: 1062, Message: "Duplicate entry 'person@example.com' for key 'email'"})
+	})
+
+	if assert.Len(t, rec.events, 1) {
+		assert.NotContains(t, rec.events[0].Message, "person")
+		shape, _ := rec.events[0].Extra["sql_shape"].(string)
+		assert.NotContains(t, shape, "person")
+	}
+}
+
 func TestTraceKeepsDeadlocksOutOfSentry(t *testing.T) {
 	rec := withRecorder(t)
 	l := newTestLogger(logger2.Error, 0, true)
 
 	out := captureStdout(func() {
 		l.Trace(context.Background(), time.Now(), func() (string, int64) { return "UPDATE x SET y = 1", 0 },
-			errors.New("Error 1213 (40001): Deadlock found when trying to get lock"))
+			&mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock"})
 	})
 
 	assert.Empty(t, rec.events)

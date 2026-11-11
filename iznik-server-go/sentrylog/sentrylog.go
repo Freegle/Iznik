@@ -92,7 +92,7 @@ func (l logger) Error(ctx context.Context, msg string, data ...interface{}) {
 	if l.LogLevel >= logger2.Error {
 		fmt.Printf(l.errStr+msg, append([]interface{}{utils.FileWithLineNum()}, data...)...)
 		err := fmt.Errorf(l.errStr+msg, append([]interface{}{utils.FileWithLineNum()}, data...)...)
-		sentry.CaptureMessage(err.Error())
+		sentry.CaptureMessage(ScrubMessage(err.Error()))
 	}
 }
 
