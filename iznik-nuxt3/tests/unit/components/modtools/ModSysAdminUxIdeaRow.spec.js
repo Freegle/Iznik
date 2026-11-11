@@ -126,6 +126,15 @@ describe('ModSysAdminUxIdeaRow', () => {
       expect(w.find('button').classes()).not.toContain('open')
     })
 
+    it('points aria-controls at the detail only while the detail is in the page', async () => {
+      const w = make({ open: false, controls: 'ux-idea-3' })
+      expect(w.find('button').attributes('aria-controls')).toBeUndefined()
+      expect(w.find('#ux-idea-3').exists()).toBe(false)
+      await w.setProps({ open: true })
+      expect(w.find('button').attributes('aria-controls')).toBe('ux-idea-3')
+      expect(w.find('#ux-idea-3').exists()).toBe(true)
+    })
+
     it('asks to be opened or closed when it is pressed', async () => {
       const w = make()
       await w.find('button').trigger('click')

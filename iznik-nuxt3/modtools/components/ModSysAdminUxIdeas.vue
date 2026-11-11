@@ -40,16 +40,22 @@
       </div>
 
       <!-- Waiting ideas are summarised for each funnel; a funnel is opened to list them. -->
-      <ul v-else-if="byFunnel" class="funnels list-unstyled mb-2">
-        <li v-for="f in funnelRows" :key="f.flow" class="funnel-row">
-          <a
-            class="funnel-link"
-            :href="hrefFor({ flow: f.flow, idea: undefined })"
-            @click="(e) => chooseFunnel(f.flow, e)"
-            >{{ f.line }}</a
-          >
-        </li>
-      </ul>
+      <template v-else-if="byFunnel">
+        <p v-if="type" class="type-notice small text-muted mb-2">
+          These lines count both types. The type choice ({{ typeWord }}) applies
+          once a funnel is opened.
+        </p>
+        <ul class="funnels list-unstyled mb-2">
+          <li v-for="f in funnelRows" :key="f.flow" class="funnel-row">
+            <a
+              class="funnel-link"
+              :href="hrefFor({ flow: f.flow, idea: undefined })"
+              @click="(e) => chooseFunnel(f.flow, e)"
+              >{{ f.line }}</a
+            >
+          </li>
+        </ul>
+      </template>
 
       <template v-else>
         <div class="filters d-flex flex-wrap align-items-center gap-2 mb-2">
@@ -175,6 +181,7 @@ const type = computed(() =>
     ? props.view.extra.itype
     : ''
 )
+const typeWord = computed(() => (type.value === 'fix' ? 'Fix' : 'Experiment'))
 const openId = computed(() => {
   const idea = props.view.extra?.idea
   return /^\d+$/.test(idea || '') ? Number(idea) : null

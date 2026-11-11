@@ -164,6 +164,20 @@ describe('ModSysAdminUxIdeas', () => {
       expect(store.load).toHaveBeenCalledWith(WAITING)
     })
 
+    it('says so on the funnel lines when a type is kept in the address, and not when none is', () => {
+      const withType = make(viewOf({ itype: 'fix' }))
+      expect(withType.find('.funnels').exists()).toBe(true)
+      expect(withType.find('.type-notice').text()).toBe(
+        'These lines count both types. The type choice (Fix) applies once a funnel is opened.'
+      )
+      expect(
+        make(viewOf({ itype: 'experiment' }))
+          .find('.type-notice')
+          .text()
+      ).toContain('(Experiment)')
+      expect(make(viewOf()).find('.type-notice').exists()).toBe(false)
+    })
+
     it('ignores an ux_flow that is no funnel, as another section may leave one', () => {
       make(viewOf({ flow: 'none' }))
       expect(store.load).toHaveBeenCalledWith(WAITING)

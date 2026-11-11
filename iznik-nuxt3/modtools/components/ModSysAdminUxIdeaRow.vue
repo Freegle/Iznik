@@ -5,7 +5,7 @@
       class="ux-idea-row"
       :class="{ open, 'with-funnel': showFunnel }"
       :aria-expanded="open ? 'true' : 'false'"
-      :aria-controls="controls || undefined"
+      :aria-controls="open && controls ? controls : undefined"
       @click="emit('toggle')"
     >
       <span class="caret" aria-hidden="true" />
