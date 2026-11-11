@@ -4,6 +4,7 @@ import ModMessage from '~/modtools/components/ModMessage.vue'
 // The real child, so tests can assert on what a moderator actually sees rather
 // than on the stub that hid duplicate hold reasons (Discourse 9989).
 import ModMessageWorry from '~/modtools/components/ModMessageWorry.vue'
+import { ROLE_MEMBER, ROLE_MODERATOR } from '~/constants'
 
 // Hoisted mocks
 const {
@@ -1488,7 +1489,7 @@ describe('ModMessage', () => {
     it("shows 'Sender only available to mods' for a member without fromuser loaded", async () => {
       const wrapper = mountComponent(
         { summary: false },
-        { fromuser: null, myrole: 'Member' }
+        { fromuser: null, myrole: ROLE_MEMBER }
       )
       await wrapper.vm.$nextTick()
       const notice = wrapper.find('.notice-message.danger')
@@ -1500,7 +1501,7 @@ describe('ModMessage', () => {
     it("shows the can't-identify-sender fallback for other roles", async () => {
       const wrapper = mountComponent(
         { summary: false },
-        { fromuser: null, myrole: 'Moderator' }
+        { fromuser: null, myrole: ROLE_MODERATOR }
       )
       await wrapper.vm.$nextTick()
       const notice = wrapper.find('.notice-message.danger')

@@ -4,6 +4,7 @@ import { defineComponent, h, Suspense, computed, nextTick } from 'vue'
 
 // Import layout after mocks
 import DefaultLayout from '~/modtools/layouts/default.vue'
+import { ROLE_MODERATOR } from '~/constants'
 
 // Stub Nuxt auto-imported globals not available in vitest
 vi.stubGlobal('useHead', vi.fn())
@@ -449,7 +450,7 @@ describe('modtools default layout - Check only on trial communities', () => {
   })
 
   it("hides Check when none of the moderator's communities is in the trial", async () => {
-    mockAuthStore.groups = [{ groupid: 1, role: 'Moderator' }]
+    mockAuthStore.groups = [{ groupid: 1, role: ROLE_MODERATOR }]
     const links = captureLinks()
     await flushPromises()
     await nextTick()
@@ -459,8 +460,8 @@ describe('modtools default layout - Check only on trial communities', () => {
 
   it("shows Check when one of the moderator's communities is in the trial", async () => {
     mockAuthStore.groups = [
-      { groupid: 1, role: 'Moderator' },
-      { groupid: 2, role: 'Moderator', autoapprovetrial: true },
+      { groupid: 1, role: ROLE_MODERATOR },
+      { groupid: 2, role: ROLE_MODERATOR, autoapprovetrial: true },
     ]
     const links = captureLinks()
     await flushPromises()
