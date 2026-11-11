@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
 Fine-tune an encoder (DistilBERT/RoBERTa) as a binary promise classifier on the
-same clean span->promised CSV. The real DST test vs the linear baseline: same
-input, same labels, same conversation-level split — only the model changes.
+same clean span->promised CSV. Same input and labels as the linear baseline, and a
+conversation-level split, but not the same split: this script shuffles the room ids with a
+seeded Python RNG, while promise:train uses its own seeded PHP shuffle. The two test sets
+differ, so compare the metrics, not the rows.
 
 Scored on what matters here: expected cost with FP 20x worse than FN
-(=> precision-at-target), plus ROC/PR-AUC and a threshold sweep.
+(=> precision-at-target), plus ROC/PR-AUC and a threshold sweep. The cost-optimal threshold
+and the high-precision regime are picked on the test windows themselves, so they are upper
+bounds, not results.
 
 Usage:
   python3 finetune_encoder.py --csv <path> [--model distilbert-base-uncased]
@@ -143,11 +147,11 @@ def main():
     print(f"model      : {args.model}  ({args.epochs} epochs)")
     print(f"test       : {M['n']} windows (base rate {M['base_rate']:.1%})")
     print(f"ROC-AUC    : {M['roc']:.3f}   PR-AUC: {M['pr']:.3f}")
-    print(f"high-precision regime (recall>=0.2): precision {M['high_prec'][0]:.3f} "
+    print(f"high-precision regime (recall>=0.2, best point on the test set): precision {M['high_prec'][0]:.3f} "
           f"at recall {M['high_prec'][1]:.3f}")
     for thr, P, R, F1 in M["sweep"]:
         print(f"  thr {thr:.1f}: P {P:.3f}  R {R:.3f}  F1 {F1:.3f}")
-    print(f"cost-optimal thr {b['thr']:.2f}: P {b['P']:.3f} R {b['R']:.3f} "
+    print(f"cost-optimal thr {b['thr']:.2f} (chosen on the test set): P {b['P']:.3f} R {b['R']:.3f} "
           f"(TP {b['TP']} FP {b['FP']} FN {b['FN']})")
     print(f"expected cost (FP={int(args.fp_cost)}xFN): {b['cost']:.0f} "
           f"vs never-fire {M['never_fire_cost']:.0f} -> "
