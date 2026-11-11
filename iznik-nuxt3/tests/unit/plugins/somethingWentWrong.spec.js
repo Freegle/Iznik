@@ -101,11 +101,24 @@ describe('something-went-wrong plugin', () => {
     )
   })
 
-  it('shows nothing for a refusal to a signed-out visitor', async () => {
+  it('shows nothing for a signed-out visitor whose read was refused', async () => {
     const handler = await load()
     expect(handler(refusal('/chat?requestid=2'), {}, 'x')).toBe(true)
     expect(mocks.setErrorDetails).not.toHaveBeenCalled()
     expect(mocks.captureException).not.toHaveBeenCalled()
+  })
+
+  it('still shows the notice when a signed-out visitor write was refused', async () => {
+    const handler = await load()
+    const err = new APIError(
+      {
+        request: { method: 'POST', path: '/message?requestid=2' },
+        response: { status: 401 },
+      },
+      'refused'
+    )
+    expect(handler(err, {}, 'x')).toBe(true)
+    expect(mocks.setErrorDetails).toHaveBeenCalledWith(err)
   })
 
   it('does not report again an error BaseAPI already sent', async () => {

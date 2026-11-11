@@ -33,10 +33,13 @@ function reportApiError(err) {
   }
 }
 
-// A signed-out member's calls for their own data answer 401, and nothing on screen is wrong.
+// A signed-out visitor's reads of a member's own data (chats, notification count) answer 401, and
+// nothing on screen is wrong. A write that is refused (Reply, Save, Join) is different: the visitor
+// asked for something and it did not happen, so they are still told.
 function isSignedOutRefusal(err) {
   return (
     err.response?.status === 401 &&
+    String(err.request?.method || '').toUpperCase() === 'GET' &&
     !String(err.request?.path || '').includes('loggedInAs=')
   )
 }
