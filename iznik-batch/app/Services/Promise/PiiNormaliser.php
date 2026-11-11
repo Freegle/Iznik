@@ -15,6 +15,10 @@ class PiiNormaliser
         . '|Crescent|Cres|Place|Pl|Gardens|Gdns|Terrace|Grove|Walk|Row|Square|Sq|Mews'
         . '|Parade|Rise|Park|Green|Hill|Vale|Croft|Wharf|Quay|Gate|Yard|Boulevard|Broadway';
 
+    /** Lower-case words that can follow a street in running text ("12 elm road please"). */
+    private const AFTER_STREET = 'please|pls|thanks|thank|and|or|but|then|so|if|after|before|around|about|at|on|in|by|for|to|from'
+        . '|ok|okay|tomorrow|today|tonight|tmrw|ish|thx|cheers|between|until|till|when|where|which|that|i|we|you';
+
     /** Words that can follow a greeting without being a name ("Hi there", "Hello again"). */
     private const NOT_A_NAME = 'There|All|Everyone|Everybody|Again|Are|Is|Was|Can|Could|Would|Do|Did|Does'
         . '|Thanks|Thank|Just|Still|Sorry|Yes|No|Please|Ok|Okay|Sure|We|You|It|The|This|That'
@@ -110,9 +114,11 @@ class PiiNormaliser
             $text
         );
         // Pattern 2: "12 elm road": lower-case street name, one name word, and only a suffix
-        //            that is not also an everyday word.
+        //            that is not also an everyday word. The suffix must end the phrase or be
+        //            followed by punctuation or a connecting word (AFTER_STREET), so "3 old road
+        //            bikes" and "2 fast lane drivers" stay as text.
         $text = preg_replace(
-            '/\b\d{1,4}[a-z]?\s+[a-z]+\s+(?i:' . self::SAFE_SUFFIX . ')\b/',
+            '/\b\d{1,4}[a-z]?\s+[a-z]+\s+(?i:' . self::SAFE_SUFFIX . ')\b(?!\s+(?!(?:' . self::AFTER_STREET . ')\b)[a-z])/',
             '<ADDRESS>',
             $text
         );

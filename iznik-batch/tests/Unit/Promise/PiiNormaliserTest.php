@@ -151,6 +151,22 @@ class PiiNormaliserTest extends TestCase
         }
     }
 
+    public function test_lowercase_street_followed_by_a_connecting_word_is_redacted()
+    {
+        foreach (['come to 12 elm road please', 'it is 7 mill lane, thanks', '12 elm road and ring the bell'] as $input) {
+            $result = $this->normaliser->normalise($input);
+            $this->assertStringContainsString('<ADDRESS>', $result, "'$input' should be redacted");
+            $this->assertDoesNotMatchRegularExpression('/\d/', $result, "'$input' leaked a number: $result");
+        }
+    }
+
+    public function test_quantity_adjective_and_street_word_is_not_redacted_as_address()
+    {
+        foreach (['I have 3 old road bikes', 'only 2 fast lane drivers', 'I have 2 spare Gardens chairs', 'got 4 big avenue signs'] as $input) {
+            $this->assertStringNotContainsString('<ADDRESS>', $this->normaliser->normalise($input), $input);
+        }
+    }
+
     public function test_lowercase_durations_are_not_redacted_as_address()
     {
         foreach (['it is a 20 min drive', 'about 5 minutes walk', '3 chairs in the park', '3 bags st'] as $input) {
