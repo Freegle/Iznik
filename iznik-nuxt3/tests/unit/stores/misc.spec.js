@@ -33,7 +33,7 @@ describe('misc store', () => {
       expect(store.apiCount).toBe(0)
       expect(store.online).toBe(true)
       expect(store.modtools).toBe(false)
-      expect(store.marketingConsentTicked).toBe(false)
+      expect(store.marketingConsentTicked).toBe(null)
       expect(store.source).toBeNull()
     })
   })

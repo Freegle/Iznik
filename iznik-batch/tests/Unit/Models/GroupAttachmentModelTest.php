@@ -62,6 +62,31 @@ class GroupAttachmentModelTest extends TestCase
         $this->assertStringNotContainsString('live.example.com', $url);
     }
 
+    public function test_an_archived_thumbnail_is_made_by_the_resizer_not_read_from_a_v1_thumbnail(): void
+    {
+        $attachment = new GroupAttachment(['archived' => true]);
+        $attachment->id = 5;
+
+        config(['freegle.images.archived_domain' => 'https://images.example.com/archive']);
+        config(['freegle.delivery.base_url' => 'https://delivery.example.com']);
+
+        $this->assertSame('https://images.example.com/archive/gimg_5.jpg', $attachment->getPath(false));
+        $this->assertSame(
+            'https://delivery.example.com?w=250&h=250&url=' . rawurlencode('https://images.example.com/archive/gimg_5.jpg'),
+            $attachment->getPath(true)
+        );
+    }
+
+    public function test_an_archived_thumbnail_still_on_azure_is_v1s_own(): void
+    {
+        $attachment = new GroupAttachment(['archived' => true]);
+        $attachment->id = 5;
+
+        config(['freegle.images.archived_domain' => 'https://freegle.blob.core.windows.net/images']);
+
+        $this->assertSame('https://freegle.blob.core.windows.net/images/tgimg_5.jpg', $attachment->getPath(true));
+    }
+
     public function test_get_path_uses_live_domain_when_not_archived(): void
     {
         $attachment = new GroupAttachment(['archived' => false]);

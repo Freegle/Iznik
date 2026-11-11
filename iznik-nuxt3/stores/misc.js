@@ -40,10 +40,11 @@ export const useMiscStore = defineStore('misc', {
     worktimer: false,
     deferGetMessages: false,
     source: null,
-    // Set when the member ticks the marketing consent box on the login form. The next user fetch
-    // saves it to the server, which holds the consent. Not persisted: a tick must not outlive the
-    // page, and a value left over from the old ticked default must never count as consent.
-    marketingConsentTicked: false,
+    // The marketing consent box on the login form. null until the form is shown, when the box
+    // starts ticked; then whatever the member leaves it as. The next user fetch saves a tick to
+    // the server, which holds the consent. Not persisted: a tick must not outlive the page, and a
+    // member who never saw the form is never opted in.
+    marketingConsentTicked: null,
   }),
   actions: {
     init(config) {

@@ -113,10 +113,6 @@ func GetVisualise(c *fiber.Ctx) error {
 	if imageDomain == "" {
 		imageDomain = "images.ilovefreegle.org"
 	}
-	archivedDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
-	if archivedDomain == "" {
-		archivedDomain = "images.ilovefreegle.org"
-	}
 
 	results := make([]VisualiseResult, len(rows))
 	var lastCtx uint64
@@ -153,7 +149,7 @@ func GetVisualise(c *fiber.Ctx) error {
 			var att AttachmentInfo
 			db.Table("messages_attachments").Select("id, archived, externaluid, externalmods").Where("id = ?", attid).Scan(&att)
 
-			attPath, attThumb := getAttachmentPaths(att, imageDomain, archivedDomain)
+			attPath, attThumb := getAttachmentPaths(att, imageDomain)
 			mu.Lock()
 			results[idx].Attachment = map[string]interface{}{
 				"id":    attid,
@@ -167,7 +163,7 @@ func GetVisualise(c *fiber.Ctx) error {
 		wg.Add(1)
 		go func(idx int, userid uint64) {
 			defer wg.Done()
-			icon := getUserIcon(db, userid, imageDomain, archivedDomain)
+			icon := getUserIcon(db, userid, imageDomain)
 			mu.Lock()
 			results[idx].From = UserIcon{ID: userid, Icon: icon}
 			mu.Unlock()
@@ -177,7 +173,7 @@ func GetVisualise(c *fiber.Ctx) error {
 		wg.Add(1)
 		go func(idx int, userid uint64) {
 			defer wg.Done()
-			icon := getUserIcon(db, userid, imageDomain, archivedDomain)
+			icon := getUserIcon(db, userid, imageDomain)
 			mu.Lock()
 			results[idx].To = UserIcon{ID: userid, Icon: icon}
 			mu.Unlock()
@@ -193,7 +189,7 @@ func GetVisualise(c *fiber.Ctx) error {
 				Where("refmsgid = ? AND userid != ? AND userid != ?", msgid, touser, fromuser).Scan(&otherIDs)
 
 			for _, o := range otherIDs {
-				icon := getUserIcon(db, o.Userid, imageDomain, archivedDomain)
+				icon := getUserIcon(db, o.Userid, imageDomain)
 
 				// Get user location from settings JSON. Not for a Trash Nothing member:
 				// their mylocation is stale V1 data.
@@ -229,20 +225,19 @@ func GetVisualise(c *fiber.Ctx) error {
 	})
 }
 
-func getAttachmentPaths(att AttachmentInfo, imageDomain, archivedDomain string) (string, string) {
+func getAttachmentPaths(att AttachmentInfo, imageDomain string) (string, string) {
 	if att.Externaluid != "" {
 		url := misc.GetImageDeliveryUrl(att.Externaluid, string(att.Externalmods))
 		return url, url
 	}
 	if att.Archived > 0 {
-		return "https://" + archivedDomain + "/img_" + strconv.FormatUint(att.ID, 10) + ".jpg",
-			"https://" + archivedDomain + "/timg_" + strconv.FormatUint(att.ID, 10) + ".jpg"
+		return misc.ArchivedImageUrls("img", att.ID)
 	}
 	return "https://" + imageDomain + "/img_" + strconv.FormatUint(att.ID, 10) + ".jpg",
 		"https://" + imageDomain + "/timg_" + strconv.FormatUint(att.ID, 10) + ".jpg"
 }
 
-func getUserIcon(db *gorm.DB, userid uint64, imageDomain, archivedDomain string) string {
+func getUserIcon(db *gorm.DB, userid uint64, imageDomain string) string {
 	type profileRow struct {
 		Profileid    uint64
 		Url          string
@@ -271,7 +266,8 @@ func getUserIcon(db *gorm.DB, userid uint64, imageDomain, archivedDomain string)
 		return misc.GetImageDeliveryUrl(p.Externaluid, string(p.Externalmods))
 	}
 	if p.Archived > 0 {
-		return "https://" + archivedDomain + "/tuimg_" + strconv.FormatUint(p.Profileid, 10) + ".jpg"
+		_, thumb := misc.ArchivedImageUrls("uimg", p.Profileid)
+		return thumb
 	}
 	return "https://" + imageDomain + "/tuimg_" + strconv.FormatUint(p.Profileid, 10) + ".jpg"
 }

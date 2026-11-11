@@ -469,9 +469,13 @@ export const useAuthStore = defineStore('auth', {
       // Use V2 API (Go backend) - GET /session returns {me, groups, work, discourse, ...}
       if (this.auth.jwt || this.auth.persistent) {
         try {
+          // The installed app's own version (App.getInfo()), so support can see which app a member
+          // runs: the server records it in users_builddates. Null on the website, so not sent there.
+          const appversion = useMobileStore().appVersion
           const sessionData = await this.$api.session.fetchv2(
             {
               webversion: this.config.public.BUILD_DATE,
+              ...(appversion ? { appversion } : {}),
             },
             false
           )
@@ -568,7 +572,7 @@ export const useAuthStore = defineStore('auth', {
 
         if (import.meta.client) {
           // The server holds marketing consent. The login box can only give it, and only when the
-          // member ticked it; withdrawing is done in Settings.
+          // member saw the form and left the box ticked; withdrawing is done in Settings.
           const miscStore = useMiscStore()
 
           if (miscStore.marketingConsentTicked) {

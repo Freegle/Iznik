@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/index.vue
@@ -37,7 +37,7 @@ The join form has the Continue with buttons at the top, then your name, email an
 then the **Join Freegle!** button. Joining signs you in at once.
 
 Under the form is a box to say you would like news and ways to support Freegle by email. It
-starts unticked, and leaving it unticked changes nothing. You can change your mind later with
+starts ticked. Untick it if you would rather not; unticking it changes nothing else. You can change your mind later with
 **Freegle updates** in Settings.
 
 Already have an account? Choose **Log in** in the same box. Forgotten your password? Use

@@ -63,8 +63,9 @@ function getPool() {
 // on the host / in CI; see guard.test.js.
 const { guardSelect } = require('./guard')
 
-async function dbSelect(sql, maxRows = 500) {
-  const guarded = guardSelect(sql, maxRows)
+// opts.allowSecretNames is only for queries written here in the code; db_query never passes it.
+async function dbSelect(sql, maxRows = 500, opts = {}) {
+  const guarded = guardSelect(sql, maxRows, opts)
   // Fail CLOSED: take a dedicated connection and make it read-only + time-bounded
   // BEFORE running the query; if that can't be set, abort rather than run writable.
   const conn = await getPool().getConnection()
@@ -465,16 +466,24 @@ function buildTools(ctx) {
 
   const identify_user = tool(
     'identify_user',
-    'Resolve a member from an email, user id, or name. Returns the user id, ALL their email addresses ' +
-      '(including any Apple private-relay @privaterelay.appleid.com addresses), login methods, and account status. ' +
-      'Use this first when the member is given by email/name rather than id.',
+    'Resolve a member from an email, part of an email, a phone number, user id, or name. Returns the user id, ' +
+      'ALL their email addresses (including any Apple private-relay @privaterelay.appleid.com addresses), login ' +
+      'methods, and account status. Use this first when the member is given by email/name rather than id. When ' +
+      'several members match part of an email or a phone number, it lists them instead.',
     {
       email: z.string().optional().describe('Email address (checks users_emails, not users)'),
+      email_part: z
+        .string()
+        .optional()
+        .describe('Part of an email address, at least 4 characters, when only part is known or it may be mistyped'),
+      phone: z.string().optional().describe('Phone number in any format; matched on its last 10 digits'),
       userid: z.number().optional().describe('Numeric user id'),
       name: z.string().optional().describe('Display name (fuzzy)'),
     },
     async (a) => {
       try {
+        // A LIKE pattern from the member's text: % and _ in it are literal characters.
+        const likeLiteral = (s) => String(s).replace(/[\\%_]/g, '\\$&')
         let id = a.userid
         if (!id && a.email) {
           const r = await dbSelect(
@@ -482,6 +491,29 @@ function buildTools(ctx) {
              WHERE ue.email=${getPool().escape(a.email)} AND u.deleted IS NULL LIMIT 1`
           )
           id = r[0]?.id
+        }
+        if (!id && a.email_part) {
+          const part = String(a.email_part).trim()
+          if (part.length < 4) return err('email_part needs at least 4 characters')
+          const r = await dbSelect(
+            `SELECT u.id, ue.email FROM users u JOIN users_emails ue ON ue.userid=u.id
+             WHERE ue.email LIKE ${getPool().escape('%' + likeLiteral(part) + '%')} AND u.deleted IS NULL
+             ORDER BY u.lastaccess DESC LIMIT 10`
+          )
+          if (new Set(r.map((x) => x.id)).size === 1) id = r[0].id
+          else if (r.length > 1) return text({ ambiguous: r })
+        }
+        if (!id && a.phone) {
+          // Stored as entered for SMS, e.g. +447700900123 or 07700900123: the last 10 digits are the same.
+          const digits = String(a.phone).replace(/\D/g, '')
+          if (digits.length < 9) return err('phone needs at least 9 digits')
+          const r = await dbSelect(
+            `SELECT u.id, up.number FROM users u JOIN users_phones up ON up.userid=u.id
+             WHERE up.number LIKE ${getPool().escape('%' + digits.slice(-10))} AND u.deleted IS NULL
+             ORDER BY u.lastaccess DESC LIMIT 10`
+          )
+          if (new Set(r.map((x) => x.id)).size === 1) id = r[0].id
+          else if (r.length > 1) return text({ ambiguous: r })
         }
         if (!id && a.name) {
           const r = await dbSelect(
@@ -497,7 +529,10 @@ function buildTools(ctx) {
                     deleted IS NOT NULL AS in_limbo, forgotten IS NOT NULL AS purged FROM users WHERE id=${id}`),
           dbSelect(`SELECT email, preferred, validated IS NOT NULL AS confirmed, bounced,
                     email LIKE '%@privaterelay.appleid.com' AS apple_relay FROM users_emails WHERE userid=${id}`),
-          dbSelect(`SELECT type, credentials IS NOT NULL AS has_password, lastaccess FROM users_logins WHERE userid=${id}`),
+          // Names the secret table and column but returns only whether a password exists.
+          dbSelect(`SELECT type, credentials IS NOT NULL AS has_password, lastaccess FROM users_logins WHERE userid=${id}`, 500, {
+            allowSecretNames: true,
+          }),
         ])
         return text({ userid: id, profile: profile[0], emails, logins })
       } catch (e) {

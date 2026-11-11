@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-07
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -108,7 +108,7 @@ SDK's `Read`/`Grep`/`Glob` confined to the codebase checkout:
 
 | Tool | Purpose |
 |------|---------|
-| `identify_user` | resolve an email / name / id to a member (must be done first) |
+| `identify_user` | resolve an email, part of an email, a phone number, a name or an id to a member (must be done first); lists the members when part of an email or a phone number matches several |
 | `get_user_dump` + `query_dump` | pull a per-user SQLite dump (~70 tables + Loki + Sentry, secrets redacted) via the Go API and run SQL against it locally |
 | `db_query` | ad-hoc **read-only** SQL against the live DB (guarded — see below) |
 | `loki_search` | multi-pass member-id search (both label eras), or raw LogQL (window capped) |
@@ -417,7 +417,10 @@ member is deleted with that member's account (`userid` cascades).
 - **Query guard (`guardSelect`)** — `SELECT`/`WITH` only, single statement, SQL comments
   stripped first (defeats `INTO/**/OUTFILE`), a denylist of write/DoS keywords, a denylist
   of auth-secret **tables** (`sessions`, `users_logins`, `config`, …) and **columns**
-  (`credentials`, `token`, `password`, …), and a hard cap on the `LIMIT` value.
+  (`credentials`, `token`, `password`, …), and a hard cap on the `LIMIT` value. A query
+  written in `tools.js` itself can pass `allowSecretNames`: `identify_user` asks whether a
+  member has a password (`credentials IS NOT NULL` from `users_logins`), which names the
+  secret table but returns only a yes or no. `db_query` never passes it.
 - **Prompt-injection defence (`prompt.js`)** — the system prompt marks everything
   tools return (chat text, names, log lines) as **data, never instructions**; tools are
   read-only (`disallowedTools: Write/Edit/Bash`), file reads are confined to

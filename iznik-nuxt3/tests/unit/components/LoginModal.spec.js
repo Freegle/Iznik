@@ -1285,12 +1285,19 @@ describe('LoginModal', () => {
       expect(wrapper.find('input[type="checkbox"]').exists()).toBe(true)
     })
 
-    // Consent has to be given, so the box is never ticked for the member.
-    it('checkbox is unticked by default', async () => {
+    it('reflects what the store holds', async () => {
+      mockMarketingConsentTicked.value = true
       const wrapper = createWrapper()
       await flushPromises()
-      const checkbox = wrapper.find('input[type="checkbox"]')
-      expect(checkbox.element.checked).toBe(false)
+      expect(wrapper.find('input[type="checkbox"]').element.checked).toBe(true)
+    })
+
+    it('records an untick, which the next user fetch then leaves alone', async () => {
+      mockMarketingConsentTicked.value = true
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('input[type="checkbox"]').setValue(false)
+      expect(mockSetMarketingConsentTicked).toHaveBeenCalledWith(false)
     })
 
     it('records a tick for the next user fetch to save', async () => {
@@ -1313,8 +1320,24 @@ describe('LoginModal', () => {
   })
 
   describe('component initialization', () => {
-    it('does not tick the marketing consent box on mount', async () => {
+    it('ticks the marketing consent box the first time the form is shown', async () => {
       mockMarketingConsentTicked.value = null
+      mockForceLogin.value = true
+      createWrapper()
+      await flushPromises()
+      expect(mockSetMarketingConsentTicked).toHaveBeenCalledWith(true)
+    })
+
+    it('ticks nothing while the form is not shown', async () => {
+      mockMarketingConsentTicked.value = null
+      mockForceLogin.value = false
+      createWrapper()
+      await flushPromises()
+      expect(mockSetMarketingConsentTicked).not.toHaveBeenCalled()
+    })
+
+    it('leaves a box the member has unticked alone when the form is shown again', async () => {
+      mockMarketingConsentTicked.value = false
       mockForceLogin.value = true
       createWrapper()
       await flushPromises()

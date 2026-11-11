@@ -141,6 +141,7 @@ const mockMobileStore = {
   acceptedMobilePushId: false,
   isiOS: false,
   deviceuserinfo: 'test-device',
+  appVersion: null,
 }
 vi.mock('~/stores/mobile', () => ({
   useMobileStore: () => mockMobileStore,
@@ -192,6 +193,7 @@ describe('auth store', () => {
       acceptedMobilePushId: false,
       isiOS: false,
       deviceuserinfo: 'test-device',
+      appVersion: null,
     })
     Object.assign(mockMiscStore, {
       modtools: false,
@@ -832,6 +834,30 @@ describe('auth store', () => {
     })
   })
 
+  describe('fetchUser reports the installed app version', () => {
+    it('sends the app version on the session call, so the server records it', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockMobileStore.appVersion = '3.2.28'
+      mockFetchv2.mockResolvedValue({ me: { id: 5 }, groups: [] })
+
+      await store.fetchUser()
+
+      expect(mockFetchv2).toHaveBeenCalledWith(
+        expect.objectContaining({ appversion: '3.2.28' }),
+        false
+      )
+    })
+
+    it('sends no app version from the website', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockFetchv2.mockResolvedValue({ me: { id: 5 }, groups: [] })
+
+      await store.fetchUser()
+
+      expect(mockFetchv2.mock.calls[0][0]).not.toHaveProperty('appversion')
+    })
+  })
+
   describe('fetchUser group batch off the critical path', () => {
     it('resolves without waiting for the group detail batch', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
@@ -1287,10 +1313,15 @@ describe('auth store', () => {
       expect(mockMiscStore.marketingConsentTicked).toBe(false)
     })
 
-    it('leaves the profile alone when the box was not ticked', async () => {
-      for (const marketingconsent of [false, true]) {
+    it('leaves the profile alone when the box was unticked or the form was never shown', async () => {
+      for (const [marketingconsent, ticked] of [
+        [false, false],
+        [true, false],
+        [false, null],
+        [true, null],
+      ]) {
         store.setAuth('valid-jwt', 'valid-persistent')
-        mockMiscStore.marketingConsentTicked = false
+        mockMiscStore.marketingConsentTicked = ticked
         mockFetchv2.mockResolvedValue({
           me: { id: 1, marketingconsent },
           groups: [],

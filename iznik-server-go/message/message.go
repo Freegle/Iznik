@@ -529,7 +529,6 @@ func AddSummaryRoadMetrics(viewerLat, viewerLng float64, res []MessageSummary) {
 
 func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	db := database.DBConn
-	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
 	imageDomain := os.Getenv("IMAGE_DOMAIN")
 
 	// This can be used to fetch one or more messages.  Fetch them in parallel.  Empirically this is faster than
@@ -907,8 +906,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 						// Masked AI picture: leave the paths empty so the frontend shows the placeholder.
 						continue
 					} else if a.Archived > 0 {
-						message.MessageAttachments[i].Path = "https://" + archiveDomain + "/img_" + strconv.FormatUint(a.ID, 10) + ".jpg"
-						message.MessageAttachments[i].Paththumb = "https://" + archiveDomain + "/timg_" + strconv.FormatUint(a.ID, 10) + ".jpg"
+						message.MessageAttachments[i].Path, message.MessageAttachments[i].Paththumb = misc.ArchivedImageUrls("img", a.ID)
 					} else {
 						message.MessageAttachments[i].Path = "https://" + imageDomain + "/img_" + strconv.FormatUint(a.ID, 10) + ".jpg"
 						message.MessageAttachments[i].Paththumb = "https://" + imageDomain + "/timg_" + strconv.FormatUint(a.ID, 10) + ".jpg"

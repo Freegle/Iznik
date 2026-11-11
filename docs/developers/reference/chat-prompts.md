@@ -162,11 +162,12 @@ That fixes clients carrying this build. It does nothing for the app somebody is 
 which is why the sending side is a separate change: every client has to be able to understand a
 prompt *before* anything starts sending them.
 
-**There is no way to gate this per member.** `users_builddates` has an `appversion` column, but it
-is empty for every user seen in the last 30 days on live (41,402 of 41,402) - only `webversion` is
-populated. So we can neither suppress prompts for old clients nor measure app adoption from it. The
-control is therefore time and release adoption, not a query, and that is worth fixing before the
-sending side is switched on.
+**There is no way yet to gate this per member.** `users_builddates` has an `appversion` column, but it
+was empty for every user seen in the 30 days to the end of October on live (41,402 of 41,402) - only
+`webversion` was populated, because the app never sent its version on `GET /session`. It does now
+(`fetchUser` in `iznik-nuxt3/stores/auth.js`, from the version Capacitor reports), but only from app
+builds that carry that change; older builds still send nothing. Until enough members run such a build,
+the control is time and release adoption, not a query.
 
 ## Testing
 
