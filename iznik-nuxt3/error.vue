@@ -89,7 +89,7 @@ onMounted(async () => {
     if (!error?.value || maintenance || importError) return
 
     if (isPageNotFound(error.value)) {
-      // A 404 is an answer, not a fault: someone followed a stale link. Count it in the logs, with
+      // An address with no page is an answer, not a fault: someone followed a stale link. Count it in the logs, with
       // the address and where they came from, so a link of ours that has gone wrong still shows up.
       action('page_not_found', {
         path: window.location?.pathname,
