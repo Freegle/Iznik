@@ -285,6 +285,54 @@ func TestMicroVolunteeringIneligibleApproversDoNotMarkChecked(t *testing.T) {
 	assert.Nil(t, at, "a community without microvolunteering has no reviewers whose votes count")
 }
 
+// Votes count only on the offer rules of the review challenge: the vote is cast on the day the post
+// arrived, and the copy is not an autorepost. Two eligible members voting on an old post, or on a
+// repost the challenge never serves, do not clear it.
+func TestMicroVolunteeringVotesOutsideTheOfferDoNotMarkChecked(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_offer")
+	groupID := CreateTestGroup(t, prefix)
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
+	t.Setenv("FREEGLE_AUTOMOD_SHADOW_GROUPS", "")
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	r1 := CreateTestUser(t, prefix+"_r1", utils.SYSTEMROLE_USER)
+	r2 := CreateTestUser(t, prefix+"_r2", utils.SYSTEMROLE_USER)
+	for _, u := range []uint64{poster, r1, r2} {
+		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
+	}
+	makeApproversEligible(t, groupID, r1, r2)
+	_, t1 := CreateTestSession(t, r1)
+	_, t2 := CreateTestSession(t, r2)
+
+	// A post that arrived three days ago is never offered, so votes on it carry no weight.
+	old := CreateTestMessageWithArrival(t, poster, groupID, prefix+" old post", 52.0, -1.0, 3)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', approvedby = NULL, approvedat = NOW(), checkedat = NULL, checkedby = NULL, rippled_in = 0 WHERE msgid = ?", old)
+	defer db.Exec("DELETE FROM microactions WHERE msgid = ?", old)
+	postVerdict(t, t1, old, "Approve")
+	postVerdict(t, t2, old, "Approve")
+	at, _ := checkedState(t, old, groupID)
+	assert.Nil(t, at, "votes on a post that arrived on an earlier day do not count")
+
+	// A repost is not served by the challenge either.
+	repost := CreateTestMessage(t, poster, groupID, prefix+" repost", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', approvedby = NULL, approvedat = NOW(), checkedat = NULL, checkedby = NULL, rippled_in = 0, autoreposts = 1 WHERE msgid = ?", repost)
+	defer db.Exec("DELETE FROM microactions WHERE msgid = ?", repost)
+	postVerdict(t, t1, repost, "Approve")
+	postVerdict(t, t2, repost, "Approve")
+	at, _ = checkedState(t, repost, groupID)
+	assert.Nil(t, at, "votes on an autorepost do not count")
+
+	// The same two members on a post that arrived today do clear it.
+	fresh := CreateTestMessage(t, poster, groupID, prefix+" fresh post", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', approvedby = NULL, approvedat = NOW(), checkedat = NULL, checkedby = NULL, rippled_in = 0 WHERE msgid = ?", fresh)
+	defer db.Exec("DELETE FROM microactions WHERE msgid = ?", fresh)
+	postVerdict(t, t1, fresh, "Approve")
+	postVerdict(t, t2, fresh, "Approve")
+	at, _ = checkedState(t, fresh, groupID)
+	assert.NotNil(t, at, "two eligible votes on a post offered today mark it checked")
+}
+
 // A copy that is Pending (a moderator pulled it back, or it is still counting down) is never
 // stamped, however many approvals it has, and old approvals do not stamp it when it is
 // published later.

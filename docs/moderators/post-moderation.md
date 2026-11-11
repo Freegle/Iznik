@@ -308,8 +308,9 @@ write notes.
   a post through microvolunteering and nobody has rejected it, it counts as looked at:
   it leaves the Check queue and the hold is lifted. Only votes from members who could
   have been offered the post count: they have belonged to the community for at least a
-  week, the community has microvolunteering on for approved posts, and their trust level
-  is not Declined or Excluded. Only a live copy is stamped, never one that is Pending.
+  week, the community has microvolunteering on for approved posts, their trust level
+  is not Declined or Excluded, the vote was cast on the day the post arrived, and the
+  copy is not an autorepost. Only a live copy is stamped, never one that is Pending.
   A rejection afterwards puts it back in the queue, and so does an edit by the poster,
   which also discards the votes cast on the old text. A moderator's own check is never
   undone by a rejection or an edit.

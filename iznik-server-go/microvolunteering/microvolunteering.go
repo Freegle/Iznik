@@ -999,11 +999,12 @@ func ModFeedback(c *fiber.Ctx) error {
 // waiting for a moderator, and a stamp on it would lift the hold on a post a moderator has pulled
 // back and send it into the Approved list already stamped.
 //
-// Only votes from members who could have been offered the post count: an Approved member,
-// for at least ApproverMinMembershipDays, of one of the trial communities the post is on, which
-// has microvolunteering on for approved posts, with a trust level other than Declined or
-// Excluded. Votes cast before the poster last edited the post are about different text and do
-// not count.
+// Only votes from members who could have been offered the post count, on the offer rules of the
+// review challenge: an Approved member, for at least ApproverMinMembershipDays, of one of the
+// trial communities the post is on, which has microvolunteering on for approved posts, with a
+// trust level other than Declined or Excluded; the vote cast on the day the post arrived; and the
+// copy on that community not an autorepost. Votes cast before the poster last edited the post
+// are about different text and do not count.
 func markCheckedByMicrovolunteers(db *gorm.DB, msgid uint64) {
 	var direct []uint64
 	db.Table("messages_groups").Select("groupid").
@@ -1021,10 +1022,12 @@ func markCheckedByMicrovolunteers(db *gorm.DB, msgid uint64) {
 		Joins("INNER JOIN users u ON u.id = ma.userid").
 		Joins("INNER JOIN memberships mem ON mem.userid = ma.userid AND mem.groupid IN ? AND mem.collection = ? "+
 			"AND mem.added < NOW() - INTERVAL ? DAY", trial, utils.COLLECTION_APPROVED, ApproverMinMembershipDays).
+		Joins("INNER JOIN messages_groups mg ON mg.msgid = ma.msgid AND mg.groupid = mem.groupid AND mg.autoreposts = 0 AND mg.deleted = 0").
 		Joins("INNER JOIN `groups` g ON g.id = mem.groupid AND g.microvolunteering = 1 "+
 			"AND (g.microvolunteeringoptions IS NULL OR JSON_EXTRACT(g.microvolunteeringoptions, '$.approvedmessages') = 1)").
 		Where("ma.msgid = ? AND ma.actiontype = ? AND ma.result = 'Approve' AND ma.userid != COALESCE(m.fromuser, 0) "+
-			"AND COALESCE(u.trustlevel, ?) NOT IN (?, ?) AND (m.editedat IS NULL OR ma.timestamp > m.editedat)",
+			"AND COALESCE(u.trustlevel, ?) NOT IN (?, ?) AND (m.editedat IS NULL OR ma.timestamp > m.editedat) "+
+			"AND DATE(ma.timestamp) = DATE(m.arrival)",
 			msgid, ChallengeCheckMessage, TrustBasic, TrustDeclined, TrustExcluded).
 		Scan(&approvers)
 	if approvers < int64(ApprovalQuorum) {
