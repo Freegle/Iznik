@@ -45,6 +45,9 @@ class TakedownService
             : [];
 
         $message->deleted = now();
+        // The time of the decision. Reports made before it are not counted again if the post is
+        // restored (ReportResolutionService).
+        $message->rejectedat = now();
         $message->collection = Message::COLLECTION_REJECTED;
         $message->contentcheck_reasons = json_encode(array_values(array_unique(array_merge($existing, [$why]))));
         $message->save();

@@ -3086,6 +3086,7 @@ func handleMessageTakeDown(c *fiber.Ctx, myid uint64, msgid uint64, reason *stri
 	db.Table("messages").Where("id = ?", msgid).
 		Updates(map[string]interface{}{
 			"deleted":              gorm.Expr("NOW()"),
+			"rejectedat":           gorm.Expr("NOW()"),
 			"contentcheck_reasons": string(reasonsJSON),
 		})
 

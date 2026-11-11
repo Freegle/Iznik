@@ -7,6 +7,7 @@ use App\Models\ChatRoom;
 use App\Models\Message;
 use App\Models\Microaction;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -75,14 +76,24 @@ class ReportResolutionService
             ->where(function ($q) {
                 $q->whereNull('msgcategory')->orWhere('msgcategory', 'ShouldntBeHere');
             })
-            ->where('userid', '!=', $message->fromuser)
-            ->get();
+            ->where('userid', '!=', $message->fromuser);
+
+        // Only reports made since the last decision on the post count. A moderator who restored
+        // a taken-down post has decided, and the reports that took it down are not counted again.
+        if ($message->rejectedat !== null) {
+            $reports->where('timestamp', '>', $message->rejectedat);
+        }
+
+        $reports = $reports->get();
 
         if ($reports->isEmpty()) {
             return false;
         }
 
-        $reporterIds = $reports->pluck('userid')->unique()->values();
+        // A report counts when its author is a real, current member who is not banned and not
+        // another account of the poster, so two throwaway or linked accounts cannot take a post
+        // down between them.
+        $reporterIds = $this->eligibleReporters($reports->pluck('userid')->unique()->values(), (int) $message->fromuser);
         $reporters = User::whereIn('id', $reporterIds)->get()->keyBy('id');
 
         $quorumMet = $reporters->contains(fn (User $u) => $u->isModerator())
@@ -92,7 +103,7 @@ class ReportResolutionService
             return false;
         }
 
-        $why = "It was reported by other freeglers as: {$message->subject}.";
+        $why = 'Other members reported that it should not be on Freegle.';
 
         if (! $this->takedown->takeDown($msgid, $why)) {
             return false;
@@ -105,6 +116,36 @@ class ReportResolutionService
         }
 
         return true;
+    }
+
+    /**
+     * The reporters whose reports count: not deleted, not banned, and not linked to the poster
+     * as another account of the same person.
+     *
+     * @param  \Illuminate\Support\Collection<int, int>  $reporterIds
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    private function eligibleReporters($reporterIds, int $posterId)
+    {
+        if ($reporterIds->isEmpty()) {
+            return $reporterIds;
+        }
+
+        $linked = DB::table('users_related')
+            ->where(function ($q) use ($posterId) {
+                $q->where('user1', $posterId)->orWhere('user2', $posterId);
+            })
+            ->get(['user1', 'user2'])
+            ->flatMap(fn ($r) => [(int) $r->user1, (int) $r->user2])
+            ->unique();
+
+        return User::whereIn('id', $reporterIds)
+            ->whereNull('deleted')
+            ->whereNull('banned')
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->reject(fn ($id) => $linked->contains($id))
+            ->values();
     }
 
     /**
