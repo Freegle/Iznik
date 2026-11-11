@@ -847,6 +847,7 @@ services:
       # How many replies a member may send in a day before the next one waits for a graded
       # micro-volunteering task. Empty means the API default (5); 0 disables the gate.
       - REPLY_GATE_AFTER=${REPLY_GATE_AFTER:-}
+      - CHAT_WARN_NOT_HOLD=${CHAT_WARN_NOT_HOLD:-}
       # In dev, uploaded photos live in the local tusd, not the production
       # store. The Go API builds delivery URLs as IMAGE_DELIVERY?url=UPLOADS+uid;
       # without this UPLOADS defaults to production (uploads.ilovefreegle.org),
