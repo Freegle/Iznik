@@ -210,6 +210,47 @@ class EvaluatorTest extends TestCase
         $this->assertEquals([-3], $offsets);
     }
 
+    public function test_timing_offset_uses_earliest_crossing_when_rows_are_newest_first(): void
+    {
+        // The extractor emits rows newest-first, so the first row in iteration
+        // order is the last turn. The first crossing is still turn 3.
+        $roomTurns = [
+            ['end_turn' => 5, 'proba' => 0.9],
+            ['end_turn' => 4, 'proba' => 0.9],
+            ['end_turn' => 3, 'proba' => 0.8],
+            ['end_turn' => 2, 'proba' => 0.3],
+            ['end_turn' => 1, 'proba' => 0.1],
+        ];
+
+        $offsets = $this->evaluator->timingOffsets(
+            roomTurns: $roomTurns,
+            actualPromiseTurn: 3,
+            threshold: 0.5
+        );
+
+        $this->assertEquals([0], $offsets);
+    }
+
+    public function test_auc_does_not_depend_on_order_of_tied_scores(): void
+    {
+        // A binary predictor scores every row 0.0 or 1.0, so almost everything ties.
+        $yTrueA = [1, 0, 1, 0, 0, 1];
+        $probaA = [1.0, 1.0, 0.0, 0.0, 1.0, 1.0];
+
+        // Same rows in a different order.
+        $yTrueB = [0, 0, 1, 1, 1, 0];
+        $probaB = [0.0, 1.0, 1.0, 1.0, 0.0, 1.0];
+
+        $a = $this->evaluator->evaluate($yTrueA, $probaA);
+        $b = $this->evaluator->evaluate($yTrueB, $probaB);
+
+        $this->assertEqualsWithDelta($a['roc_auc'], $b['roc_auc'], 1e-9);
+        $this->assertEqualsWithDelta($a['pr_auc'], $b['pr_auc'], 1e-9);
+
+        // One tie block at TPR 2/3 and FPR 2/3 gives an area of 0.5.
+        $this->assertEqualsWithDelta(0.5, $a['roc_auc'], 1e-9);
+    }
+
     public function test_timing_offset_distribution(): void
     {
         // Multiple rooms with different offsets

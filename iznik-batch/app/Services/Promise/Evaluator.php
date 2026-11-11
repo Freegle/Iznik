@@ -113,9 +113,43 @@ class Evaluator
     }
 
     /**
+     * Cumulative (tp, fp) after each block of tied scores, highest score first.
+     * Tied scores form one point on the curve, so the result does not depend on
+     * the order the input happens to be in.
+     *
+     * @param int[] $yTrue
+     * @param float[] $yProba
+     * @return array<int, array{0: int, 1: int}>
+     */
+    private function cumulativeCounts(array $yTrue, array $yProba): array
+    {
+        $indices = array_keys($yProba);
+        usort($indices, fn($i, $j) => $yProba[$j] <=> $yProba[$i]);
+
+        $points = [];
+        $tp = $fp = 0;
+        $n = count($indices);
+
+        for ($k = 0; $k < $n; $k++) {
+            if ($yTrue[$indices[$k]] === 1) {
+                $tp++;
+            } else {
+                $fp++;
+            }
+
+            $isBlockEnd = $k === $n - 1 || $yProba[$indices[$k + 1]] != $yProba[$indices[$k]];
+            if ($isBlockEnd) {
+                $points[] = [$tp, $fp];
+            }
+        }
+
+        return $points;
+    }
+
+    /**
      * Compute ROC-AUC (area under receiver operating characteristic curve).
      *
-     * Uses the trapezoidal rule to approximate AUC from sorted probabilities.
+     * Uses the trapezoidal rule over one point per distinct score.
      *
      * @param int[] $yTrue
      * @param float[] $yProba
@@ -123,48 +157,23 @@ class Evaluator
      */
     public function rocAuc(array $yTrue, array $yProba): float
     {
-        // Sort by probability (descending)
-        $indices = array_keys($yProba);
-        usort($indices, fn($i, $j) => $yProba[$j] <=> $yProba[$i]);
-
-        $sorted = array_map(fn($i) => $yTrue[$i], $indices);
-
-        // Count positives and negatives
-        $nPositives = array_sum($sorted);
-        $nNegatives = count($sorted) - $nPositives;
+        $nPositives = array_sum($yTrue);
+        $nNegatives = count($yTrue) - $nPositives;
 
         if ($nPositives === 0 || $nNegatives === 0) {
             return 0.0;
         }
 
-        // Compute true positive rate and false positive rate at each threshold
-        $tpCounts = [];
-        $fpCounts = [];
-        $tp = $fp = 0;
-
-        foreach ($sorted as $label) {
-            if ($label === 1) {
-                $tp++;
-            } else {
-                $fp++;
-            }
-            $tpCounts[] = $tp;
-            $fpCounts[] = $fp;
-        }
-
-        // Normalize to rates
-        $tpr = array_map(fn($tp) => $tp / $nPositives, $tpCounts);
-        $fpr = array_map(fn($fp) => $fp / $nNegatives, $fpCounts);
-
-        // Compute AUC using trapezoidal rule
         $auc = 0.0;
         $prevFpr = 0.0;
         $prevTpr = 0.0;
 
-        for ($i = 0; $i < count($tpr); $i++) {
-            $auc += ($fpr[$i] - $prevFpr) * ($tpr[$i] + $prevTpr) / 2.0;
-            $prevFpr = $fpr[$i];
-            $prevTpr = $tpr[$i];
+        foreach ($this->cumulativeCounts($yTrue, $yProba) as [$tp, $fp]) {
+            $tpr = $tp / $nPositives;
+            $fpr = $fp / $nNegatives;
+            $auc += ($fpr - $prevFpr) * ($tpr + $prevTpr) / 2.0;
+            $prevFpr = $fpr;
+            $prevTpr = $tpr;
         }
 
         return min(1.0, max(0.0, $auc));
@@ -173,49 +182,30 @@ class Evaluator
     /**
      * Compute PR-AUC (area under precision-recall curve).
      *
+     * Uses one point per distinct score, starting from precision 1.0 at recall 0.
+     *
      * @param int[] $yTrue
      * @param float[] $yProba
      * @return float
      */
     public function prAuc(array $yTrue, array $yProba): float
     {
-        // Sort by probability (descending)
-        $indices = array_keys($yProba);
-        usort($indices, fn($i, $j) => $yProba[$j] <=> $yProba[$i]);
-
-        $sorted = array_map(fn($i) => $yTrue[$i], $indices);
-
-        $nPositives = array_sum($sorted);
+        $nPositives = array_sum($yTrue);
 
         if ($nPositives === 0) {
             return 0.0;
         }
 
-        // Compute precision and recall at each threshold
-        $precisions = [];
-        $recalls = [];
-        $tp = 0;
-
-        for ($i = 0; $i < count($sorted); $i++) {
-            if ($sorted[$i] === 1) {
-                $tp++;
-            }
-            $precision = $tp / ($i + 1);
-            $recall = $tp / $nPositives;
-
-            $precisions[] = $precision;
-            $recalls[] = $recall;
-        }
-
-        // Compute AUC using trapezoidal rule
         $auc = 0.0;
         $prevRecall = 0.0;
         $prevPrecision = 1.0; // Start at 1.0 before any predictions
 
-        for ($i = 0; $i < count($recalls); $i++) {
-            $auc += ($recalls[$i] - $prevRecall) * ($precisions[$i] + $prevPrecision) / 2.0;
-            $prevRecall = $recalls[$i];
-            $prevPrecision = $precisions[$i];
+        foreach ($this->cumulativeCounts($yTrue, $yProba) as [$tp, $fp]) {
+            $precision = $tp / ($tp + $fp);
+            $recall = $tp / $nPositives;
+            $auc += ($recall - $prevRecall) * ($precision + $prevPrecision) / 2.0;
+            $prevRecall = $recall;
+            $prevPrecision = $precision;
         }
 
         return min(1.0, max(0.0, $auc));
@@ -259,6 +249,9 @@ class Evaluator
      */
     public function timingOffsets(array $roomTurns, int $actualPromiseTurn, float $threshold = 0.5): array
     {
+        // The first crossing is the earliest turn, whatever order the rows arrive in.
+        usort($roomTurns, fn($a, $b) => $a['end_turn'] <=> $b['end_turn']);
+
         // Find first turn where probability >= threshold
         $detectedTurn = null;
 
