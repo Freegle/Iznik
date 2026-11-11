@@ -274,6 +274,10 @@ import Api from '~/api'
 import { useMobileStore } from '@/stores/mobile' // APP
 import { useLoginTelemetry } from '~/composables/useLoginTelemetry'
 import { socialLoginOutcome } from '~/composables/useSocialLoginOutcome'
+import {
+  googleButtonFailureKind,
+  inAppBrowser,
+} from '~/composables/useGoogleButtonReport'
 import { action } from '~/composables/useClientLog'
 import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 
@@ -1072,18 +1076,35 @@ function reportGoogleButtonMissing(attempts) {
   // be reproduced afterwards on any browser, connection speed or cache state
   // we could think of, and a report saying only "it happened again" would
   // leave the next one just as unanswerable.
+  const facts = {
+    scriptLoaded: Boolean(window?.google?.accounts?.id),
+    containerPresent: Boolean(document.getElementById('googleLoginButton')),
+    attempts,
+    waitedMs: Date.now() - googleDrawStarted,
+    signUp: signUp.value,
+    // Where the container went: the modal itself, and whether there is more than one button.
+    modalInPage: Boolean(document.getElementById('loginModal')),
+    containerCount: document.querySelectorAll('#googleLoginButton').length,
+    loggedIn: loggedIn.value,
+    forceLogin: forceLogin.value,
+    showModal: showModal.value,
+    instanceId,
+    inAppBrowser: inAppBrowser(window?.navigator?.userAgent),
+  }
+  const kind = googleButtonFailureKind(facts)
+
+  if (kind === 'script_not_loaded') {
+    action('google_button_script_not_loaded', facts)
+    return
+  }
+
   Sentry.captureException(new Error('Google sign-in button did not draw'), {
     tags: {
       social_login_provider: 'google',
       social_login_platform: 'web',
+      google_button_failure: kind,
     },
-    extra: {
-      scriptLoaded: Boolean(window?.google?.accounts?.id),
-      containerPresent: Boolean(document.getElementById('googleLoginButton')),
-      attempts,
-      waitedMs: Date.now() - googleDrawStarted,
-      signUp: signUp.value,
-    },
+    extra: facts,
   })
 }
 

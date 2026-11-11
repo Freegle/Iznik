@@ -11,6 +11,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useLoggingContextStore } from '~/stores/loggingContext'
 import { getTraceHeaders } from '~/composables/useTrace'
 import { warn, noteApiRequestStarted } from '~/composables/useClientLog'
+import { trackApiCall } from '~/composables/useApiCallsInFlight'
 import { getLiveFlowInstanceId } from '~/composables/useFlowTelemetry'
 
 export { APIError, MaintenanceError, LoginError, SignUpError }
@@ -113,6 +114,7 @@ export default class BaseAPI {
     // Count requests started (the interaction plugin uses it to spot clicks that did nothing) and
     // tie requests made during a flow to its instance.
     noteApiRequestStarted()
+    const apiCall = trackApiCall(method, path)
     const flowInstance = getLiveFlowInstanceId()
     if (flowInstance) {
       headers['X-Freegle-Flow-Instance'] = flowInstance
@@ -202,6 +204,7 @@ export default class BaseAPI {
       }
 
       await miscStore.waitForOnline()
+      apiCall.fetching()
       miscStore.api(1)
       ;[status, data] = await ourFetch(this.config.public.APIv2 + path, {
         ...config,
@@ -315,6 +318,7 @@ export default class BaseAPI {
         }
       }
     } finally {
+      apiCall.done()
       miscStore?.api(-1)
     }
 
