@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -29,6 +30,7 @@ import (
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/utils"
+	"github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
@@ -2222,6 +2224,16 @@ type UserDeleteRequest struct {
 	ID uint64 `json:"id"`
 }
 
+// errNoNewUserID is returned inside the signup transaction when the insert gave no id back.
+var errNoNewUserID = errors.New("no id returned for the new user")
+
+// isDuplicateEmail is true when err is MySQL's duplicate entry error (1062) on the address
+// column of users_emails.
+func isDuplicateEmail(err error) bool {
+	var me *mysql.MySQLError
+	return errors.As(err, &me) && me.Number == 1062 && strings.Contains(me.Message, "users_emails")
+}
+
 // PutUser creates a new user (signup).
 //
 // @Summary Create/signup a new user
@@ -2251,11 +2263,10 @@ func PutUser(c *fiber.Ctx) error {
 	emailhygiene.Report(email, "user.PutUser", 0)
 	db := database.DBConn
 
-	// Check if email already exists.
-	var existingUID uint64
-	db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&existingUID)
-
-	if existingUID > 0 {
+	// What to answer when the address already belongs to an account. Used both when the
+	// address is found up front and when another signup for the same address wins the race
+	// between that check and our insert.
+	respondExisting := func(existingUID uint64) error {
 		// Authenticated callers (e.g. moderators using Add Member in ModTools) get the existing
 		// user's ID back — idempotent, mirrors PHP v1 behaviour for mods.
 		myid := WhoAmI(c)
@@ -2283,6 +2294,14 @@ func PutUser(c *fiber.Ctx) error {
 			"ret":    2,
 			"status": "That email is already in use",
 		})
+	}
+
+	// Check if email already exists. userid is nullable, so an address with no account reads as 0.
+	var existingUID uint64
+	db.Table("users_emails").Select("COALESCE(userid, 0)").Where("email = ?", email).Limit(1).Scan(&existingUID)
+
+	if existingUID > 0 {
+		return respondExisting(existingUID)
 	}
 
 	// Build display name from parts.
@@ -2319,26 +2338,47 @@ func PutUser(c *fiber.Ctx) error {
 		"lastname":  lastname,
 		"added":     gorm.Expr("NOW()"),
 	}
-	if err := db.Table("users").Create(row).Error; err != nil {
+	//
+	// The user and its address go in together. users_emails.email is unique, so when two
+	// signups for one address race, the loser's insert fails; inside a transaction that
+	// rolls its user row back too, instead of leaving an account with no address.
+	canon := CanonicalizeEmail(email)
+	var newUserID uint64
+	txErr := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("users").Create(row).Error; err != nil {
+			return err
+		}
+
+		newUserIDInt, _ := row["@id"].(int64)
+		if newUserIDInt == 0 {
+			return errNoNewUserID
+		}
+		newUserID = uint64(newUserIDInt)
+
+		return tx.Table("users_emails").Create(map[string]interface{}{
+			"userid":    newUserID,
+			"email":     email,
+			"preferred": gorm.Expr("1"),
+			"validated": gorm.Expr("NOW()"),
+			"canon":     canon,
+			"backwards": reverseString(canon),
+		}).Error
+	})
+	if txErr != nil {
+		if isDuplicateEmail(txErr) {
+			// Someone signed up with this address a moment ago. Answer as if we had found
+			// them in the first place.
+			var winner uint64
+			db.Table("users_emails").Select("COALESCE(userid, 0)").Where("email = ?", email).Limit(1).Scan(&winner)
+			if winner > 0 {
+				return respondExisting(winner)
+			}
+		}
+		if errors.Is(txErr, errNoNewUserID) {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new user ID")
+		}
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
 	}
-
-	newUserIDInt, _ := row["@id"].(int64)
-	if newUserIDInt == 0 {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new user ID")
-	}
-	newUserID := uint64(newUserIDInt)
-
-	// Add email.
-	canon := CanonicalizeEmail(email)
-	db.Table("users_emails").Create(map[string]interface{}{
-		"userid":    newUserID,
-		"email":     email,
-		"preferred": gorm.Expr("1"),
-		"validated": gorm.Expr("NOW()"),
-		"canon":     canon,
-		"backwards": reverseString(canon),
-	})
 
 	// Generate random password if none provided (for email-only signup).
 	// The client shows this to the user in the welcome modal.
