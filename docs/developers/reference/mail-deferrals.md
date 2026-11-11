@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-10
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Mail/Deferrals/*.php
@@ -277,6 +277,11 @@ There is also a fail-open: if the probe has not been able to confirm a
 suppression for `stale_after_hours`, it is released and alerted on. Quietly not
 mailing an entire provider for ever, because our own probe broke, would be
 worse than the problem this feature was written to solve.
+
+This applies to a whole provider only. A single address that has left the queue is
+released by the ordinary two clear scans and is not alerted on: its row stops being
+refreshed once its backlog drops under the suppression threshold, so by the time the relay
+gives up on its mail (five days) the row is old, and that is routine.
 
 We never store the mail we declined to render - storing it would defeat the
 point - so the backlog policy is per type:
