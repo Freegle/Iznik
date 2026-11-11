@@ -20,9 +20,9 @@ guard is always live under test whichever flag it reads. Find them by grep, not 
 
 ## Three `await`s that can hang forever
 
-1. **`api/BaseAPI.js` returns a promise that never settles** for a 401 on the chat list, and for
-   any aborted request. It is deliberate, to keep abort-on-unload out of Sentry, but a caller
-   awaiting it gets neither success nor catch. Aborts come from logout.
+1. **`api/BaseAPI.js` returns a promise that never settles** for any aborted request. It is
+   deliberate, to keep abort-on-unload out of Sentry, but a caller awaiting it gets neither success
+   nor catch. Aborts come from logout.
 2. **`stores/misc.js waitForOnline()`** polls every second with no timeout and no reject, and
    `$requestv2` awaits it *before* fetching. If `online` sticks false, everything downstream
    stops.
@@ -30,6 +30,21 @@ guard is always live under test whichever flag it reads. Find them by grep, not 
 
 When a member reports "it just spins forever" rather than an error, look here before looking at
 the endpoint.
+
+## A failed API call is a Sentry issue only for a 400, a 500 or "no reply"
+
+`composables/useApiFailurePolicy.js` decides. A 401, 403, 404, 409, 410 or 429 is an answer, not a
+fault, and goes to the client log only. A call with no reply, or a 502, 503 or 504, is one issue
+(`api-unreachable`) with the endpoint as a tag. The thrown `APIError` carries `failureHandled` and
+`sentryReported`, so the Vue handler and the unhandled-rejection listener do not report it again.
+
+`fetchRetry` rejects on every 4xx and only resolves on 2xx, so code in `$requestv2` after the
+`await ourFetch` can never see a 401. A status check there is dead; handle statuses after the
+`catch`. A unit test that mocks `fetchRetry` to resolve `[401, {}]` runs code that production
+cannot reach.
+
+A `ref` is always truthy: `if (me && ...)` tests the ref, `if (me.value && ...)` tests the member.
+The first made a signed-out visitor's page fetch chats and notifications and get a 401 each time.
 
 ## `SpinButton` spins for 20 seconds when a handler returns early
 

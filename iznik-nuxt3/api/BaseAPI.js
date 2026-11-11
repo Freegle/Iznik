@@ -12,6 +12,13 @@ import { useLoggingContextStore } from '~/stores/loggingContext'
 import { getTraceHeaders } from '~/composables/useTrace'
 import { warn, noteApiRequestStarted } from '~/composables/useClientLog'
 import { getLiveFlowInstanceId } from '~/composables/useFlowTelemetry'
+import {
+  apiFailureDisposition,
+  apiFailureFingerprint,
+  logDroppedApiFailure,
+  normaliseApiPath,
+  underSessionCap,
+} from '~/composables/useApiFailurePolicy'
 
 export { APIError, MaintenanceError, LoginError, SignUpError }
 
@@ -56,6 +63,47 @@ export function exitLogoutMode() {
 // Note that $fetch and useFetch cause problems on Node v18, so we don't use them.
 const ourFetch = fetchRetry(fetch)
 
+// Send one failed call to Sentry under the rules in useApiFailurePolicy: all the calls the API did
+// not answer are one issue (api-unreachable), and every other failure is one issue per method,
+// normalised path and status. Returns whether an event was sent.
+function reportApiFailure(disposition, { status, method, path, detail }) {
+  const fingerprint = apiFailureFingerprint(disposition, method, path, status)
+
+  if (!underSessionCap(fingerprint)) {
+    logDroppedApiFailure({ status, method, path, reason: 'session_cap' })
+    return false
+  }
+
+  // Sentry is only initialized on the client, so check before calling.
+  if (typeof Sentry?.captureMessage !== 'function') {
+    return false
+  }
+
+  const unreachable = disposition === 'unreachable'
+
+  Sentry.captureMessage(
+    unreachable
+      ? 'API unreachable'
+      : 'API2 request failed ' +
+          normaliseApiPath(path) +
+          ' returned HTTP ' +
+          status,
+    {
+      level: unreachable ? 'warning' : 'error',
+      fingerprint,
+      tags: {
+        api_path: normaliseApiPath(path),
+        api_method: method,
+        http_status: String(status ?? 'none'),
+        ...(status === null ? { error_type: 'network' } : {}),
+      },
+      extra: { detail },
+    }
+  )
+
+  return true
+}
+
 export default class BaseAPI {
   constructor(config) {
     this.config = config
@@ -82,10 +130,8 @@ export default class BaseAPI {
   }
 
   async $requestv2(method, path, config, logError = true, body = null) {
-    // Sentry groups events by title, so a title must name the endpoint, not this one request:
-    // the query string below gains loggedInAs and a request counter, which made every failure
-    // a new issue (a page-wide poll such as /lockdown opened one per member per blip).
-    const reportPath = path.split('?')[0]
+    // The query string below gains loggedInAs and a request counter, so failures are reported by
+    // the path as it came in (see reportApiFailure), which names the endpoint and not this request.
 
     // timer++
     // const timerLabel = path + ' api-' + timer
@@ -95,6 +141,7 @@ export default class BaseAPI {
 
     let status = null
     let data = null
+    let sentryReported = false
     const headers = config.headers ? config.headers : {}
 
     // Add trace headers for distributed tracing.
@@ -225,43 +272,6 @@ export default class BaseAPI {
           )
         }
       }
-
-      if (status === 401) {
-        // A 401 on THIS request doesn't prove the whole session is dead - only
-        // GET/PATCH/DELETE /session, the authoritative "am I logged in" check,
-        // does (fetchUser() in stores/auth.js already handles that case on its
-        // own 401/404).  Clearing auth here unconditionally, for every one of
-        // the many background calls a page fires (chat polls, notification
-        // counts, ModTools work-count refresh, newsfeed, etc.), meant a single
-        // transient/edge-case 401 on any of them force-logged the user out even
-        // though the session was still good - the cause of moderators being
-        // asked to log in to ModTools unexpectedly often (Discourse #9893).
-        const isSessionCheck =
-          path === '/session' || path.startsWith('/session?')
-
-        if (isSessionCheck) {
-          console.log('Not authorised on /session - force logged out')
-          authStore.wipeAuth()
-        } else {
-          console.log('Not authorised for this request - session left intact')
-        }
-
-        // For specific paths, we want to silently allow 401 errors and swallow them.
-        // This can happen if a login token is invalid, and we don't want to show errors to the user.
-        if (path.startsWith('/chat?includeClosed=true')) {
-          console.log('Silently handling 401 for includeClosed chat request')
-          // Deliberately never settles, to keep this out of Sentry.  That is
-          // only safe because nothing downstream is gated on the result; if
-          // that ever stops being true it becomes the same class of bug as the
-          // stranded give-flow photo, so make it visible rather than silent.
-          warn('API request abandoned without settling', {
-            event_type: 'api_abandoned',
-            reason: 'chat_401',
-            api_path: path,
-          })
-          return new Promise(function (resolve) {})
-        }
-      }
     } catch (e) {
       console.log('Fetch error', path, e?.message)
       if (e?.response?.status) {
@@ -294,24 +304,24 @@ export default class BaseAPI {
         return new Promise(function (resolve) {})
       }
 
-      if (
-        status === null &&
-        !e.message.match(/.*unload.*/i) &&
-        miscStore?.online
-      ) {
-        // Network failure with no HTTP response (e.g. retries exhausted) while the online
-        // check believes we have connectivity.  This suggests a server-side or routing
-        // problem rather than the user's network being down — worth investigating.
-        // Skip when offline (user's network is known to be down — not actionable) and
-        // when unloading (user navigated away — expected).
-        if (typeof Sentry?.captureMessage === 'function') {
-          Sentry.captureMessage(
-            `API network failure ${method} ${reportPath}: ${e.message}`,
-            {
-              level: 'warning',
-              tags: { api_path: path, error_type: 'network' },
-            }
-          )
+      if (status === null) {
+        // No HTTP response (e.g. retries exhausted).  Report it only while the online check believes
+        // we have connectivity, which suggests a server-side or routing problem rather than the
+        // user's network being down, and not when unloading, which is expected.
+        if (!e.message.match(/.*unload.*/i) && miscStore?.online) {
+          sentryReported = reportApiFailure('unreachable', {
+            status,
+            method,
+            path,
+            detail: e.message,
+          })
+        } else {
+          logDroppedApiFailure({
+            status,
+            method,
+            path,
+            reason: miscStore?.online ? 'unloading' : 'offline',
+          })
         }
       }
     } finally {
@@ -322,44 +332,29 @@ export default class BaseAPI {
     if (status < 200 || status >= 300) {
       const statusstr = status?.toString()
 
-      // 401 means our auth is invalid (expired JWT, deleted session, etc). We already clear auth state
-      // above (line ~202), so don't log these to Sentry — they're expected and not actionable.
-      if (status === 401) {
-        throw new APIError(
-          {
-            request: {
-              path,
-              method,
-              headers: config.headers,
-              params: config.params,
-              data: config.data,
-            },
-            response: { status, data },
-          },
-          `API Error ${method} ${path} -> status: 401`
-        )
-      }
+      // Whether a failure is worth a Sentry issue depends on its status (see useApiFailurePolicy), and
+      // on the caller.  Some API calls are expected to fail, and throw an exception which is then
+      // handled in the code, so the logError parameter (a boolean or a function for more complex
+      // decisions) lets a caller say it is dealing with the failure itself.
+      if (status !== null) {
+        const disposition = apiFailureDisposition(status)
+        const log = typeof logError === 'function' ? logError(data) : logError
 
-      // Whether or not we log this error to Sentry depends.  Most errors are worth logging, because they're unexpected.
-      // But some API calls are expected to fail, and throw an exception which is then handled in the code.  We don't
-      // want to log those, otherwise we will spend time investigating them in Sentry.  So we have a parameter which
-      // indicates whether we want to log this to Sentry - which can be a boolean or a function for more complex
-      // decisions.
-      const log = typeof logError === 'function' ? logError(data) : logError
-
-      if (log && status !== null) {
-        // Sentry is only initialized on the client, so check before calling
-        if (typeof Sentry?.captureMessage === 'function') {
-          Sentry.captureMessage(
-            'API2 request failed ' +
-              reportPath +
-              ' returned HTTP ' +
-              status +
-              ' status ' +
-              statusstr +
-              ' data length ' +
-              (data ? data.length : 0)
-          )
+        if (disposition === 'drop' || !log) {
+          logDroppedApiFailure({
+            status,
+            method,
+            path,
+            reason:
+              disposition === 'drop' ? 'expected_status' : 'caller_handles',
+          })
+        } else {
+          sentryReported = reportApiFailure(disposition, {
+            status,
+            method,
+            path,
+            detail: 'data length ' + (data ? data.length : 0),
+          })
         }
       }
 
@@ -371,7 +366,7 @@ export default class BaseAPI {
         `status: ${statusstr}`,
       ].join(' ')
 
-      throw new APIError(
+      const apiError = new APIError(
         {
           request: {
             path,
@@ -387,6 +382,13 @@ export default class BaseAPI {
         },
         message
       )
+
+      // Tell whoever catches this that the failure has been dealt with here, so it is not sent to
+      // Sentry or written to the log a second time as it propagates.
+      apiError.sentryReported = sentryReported
+      apiError.failureHandled = true
+
+      throw apiError
     }
 
     // console.timeEnd(timerLabel)

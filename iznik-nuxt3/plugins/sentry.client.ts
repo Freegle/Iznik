@@ -9,6 +9,7 @@ import {
   suppressSentryEvent,
 } from '~/composables/useSuppressException'
 import { onTraceChange, getTraceId, getSessionId } from '~/composables/useTrace'
+import { applyApiFailurePolicy } from '~/composables/useApiFailurePolicy'
 import {
   useClientLog,
   setRouteNameProvider,
@@ -131,6 +132,12 @@ export default defineNuxtPlugin((nuxtApp) => {
           if (useMiscStore()?.unloading) {
             // All network requests are aborted during unload, and so we'll get spurious errors.  Ignore them.
             console.log('Ignore error in unload')
+            return null
+          }
+
+          // A failed API call is only worth an issue under the rules in useApiFailurePolicy, however
+          // it reached here (the Vue handler, an unhandled rejection or a component's own capture).
+          if (!applyApiFailurePolicy(event, hint)) {
             return null
           }
 
