@@ -179,12 +179,12 @@ class AutomodHealthCommandTest extends TestCase
             DB::table('messages_automod')->delete();
             [$msgid, $groupid, $userid] = $this->waitingPost(now()->subMinutes(40));
             $this->unavailableRow($msgid, $groupid, 5, now()->subHour());
+            $this->assertSame(1, Artisan::call('monitor:automod-health'), "{$label}: the same post alerts before it is arranged away");
+
             $arrange($msgid, $groupid, $userid);
 
-            $this->artisan('monitor:automod-health')->assertExitCode(0);
+            $this->assertSame(0, Artisan::call('monitor:automod-health'), "{$label}: no alert once arranged");
         }
-
-        $this->assertTrue(true);
     }
 
     // --- UNDECIDED: an approve-mode post past the delay with no decision ----------------------
@@ -250,12 +250,12 @@ class AutomodHealthCommandTest extends TestCase
         foreach ($arrangements as $label => $arrange) {
             DB::table('messages_automod')->delete();
             [$msgid, $groupid, $userid] = $this->waitingPost(now()->subMinutes(40));
+            $this->assertSame(1, Artisan::call('monitor:automod-health'), "{$label}: the same post alerts before it is arranged away");
+
             $arrange($msgid, $groupid, $userid);
 
-            $this->artisan('monitor:automod-health')->assertExitCode(0);
+            $this->assertSame(0, Artisan::call('monitor:automod-health'), "{$label}: no alert once arranged");
         }
-
-        $this->assertTrue(true);
     }
 
     public function test_quiet_when_automated_review_is_dark(): void
