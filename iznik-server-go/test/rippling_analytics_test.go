@@ -11,6 +11,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -190,7 +191,7 @@ func TestRipplingAnalyticsDriveTimeEndpoint(t *testing.T) {
 // /rippling/analytics section2.kpis (trendSeries), which groups by rippling_reach.created_at.
 func TestRipplingAnalyticsTrendAnchorsOnRippleReachCreatedDate(t *testing.T) {
 	prefix := uniquePrefix("rippleanchor")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 	db := database.DBConn
 

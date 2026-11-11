@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -51,10 +52,10 @@ func postAutomodFeedbackBody(t *testing.T, token string, msgid, groupid uint64, 
 func automodFixture(t *testing.T, name string) (groupID, msgID, modID uint64, modToken string, posterToken string) {
 	prefix := uniquePrefix(name)
 	groupID = CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID = CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID = CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken = CreateTestSession(t, modID)
 	_, posterToken = CreateTestSession(t, poster)
 
@@ -143,7 +144,7 @@ func TestAutomodAgreement(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode, "an ordinary moderator cannot see the SysAdmin report")
 
-	admin := CreateTestUser(t, uniquePrefix("automod_admin"), "Admin")
+	admin := CreateTestUser(t, uniquePrefix("automod_admin"), utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, admin)
 	resp, err = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/automod/agreement?days=7&jwt=%s", adminToken), nil))
 	assert.NoError(t, err)
@@ -261,12 +262,12 @@ func TestAutomodAgreementByGroupLatencyAndNeighbours(t *testing.T) {
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
 	other := CreateTestGroup(t, prefix+"_other")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modB := CreateTestUser(t, prefix+"_modb", "User")
-	CreateTestMembership(t, poster, groupA, "Member")
-	CreateTestMembership(t, poster, other, "Member")
-	CreateTestMembership(t, modB, groupB, "Moderator")
-	admin := CreateTestUser(t, prefix+"_admin", "Admin")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, poster, other, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modB, groupB, utils.ROLE_MODERATOR)
+	admin := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, admin)
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d,%d", groupA, other))
 

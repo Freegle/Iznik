@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,15 +19,15 @@ func TestGetMicrovolunteering_CheckMessage_ReachBounded(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("mv_reachbound")
 
-	reviewerID := CreateTestUser(t, prefix+"_reviewer", "User")
+	reviewerID := CreateTestUser(t, prefix+"_reviewer", utils.SYSTEMROLE_USER)
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, reviewerID)
 	_, token := CreateTestSession(t, reviewerID)
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 
 	groupID := CreateTestGroup(t, prefix)
 	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
-	CreateTestMembership(t, reviewerID, groupID, "Member")
-	CreateTestMembership(t, senderID, groupID, "Member")
+	CreateTestMembership(t, reviewerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, senderID, groupID, utils.ROLE_MEMBER)
 
 	// Suppress the Invite challenge for this reviewer.
 	db.Exec("INSERT INTO microactions (actiontype, userid, version, timestamp, score_negative) VALUES (?, ?, 4, NOW(), 0)",
@@ -87,14 +88,14 @@ func TestGetMicrovolunteering_CheckMessage_NearFirst(t *testing.T) {
 	prefix := uniquePrefix("mv_nearfirst")
 	t.Setenv("RIPPLE_EARNED_REACH_ENABLED", "true")
 
-	reviewerID := CreateTestUser(t, prefix+"_reviewer", "User")
+	reviewerID := CreateTestUser(t, prefix+"_reviewer", utils.SYSTEMROLE_USER)
 	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, reviewerID)
 	_, token := CreateTestSession(t, reviewerID)
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
-	CreateTestMembership(t, reviewerID, groupID, "Member")
-	CreateTestMembership(t, senderID, groupID, "Member")
+	CreateTestMembership(t, reviewerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, senderID, groupID, utils.ROLE_MEMBER)
 
 	db.Exec("INSERT INTO microactions (actiontype, userid, version, timestamp, score_negative) VALUES (?, ?, 4, NOW(), 0)",
 		microvolunteering.ChallengeInvite, reviewerID)

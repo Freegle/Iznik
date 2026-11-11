@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -54,10 +55,10 @@ func TestListMessagesMTPendingBumpsHold(t *testing.T) {
 	// written there (see the outside-trial check at the end).
 	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -108,12 +109,12 @@ func TestAutoapproveatPendingModGating(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	regularID := CreateTestUser(t, prefix+"_reg", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, regularID, groupID, "Member")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	regularID := CreateTestUser(t, prefix+"_reg", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, regularID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 	_, regToken := CreateTestSession(t, regularID)
@@ -144,10 +145,10 @@ func TestAutoapproveatDelayIsSiteWide(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	// A community that tried to shorten the wait to 5 minutes.
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.autoapprove.delay_minutes', 5) WHERE id = ?", groupID)
@@ -195,10 +196,10 @@ func TestAutoapproveatCountsFromTheDecision(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -229,10 +230,10 @@ func TestAutoapproveatQualitySample(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -264,10 +265,10 @@ func TestAutoapproveatDecisionBeforeContentCheckRerun(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -316,11 +317,11 @@ func TestModActionStampsOwnSelfPublishedCopies(t *testing.T) {
 	trial := CreateTestGroup(t, prefix+"_trial")
 	outside := CreateTestGroup(t, prefix+"_outside")
 	pendingOn := CreateTestGroup(t, prefix+"_pending")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	for _, gid := range []uint64{trial, outside, pendingOn} {
-		CreateTestMembership(t, poster, gid, "Member")
-		CreateTestMembership(t, modID, gid, "Moderator")
+		CreateTestMembership(t, poster, gid, utils.ROLE_MEMBER)
+		CreateTestMembership(t, modID, gid, utils.ROLE_MODERATOR)
 	}
 	_, modToken := CreateTestSession(t, modID)
 	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
@@ -395,10 +396,10 @@ func TestAutoapproveatRippledInCopy(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	parseAt := func(v interface{}) time.Time {
@@ -438,10 +439,10 @@ func TestAutoapproveatRolloutGate(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -490,11 +491,11 @@ func TestMarkCheckedSpecificIDs(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupA, "Member")
-	CreateTestMembership(t, poster, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator") // mod of A only
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, poster, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR) // mod of A only
 	_, modToken := CreateTestSession(t, modID)
 
 	approvedA := CreateTestMessage(t, poster, groupA, prefix+" approved a", 52.0, -1.0)
@@ -531,8 +532,8 @@ func TestMarkCheckedCrossGroupAndNonMod(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	modB := CreateTestUser(t, prefix+"_modb", "User")
-	CreateTestMembership(t, modB, groupB, "Moderator") // mod of B only
+	modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modB, groupB, utils.ROLE_MODERATOR) // mod of B only
 	_, modBToken := CreateTestSession(t, modB)
 
 	// Mod of B targeting group A → 403.
@@ -544,7 +545,7 @@ func TestMarkCheckedCrossGroupAndNonMod(t *testing.T) {
 	assert.Equal(t, 403, respA.StatusCode, "mod of B must not mark group A")
 
 	// Non-mod with groupid=0 → 403.
-	regID := CreateTestUser(t, prefix+"_reg", "User")
+	regID := CreateTestUser(t, prefix+"_reg", utils.SYSTEMROLE_USER)
 	_, regToken := CreateTestSession(t, regID)
 	body0 := `{"groupid": 0, "filter": "checked"}`
 	req0 := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/messages/markchecked?jwt=%s", regToken), strings.NewReader(body0))
@@ -571,10 +572,10 @@ func TestMarkCheckedReject(t *testing.T) {
 	db := database.DBConn
 
 	groupA := CreateTestGroup(t, prefix+"_a")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupA, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// A real Check-queue row: self-published, and nobody has looked at it yet.
@@ -588,11 +589,11 @@ func TestMarkCheckedReject(t *testing.T) {
 	groupB := CreateTestGroup(t, prefix+"_b")
 	groupC := CreateTestGroup(t, prefix+"_c")
 	groupD := CreateTestGroup(t, prefix+"_d")
-	modC := CreateTestUser(t, prefix+"_modc", "User")
-	modD := CreateTestUser(t, prefix+"_modd", "User")
-	CreateTestMembership(t, modC, groupC, "Moderator")
-	CreateTestMembership(t, modD, groupD, "Moderator")
-	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, 'Member', 1)", poster, groupB)
+	modC := CreateTestUser(t, prefix+"_modc", utils.SYSTEMROLE_USER)
+	modD := CreateTestUser(t, prefix+"_modd", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modC, groupC, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modD, groupD, utils.ROLE_MODERATOR)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, ?, 1)", poster, groupB, utils.ROLE_MEMBER)
 	// Mid-pause when rejected: the awaiting stamp must be banked and cleared by the
 	// reject, or the "posts awaiting review" metric counts this frozen row forever.
 	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound, arrival, awaiting_review_since) "+
@@ -619,8 +620,8 @@ func TestMarkCheckedReject(t *testing.T) {
 
 	// A mod of a RECEIVING group cannot reject the rippled-in copy through this endpoint:
 	// oversight actions are origin-row only.
-	modB := CreateTestUser(t, prefix+"_modb", "User")
-	CreateTestMembership(t, modB, groupB, "Moderator")
+	modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modB, groupB, utils.ROLE_MODERATOR)
 	_, modBToken := CreateTestSession(t, modB)
 	bodyB := fmt.Sprintf(`{"groupid": %d, "reject": true, "ids": [%d]}`, groupB, approved)
 	reqB := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/messages/markchecked?jwt=%s", modBToken), strings.NewReader(bodyB))
@@ -753,10 +754,10 @@ func TestMarkCheckedRejectThenApprove(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msg := CreateTestMessage(t, poster, groupID, prefix+" approved again", 52.0, -1.0)
@@ -805,10 +806,10 @@ func TestMarkCheckedRejectThenReleaseKeepsNeedsModerator(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -855,10 +856,10 @@ func TestMarkCheckedRejectSkipsHandApprovedCopy(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msg := CreateTestMessage(t, poster, groupID, prefix+" by hand", 52.0, -1.0)
@@ -892,10 +893,10 @@ func TestMarkCheckedOutsideTrialDoesNothing(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -934,10 +935,10 @@ func TestAutoapproveatCopySpamreasonHidesCountdown(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -965,10 +966,10 @@ func TestAutoapproveatPostingStatusSetMidWait(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -998,16 +999,16 @@ func TestAutoapproveatOnlyOnTheViewersOwnCopies(t *testing.T) {
 	trial := CreateTestGroup(t, prefix+"_trial")
 	outside := CreateTestGroup(t, prefix+"_outside")
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", trial))
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	trialMod := CreateTestUser(t, prefix+"_trialmod", "User")
-	outsideMod := CreateTestUser(t, prefix+"_outsidemod", "User")
-	bothMod := CreateTestUser(t, prefix+"_bothmod", "User")
-	CreateTestMembership(t, poster, trial, "Member")
-	CreateTestMembership(t, poster, outside, "Member")
-	CreateTestMembership(t, trialMod, trial, "Moderator")
-	CreateTestMembership(t, outsideMod, outside, "Moderator")
-	CreateTestMembership(t, bothMod, trial, "Moderator")
-	CreateTestMembership(t, bothMod, outside, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	trialMod := CreateTestUser(t, prefix+"_trialmod", utils.SYSTEMROLE_USER)
+	outsideMod := CreateTestUser(t, prefix+"_outsidemod", utils.SYSTEMROLE_USER)
+	bothMod := CreateTestUser(t, prefix+"_bothmod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, trial, utils.ROLE_MEMBER)
+	CreateTestMembership(t, poster, outside, utils.ROLE_MEMBER)
+	CreateTestMembership(t, trialMod, trial, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, outsideMod, outside, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, bothMod, trial, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, bothMod, outside, utils.ROLE_MODERATOR)
 	_, trialToken := CreateTestSession(t, trialMod)
 	_, outsideToken := CreateTestSession(t, outsideMod)
 	_, bothToken := CreateTestSession(t, bothMod)
@@ -1038,12 +1039,12 @@ func TestAutoapproveatMirrorsTheCronsOtherConditions(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	// A moderator as production has them (system role Moderator), who is shown a post whose
 	// poster has since deleted their account; a plain member is not.
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -1079,10 +1080,10 @@ func TestApproveOfACopyThatAlreadyPublishedChangesNothing(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msg := CreateTestMessage(t, poster, groupID, prefix+" published a moment ago", 52.0, -1.0)
@@ -1124,11 +1125,11 @@ func TestListMessagesMTPendingHoldsEveryCopyOnTheListedCommunities(t *testing.T)
 	outside := CreateTestGroup(t, prefix+"_outside")
 	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d,%d", listed, otherTrial))
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	for _, gid := range []uint64{listed, otherTrial, outside} {
-		CreateTestMembership(t, poster, gid, "Member")
-		CreateTestMembership(t, modID, gid, "Moderator")
+		CreateTestMembership(t, poster, gid, utils.ROLE_MEMBER)
+		CreateTestMembership(t, modID, gid, utils.ROLE_MODERATOR)
 	}
 	_, modToken := CreateTestSession(t, modID)
 
@@ -1225,10 +1226,10 @@ func TestAutoapproveatIgnoresAShadowDecision(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -1258,10 +1259,10 @@ func TestAutoapproveatDecisionMustBeStrictlyLater(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -1304,10 +1305,10 @@ func TestAutoapproveatNoCountdownWhileTheLockdownHoldsPosts(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, modToken := CreateTestSession(t, modID)
 

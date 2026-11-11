@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -44,8 +45,8 @@ func TestAutomodFeedbackUndo(t *testing.T) {
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", "")
 
 	// A second moderator of the same community, whose mark must survive the first one's undo.
-	otherMod := CreateTestUser(t, uniquePrefix("automod_fb_undo_other"), "User")
-	CreateTestMembership(t, otherMod, groupID, "Moderator")
+	otherMod := CreateTestUser(t, uniquePrefix("automod_fb_undo_other"), utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherMod, groupID, utils.ROLE_MODERATOR)
 	_, otherToken := CreateTestSession(t, otherMod)
 
 	t.Setenv("FREEGLE_AUTOMOD_SHADOW_GROUPS", "")
@@ -133,15 +134,15 @@ func TestAutomodAgreementFeedbackCountsMarksAndPosts(t *testing.T) {
 	t.Setenv("FREEGLE_AUTOMOD_SHADOW_GROUPS", fmt.Sprintf("%d", groupID))
 	db := database.DBConn
 
-	otherMod := CreateTestUser(t, uniquePrefix("automod_fb_posts_other"), "User")
-	CreateTestMembership(t, otherMod, groupID, "Moderator")
+	otherMod := CreateTestUser(t, uniquePrefix("automod_fb_posts_other"), utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherMod, groupID, utils.ROLE_MODERATOR)
 	_, otherToken := CreateTestSession(t, otherMod)
-	admin := CreateTestUser(t, uniquePrefix("automod_fb_posts_admin"), "Admin")
+	admin := CreateTestUser(t, uniquePrefix("automod_fb_posts_admin"), utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, admin)
 
 	// A second post on the same community, with its own decision that also walked LOAN.
-	poster := CreateTestUser(t, uniquePrefix("automod_fb_posts_poster"), "User")
-	CreateTestMembership(t, poster, groupID, "Member")
+	poster := CreateTestUser(t, uniquePrefix("automod_fb_posts_poster"), utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
 	secondMsg := CreateTestMessage(t, poster, groupID, uniquePrefix("automod_fb_posts")+" second", 52.0, -1.0)
 	db.Exec("UPDATE messages_groups SET collection='Pending', contentcheck_checked_at=NOW() WHERE msgid=?", secondMsg)
 	db.Exec("INSERT INTO messages_automod (msgid, groupid, mode, chart_version, verdict, end_node, reason, path, created) "+

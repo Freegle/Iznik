@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -573,7 +574,7 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 // (all zeros is a valid empty state; the snapshot query fails-soft to zero if columns are absent).
 func TestRipplingMetricsReviewDelayFieldsPresent(t *testing.T) {
 	prefix := uniquePrefix("ripplerdfields")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
@@ -593,9 +594,9 @@ func TestRipplingMetricsReviewDelayFieldsPresent(t *testing.T) {
 // yields a non-negative average wait.
 func TestRipplingMetricsReviewDelayAwaiting(t *testing.T) {
 	prefix := uniquePrefix("ripplerdawait")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	db := database.DBConn
@@ -632,9 +633,9 @@ func TestRipplingMetricsReviewDelayAwaiting(t *testing.T) {
 // have resumed.
 func TestRipplingMetricsReviewDelayIgnoresDeadRows(t *testing.T) {
 	prefix := uniquePrefix("ripplerddead")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	db := database.DBConn
@@ -674,9 +675,9 @@ func TestRipplingMetricsReviewDelayIgnoresDeadRows(t *testing.T) {
 // post_hours_delayed (7200s / 3600 = 2 post-hours).
 func TestRipplingMetricsReviewDelayPostHours(t *testing.T) {
 	prefix := uniquePrefix("ripplerdhours")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	db := database.DBConn

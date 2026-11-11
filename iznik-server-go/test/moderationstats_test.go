@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestModerationStats_NonAdminForbidden(t *testing.T) {
 	prefix := uniquePrefix("modstats_unauth")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	today := time.Now().Format("2006-01-02")
@@ -25,7 +26,7 @@ func TestModerationStats_NonAdminForbidden(t *testing.T) {
 
 func TestModerationStats_RequiresDates(t *testing.T) {
 	prefix := uniquePrefix("modstats_nodate")
-	adminID := CreateTestUser(t, prefix, "Admin")
+	adminID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	resp, err := getApp().Test(httptest.NewRequest("GET",
@@ -39,9 +40,9 @@ func TestModerationStats_CountsAutoApprovedAndSample(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	nullPoster := CreateTestUser(t, prefix+"_null", "User")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, nullPoster, groupID, "Member")
+	nullPoster := CreateTestUser(t, prefix+"_null", utils.SYSTEMROLE_USER)
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, nullPoster, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", nullPoster, groupID)
 	_, adminToken := CreateTestSession(t, adminID)
 
@@ -95,10 +96,10 @@ func TestModerationStats_TrustedScopedByGroup(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, poster, groupA, "Member")
-	CreateTestMembership(t, poster, groupB, "Member")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, poster, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, poster, groupB, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET ourPostingStatus='DEFAULT' WHERE userid=? AND groupid IN (?, ?)", poster, groupA, groupB)
 	_, adminToken := CreateTestSession(t, adminID)
 
@@ -142,10 +143,10 @@ func TestModerationStats_AllFieldsExactCounts(t *testing.T) {
 	const tLater = "2005-06-13 11:00:00"
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, poster, groupID, "Member")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET ourPostingStatus='DEFAULT' WHERE userid=? AND groupid=?", poster, groupID)
 	_, adminToken := CreateTestSession(t, adminID)
 
@@ -228,9 +229,9 @@ func TestModerationStats_TrustedIsBoundedByArrival(t *testing.T) {
 	const longBefore = "2004-01-01 10:00:00"
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, poster, groupID, "Member")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET ourPostingStatus='DEFAULT' WHERE userid=? AND groupid=?", poster, groupID)
 	_, adminToken := CreateTestSession(t, adminID)
 
@@ -287,10 +288,10 @@ func TestModerationStats_QualitySampleIsBucketedByTheDecisionAndDividedByDecided
 	const afterWindow = "2005-06-30 09:00:00"
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, poster, groupID, "Member")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	verdict := func(msg uint64, subtype string, at string, by uint64) {
@@ -354,10 +355,10 @@ func TestModerationStats_LaterActionedCleanCountsOnlyThePostsTheTrialPublished(t
 	const actedOn = "2005-06-17 11:00:00"
 
 	groupID := CreateTestGroup(t, prefix)
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, poster, groupID, "Member")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, poster, groupID, utils.ROLE_MEMBER)
 	_, adminToken := CreateTestSession(t, adminID)
 
 	autoPublished := func(name, text string, actedOnAfter string) uint64 {

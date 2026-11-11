@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -41,12 +42,12 @@ func TestMicroVolunteeringTwoApprovalsMarkChecked(t *testing.T) {
 	// The Checked queue and its stamps exist on communities in the post-moderation trial.
 	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	r1 := CreateTestUser(t, prefix+"_r1", "User")
-	r2 := CreateTestUser(t, prefix+"_r2", "User")
-	r3 := CreateTestUser(t, prefix+"_r3", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	r1 := CreateTestUser(t, prefix+"_r1", utils.SYSTEMROLE_USER)
+	r2 := CreateTestUser(t, prefix+"_r2", utils.SYSTEMROLE_USER)
+	r3 := CreateTestUser(t, prefix+"_r3", utils.SYSTEMROLE_USER)
 	for _, u := range []uint64{poster, r1, r2, r3} {
-		CreateTestMembership(t, u, groupID, "Member")
+		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
 	}
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, t1 := CreateTestSession(t, r1)
@@ -79,15 +80,15 @@ func TestMicroVolunteeringApprovalsRespectRejectionsAndModerators(t *testing.T) 
 	groupID := CreateTestGroup(t, prefix)
 	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	r1 := CreateTestUser(t, prefix+"_r1", "User")
-	r2 := CreateTestUser(t, prefix+"_r2", "User")
-	r3 := CreateTestUser(t, prefix+"_r3", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	r1 := CreateTestUser(t, prefix+"_r1", utils.SYSTEMROLE_USER)
+	r2 := CreateTestUser(t, prefix+"_r2", utils.SYSTEMROLE_USER)
+	r3 := CreateTestUser(t, prefix+"_r3", utils.SYSTEMROLE_USER)
 	for _, u := range []uint64{poster, r1, r2, r3} {
-		CreateTestMembership(t, u, groupID, "Member")
+		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
 	}
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
 	_, t1 := CreateTestSession(t, r1)
 	_, t2 := CreateTestSession(t, r2)
@@ -129,14 +130,14 @@ func TestGetMicrovolunteering_CheckMessagePendingPrefersSelfPublishing(t *testin
 	prefix := uniquePrefix("mv_prio")
 
 	var reviewer uint64
-	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES (?, 'Reviewer', 'User', ?)", prefix, microvolunteering.TrustModerate)
+	db.Exec("INSERT INTO users (firstname, lastname, systemrole, trustlevel) VALUES (?, 'Reviewer', ?, ?)", prefix, utils.SYSTEMROLE_USER, microvolunteering.TrustModerate)
 	db.Raw("SELECT id FROM users WHERE firstname = ? AND lastname = 'Reviewer' ORDER BY id DESC LIMIT 1", prefix).Scan(&reviewer)
 	defer db.Exec("DELETE FROM users WHERE id = ?", reviewer)
 	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, score_negative) VALUES (?, ?, 4, 'block invite', NOW(), 0)", microvolunteering.ChallengeInvite, reviewer)
 	defer db.Exec("DELETE FROM microactions WHERE userid = ?", reviewer)
 
-	moderatedPoster := CreateTestUser(t, prefix+"_moderated", "User")
-	autoPoster := CreateTestUser(t, prefix+"_auto", "User")
+	moderatedPoster := CreateTestUser(t, prefix+"_moderated", utils.SYSTEMROLE_USER)
+	autoPoster := CreateTestUser(t, prefix+"_auto", utils.SYSTEMROLE_USER)
 
 	var groupID uint64
 	db.Exec("INSERT INTO `groups` (nameshort, namefull, type, microvolunteering, polyindex) VALUES (?, ?, 'Freegle', 1, ST_GeomFromText('POINT(0 0)', 3857))", prefix, prefix+" full")
@@ -190,11 +191,11 @@ func TestMicroVolunteeringApprovalsOutsideTheTrialDoNotMarkChecked(t *testing.T)
 	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", "")
 	t.Setenv("FREEGLE_AUTOMOD_SHADOW_GROUPS", "")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	r1 := CreateTestUser(t, prefix+"_r1", "User")
-	r2 := CreateTestUser(t, prefix+"_r2", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	r1 := CreateTestUser(t, prefix+"_r1", utils.SYSTEMROLE_USER)
+	r2 := CreateTestUser(t, prefix+"_r2", utils.SYSTEMROLE_USER)
 	for _, u := range []uint64{poster, r1, r2} {
-		CreateTestMembership(t, u, groupID, "Member")
+		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
 	}
 	_, t1 := CreateTestSession(t, r1)
 	_, t2 := CreateTestSession(t, r2)

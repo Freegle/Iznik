@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -65,16 +66,16 @@ func newCheckQueueFixture(t *testing.T, name string) checkQueueFixture {
 	}
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", f.group))
 
-	f.mod = CreateTestUser(t, prefix+"_mod", "User")
-	f.otherMod = CreateTestUser(t, prefix+"_othermod", "User")
-	CreateTestMembership(t, f.mod, f.group, "Moderator")
-	CreateTestMembership(t, f.otherMod, f.group, "Moderator")
+	f.mod = CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	f.otherMod = CreateTestUser(t, prefix+"_othermod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, f.mod, f.group, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, f.otherMod, f.group, utils.ROLE_MODERATOR)
 	_, f.token = CreateTestSession(t, f.mod)
 
 	member := func(suffix, status string) uint64 {
-		u := CreateTestUser(t, prefix+"_"+suffix, "User")
+		u := CreateTestUser(t, prefix+"_"+suffix, utils.SYSTEMROLE_USER)
 		if status != "left" {
-			CreateTestMembership(t, u, f.group, "Member")
+			CreateTestMembership(t, u, f.group, utils.ROLE_MEMBER)
 			if status == "" {
 				db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", u, f.group)
 			} else {
@@ -239,14 +240,14 @@ func TestListMessagesMTFilterNeedsAModerator(t *testing.T) {
 	f := newCheckQueueFixture(t, "cq_perm")
 	prefix := uniquePrefix("cq_perm_users")
 
-	member := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, member, f.group, "Member")
+	member := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, member, f.group, utils.ROLE_MEMBER)
 	_, memberToken := CreateTestSession(t, member)
-	stranger := CreateTestUser(t, prefix+"_stranger", "User")
+	stranger := CreateTestUser(t, prefix+"_stranger", utils.SYSTEMROLE_USER)
 	_, strangerToken := CreateTestSession(t, stranger)
 	elsewhere := CreateTestGroup(t, prefix+"_elsewhere")
-	otherMod := CreateTestUser(t, prefix+"_othermod", "User")
-	CreateTestMembership(t, otherMod, elsewhere, "Moderator")
+	otherMod := CreateTestUser(t, prefix+"_othermod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherMod, elsewhere, utils.ROLE_MODERATOR)
 	_, otherModToken := CreateTestSession(t, otherMod)
 
 	status := func(token string, query string) int {
@@ -285,8 +286,8 @@ func TestCheckBadgeCountsActiveCommunitiesAndOncePerPost(t *testing.T) {
 
 	// A backup moderator (active = 0 in the membership settings) of the same community: the
 	// all-communities Check list is built from active communities only, so its badge must be too.
-	backup := CreateTestUser(t, prefix+"_backup", "User")
-	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, 'Moderator', ?)", backup, f.group, `{"active":0}`)
+	backup := CreateTestUser(t, prefix+"_backup", utils.SYSTEMROLE_USER)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, ?, ?)", backup, f.group, utils.ROLE_MODERATOR, `{"active":0}`)
 	_, backupToken := CreateTestSession(t, backup)
 	assert.Equal(t, float64(0), getSessionWork(t, backupToken)["checked"], "a backup moderator's badge does not count a community the list leaves out")
 	resp, err := getApp().Test(httptest.NewRequest("GET",
@@ -302,10 +303,10 @@ func TestCheckBadgeCountsActiveCommunitiesAndOncePerPost(t *testing.T) {
 	// every community, and one in the badge.
 	second := CreateTestGroup(t, prefix+"_second")
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d,%d", f.group, second))
-	CreateTestMembership(t, f.mod, second, "Moderator")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, poster, f.group, "Member")
-	CreateTestMembership(t, poster, second, "Member")
+	CreateTestMembership(t, f.mod, second, utils.ROLE_MODERATOR)
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, f.group, utils.ROLE_MEMBER)
+	CreateTestMembership(t, poster, second, utils.ROLE_MEMBER)
 	cross := CreateTestMessage(t, poster, f.group, prefix+" cross-post", 52.0, -1.0)
 	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL, rippled_in=0 WHERE msgid=?", cross)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 15 MINUTE), 'Approved', 0, 0)", cross, second)
@@ -338,11 +339,11 @@ func TestCheckRejectPullsBackEveryCopyOfACrossPost(t *testing.T) {
 	first := CreateTestGroup(t, prefix+"_first")
 	second := CreateTestGroup(t, prefix+"_second")
 	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d,%d", first, second))
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	for _, gid := range []uint64{first, second} {
-		CreateTestMembership(t, poster, gid, "Member")
-		CreateTestMembership(t, mod, gid, "Moderator")
+		CreateTestMembership(t, poster, gid, utils.ROLE_MEMBER)
+		CreateTestMembership(t, mod, gid, utils.ROLE_MODERATOR)
 	}
 	_, token := CreateTestSession(t, mod)
 

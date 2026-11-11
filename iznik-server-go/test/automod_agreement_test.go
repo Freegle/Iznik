@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -38,14 +39,14 @@ func TestAutomodAgreementCountsOnlyAModeratorWhoIsNotThePoster(t *testing.T) {
 	groupA := CreateTestGroup(t, prefix+"_a") // the trial community, run by modA
 	groupB := CreateTestGroup(t, prefix+"_b") // a neighbour run by modB
 	groupC := CreateTestGroup(t, prefix+"_c") // another neighbour, also run by modA
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	modA := CreateTestUser(t, prefix+"_moda", "User")
-	modB := CreateTestUser(t, prefix+"_modb", "User")
-	CreateTestMembership(t, poster, groupA, "Member")
-	CreateTestMembership(t, modA, groupA, "Moderator")
-	CreateTestMembership(t, modA, groupC, "Moderator")
-	CreateTestMembership(t, modB, groupB, "Moderator")
-	admin := CreateTestUser(t, prefix+"_admin", "Admin")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modA, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modA, groupC, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modB, groupB, utils.ROLE_MODERATOR)
+	admin := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, admin)
 
 	post := func(label string) uint64 {
@@ -88,9 +89,9 @@ func TestAutomodAgreementCountsOnlyAModeratorWhoIsNotThePoster(t *testing.T) {
 func TestAutomodAgreementSplitsAGroupByMode(t *testing.T) {
 	prefix := uniquePrefix("automod_modesplit")
 	groupA := CreateTestGroup(t, prefix+"_a")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, poster, groupA, "Member")
-	admin := CreateTestUser(t, prefix+"_admin", "Admin")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupA, utils.ROLE_MEMBER)
+	admin := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, admin)
 
 	shadow := CreateTestMessage(t, poster, groupA, prefix+" shadow", 52.0, -1.0)
@@ -122,11 +123,11 @@ func TestAutomodAgreementPulledBackFromCheck(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupZ := CreateTestGroup(t, prefix+"_z")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupA, "Member")
-	CreateTestMembership(t, mod, groupA, "Moderator")
-	admin := CreateTestUser(t, prefix+"_admin", "Admin")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, mod, groupA, utils.ROLE_MODERATOR)
+	admin := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, admin)
 
 	post := func(group uint64, label string) uint64 {
@@ -184,11 +185,11 @@ func TestAutomodAgreementBreakdownsAddUp(t *testing.T) {
 	t.Setenv("FREEGLE_AUTOAPPROVE_DELAY_MINUTES", "")
 	prefix := uniquePrefix("automod_addsup")
 	groupA := CreateTestGroup(t, prefix+"_a")
-	poster := CreateTestUser(t, prefix+"_poster", "User")
-	mod := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, poster, groupA, "Member")
-	CreateTestMembership(t, mod, groupA, "Moderator")
-	admin := CreateTestUser(t, prefix+"_admin", "Admin")
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	mod := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, poster, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, mod, groupA, utils.ROLE_MODERATOR)
+	admin := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, admin)
 	db := database.DBConn
 

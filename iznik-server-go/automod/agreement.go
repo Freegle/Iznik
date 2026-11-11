@@ -174,7 +174,8 @@ func modDisagreedRowSQL() string {
 // does not count: a home Check reject or Back to pending writes a withdraw log on each rippled
 // copy and a hold log on every other copy it pulls back, and that is the trial community
 // disagreeing with itself (already ModDisagreed), not a neighbour disagreeing with it. (A
-// members' report quorum writes its logs with no byuser, so it is not counted either.)
+// members' report quorum writes its logs with no byuser, so it is not counted either.) It
+// takes two bound arguments, the moderator and owner roles, in that order.
 func neighbourDisagreedRowSQL() string {
 	return `CASE
 	WHEN ` + decidedSQL() + ` AND ma.verdict = 'approve' THEN EXISTS (SELECT 1 FROM logs l
@@ -182,7 +183,7 @@ func neighbourDisagreedRowSQL() string {
 		AND l.type = 'Message' AND l.subtype IN ('Rejected', 'Deleted', 'Hold')
 		AND ` + moderatorLogSQL + ` AND l.timestamp >= ma.created
 		AND NOT EXISTS (SELECT 1 FROM memberships mm
-			WHERE mm.userid = l.byuser AND mm.groupid = ma.groupid AND mm.role IN ('Moderator', 'Owner')))
+			WHERE mm.userid = l.byuser AND mm.groupid = ma.groupid AND mm.role IN (?, ?)))
 	ELSE 0
 	END`
 }
@@ -300,7 +301,7 @@ func Agreement(c *fiber.Ctx) error {
 			"DATE_FORMAT(ma.created, '%Y-%m-%d') AS day, COUNT(*) AS decisions, " +
 			"SUM(" + modDisagreedRowSQL() + ") AS mod_disagreed, " +
 			"SUM(" + neighbourDisagreedRowSQL() + ") AS neighbour_disagreed, " +
-			"SUM(" + lateRowSQL() + ") AS late").
+			"SUM(" + lateRowSQL() + ") AS late", utils.ROLE_MODERATOR, utils.ROLE_OWNER).
 		Group("ma.groupid, ma.mode, ma.chart_version, ma.end_node, ma.verdict, DATE_FORMAT(ma.created, '%Y-%m-%d')").
 		Scan(&cells)
 
