@@ -5555,3 +5555,35 @@ func TestSearchUsers_PostcodeStillSupportOnly(t *testing.T) {
 	assert.Nil(t, body["users"])
 	assert.Nil(t, body["matches"])
 }
+
+// An address row that belongs to no account must not break the search for everyone else.
+func TestSearchUsers_AddressWithNoAccountDoesNotHideOtherMatches(t *testing.T) {
+	prefix := uniquePrefix("searchorphan")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	_, adminToken := CreateTestSession(t, adminID)
+
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	db.Exec("UPDATE users SET fullname = ? WHERE id = ?", prefix+" findme", targetID)
+
+	orphan := prefix + "_orphan@test.com"
+	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (NULL, ?, ?)", orphan, orphan)
+	t.Cleanup(func() { db.Exec("DELETE FROM users_emails WHERE email = ?", orphan) })
+
+	url := fmt.Sprintf("/api/user/search?q=%s&jwt=%s", prefix, adminToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+
+	found := false
+	for _, u := range result["users"].([]interface{}) {
+		if uint64(u.(float64)) == targetID {
+			found = true
+		}
+	}
+	assert.True(t, found, "the member should still be found when a matching address has no account")
+}

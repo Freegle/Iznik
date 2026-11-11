@@ -1302,7 +1302,10 @@ func SearchUsers(c *fiber.Ctx) error {
 	// parenthesised UNION is the "table", so it renders verbatim rather than
 	// being quoted as an identifier.
 	db.Table("("+
-		"(SELECT userid FROM users_emails WHERE email LIKE ? OR canon LIKE ? OR backwards LIKE ?) "+
+		// userid is nullable: an address row with no account must not be selected, or its
+		// NULL (which sorts first) makes the whole result fail to scan and the search
+		// comes back empty.
+		"(SELECT userid FROM users_emails WHERE (email LIKE ? OR canon LIKE ? OR backwards LIKE ?) AND userid IS NOT NULL) "+
 		"UNION "+
 		// firstname/lastname and their concatenation as well as fullname: LoveJunk-origin
 		// members have fullname NULL and their name split across the two columns, and the
