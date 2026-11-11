@@ -107,7 +107,7 @@ let image
 
 if (groupid.value) {
   const group = await groupStore.fetch(groupid.value)
-  name = 'Community Events for ' + group.namedisplay
+  name = 'Community Events for ' + (group?.namedisplay ?? 'your community')
   image = group?.profile
 
   await communityEventStore.fetchGroup(groupid.value)
