@@ -2337,65 +2337,95 @@ func PutUser(c *fiber.Ctx) error {
 	// SELECT LAST_INSERT_ID() query, so no connection-pool race. See
 	// test/insertid_gorm_writeback_test.go, which proves this against the
 	// real database.
-	row := map[string]interface{}{
-		"fullname":  fullname,
-		"firstname": firstname,
-		"lastname":  lastname,
-		"added":     gorm.Expr("NOW()"),
-	}
 	//
 	// The user and its address go in together. users_emails.email is unique, so when two
 	// signups for one address race, the loser's insert fails; inside a transaction that
 	// rolls its user row back too, instead of leaving an account with no address.
 	canon := CanonicalizeEmail(email)
 	var newUserID uint64
-	txErr := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Table("users").Create(row).Error; err != nil {
-			return err
+	createUserAndAddress := func() error {
+		// Built afresh each time: GORM writes the new id back into this map.
+		row := map[string]interface{}{
+			"fullname":  fullname,
+			"firstname": firstname,
+			"lastname":  lastname,
+			"added":     gorm.Expr("NOW()"),
 		}
 
-		newUserIDInt, _ := row["@id"].(int64)
-		if newUserIDInt == 0 {
-			return errNoNewUserID
-		}
-		newUserID = uint64(newUserIDInt)
-
-		// An address row can exist with no account (userid NULL). Take it over rather than
-		// inserting beside it, which would fail on the unique address for ever.
-		claim := tx.Table("users_emails").Where("email = ? AND userid IS NULL", email).Updates(map[string]interface{}{
-			"userid":    newUserID,
-			"preferred": gorm.Expr("1"),
-			"validated": gorm.Expr("NOW()"),
-			"canon":     canon,
-			"backwards": reverseString(canon),
-		})
-		if claim.Error != nil {
-			return claim.Error
-		}
-		if claim.RowsAffected > 0 {
-			return nil
-		}
-
-		return tx.Table("users_emails").Create(map[string]interface{}{
-			"userid":    newUserID,
-			"email":     email,
-			"preferred": gorm.Expr("1"),
-			"validated": gorm.Expr("NOW()"),
-			"canon":     canon,
-			"backwards": reverseString(canon),
-		}).Error
-	})
-	if txErr != nil {
-		if isDuplicateEmail(txErr) {
-			// Someone signed up with this address a moment ago. Answer as if we had found
-			// them in the first place.
-			var winner uint64
-			// From the write node: a replica may not have the winner's row yet.
-			db.Clauses(dbresolver.Write).Table("users_emails").Select("COALESCE(userid, 0)").Where("email = ?", email).Limit(1).Scan(&winner)
-			if winner > 0 {
-				return respondExisting(winner)
+		return db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Table("users").Create(row).Error; err != nil {
+				return err
 			}
+
+			newUserIDInt, _ := row["@id"].(int64)
+			if newUserIDInt == 0 {
+				return errNoNewUserID
+			}
+			newUserID = uint64(newUserIDInt)
+
+			// Insert first. Looking for an orphan to claim before inserting would take a gap
+			// lock on a row that is not there, and two racing signups would deadlock on it.
+			insertErr := tx.Table("users_emails").Create(map[string]interface{}{
+				"userid":    newUserID,
+				"email":     email,
+				"preferred": gorm.Expr("1"),
+				"validated": gorm.Expr("NOW()"),
+				"canon":     canon,
+				"backwards": reverseString(canon),
+			}).Error
+			if insertErr == nil || !isDuplicateEmail(insertErr) {
+				return insertErr
+			}
+
+			// The address is already there. If it belongs to no account (userid NULL), take
+			// it over; a failed statement leaves this transaction usable. Otherwise someone
+			// else has it, and the caller answers as for an existing account.
+			claim := tx.Table("users_emails").Where("email = ? AND userid IS NULL", email).Updates(map[string]interface{}{
+				"userid":    newUserID,
+				"preferred": gorm.Expr("1"),
+				"validated": gorm.Expr("NOW()"),
+				"canon":     canon,
+				"backwards": reverseString(canon),
+			})
+			if claim.Error != nil {
+				return claim.Error
+			}
+			if claim.RowsAffected == 0 {
+				return insertErr
+			}
+
+			return nil
+		})
+	}
+
+	// A lost race shows up as a duplicate address, or, when two signups claim the same
+	// orphan row at once, as a deadlock. Either way the other signup has won: answer as if
+	// we had found them in the first place. A deadlock with no winner visible yet gets one
+	// more go.
+	var txErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		txErr = createUserAndAddress()
+		if txErr == nil {
+			break
 		}
+
+		lostRace := isDuplicateEmail(txErr)
+		deadlocked := database.IsDeadlockOrLockTimeout(txErr)
+		if !lostRace && !deadlocked {
+			break
+		}
+
+		var winner uint64
+		// From the write node: a replica may not have the winner's row yet.
+		db.Clauses(dbresolver.Write).Table("users_emails").Select("COALESCE(userid, 0)").Where("email = ?", email).Limit(1).Scan(&winner)
+		if winner > 0 {
+			return respondExisting(winner)
+		}
+		if lostRace {
+			break
+		}
+	}
+	if txErr != nil {
 		if errors.Is(txErr, errNoNewUserID) {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new user ID")
 		}
