@@ -21,6 +21,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/authority"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,9 +43,9 @@ func TestBulkCollectedPathRecomputesNoDoubleDeduction(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkdedupe")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	itemAID := addBulkItem(t, msgID, "DeskA", 4, "Good")
@@ -102,9 +103,9 @@ func TestBulkLastItemCollectedInsertsOutcomeRowOnce(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("bulkoutcome")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
 	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
@@ -227,9 +228,9 @@ func TestBulkOfferAuthorityStats(t *testing.T) {
 
 	// --- Build a bulk offer message and point it at location 1000001. ---
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	wanterID := CreateTestUser(t, prefix+"_wanter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.957571, -3.205333)
 	// Override the locationid to the seeded test postcode so pc picks it up.

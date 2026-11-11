@@ -1,0 +1,44 @@
+name: Clear the CI label when a run is cancelled
+
+# The pipeline labels a PR "CI: Running" when its build starts and swaps that for "CI: Passed" or
+# "CI: Failed" at the end. A cancelled run never reaches the end, so the PR goes on saying its
+# tests are running when nothing is. CircleCI reports a cancelled run as a commit status with
+# state "error" and the text "Your CircleCI tests were canceled"; this takes the label off.
+#
+# Only when the cancelled commit is still the PR's head. When a push supersedes a run, the old
+# commit's cancellation arrives after the new run has labelled the PR, and that label is right.
+
+on:
+  status:
+
+jobs:
+  clear:
+    if: |
+      github.event.context == 'ci/circleci: build-and-test' &&
+      github.event.state == 'error' &&
+      contains(github.event.description, 'canceled')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Take "CI - Running" off the open PRs whose head is this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A real env var, never interpolated into the script, so it is data and not shell.
+          SHA: ${{ github.event.sha }}
+        run: |
+          PRS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
+            --jq '.[] | select(.state == "open" and .head.sha == env.SHA) | .number')
+          if [ -z "$PRS" ]; then
+            echo "No open PR has $SHA as its head; nothing to clear"
+            exit 0
+          fi
+          for PR in $PRS; do
+            # A 404 means the label was not on the PR, which is fine.
+            if gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${PR}/labels/CI%3A%20Running" > /dev/null 2>&1; then
+              echo "Cleared CI: Running on #$PR"
+            else
+              echo "#$PR did not carry CI: Running"
+            fi
+          done

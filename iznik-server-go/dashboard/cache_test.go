@@ -201,9 +201,11 @@ func TestCachedComponent_ExpiredEntryRecomputes(t *testing.T) {
 		return "v"
 	}
 
-	cachedComponent("k", 20*time.Millisecond, compute)
-	time.Sleep(40 * time.Millisecond)
-	cachedComponent("k", 20*time.Millisecond, compute)
+	// The TTL only has to be long enough to tell "within" from "after"; the wait
+	// need only outlast it, and time.Sleep never returns early.
+	cachedComponent("k", 2*time.Millisecond, compute)
+	time.Sleep(4 * time.Millisecond)
+	cachedComponent("k", 2*time.Millisecond, compute)
 
 	assert.Equal(t, int32(2), atomic.LoadInt32(&calls))
 }

@@ -7,6 +7,7 @@ use App\Services\Gmail\GmailService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Poll the outreach mailbox for replies to Sent outreach emails. This is the
@@ -29,6 +30,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Emits a JSON array of reply threads to stdout so the gmail FSM driver can act.
  */
+#[AsCommand(name: 'bulkoffer:poll-outreach')]
 class PollGmailOutreachCommand extends Command
 {
     /**

@@ -6,11 +6,13 @@ use App\Services\CookieYes\CookieYesException;
 use App\Services\CookieYes\CookieYesMcpClient;
 use App\Services\CookieYes\CookieYesOAuth;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * One-time login for the CookieYes watchdog, in two steps so it works over
  * `docker exec` with no terminal to type into.
  */
+#[AsCommand(name: 'cookieyes:authorize')]
 class AuthorizeCommand extends Command
 {
     protected $signature = 'cookieyes:authorize

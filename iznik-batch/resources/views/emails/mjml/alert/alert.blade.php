@@ -32,6 +32,42 @@
       </mj-column>
     </mj-section>
 
+    @if ($requireReply)
+    <mj-section background-color="#ffffff" padding="0 20px 10px">
+      <mj-column>
+        <mj-text font-size="14px" color="#c0392b" font-weight="bold" padding="0 0 8px">
+          A reply is needed. When you next open ModTools it will ask you to answer this before you carry on.
+        </mj-text>
+        <mj-button href="{{ $modSite }}" mj-class="btn-modtools" border-radius="3px" font-size="16px">
+          Open ModTools to reply
+        </mj-button>
+      </mj-column>
+    </mj-section>
+    @endif
+
+    @if ($quoted)
+    <mj-section background-color="#ffffff" padding="0 20px 10px">
+      <mj-column border-left="4px solid #cccccc" padding-left="12px">
+        <mj-text font-size="12px" color="#777777" padding="0 0 6px">
+          The member's original email, in full:
+        </mj-text>
+        <mj-text font-size="14px" color="#555555" line-height="1.5" background-color="#f7f7f7" padding="8px 12px">
+          {!! nl2br(e($quoted)) !!}
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    @endif
+
+    @if (!empty($fileNames))
+    <mj-section background-color="#ffffff" padding="0 20px 10px">
+      <mj-column>
+        <mj-text font-size="13px" color="#555555">
+          Attached: {{ implode(', ', $fileNames) }}
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    @endif
+
     @if ($clickUrl)
     <mj-section background-color="#ffffff" padding="0 20px 10px">
       <mj-column>

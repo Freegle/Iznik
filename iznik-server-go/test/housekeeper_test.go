@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,7 +18,7 @@ func TestHousekeeperNotifySuccess(t *testing.T) {
 	db := database.DBConn
 
 	// Create an admin user and session.
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	body := []byte(`{
@@ -74,7 +75,7 @@ func TestHousekeeperNotifyForbiddenNonAdmin(t *testing.T) {
 	db := database.DBConn
 
 	// Create a regular (non-admin) user.
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := []byte(`{
@@ -104,7 +105,7 @@ func TestHousekeeperNotifyFailureQueued(t *testing.T) {
 	db := database.DBConn
 
 	// Create an admin user and session.
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	// Extension reports a failure — should still be queued for notification.
@@ -136,7 +137,7 @@ func TestHousekeeperNotifyBadRequest(t *testing.T) {
 	prefix := uniquePrefix("hkbadreq")
 
 	// Create an admin user.
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	// Missing required "task" and "status" fields.
@@ -158,7 +159,7 @@ func TestHousekeeperNotifyUpsertsRegistry(t *testing.T) {
 	prefix := uniquePrefix("hkreg")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	body := []byte(`{
@@ -215,7 +216,7 @@ func TestHousekeeperNotifyUpdatesLastRun(t *testing.T) {
 	prefix := uniquePrefix("hklast")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	body := []byte(`{
@@ -249,7 +250,7 @@ func TestListTasksReturnsAll(t *testing.T) {
 	prefix := uniquePrefix("hklist")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	// Seed two tasks.
@@ -292,7 +293,7 @@ func TestListTasksRequiresAdminOrSupport(t *testing.T) {
 	assert.Equal(t, 401, resp.StatusCode)
 
 	// Regular user → 403.
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req = httptest.NewRequest("GET", "/api/housekeeper/tasks?jwt="+token, nil)
@@ -301,7 +302,7 @@ func TestListTasksRequiresAdminOrSupport(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 
 	// Support user → 200.
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
 
 	req = httptest.NewRequest("GET", "/api/housekeeper/tasks?jwt="+supportToken, nil)
@@ -313,7 +314,7 @@ func TestListTasksRequiresAdminOrSupport(t *testing.T) {
 func TestListCronJobsReturnsData(t *testing.T) {
 	prefix := uniquePrefix("hkcron")
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
@@ -346,7 +347,7 @@ func TestListCronJobsRequiresAdminOrSupport(t *testing.T) {
 	assert.Equal(t, 401, resp.StatusCode)
 
 	// Regular user → 403.
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req = httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
@@ -359,12 +360,12 @@ func TestListCronJobsIncludesLastRunData(t *testing.T) {
 	prefix := uniquePrefix("hkcronrun")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	// Seed a cron_job_status row matching a known cron job command.
 	db.Exec(`INSERT INTO cron_job_status (command, last_run_at, last_finished_at, last_exit_code, last_output, updated_at)
-		VALUES ('deploy:watch', NOW(), NOW(), 0, 'Version unchanged', NOW())`)
+		VALUES ('deploy:green-master', NOW(), NOW(), 0, 'Deployed includes the latest green master', NOW())`)
 
 	// Also seed one with flags to test prefix matching.
 	db.Exec(`INSERT INTO cron_job_status (command, last_run_at, last_finished_at, last_exit_code, last_output, updated_at)
@@ -380,12 +381,12 @@ func TestListCronJobsIncludesLastRunData(t *testing.T) {
 	err = json.Unmarshal(respBody, &jobs)
 	assert.NoError(t, err)
 
-	// Find deploy:watch and verify it has last_run_at.
+	// Find deploy:green-master and verify it has last_run_at.
 	for _, job := range jobs {
-		if job["command"] == "deploy:watch" {
-			assert.NotNil(t, job["last_run_at"], "deploy:watch should have last_run_at from DB")
-			assert.Equal(t, float64(0), job["last_exit_code"], "deploy:watch should have exit code 0")
-			assert.Equal(t, "Version unchanged", job["last_output"])
+		if job["command"] == "deploy:green-master" {
+			assert.NotNil(t, job["last_run_at"], "deploy:green-master should have last_run_at from DB")
+			assert.Equal(t, float64(0), job["last_exit_code"], "deploy:green-master should have exit code 0")
+			assert.Equal(t, "Deployed includes the latest green master", job["last_output"])
 		}
 		if job["command"] == "mail:chat:user2user" {
 			assert.NotNil(t, job["last_run_at"], "mail:chat:user2user should match via prefix")
@@ -394,7 +395,7 @@ func TestListCronJobsIncludesLastRunData(t *testing.T) {
 	}
 
 	// Clean up.
-	db.Exec("DELETE FROM cron_job_status WHERE command IN ('deploy:watch', 'mail:chat:user2user --max-iterations=60 --spool')")
+	db.Exec("DELETE FROM cron_job_status WHERE command IN ('deploy:green-master', 'mail:chat:user2user --max-iterations=60 --spool')")
 }
 
 func TestSessionWorkIncludesHousekeeping(t *testing.T) {
@@ -402,9 +403,9 @@ func TestSessionWorkIncludesHousekeeping(t *testing.T) {
 	db := database.DBConn
 
 	// Create an admin user with a group membership (needed for work counts).
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	// Insert a failed, enabled housekeeper task.
@@ -436,13 +437,12 @@ func TestSessionWorkIncludesHousekeeping(t *testing.T) {
 	db.Exec("DELETE FROM housekeeper_tasks WHERE task_key IN (?, ?)", prefix+"_failed", prefix+"_overdue")
 }
 
-func TestDeployWatchIsInactive(t *testing.T) {
-	// deploy:watch has been disabled — verify ActiveCronJobCount does not include it,
-	// and that it appears as Active: false in the cron job list.
+func TestCodeDeployedIsListedAndActive(t *testing.T) {
+	// Code Deployed replaces the retired deploy:watch row and counts as an active job.
 	prefix := uniquePrefix("deployw")
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
@@ -455,22 +455,25 @@ func TestDeployWatchIsInactive(t *testing.T) {
 	err = json.Unmarshal(respBody, &jobs)
 	assert.NoError(t, err)
 
+	found := false
 	for _, job := range jobs {
-		if job["command"] == "deploy:watch" {
-			active, ok := job["active"].(bool)
-			assert.True(t, ok, "active field should be a boolean")
-			assert.False(t, active, "deploy:watch should be inactive")
+		assert.NotEqual(t, "deploy:watch", job["command"], "deploy:watch should no longer be listed")
+		if job["command"] == "deploy:green-master" {
+			found = true
+			assert.Equal(t, true, job["active"])
+			assert.Equal(t, float64(10080), job["interval_minutes"])
 		}
 	}
+	assert.True(t, found, "deploy:green-master should be listed")
 }
 
 // TestFinalV1CronMigrationsRegistered verifies the last batch of V1 crontab
 // migrations appear in the SysAdmin cron registry as active jobs.
 func TestFinalV1CronMigrationsRegistered(t *testing.T) {
 	prefix := uniquePrefix("v1cron")
-	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
@@ -502,4 +505,112 @@ func TestFinalV1CronMigrationsRegistered(t *testing.T) {
 	for cmd, found := range expected {
 		assert.True(t, found, cmd+" should be present in the cron registry")
 	}
+}
+
+// TestHostMaintenanceJobsShowRecordedRuns verifies the freegle-maint slots are in
+// the cron registry and pick up the row `artisan cron:record` writes for them,
+// without one slot's row standing for another whose name it starts with.
+func TestHostMaintenanceJobsShowRecordedRuns(t *testing.T) {
+	prefix := uniquePrefix("hostmaint")
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("DELETE FROM cron_job_status WHERE command IN ('freegle-maint db', 'freegle-maint docker')")
+	db.Exec("INSERT INTO cron_job_status (command, last_run_at, last_finished_at, last_exit_code, last_output) VALUES ('freegle-maint db', NOW(), NOW(), 1, 'db3-internal: monit unmonitor failed')")
+	defer db.Exec("DELETE FROM cron_job_status WHERE command IN ('freegle-maint db', 'freegle-maint docker')")
+
+	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var jobs []map[string]interface{}
+	assert.NoError(t, json.Unmarshal(respBody, &jobs))
+
+	found := map[string]map[string]interface{}{}
+	for _, job := range jobs {
+		if cmd, _ := job["command"].(string); cmd != "" {
+			found[cmd] = job
+		}
+	}
+
+	for _, slot := range []string{"lb", "db", "mail", "docker", "arbitrator", "rollout"} {
+		job, ok := found["freegle-maint "+slot]
+		if assert.True(t, ok, "freegle-maint "+slot+" should be in the cron registry") {
+			assert.Equal(t, "Host Maintenance", job["category"])
+			assert.Equal(t, true, job["active"])
+		}
+	}
+
+	dbJob := found["freegle-maint db"]
+	assert.Equal(t, float64(1), dbJob["last_exit_code"])
+	assert.Equal(t, "db3-internal: monit unmonitor failed", dbJob["last_output"])
+	assert.Nil(t, found["freegle-maint docker"]["last_run_at"], "the db row must not stand for the docker slot")
+}
+
+// TestSessionWorkCronJobsCountsFailedNeverRunAndOverdue verifies the SysAdmin
+// Cron Jobs badge counts registry entries that failed, never ran, or are
+// overdue, and nothing else.
+func TestSessionWorkCronJobsCountsFailedNeverRunAndOverdue(t *testing.T) {
+	prefix := uniquePrefix("wccron")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
+	_, token := CreateTestSession(t, userID)
+
+	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	var jobs []map[string]interface{}
+	assert.NoError(t, json.Unmarshal(body, &jobs))
+
+	var commands []string
+	for _, j := range jobs {
+		if j["active"] == true {
+			commands = append(commands, j["command"].(string))
+		}
+	}
+	if !assert.GreaterOrEqual(t, len(commands), 4) {
+		return
+	}
+
+	db.Exec("DELETE FROM cron_job_status")
+	defer db.Exec("DELETE FROM cron_job_status")
+
+	seed := func(command, started string, exit int) {
+		db.Exec("INSERT INTO cron_job_status (command, last_run_at, last_finished_at, last_exit_code, last_output, updated_at) VALUES (?, "+started+", "+started+", ?, 'x', NOW())", command, exit)
+	}
+	count := func() float64 { return getSessionWork(t, token)["cronjobs"].(float64) }
+
+	// Nothing recorded: every active entry has never run.
+	assert.Equal(t, float64(len(commands)), count())
+
+	// Everything fresh and successful.
+	db.Exec("DELETE FROM cron_job_status")
+	for _, c := range commands {
+		seed(c, "NOW()", 0)
+	}
+	assert.Equal(t, float64(0), count())
+
+	// One failed.
+	db.Exec("UPDATE cron_job_status SET last_exit_code = 1 WHERE command = ?", commands[0])
+	assert.Equal(t, float64(1), count())
+
+	// One overdue (a success that started 100 days ago).
+	db.Exec("UPDATE cron_job_status SET last_run_at = DATE_SUB(NOW(), INTERVAL 100 DAY) WHERE command = ?", commands[1])
+	assert.Equal(t, float64(2), count())
+
+	// One never run.
+	db.Exec("DELETE FROM cron_job_status WHERE command = ?", commands[2])
+	assert.Equal(t, float64(3), count())
+
+	// A failed row outside the registry is not counted.
+	seed("retired:job", "NOW()", 1)
+	assert.Equal(t, float64(3), count())
 }

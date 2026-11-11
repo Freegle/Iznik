@@ -22,6 +22,13 @@
             </b-button>
           </template>
         </b-input-group>
+        <div
+          v-if="lockdownError"
+          class="text-danger small mt-1"
+          data-testid="profile-lockdown-error"
+        >
+          {{ lockdownError }}
+        </div>
       </div>
 
       <!-- Profile photo and about -->
@@ -130,6 +137,8 @@ import ProfileImage from '~/components/ProfileImage'
 import OurUploader from '~/components/OurUploader'
 import OurToggle from '~/components/OurToggle'
 import SupporterInfo from '~/components/SupporterInfo'
+import { useLockdownNotice } from '~/composables/useLockdownNotice'
+import { SYSTEMROLE_USER } from '~/constants'
 
 const emit = defineEmits([
   'update',
@@ -140,6 +149,7 @@ const emit = defineEmits([
 const authStore = useAuthStore()
 const imageStore = useImageStore()
 const { me, myid } = useMe()
+const { lockdownError, guardLockdown } = useLockdownNotice()
 
 // State
 const uploading = ref(false)
@@ -160,7 +170,7 @@ const showSupporter = computed(() => {
 
 const eligibleSupporter = computed(() => {
   if (!me.value) return false
-  const isMod = me.value.systemrole && me.value.systemrole !== 'User'
+  const isMod = me.value.systemrole && me.value.systemrole !== SYSTEMROLE_USER
   const hasRecentDonation =
     me.value.donated &&
     new Date(me.value.donated) >
@@ -219,8 +229,13 @@ const changeUseProfile = async (value) => {
 }
 
 const saveName = async () => {
-  await authStore.saveAndGet({ displayname: displayName.value })
-  emit('update')
+  // plans/active/2026-09-27-lockdown-switch.md section 11.3: displayname is
+  // refused while the "posts" surface is held. Show the paused message in
+  // place, rather than emitting update or letting an error modal appear.
+  await guardLockdown(async () => {
+    await authStore.saveAndGet({ displayname: displayName.value })
+    emit('update')
+  })
 }
 
 const uploadProfile = () => {

@@ -8,12 +8,14 @@ use App\Traits\SingleInstanceLock;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Nightly embedding generator — embeds messages that don't yet have a row
  * in messages_embeddings. See RegenerateEmbeddingsCommand for the full
  * rebuild used after recipe or model changes.
  */
+#[AsCommand(name: 'embeddings:generate')]
 class GenerateEmbeddingsCommand extends Command
 {
     use GracefulShutdown;
@@ -57,6 +59,9 @@ class GenerateEmbeddingsCommand extends Command
 
             $batchLimit = min($remaining, $chunkSize);
 
+            // keep-raw: LEFT() has no builder method; the rest of this query
+            // (join, anti-join, order, limit) would gain nothing from being
+            // rebuilt around a lone selectRaw() for that one column.
             $messages = DB::select('
                 SELECT ms.msgid, m.subject, LEFT(m.textbody, 500) as body
                 FROM messages_spatial ms

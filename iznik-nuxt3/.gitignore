@@ -66,6 +66,10 @@ android/*
 !android/app/
 android/app/*
 !android/app/build.gradle
+# The emulator gate's build-type manifest (scripts/app-e2e in FreegleDocker).
+!android/app/src/
+android/app/src/*
+!android/app/src/e2e/
 ios/*
 !ios/App/
 ios/App/*

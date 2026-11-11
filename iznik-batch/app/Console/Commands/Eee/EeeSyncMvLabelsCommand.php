@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Push fresh EEELabel rows from microactions to the eee-browser labels DB.
@@ -24,6 +25,7 @@ use Illuminate\Support\Facades\Http;
  * Run via scheduler every 10 minutes; safe to re-run because the endpoint
  * upserts on (messageid, attid, field, labeller).
  */
+#[AsCommand(name: 'eee:sync-mv-labels')]
 class EeeSyncMvLabelsCommand extends Command
 {
     protected $signature = 'eee:sync-mv-labels

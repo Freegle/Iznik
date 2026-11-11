@@ -8,6 +8,7 @@ use App\Services\ItemService;
 use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
+use App\Services\TrashNothing\Ingestion\TnUserProvisioner;
 use Illuminate\Support\Facades\Log;
 use OpenAPI\Client\Api\PostsApi;
 use OpenAPI\Client\ApiException;
@@ -54,6 +55,18 @@ class PostSyncer
     // routed Loki entry is distinguishable from one the scheduled sync caught.
     private bool $backfill = false;
 
+    // Whether this run has already reported a post with no freegle_group_ids field, so a key
+    // without the field reports once a run rather than once a post.
+    private bool $missingConsentFieldReported = false;
+
+    // Set by processPost() when TN could not be asked who a post's poster is. sync() stops
+    // there; ingestFetchedPost() answers false.
+    private bool $posterLookupFailed = false;
+
+    // Where the last sync() stopped for a poster it could not look up: the start of the
+    // day window the post was in. Null when the run got through every post.
+    private ?string $stalledAt = null;
+
     public function __construct(
         private bool $dryRun,
         private bool $localTesting,
@@ -71,6 +84,14 @@ class PostSyncer
             dryRun: $this->dryRun,
             loki: $this->loki,
             itemService: app(ItemService::class),
+            localTesting: $this->localTesting,
+            userProvisioner: new TnUserProvisioner(
+                dryRun: $this->dryRun,
+                localTesting: $this->localTesting,
+                publicApiKey: $this->apiKey,
+                loki: $this->loki,
+                rateLimiter: $this->rateLimiter,
+            ),
         );
     }
 
@@ -82,6 +103,9 @@ class PostSyncer
         $count   = 0;
         $maxDate = null;
         $api     = $this->buildApiClient();
+
+        $this->missingConsentFieldReported = false;
+        $this->stalledAt = null;
 
         // /posts/all requires date_max within 1 day of date_min, so walk day-by-day.
         $cursor = new \DateTime($from, new \DateTimeZone('UTC'));
@@ -103,12 +127,30 @@ class PostSyncer
                 foreach ($posts as $post) {
                     $count++;
                     $maxDate = $this->processPost($post, $maxDate);
+
+                    // TN could not say who posted this, so Freegle cannot tell whether it
+                    // is theirs to ingest. Passing over it would put it behind the stored
+                    // cursor for good, so the window stops here and the next run asks again.
+                    // Like a failed page above, but the failure is in a post, not the feed.
+                    if ($this->posterLookupFailed) {
+                        $this->stalledAt = $cursor->format(self::ISO_UTC);
+                        break 3;
+                    }
                 }
 
                 $page++;
             } while ($hasMore);
 
             $cursor = $windowEnd;
+        }
+
+        // The feed's order is TN's, so any post in the window that stopped may not have been
+        // reached: the cursor must not pass the start of that window.
+        if ($this->stalledAt !== null) {
+            if ($maxDate !== null && strtotime($maxDate) > strtotime($this->stalledAt)) {
+                $maxDate = $this->stalledAt;
+            }
+            Log::warning('TN-SYNC-TRACE [POSTS-STALLED] a poster could not be looked up; the next run resumes from ' . $this->stalledAt);
         }
 
         Log::info('TN-SYNC-TRACE [POSTS-DONE] total=' . $count . ' max_date=' . ($maxDate ?? 'null'));
@@ -122,9 +164,20 @@ class PostSyncer
             'from'     => $from,
             'to'       => $to,
             'dry_run'  => $this->dryRun,
+            'stalled_at' => $this->stalledAt,
         ]);
 
         return [$count, $maxDate];
+    }
+
+    /**
+     * Where the last sync() stopped because TN could not be asked about a poster, or null
+     * if it got through every post. The stored sync date must not go past it, whatever
+     * the other syncers saw: a later run has to fetch that window again.
+     */
+    public function stalledAt(): ?string
+    {
+        return $this->stalledAt;
     }
 
     /**
@@ -193,6 +246,9 @@ class PostSyncer
 
     private function processPost(mixed $post, ?string $maxDate): ?string
     {
+        $this->posterLookupFailed = false;
+        $previousMax = $maxDate;
+
         $date      = is_array($post) ? ($post['date'] ?? null) : $post->getDate()?->format(self::ISO_UTC);
         $postId    = is_array($post) ? ($post['post_id'] ?? '') : $post->getPostId();
         $type      = is_array($post) ? ($post['type'] ?? '') : $post->getType();
@@ -207,7 +263,7 @@ class PostSyncer
 
         // tn_group_id, not group_id: this is TN's OWN group id (empty on a
         // source post, set on a per-group copy), which is never used to place
-        // the post — see findGroupByLocation() below. The email path's [POST]
+        // the post: see placement() below. The email path's [POST]
         // line carries a `group_id=` that is the resolved FREEGLE group id, so
         // reusing that name here would put two different things under one
         // label in a stream the two paths are meant to be read side by side.
@@ -218,12 +274,18 @@ class PostSyncer
         // entry carries the same subject text as a successful one.
         $subject = strtoupper((string) $type) . ': ' . $title;
 
-        // Resolve the Freegle group purely from the post's own lat/lng — the group TN thinks
-        // a post belongs to (group_id) is just where the member happened to post it, which
-        // drifts out of step with Freegle's group boundaries, so it is never used to place a
-        // post. Location::groupsNear() is the same polygon-containment-then-nearest-centroid
-        // logic used for member group boundaries (see Location::groupsNear() and the Go port
-        // in iznik-server-go/location/location.go).
+        // The member chooses the community on TrashNothing. TN's out-of-spec
+        // freegle_group_ids field (see the FREEGLE LOCAL MODIFICATION note on the Post model)
+        // lists the Freegle communities the member picked for this post, and the post goes on
+        // one of them (placement()). Only a post that names none is placed by its own lat/lng,
+        // on the local community, and that one is unaddressed: its poster never chose it, so
+        // messages_groups.mod_messaging_allowed is 0 (Discourse 10315). TN's own group_id is
+        // never used: it is where the member happened to post on TN, which drifts out of step
+        // with Freegle's group boundaries.
+        //
+        // A missing field (e.g. a non-FD API key) is no choice at all, so every post would be
+        // placed by location and unaddressed; it is reported. An empty list is the member's
+        // choice and is not.
         if ($lat === null || $lng === null) {
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=no-coordinates tn_group_id=' . $groupId . ' post_id=' . $postId);
             // No group resolved, so no group context — which matches the shape
@@ -236,7 +298,11 @@ class PostSyncer
             return $maxDate;
         }
 
-        $group = $this->findGroupByLocation((float) $lat, (float) $lng);
+        if (($post['freegle_group_ids'] ?? null) === null) {
+            $this->reportMissingConsentField($postId);
+        }
+
+        [$group, $moderatorMessagingAllowed] = self::placement((float) $lat, (float) $lng, self::chosenGroupIds($post));
         if ($group === null) {
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=not-in-any-group-bounds lat=' . $lat . ' lng=' . $lng . ' post_id=' . $postId);
             // The closest analogue to the email path's "Post to unknown group"
@@ -251,32 +317,33 @@ class PostSyncer
             return $maxDate;
         }
 
-        // TN also returns an out-of-spec `freegle_group_ids` field (see the FREEGLE LOCAL
-        // MODIFICATION note on the Post model) — the Freegle groups the poster has allowed
-        // moderator messages from. Both array (fixture) and Post object post shapes support
-        // ArrayAccess, so this works for either without a getter on the model.
-        //
-        // Unlike messages_groups.mod_messaging_allowed's table-wide default (allowed,
-        // for ordinary Freegle posts), every TN post is disallowed by default: TN
-        // posters haven't consented to mod contact unless the resolved group is
-        // explicitly present in freegle_group_ids. A missing/empty field (e.g. a
-        // non-FD API key) means no consent was given, so it stays disallowed.
-        //
-        // Ids are normalized before the strict comparison: the live path deserializes them
-        // as int[], but fixtures are raw JSON that can carry them as strings, and a strict
-        // in_array() against a string id would silently read as "no consent".
-        $freegleGroupIds           = $post['freegle_group_ids'] ?? [];
-        $freegleGroupIds           = array_map('intval', is_array($freegleGroupIds) ? $freegleGroupIds : []);
-        $moderatorMessagingAllowed = in_array((int) $group->id, $freegleGroupIds, true);
-
         // Own trace tag (not [POST-RESULT]/[POST-SKIP]/[WRITE]) — EmailApiParityTest diffs
         // those tags line-for-line against the email path, which has no equivalent of this
         // API-only field.
-        Log::info('TN-SYNC-TRACE [POST-META] post_id=' . $postId . ' moderator_messaging_allowed=' . ($moderatorMessagingAllowed ? 'true' : 'false'));
+        Log::info('TN-SYNC-TRACE [POST-META] post_id=' . $postId . ' group_id=' . $group->id . ' placed=' . ($moderatorMessagingAllowed ? 'chosen' : 'location') . ' moderator_messaging_allowed=' . ($moderatorMessagingAllowed ? 'true' : 'false'));
 
         try {
             $result = $this->ingestionService->ingest($post, $group, $moderatorMessagingAllowed);
             Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=' . $result);
+
+            $context = $this->ingestionService->getLastRoutingContext();
+
+            $reason = $context['routing_reason'] ?? null;
+
+            // A rejected key holds nothing in the sync (TnUserProvisioner::REASON_LOOKUP_KEY_REJECTED):
+            // the post is skipped as a miss below. The coverage check's backfill asks about a missed
+            // post again on its next run, so there it is "try later", like a failed lookup.
+            if ($reason === GroupPostIngestionService::REASON_TN_USER_LOOKUP_FAILED
+                || ($this->backfill && $reason === GroupPostIngestionService::REASON_TN_USER_LOOKUP_KEY_REJECTED)) {
+                // Held for a retry, not decided: the cursor must not move to this post's date
+                // and the next run reaches the post again. The routed stream carries one entry
+                // per post, so it gets its entry when the post is finally ingested or skipped
+                // (a post whose lookups keep failing is skipped, see TnUserProvisioner), and a
+                // wedge does not write one every minute.
+                $this->posterLookupFailed = true;
+
+                return $previousMax;
+            }
 
             // THE emission point for an ingested post, mirroring
             // IncomingMailController::receive(): the router returns an outcome
@@ -290,12 +357,13 @@ class PostSyncer
                 $subject,
                 $group,
                 GroupPostIngestionService::outcomeFor($result),
-                $this->ingestionService->getLastRoutingContext(),
+                $context,
             );
         } catch (\Throwable $e) {
-            Log::error('TN sync: post ingestion failed', [
+            // Reported, not just logged: the sync moves past this post, and only
+            // tn:verify-email-coverage, hours later, fetches it again.
+            GroupPostIngestionService::reportFailure('TN sync: post ingestion failed', $e, [
                 'post_id' => $postId,
-                'error'   => $e->getMessage(),
             ]);
             // The one place this path deliberately does NOT mirror the email
             // path: IncomingMailController's own catch emits no Loki entry, so a
@@ -310,6 +378,29 @@ class PostSyncer
         }
 
         return $maxDate;
+    }
+
+    /**
+     * A post with no freegle_group_ids field at all is a configuration fault, not a poster's
+     * choice: TN turns the field on per API key, and a key without it reads every post as
+     * unaddressed. That makes every poster an implicit member of their post's group, and takes
+     * moderator contact away. That looks to be what happened for 27 hours after the key changed
+     * on 2026-09-25. The post is still read as "no consent", but the run reports it, once, so
+     * a key change is caught in minutes rather than weeks.
+     */
+    private function reportMissingConsentField(string $postId): void
+    {
+        if ($this->missingConsentFieldReported) {
+            return;
+        }
+        $this->missingConsentFieldReported = true;
+
+        $message = 'TrashNothing posts API returned a post with no freegle_group_ids field (post '
+            . $postId . '): every post is read as unaddressed until TN enables the field for this API key';
+        Log::error($message);
+        if (app()->bound('sentry')) {
+            app('sentry')->captureMessage($message, \Sentry\Severity::error());
+        }
     }
 
     /**
@@ -352,8 +443,9 @@ class PostSyncer
         }
 
         $entry = $this->loki->logIngestedPost(
-            // No SMTP envelope on this path; mirrors the null/synthesized values
-            // createMessage() writes to messages.envelopefrom/fromaddr.
+            // No SMTP envelope on this path. createMessage() records the member's TN
+            // address as the sender on the message, but this entry is written whether
+            // or not a message was made, so it keeps both empty.
             envelopeFrom: '',
             envelopeTo: $group !== null
                 ? $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org')
@@ -435,7 +527,7 @@ class PostSyncer
      *
      * The backfill entry point for tn:verify-email-coverage (section S.5 rail
      * 1): rather than reimplementing ingestion, it reuses processPost() whole,
-     * so coordinate-based group resolution, freegle_group_ids consent handling,
+     * so group placement (placement()), freegle_group_ids consent handling,
      * duplicate suppression and the exactly-one-Loki-entry-per-post invariant
      * all behave identically to a normal sync. The only difference is the
      * `backfill` marker added to the routed entry (see logRoutedPost()), so the
@@ -446,26 +538,73 @@ class PostSyncer
      * deliberately does not re-litigate whether the post *should* be ingested,
      * because the decision needs context (the email inventory) that PostSyncer
      * does not have.
+     *
+     * @return bool false when TN could not be asked who the poster is, so nothing was
+     *              decided and the caller should try the post again later; true otherwise
+     *              (including a post ingestion deliberately skipped)
      */
-    public function ingestFetchedPost(mixed $post): void
+    public function ingestFetchedPost(mixed $post): bool
     {
         $this->backfill = true;
 
         try {
             $this->processPost($post, null);
+
+            return !$this->posterLookupFailed;
         } finally {
             $this->backfill = false;
         }
     }
 
     /**
-     * Resolve the Freegle group whose area contains this post's coordinates.
+     * The community a TN post goes on, and whether the member chose it.
+     *
+     * A post that names communities goes on one of them: the one whose area contains it,
+     * or failing that the one whose centre is nearest. Wherever the post is, even outside
+     * every community's area, because the member chose it. A chosen community that is not
+     * published is passed over. A post that names none (or none we can use) goes on the
+     * local community by Location::groupsNear(), not chosen, or nowhere when no community
+     * is near enough.
+     *
+     * Public and static so tn:verify-email-coverage (CoverageVerifier) asks the same
+     * question ingestion does.
+     *
+     * @param  int[]  $chosenIds  the post's freegle_group_ids (chosenGroupIds())
+     * @return array{0: Group|null, 1: bool}
      */
-    private function findGroupByLocation(float $lat, float $lng): ?Group
+    public static function placement(float $lat, float $lng, array $chosenIds): array
     {
+        if (!empty($chosenIds)) {
+            // keep-raw: ST_Contains/ST_GeomFromText/haversine() have no builder method.
+            $chosen = Group::query()
+                ->whereIn('id', $chosenIds)
+                ->where('publish', 1)
+                ->orderByRaw('ST_Contains(polyindex, ST_GeomFromText(?, ?)) DESC', ["POINT($lng $lat)", config('freegle.srid', 3857)])
+                ->orderByRaw('COALESCE(haversine(lat, lng, ?, ?), 999999) ASC', [$lat, $lng])
+                ->first();
+
+            if ($chosen !== null) {
+                return [$chosen, true];
+            }
+        }
+
         $groupIds = Location::groupsNear($lat, $lng, limit: 1);
 
-        return empty($groupIds) ? null : Group::find($groupIds[0]);
+        return [empty($groupIds) ? null : Group::find($groupIds[0]), false];
+    }
+
+    /**
+     * The Freegle community ids a post names in freegle_group_ids, as ints. Both post shapes
+     * (the deserialized Post and the array fixtures use) support ArrayAccess. Fixtures are raw
+     * JSON that can carry the ids as strings, which would otherwise never match an id.
+     *
+     * @return int[]
+     */
+    public static function chosenGroupIds(mixed $post): array
+    {
+        $ids = (is_array($post) || $post instanceof \ArrayAccess) ? ($post['freegle_group_ids'] ?? null) : null;
+
+        return array_values(array_filter(array_map('intval', is_array($ids) ? $ids : [])));
     }
 
     private function throttle(): void

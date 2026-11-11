@@ -7,6 +7,11 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
+const capacitor = vi.hoisted(() => ({ platform: 'web' }))
+vi.mock('@capacitor/core', () => ({
+  Capacitor: { getPlatform: () => capacitor.platform },
+}))
+
 describe('useClientLog', () => {
   let mod
 
@@ -500,6 +505,216 @@ describe('useClientLog', () => {
       expect(entry.level).toBe('info')
       expect(entry.trace_id).toBeDefined()
       expect(entry.session_id).toBeDefined()
+    })
+  })
+
+  // ------------------------------------------------------------------ //
+  // UX context fields on every entry (docs/developers/reference/ux-telemetry.md s1)
+  // ------------------------------------------------------------------ //
+
+  describe('UX context fields', () => {
+    function sent() {
+      mod.flush()
+      vi.runAllTimers()
+      const [, opts] = global.fetch.mock.calls.at(-1)
+      return JSON.parse(opts.body).logs
+    }
+
+    function setWidth(w) {
+      Object.defineProperty(window, 'innerWidth', {
+        value: w,
+        configurable: true,
+        writable: true,
+      })
+    }
+
+    afterEach(() => {
+      capacitor.platform = 'web'
+      setWidth(1024)
+    })
+
+    it.each([
+      [500, 'mobile'],
+      [767, 'mobile'],
+      [768, 'tablet'],
+      [1199, 'tablet'],
+      [1200, 'desktop'],
+    ])('width %i is %s', (w, cls) => {
+      setWidth(w)
+      mod.info('x')
+      expect(sent()[0].device_class).toBe(cls)
+    })
+
+    it('reports app-ios and app-android from the Capacitor platform', () => {
+      capacitor.platform = 'ios'
+      mod.info('x')
+      let e = sent()[0]
+      expect(e.device_class).toBe('app-ios')
+      expect(e.is_app).toBe(true)
+
+      capacitor.platform = 'android'
+      mod.info('y')
+      e = sent()[0]
+      expect(e.device_class).toBe('app-android')
+      expect(e.is_app).toBe(true)
+    })
+
+    it('is_app is false on the web', () => {
+      mod.info('x')
+      expect(sent()[0].is_app).toBe(false)
+    })
+
+    it('logged_in follows the auth store', () => {
+      mod.info('anon')
+      expect(sent()[0].logged_in).toBe(false)
+      mod.setAuthStore({ user: { id: 5 }, loginStateKnown: true })
+      mod.info('in')
+      expect(sent()[0].logged_in).toBe(true)
+    })
+
+    it('page_route is the route name from the provider, never the URL', () => {
+      mod.setRouteNameProvider(() => 'give-mobile-photos')
+      mod.info('x')
+      expect(sent()[0].page_route).toBe('give-mobile-photos')
+    })
+
+    it('page_route is null when no provider or the provider throws', () => {
+      mod.info('x')
+      expect(sent()[0].page_route).toBeNull()
+      mod.setRouteNameProvider(() => {
+        throw new Error('no router')
+      })
+      mod.info('y')
+      expect(sent()[0].page_route).toBeNull()
+    })
+
+    it('page_view carries page_id and modal context from the logging context', () => {
+      mod.setLoggingContextProvider(() => ({
+        page_id: 'page_abc',
+        modal_stack: ['modal_1'],
+        modal_names: ['Login'],
+      }))
+      mod.pageView('/give', { route_name: 'give' })
+      const e = sent()[0]
+      expect(e.page_id).toBe('page_abc')
+      expect(e.modal_names).toEqual(['Login'])
+      expect(e.route_name).toBe('give')
+    })
+
+    it('counts API requests started', () => {
+      const before = mod.getApiRequestCount()
+      mod.noteApiRequestStarted()
+      mod.noteApiRequestStarted()
+      expect(mod.getApiRequestCount()).toBe(before + 2)
+    })
+  })
+
+  // ------------------------------------------------------------------ //
+  // Per-session sampling
+  // ------------------------------------------------------------------ //
+
+  describe('session sampling', () => {
+    beforeEach(() => {
+      sessionStorage.removeItem('freegle_ux_sampled')
+    })
+
+    it('SAMPLE_RATE is 0.1', () => {
+      expect(mod.SAMPLE_RATE).toBe(0.1)
+    })
+
+    it('samples a session in when the coin is under the rate', () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.05)
+      expect(mod.sessionSampled()).toBe(true)
+    })
+
+    it('samples a session out when the coin is at or over the rate', () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.1)
+      expect(mod.sessionSampled()).toBe(false)
+    })
+
+    it('flips the coin once per browser session', () => {
+      const r = vi.spyOn(Math, 'random').mockReturnValue(0.05)
+      mod.sessionSampled()
+      r.mockReturnValue(0.9)
+      expect(mod.sessionSampled()).toBe(true)
+      expect(sessionStorage.getItem('freegle_ux_sampled')).toBe('1')
+    })
+
+    it('a fresh page load in the same browser session reuses the stored coin', async () => {
+      sessionStorage.setItem('freegle_ux_sampled', '0')
+      vi.resetModules()
+      const fresh = await import('~/composables/useClientLog')
+      vi.spyOn(Math, 'random').mockReturnValue(0.01)
+      expect(fresh.sessionSampled()).toBe(false)
+    })
+
+    it('still decides when sessionStorage throws', () => {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new Error('blocked')
+      })
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('blocked')
+      })
+      vi.spyOn(Math, 'random').mockReturnValue(0.05)
+      expect(mod.sessionSampled()).toBe(true)
+    })
+  })
+
+  describe('url on flow, interaction and impressions entries', () => {
+    function sentUrl(type) {
+      history.replaceState({}, '', '/give?u=12&k=SECRETKEY&q=sofa#top')
+      mod.action('x', { event_type: type })
+      mod.flush()
+      vi.runAllTimers()
+      const [, opts] = global.fetch.mock.calls.at(-1)
+      return JSON.parse(opts.body).logs.at(-1).url
+    }
+
+    afterEach(() => history.replaceState({}, '', '/'))
+
+    it.each(['flow', 'interaction', 'impressions'])(
+      'strips the query string and hash for %s',
+      (type) => {
+        const url = sentUrl(type)
+        expect(url).toBe(location.origin + '/give')
+        expect(url).not.toContain('SECRETKEY')
+      }
+    )
+
+    it('leaves the full url on other entries', () => {
+      expect(sentUrl('action')).toContain('SECRETKEY')
+    })
+  })
+
+  describe('api requests started between two times', () => {
+    it('reports whether one started inside the window', () => {
+      const t0 = Date.now()
+      vi.advanceTimersByTime(500)
+      mod.noteApiRequestStarted()
+      expect(mod.apiRequestStartedBetween(t0, t0 + 1500)).toBe(true)
+      expect(mod.apiRequestStartedBetween(t0 + 600, t0 + 1500)).toBe(false)
+    })
+  })
+
+  describe('flush(force)', () => {
+    it('sends at once, without waiting for the auth store, when forced', () => {
+      mod.setAuthStore({ loginStateKnown: false })
+      mod.info('about to hide')
+      mod.flush(true)
+      expect(global.fetch).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('recent click component', () => {
+    it('remembers the component of the last click for a short time', () => {
+      mod.noteClickComponent('NavbarMobilePost')
+      expect(mod.getRecentClickComponent(3000)).toBe('NavbarMobilePost')
+      vi.advanceTimersByTime(3001)
+      expect(mod.getRecentClickComponent(3000)).toBeNull()
+    })
+
+    it('is null before any click', () => {
+      expect(mod.getRecentClickComponent(3000)).toBeNull()
     })
   })
 })

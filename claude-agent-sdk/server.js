@@ -23,8 +23,10 @@ const cors = require('cors')
 const { v4: uuidv4 } = require('uuid')
 const { execSync } = require('child_process')
 const fs = require('fs')
+const path = require('path')
 const { preferSubscriptionToken } = require('./auth')
 const { syncCodebase } = require('./codebase')
+const { sessionExists, pruneSessions } = require('./sessions')
 
 // Where the agent's checkout of the monorepo lives. Matches the default in tools.js and
 // support-agent.js, which read the same override.
@@ -32,7 +34,15 @@ const CODEBASE_DIR = process.env.CODEBASE_DIR || '/app/codebase'
 // agent.js kept for searchCodebase utility but runAgent/warmupSession no longer used
 
 const app = express()
-app.use(express.json())
+// The /internal routes take bodies well over the default 100kb (hundreds of member answers or
+// problems), so they get their own larger limit below and are skipped here. Without that the default
+// parser would answer 413 before they ran.
+const defaultJson = express.json()
+// Questions and referrals can carry screenshots (base64), so they too get their own route-level limit.
+const BIG_BODY_PATHS = ['/api/log-analysis', '/api/refer-to-geeks']
+app.use((req, res, next) =>
+  req.path.startsWith('/internal/') || BIG_BODY_PATHS.includes(req.path) ? next() : defaultJson(req, res, next)
+)
 
 // CORS: allow ModTools origins only. Dev uses *.localhost (traefik); prod/edge
 // lists its ModTools origin in ALLOWED_ORIGINS (comma-separated). Requests with
@@ -127,6 +137,14 @@ updateCodebase()
 // Update codebase every 30 minutes
 setInterval(updateCodebase, 30 * 60 * 1000)
 
+// Saved sessions are kept on a volume across restarts, but only for a day (see sessions.js).
+function pruneOldSessions() {
+  const removed = pruneSessions()
+  if (removed) console.log(`[Sessions] removed ${removed} saved sessions older than a day`)
+}
+pruneOldSessions()
+setInterval(pruneOldSessions, 60 * 60 * 1000)
+
 // Health check endpoint with auth status
 app.get('/health', (req, res) => {
   res.json({
@@ -148,8 +166,10 @@ app.get('/health', (req, res) => {
  */
 const { runSupportQuery, driverMode } = require('./support-agent')
 const { verifyModerator } = require('./auth')
+const { validateImages, MAX_REFERRAL_IMAGES } = require('./images')
 
-app.post('/api/log-analysis', async (req, res) => {
+// Up to 5 screenshots of 4MB (12MB together) as base64 is about 16MB.
+app.post('/api/log-analysis', express.json({ limit: '20mb' }), async (req, res) => {
   // Authenticate the caller as a Freegle moderator/support/admin. This endpoint
   // analyses production logs and incurs Anthropic API cost, so it must not be
   // open to unauthenticated callers — having ANTHROPIC_API_KEY set on the
@@ -174,12 +194,27 @@ app.post('/api/log-analysis', async (req, res) => {
   }
 
   const { query, userId, claudeSessionId } = req.body
+  const { images, error: imageError } = validateImages(req.body.images)
+  if (imageError) {
+    return res.status(400).json({ error: 'BAD_IMAGES', message: imageError })
+  }
   // The caller's JWT is used for get_user_dump against the Go API. Header only —
   // never accept it as a URL query param (which would leak into access logs).
   const jwt = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
 
   if (!query) {
     return res.status(400).json({ error: 'Query is required' })
+  }
+
+  // A follow-up whose session is gone (older than a day, or saved before sessions were kept on a volume)
+  // would only fail inside the run. Say so before starting, in the form the page already handles: it drops
+  // the old session and asks for the question again.
+  if (claudeSessionId && !sessionExists(claudeSessionId)) {
+    console.log(`[LogAnalysis] Session ${String(claudeSessionId).slice(0, 40)} has expired`)
+    return res.status(410).json({
+      error: 'SESSION_EXPIRED',
+      message: 'That chat can no longer be continued. Ask the question again to start a new one.',
+    })
   }
 
   console.log(`[LogAnalysis] ${claudeSessionId ? 'Continuing' : 'New'}: ${query.substring(0, 80)}`)
@@ -201,6 +236,7 @@ app.post('/api/log-analysis', async (req, res) => {
         agentSessionId: claudeSessionId,
         modId: mod.id,
         modEmail: mod.email,
+        images,
         onProgress: (type, message) => {
           res.write(`data: ${JSON.stringify({ type, message })}\n\n`)
         },
@@ -217,7 +253,7 @@ app.post('/api/log-analysis', async (req, res) => {
 
   // Non-streaming fallback
   try {
-    const result = await runSupportQuery({ query, userId: userId || 0, jwt, agentSessionId: claudeSessionId, modId: mod.id, modEmail: mod.email })
+    const result = await runSupportQuery({ query, userId: userId || 0, jwt, agentSessionId: claudeSessionId, modId: mod.id, modEmail: mod.email, images })
     res.json(result)
   } catch (error) {
     console.error('[LogAnalysis] Error:', error)
@@ -245,7 +281,7 @@ app.post('/api/log-analysis', async (req, res) => {
 // full-text scans that time out against prod. No Anthropic cost; Support/Admin-
 // gated and audited.
 // ---------------------------------------------------------------------------
-const { lokiQuery, audit } = require('./tools')
+const { lokiQuery, audit, fetchUserDump, prefetchDump } = require('./tools')
 const { parseSessionStart, dedupeSessions, buildDeviceSummary } = require('./device-summary')
 
 // The deployed web/app version to compare a member's loaded version against, so
@@ -260,6 +296,24 @@ function currentMobileVersion() {
     return null
   }
 }
+
+// Start fetching the member's dump as soon as the volunteer picks them, so it is ready, or nearly, when
+// they ask (see prefetchDump). The answer does not wait for the download.
+app.post('/api/prefetch-dump', express.json({ limit: '1kb' }), async (req, res) => {
+  const mod = await verifyModerator(req)
+  if (!mod) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Support or Admin authentication required.' })
+  }
+  const userId = parseInt(req.body && req.body.userId, 10)
+  if (!userId || userId < 1) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'userId is required' })
+  }
+  // Header only, never the URL, as for /api/log-analysis.
+  const jwt = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
+  audit({ mod: mod.id, modEmail: mod.email, target: userId, tool: 'prefetch_user_dump', since: '90d' })
+  prefetchDump({ userId, jwt })
+  res.status(202).json({ started: true })
+})
 
 app.get('/api/device-summary', async (req, res) => {
   const mod = await verifyModerator(req)
@@ -363,7 +417,7 @@ const { sendReferral, newReferralRef, GEEKS_EMAIL } = require('./referral-email'
 
 // A referral is a transcript, not a document upload — big enough to need its
 // own limit, small enough that this is a real bound.
-const REFERRAL_BODY_LIMIT = '4mb'
+const REFERRAL_BODY_LIMIT = '20mb'
 
 app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), async (req, res) => {
   const mod = await verifyModerator(req)
@@ -371,7 +425,12 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
     return res.status(403).json({ error: 'FORBIDDEN', message: 'Support or Admin authentication required.' })
   }
 
-  const { member, note, deviceSummary, messages, totals, modToolsUrl } = req.body || {}
+  const { member, note, deviceSummary, messages, totals, modToolsUrl, earlierRefs } = req.body || {}
+  // The screenshots from the investigation, passed on to the geeks with the referral.
+  const { images: screenshots, error: screenshotError } = validateImages((req.body || {}).screenshots, MAX_REFERRAL_IMAGES)
+  if (screenshotError) {
+    return res.status(400).json({ error: 'BAD_IMAGES', message: screenshotError })
+  }
 
   if (!Array.isArray(messages) || !messages.length) {
     return res.status(400).json({ error: 'BAD_REQUEST', message: 'There is no investigation to refer yet.' })
@@ -396,6 +455,10 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
     totals: totals || {},
     generatedAt: new Date().toISOString(),
     modToolsUrl,
+    screenshots,
+    // References of referrals already sent about this member in this session, so the new one threads
+    // under them in the mailbox. Only well-formed references are kept.
+    earlierRefs: Array.isArray(earlierRefs) ? earlierRefs.filter((r) => /^SR-[A-Z0-9]{5}$/.test(String(r))).slice(-20) : [],
   }
 
   // Record the referral itself: who handed what over, and under which reference.
@@ -406,6 +469,7 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
     tool: 'refer_to_geeks',
     ref,
     messages: messages.length,
+    screenshots: screenshots.length,
   })
 
   try {
@@ -423,6 +487,68 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
     })
   }
 })
+
+// ---------------------------------------------------------------------------
+// The member-answer coder and the regroup call. Asked by the batch (ux:prompt analyse and
+// ux:prompt regroup, on request) from the docker network, never by a browser, so they are
+// deliberately NOT under /api/ai-support, the only prefix the load balancer forwards
+// (docs/ops/production.md). The guard also refuses anything that is not from a private address,
+// that carries a forwarding header, or that lacks the shared secret in X-Freegle-Internal-Secret
+// (env UX_INTERNAL_SECRET; unset refuses everyone). One run at a time across every /internal
+// route: a second request while one is running is answered 429 straight away, and a run stops if
+// its caller disconnects. See ux-themes.js, ux-groups.js, ux-internal.js,
+// docs/developers/reference/ux-member-surveys.md and docs/developers/reference/ai-support-helper.md.
+// ---------------------------------------------------------------------------
+const { internalHandler, internalGuard } = require('./ux-internal')
+const { cleanThemesRequest, generateThemes } = require('./ux-themes')
+const { cleanGroupsRequest, generateGroups } = require('./ux-groups')
+
+// Refuse before reading the body, so a caller without the secret cannot make this parse 2MB.
+const internalGate = (req, res, next) => (internalGuard(req).ok ? next() : res.status(403).json({ error: 'FORBIDDEN' }))
+const internalJson = express.json({ limit: '2mb' })
+
+app.post(
+  '/internal/ux-themes',
+  internalGate,
+  internalJson,
+  internalHandler({
+    tag: 'UxThemes',
+    clean: cleanThemesRequest,
+    run: (request, { signal }) => generateThemes({ ...request, signal }),
+    summary: (result, request) =>
+      `preset=${request.preset} answers=${request.answers.length} problems=${result.problems.length} solutions=${result.solutions.length} values=${result.values.length}`,
+  })
+)
+
+app.post(
+  '/internal/ux-groups',
+  internalGate,
+  internalJson,
+  internalHandler({
+    tag: 'UxGroups',
+    clean: cleanGroupsRequest,
+    run: (request, { signal }) => generateGroups({ ...request, signal }),
+    summary: (result, request) => `problems=${request.problems.length} assigned=${result.assignments.length}`,
+  })
+)
+
+// The support first pass: one bounded run per referral, asked by the batch (support:first-pass). The
+// dump is fetched with USERDUMP_INTERNAL_KEY, which stays out of the interactive agent's environment.
+// See first-pass.js and docs/developers/reference/ai-support-helper.md.
+const { cleanFirstPassRequest, runFirstPass } = require('./first-pass')
+
+app.post(
+  '/internal/support-first-pass',
+  internalGate,
+  express.json({ limit: '20mb' }),
+  internalHandler({
+    tag: 'SupportFirstPass',
+    clean: cleanFirstPassRequest,
+    run: (request, { signal }) => runFirstPass(request, { signal, deps: { audit, fetchDump: fetchUserDump, pagesDir: path.join(CODEBASE_DIR, 'iznik-nuxt3', 'pages') } }),
+    summary: (result, request) =>
+      `case=${request.caseid} classification=${result.brief.classification} confidence=${result.brief.confidence.level} images=${result.brief.images.sent}`,
+  })
+)
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {

@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense, ref } from 'vue'
 import PromiseModal from '~/components/PromiseModal.vue'
+import { flowCalls, resetFlowCalls } from '../helpers/flowTelemetryMock'
+
+vi.mock('~/composables/useFlowTelemetry', async () => {
+  const m = await import('../helpers/flowTelemetryMock')
+  return m.flowTelemetryModule
+})
 
 // Mock dayjs
 vi.mock('dayjs', () => {
@@ -205,6 +211,76 @@ describe('PromiseModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    resetFlowCalls()
+  })
+
+  describe('flow telemetry', () => {
+    const vmOf = (wrapper) => wrapper.findComponent(PromiseModal).vm
+
+    it('starts the chat_promise flow when the modal is shown', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      await vmOf(wrapper).onShow()
+      expect(flowCalls.slice(0, 2)).toEqual([
+        ['start', 'chat'],
+        ['enterStep', 'choose'],
+      ])
+    })
+
+    it('says the entry was maybe when asked after an address', async () => {
+      const wrapper = createWrapper({ maybe: true })
+      await flushPromises()
+      await vmOf(wrapper).onShow()
+      expect(flowCalls[0]).toEqual(['start', 'maybe'])
+    })
+
+    it('sends submit, an ok result and complete on a promise', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      await vmOf(wrapper).onShow()
+      flowCalls.length = 0
+      await vmOf(wrapper).promise(() => {})
+      expect(flowCalls.map((c) => c[0])).toEqual([
+        'submit',
+        'submitResult',
+        'completeStep',
+        'complete',
+      ])
+      expect(flowCalls[1]).toEqual(['submitResult', true, 200, null])
+    })
+
+    it('sends a failed result when the promise call throws', async () => {
+      const wrapper = createWrapper()
+      mockMessagePromise.mockRejectedValueOnce(
+        Object.assign(new Error('boom'), { response: { status: 500 } })
+      )
+      await flushPromises()
+      await vmOf(wrapper).onShow()
+      flowCalls.length = 0
+      await expect(vmOf(wrapper).promise(() => {})).rejects.toThrow('boom')
+      expect(flowCalls).toContainEqual(['submitResult', false, 500, 'error'])
+      expect(flowCalls.map((c) => c[0])).not.toContain('complete')
+    })
+
+    it('reports a missing recipient as a validation failure', async () => {
+      const wrapper = createWrapper({ selectedUser: null, users: mockUsers })
+      await flushPromises()
+      await vmOf(wrapper).onShow()
+      flowCalls.length = 0
+      vmOf(wrapper).currentlySelected = 0
+      await vmOf(wrapper).promise(() => {})
+      expect(flowCalls).toEqual([['validationFailed', 'recipient', 'missing']])
+    })
+
+    it('abandons as closed when the modal is hidden without a promise', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      await vmOf(wrapper).onShow()
+      flowCalls.length = 0
+      vmOf(wrapper).onHidden()
+      expect(flowCalls).toEqual([['abandon', 'closed']])
+      expect(wrapper.findComponent(PromiseModal).emitted('hidden')).toBeTruthy()
+    })
   })
 
   describe('rendering', () => {

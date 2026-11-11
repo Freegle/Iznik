@@ -20,6 +20,7 @@ class RotateLogsCommandTest extends TestCase
             ->with($this->isType('string'), false)
             ->willReturn(['compressed' => 3, 'bytes_before' => 2048, 'bytes_after' => 512, 'files' => []]);
 
+        $service->method('rotateLive')->willReturn(['rotated' => 0, 'bytes' => 0, 'files' => []]);
         $this->app->instance(LogRotationService::class, $service);
 
         $this->artisan('logs:rotate')
@@ -37,6 +38,7 @@ class RotateLogsCommandTest extends TestCase
         $service->method('compress')
             ->willReturn(['compressed' => 0, 'bytes_before' => 0, 'bytes_after' => 0, 'files' => []]);
 
+        $service->method('rotateLive')->willReturn(['rotated' => 0, 'bytes' => 0, 'files' => []]);
         $this->app->instance(LogRotationService::class, $service);
 
         $this->artisan('logs:rotate', ['--days' => 14])
@@ -55,6 +57,7 @@ class RotateLogsCommandTest extends TestCase
             ->with($this->isType('string'), true)
             ->willReturn(['compressed' => 0, 'bytes_before' => 0, 'bytes_after' => 0, 'files' => []]);
 
+        $service->method('rotateLive')->willReturn(['rotated' => 0, 'bytes' => 0, 'files' => []]);
         $this->app->instance(LogRotationService::class, $service);
 
         $this->artisan('logs:rotate', ['--dry-run' => true])

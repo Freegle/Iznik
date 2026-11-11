@@ -5,6 +5,8 @@ paths:
   - "iznik-server-go/rippling/**"
   - "iznik-batch/app/Services/ContentCheckService.php"
   - "iznik-batch/app/Services/AutoApproveService.php"
+  - "iznik-server-go/microvolunteering/microvolunteering.go"
+  - "iznik-server-go/message/message.go"
 ---
 
 # Traps when working on rippling
@@ -45,17 +47,54 @@ Editing is the opposite: an edit mutates the single shared `messages` row, so it
 every group at once. That is a genuinely different mechanism rather than an inconsistency, and
 it is worth saying plainly to moderators who notice the asymmetry.
 
-## Back to pending pulls every copy, and automation must not put them back
+## Back to pending pulls every unreviewed copy, and automation must not put them back
 
-A moderator's Back to pending on any one group pulls the post back to Pending on **every**
-group it is on, the home copy included (`handleBackToPending`, `SendForReviewAllGroups`). Only
-the acting moderator's copy is held. Every copy pulled back is marked
-`messages_groups.needs_moderator`, and only a moderator's Approve clears it. The content check
-and auto-approve both skip a flagged copy.
+A moderator's Back to pending on any one group pulls the post back to Pending on every group
+it is on, the home copy included (`handleBackToPending`, `SendForReviewGroupsExcept`), **except**
+a copy on another community whose own moderator approved it by hand. That copy stays Approved
+with its `approvedby`/`approvedat`, gets no log, and is not withdrawn by a home send-back. The
+acting moderator's own copies always go back. Only the acting moderator's copy is held. Every
+copy pulled back is marked `messages_groups.needs_moderator`, and only a moderator's Approve
+clears it. The content check and auto-approve both skip a flagged copy.
+
+"Approved by hand" is `messages_groups.approvedby IS NOT NULL`, and that only holds because
+`handleApprove` is the one path that sets it: the content check and auto-approve write NULL and
+the ripple insert leaves it out. A new automatic approval path that stamps `approvedby` would make
+its copies survive every later Back to pending. A report quorum (`SendForReviewAllGroups`) is not
+a moderator's review and still pulls every copy.
 
 Before that flag existed, the content check re-approved every unheld copy a minute after the
 next edit, with no log entry, so a moderator's decision was quietly undone everywhere but on
 their own group (122011064, 121985402). Any new automatic approval path must honour the flag.
+
+## A pull-back freezes the reach, and approving the home copy resumes it
+
+A pull-back sets `rippling_reach.status` to `held` with nothing scheduled: `FreezeReachIfOriginPending`
+once the post's home copy is no longer live (a moderator's Back to pending, a members' report quorum,
+a moderator's report), and `FreezeReach` outright for a home community's Back to pending. A
+moderator's **Approve of a home copy** (`handleApprove`, `rippled_in = 0`, any community the post was
+posted to) then calls `ResumeReachIfHeld`: `held` becomes `expanding`, due now. The engine's next run
+catches the reach up to the tick the clock says the post is at, counted from its arrival, so the
+time it spent in review is not given back and a post held for hours takes several steps at once.
+Nobody already told is told again (`rippling_reach_notified`), and `updated_at` is left for the
+engine to bump, because it is the reach mailer's signal.
+
+What does not resume it, silently:
+
+- **A home community's Back to pending.** It writes `rippling_blocked` as well: the post must never
+  ripple again, and `ResumeReachIfHeld` refuses a blocked post. The same row is what stops a repost,
+  which deletes the reach row, starting a new reach.
+- **Approving a rippled-in copy alone.** That says nothing about the post's own community.
+- **A reach that is not `held`.** `expanding` keeps its schedule; `done` and `stopped` are left
+  alone. A frozen reach has lost which of those it was, and the engine returns a finished one to
+  `done` the next time it looks.
+- **A post with no live home copy.** The check is in the same UPDATE as the write, because the
+  engine retracts the rippled copies of an `expanding` reach whose origin is not live and deletes
+  its reach row (`retractCopiesOrphanedByOriginRemoval`), which is what the freeze exists to prevent.
+
+A new way of approving a home copy, or of undoing a pull-back, has to call `ResumeReachIfHeld`
+itself. Nothing else will: the post stays `held` for the rest of its life, with no error and no log
+line, and members stop being told about it.
 
 ## Nothing ripples unless its home copy is approved
 
@@ -108,6 +147,33 @@ acts on a post in a community, decide explicitly what it does to a copy that rip
 
 For the same reason, statistics that count local activity must exclude memberships rippling
 created itself, or auto-joins get counted as pre-existing local members.
+
+## Writing to the poster and turning the post away are different questions
+
+`NotifyPosterFlag(home, gid) == 0` is read twice in the reject and delete handlers: once for
+whether the poster is told, and once for whether this is a receiving community turning the
+post away, which clips its reach so it cannot ripple back. A rippled-in community may now
+write to a poster who is an ordinary member there (`PosterMessagingGroups`), but its copy is
+still not a home copy. Feed only the notify flags from `PosterMessagingGroups`; leave the
+turned-away check on `HomeGroups`, or a rejection there lets the post ripple straight back.
+
+The delete handler removes the rows both are read from, so read them before the delete.
+
+## A cleared ripple flag must stay cleared
+
+`memberships.rippled` and `implicit` are cleared once the member joins, moves in (a ripple join
+only), or deals with the community, and each clear writes a "became ordinary" row to the log
+(`Ripple-created ...`, or `TrashNothing-placed ...` for a `tn_unaddressed` row). An account
+merge that keeps a placed row as ordinary, because the other account chose the community,
+writes one too. Any job that sets the flag from the original `Rippled` join log, as
+`ripple:backfill-memberships` does, has to skip memberships with a later clear, or it silently
+counts those members as not already being members again (section 10a of the rippling doc).
+Anything that skips "became ordinary" rows by their text has to match both prefixes.
+
+"A `Rippled` log exists" is not enough either. A member rippled in who left and later joined
+by hand still has that log, and the current row is the later join. Read the **latest**
+Group/Joined row for the pair, ignoring the "became ordinary" rows, as
+`memberships:backfill-origin` does.
 
 ## A held reply released to somebody who never got the post
 

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -28,8 +29,8 @@ func TestDashboardHeatmapWithData(t *testing.T) {
 	// Create some spatial data, then verify it appears in the heatmap.
 	prefix := uniquePrefix("DashHM")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// CreateTestMessage inserts into messages_spatial with successful=1 and arrival=NOW()
 	CreateTestMessage(t, userID, groupID, "Heatmap test "+prefix, 52.2, -0.1)

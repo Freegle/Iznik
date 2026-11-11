@@ -32,14 +32,20 @@
                 class="mb-2"
                 memberonly
               />
+              <NoticeMessage v-if="groupIsMine" variant="info" class="mb-2">
+                {{ modCantLeave }}
+              </NoticeMessage>
               <SpinButton
-                v-if="groupid"
+                v-else-if="groupid"
                 variant="primary"
                 icon-name="trash-alt"
                 label="Leave this community"
                 class="w-100"
                 @handle="leave"
               />
+              <NoticeMessage v-if="leaveError" variant="warning" class="mb-2">
+                {{ leaveError }}
+              </NoticeMessage>
             </div>
 
             <NoticeMessage
@@ -158,14 +164,24 @@
                 <p>You can leave individual communities:</p>
                 <div class="mb-2">
                   <GroupSelect v-model="groupid" size="lg" memberonly />
+                  <NoticeMessage v-if="groupIsMine" variant="info" class="mt-2">
+                    {{ modCantLeave }}
+                  </NoticeMessage>
                   <SpinButton
-                    v-if="groupid"
+                    v-else-if="groupid"
                     variant="primary"
                     icon-name="trash-alt"
                     label="Leave this community"
                     class="mt-2"
                     @handle="leave"
                   />
+                  <NoticeMessage
+                    v-if="leaveError"
+                    variant="warning"
+                    class="mt-2"
+                  >
+                    {{ leaveError }}
+                  </NoticeMessage>
                 </div>
               </div>
               <NoticeMessage
@@ -289,6 +305,7 @@ import {
   ref,
   computed,
   onMounted,
+  watch,
   defineAsyncComponent,
   useRoute,
   useRouter,
@@ -302,6 +319,8 @@ import SpinButton from '~/components/SpinButton.vue'
 import EmailValidator from '~/components/EmailValidator.vue'
 import SupportLink from '~/components/SupportLink.vue'
 import { useMe } from '~/composables/useMe'
+import { asRefusalMessage } from '~/api/refusal'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const ForgetFailModal = defineAsyncComponent(
   () => import('~/components/ForgetFailModal.vue')
@@ -349,6 +368,7 @@ const emailSent = ref(false)
 const emailProblem = ref(false)
 const wrongUser = ref(false)
 const left = ref(null)
+const leaveError = ref(null)
 const unknown = ref(false)
 const showForgetFailModal = ref(false)
 const showConfirmModal = ref(false)
@@ -369,6 +389,20 @@ const groupCount = computed(() => {
   return myGroups.value.length
 })
 
+// A community you moderate cannot be left from here: leaving would drop your role (the
+// server refuses it too). You can change your own role to Member in ModTools first.
+const modCantLeave =
+  'You are a moderator of this community, so leaving would drop that role. To leave, change your own role to Member first, or ask another owner to.'
+
+const groupIsMine = computed(() => {
+  const role = groupid.value ? myGroup(groupid.value)?.role : null
+  return role === ROLE_OWNER || role === ROLE_MODERATOR
+})
+
+watch(groupid, () => {
+  leaveError.value = null
+})
+
 // Methods
 function unsubscribe() {
   if (!me.value) {
@@ -383,14 +417,24 @@ function unsubscribe() {
 }
 
 async function leave(callback) {
-  if (groupid.value) {
-    const groupName = myGroup(groupid.value).namedisplay
-    await authStore.leaveGroup(myid.value, groupid.value)
-    left.value = groupName
-  }
+  leaveError.value = null
 
-  groupid.value = 0
-  callback()
+  try {
+    if (groupid.value) {
+      const groupName = myGroup(groupid.value).namedisplay
+      await authStore.leaveGroup(myid.value, groupid.value)
+      left.value = groupName
+    }
+
+    groupid.value = 0
+  } catch (e) {
+    // The server can refuse on purpose; show its words rather than the error page.
+    const refusal = asRefusalMessage(e)
+    if (!refusal) throw e
+    leaveError.value = refusal
+  } finally {
+    callback()
+  }
 }
 
 async function forget() {

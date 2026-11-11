@@ -64,6 +64,171 @@ class PurgeServiceTest extends TestCase
         $this->assertEquals(1, $count);
     }
 
+    private const SPAM_WATERMARK_KEY = 'purge_chats_spam_last_id';
+
+    private function spamWatermark(): int
+    {
+        return (int) (DB::table('config')->where('key', self::SPAM_WATERMARK_KEY)->value('value') ?? 0);
+    }
+
+    private function setSpamWatermark(int $id): void
+    {
+        DB::table('config')->upsert(['key' => self::SPAM_WATERMARK_KEY, 'value' => (string) $id], ['key'], ['value']);
+    }
+
+    /** @return array{0: int, 1: int} [user id, chat room id] */
+    private function spamTestRoom(): array
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = ChatRoom::create([
+            'name' => 'Spam Room',
+            'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id,
+            'user2' => $user2->id,
+        ]);
+
+        return [$user1->id, $room->id];
+    }
+
+    private function spamMessage(int $userid, int $chatid, int $ageDays, bool $rejected): int
+    {
+        return ChatMessage::create([
+            'chatid' => $chatid,
+            'userid' => $userid,
+            'message' => 'Spam',
+            'type' => ChatMessage::TYPE_DEFAULT,
+            'date' => now()->subDays($ageDays),
+            'reviewrejected' => $rejected ? 1 : 0,
+        ])->id;
+    }
+
+    public function test_spam_purge_advances_watermark_to_trail_boundary(): void
+    {
+        [$user, $room] = $this->spamTestRoom();
+        $this->setSpamWatermark(0);
+
+        $veryOld = $this->spamMessage($user, $room, 30, false);
+        $oldEnough = $this->spamMessage($user, $room, 20, false);
+        $inTrail = $this->spamMessage($user, $room, 10, false);
+        $recent = $this->spamMessage($user, $room, 1, false);
+
+        $this->service->purgeSpamChatMessages();
+
+        // Advances over everything older than cutoff + trail (7 + 7 days), and not a row further.
+        $this->assertGreaterThanOrEqual($oldEnough, $this->spamWatermark());
+        $this->assertLessThan($inTrail, $this->spamWatermark());
+        $this->assertLessThan($recent, $this->spamWatermark());
+        $this->assertGreaterThanOrEqual($veryOld, $this->spamWatermark());
+    }
+
+    public function test_spam_purge_does_not_rescan_below_the_watermark(): void
+    {
+        [$user, $room] = $this->spamTestRoom();
+
+        $below = $this->spamMessage($user, $room, 30, true);
+        $above = $this->spamMessage($user, $room, 30, true);
+        $this->setSpamWatermark($below);
+
+        $count = $this->service->purgeSpamChatMessages();
+
+        $this->assertEquals(1, $count);
+        $this->assertDatabaseHas('chat_messages', ['id' => $below]);
+        $this->assertDatabaseMissing('chat_messages', ['id' => $above]);
+    }
+
+    public function test_spam_purge_still_purges_a_message_rejected_late_inside_the_trail(): void
+    {
+        [$user, $room] = $this->spamTestRoom();
+        $this->setSpamWatermark(0);
+
+        // Older than the 7 day cutoff but inside the trail: not yet rejected on the first night.
+        $late = $this->spamMessage($user, $room, 9, false);
+        $this->service->purgeSpamChatMessages();
+
+        $this->assertLessThan($late, $this->spamWatermark());
+        $this->assertDatabaseHas('chat_messages', ['id' => $late]);
+
+        // The auto-reject of stale review items lands after the watermark pass.
+        DB::table('chat_messages')->where('id', $late)->update(['reviewrejected' => 1]);
+
+        $this->assertEquals(1, $this->service->purgeSpamChatMessages());
+        $this->assertDatabaseMissing('chat_messages', ['id' => $late]);
+    }
+
+    public function test_spam_purge_also_clears_rejected_messages_of_spammers_below_the_watermark(): void
+    {
+        [$user, $room] = $this->spamTestRoom();
+
+        // Marking a user as a spammer rejects ALL their messages, whatever their age.
+        $old = $this->spamMessage($user, $room, 40, true);
+        DB::table('spam_users')->insert([
+            'userid' => $user,
+            'collection' => 'Spammer',
+            'added' => now(),
+        ]);
+        $this->setSpamWatermark($old + 1000000);
+
+        $this->assertEquals(1, $this->service->purgeSpamChatMessages());
+        $this->assertDatabaseMissing('chat_messages', ['id' => $old]);
+    }
+
+    public function test_spam_purge_stops_when_a_chunk_comes_back_short(): void
+    {
+        [$user, $room] = $this->spamTestRoom();
+        $this->setSpamWatermark(0);
+        $this->spamMessage($user, $room, 30, true);
+        $this->spamMessage($user, $room, 30, true);
+
+        $deletes = 0;
+        DB::listen(function ($query) use (&$deletes) {
+            if (stripos($query->sql, 'delete from `chat_messages`') === 0) {
+                $deletes++;
+            }
+        });
+
+        $this->assertEquals(2, $this->service->purgeSpamChatMessages());
+
+        // Two rows fit in one chunk, so one DELETE; the old loop issued a second, empty one.
+        $this->assertEquals(1, $deletes);
+    }
+
+    public function test_spam_purge_walks_several_windows_and_chunks(): void
+    {
+        [$user, $room] = $this->spamTestRoom();
+        $this->setSpamWatermark(0);
+
+        $ids = [];
+        for ($i = 0; $i < 5; $i++) {
+            $ids[] = $this->spamMessage($user, $room, 30, true);
+            $this->spamMessage($user, $room, 30, false);
+        }
+
+        $service = new class extends PurgeService {
+            public function __construct()
+            {
+                $this->chunkSize = 2;
+                $this->spamScanWindow = 3;
+            }
+        };
+
+        $this->assertEquals(5, $service->purgeSpamChatMessages());
+        foreach ($ids as $id) {
+            $this->assertDatabaseMissing('chat_messages', ['id' => $id]);
+        }
+    }
+
+    public function test_spam_purge_dry_run_counts_without_deleting_or_moving_the_watermark(): void
+    {
+        [$user, $room] = $this->spamTestRoom();
+        $this->setSpamWatermark(0);
+        $id = $this->spamMessage($user, $room, 30, true);
+
+        $this->assertEquals(1, $this->service->purgeSpamChatMessages(7, true));
+        $this->assertDatabaseHas('chat_messages', ['id' => $id]);
+        $this->assertEquals(0, $this->spamWatermark());
+    }
+
     public function test_purge_empty_chat_rooms(): void
     {
         $user1 = $this->createTestUser();

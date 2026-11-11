@@ -4,7 +4,9 @@ namespace App\Console\Commands\Stories;
 
 use App\Services\StoriesNewsletterService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'stories:newsletter')]
 class SendStoriesNewsletterCommand extends Command
 {
     protected $signature = 'stories:newsletter

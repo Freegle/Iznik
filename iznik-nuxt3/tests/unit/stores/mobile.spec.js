@@ -631,6 +631,8 @@ describe('mobile store', () => {
 
     it('refreshes chats on foreground push', async () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      // The chats fetched are the signed-in member's.
+      mockAuthUser = { id: 1 }
 
       await store.handleNotification(
         {
@@ -647,6 +649,7 @@ describe('mobile store', () => {
       )
       expect(mockFetchChats).toHaveBeenCalledWith(null, false)
       expect(mockFetchMessages).toHaveBeenCalledWith(42)
+      mockAuthUser = null
       logSpy.mockRestore()
     })
   })
@@ -950,21 +953,25 @@ describe('mobile store', () => {
       // the app that URL untouched; pushing it as a route landed on the error
       // page and then ChitChat, where one member typed her chat reply.
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      const fetchSpy = vi
-        .spyOn(globalThis, 'fetch')
-        .mockResolvedValue({
-          ok: true,
-          json: async () => ({ url: 'https://www.ilovefreegle.org/chats/21116632' }),
-        })
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          url: 'https://www.ilovefreegle.org/chats/21116632',
+        }),
+      })
 
-      await triggerDeepLink('https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0')
+      await triggerDeepLink(
+        'https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0'
+      )
 
       expect(fetchSpy).toHaveBeenCalledTimes(1)
       const asked = new URL(fetchSpy.mock.calls[0][0])
       expect(asked.pathname).toBe('/e/d/r/abc123456789/reply/AQ/p0')
       expect(asked.searchParams.get('format')).toBe('json')
       expect(mockRouterPush).toHaveBeenCalledWith('/chats/21116632')
-      expect(mockRouterPush).not.toHaveBeenCalledWith(expect.stringContaining('/e/'))
+      expect(mockRouterPush).not.toHaveBeenCalledWith(
+        expect.stringContaining('/e/')
+      )
       fetchSpy.mockRestore()
       logSpy.mockRestore()
     })
@@ -975,10 +982,14 @@ describe('mobile store', () => {
         .spyOn(globalThis, 'fetch')
         .mockRejectedValue(new Error('offline'))
 
-      await triggerDeepLink('https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0')
+      await triggerDeepLink(
+        'https://www.ilovefreegle.org/e/d/r/abc123456789/reply/AQ/p0'
+      )
 
       expect(mockRouterPush).toHaveBeenCalledWith('/')
-      expect(mockRouterPush).not.toHaveBeenCalledWith(expect.stringContaining('/e/'))
+      expect(mockRouterPush).not.toHaveBeenCalledWith(
+        expect.stringContaining('/e/')
+      )
       fetchSpy.mockRestore()
       logSpy.mockRestore()
     })
@@ -1086,10 +1097,36 @@ describe('mobile store', () => {
         }),
       }
       import.meta.client = true
+      // Somebody signed in: the counts and chats fetched on resume are theirs.
+      mockAuthUser = { id: 1 }
     })
 
     afterEach(() => {
       delete import.meta.client
+      mockAuthUser = null
+    })
+
+    it('fetches nothing of the member on resume while nobody is signed in', async () => {
+      mockAuthUser = null
+      store.isApp = true
+      const plugin = {
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockResolvedValue(undefined),
+      }
+      store.pushPlugin = plugin
+      mockRefreshNavbarCounts.mockClear()
+      mockFetchChats.mockClear()
+
+      store.initWakeUpActions(mockApp)
+      await capturedListener({})
+      await Promise.resolve()
+      await Promise.resolve()
+
+      // Signed out, the API would answer 401 to these and the client would
+      // report it to Sentry; push registration does not depend on a session.
+      expect(mockFetchChats).not.toHaveBeenCalled()
+      expect(mockRefreshNavbarCounts).not.toHaveBeenCalled()
+      expect(plugin.register).toHaveBeenCalled()
     })
 
     it('re-registers push on resume when on a native app', async () => {
@@ -1265,6 +1302,36 @@ describe('mobile store', () => {
       logSpy.mockRestore()
     })
 
+    // A chat push reaching a signed-out app (a token not yet released after
+    // logout) must not fetch the chats: the API answers 401, which the client
+    // reports to Sentry.
+    it('does NOT refresh chats for a foreground chat push while nobody is signed in', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      mockAuthUser = null
+
+      await store.handleNotification(
+        {
+          data: {
+            channel_id: 'chat_messages',
+            category: 'CHAT_MESSAGE',
+            foreground: true,
+            badge: '1',
+            modtools: 'false',
+            route: '/chats',
+            chatids: '123',
+            notId: '1',
+            count: '1',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockFetchChats).not.toHaveBeenCalled()
+      expect(mockFetchMessages).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+
     // A foreground new_posts push should not trigger fetchMessages either.
     it('does NOT fetch messages when a new_posts push arrives in the foreground', async () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -1316,6 +1383,7 @@ describe('mobile store', () => {
     // (regression guard — verifies the channel_id guard is specific to new_posts).
     it('still refreshes chats for a foreground chat_messages push', async () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      mockAuthUser = { id: 1 }
 
       await store.handleNotification(
         {
@@ -1331,6 +1399,7 @@ describe('mobile store', () => {
       )
 
       expect(mockFetchChats).toHaveBeenCalledWith(null, false)
+      mockAuthUser = null
       logSpy.mockRestore()
     })
   })

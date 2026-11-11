@@ -2,7 +2,9 @@
 
 namespace App\Listeners;
 
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFinished;
+use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -48,7 +50,29 @@ class CronJobStatusListener
 
     public function handleFinished(ScheduledTaskFinished $event): void
     {
-        $command = self::extractCommand($event->task->command ?? '');
+        // A background task is only launched here: this fires at once, with no
+        // exit code. Its outcome comes later through handleBackgroundFinished;
+        // recording now would wipe the last outcome for the length of every run.
+        if ($event->task->runInBackground) {
+            return;
+        }
+
+        $this->recordFinish($event->task);
+    }
+
+    /**
+     * Fired by schedule:finish when a runInBackground() task exits, with its
+     * exit code set. Most of the schedule runs in the background, so without
+     * this a failing job never shows as failed.
+     */
+    public function handleBackgroundFinished(ScheduledBackgroundTaskFinished $event): void
+    {
+        $this->recordFinish($event->task);
+    }
+
+    private function recordFinish(Event $task): void
+    {
+        $command = self::extractCommand($task->command ?? '');
 
         if (!$command) {
             return;
@@ -56,7 +80,7 @@ class CronJobStatusListener
 
         // Read output if it was captured to a file.
         $output = null;
-        $outputPath = $event->task->output ?? '/dev/null';
+        $outputPath = $task->output ?? '/dev/null';
 
         if ($outputPath !== '/dev/null' && file_exists($outputPath)) {
             $output = file_get_contents($outputPath);
@@ -72,7 +96,7 @@ class CronJobStatusListener
                 ['command' => $command],
                 [
                     'last_finished_at' => now(),
-                    'last_exit_code' => $event->task->exitCode,
+                    'last_exit_code' => $task->exitCode,
                     'last_output' => $output,
                     'updated_at' => now(),
                 ]

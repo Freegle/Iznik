@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 
 import UnsubscribePage from '~/pages/unsubscribe/[[id]].vue'
+import { ROLE_MEMBER, ROLE_OWNER } from '~/constants'
 
 // Smoke test for the logged-out unsubscribe page: it should mount and render the
 // email-entry form (with an EmailValidator). The detailed behaviour is covered
@@ -12,11 +13,14 @@ import UnsubscribePage from '~/pages/unsubscribe/[[id]].vue'
 //   - the inline error + red invalid border -> EmailValidator.spec.js
 //   - the Contact-us modal not auto-opening on load -> useOurModal.spec.js
 
+const leaveGroup = vi.hoisted(() => vi.fn())
+const pickState = vi.hoisted(() => ({ id: null }))
+
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
     unsubscribe: vi.fn(),
     forget: vi.fn(),
-    leaveGroup: vi.fn(),
+    leaveGroup,
     loggedInEver: false,
     forceLogin: false,
   }),
@@ -35,7 +39,8 @@ vi.mock('~/composables/useMe', () => ({
     me: ref(meState.me),
     myid: ref(meState.myid),
     myGroups: ref(meState.myGroups),
-    myGroup: vi.fn(),
+    myGroup: (id) =>
+      meState.myGroups.find((g) => parseInt(g.id) === id) || null,
     loggedIn: ref(meState.loggedIn),
   }),
 }))
@@ -57,7 +62,12 @@ function mountPage() {
     global: {
       stubs: {
         'client-only': { template: '<div><slot /></div>' },
-        SpinButton: { template: '<button class="spin-btn" />' },
+        SpinButton: {
+          props: ['label'],
+          emits: ['handle'],
+          template:
+            '<button class="spin-btn" :data-label="label" @click="$emit(\'handle\', () => {})" />',
+        },
         SupportLink: { template: '<span />' },
         ConfirmModal: { template: '<div />' },
         ContactSupportModal: { template: '<div />' },
@@ -65,11 +75,16 @@ function mountPage() {
         GroupSelect: {
           // Boolean so the bare `memberonly` attribute casts to true, as it does
           // on the real component.
-          props: { memberonly: Boolean },
+          props: { memberonly: Boolean, modelValue: { default: null } },
+          emits: ['update:modelValue'],
           template:
-            '<div class="group-select" :data-memberonly="String(memberonly)" />',
+            '<div class="group-select" :data-memberonly="String(memberonly)" @click="$emit(\'update:modelValue\', pickState.id)" />',
+          setup: () => ({ pickState }),
         },
-        NoticeMessage: { template: '<div><slot /></div>' },
+        NoticeMessage: {
+          props: ['variant'],
+          template: '<div class="notice" :class="variant"><slot /></div>',
+        },
         ExternalLink: { template: '<a><slot /></a>' },
         DeletedRestore: { template: '<div />' },
         NuxtLink: { template: '<a><slot /></a>' },
@@ -112,8 +127,8 @@ describe('pages/unsubscribe/[[id]].vue', () => {
     meState.myid = 42
     meState.loggedIn = true
     meState.myGroups = [
-      { id: 1, namedisplay: 'Plain', role: 'Member' },
-      { id: 2, namedisplay: 'Mine', role: 'Owner' },
+      { id: 1, namedisplay: 'Plain', role: ROLE_MEMBER },
+      { id: 2, namedisplay: 'Mine', role: ROLE_OWNER },
     ]
 
     const wrapper = mountPage()
@@ -142,5 +157,68 @@ describe('pages/unsubscribe/[[id]].vue', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.email-validator').length).toBeGreaterThan(0)
+  })
+
+  // Discourse 10242: an owner picked a community she moderates, pressed Leave, got a 403
+  // from the server and landed on the "Oh dear" crash page.
+  describe('leaving a community you moderate', () => {
+    const MSG =
+      'You are a moderator of this community, so leaving would drop that role. To leave, change your own role to Member first, or ask another owner to.'
+
+    function loggedInWith(groups) {
+      meState.me = { id: 42 }
+      meState.myid = 42
+      meState.loggedIn = true
+      meState.myGroups = groups
+    }
+
+    async function pick(wrapper, id) {
+      pickState.id = id
+      for (const picker of wrapper.findAll('.group-select')) {
+        await picker.trigger('click')
+      }
+      await flushPromises()
+    }
+
+    it('shows an explanation instead of a Leave button', async () => {
+      loggedInWith([{ id: 2, namedisplay: 'Mine', role: ROLE_OWNER }])
+      const wrapper = mountPage()
+      await flushPromises()
+      await pick(wrapper, 2)
+
+      expect(
+        wrapper.findAll('.spin-btn[data-label="Leave this community"]')
+      ).toHaveLength(0)
+      expect(wrapper.text()).toContain('change your own role to Member')
+    })
+
+    it('still offers Leave for a plain membership', async () => {
+      loggedInWith([{ id: 1, namedisplay: 'Plain', role: ROLE_MEMBER }])
+      const wrapper = mountPage()
+      await flushPromises()
+      await pick(wrapper, 1)
+
+      expect(
+        wrapper.findAll('.spin-btn[data-label="Leave this community"]').length
+      ).toBeGreaterThan(0)
+      expect(wrapper.text()).not.toContain('change your own role to Member')
+    })
+
+    it('shows the server refusal instead of crashing if the server says no', async () => {
+      loggedInWith([{ id: 1, namedisplay: 'Plain', role: ROLE_MEMBER }])
+      const e = new Error('API Error DELETE /memberships -> status: 403')
+      e.response = { status: 403, data: { error: 403, message: MSG } }
+      leaveGroup.mockRejectedValue(e)
+
+      const wrapper = mountPage()
+      await flushPromises()
+      await pick(wrapper, 1)
+      await wrapper
+        .find('.spin-btn[data-label="Leave this community"]')
+        .trigger('click')
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(MSG)
+    })
   })
 })

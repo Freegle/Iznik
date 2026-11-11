@@ -73,10 +73,17 @@
                 v-else
                 class="flex-grow-1 ps-0 ps-md-2 pe-0 pe-md-2 fullsubject"
               >
-                <label class="me-2">Subject:</label>
-                <b-form-input v-model="editmessage.subject" size="lg" />
-                <label class="me-2">Post type:</label>
+                <label :for="`${formId}-subject`" class="me-2">Subject:</label>
+                <b-form-input
+                  :id="`${formId}-subject`"
+                  v-model="editmessage.subject"
+                  size="lg"
+                />
+                <label :for="`${formId}-post-type`" class="me-2"
+                  >Post type:</label
+                >
                 <b-form-select
+                  :id="`${formId}-post-type`"
                   v-model="editmessage.type"
                   :options="typeOptions"
                   class="type me-1"
@@ -169,12 +176,67 @@
               </ShowMore>
             </div>
             <NoticeMessage
-              v-if="onMultipleOfMyGroups || isRippledInToContextGroup"
+              v-if="pendingOnSeveral"
+              variant="info"
+              class="mt-1 mb-2"
+              data-test="multi-group-pending"
+            >
+              Pending on
+              <strong>{{ pendingCopies.all.length }} of your communities</strong
+              >:
+              <ShowMore
+                :items="pendingCopies.all"
+                :limit="3"
+                inline
+                keyfield="groupid"
+              >
+                <template #item="{ item }">{{ copyName(item) }}</template>
+              </ShowMore>
+              <div
+                v-if="pendingCopies.held.length"
+                class="mt-1"
+                data-test="multi-group-held"
+              >
+                Held by another volunteer on
+                {{ copyNames(pendingCopies.held) }} - that's left for them.
+              </div>
+              <div
+                v-if="pendingCopies.locked.length"
+                class="mt-1"
+                data-test="multi-group-locked"
+              >
+                Waiting for its home community on
+                {{ copyNames(pendingCopies.locked) }} - that's left until they
+                approve it.
+              </div>
+              <div v-if="severalActionable" class="mt-1">
+                <b-form-checkbox
+                  v-model="actOnAll"
+                  switch
+                  data-test="multi-group-act-on-all"
+                >
+                  <span v-if="actOnAll">
+                    Approve, Reject and Delete act on all
+                    {{ pendingCopies.actionable.length }}.
+                  </span>
+                  <span v-else>
+                    Approve, Reject and Delete act on
+                    <strong>{{ currentGroupName || 'this group' }}</strong>
+                    only.
+                  </span>
+                </b-form-checkbox>
+              </div>
+            </NoticeMessage>
+            <NoticeMessage
+              v-if="
+                (onMultipleOfMyGroups && !actingOnSeveral) ||
+                isRippledInToContextGroup
+              "
               variant="info"
               class="mt-1 mb-2"
               data-test="multi-group-mod-warning"
             >
-              <span v-if="onMultipleOfMyGroups">
+              <span v-if="onMultipleOfMyGroups && !actingOnSeveral">
                 This post is on several of your communities. You're moderating
                 for <strong>{{ currentGroupName || 'this group' }}</strong> -
                 approving or rejecting here affects
@@ -201,6 +263,18 @@
                   keep moderation load low. You don't need to do anything; you
                   can still reject it for the usual reasons (spam, breaks the
                   rules), just not for being "out of area".
+                </span>
+                <span
+                  v-if="canMessagePoster"
+                  class="d-block mt-1"
+                  data-test="ripple-poster-is-member-note"
+                >
+                  The poster has since become one of your members, so you can
+                  write to them about this post.
+                  <template v-if="pending">
+                    Reject sends them your usual message;
+                  </template>
+                  Delete takes it off here without telling them.
                 </span>
                 <span
                   v-if="rippleProximity"
@@ -398,6 +472,16 @@
               {{ position.lng }}), which means it might be a scam. Please check
               carefully.
             </NoticeMessage>
+            <!-- Plan 10.6/10.12: posts held by the lockdown switch are labelled in the
+                 queue so a mod can tell them apart from a post held for the group's own
+                 reasons. Confirmed live via GET /message/:id -> message.lockdownheld. -->
+            <NoticeMessage
+              v-if="message.lockdownheld"
+              variant="warning"
+              class="mb-2"
+            >
+              Held by lockdown during a security incident. Approve if genuine.
+            </NoticeMessage>
             <NoticeMessage
               v-if="message.spamreason"
               variant="warning"
@@ -539,15 +623,26 @@
                 variant="info"
                 class="mb-3"
               >
-                <strong>
+                <strong v-if="isSplit" data-testid="autosplit-banner">
+                  <v-icon icon="list" /> Split automatically into
+                  {{ message.bulkcount }} items.
+                </strong>
+                <strong v-else>
                   <v-icon icon="boxes-stacked" /> Bulk clearance —
                   {{ message.bulkcount }} item{{
                     message.bulkcount === 1 ? '' : 's'
                   }}.
                 </strong>
-                This is a single post on the group, but when a member opens it
-                they can see each item and turn on the ones they'd like (and how
-                many).
+                <template v-if="isSplit">
+                  The member posted these as one post and Freegle listed them
+                  separately, so people can say which they want. The member can
+                  undo it.
+                </template>
+                <template v-else>
+                  This is a single post on the group, but when a member opens it
+                  they can see each item and turn on the ones they'd like (and
+                  how many).
+                </template>
                 <b-button
                   variant="link"
                   class="p-0 ms-1 align-baseline"
@@ -624,7 +719,7 @@
                 <NoticeMessage
                   v-if="
                     message.myrole === 'Non-member' ||
-                    message.myrole === 'Member'
+                    message.myrole === ROLE_MEMBER
                   "
                   variant="danger"
                 >
@@ -770,10 +865,12 @@
           v-if="(!contextGroup?.heldby || heldbyId === myid) && !editing"
           :messageid="message.id"
           :groupid="currentGroupid"
+          :groupids="scopeGroupids"
           :modconfigid="configid"
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
           :is-home-group="isHomeGroup"
+          :can-message-poster="canMessagePoster"
           :mod-messaging-allowed="modMessagingAllowed"
         />
         <b-button
@@ -825,7 +922,16 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import {
+  ref,
+  reactive,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+  unref,
+  useId,
+} from 'vue'
 import Highlighter from 'vue-highlight-words'
 import ShowMore from '~/components/ShowMore.vue'
 
@@ -839,7 +945,7 @@ import { setupKeywords } from '~/composables/useKeywords'
 import { useMemberStore } from '~/stores/member'
 import { useModConfigStore } from '~/stores/modconfig'
 import { useMiscStore } from '~/stores/misc'
-import { SUBJECT_REGEX } from '~/constants'
+import { ROLE_MEMBER, SUBJECT_REGEX } from '~/constants'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
 import { buildKeywordRegex } from '~/composables/useKeywordRegex'
@@ -847,12 +953,21 @@ import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 import { useModGroupStore } from '@/stores/modgroup'
 
 import { twem } from '~/composables/useTwem'
+import { hasItemList, isAutoSplit } from '~/composables/useAutoSplit'
 import {
   isRippledInToContextGroup as isRippledIn,
   isHomeGroupRow,
+  canMessagePosterRow,
   earliestArrivalGroupId,
   homeGroupId,
 } from '~/composables/rippleStatus'
+import {
+  splitPendingCopies,
+  actionGroupids,
+} from '~/modtools/composables/multiGroupModeration'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   messageid: {
@@ -972,12 +1087,10 @@ const showEmailSourceModal = ref(false)
 const showSpamModal = ref(false)
 const showBulkPreview = ref(false)
 
-// A bulk "clearance" offer carries a structured catalogue of items.
-const isBulk = computed(
-  () =>
-    (message.value?.bulkcount || 0) > 0 ||
-    (message.value?.bulkitems?.length || 0) > 0
-)
+// A bulk "clearance" offer carries a structured catalogue of items, and so does an
+// ordinary post the server split into items (isSplit).
+const isBulk = computed(() => hasItemList(message.value))
+const isSplit = computed(() => isAutoSplit(message.value))
 const showMailSettings = ref(false)
 const showActions = ref(false)
 const showEmails = ref(false)
@@ -1131,17 +1244,56 @@ const alreadyOnHomeGroup = computed(() => {
 
 // The groups this post is on that the current user actually moderates. When there's more
 // than one, a Reject/Approve here is ambiguous unless we say which group it applies to.
+// Edit review is not: an accepted or rejected edit changes the post itself, on every group.
 const moderatedGroupsOnPost = computed(() =>
   (message.value?.groups || []).filter((g) => amAModOn(parseInt(g.groupid)))
 )
 const onMultipleOfMyGroups = computed(
-  () => moderatedGroupsOnPost.value.length > 1
+  () => !props.editreview && moderatedGroupsOnPost.value.length > 1
 )
 // The name of the group this copy is being administered on (the context group).
 const currentGroupName = computed(() => {
   const gid = contextGroup.value?.groupid
   return gid ? groupStore.get(parseInt(gid))?.namedisplay : null
 })
+
+// The post's copies still waiting for a moderator on communities I run, split into the
+// ones Approve, Reject and Delete can take and the ones they leave alone (held by another
+// volunteer, or locked by the home community). See multiGroupModeration.js.
+const pendingCopies = computed(() => {
+  if (props.editreview) {
+    return { all: [], actionable: [], held: [], locked: [] }
+  }
+  return splitPendingCopies(message.value?.groups, amAModOn, unref(myid))
+})
+
+const pendingOnSeveral = computed(() => pendingCopies.value.all.length > 1)
+const severalActionable = computed(
+  () =>
+    actionGroupids(currentGroupid.value, pendingCopies.value.actionable) !==
+    null
+)
+
+// Whether this card's Approve, Reject and Delete act on every community the post is
+// waiting on. On by default; the switch narrows it to the community being looked at.
+const actOnAll = ref(true)
+
+// The communities to act on, the one being looked at first, or null for that one alone.
+const scopeGroupids = computed(() =>
+  actOnAll.value
+    ? actionGroupids(currentGroupid.value, pendingCopies.value.actionable)
+    : null
+)
+const actingOnSeveral = computed(() => scopeGroupids.value !== null)
+
+function copyName(row) {
+  const id = parseInt(row.groupid)
+  return groupStore.get(id)?.namedisplay || row.namedisplay || 'Group ' + id
+}
+
+function copyNames(rows) {
+  return rows.map(copyName).join(', ')
+}
 
 // Whether the copy being administered is one the member posted DIRECTLY (rippled_in = 0),
 // as opposed to one rippling created. Per row, not "the single earliest group": a
@@ -1150,6 +1302,13 @@ const currentGroupName = computed(() => {
 // offered here, not on a rippled-in copy, and only a home copy's removal tells the poster.
 const isHomeGroup = computed(() =>
   isHomeGroupRow(message.value?.groups, currentGroupid.value)
+)
+
+// Whether this community may write to the poster: its home, or one the post rippled into
+// where the poster is an ordinary member (Discourse 10239). Decides the buttons whose only
+// effect is a message; outcomes and whole-post deletes still go by isHomeGroup.
+const canMessagePoster = computed(() =>
+  canMessagePosterRow(message.value?.groups, currentGroupid.value)
 )
 
 // Rippling-out: only OFFER/WANTED posts ripple, so only offer the reach map for those.

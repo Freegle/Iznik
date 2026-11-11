@@ -145,6 +145,7 @@ describe('useReplyToPost', () => {
         replyMessage: 'Hello, is this still available?',
         replyingAt: RECENT_AT,
         replySource: 'browse',
+        replyImageId: null,
       })
     })
 
@@ -168,7 +169,16 @@ describe('useReplyToPost', () => {
         replyMessage: 'Test message',
         replyingAt: RECENT_AT,
         replySource: 'message_page',
+        replyImageId: null,
       })
+    })
+
+    it('carries the photo id when a photo was added', () => {
+      mockReplyStore = freshReplyStore({
+        replyImage: { id: 555, paththumb: 'https://example.com/t.jpg' },
+      })
+      const { replyToSend } = useReplyToPost()
+      expect(replyToSend.value.replyImageId).toBe(555)
     })
   })
 
@@ -276,7 +286,8 @@ describe('useReplyToPost', () => {
         42,
         false,
         false,
-        'browse'
+        'browse',
+        null
       )
     })
 
@@ -291,7 +302,8 @@ describe('useReplyToPost', () => {
         42,
         false,
         true,
-        'browse'
+        'browse',
+        null
       )
     })
 
@@ -309,6 +321,25 @@ describe('useReplyToPost', () => {
       expect(mockReplyStore.replyMsgId).toBeNull()
       expect(mockReplyStore.replyMessage).toBeNull()
       expect(mockReplyStore.replySource).toBeNull()
+    })
+
+    it('passes the photo to openChat and clears it afterwards', async () => {
+      mockReplyStore = freshReplyStore({
+        replyImage: { id: 555, paththumb: 'https://example.com/t.jpg' },
+      })
+      const openChat = vi.fn().mockResolvedValue(undefined)
+      const { replyToPost } = useReplyToPost()
+      await replyToPost({ openChat })
+      expect(openChat).toHaveBeenCalledWith(
+        null,
+        'Hello, is this still available?',
+        42,
+        false,
+        false,
+        'browse',
+        555
+      )
+      expect(mockReplyStore.replyImage).toBeNull()
     })
 
     it('clears a composing draft for the same item after sending', async () => {

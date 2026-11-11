@@ -23,7 +23,7 @@ class GroupClosedReminderService
 
         $closedGroups = DB::table('groups')
             ->whereNotNull('settings')
-            ->whereRaw("JSON_EXTRACT(settings, '$.closed') = 1")
+            ->whereJsonContains('settings->closed', 1)
             ->select(['id', 'nameshort'])
             ->get();
 

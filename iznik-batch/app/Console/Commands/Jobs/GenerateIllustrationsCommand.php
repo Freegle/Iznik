@@ -7,7 +7,9 @@ use App\Services\JobIllustrationsService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'jobs:generate-illustrations')]
 class GenerateIllustrationsCommand extends Command
 {
     use PreventsOverlapping;
@@ -29,7 +31,7 @@ class GenerateIllustrationsCommand extends Command
             $dryRun = (bool) $this->option('dry-run');
 
             if ($dryRun) {
-                $this->info('Dry run — counting work but not calling pollinations.ai.');
+                $this->info('Dry run — counting work but not calling the image generator.');
             } else {
                 Log::info('Starting job illustrations generation');
             }

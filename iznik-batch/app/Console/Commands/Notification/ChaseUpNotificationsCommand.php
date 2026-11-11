@@ -4,6 +4,7 @@ namespace App\Console\Commands\Notification;
 
 use App\Services\NotificationChaseUpService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Send chaseup emails for unseen, unmailed site notifications (comments, loves, etc.).
@@ -11,6 +12,7 @@ use Illuminate\Console\Command;
  * Migrated from V1 notification_chaseup.php → Notifications::sendEmails().
  * Runs every 5 minutes in production (see routes/console.php).
  */
+#[AsCommand(name: 'mail:notifications:chaseup')]
 class ChaseUpNotificationsCommand extends Command
 {
     protected $signature = 'mail:notifications:chaseup

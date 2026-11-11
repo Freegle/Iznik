@@ -198,6 +198,7 @@ import ExternalLink from '~/components/ExternalLink'
 import WhichPostsExplanation from '~/components/WhichPostsExplanation.vue'
 import { useAuthStore } from '~/stores/auth'
 import { useClientLog } from '~/composables/useClientLog'
+import { noteHelpSought } from '~/composables/useFlowTelemetry'
 
 const authStore = useAuthStore()
 const loggedIn = computed(() => authStore.user !== null)
@@ -449,6 +450,8 @@ watch(
 )
 
 function selectOption(opt) {
+  noteHelpSought()
+
   logAction('help_option_click', {
     option_id: opt.id,
     option_label: opt.label,

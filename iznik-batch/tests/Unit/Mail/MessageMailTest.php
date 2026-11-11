@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Mail;
 
+use App\Mail\Message\AutoRepostWarning;
+use App\Mail\Message\ChaseUp;
 use App\Mail\Message\DeadlineReached;
 use App\Models\Message;
 use App\Models\MessageGroup;
@@ -215,6 +217,7 @@ class MessageMailTest extends TestCase
             'user'         => $user,
             'outcomeType'  => 'taken',
             'groupName'    => $group->nameshort,
+            'isOffer'      => true,
             'extendUrl'    => 'https://example.com/extend',
             'completedUrl' => 'https://example.com/completed',
             'withdrawUrl'  => 'https://example.com/withdraw',
@@ -236,6 +239,7 @@ class MessageMailTest extends TestCase
             'userName'       => 'Alice',
             'outcomeType'    => 'taken',
             'isOffer'        => true,
+            'repostWhen'     => 'soon',
             'completedUrl'   => 'https://example.com/completed',
             'withdrawUrl'    => 'https://example.com/withdraw',
             'promiseUrl'     => 'https://example.com/promise',
@@ -278,10 +282,10 @@ class MessageMailTest extends TestCase
             'messageSubject' => 'OFFER: Red Bicycle (Edinburgh)',
             'userName'       => 'Carol',
             'outcomeType'    => 'taken',
+            'promisedTo'     => 'Dave',
             'completedUrl'   => 'https://example.com/completed',
             'repostUrl'      => 'https://example.com/repost',
             'withdrawUrl'    => 'https://example.com/withdraw',
-            'myPostsUrl'     => 'https://example.com/myposts',
             'settingsUrl'    => 'https://example.com/settings',
             'email'          => 'carol@example.com',
         ])->render();
@@ -296,6 +300,205 @@ class MessageMailTest extends TestCase
             $html,
             'chaseup-promised preheader must include the "has it been collected?" suffix'
         );
+    }
+
+    // ─── Wording ──────────────────────────────────────────────────────────────
+
+    /** The data a mailable's build() hands to its MJML view. */
+    private function mjmlData(\App\Mail\MjmlMailable $mail): array
+    {
+        $mail->build();
+        $prop = new \ReflectionProperty(\App\Mail\MjmlMailable::class, 'mjmlData');
+        $prop->setAccessible(true);
+
+        return $prop->getValue($mail);
+    }
+
+    private function renderDeadline(string $type, ?string $deadlineDate = '28 October'): string
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $message = $this->createTestMessage($user, $group, [
+            'type'    => $type,
+            'subject' => ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED') . ': Thing (Town)',
+        ]);
+
+        $mail = new DeadlineReached($message, $user);
+
+        return view('emails.mjml.message.deadline-reached', [
+            'post'         => $message,
+            'user'         => $user,
+            'outcomeType'  => $mail->outcomeType,
+            'isOffer'      => $type === Message::TYPE_OFFER,
+            'deadlineDate' => $deadlineDate,
+            'groupName'    => $group->nameshort,
+            'extendUrl'    => 'https://example.com/extend',
+            'completedUrl' => 'https://example.com/completed',
+            'withdrawUrl'  => 'https://example.com/withdraw',
+            'settingsUrl'  => 'https://example.com/settings',
+            'email'        => $user->email_preferred,
+        ])->render();
+    }
+
+    public function test_deadline_reached_offer_keeps_giving_wording(): void
+    {
+        $html = $this->renderDeadline(Message::TYPE_OFFER);
+
+        $this->assertStringContainsString('find someone for your item', $html);
+        $this->assertStringContainsString('found a new home', $html);
+        $this->assertStringContainsString('give it away', $html);
+        $this->assertStringContainsString('Mark as Taken', $html);
+    }
+
+    public function test_deadline_reached_wanted_uses_looking_wording(): void
+    {
+        $html = $this->renderDeadline(Message::TYPE_WANTED);
+
+        $this->assertStringNotContainsString('find someone for your item', $html);
+        $this->assertStringNotContainsString('found a new home', $html);
+        $this->assertStringNotContainsString('give it away', $html);
+        $this->assertStringContainsString('find what you are looking for', $html);
+        $this->assertStringContainsString('Tell us you have received it', $html);
+        $this->assertStringContainsString('no longer looking for it', $html);
+        $this->assertStringContainsString('Mark as Received', $html);
+    }
+
+    public function test_deadline_reached_gives_the_deadline_date(): void
+    {
+        $html = $this->renderDeadline(Message::TYPE_OFFER, '28 October');
+
+        $this->assertStringContainsString('reached the deadline you set, 28 October.', $html);
+    }
+
+    public function test_deadline_reached_without_a_date_keeps_the_plain_wording(): void
+    {
+        $html = $this->renderDeadline(Message::TYPE_OFFER, null);
+
+        $this->assertStringContainsString('reached the deadline you set.', $html);
+        $this->assertStringNotContainsString('you set,', $html);
+    }
+
+    public function test_deadline_reached_build_passes_the_deadline_as_day_and_month(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $message = $this->createTestMessage($user, $group);
+        $message->deadline = '2026-10-28';
+
+        $this->assertSame('28 October', $this->mjmlData(new DeadlineReached($message, $user))['deadlineDate']);
+    }
+
+    public function test_deadline_reached_build_passes_is_offer(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $message = $this->createTestMessage($user, $group, ['type' => Message::TYPE_WANTED]);
+
+        $mail = new DeadlineReached($message, $user);
+
+        $this->assertFalse($this->mjmlData($mail)['isOffer']);
+    }
+
+    private function renderPromised(?string $promisedTo): string
+    {
+        $mail = new \App\Mail\Message\ChaseUpPromised(
+            messageId: 1,
+            messageSubject: 'OFFER: Red Bicycle (Edinburgh)',
+            messageType: Message::TYPE_OFFER,
+            userId: 1,
+            userName: 'Carol',
+            userEmail: 'carol@example.com',
+            promisedTo: $promisedTo,
+        );
+
+        return view('emails.mjml.message.chaseup-promised', $this->mjmlData($mail))->render();
+    }
+
+    public function test_chaseup_promised_names_who_it_was_promised_to(): void
+    {
+        $html = $this->renderPromised('Dave');
+
+        $this->assertStringContainsString('You promised this to Dave. Has it been collected?', $html);
+        $this->assertStringNotContainsString('My Posts', $html);
+        $this->assertStringContainsString('Repost', $html);
+        $this->assertStringContainsString('Withdraw', $html);
+    }
+
+    public function test_chaseup_promised_falls_back_to_someone(): void
+    {
+        $this->assertStringContainsString(
+            'You promised this to someone. Has it been collected?',
+            $this->renderPromised(null)
+        );
+    }
+
+    private function renderWarning(?string $repostDate): string
+    {
+        $mail = new \App\Mail\Message\AutoRepostWarning(
+            messageId: 1,
+            messageSubject: 'OFFER: Garden Tools (Manchester)',
+            messageType: Message::TYPE_OFFER,
+            userId: 1,
+            userName: 'Alice',
+            userEmail: 'alice@example.com',
+            repostDate: $repostDate,
+        );
+
+        return view('emails.mjml.message.autorepost-warning', $this->mjmlData($mail))->render();
+    }
+
+    public function test_autorepost_warning_gives_the_repost_day(): void
+    {
+        $html = $this->renderWarning('2026-10-31');
+
+        $this->assertStringContainsString('repost your post', $html);
+        $this->assertStringContainsString('on Saturday 31 October', $html);
+        $this->assertStringNotContainsString('your message', $html);
+    }
+
+    public function test_autorepost_warning_preheader_gives_the_repost_day(): void
+    {
+        $this->assertStringContainsString(
+            '<mj-preview>Will repost on Saturday 31 October: OFFER: Garden Tools (Manchester)',
+            $this->renderWarning('2026-10-31')
+        );
+    }
+
+    public function test_autorepost_warning_preheader_says_soon_without_a_date(): void
+    {
+        $this->assertStringContainsString(
+            '<mj-preview>Will repost soon: OFFER: Garden Tools (Manchester)',
+            $this->renderWarning(null)
+        );
+    }
+
+    public function test_autorepost_warning_says_soon_without_a_date(): void
+    {
+        $html = $this->renderWarning(null);
+
+        $this->assertStringContainsString('</strong> soon,', $html);
+    }
+
+    public function test_chaseup_says_post_not_message(): void
+    {
+        $html = view('emails.mjml.message.chaseup', [
+            'messageSubject' => 'OFFER: Oak Bookcase (Leeds)',
+            'userName'       => 'Bob',
+            'outcomeType'    => 'taken',
+            'repostUrl'      => 'https://example.com/repost',
+            'completedUrl'   => 'https://example.com/completed',
+            'withdrawUrl'    => 'https://example.com/withdraw',
+            'chatsUrl'       => 'https://example.com/chats',
+            'myPostsUrl'     => 'https://example.com/myposts',
+            'settingsUrl'    => 'https://example.com/settings',
+            'email'          => 'bob@example.com',
+        ])->render();
+
+        $this->assertStringContainsString('happened to your post', $html);
+        $this->assertStringNotContainsString('your message', $html);
     }
 
     public function test_mod_std_message_preheader_contains_body_snippet(): void
@@ -314,5 +517,84 @@ class MessageMailTest extends TestCase
             $html,
             'mod-std-message preheader must contain the start of the body text'
         );
+    }
+
+    /**
+     * The tracked link carries its destination base64-encoded, so this is how the promise
+     * link appears in a rendered mail.
+     */
+    private function promiseLinkToken(): string
+    {
+        return rawurlencode(base64_encode(config('freegle.sites.user') . '/mypost/123/promise'));
+    }
+
+    private function renderAutoRepostWarning(string $type): string
+    {
+        return (new AutoRepostWarning(
+            messageId: 123,
+            messageSubject: ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED') . ': Garden Tools (Manchester)',
+            messageType: $type,
+            userId: 456,
+            userName: 'Alice',
+            userEmail: 'alice@example.com',
+            groupId: 789,
+        ))->render();
+    }
+
+    private function renderChaseUp(string $type): string
+    {
+        return (new ChaseUp(
+            messageId: 123,
+            messageSubject: ($type === Message::TYPE_OFFER ? 'OFFER' : 'WANTED') . ': Oak Bookcase (Leeds)',
+            messageType: $type,
+            userId: 456,
+            userName: 'Bob',
+            userEmail: 'bob@example.com',
+            groupId: 789,
+        ))->render();
+    }
+
+    public function test_autorepost_warning_offer_has_promise_button(): void
+    {
+        $html = $this->renderAutoRepostWarning(Message::TYPE_OFFER);
+
+        $this->assertStringContainsString('Mark as Promised', $html);
+        $this->assertStringContainsString('Mark as Taken', $html);
+        $this->assertStringContainsString($this->promiseLinkToken(), $html);
+        $this->assertStringContainsString('p=promise_button', $html);
+    }
+
+    public function test_autorepost_warning_wanted_has_no_promise_button_or_sentence(): void
+    {
+        $html = $this->renderAutoRepostWarning(Message::TYPE_WANTED);
+
+        $this->assertStringNotContainsString('Mark as Promised', $html);
+        $this->assertStringNotContainsString('Promised', $html);
+        $this->assertStringNotContainsString($this->promiseLinkToken(), $html);
+        $this->assertStringNotContainsString('promise_button', $html);
+        $this->assertStringContainsString('Mark as Received', $html);
+    }
+
+    public function test_chaseup_offer_has_promise_button(): void
+    {
+        $html = $this->renderChaseUp(Message::TYPE_OFFER);
+
+        $this->assertStringContainsString('Mark as Promised', $html);
+        $this->assertStringContainsString($this->promiseLinkToken(), $html);
+        $this->assertStringContainsString('p=promise_button', $html);
+        $this->assertStringContainsString('Mark as Taken', $html);
+        $this->assertStringContainsString('Repost', $html);
+        $this->assertStringContainsString('Withdraw', $html);
+    }
+
+    public function test_chaseup_wanted_has_no_promise_button(): void
+    {
+        $html = $this->renderChaseUp(Message::TYPE_WANTED);
+
+        $this->assertStringNotContainsString('Mark as Promised', $html);
+        $this->assertStringNotContainsString('Promised', $html);
+        $this->assertStringNotContainsString($this->promiseLinkToken(), $html);
+        $this->assertStringNotContainsString('promise_button', $html);
+        $this->assertStringContainsString('Mark as Received', $html);
     }
 }

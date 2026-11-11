@@ -122,6 +122,14 @@ describe('PinchMe', () => {
       })
       expect(wrapper.find('.b-img').exists()).toBe(true)
     })
+
+    it('renders no image for a masked AI picture with no path', () => {
+      const wrapper = createWrapper({
+        attachment: { ouruid: '', path: '', paththumb: '' },
+      })
+      expect(wrapper.find('.b-img').exists()).toBe(false)
+      expect(wrapper.find('.our-uploaded-image').exists()).toBe(false)
+    })
   })
 
   describe('props', () => {

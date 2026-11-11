@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-28
+last_reviewed: 2026-09-29
 owner: Freegle dev team
 ---
 
@@ -73,7 +73,7 @@ These are the patterns that come back. For each, the action and its risk level.
 | 6 | **A stale duplicate of a migrated service** | After a service moves hosts, the old copy may still be running and serving nobody | Prove the live instance is elsewhere (access-log recency on both), then retire the old containers and data | Medium - it is member/community content; archive first |
 | 7 | **Database table growth** | Every table replicates to every node, so a GB saved multiplies by the node count | Identify high-growth tables (ripple reach geometry, per-message view/like counters, email open-tracking, bounces, the app `logs` table). Prune by age, one row at a time. Reclaiming file space needs a separate gated rebuild | Medium/high - Galera rules apply |
 | 8 | **Oversized or wrong-class storage volumes** | The upload store and per-host data disks | Right-size, and pick the cheapest class that fits the access pattern (see Step 3) | Medium |
-| 9 | **The upload store (tusd)** | Large and always growing | Moving to object storage - [runbook](images-to-object-storage.md). New uploads already go there and abandoned uploads are purged by the pusher; the saving lands when the legacy copy is verified and the file storage volume is deleted | Medium |
+| 9 | **The upload store (tusd)** | Large and always growing | On object storage, billed on use - [runbook](images-to-object-storage.md). Abandoned uploads are purged by the pusher. Check nothing has recreated a file storage volume | Low |
 
 ## Step 3 - Storage cost model
 

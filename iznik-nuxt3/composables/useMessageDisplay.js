@@ -116,7 +116,8 @@ export function useMessageDisplay(messageId) {
   })
 
   const gotAttachments = computed(() => {
-    return message.value?.attachments?.length > 0
+    // An attachment with neither ouruid nor path is a suppressed/rejected AI picture: nothing to show.
+    return !!message.value?.attachments?.some((a) => a.ouruid || a.path)
   })
 
   const sampleImage = computed(() => {

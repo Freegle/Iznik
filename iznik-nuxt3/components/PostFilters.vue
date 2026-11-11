@@ -217,7 +217,9 @@ function refetchCount() {
     messageStore.fetchCount(
       me.value.settings?.browseView,
       me.value.settings?.browseMaxDistance,
-      false
+      false,
+      me.value.settings?.browseType,
+      me.value.settings?.browseGroup
     )
   }
 }
@@ -271,7 +273,8 @@ watch(group, async (newVal) => {
   // choosing either whole-feed view clears it. Restoring a saved choice on load arrives here
   // through the selectedGroup prop as well, so only write when something actually changed -
   // otherwise every visit to Browse spends a save putting back what is already stored.
-  const savedId = parseInt(settings.browseGroup) > 0 ? parseInt(settings.browseGroup) : null
+  const savedId =
+    parseInt(settings.browseGroup) > 0 ? parseInt(settings.browseGroup) : null
   const wantId = newVal > 0 ? newVal : null
   const wantView =
     newVal === -1 ? 'nearby' : newVal === 0 ? 'mygroups' : settings.browseView
@@ -288,6 +291,12 @@ watch(group, async (newVal) => {
 
   if (newVal > 0) {
     emit('update:selectedGroup', newVal)
+
+    // The badge counts only this community now. Restoring a saved choice on load is not a
+    // change, and the count that arrived with the page already used it.
+    if (changed) {
+      refetchCount()
+    }
   } else {
     emit('update:selectedGroup', 0)
 
@@ -336,6 +345,9 @@ watch(type, async (newVal) => {
   }
 
   emit('update:selectedType', newVal)
+
+  // The badge counts only the chosen type, so it has changed.
+  refetchCount()
 })
 
 // Sort

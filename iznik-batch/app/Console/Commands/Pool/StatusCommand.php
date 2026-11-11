@@ -5,7 +5,9 @@ namespace App\Console\Commands\Pool;
 use App\Services\WorkerPool\BoundedPool;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Redis;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'pool:status')]
 class StatusCommand extends Command
 {
     protected $signature = 'pool:status {name? : Specific pool name to show}';

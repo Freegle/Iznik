@@ -2,9 +2,11 @@
 
 namespace App\Console\Commands\User;
 
+use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Restore a user from a JSON dump file produced by user:dump.
@@ -13,6 +15,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Usage: php artisan user:restore --input=/tmp/user-dump.json
  */
+#[AsCommand(name: 'user:restore')]
 class RestoreUserCommand extends Command
 {
     protected $signature = 'user:restore
@@ -170,7 +173,7 @@ class RestoreUserCommand extends Command
                 'lastname'   => $userAttrs['lastname'],
                 'added'      => now(),
                 'lastaccess' => now(),
-                'systemrole' => $userAttrs['systemrole'] ?? 'User',
+                'systemrole' => $userAttrs['systemrole'] ?? User::SYSTEMROLE_USER,
             ]);
 
             DB::table('users_emails')->insert([
@@ -352,6 +355,14 @@ class RestoreUserCommand extends Command
         );
 
         try {
+            // keep-raw: generic multi-table upsert - both the table name and the
+            // column list vary per call (built from array_keys($row), which differs
+            // per source table in the dump), and ON DUPLICATE KEY UPDATE sets
+            // `id` = LAST_INSERT_ID(`id`) to keep the row's own id stable while
+            // remapping only the user-ID columns. Query builder's upsert() only
+            // supports "column = VALUES(column)" updates, not a custom expression
+            // like LAST_INSERT_ID(id), and can't be driven by runtime column names
+            // built into arbitrary update clauses like this.
             DB::statement($sql, array_values($row));
         } catch (\Exception $e) {
             $this->warn("  Warning: skipped row in $table: ".$e->getMessage());

@@ -407,18 +407,21 @@
       </mj-column>
     </mj-section>
     <mj-section mj-class="bg-light" padding="0 20px 20px 20px">
-      <mj-column width="50%">
+      <mj-column width="{{ $donateUrl ? '50%' : '100%' }}">
         <mj-button href="{{ $jobsUrl }}" mj-class="{{ ($isModerator ?? false) ? 'btn-modtools' : 'btn-secondary' }}" font-size="14px" padding="12px 20px" width="90%">
           View more jobs
         </mj-button>
       </mj-column>
+      @if($donateUrl)
       <mj-column width="50%">
         {{-- Keep donate button green - it's for Freegle charity --}}
         <mj-button href="{{ $donateUrl }}" mj-class="btn-success" font-size="14px" padding="12px 20px" width="90%">
           Donating helps too!
         </mj-button>
       </mj-column>
+      @endif
     </mj-section>
+    @if($donateUrl)
     {{-- Donate now lands on our Stripe page, not PayPal, so show what's there.
          Alt text repeats it for clients that block images. --}}
     <mj-section mj-class="bg-light" padding="0 20px 16px 20px">
@@ -426,6 +429,7 @@
         <mj-image src="{{ $donateMarksUrl ?? config('freegle.images.paymethods') }}" alt="Donate with Apple Pay, Google Pay, PayPal or card" title="Donate with Apple Pay, Google Pay, PayPal or card" width="190px" align="center" padding="0" href="{{ $donateUrl }}" />
       </mj-column>
     </mj-section>
+    @endif
     @endif
 
     {{-- Footer --}}

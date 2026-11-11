@@ -16,22 +16,23 @@ import (
 // Active groups get primary fields (red badges), inactive/backup groups get
 // "other" fields (blue badges).
 type GroupWork struct {
-	Groupid             uint64 `json:"groupid"`
-	Pending             int64  `json:"pending"`
-	Pendingother        int64  `json:"pendingother"`
-	Spam                int64  `json:"spam"`
-	Pendingmembers      int64  `json:"pendingmembers"`
-	Pendingmembersother int64  `json:"pendingmembersother"`
-	Spammembers         int64  `json:"spammembers"`
-	Spammembersother    int64  `json:"spammembersother"`
-	Pendingevents       int64  `json:"pendingevents"`
-	Pendingvolunteering int64  `json:"pendingvolunteering"`
-	Editreview          int64  `json:"editreview"`
-	Pendingadmins       int64  `json:"pendingadmins"`
-	Happiness           int64  `json:"happiness"`
-	Relatedmembers      int64  `json:"relatedmembers"`
-	Chatreview          int64  `json:"chatreview"`
-	Chatreviewother     int64  `json:"chatreviewother"`
+	Groupid                  uint64 `json:"groupid"`
+	Pending                  int64  `json:"pending"`
+	Pendingother             int64  `json:"pendingother"`
+	Spam                     int64  `json:"spam"`
+	Pendingmembers           int64  `json:"pendingmembers"`
+	Pendingmembersother      int64  `json:"pendingmembersother"`
+	Spammembers              int64  `json:"spammembers"`
+	Spammembersother         int64  `json:"spammembersother"`
+	Pendingevents            int64  `json:"pendingevents"`
+	Pendingvolunteering      int64  `json:"pendingvolunteering"`
+	Pendingvolunteeringother int64  `json:"pendingvolunteeringother"`
+	Editreview               int64  `json:"editreview"`
+	Pendingadmins            int64  `json:"pendingadmins"`
+	Happiness                int64  `json:"happiness"`
+	Relatedmembers           int64  `json:"relatedmembers"`
+	Chatreview               int64  `json:"chatreview"`
+	Chatreviewother          int64  `json:"chatreviewother"`
 }
 
 // isActiveModForGroup checks membership settings JSON for the active flag.
@@ -279,13 +280,26 @@ func GetGroupWork(c *fiber.Ctx) error {
 			Select("vg.groupid, COUNT(DISTINCT v.id) as count").
 			Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
 			Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
-			Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND (vd.end IS NULL OR vd.end >= NOW())", activeGroupIDs).
+			Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND v.heldby IS NULL AND (vd.end IS NULL OR vd.end >= NOW())", activeGroupIDs).
 			Group("vg.groupid").
 			Scan(&rows)
+		var heldRows []countRow
+		db.Table("volunteering v").
+			Select("vg.groupid, COUNT(DISTINCT v.id) as count").
+			Joins("INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id").
+			Joins("LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id").
+			Where("vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 AND v.heldby IS NOT NULL AND (vd.end IS NULL OR vd.end >= NOW())", activeGroupIDs).
+			Group("vg.groupid").
+			Scan(&heldRows)
 		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Pendingvolunteering = r.Count
+			}
+		}
+		for _, r := range heldRows {
+			if w := workMap[r.Groupid]; w != nil {
+				w.Pendingvolunteeringother = r.Count
 			}
 		}
 		mapMutex.Unlock()
@@ -308,6 +322,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 		db.Table("messages_edits me").
 			Select("mg.groupid, COUNT(DISTINCT me.msgid) as count").
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid").
+			Joins("INNER JOIN messages m ON m.id = me.msgid AND m.deleted IS NULL").
 			Where("mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) AND mg.deleted = 0 AND mg.rippled_in = 0",
 				activeGroupIDs).
 			Group("mg.groupid").
@@ -357,16 +372,8 @@ func GetGroupWork(c *fiber.Ctx) error {
 			Select("mg.groupid, COUNT(DISTINCT mo.id) as count").
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = mo.msgid").
 			Where("mo.timestamp >= ? AND mg.arrival >= ? AND mg.groupid IN ? AND mg.rippled_in = 0 "+
-				"AND mo.comments IS NOT NULL AND mo.comments != '' "+
-				"AND mo.comments != 'Sorry, this is no longer available.' "+
-				"AND mo.comments != 'Thanks, this has now been taken.' "+
-				"AND mo.comments != 'Thanks, I''m no longer looking for this.' "+
-				"AND mo.comments != 'Sorry, this has now been taken.' "+
-				"AND mo.comments != 'Thanks for the interest, but this has now been taken.' "+
-				"AND mo.comments != 'Thanks, these have now been taken.' "+
-				"AND mo.comments != 'Thanks, this has now been received.' "+
-				"AND mo.comments != 'Withdrawn on user unsubscribe' "+
-				"AND mo.comments != 'Auto-Expired' "+
+				// feedback: a real comment, not an automatic or empty one (indexed generated column).
+				"AND mo.feedback = 1 "+
 				"AND (mo.happiness = 'Happy' OR mo.happiness IS NULL) "+
 				"AND mo.reviewed = 0",
 				hapCutoff, hapCutoff, activeGroupIDs).
@@ -393,22 +400,25 @@ func GetGroupWork(c *fiber.Ctx) error {
 		// Table() passes its name argument through verbatim (no quoting) once it
 		// contains a space, so a parenthesized UNION subquery can be given as the
 		// "table name" with its own bind args in Table()'s variadic args.
+		// Counted on the same terms as the list: a pair across the TrashNothing line
+		// cannot be merged, so it is not shown or counted.
+		mergeable := user.MergeableSidesSQL("u1", "u2")
 		db.Table("(SELECT ur.user1, m.groupid FROM users_related ur "+
 			"INNER JOIN memberships m ON m.userid = ur.user1 "+
-			"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
-			"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
-			"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
+			"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
+			"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
+			"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? AND "+mergeable+" "+
 			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
 			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0 "+
 			"UNION "+
 			"SELECT ur.user1, m.groupid FROM users_related ur "+
 			"INNER JOIN memberships m ON m.userid = ur.user2 "+
-			"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
-			"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
-			"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
+			"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
+			"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
+			"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? AND "+mergeable+" "+
 			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
 			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0) t",
-			activeGroupIDs, activeGroupIDs).
+			utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs, utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs).
 			Select("groupid, COUNT(*) as count").
 			Group("groupid").
 			Scan(&rows)

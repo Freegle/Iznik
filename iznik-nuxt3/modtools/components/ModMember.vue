@@ -2,7 +2,8 @@
   <div v-if="member" class="member-card">
     <b-card bg-variant="white" no-body>
       <b-card-header class="d-flex justify-content-between flex-wrap">
-        <div>
+        <div class="d-flex align-items-center">
+          <slot name="select" />
           <div v-if="isLJ">LoveJunk user #{{ user.ljuserid }}</div>
           <div v-else-if="email">
             <!-- eslint-disable-next-line -->
@@ -37,11 +38,9 @@
           class="mb-2"
           data-test="tn-unaddressed-member-warning"
         >
-          This is a <strong>Trash Nothing</strong> user. Everything they've
-          posted here was matched to a community from where they are, not
-          chosen by them, so <strong>they can't be contacted</strong> - there's
-          no chat, no mail and no standard messages. If they post to a
-          community they've chosen, this goes away by itself.
+          This is a <strong>Trash Nothing</strong> member who didn't choose this
+          community, so <strong>you can't contact them</strong> from here:
+          there's no chat, no mail and no standard messages.
         </NoticeMessage>
         <div v-if="heldByUser">
           <NoticeMessage variant="warning" class="mb-2">
@@ -294,12 +293,8 @@
             :groupid="groupid"
             :role="member.role"
           />
-          <!-- A membership rippling created for a poster records where their post
-               travelled, not a relationship with this community, so there is no chat for
-               its volunteers to start (Discourse 10102). If the member writes to us
-               first, that chat appears in Chats as normal. -->
           <ChatButton
-            v-if="modMessagingAllowed && !member.rippled"
+            v-if="modMessagingAllowed"
             :userid="member.userid"
             :groupid="member.groupid"
             title="Chat"
@@ -523,9 +518,9 @@ onMounted(() => {
     banned.value = true
   }
 
-  // Fetch user data — in modtools context, fetch() automatically uses fetchMT.
+  // Forced, so a note added since this tab last loaded the member shows.
   if (member.value?.userid) {
-    userStore.fetch(member.value.userid)
+    userStore.fetch(member.value.userid, true)
   }
 
   // V2 API returns heldby as a numeric ID — fetch the user so we can show their name.
@@ -618,5 +613,12 @@ async function unban() {
 <style scoped lang="scss">
 .text-link {
   color: var(--color-link);
+}
+
+/* The select checkbox comes from the parent through a slot, so reach it with
+   :deep. Bootstrap's default border is a faint grey that disappears against
+   the card header, so give the unticked box a clear dark border. */
+.member-card :deep(.bulk-check .form-check-input:not(:checked)) {
+  border: 2px solid #495057;
 }
 </style>

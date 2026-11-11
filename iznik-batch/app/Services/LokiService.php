@@ -33,6 +33,12 @@ class LokiService
 
     private bool $enabled = false;
 
+    /** HTTP status of the last queryMetricRange failure (null when it never got a response). */
+    public ?int $lastMetricStatus = null;
+
+    /** Start of the response body of that failure, for telling one 4xx from another. */
+    public ?string $lastMetricError = null;
+
     private string $logPath;
 
     public function __construct()
@@ -381,7 +387,7 @@ class LokiService
      *
      * @return array<int, array<string, mixed>>|null
      */
-    public function queryRange(string $logql, Carbon $start, Carbon $end): ?array
+    public function queryRange(string $logql, Carbon $start, Carbon $end, int $limit = 5000): ?array
     {
         $url = config('freegle.loki.query_url');
         if (empty($url)) {
@@ -395,7 +401,7 @@ class LokiService
                 'query' => $logql,
                 'start' => $start->getTimestamp() * 1_000_000_000, // ns
                 'end' => $end->getTimestamp() * 1_000_000_000,   // ns
-                'limit' => 5000,
+                'limit' => $limit,
                 'direction' => 'forward',
             ]);
         } catch (\Throwable $e) {
@@ -422,5 +428,58 @@ class LokiService
         }
 
         return $rows;
+    }
+
+    /**
+     * Read side: run a LogQL metric query (count_over_time and the like) over
+     * [$start, $end], evaluated every $stepSeconds. Returns one entry per series,
+     * its labels and its points keyed by unix timestamp - or NULL if the query
+     * failed, for the same reason as queryRange: a Loki error is not "zero".
+     *
+     * @return array<int, array{labels: array<string, string>, points: array<int, float>}>|null
+     */
+    public function queryMetricRange(string $logql, Carbon $start, Carbon $end, int $stepSeconds): ?array
+    {
+        $this->lastMetricStatus = null;
+        $this->lastMetricError = null;
+        $url = config('freegle.loki.query_url');
+        if (empty($url)) {
+            Log::warning('LokiService::queryMetricRange: no freegle.loki.query_url configured');
+
+            return null;
+        }
+
+        try {
+            $resp = Http::timeout(120)->get(rtrim($url, '/').'/loki/api/v1/query_range', [
+                'query' => $logql,
+                'start' => $start->getTimestamp() * 1_000_000_000, // ns
+                'end' => $end->getTimestamp() * 1_000_000_000,   // ns
+                'step' => $stepSeconds,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('LokiService::queryMetricRange failed: '.$e->getMessage());
+
+            return null;
+        }
+
+        if (! $resp->ok() || $resp->json('data.resultType') !== 'matrix') {
+            $this->lastMetricStatus = $resp->status();
+            $this->lastMetricError = substr($resp->body(), 0, 500);
+            Log::warning('LokiService::queryMetricRange unexpected response: '.$resp->status().' '.substr($resp->body(), 0, 500));
+
+            return null;
+        }
+
+        $series = [];
+        foreach (($resp->json('data.result') ?? []) as $result) {
+            $points = [];
+            foreach (($result['values'] ?? []) as $pair) {
+                // $pair = [ <unix seconds>, "<value>" ]
+                $points[(int) $pair[0]] = (float) $pair[1];
+            }
+            $series[] = ['labels' => $result['metric'] ?? [], 'points' => $points];
+        }
+
+        return $series;
     }
 }

@@ -36,7 +36,7 @@
           lazy
         />
         <b-img
-          v-else
+          v-else-if="attachment.path"
           generator-unable-to-provide-required-alt=""
           title="Item picture"
           :src="attachment.path"

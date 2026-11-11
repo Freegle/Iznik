@@ -301,7 +301,7 @@ func Bounds(c *fiber.Ctx) error {
 	db.Table("messages").
 		Select("messages.lat, messages.lng, messages.id, "+
 			"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
-			"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
+			PromisedSQL("messages.id", "messages.availablenow")+" AS promised, "+
 			"MIN(messages_groups.groupid) AS groupid, "+
 			"messages.type,"+
 			"MAX(messages_groups.arrival) AS arrival, "+
@@ -310,11 +310,12 @@ func Bounds(c *fiber.Ctx) error {
 		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
 		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
 		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
-		Joins("LEFT JOIN messages_promises ON messages_promises.msgid = messages.id").
 		Joins("LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 		Where("fromuser = ? AND messages_groups.arrival >= ? AND "+
 			"ST_Contains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
-			"AND messages_outcomes.id IS NULL",
+			"AND messages_outcomes.id IS NULL "+
+			// Withdrawn while Pending: deleted group row, no outcome (Discourse 10216/2).
+			"AND messages_groups.deleted = 0",
 			myid, start, swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat, utils.SRID, utils.SRID).
 		Group("messages.id").
 		Scan(&ownMsgs)

@@ -12,6 +12,11 @@ never the thing they point at.
 
 ## A moderator sees nothing, and the data is fine
 
+- **A pending post the content check has not reached.** The pending list only shows a Pending
+  post once `messages_groups.contentcheck_checked_at` is set, or after 30 minutes
+  (`message_list.go`). Anything that makes `messages:contentcheck` skip a post hides it from
+  moderators for that half hour, with no error. The lockdown hit this: skipping held posts meant
+  the moderators who could still approve them could not see them. Check without acting instead.
 - **Email history for a member in no communities.** The endpoint is gated on the moderator and
   the member sharing an active membership, so a member who has left everything returns a refusal
   and the tab looks empty. The emails were in the log the whole time. Support reports this as
@@ -181,3 +186,67 @@ days, has the request headers under `request_headers` and joins on `request_id`.
 `query_range`, `direction=forward`, at most 5000 lines per call; a line filter over the whole
 retention is slow and a paged pull across the busy hours will time out silently, so bound each
 call to a day or an hour.
+
+## A Mod2Mod chat has no user1 or user2
+
+A moderators' chat (`chattype = 'Mod2Mod'`) belongs to its group and has `user1` and `user2`
+NULL. Any check that treats "no user1 and no user2" as "the chat does not exist" returns 404 to
+every moderator, with the room and the access rules both fine. `GET /chat/:id/message` did this
+from 2026-03-20 (fd3a6c755), and posting from 2026-03-28 (70bdee1f4). Test existence by the row's
+`id`, then gate with `canSeeChatRoom` plus `mod2ModAllowed` (active moderators only, as
+`listChats`).
+
+## A chat that "never arrived" may sit on a merged-away account
+
+An account merge has to move chat rooms *and* their `chat_roster` rows. Before July 2026 the
+email-verify merge did neither reliably: the room update failed outright when the survivor
+already had a room with the same person (the unique key on user1, user2, chattype), leaving
+every room in that column on the soft-deleted loser, and roster rows were never moved at all.
+The member sees a conversation vanish, or sees messages arrive in the chat but is never
+emailed. No error is logged anywhere.
+
+Until October 2026 the Go API had two merges: the moderator merge, `user.MergeUsersTx`, and a
+cut-down copy for the email-verify case in `session/merge.go`, which moved fewer tables, wrote
+nothing to `logs` and soft-deleted the loser. There is now one. Confirming an email that
+belongs to another account calls `user.MergeUsersTx`, so it moves the same tables, deletes the
+loser outright and writes the same `User`/`Merged` pair of log rows, one per account with
+`byuser` the member. Do not add a second merge path; the cut-down one is how chats got stranded.
+`docs/developers/reference/account-merge.md` says what a merge does. The PHP `User::merge()`
+in iznik-batch is a separate copy used only by the TrashNothing sync, and nothing checks it
+against the Go one.
+
+For merges before October 2026 the loser is not findable from `logs` by name. Two traces
+survive: the loser's `users.deleted` is the same second as the survivor's
+`users_emails.validated` for the email that moved, and the loser's messages were re-attributed
+to the survivor, so a stranded room holds messages from someone who is neither participant.
+The second also matches support accounts that write into members' chats, so use it only to
+confirm the first. `chat:repair-merged-rooms` finishes such a merge from a loser,survivor file;
+`user/merge.go` `mergeChatRooms` is what a merge does now.
+
+To a partner such as TrashNothing this looks like the poster changing account mid-chat: a member
+posts with one email, signs in with Google under another (two accounts), then confirms the first
+address, and the poster's Freegle id changes under the conversation. That is the member joining
+their own accounts, not misrouted mail.
+
+## "A freegler" on screen does not mean the account has no name
+
+`user/namevalidation.go` (`SanitizeDisplayName`, Discourse 9587) rewrites a non-volunteer's
+display name to "A freegler" when it trades on the Freegle brand ("freegle", "ilovefreegle",
+"freecycle"), pairs "freegler" with an authority word, or is made only of authority words
+("Admin", "Support Team"). `iznik-batch/app/Support/NameSanitiser.php` is the copy the mail
+uses. The rewrite happens on every read; `users.fullname` is untouched and nothing on the
+account records that it was rewritten, so the API, ModTools, chat and the spam warning email
+all show "A freegler" with no sign that a name was ever set. `utils.TidyName` produces the same
+string for an empty name, so the two cases are indistinguishable on screen.
+
+Every place that shows a member's name has to apply the rewrite itself; nothing does it centrally.
+The member-site chat list and chat header (`chat/chatroom.go` `listChats`, which `GetChatRoom`
+reuses) built the name from `users.fullname` directly until October 2026, so the scam accounts
+showed as "ilovefreegle" in Chats beside a profile saying "A freegler" (Discourse 10173/52).
+A new name path needs `SanitizeDisplayName` with `IsNameExempt`, and a test with a brand name.
+
+Read the stored name before saying what a member chose. On 2026-09-20 the scam that mailed the
+group forwarders created 4,580 accounts from its own From header, every one stored as
+"ilovefreegle"; members, moderators and the warning email all saw "A freegler", and a reply on
+Discourse (10174/40) then said the scammer might have picked that name. They had picked
+"ilovefreegle"; "A freegler" was the sanitiser.

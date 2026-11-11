@@ -8,7 +8,9 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 use RuntimeException;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'spatial:update-data')]
 class UpdateSpatialDataCommand extends Command
 {
     /**
@@ -32,6 +34,18 @@ class UpdateSpatialDataCommand extends Command
     private const CSV_LNG_MAX = 2.2;
     private const QUINTILE_MIN_PCT = 15;
     private const QUINTILE_MAX_PCT = 30;
+
+    /**
+     * The Great Britain extract is about 2.2 GB, and Geofabrik serves it at anything from under
+     * 0.5 to about 2 MB/s, so a whole-transfer limit of ten minutes failed most months: on
+     * 2026-11-01 it gave up with 286 MB received, and /data still held June's extract. Bound the
+     * transfer generously and abort a stall instead: under PBF_STALL_BYTES_PER_SEC for
+     * PBF_STALL_SECONDS means the download has stopped, not that it is slow.
+     */
+    public const PBF_DOWNLOAD_TIMEOUT = 3 * 3600;
+    public const PBF_CONNECT_TIMEOUT = 30;
+    public const PBF_STALL_BYTES_PER_SEC = 10 * 1024;
+    public const PBF_STALL_SECONDS = 300;
 
     /**
      * Execute the console command.
@@ -150,8 +164,15 @@ class UpdateSpatialDataCommand extends Command
         $tempPath = "{$filePath}.tmp";
         $this->line("  Downloading {$url} ...");
         try {
-            $response = Http::timeout(600)
-                ->withOptions(['verify' => false])
+            $response = Http::timeout(self::PBF_DOWNLOAD_TIMEOUT)
+                ->connectTimeout(self::PBF_CONNECT_TIMEOUT)
+                ->withOptions([
+                    'verify' => false,
+                    'curl' => [
+                        CURLOPT_LOW_SPEED_LIMIT => self::PBF_STALL_BYTES_PER_SEC,
+                        CURLOPT_LOW_SPEED_TIME => self::PBF_STALL_SECONDS,
+                    ],
+                ])
                 ->sink($tempPath)
                 ->get($url);
 
@@ -259,8 +280,13 @@ class UpdateSpatialDataCommand extends Command
         }
 
         try {
+            // The escape argument is passed explicitly (as its long-standing
+            // default) because PHP 8.4 raises a deprecation on every call that
+            // relies on the default. Reading a 40,000-row file that way raised
+            // 40,000 deprecations, each routed through the error handler, which
+            // took four times longer than the parsing itself.
             // Read header
-            $header = fgetcsv($handle);
+            $header = fgetcsv($handle, escape: '\\');
             if (!$header || count($header) < 3) {
                 throw new RuntimeException("CSV header invalid or missing");
             }
@@ -277,7 +303,7 @@ class UpdateSpatialDataCommand extends Command
             $niRows = 0;
             $outOfBounds = 0;
 
-            while (($row = fgetcsv($handle)) !== false) {
+            while (($row = fgetcsv($handle, escape: '\\')) !== false) {
                 if (count($row) < 3) {
                     continue;
                 }

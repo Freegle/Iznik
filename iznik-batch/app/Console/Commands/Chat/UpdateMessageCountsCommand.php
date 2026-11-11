@@ -7,7 +7,9 @@ use App\Traits\GracefulShutdown;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'chats:update-counts')]
 class UpdateMessageCountsCommand extends Command
 {
     use GracefulShutdown, LogsBatchJob;

@@ -4,11 +4,13 @@ namespace App\Console\Commands\Donation;
 
 use App\Services\PaypalDownloadService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Fallback PayPal donation downloader (V1 cron/paypal_download.php). The IPN
  * catches donations normally; this backfills any it missed over the last N days.
  */
+#[AsCommand(name: 'donations:paypal-download')]
 class PaypalDownloadCommand extends Command
 {
     protected $signature = 'donations:paypal-download';

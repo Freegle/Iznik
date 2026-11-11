@@ -5,6 +5,7 @@ namespace App\Console\Commands\Dedup;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Collapse a set of Freegle messages that share a TrashNothing post id onto one message.
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\Log;
  * whatever did not move. A row can only fail to move because a unique key already holds
  * the canonical's equivalent, which makes the copy's row redundant.
  */
+#[AsCommand(name: 'tn:merge-crossposts')]
 class TnMergeCrosspostsCommand extends Command
 {
     protected $signature = 'tn:merge-crossposts

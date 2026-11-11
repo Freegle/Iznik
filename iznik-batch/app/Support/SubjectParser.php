@@ -59,4 +59,30 @@ final class SubjectParser
 
         return [$type, $item, $location];
     }
+
+    /**
+     * The subject with its location replaced: "TYPE: item (location)" becomes
+     * "TYPE: item ($location)", and a subject with no bracket gains one. Passing
+     * null drops the bracket, so nothing a member typed stays in the subject when
+     * there is no resolved location to put in its place.
+     *
+     * A subject not in the "TYPE: item" shape is returned unchanged.
+     */
+    public static function withLocation(string $subject, ?string $location): string
+    {
+        [$type, $item, $current] = self::parse($subject);
+
+        if ($current === null) {
+            // No trailing bracket. Still needs the "TYPE: item" shape to add one.
+            if (!preg_match('/^([^:]+):\s*(.*)$/s', $subject, $m)) {
+                return $subject;
+            }
+            $type = trim($m[1]);
+            $item = trim($m[2]);
+        }
+
+        $base = $type . ': ' . $item;
+
+        return $location === null || $location === '' ? $base : $base . ' (' . $location . ')';
+    }
 }

@@ -10,20 +10,24 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailhygiene"
 	"github.com/freegle/iznik-server-go/location"
+	"github.com/freegle/iznik-server-go/lockdown"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/reachqueue"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
+	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
@@ -37,26 +41,29 @@ type Aboutme struct {
 }
 
 type User struct {
-	ID              uint64      `json:"id" gorm:"primary_key"`
-	Firstname       *string     `json:"firstname"`
-	Lastname        *string     `json:"lastname"`
-	Fullname        *string     `json:"fullname"`
-	Displayname     string      `json:"displayname" gorm:"-"`
-	Profile         UserProfile `json:"profile" gorm:"-"`
-	Lastaccess      time.Time   `json:"lastaccess"`
-	Info            UserInfo    `json:"info" gorm:"-"`
-	Supporter       bool        `json:"supporter" gorm:"-"`
-	Donated         *time.Time  `json:"donated" gorm:"-"`
-	DonatedType     *string     `json:"donatedtype" gorm:"-"`
-	Comments        []Comment   `json:"comments,omitempty" gorm:"-"`
-	Spammer         interface{} `json:"spammer" gorm:"-"`
-	Showmod         bool        `json:"showmod" gorm:"-"`
-	Lat             float32     `json:"lat" gorm:"-"` // Exact for logged in user, approx for others.
-	Lng             float32     `json:"lng" gorm:"-"`
-	Aboutme         Aboutme     `json:"aboutme" gorm:"-"`
-	Added           time.Time   `json:"added"`
-	ExpectedReplies int         `json:"expectedreplies" gorm:"-"`
-	ExpectedChats   []uint64    `json:"expectedchats" gorm:"-"`
+	ID                  uint64      `json:"id" gorm:"primary_key"`
+	Firstname           *string     `json:"firstname"`
+	Lastname            *string     `json:"lastname"`
+	Fullname            *string     `json:"fullname"`
+	Displayname         string      `json:"displayname" gorm:"-"`
+	Profile             UserProfile `json:"profile" gorm:"-"`
+	Lastaccess          time.Time   `json:"lastaccess"`
+	Info                UserInfo    `json:"info" gorm:"-"`
+	Supporter           bool        `json:"supporter" gorm:"-"`
+	Donated             *time.Time  `json:"donated" gorm:"-"`
+	DonatedType         *string     `json:"donatedtype" gorm:"-"`
+	Donor               bool        `json:"donor,omitempty" gorm:"-"`
+	NoDonationAsks      bool        `json:"nodonationasks,omitempty" gorm:"-"`
+	NoDonationAsksUntil *string     `json:"nodonationasksuntil,omitempty" gorm:"-"`
+	Comments            []Comment   `json:"comments,omitempty" gorm:"-"`
+	Spammer             interface{} `json:"spammer" gorm:"-"`
+	Showmod             bool        `json:"showmod" gorm:"-"`
+	Lat                 float32     `json:"lat" gorm:"-"` // Exact for logged in user, approx for others.
+	Lng                 float32     `json:"lng" gorm:"-"`
+	Aboutme             Aboutme     `json:"aboutme" gorm:"-"`
+	Added               time.Time   `json:"added"`
+	ExpectedReplies     int         `json:"expectedreplies" gorm:"-"`
+	ExpectedChats       []uint64    `json:"expectedchats" gorm:"-"`
 	// No gorm:"->" — user/auth.go GetLoveJunkUser writes this column via
 	// db.Create(&ljuser) when first creating an LJ-linked user; making it
 	// read-only would silently drop the value and cause a fresh user to be
@@ -151,8 +158,13 @@ type MembershipTable struct {
 	Eventsallowed       int       `json:"eventsallowed"`
 	Volunteeringallowed int       `json:"volunteeringallowed"`
 	Role                string    `json:"role"`
-	Rippled             int       `json:"rippled"` // 1 = rippling auto-joined the poster; nobody chose this membership
-	OurPostingStatus    *string   `json:"ourpostingstatus,omitempty" gorm:"column:ourPostingStatus"`
+	Rippled             int       `json:"rippled"`  // 1 = rippling auto-joined the poster; nobody chose this membership
+	Implicit            int       `json:"implicit"` // 1 = the member has not knowingly joined; replaces Rippled
+	// How the row was created (memberships.added_origin). The default tag makes an insert that
+	// leaves it unset write unknown. An empty string is not one of the ENUM's values, and
+	// production runs without strict mode, so MySQL would store it as an empty string.
+	AddedOrigin      string  `json:"added_origin" gorm:"column:added_origin;default:unknown"`
+	OurPostingStatus *string `json:"ourpostingstatus,omitempty" gorm:"column:ourPostingStatus"`
 }
 
 // This is the membership we return to the client.  It includes some information not stored in the DB.
@@ -189,6 +201,8 @@ type MembershipHistory struct {
 	Added              time.Time `json:"added"`
 	Collection         string    `json:"collection"`
 	Processingrequired bool      `json:"processingrequired"`
+	// How the membership was created; the same value as memberships.added_origin.
+	AddedOrigin string `json:"added_origin" gorm:"column:added_origin;default:unknown"`
 }
 
 type Search struct {
@@ -438,7 +452,7 @@ func GetMemberships(id uint64) []Membership {
 
 	var memberships []Membership
 	db.Table("memberships").
-		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, memberships.rippled, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+		Select("memberships.id, added, role, groupid, emailfrequency, eventsallowed, volunteeringallowed, ourPostingStatus, memberships.rippled, memberships.implicit, memberships.added_origin, microvolunteering AS microvolunteeringallowed, nameshort, namefull, groups.type, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
 		Joins("INNER JOIN `groups` ON groups.id = memberships.groupid").
 		Where("userid = ? AND collection = ?", id, "Approved").
 		Scan(&memberships)
@@ -807,9 +821,11 @@ func GetUserById(id uint64, myid uint64) User {
 	}()
 
 	var supporter struct {
-		Supporter   bool       `json:"supporter"`
-		Donated     *time.Time `json:"donated"`
-		DonatedType *string    `json:"donatedtype"`
+		Supporter      bool       `json:"supporter"`
+		Donated        *time.Time `json:"donated"`
+		DonatedType    *string    `json:"donatedtype"`
+		NoDonationAsks bool       `json:"nodonationasks"`
+		Until          *string    `json:"-"`
 	}
 
 	wg.Add(1)
@@ -828,7 +844,9 @@ func GetUserById(id uint64, myid uint64) User {
 				"THEN 1 ELSE 0 END) "+
 				"AS supporter, "+
 				"(SELECT MAX(timestamp) FROM users_donations WHERE userid = ?) AS donated, "+
-				"(SELECT type FROM users_donations WHERE userid = ? ORDER BY timestamp DESC LIMIT 1) AS donatedtype",
+				"(SELECT type FROM users_donations WHERE userid = ? ORDER BY timestamp DESC LIMIT 1) AS donatedtype, "+
+				"COALESCE(JSON_EXTRACT(users.settings, '$.nodonationasks') = CAST('true' AS JSON), 0) AS no_donation_asks, "+
+				"JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.nodonationasksuntil')) AS until",
 				utils.SYSTEMROLE_USER, id, start, id, start, id, id).
 			Where("users.id = ?", id).
 			Scan(&supporter)
@@ -899,6 +917,18 @@ func GetUserById(id uint64, myid uint64) User {
 		// We can see our own donor status.
 		user.Donated = supporter.Donated
 		user.DonatedType = supporter.DonatedType
+	}
+
+	if id == myid || auth.IsAdminOrSupport(myid) {
+		// Whether they have ever donated, and whether they have turned donation requests off, so
+		// support can show that switch. Only yes/no: the donations stay behind PERM_GIFTAID, and
+		// Admin/Support who do not moderate the member's groups do not get the full settings.
+		user.Donor = supporter.Donated != nil
+		// A lapsed opt-out reads as off; the date says when a running one ends.
+		user.NoDonationAsks = DonationAsksPaused(supporter.NoDonationAsks, supporter.Until, time.Now())
+		if user.NoDonationAsks && supporter.Until != nil && *supporter.Until != "null" {
+			user.NoDonationAsksUntil = supporter.Until
+		}
 	}
 
 	if user.Deleted == nil {
@@ -1294,7 +1324,77 @@ func SearchUsers(c *fiber.Ctx) error {
 		Limit(100).
 		Pluck("userid", &userIDs)
 
-	return c.JSON(fiber.Map{"users": userIDs})
+	// Extra matches for support: the email a donor paid with (which may differ from any email on their
+	// account) and postcode. Each records why the user matched so the UI can show it. This endpoint is
+	// support/admin only (checked above); these fields are personal data and must stay that way.
+	matches := map[uint64][]string{}
+	addMatches := func(reason string, ids []uint64) {
+		for _, id := range ids {
+			matches[id] = append(matches[id], reason)
+			found := false
+			for _, existing := range userIDs {
+				if existing == id {
+					found = true
+					break
+				}
+			}
+			if !found && len(userIDs) < searchUsersLimit {
+				userIDs = append(userIDs, id)
+			}
+		}
+	}
+
+	// users_donations.Payer is indexed, so this is a prefix range scan (an exact email is a prefix of itself).
+	var payerIDs []uint64
+	db.Raw("SELECT DISTINCT userid FROM users_donations WHERE userid IS NOT NULL AND Payer LIKE ? LIMIT ?",
+		prefixTerm, searchUsersLimit).Scan(&payerIDs)
+	addMatches("donation_payer", payerIDs)
+
+	if outcode, full, ok := parsePostcodeQuery(q); ok {
+		// locations.name is indexed and users.lastlocation is indexed, so both are range/ref lookups.
+		var pcIDs []uint64
+		if full {
+			db.Raw("SELECT DISTINCT u.id FROM locations l INNER JOIN users u ON u.lastlocation = l.id "+
+				"WHERE l.type = 'Postcode' AND l.name = ? LIMIT ?", outcode, searchUsersLimit).Scan(&pcIDs)
+		} else {
+			db.Raw("SELECT DISTINCT u.id FROM locations l INNER JOIN users u ON u.lastlocation = l.id "+
+				"WHERE l.type = 'Postcode' AND l.name LIKE ? LIMIT ?", outcode+" %", searchUsersLimit).Scan(&pcIDs)
+		}
+		addMatches("postcode", pcIDs)
+
+		// giftaid is a few thousand rows and has no postcode index; compare with the space removed so
+		// "EH36SS" and "EH3 6SS" both match.
+		var gaIDs []uint64
+		compact := strings.ReplaceAll(outcode, " ", "")
+		db.Raw("SELECT DISTINCT userid FROM giftaid WHERE REPLACE(postcode, ' ', '') LIKE ? LIMIT ?",
+			compact+"%", searchUsersLimit).Scan(&gaIDs)
+		addMatches("giftaid_postcode", gaIDs)
+	}
+
+	// Existing clients read only "users"; "matches" says why the extra users matched.
+	outMatches := map[string][]string{}
+	for id, reasons := range matches {
+		outMatches[strconv.FormatUint(id, 10)] = reasons
+	}
+
+	return c.JSON(fiber.Map{"users": userIDs, "matches": outMatches})
+}
+
+const searchUsersLimit = 100
+
+var ukPostcodeRe = regexp.MustCompile(`^([A-Z]{1,2}[0-9][A-Z0-9]?)(?: ?([0-9][A-Z]{2}))?$`)
+
+// parsePostcodeQuery recognises a full UK postcode or an outcode (district). It returns the normalised
+// text ("EH3 6SS" or "EH3") and whether it is a full postcode.
+func parsePostcodeQuery(q string) (string, bool, bool) {
+	m := ukPostcodeRe.FindStringSubmatch(strings.ToUpper(strings.TrimSpace(q)))
+	if m == nil {
+		return "", false, false
+	}
+	if m[2] != "" {
+		return m[1] + " " + m[2], true, true
+	}
+	return m[1], false, true
 }
 
 func generateRandomKey(length int) string {
@@ -1437,11 +1537,13 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 			// mh.rippled = 0: exclude memberships created by rippling auto-join (Rippling Out,
 			// ExpandService::addPosterMembershipToRippledGroups). Those follow a post's reach, not
 			// a choice by the member, so counting them flags/bans innocent freeglers for spread they
-			// never caused (Discourse 10064/1).
+			// never caused (Discourse 10064/1). The same goes for a TrashNothing post placed on a
+			// group the poster did not pick (added_origin tn_unaddressed).
 			db.Table("memberships_history mh").
 				Select("DISTINCT g.lat, g.lng").
 				Joins("INNER JOIN `groups` g ON mh.groupid = g.id").
-				Where("mh.userid = ? AND mh.rippled = 0 AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0", id).
+				Where("mh.userid = ? AND mh.rippled = 0 AND mh.added_origin <> ? AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0",
+					id, addedorigin.TNUnaddressed).
 				Scan(&locs)
 			if len(locs) >= 2 {
 				var swlat, swlng, nelat, nelng float64
@@ -1638,7 +1740,9 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 	}
 }
 
-func AddMembership(userid uint64, groupid uint64, role string, collection string, emailfrequency int, eventsallowed int, volunteeringallowed int, reason string) bool {
+// AddMembership joins userid to groupid unless they are banned there. reason is the join log's
+// text and origin the new row's added_origin.
+func AddMembership(userid uint64, groupid uint64, role string, collection string, emailfrequency int, eventsallowed int, volunteeringallowed int, reason string, origin string) bool {
 	db := database.DBConn
 
 	ret := false
@@ -1681,6 +1785,7 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 			membership.Emailfrequency = emailfrequency
 			membership.Eventsallowed = eventsallowed
 			membership.Volunteeringallowed = volunteeringallowed
+			membership.AddedOrigin = addedorigin.ForInsert("user.AddMembership", userid, groupid, origin)
 
 			// Two concurrent joins (double-click, retry) both pass the
 			// membership check above and race the insert; the loser used to
@@ -1706,6 +1811,7 @@ func AddMembership(userid uint64, groupid uint64, role string, collection string
 					history.Groupid = groupid
 					history.Added = membership.Added
 					history.Collection = collection
+					history.AddedOrigin = membership.AddedOrigin
 
 					// Set processingrequired for background processing (welcome email, spam check, etc).
 					history.Processingrequired = true
@@ -1861,6 +1967,12 @@ func handleRatingReviewed(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRe
 		if count == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Not authorized to review this rating")
 		}
+	}
+
+	// Section 11.3 of the lockdown plan: POST /user RatingReviewed is a moderator
+	// action, refused outright while "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	db.Table("ratings").Where("id = ?", req.Ratingid).Update("reviewrequired", gorm.Expr("0"))
@@ -2033,20 +2145,44 @@ func handleRemoveEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostReque
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// CanonicalizeEmail returns a canonical form of the email for deduplication.
+// CanonicalizeEmail returns users_emails.canon for an address: iznik-batch's User::canonMail
+// applied to the lowercased address, which is what users:backfill-email-canon stores. The two
+// must agree, or a row one side writes is invisible to the other's canon lookup.
+//
+// In order: googlemail becomes gmail; a Trash Nothing -gNNN alias suffix is stripped; a "+"
+// suffix is stripped, unless the address starts with "+" (O2 does that) or is a Facebook proxy
+// address; dots are dropped from the username for Gmail only; dots are dropped from the domain.
 func CanonicalizeEmail(email string) string {
 	email = strings.ToLower(strings.TrimSpace(email))
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) != 2 {
-		return email
+	email = strings.ReplaceAll(email, "@googlemail.", "@gmail.")
+
+	if m := canonTNAlias.FindStringSubmatch(email); m != nil {
+		email = m[1] + m[2]
 	}
-	// Remove dots and plus-addressing from local part for Gmail-style canonicalization.
-	local := strings.ReplaceAll(parts[0], ".", "")
-	if idx := strings.Index(local, "+"); idx >= 0 {
-		local = local[:idx]
+
+	if !strings.HasPrefix(email, "+") && !strings.Contains(email, "@proxymail.facebook.com") {
+		if m := canonPlus.FindStringSubmatch(email); m != nil {
+			email = m[1] + m[3]
+		}
 	}
-	return local + "@" + parts[1]
+
+	if p := strings.Index(email, "@"); p >= 0 {
+		lhs, rhs := email[:p], email[p:]
+		if strings.Contains(rhs, "@gmail") || strings.Contains(rhs, "@googlemail") {
+			lhs = strings.ReplaceAll(lhs, ".", "")
+		}
+		email = lhs + strings.ReplaceAll(rhs, ".", "")
+	}
+
+	return email
 }
+
+// canonMail's two patterns. Go's regexp picks submatches leftmost-first as PCRE does, so the
+// greedy groups split the address at the same "+" and "-g" as PHP.
+var (
+	canonTNAlias = regexp.MustCompile(`^(.+)-g\d+(@user\.trashnothing\.com)$`)
+	canonPlus    = regexp.MustCompile(`(.*)\+(.*)(@.*)`)
+)
 
 // UserPutRequest is the body for PUT /user (signup).
 type UserPutRequest struct {
@@ -2056,6 +2192,9 @@ type UserPutRequest struct {
 	Lastname    string `json:"lastname"`
 	Displayname string `json:"displayname"`
 	GroupID     uint64 `json:"groupid"`
+	// Why the new account joins GroupID (memberships.added_origin): normally signup. The same
+	// values as PUT /memberships' origin; without one the membership is unknown and reported.
+	Origin string `json:"origin"`
 }
 
 // UserPatchRequest is the body for PATCH /user (profile update).
@@ -2097,6 +2236,10 @@ func PutUser(c *fiber.Ctx) error {
 
 	if req.Email == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email is required")
+	}
+
+	if req.Origin != "" && !addedorigin.FromClient(req.Origin) {
+		return fiber.NewError(fiber.StatusBadRequest, addedorigin.ClientValuesMessage())
 	}
 
 	email := strings.TrimSpace(req.Email)
@@ -2219,11 +2362,13 @@ func PutUser(c *fiber.Ctx) error {
 
 	// If groupid provided, add membership.
 	if req.GroupID > 0 {
+		origin := addedorigin.ForInsert("user.PutUser", newUserID, req.GroupID, req.Origin)
 		result := db.Table("memberships").Create(map[string]interface{}{
-			"userid":     newUserID,
-			"groupid":    req.GroupID,
-			"role":       utils.ROLE_MEMBER,
-			"collection": utils.COLLECTION_APPROVED,
+			"userid":       newUserID,
+			"groupid":      req.GroupID,
+			"role":         utils.ROLE_MEMBER,
+			"collection":   utils.COLLECTION_APPROVED,
+			"added_origin": origin,
 		})
 		if result.RowsAffected > 0 {
 			reachqueue.QueueMember(db, newUserID, reachqueue.ReasonJoined)
@@ -2248,6 +2393,7 @@ func PutUser(c *fiber.Ctx) error {
 				"collection":         utils.COLLECTION_APPROVED,
 				"processingrequired": gorm.Expr("1"),
 				"added":              gorm.Expr("NOW()"),
+				"added_origin":       origin,
 			})
 		}
 	}
@@ -2326,6 +2472,7 @@ func PutUser(c *fiber.Ctx) error {
 // ProcessSettingsUpdate applies V1-parity side effects when settings are saved:
 //   - If mylocation changes to a new Postcode, update lastlocation, clear isochrones, log PostcodeChange.
 //   - Prune groupsnear from mylocation before saving (keeps the DB row smaller).
+//   - Date a "don't ask me to donate" opt-out a year ahead (applyDonationAskLapse).
 //
 // Returns the pruned settings JSON ready for storage, and appends any SET clauses needed for the
 // users table (e.g. lastlocation) to the provided slices. Callers must include those clauses in
@@ -2451,6 +2598,7 @@ func ProcessSettingsUpdate(settingsJSON []byte, myid uint64, setClauses *[]strin
 		if myloc, ok := rawMap["mylocation"].(map[string]interface{}); ok {
 			delete(myloc, "groupsnear")
 		}
+		applyDonationAskLapse(db, rawMap, myid, time.Now())
 		if pruned, jsonErr := json.Marshal(rawMap); jsonErr == nil {
 			settingsJSON = pruned
 		}
@@ -2521,6 +2669,13 @@ func PatchUser(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusForbidden, "Not authorized to moderate this user")
 		}
 
+		// Section 11.3 of the lockdown plan: PATCH /user's moderation statuses
+		// (chatmodstatus, newsfeedmodstatus, and a moderator setting someone else's
+		// trustlevel below) are refused outright while "mods" is held.
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
+
 		// chatmodstatus is an ENUM. Without this check an unrecognised value is
 		// coerced to '' by MySQL in non-strict mode, which reads back as neither
 		// Moderated nor Fully and so quietly drops the member out of the spam
@@ -2571,6 +2726,10 @@ func PatchUser(c *fiber.Ctx) error {
 			}
 		}
 
+		if lockdown.GateMod(c, myid) {
+			return nil
+		}
+
 		db.Table("users").Where("id = ?", req.ID).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
@@ -2606,6 +2765,12 @@ func PatchUser(c *fiber.Ctx) error {
 
 	// Self-only updates always target the logged-in user.
 	if req.Displayname != nil {
+		// Section 11.3 of the lockdown plan (Profile/"posts" row): a member
+		// changing their public-facing name is refused while "posts" is held.
+		if lockdown.GateMember(c, myid, "posts") {
+			return nil
+		}
+
 		// None of these three
 		// assignments reference another assigned column.
 		db.Table("users").Where("id = ?", myid).Updates(map[string]interface{}{
@@ -2667,12 +2832,13 @@ func PatchUser(c *fiber.Ctx) error {
 	}
 
 	if req.Aboutme != nil {
-		// Insert a new aboutme entry. The most recent is fetched via ORDER BY timestamp DESC LIMIT 1.
-		db.Table("users_aboutme").Create(map[string]interface{}{
-			"userid":    myid,
-			"text":      *req.Aboutme,
-			"timestamp": gorm.Expr("NOW()"),
-		})
+		// Section 11.3 of the lockdown plan (Profile/"posts" row): a member
+		// editing their "about me" text is refused while "posts" is held.
+		if lockdown.GateMember(c, myid, "posts") {
+			return nil
+		}
+
+		SaveAboutMe(db, myid, *req.Aboutme)
 	}
 
 	if req.Newsfeedmodstatus != nil {
@@ -2746,6 +2912,14 @@ func PatchUser(c *fiber.Ctx) error {
 		}
 
 		if isMod {
+			// A moderator setting someone's trust level is a moderation status
+			// change, refused while "mods" is held (section 11.3 of the lockdown
+			// plan) - the self-service Basic/Declined path below is a personal
+			// setting, not moderation, and stays ungated.
+			if lockdown.GateMod(c, myid) {
+				return nil
+			}
+
 			if *req.Trustlevel == "" {
 				db.Table("users").Where("id = ?", trustTarget).Update("trustlevel", gorm.Expr("NULL"))
 			} else {
@@ -3036,6 +3210,13 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
+	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
+	// with a Freegle account, whoever asks (.claude/rules/conventions.md). ModTools refuses this
+	// too, but only by looking at the email typed in, so a merge by id went straight through.
+	if isTrashNothingAccount(db, uint64(req.ID1)) != isTrashNothingAccount(db, uint64(req.ID2)) {
+		return fiber.NewError(fiber.StatusBadRequest, "You can't merge a TrashNothing member with a Freegle account. Add a note to each to say they are the same person.")
+	}
+
 	if err := MergeUsersTx(db, uint64(req.ID1), uint64(req.ID2), myid); err != nil {
 		return err
 	}
@@ -3043,13 +3224,60 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// userOptedOutOfMerge reports whether a user's settings say canmerge is false.
+// PHP reads it as `$settings['canmerge'] ?? TRUE`, so only a falsy value set
+// explicitly counts; a missing key, null, or unreadable settings mean "may merge".
+func userOptedOutOfMerge(db *gorm.DB, id uint64) bool {
+	var raw string
+	if err := db.Raw("SELECT COALESCE(settings, '{}') FROM users WHERE id = ?", id).Row().Scan(&raw); err != nil {
+		return false
+	}
+	var settings map[string]interface{}
+	if json.Unmarshal([]byte(raw), &settings) != nil {
+		return false
+	}
+	switch v := settings["canmerge"].(type) {
+	case bool:
+		return !v
+	case float64:
+		return v == 0
+	case string:
+		return v == "" || v == "0" || v == "false"
+	}
+	return false
+}
+
 // MergeUsersTx merges id1 (discarded) into id2 (kept): every table's rows
 // move from id1 to id2 inside one transaction, mirroring V1's User::merge,
 // then id1's users row is hard-deleted after commit. byuser is recorded in
-// the merge log entries. Extracted from handleMerge so the TN divergence
-// heal (see FindTNCandidates) can merge a member's twin accounts through
-// exactly the moderator-merge code path.
+// the merge log entries.
+//
+// This is the only account merge. The moderator merge (handleMerge), the
+// email-verify merge (session.PatchSession, when a member confirms an address
+// that belongs to another of their accounts) and the TN divergence heal
+// (HealTNDivergence) all come through here, so they move the same tables and
+// leave the same log rows. Do not add a cut-down copy for a new caller: the
+// email-verify path had one until October 2026, and it stranded chat rooms
+// and wrote no log row. docs/developers/reference/account-merge.md says what
+// a merge does in plain words.
 func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
+	// Two different TrashNothing ids are two different TrashNothing members. Merging them keeps one
+	// id and drops the other, which loses that member for good (Discourse: pchide251 and
+	// brianandi170). Every merge path comes through here: the moderator merge and the TN
+	// divergence heal, whose own case - one twin stamped, the other not - is still allowed.
+	var tn1, tn2 *uint64
+	db.Table("users").Select("tnuserid").Where("id = ?", id1).Scan(&tn1)
+	db.Table("users").Select("tnuserid").Where("id = ?", id2).Scan(&tn2)
+	if tn1 != nil && tn2 != nil && *tn1 != *tn2 {
+		return fiber.NewError(fiber.StatusBadRequest, "These accounts belong to two different TrashNothing members and can't be merged.")
+	}
+
+	// A member can set canmerge to false in their settings to stop their account being merged.
+	// V1 and the PHP merge in iznik-batch both refuse in that case; so does this.
+	if userOptedOutOfMerge(db, id1) || userOptedOutOfMerge(db, id2) {
+		return fiber.NewError(fiber.StatusBadRequest, "One of these accounts has asked not to be merged.")
+	}
+
 	// All merge operations run inside a single transaction (V1 parity).
 	// id1 = DISCARD (source), id2 = KEEP (destination). All data moves FROM id1 TO id2.
 	tx := db.Begin()
@@ -3099,7 +3327,7 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	}
 
 	// Membership merge: V1 parity (max role, older date, non-null attrs from id1).
-	roleWeight := map[string]int{"Non-member": 0, "Member": 1, "Moderator": 2, "Owner": 3}
+	roleWeight := map[string]int{"Non-member": 0, utils.ROLE_MEMBER: 1, utils.ROLE_MODERATOR: 2, utils.ROLE_OWNER: 3}
 
 	type MembershipRow struct {
 		ID       uint64
@@ -3132,9 +3360,38 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 				newRole = m1.Role
 			}
 			tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).Update("role", newRole)
+			// implicit, rippled and added_origin are read from both rows before the added date
+			// below changes, and merged by MergedMembershipFlags.
+			var flags []MembershipFlags
+			tx.Table("memberships").Select("implicit, rippled, added_origin, added").
+				Where("groupid = ? AND userid IN (?, ?)", m1.Groupid, id2, id1).Scan(&flags)
+			if len(flags) == 2 {
+				merged := MergedMembershipFlags(flags[0], flags[1])
+				tx.Table("memberships").Where("userid = ? AND groupid = ?", id2, m1.Groupid).
+					Updates(map[string]interface{}{"implicit": merged.Implicit, "rippled": merged.Rippled, "added_origin": merged.AddedOrigin})
+				// One account was placed on the group (by rippling or TrashNothing) and the other
+				// chose it, so the merged membership has become ordinary: log it as every other
+				// clear does, or the kept added_origin reads as a placement with its flag lost.
+				placed0 := flags[0].Implicit == 1 || flags[0].Rippled == 1
+				if placed0 != (flags[1].Implicit == 1 || flags[1].Rippled == 1) {
+					placedOrigin := flags[1].AddedOrigin
+					if placed0 {
+						placedOrigin = flags[0].AddedOrigin
+					}
+					tx.Table("logs").Create(map[string]interface{}{
+						"timestamp": gorm.Expr("NOW()"),
+						"type":      log2.LOG_TYPE_GROUP,
+						"subtype":   log2.LOG_SUBTYPE_JOINED,
+						"groupid":   m1.Groupid,
+						"user":      id2,
+						"byuser":    byuser,
+						"text":      rippling.BecameOrdinaryText(placedOrigin, rippling.ReasonMerged),
+					})
+				}
+			}
 			// Take older added date (SQL JOIN to avoid Go datetime string formatting).
 			// Genuine multi-table UPDATE...JOIN: Table()-verbatim JOIN text +
-			// explicit clause.Set, same mechanism as session/merge.go's
+			// explicit clause.Set, same mechanism as merge.go's
 			// mergeChatRooms conversion. Proven by the retired ormharness's
 			// updatejoin_replace_test.go TestUpdateJoin_SelfJoinWithLeastExpr
 			// (removed in d22ba1d6c).
@@ -3177,56 +3434,19 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	tx.Table("logs").Where("user = ?", id1).Update("user", id2)
 	tx.Table("logs").Where("byuser = ?", id1).Update("byuser", id2)
 
-	// Chat room merge with deduplication (V1 parity).
-	type ChatRoomRow struct {
-		ID            uint64
-		Chattype      string
-		User1         uint64
-		User2         *uint64
-		Groupid       *uint64
-		Latestmessage *string
-	}
-	var id1Rooms []ChatRoomRow
-	tx.Table("chat_rooms").Select("id, chattype, user1, user2, groupid, latestmessage").
-		Where("(user1 = ? OR user2 = ?) AND chattype IN ('User2User','User2Mod')", id1, id1).Scan(&id1Rooms)
-	for _, room := range id1Rooms {
-		var existingID uint64
-		if room.Chattype == "User2Mod" {
-			tx.Table("chat_rooms").Select("id").
-				Where("user1 = ? AND groupid = ? AND chattype = 'User2Mod'", id2, room.Groupid).Scan(&existingID)
-		} else {
-			var otherUserID uint64
-			if room.User1 == id1 {
-				if room.User2 != nil {
-					otherUserID = *room.User2
-				}
-			} else {
-				otherUserID = room.User1
-			}
-			if otherUserID > 0 {
-				tx.Table("chat_rooms").Select("id").
-					Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-						id2, otherUserID, otherUserID, id2).Scan(&existingID)
-			}
-		}
-		if existingID > 0 {
-			// Duplicate room — move messages into surviving room and delete duplicate.
-			tx.Table("chat_messages").Where("chatid = ?", room.ID).Update("chatid", existingID)
-			if room.Latestmessage != nil {
-				tx.Table("chat_rooms").Where("id = ?", existingID).
-					Update("latestmessage", gorm.Expr("GREATEST(latestmessage, ?)", *room.Latestmessage))
-			}
-			tx.Table("chat_rooms").Where("id = ?", room.ID).Delete(nil)
-		} else {
-			if room.User1 == id1 {
-				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user1", id2)
-			} else {
-				tx.Table("chat_rooms").Where("id = ?", room.ID).Update("user2", id2)
-			}
-		}
+	// Chat rooms: consolidated rather than blindly reassigned, so the unique key
+	// on (user1, user2, chattype) cannot abort the merge and strand rooms on
+	// the account about to be deleted. See mergeChatRooms in merge.go.
+	if err := mergeChatRooms(tx, id2, id1); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge chat rooms")
 	}
 	tx.Table("chat_messages").Where("userid = ?", id1).Update("userid", id2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("chat_roster").Where("userid = ?", id1).Update("userid", id2)
+	// A reply question asked of id1 (chat_prompts.userid) moves with their messages. Left behind, the foreign key
+	// deletes it with id1, and the reply it holds (now id2's) is delivered unasked. The held reply itself is a chat
+	// message and has just moved above.
+	if err := tx.Table("chat_prompts").Where("userid = ?", id1).Update("userid", id2).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to merge reply questions")
+	}
 
 	// Sessions and logins.
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("sessions").Where("userid = ?", id1).Update("userid", id2)
@@ -3267,11 +3487,13 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 		tx.Table("users").Where("id = ?", id2).Update("lastname", *u1Attrs.Lastname)
 	}
 	if u1Attrs.Yahooid != nil && u2Attrs.Yahooid == nil {
+		// yahooid is unique, so take it off id1 first or the update below fails silently.
+		tx.Table("users").Where("id = ?", id1).Update("yahooid", gorm.Expr("NULL"))
 		tx.Table("users").Where("id = ?", id2).Update("yahooid", *u1Attrs.Yahooid)
 	}
 
 	// systemrole: take the max (User < Moderator < Support < Admin).
-	sysRoleOrder := map[string]int{"User": 0, "Moderator": 1, "Support": 2, "Admin": 3}
+	sysRoleOrder := map[string]int{utils.SYSTEMROLE_USER: 0, utils.SYSTEMROLE_MODERATOR: 1, utils.SYSTEMROLE_SUPPORT: 2, utils.SYSTEMROLE_ADMIN: 3}
 	if sysRoleOrder[u1Attrs.Systemrole] > sysRoleOrder[u2Attrs.Systemrole] {
 		tx.Table("users").Where("id = ?", id2).Update("systemrole", u1Attrs.Systemrole)
 	}
@@ -3321,6 +3543,7 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	tx.Table("users_comments").Where("userid = ?", id1).Update("userid", id2)
 	tx.Table("users_comments").Where("byuserid = ?", id1).Update("byuserid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_donations").Where("userid = ?", id1).Update("userid", id2)
+	tx.Table("giftaid_asks").Where("userid = ?", id1).Update("userid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_images").Where("userid = ?", id1).Update("userid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_invitations").Where("userid = ?", id1).Update("userid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_nearby").Where("userid = ?", id1).Update("userid", id2)
@@ -3350,6 +3573,23 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("trysts").Where("user2 = ?", id1).Update("user2", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("isochrones_users").Where("userid = ?", id1).Update("userid", id2)
 	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("microactions").Where("userid = ?", id1).Update("userid", id2)
+	// The record of which experiment arm a send used. A merge must not depend on an analytics table,
+	// so a table that has not been created yet is skipped. A row that clashes with one the surviving
+	// account already has stays where it is.
+	if tx.Migrator().HasTable("ux_experiment_exposures") {
+		tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ux_experiment_exposures").Where("userid = ?", id1).Update("userid", id2)
+	}
+	// Marks of interest in a post: where both accounts marked the same post the kept account's mark stays,
+	// and the discarded account's is removed with the rest of its rows.
+	if tx.Migrator().HasTable("messages_interested") {
+		tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("messages_interested").Where("userid = ?", id1).Update("userid", id2)
+		tx.Table("messages_interested").Where("userid = ?", id1).Delete(nil)
+	}
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("ux_prompt_responses").Where("userid = ?", id1).Update("userid", id2)
+	// Where both had answered the same question the IGNORE left id1's answer behind, and id1 is
+	// about to be deleted. It would belong to nobody, out of reach of forget-me and the data
+	// export for id2, and still counted as a second answer from one person. id2's answer wins.
+	tx.Table("ux_prompt_responses").Where("userid = ?", id1).Delete(nil)
 	tx.Table("volunteering").Where("userid = ?", id1).Update("userid", id2)
 	tx.Table("volunteering").Where("deletedby = ?", id1).Update("deletedby", id2)
 	tx.Table("volunteering").Where("heldby = ?", id1).Update("heldby", id2)
@@ -3357,8 +3597,13 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	tx.Table("communityevents").Where("heldby = ?", id1).Update("heldby", id2)
 
 	// Bans: move id1's bans to id2, then delete memberships for groups id2 is now banned from.
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("userid = ?", id1).Update("userid", id2)
-	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("byuser = ?", id1).Update("byuser", id2)
+	// users_banned.date is ON UPDATE CURRENT_TIMESTAMP, so any UPDATE re-stamps it with the
+	// merge time unless the column is set explicitly. Merging a moderator's two accounts
+	// otherwise makes every ban they ever made look like a batch of new bans that second.
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("userid = ?", id1).
+		Updates(map[string]interface{}{"userid": id2, "date": gorm.Expr("`date`")})
+	tx.Clauses(clause.Update{Modifier: "IGNORE"}).Table("users_banned").Where("byuser = ?", id1).
+		Updates(map[string]interface{}{"byuser": id2, "date": gorm.Expr("`date`")})
 
 	type MergeBanRow struct{ Groupid uint64 }
 	var mergeBans []MergeBanRow
@@ -3434,6 +3679,17 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	// model, so User.Deleted (a plain *time.Time, not gorm.DeletedAt) can never
 	// turn this into a soft-delete UPDATE.
 	db.Table("users").Where("id = ?", id1).Delete(nil)
+
+	// A moderator's Discourse account may be linked to the account that just went. Move it to the
+	// kept one now, in the background, rather than at their next sign-in, so their email and name
+	// keep updating. Only moderators have Discourse accounts, so members cost one query.
+	if sso.IsModerator(id2) {
+		go func() {
+			if _, err := sso.RelinkMerged(id2); err != nil {
+				log.Printf("[Merge] Discourse relink for %d failed: %v", id2, err)
+			}
+		}()
+	}
 
 	return nil
 }
@@ -3722,8 +3978,15 @@ func GetUserMembershipHistory(c *fiber.Ctx) error {
 		Text        string     `json:"text"`
 	}
 
+	// FORCE INDEX (user): without it the optimiser drives from `groups` and reads each
+	// group's logs through the `group` index, believing a few dozen rows per group. On the
+	// production logs table that is close to a full scan; one member's history ran for over
+	// an hour, and a moderator's ModTools retrying it stacked 164 copies on the write node.
+	// Through `user` it reads only this member's own log rows. The hint names an index, so
+	// TestUserMembershipHistory runs this SQL: a renamed `user` index fails that test rather
+	// than every request. The index comes from the create_logs_table migration.
 	var history []MembershipHistoryRow
-	db.Table("logs l").
+	db.Table("logs l FORCE INDEX (user)").
 		Select("l.timestamp, l.subtype AS type, l.groupid, g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, COALESCE(l.text,'') AS text").
 		Joins("INNER JOIN `groups` g ON g.id = l.groupid").
 		Where("l.user = ? AND l.type = 'Group' AND l.subtype IN ('Joined','Approved','Rejected','Applied','Left')", targetid).
@@ -3767,4 +4030,70 @@ func GetUserLogins(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(logins)
+}
+
+// MembershipFlags are the columns that say why a membership exists.
+type MembershipFlags struct {
+	Implicit    int
+	Rippled     int
+	AddedOrigin string
+	Added       time.Time
+}
+
+// MergedMembershipFlags merges two memberships of one group when their accounts merge, into a
+// state the writers themselves make:
+//   - an ordinary membership on either side means the member chose the group: ordinary, with the
+//     older row's origin;
+//   - both implicit, and either a TrashNothing placement: a placement (implicit, not rippled).
+//     A placement is never removed automatically, so it must not become a ripple join that is;
+//   - two ripple joins: the older row's origin and rippled flag, together.
+//
+// Laravel's User::mergedMembershipFlags is the same rule.
+func MergedMembershipFlags(a, b MembershipFlags) MembershipFlags {
+	older := a
+	if b.Added.Before(a.Added) {
+		older = b
+	}
+
+	if a.Implicit == 0 || b.Implicit == 0 {
+		return MembershipFlags{Implicit: 0, Rippled: 0, AddedOrigin: older.AddedOrigin, Added: older.Added}
+	}
+
+	if a.AddedOrigin == addedorigin.TNUnaddressed || b.AddedOrigin == addedorigin.TNUnaddressed {
+		return MembershipFlags{Implicit: 1, Rippled: 0, AddedOrigin: addedorigin.TNUnaddressed, Added: older.Added}
+	}
+
+	return MembershipFlags{Implicit: 1, Rippled: older.Rippled, AddedOrigin: older.AddedOrigin, Added: older.Added}
+}
+
+// TrashNothingSQL is a SQL condition that is true when the users row aliased as alias is a
+// TrashNothing member, by the same definition as isTrashNothingAccount.
+func TrashNothingSQL(alias string) string {
+	return "(" + alias + ".tnuserid IS NOT NULL OR EXISTS (SELECT 1 FROM users_emails tne WHERE tne.userid = " +
+		alias + ".id AND tne.preferred = 1 AND tne.email LIKE '%@user.trashnothing.com'))"
+}
+
+// MergeableSidesSQL is a SQL condition that is true when the users rows aliased a and b
+// could be merged: handleMerge refuses a TrashNothing member with any other account, so a
+// related-members pair across that line is one a moderator can do nothing with.
+func MergeableSidesSQL(a, b string) string {
+	return "(" + TrashNothingSQL(a) + " = " + TrashNothingSQL(b) + ")"
+}
+
+// isTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
+// tnuserid, or with a TrashNothing address as their preferred email. A non-preferred
+// TrashNothing address does not count, since volunteers may also use TrashNothing. Same
+// definition as the membership package's, which this package cannot import.
+func isTrashNothingAccount(db *gorm.DB, userid uint64) bool {
+	var stamped int64
+	db.Table("users").Where("id = ? AND tnuserid IS NOT NULL", userid).Count(&stamped)
+	if stamped > 0 {
+		return true
+	}
+
+	var tnPreferred int64
+	db.Table("users_emails").
+		Where("userid = ? AND preferred = 1 AND email LIKE ?", userid, "%@user.trashnothing.com").
+		Count(&tnPreferred)
+	return tnPreferred > 0
 }

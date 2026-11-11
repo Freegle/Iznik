@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -140,12 +141,12 @@ func List(c *fiber.Ctx) error {
 		if len(modGroupIDs) > 0 && reviewed == "0" {
 			// review listing has no public filter, has 31-day date cutoff.
 			storyCutoff := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
-			// memberships.rippled = 0 for the same reason as Group() above: a membership
-			// rippling created is not a relationship with the community, so it must not put
+			// memberships.rippled = 0 and implicit = 0 for the same reason as Group() above: a membership
+			// rippling or TrashNothing created is not a relationship with the community, so it must not put
 			// somebody's story in that group's moderators' review queue either.
 			whereSQL = "reviewed = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL " +
 				"AND users_stories.date > ? AND memberships.groupid IN (?) AND memberships.collection = ? " +
-				"AND memberships.rippled = 0"
+				"AND memberships.rippled = 0 AND memberships.implicit = 0"
 			whereArgs = []interface{}{reviewed, storyCutoff, modGroupIDs, utils.COLLECTION_APPROVED}
 			tx = db.Table("users_stories").
 				Select("DISTINCT users_stories.id").
@@ -194,7 +195,7 @@ func Group(c *fiber.Ctx) error {
 		Select("DISTINCT users_stories.id").
 		Joins("INNER JOIN memberships ON memberships.userid = users_stories.userid").
 		Joins("INNER JOIN users ON users.id = users_stories.userid").
-		Where("memberships.groupid = ? AND memberships.collection = ? AND memberships.rippled = 0 AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
+		Where("memberships.groupid = ? AND memberships.collection = ? AND memberships.rippled = 0 AND memberships.implicit = 0 AND reviewed = ? AND public = ? AND users_stories.userid IS NOT NULL AND users.deleted IS NULL",
 			groupid64, utils.COLLECTION_APPROVED, reviewed, public).
 		Order("date DESC").
 		Limit(int(limit64)).
@@ -223,6 +224,15 @@ func canModStory(myid uint64, storyID uint64) bool {
 	if authorID == myid {
 		return true
 	}
+
+	return isStoryReviewer(myid, authorID)
+}
+
+// isStoryReviewer checks if a user can review a story by the given author: admin/support,
+// or a moderator on a group the author is a member of. Unlike canModStory this excludes
+// the author themselves, so members can't approve their own stories.
+func isStoryReviewer(myid uint64, authorID uint64) bool {
+	db := database.DBConn
 
 	if auth.IsAdminOrSupport(myid) {
 		return true
@@ -377,6 +387,15 @@ func UpdateStory(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 	}
 
+	// Section 11.3 of the lockdown plan: PATCH /story (an edit or a moderator's
+	// review) is refused outright while "events" is held - unlike communityevent
+	// and volunteering there is no approve-and-keep-draining exception here, because
+	// a story's review fields (Reviewed/Newsletterreviewed/Newsletter) are exactly
+	// what the plan means by "edits refused" for this endpoint.
+	if lockdown.GateMember(c, myid, "events") {
+		return nil
+	}
+
 	db := database.DBConn
 
 	// Get current state before update (for newsfeed side effect).
@@ -391,6 +410,17 @@ func UpdateStory(c *fiber.Ctx) error {
 		Select("reviewed, public, userid, COALESCE(fromnewsfeed, 0) AS fromnewsfeed").
 		Where("id = ?", req.ID).
 		Scan(&before)
+
+	// Only reviewers can change a story. The author can withdraw it (public=0) but
+	// nothing else - otherwise they could approve it themselves, or change the text
+	// after it has been approved.
+	if !isStoryReviewer(myid, before.Userid) {
+		p := toBoolInt(req.Public)
+		if req.Reviewed != nil || req.Newsletterreviewed != nil || req.Newsletter != nil ||
+			req.Headline != nil || req.Story != nil || (p != nil && *p != 0) {
+			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
+		}
+	}
 
 	// Update settable attributes.
 	if p := toBoolInt(req.Public); p != nil {

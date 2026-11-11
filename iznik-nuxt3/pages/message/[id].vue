@@ -80,7 +80,7 @@
           "
         >
           <client-only>
-            <MyMessage :id="id" :show-old="true" expand />
+            <MyMessage :id="id" :show-old="true" expand post-page />
           </client-only>
         </div>
         <div v-else class="botpad">
@@ -97,7 +97,6 @@
             hide-close
             record-view
             @not-found="error = true"
-            @replied="onReplied"
           />
         </div>
       </b-col>
@@ -105,7 +104,7 @@
         <client-only>
           <VisibleWhen
             :not="['xs', 'sm', 'md']"
-            class="position-fixed similar-posts-sidebar"
+            class="position-fixed"
             style="width: 300px"
           >
             <ExternalDa
@@ -116,41 +115,10 @@
               show-logged-out
               :jobs="false"
             />
-            <!-- Desktop: similar posts live in the sidebar so they never push
-                 the post itself around. On mobile they'd just be clutter, so
-                 there they're shown as a modal after the user replies (see the
-                 SimilarPostsModal wiring below). -->
-            <SimilarPosts
-              v-if="message && !showtaken"
-              :msgid="id"
-              variant="sidebar"
-              :max="6"
-              class="mt-3"
-            />
           </VisibleWhen>
         </client-only>
       </b-col>
     </b-row>
-    <!-- Mobile only: after a reply, surface the recommendations as a modal so
-         they never clutter the post itself on a small screen (on desktop they
-         live in the sidebar instead). -->
-    <client-only>
-      <b-modal
-        v-model="showSimilarModal"
-        title="More like this nearby"
-        size="md"
-        ok-only
-        ok-title="Close"
-      >
-        <SimilarPosts
-          v-if="showSimilarModal && message"
-          :msgid="id"
-          variant="modal"
-          eager
-          :max="6"
-        />
-      </b-modal>
-    </client-only>
   </b-col>
 </template>
 <script setup>
@@ -164,8 +132,10 @@ import {
   useRuntimeConfig,
   useRoute,
   setResponseStatus,
+  useResponseHeader,
 } from '#imports'
 import { useMessageStore } from '~/stores/message'
+import { APIError } from '~/api/APIErrors'
 import { useAuthStore } from '~/stores/auth'
 import { useFavoritePage } from '~/composables/useFavoritePage'
 import { twem } from '~/composables/useTwem'
@@ -173,7 +143,6 @@ import { dateonlyNoYear } from '~/composables/useTimeFormat'
 import MyMessage from '~/components/MyMessage'
 import OurMessage from '~/components/OurMessage'
 import GlobalMessage from '~/components/GlobalMessage'
-import SimilarPosts from '~/components/SimilarPosts'
 import VisibleWhen from '~/components/VisibleWhen'
 import ExternalDa from '~/components/ExternalDa'
 import MicroVolunteering from '~/components/MicroVolunteering'
@@ -207,34 +176,25 @@ const failed = ref(false)
 const error = ref(false)
 const mountComplete = ref(false)
 
-// After a reply, surface the "more like this" recommendations as a modal on
-// mobile only. On desktop they already live in the sidebar, so opening a modal
-// there would be redundant.
-const showSimilarModal = ref(false)
-function onReplied() {
-  if (
-    typeof window !== 'undefined' &&
-    window.matchMedia &&
-    window.matchMedia('(max-width: 991.98px)').matches
-  ) {
-    showSimilarModal.value = true
-  }
-}
-
 const myid = computed(() => authStore.user?.id)
 
 let ret = null
 
+/* We could not reach the API, as opposed to the post not existing. That must not answer
+410: a crawler would drop a live post from its index, and the 410 would sit in the ISR cache. */
+let unavailable = false
+
 try {
   ret = await messageStore.fetch(id)
 } catch (e) {
-  // Likely to be because the message doesn't exist.
   console.log('Message fetch failed', e)
   failed.value = true
+  unavailable = !(e instanceof APIError && e.response?.status === 404)
 }
 
 if (!ret) {
   failed.value = true
+  unavailable = unavailable || Boolean(messageStore.fetchFailed?.[id])
 }
 
 const message = computed(() => {
@@ -251,6 +211,10 @@ const gone = computed(() => {
     return false
   }
 
+  if (unavailable && !message.value) {
+    return false
+  }
+
   if (failed.value || !message.value) {
     return true
   }
@@ -264,7 +228,14 @@ const gone = computed(() => {
   )
 })
 
-if (gone.value) {
+if (unavailable && !message.value) {
+  /* Ask crawlers to come back rather than drop the post, and keep this answer out of the
+  ISR cache. The client fetches again on mount, so a member still sees the post. */
+  setResponseStatus(503)
+  useResponseHeader('Retry-After').value = '300'
+  useResponseHeader('Cache-Control').value = 'no-store'
+  useResponseHeader('Netlify-CDN-Cache-Control').value = 'no-store'
+} else if (gone.value) {
   /* 410 rather than 404: these are posts that genuinely existed and are deliberately
   and permanently finished, which is exactly what Gone means. No-op on the client. */
   setResponseStatus(410)
@@ -343,14 +314,6 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
-
-/* The fixed sidebar holds the ad and the similar-posts list stacked; cap its
-   height to the viewport and let it scroll internally so a tall list never
-   runs off the bottom of the screen. */
-.similar-posts-sidebar {
-  max-height: calc(100vh - 5rem);
-  overflow-y: auto;
-}
 
 .error-page {
   min-height: 60vh;

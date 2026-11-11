@@ -52,8 +52,7 @@ type SearchMatch struct {
 // badly. That is fine on a surface somebody chose to look at and wrong for
 // deciding to put mail in an inbox. Measured on hand-judged live posts, precision
 // falls off a cliff below 0.85 (0.85-0.90 -> 0.92, 0.80-0.85 -> 0.43), which is
-// why the browsing strip (MinSimilarScore, 0.80) and the email (0.85) are
-// separate numbers in the first place.
+// why the email uses 0.85 rather than a browsing floor.
 //
 // Second, the SCALE. This compares two stored DOCUMENT embeddings - the post's
 // subject against the saved term, both written by EmbeddingService the same way -

@@ -126,21 +126,21 @@ func TestJobsDataset_CheckDrift_CountBackstop(t *testing.T) {
 	require.False(t, need, "drift within tolerance must not trigger")
 }
 
-// liveCount and the delta filter must agree with loadJobs: non-visible, sub-cpc
-// and null-geometry rows are not served and must not count toward the live set
-// (otherwise they would register as phantom drift).
+// liveCount and the delta filter must agree with loadJobs: non-visible and sub-cpc
+// rows are not served and must not count toward the live set (otherwise they would
+// register as phantom drift). A row without geometry cannot exist in MySQL (the column
+// is NOT NULL), so liveCount deliberately does not test for it; see liveCount.
 func TestJobsDataset_LiveCount_FilterAlignment(t *testing.T) {
 	db := newFakeJobsDB(t)
 	insertJob(t, db, 1, "2026-06-23 10:00:00", 1, 0.12, []byte("g")) // servable
 	insertJob(t, db, 2, "2026-06-23 10:00:00", 1, 0.12, []byte("g")) // servable
 	insertJob(t, db, 3, "2026-06-23 10:00:00", 0, 0.12, []byte("g")) // invisible
 	insertJob(t, db, 4, "2026-06-23 10:00:00", 1, 0.05, []byte("g")) // sub-cpc
-	insertJob(t, db, 5, "2026-06-23 10:00:00", 1, 0.12, nil)         // null geometry
 
 	d := &JobsDataset{}
 	n, err := d.liveCount(db)
 	require.NoError(t, err)
-	require.EqualValues(t, 2, n, "only visible, paying, geolocated rows count")
+	require.EqualValues(t, 2, n, "only visible, paying rows count")
 }
 
 // An empty table yields an empty MAX(seenat); CheckDrift must not panic or

@@ -543,7 +543,7 @@ describe('question answering is wired into the parallel batch', () => {
     expect(prompt).toContain('needsHuman')
   })
 
-  it('collates the answers and queues them for approval', () => {
+  it('collates the answers and posts them', () => {
     const prompt: string = workflow.states.COLLATE_RESULTS.prompt
     expect(prompt).toContain("id starts with 'question-'")
     expect(prompt).toContain('persist_question_answers')

@@ -194,7 +194,7 @@ export function summarizeActionResult(action: string, result: unknown): string {
     }
     case 'post_discourse_reply_draft': {
       const draft = r.draft ?? {}
-      return `draft queued for ${draft.topic ?? '?'}.${draft.post ?? '?'} → @${draft.username ?? '?'}`
+      return `reply ${r.posted ? 'posted' : 'queued for retry'} for ${draft.topic ?? '?'}.${draft.post ?? '?'} → @${draft.username ?? '?'}`
     }
     case 'write_summary': {
       return `${r.bytes ?? '?'} bytes → ${r.written ?? 'summary.md'}`
@@ -307,7 +307,7 @@ const ACTION_LABELS: Record<string, string> = {
   verify_pr_created: 'verify PR was created',
   create_pr: 'verify PR details',
   delegate_to_coder: 'hand off to coder',
-  post_discourse_reply_draft: 'queue reply draft',
+  post_discourse_reply_draft: 'post reply',
   write_summary: 'write summary',
   send_email: 'send email',
   schedule_wakeup: 'schedule wakeup',

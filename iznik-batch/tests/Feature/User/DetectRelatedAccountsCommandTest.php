@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\User;
 
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -203,11 +204,51 @@ class DetectRelatedAccountsCommandTest extends TestCase
             'Quoting the other person back must not link the accounts');
     }
 
+    /**
+     * Discourse 10238: a LoveJunk account and a TrashNothing account were linked, so ModTools
+     * suggested merging them. A TrashNothing member can only be merged with another
+     * TrashNothing account, so a pair across that line is never linked.
+     */
+    public function test_does_not_link_a_trashnothing_member_with_any_other_account(): void
+    {
+        $freegler = $this->createTestUser();
+        $tn = $this->createTestUser();
+        DB::table('users')->where('id', $tn->id)->update(['tnuserid' => 990000000 + ($tn->id % 1000000)]);
+
+        $this->say($freegler->id, 'My number is 07700900771 if that helps.');
+        $this->say($tn->id, 'Call me on 07700900771 when you set off.');
+
+        $this->artisan('users:detect-related --days=30')->assertExitCode(0);
+
+        $this->assertNull($this->pairFor($freegler->id, $tn->id));
+    }
+
+    public function test_still_links_two_trashnothing_accounts(): void
+    {
+        $a = $this->createTestUser();
+        $b = $this->createTestUser();
+        DB::table('users')->where('id', $a->id)->update(['tnuserid' => 980000000 + ($a->id % 1000000)]);
+        // The other is recognised by its preferred TrashNothing address rather than a stamp.
+        DB::table('users_emails')->where('userid', $b->id)->update(['preferred' => 0]);
+        DB::table('users_emails')->insert([
+            'userid' => $b->id,
+            'email' => 'tn-' . $b->id . '@user.trashnothing.com',
+            'preferred' => 1,
+        ]);
+
+        $this->say($a->id, 'My number is 07700900772 if that helps.');
+        $this->say($b->id, 'Call me on 07700900772 when you set off.');
+
+        $this->artisan('users:detect-related --days=30')->assertExitCode(0);
+
+        $this->assertNotNull($this->pairFor($a->id, $b->id), 'two TrashNothing accounts can be merged');
+    }
+
     public function test_does_not_link_volunteers(): void
     {
         // Volunteers hand their details out as part of the role, so them recurring across
         // accounts is expected rather than suspicious.
-        $mod = $this->createTestUser(['systemrole' => 'Moderator']);
+        $mod = $this->createTestUser(['systemrole' => User::SYSTEMROLE_MODERATOR]);
         $member = $this->createTestUser();
 
         $this->say($mod->id, 'Any problems, ring me on 07700900222.');

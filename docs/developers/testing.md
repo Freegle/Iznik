@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-20
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
@@ -56,12 +56,58 @@ not hard-coded timeouts; timeout constants live in `tests/e2e/config.js`. See
 The documentation screenshots reuse this same setup - see
 [../screenshots/README.md](../screenshots/README.md).
 
+### The app on an emulator
+
+A third Playwright project, `app`, runs specs through the real Android app's WebView on
+an emulator: the native plugin set, push notifications, deep links, the camera, the photo
+picker, sharing into the app, and the post and reply flows. It is not part of the status
+API's run and not part of every push; it gates app promotion in CI and runs on demand.
+Locally, `scripts/app-e2e/run.sh` builds the app, boots the emulator and runs it (see
+[`scripts/app-e2e/README.md`](../../scripts/app-e2e/README.md); it needs `/dev/kvm`).
+
+## Keeping the suites fast
+
+The suites were halved in October 2026 by making the tests do less waiting, not by running
+more of them at once, so the gain holds on a slower CI machine. Keep it that way:
+
+- **Wait for the thing, not for time.** A fixed sleep costs its full length on every run.
+  Poll for the condition instead, and make the poll fail when it times out.
+- **Fake the clock or the sleep, then assert on it.** Go code reads time and sleeps through
+  package variables a test can swap (`handler/retry.go`, `rippling/drivetime.go`); Laravel code
+  sleeps through the `Sleep` facade. When a test fakes the waiting away, it must still check
+  the waits that would have happened (`Sleep::assertSequence`, the recorded backoffs).
+- **Unit specs unmount after every test** (`tests/unit/setup.ts`). A wrapper left mounted is
+  re-rendered by every later test in the file.
+- **Playwright tests start in a fresh browser context**, so there is nobody to log out at the
+  start of a test. The harness reloads a page whose script loads were aborted by the host, and
+  records it as a recovery that the run's result names.
+- **A Laravel process reads `.env.testing` and builds config once**, and a test that leaves
+  the environment changed fails.
+
+Speed must never come from checking less. Before merging a change that makes a test faster,
+ask what the test proved before and what it proves now.
+
 ## Test data and databases
 
 The test database is built from committed fixtures via the setup scripts (schema comes
 from Laravel migrations - see [APIs and data](apis-and-data.md)). After adding a
 migration, rerun the test-database setup so the test schema matches. The seeded data is
 FreeglePlayground around Edinburgh (postcode EH3 6SS).
+
+`scripts/test-fixtures.sql` is a dump from the retired V1 seeders and is replaced wholesale if
+it is ever regenerated, so rows added by hand go in `scripts/test-fixtures-extra.sql`, which is
+loaded straight after it (by `setup-test-database.sh` and by the status container's Playwright
+database reset). Keep it idempotent: explicit ids and `INSERT IGNORE`, or `ON DUPLICATE KEY UPDATE`
+for a row that must be refreshed.
+
+The extra fixtures also offer a child car seat (990101), whose replies are always asked about, and switch
+`ux_server_arms` on and serve the arm `button` of the experiment `interested-button` to everyone. The config row
+`ux_experiments` makes that live at once, and a matching row in the `ux_experiments` table keeps it live,
+because the hourly `ux:experiments-tick` rebuilds the config row from the table and would otherwise empty it.
+`ux_experiments` is a public config key (every browser reads it at boot); `ux_server_arms` is not. They
+reach Playwright and the dev site. The PHP suite runs on `iznik_batch_test`, and the Go suite on
+`iznik_go_test`, a schema only clone that the status API makes afresh at the start of every run, locally
+and in CI alike. Neither has these rows, so a test that reads the arm writes its own.
 
 Locally the database is in memory by default (`PERCONA_STORAGE=ram`), so it is empty
 after percona restarts, including after the idle-stack sweeper stops a worktree. Rerun

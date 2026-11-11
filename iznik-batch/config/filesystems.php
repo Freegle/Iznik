@@ -48,7 +48,7 @@ return [
         ],
 
         // The image object store (Katapult / any S3-compatible bucket). Written by
-        // images:push-spool and images:migrate-legacy; read by nobody here - the
+        // images:push-spool; read by nobody here - the
         // edge nginx serves it straight to the image resizer. url is the public
         // base of the bucket, the same value frontend-nginx proxies GETs to.
         'images' => [
@@ -74,15 +74,6 @@ return [
         'tusd-spool' => [
             'driver' => 'local',
             'root' => env('TUSD_SPOOL_PATH', '/spool'),
-            'throw' => true,
-            'report' => false,
-        ],
-
-        // The legacy NFS upload store, bound read-only into batch-prod for the
-        // duration of the migration. Never listed - see the migrator.
-        'tusd-legacy' => [
-            'driver' => 'local',
-            'root' => env('TUSD_LEGACY_PATH', '/images'),
             'throw' => true,
             'report' => false,
         ],

@@ -127,7 +127,12 @@ import PostLoggedInEmail from '~/components/PostLoggedInEmail.vue'
 import { useComposeStore } from '~/stores/compose'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
-import { setup, freegleIt, makeCanSubmit } from '~/composables/useCompose'
+import {
+  setup,
+  freegleIt,
+  makeCanSubmit,
+  reportValidationFailure,
+} from '~/composables/useCompose'
 import { buildHead } from '~/composables/useBuildHead'
 import { useMe } from '~/composables/useMe'
 
@@ -196,8 +201,13 @@ async function next() {
       if (!inuse) {
         await freegleIt('Offer', router)
       } else if (!loggedIn.value) {
+        // Their email belongs to an existing account: remember the post so it
+        // submits automatically once they have logged in (survives a refresh).
+        composeStore.deferSubmit('Offer')
+        reportValidationFailure('Offer', 'email', 'existing_account')
         authStore.forceLogin = true
       } else {
+        reportValidationFailure('Offer', 'email', 'belongs_to_other')
         emailBelongsToSomeoneElse.value = true
       }
     } else {

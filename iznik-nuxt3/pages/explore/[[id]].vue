@@ -37,6 +37,7 @@
 </template>
 <script setup>
 import { buildHead } from '~/composables/useBuildHead'
+import { exploreTitle } from '~/composables/exploreTitle'
 import PostMapAndList from '~/components/PostMapAndList'
 import { computed, useHead, useRuntimeConfig, useRoute } from '#imports'
 import NoticeMessage from '~/components/NoticeMessage'
@@ -66,7 +67,7 @@ useHead(
   buildHead(
     route,
     runtimeConfig,
-    group.value ? 'Explore ' + group.value.namedisplay : 'Explore Freegle',
+    exploreTitle(group.value?.namedisplay),
     'Freegle - like online dating for stuff. Find a community near you...',
     group.value?.profile ? group.value.profile : '/icon.png',
     {

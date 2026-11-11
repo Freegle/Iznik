@@ -1,0 +1,60 @@
+# The emulator job's stack (CircleCI, freegle/app-emulator-tests): the CI stack minus the
+# services the app tests never use, so it builds and runs inside the hour a CircleCI cloud
+# job is allowed on four cores. Each is swapped for an idle placeholder rather than
+# removed, so the orb's start, verify and wait steps, which name them, run unchanged.
+# Written out per service: Compose ignores `!reset` inside a YAML anchor.
+#
+# Kept: everything the app reaches (apiv2, batch, delivery, tusd, the databases and
+# queues, traefik), the status API (per-spec test environments) and freegle-prod-local
+# (the second member in the reply flow uses the web front end).
+
+services:
+  modtools-prod-local:
+    build: !reset null
+    image: busybox:1.36
+    command: ["sleep", "infinity"]
+    healthcheck: !reset null
+    depends_on: !reset []
+    volumes: !reset []
+    labels: !reset []
+    environment: !reset []
+
+  modtools-dev-local:
+    build: !reset null
+    image: busybox:1.36
+    command: ["sleep", "infinity"]
+    healthcheck: !reset null
+    depends_on: !reset []
+    volumes: !reset []
+    labels: !reset []
+    environment: !reset []
+
+  freegle-dev-local:
+    build: !reset null
+    image: busybox:1.36
+    command: ["sleep", "infinity"]
+    healthcheck: !reset null
+    depends_on: !reset []
+    volumes: !reset []
+    labels: !reset []
+    environment: !reset []
+
+  playwright:
+    build: !reset null
+    image: busybox:1.36
+    command: ["sleep", "infinity"]
+    healthcheck: !reset null
+    depends_on: !reset []
+    volumes: !reset []
+    labels: !reset []
+    environment: !reset []
+
+  ai-support-helper:
+    build: !reset null
+    image: busybox:1.36
+    command: ["sleep", "infinity"]
+    healthcheck: !reset null
+    depends_on: !reset []
+    volumes: !reset []
+    labels: !reset []
+    environment: !reset []

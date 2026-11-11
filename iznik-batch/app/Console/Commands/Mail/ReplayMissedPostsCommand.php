@@ -12,6 +12,7 @@ use App\Services\UnifiedDigestService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Re-send the per-post emails a member lost while their provider was suppressed.
@@ -35,6 +36,7 @@ use Illuminate\Support\Facades\Log;
  * email_tracking, which records the exact msgids each digest carried, and mail
  * only the difference.
  */
+#[AsCommand(name: 'mail:deferrals:replay-missed-posts')]
 class ReplayMissedPostsCommand extends Command
 {
     protected $signature = 'mail:deferrals:replay-missed-posts

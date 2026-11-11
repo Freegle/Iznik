@@ -91,11 +91,6 @@ func TestResolveTypeStoryFlag(t *testing.T) {
 	assert.Equal(t, "Story", req.resolveType())
 }
 
-func TestResolveTypeNoticeboardFlag(t *testing.T) {
-	req := &PostRequest{Noticeboard: true}
-	assert.Equal(t, "Noticeboard", req.resolveType())
-}
-
 func TestResolveTypeDefaultIsMessage(t *testing.T) {
 	// No ImgType/Type/flags → default "Message".
 	req := &PostRequest{}
@@ -148,11 +143,6 @@ func TestResolveParentIDStoryFromNumber(t *testing.T) {
 	assert.Equal(t, uint64(88), req.resolveParentID())
 }
 
-func TestResolveParentIDNoticeboardFromNumber(t *testing.T) {
-	req := &PostRequest{ImgType: "Noticeboard", Noticeboard: float64(111)}
-	assert.Equal(t, uint64(111), req.resolveParentID())
-}
-
 func TestResolveParentIDUnknownTypeFallsBackToMsgID(t *testing.T) {
 	// Unknown imgtype strings hit the default branch and return MsgID.
 	req := &PostRequest{ImgType: "Unknown-Type-XYZ", MsgID: 1234}
@@ -169,7 +159,7 @@ func TestResolveParentIDBoolFlagGivesZero(t *testing.T) {
 func TestTypeConfigsContainsKnownTypes(t *testing.T) {
 	// Regression guard: each imgtype string used by callers must have a config.
 	expected := []string{"Message", "Group", "Newsletter", "CommunityEvent",
-		"Volunteering", "ChatMessage", "User", "Newsfeed", "Story", "Noticeboard"}
+		"Volunteering", "ChatMessage", "User", "Newsfeed", "Story"}
 	for _, name := range expected {
 		_, ok := typeConfigs[name]
 		assert.True(t, ok, "typeConfigs missing entry for %s", name)

@@ -109,9 +109,40 @@ export function condenseCrashDumps(logs: string): string {
   const maxChars = 300_000
   if (logs.length > maxChars) {
     const head = logs.slice(0, 200_000)
+    const middle = logs.slice(200_000, -80_000)
     const tailChars = logs.slice(-80_000)
-    return `${head}\n... [condenseCrashDumps: ${logs.length - 280_000} chars elided] ...\n${tailChars}`
+    return `${head}\n... [condenseCrashDumps: ${middle.length} chars elided] ...\n${failureExcerpts(middle)}${tailChars}`
   }
 
   return logs
+}
+
+/**
+ * The test failures in a stretch of output that is about to be elided: each
+ * top-level `--- FAIL:` line and the indented assertion output go test -v
+ * prints under it. go test flushes a package's output when the package ends,
+ * so the failures of the big integration package land in the middle of the
+ * log - the part the generic cap drops - and a red run named no test at all.
+ */
+export function failureExcerpts(text: string): string {
+  const lines = text.split('\n')
+  const out: string[] = []
+  const maxLinesPerFailure = 40
+  const maxExcerpts = 50
+
+  for (let i = 0; i < lines.length && out.length < maxExcerpts * maxLinesPerFailure; i++) {
+    if (!/^--- FAIL: /.test(lines[i])) continue
+    out.push(lines[i])
+    let j = i + 1
+    // The failure's own output is indented; the next test or package line is not.
+    while (j < lines.length && j - i <= maxLinesPerFailure && /^\s/.test(lines[j])) {
+      out.push(lines[j])
+      j++
+    }
+    i = j - 1
+  }
+
+  return out.length
+    ? `=== failures from the elided output ===\n${out.join('\n')}\n=== end of failures from the elided output ===\n`
+    : ''
 }

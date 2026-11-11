@@ -62,6 +62,25 @@ type Group struct {
 	Poly        *string `json:"poly"`
 	Overlap     float64 `json:"overlap"`
 	Overlap2    float64 `json:"overlap2"`
+
+	// Coverage is the share of the authority this group covers.
+	Coverage float64 `json:"coverage"`
+
+	// Significant says whether the overlap is big enough for a Partnerships deal to list the
+	// group as covered. The stats page still counts every group in the list.
+	Significant bool `json:"significant"`
+}
+
+// SignificantOverlap is the share, either way round, at which a group overlaps an authority
+// significantly. Mirrors AuthorityStatsService::SIGNIFICANT_OVERLAP in the batch app.
+const SignificantOverlap = 0.05
+
+// Significant reports whether a group overlaps an authority significantly: at least 5% of the
+// group lies inside the authority (overlap), or the group covers at least 5% of the authority
+// (coverage). The first keeps a small group wholly inside a big council; the second a big group
+// that holds a small council.
+func Significant(overlap float64, coverage float64) bool {
+	return overlap >= SignificantOverlap || coverage >= SignificantOverlap
 }
 
 // SearchResult represents an authority search result.
@@ -168,6 +187,7 @@ func GroupsForAuthority(id uint64) []Group {
 		Poly      *string `gorm:"column:poly"`
 		Overlap   float64 `gorm:"column:overlap"`
 		Overlap2  float64 `gorm:"column:overlap2"`
+		Coverage  float64 `gorm:"column:coverage"`
 	}
 
 	// ST_Area errors on anything that isn't a polygon, and a single such group aborts the
@@ -193,7 +213,14 @@ func GroupsForAuthority(id uint64) []Group {
 			"ELSE St_area(polyindex) / St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) "+
 			"END "+
 			"ELSE 0 "+
-			"END AS overlap2").
+			"END AS overlap2, "+
+			"CASE WHEN NOT ("+polygonal+") THEN 0 "+
+			"WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
+			"CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1 "+
+			"ELSE St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) / St_area(Coalesce(simplified, polygon)) "+
+			"END "+
+			"ELSE 0 "+
+			"END AS coverage").
 		Joins("INNER JOIN authorities ON ( polyindex = Coalesce(simplified, polygon) OR St_intersects(polyindex, Coalesce(simplified, polygon)) )").
 		Where("type = ? AND publish = 1 AND onmap = 1 AND authorities.id = ?", utils.GROUP_TYPE_FREEGLE, id).
 		Scan(&groups)
@@ -206,7 +233,10 @@ func GroupsForAuthority(id uint64) []Group {
 			overlap = 1
 		}
 
-		// Exclude minor overlaps.
+		// Exclude minor overlaps. Overlap2 is area(group) / area(intersection), never below 1 for
+		// a group that touches the authority, so this keeps every touching group and the stats
+		// page weights each by its share. That is intended (see 55a0e407e); the Partnerships
+		// list narrows it with SignificantGroupsForAuthority.
 		if overlap >= 0.05 || g.Overlap2 >= 0.05 {
 			namedisplay := g.Nameshort
 			if g.Namefull != nil && len(*g.Namefull) > 0 {
@@ -223,6 +253,8 @@ func GroupsForAuthority(id uint64) []Group {
 				Poly:        g.Poly,
 				Overlap:     overlap,
 				Overlap2:    g.Overlap2,
+				Coverage:    g.Coverage,
+				Significant: Significant(overlap, g.Coverage),
 			})
 		}
 	}
@@ -232,6 +264,23 @@ func GroupsForAuthority(id uint64) []Group {
 	}
 
 	return responseGroups
+}
+
+// SignificantGroupsForAuthority is GroupsForAuthority without the groups that only graze the
+// boundary. The Partnerships page lists these as the communities a council deal covers.
+func SignificantGroupsForAuthority(id uint64) []Group {
+	var groups []Group
+	for _, g := range GroupsForAuthority(id) {
+		if g.Significant {
+			groups = append(groups, g)
+		}
+	}
+
+	if groups == nil {
+		groups = []Group{}
+	}
+
+	return groups
 }
 
 // Search searches authorities by name.

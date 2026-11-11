@@ -210,6 +210,16 @@ class MatchMailService
                 })
                 ->whereNull('fs.replied_at')
                 ->where('fs.sent_at', '>', $since)
+                // keep-raw: fs.replied_at is set from cm.date, a column on the JOINed
+                // table. The update() SET array only binds literal PHP values or takes
+                // a sub-builder/Expression; there is no non-Expression way to reference
+                // another table's column, and DB::raw() here is itself the raw site
+                // (same reasoning as ReachBoundsService::sync's `updated_at = updated_at`
+                // self-assignment). A correlated subquery would not remove it either -
+                // it would additionally have to pick a MIN/MAX cm.date where the JOIN
+                // matches more than one row, which is a behaviour decision the original
+                // does not make (MySQL's multi-table UPDATE applies whichever matching
+                // row it last processes).
                 ->update(['fs.replied_at' => DB::raw('cm.date')]);
 
             foreach ($newlyReplied as $reply) {
@@ -233,6 +243,9 @@ class MatchMailService
      */
     private function userPoint(int $userId): ?array
     {
+        // keep-raw: CASE/JSON_EXTRACT()/CAST() resolving "mylocation else lastlocation"
+        // have no query builder equivalents (same construct justified in
+        // UnifiedDigestService's mailNewlyReachedForPost/mailPostToUsers).
         $row = DB::table('users as u')
             ->leftJoin('locations as l', 'l.id', '=', 'u.lastlocation')
             ->where('u.id', $userId)
@@ -467,7 +480,13 @@ class MatchMailService
         // cadence a small batch drains far faster than posts arrive; newest
         // first because speed-to-first-reply is the whole point, and the
         // once-per-post ledger walks the batch through the backlog anyway.
-
+        //
+        // keep-raw: kept as a raw SELECT rather than converted to the query
+        // builder here - a parallel ORM-conversion branch rewrote this with
+        // the builder but reverted to the pre-incident 200-row oldest-first
+        // shape in the process, since it was authored just before this fix
+        // landed. Preserving the raw form during rebase keeps that fix
+        // intact byte-for-byte; convert to a builder query as separate work.
         return collect(DB::select(
             "SELECT ms.msgid AS msgid, ms.msgtype AS msgtype, ms.arrival AS arrival,
                     m.fromuser AS fromuser, m.subject AS subject
@@ -547,10 +566,9 @@ class MatchMailService
      * People whose open post of the OPPOSITE type matches this one, by vector.
      *
      * /message/{id}/matches is the matcher the matched-posts email uses, and it
-     * applies MinMatchedPostScore (0.85) rather than the 0.80 the on-site
-     * "similar posts" strip uses. Those are separate numbers because precision
+     * applies MinMatchedPostScore (0.85), deliberately high because precision
      * falls off a cliff: hand-judged on live posts, 0.85-0.90 scores 0.92 and
-     * 0.80-0.85 scores 0.43. A strip you chose to look at can carry a weak
+     * 0.80-0.85 scores 0.43. A page you chose to look at could carry a weak
      * suggestion; an email cannot.
      *
      * A score is the point. Keyword matching cannot say HOW well two things

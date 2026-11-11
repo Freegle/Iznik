@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modmessaging"
@@ -44,6 +45,7 @@ type Challenge struct {
 	URL      *string            `json:"url,omitempty"`
 	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
 	EEELabel *EEELabelChallenge `json:"eeelabel,omitempty"`
+	UxPrompt *UxPromptChallenge `json:"uxprompt,omitempty"`
 }
 
 // Photo represents a photo for rotation challenge
@@ -158,6 +160,16 @@ func GetChallenge(c *fiber.Ctx) error {
 		}
 	}
 
+	// Section 11.3 of the lockdown plan: while "mods" or "posts" is held, no new
+	// microvolunteering challenges are offered - not a refusal (nothing was
+	// attempted that needs blocking), just the same silent "nothing to offer right
+	// now" response already used below for declined/excluded trust levels, so
+	// members aren't asked to help moderate or check posts while incident response
+	// is under way.
+	if lockdown.Held("mods") || lockdown.Held("posts") {
+		return c.JSON(fiber.Map{})
+	}
+
 	// Get user's trust level
 	var trustLevel string
 	err := db.Table("users").Select("COALESCE(trustlevel, ?)", TrustBasic).
@@ -190,6 +202,16 @@ func GetChallenge(c *fiber.Ctx) error {
 	// Try Invite challenge first
 	if contains(challengeTypes, ChallengeInvite) {
 		if challenge := getInviteChallenge(db, userID); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
+	// A question about Freegle itself (a survey, an awareness question or an open one), when one is
+	// open and the member has not been asked this week. Ahead of the review backlogs, which never
+	// run dry, and needs no community. The site always names the types it can draw, so this is never
+	// in the default list: an old caller must not be handed a card it cannot draw.
+	if contains(challengeTypes, ChallengeUxPrompt) {
+		if challenge := getUxPromptChallenge(db, userID); challenge != nil {
 			return c.JSON(challenge)
 		}
 	}
@@ -573,6 +595,9 @@ type PostResponseRequest struct {
 	EEECondition    *string `json:"eee_condition,omitempty"`
 	EEEWeight       *string `json:"eee_weight,omitempty"`
 	EEESize         *string `json:"eee_size,omitempty"`
+	// UxPrompt response fields
+	UxPromptID uint64          `json:"ux_prompt_id,omitempty"`
+	UxAnswer   *UxPromptAnswer `json:"ux_answer,omitempty"`
 }
 
 // PostResponse records a user's response to a micro-volunteering challenge
@@ -788,6 +813,14 @@ func PostResponse(c *fiber.Ctx) error {
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
+	} else if req.UxPromptID > 0 {
+		// Response to a UxPrompt challenge: an answer to a question about Freegle itself.
+		if err := recordUxPromptResponse(db, myid, req.UxPromptID, req.UxAnswer, req.Comments); err != nil {
+			return err
+		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
 	} else if req.Invite {
 		// Response to an Invite challenge.
 		// The result column is enum('Approve','Reject') NOT NULL. Set to 'Approve' as
@@ -840,6 +873,12 @@ func ModFeedback(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
 	}
 
+	// Section 11.3 of the lockdown plan: PATCH /microvolunteering is a moderator
+	// action, refused outright while "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	var req ModFeedbackRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
@@ -865,7 +904,8 @@ func ModFeedback(c *fiber.Ctx) error {
 // currently live (Approved) on - its home group AND any rippled-out copies. Used once
 // the aggregate review quorum is reached (from in-app CheckMessage checks or website
 // reports) or on a moderator Back to Pending, so every affected community's moderators
-// see the post. Only Approved rows are touched. Exported so the moderation path reuses it.
+// see the post. Only live (Approved, not deleted) rows are touched: a copy withdrawn from its
+// community stays withdrawn. Exported so the moderation path reuses it.
 //
 // Every group whose copy is pulled back gets a Message/Hold log row carrying the reason,
 // so its moderators can see why a post they may never have looked at is in their queue
@@ -882,19 +922,30 @@ func SendForReviewAllGroups(db *gorm.DB, msgid uint64, reason string, byuser *ui
 // communities are told it was the home community. rippledReason "" means the same reason
 // everywhere.
 func SendForReviewAllGroupsWithRippledReason(db *gorm.DB, msgid uint64, reason string, rippledReason string, byuser *uint64, alreadyLogged []uint64) []uint64 {
+	return SendForReviewGroupsExcept(db, msgid, reason, rippledReason, byuser, alreadyLogged, nil)
+}
+
+// SendForReviewGroupsExcept is SendForReviewAllGroupsWithRippledReason that leaves the copies
+// on the groups in keep live and Approved, untouched and unlogged. A moderator's Back to
+// pending uses it to spare copies another community's moderator has already approved by hand.
+// A report quorum passes nothing and pulls every copy.
+func SendForReviewGroupsExcept(db *gorm.DB, msgid uint64, reason string, rippledReason string, byuser *uint64, alreadyLogged []uint64, keep []uint64) []uint64 {
 	if msgid == 0 {
 		return nil
 	}
 
 	var flipped []uint64
-	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
-		Scan(&flipped)
+	q := db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED)
+	if len(keep) > 0 {
+		q = q.Where("groupid NOT IN ?", keep)
+	}
+	q.Scan(&flipped)
 	if len(flipped) == 0 {
 		return nil
 	}
 
-	db.Table("messages_groups").Where("msgid = ? AND collection = ?", msgid, utils.COLLECTION_APPROVED).
+	db.Table("messages_groups").Where("msgid = ? AND groupid IN ? AND collection = ? AND deleted = 0", msgid, flipped, utils.COLLECTION_APPROVED).
 		Updates(map[string]interface{}{"collection": utils.COLLECTION_PENDING, "spamreason": reason})
 
 	var rippledGroups []uint64
@@ -947,9 +998,12 @@ func SendForReviewAllGroupsWithRippledReason(db *gorm.DB, msgid uint64, reason s
 // live-Approved (pulled back for review). Freezing keeps the rippling_reach row but sets
 // status='held' + next_expansion_at=NULL, so: (a) it stops expanding, (b) ExpandService's
 // retraction paths skip it and the Pending rippled copies persist for per-group
-// moderation, and (c) initialiseNew's anti-join can never re-reach + re-notify it if a
-// moderator later re-approves a copy. No-op if the origin is still live, or there is no
-// reach row. Exported for the moderation Back to Pending path.
+// moderation, and (c) because the row stays, initialiseNew's anti-join cannot start a second
+// reach for the post, which would re-notify everyone, when a moderator later re-approves a
+// copy. No-op if the origin is still live, or there is no reach row. Exported for the
+// moderation Back to Pending path. A moderator's Approve of the home copy lifts the freeze
+// again (ResumeReachIfHeld) and the same reach carries on, unless the home community sent the
+// post back, which also bars it from rippling for good (rippling_blocked).
 func FreezeReachIfOriginPending(db *gorm.DB, msgid uint64) {
 	if msgid == 0 {
 		return
@@ -961,8 +1015,51 @@ func FreezeReachIfOriginPending(db *gorm.DB, msgid uint64) {
 	if approvedOrigin > 0 {
 		return
 	}
+	FreezeReach(db, msgid)
+}
+
+// FreezeReach freezes a post's ripple whatever state its origin copies are in. A home
+// community's Back to pending uses it, because a copy on a second home community that its own
+// moderator approved by hand stays Approved, and the post must still never spread further.
+func FreezeReach(db *gorm.DB, msgid uint64) {
+	if msgid == 0 {
+		return
+	}
 	db.Table("rippling_reach").Where("msgid = ? AND status <> 'held'", msgid).
 		Updates(map[string]interface{}{"status": gorm.Expr("'held'"), "next_expansion_at": gorm.Expr("NULL")})
+}
+
+// ResumeReachIfHeld lets a frozen ripple spread again once a moderator has approved the post's
+// home copy: status 'held' goes back to 'expanding' with the next step due now, so the engine's
+// next run carries on from the tick the reach had got to, caught up to where the clock has got
+// to since the post arrived. It is the counterpart of FreezeReachIfOriginPending and writes
+// nothing else. updated_at stays as it is, because it is the reach mailer's signal and the
+// engine bumps it when it next advances the row; members already told about the post are not
+// told again (rippling_reach_notified).
+//
+// Three things are not resumed. A post in rippling_blocked stays frozen: its home community sent
+// it back, it must never ripple again, and that block is also what stops a repost, which deletes
+// the reach row, starting a new reach. A post with no live home copy stays frozen, because the
+// engine retracts the rippled copies of an 'expanding' reach whose origin is not live; the check
+// is in the same statement as the write, so a send-back landing in between cannot be undone by
+// it. And only 'held' is touched: an 'expanding' reach keeps its schedule, and 'done' and
+// 'stopped' are left as they are (a frozen one has lost which it was, and the engine puts a
+// finished reach back to 'done' the next time it looks).
+//
+// Reports whether a reach was resumed. Called by the moderation Approve of a home copy.
+func ResumeReachIfHeld(db *gorm.DB, msgid uint64) bool {
+	if msgid == 0 {
+		return false
+	}
+
+	res := db.Table("rippling_reach").
+		Where("msgid = ? AND status = 'held'", msgid).
+		Where("NOT EXISTS (SELECT 1 FROM rippling_blocked rb WHERE rb.msgid = rippling_reach.msgid)").
+		Where("EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = rippling_reach.msgid "+
+			"AND mg.rippled_in = 0 AND mg.deleted = 0 AND mg.collection = ?)", utils.COLLECTION_APPROVED).
+		Updates(map[string]interface{}{"status": gorm.Expr("'expanding'"), "next_expansion_at": gorm.Expr("NOW()")})
+
+	return res.Error == nil && res.RowsAffected > 0
 }
 
 // reporterIsModOf reports whether the reporter's verdict on the group they reported on

@@ -722,9 +722,8 @@ describe('ModMemberButtons', () => {
     })
   })
 
-  // A membership rippling created for a poster records where their post travelled, not a
-  // relationship with this community, so its volunteers have nobody to write to and the
-  // server refuses the attempt (Discourse 10102). Removing them is still theirs to do.
+  // A member who arrived by rippling is contacted like any other: only replies about the
+  // rippled post itself are left to its home community (Discourse 10283).
   describe('ripple-created membership', () => {
     const STDMSGS = [
       {
@@ -741,38 +740,31 @@ describe('ModMemberButtons', () => {
       },
     ]
 
-    it('offers no message-only standard message', () => {
+    it('offers the same standard messages as for any member', () => {
       const wrapper = mountComponent({
         member: createMember({
           rippled: true,
-          memberships: [{ id: 789, collection: 'Approved' }],
-        }),
-        modconfig: createModConfig(STDMSGS),
-      })
-      expect(wrapper.vm.validActions).not.toContain('Leave Approved Member')
-    })
-
-    it('still offers the removal standard message', () => {
-      const wrapper = mountComponent({
-        member: createMember({
-          rippled: true,
-          memberships: [{ id: 789, collection: 'Approved' }],
-        }),
-        modconfig: createModConfig(STDMSGS),
-      })
-      expect(wrapper.vm.validActions).toContain('Delete Approved Member')
-    })
-
-    it('offers both for an ordinary member', () => {
-      const wrapper = mountComponent({
-        member: createMember({
-          rippled: false,
           memberships: [{ id: 789, collection: 'Approved' }],
         }),
         modconfig: createModConfig(STDMSGS),
       })
       expect(wrapper.vm.validActions).toContain('Leave Approved Member')
       expect(wrapper.vm.validActions).toContain('Delete Approved Member')
+    })
+
+    it('offers the Mail button', () => {
+      const labels = mountComponent({
+        member: createMember({
+          collection: 'Approved',
+          mod_messaging_allowed: true,
+          rippled: true,
+        }),
+        modconfig: createModConfig(STDMSGS),
+        actions: true,
+      })
+        .findAll('button')
+        .map((b) => b.text())
+      expect(labels).toContain('Mail')
     })
   })
 })

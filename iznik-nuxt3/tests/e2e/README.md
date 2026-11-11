@@ -399,3 +399,30 @@ When working with existing components:
 - **Clarity**: Test classes communicate purpose and intent
 - **Maintainability**: Easy to find which elements are used in tests
 - **Isolation**: Changes to styling don't affect test selectors
+
+## The `app` project: the Android app on an emulator
+
+`playwright.config.js` defines a third project, `app`, only when `APP_E2E_SERIAL` is set.
+It runs specs through the WebView of the real Android app on an emulator instead of a
+browser. FreegleDocker's `scripts/app-e2e/run.sh` builds the app, boots the emulator,
+installs and launches, sets `APP_E2E_SERIAL`, `APP_E2E_PACKAGE` and `APP_E2E_ORIGIN`, and
+runs `npx playwright test --project app --workers 1`. It is the gate before app promotion;
+the status API's run, which runs every project, never sees it.
+
+- `tests/e2e/app/*.spec.js` run only in this project: native plugins, push notifications,
+  deep links, photos from the camera, the photo picker and other apps' shares. They use
+  `tests/e2e/app/device.js` for everything outside the WebView (adb shell, uiautomator,
+  the notification shade, fake FCM messages, VIEW and SEND intents, the system camera and
+  photo picker).
+- A test that kills the app (the cold-start share) calls `appWebView.reattach()`; the
+  next test's `context` fixture re-attaches by itself when the old page has closed.
+- `APP_SHARED_SPECS` in `playwright.config.js` lists the web specs that also run here,
+  unchanged, on a phone-sized screen (the post and reply flows).
+- With `APP_E2E_SERIAL` set, `fixtures.js` launches no browser: `appWebView` attaches to
+  the app through Playwright's Android support, `context` is the WebView's own context
+  with web storage wiped and the app reloaded from its origin before each test, and
+  `page` is the app's one page, with relative `goto` paths resolved against the app's
+  origin. There is no video, trace or coverage in this project.
+- The app build points at the local stack, so `testEnv`, `postMessage` and the login
+  helpers work as they do in the browser; `clearSessionData` skips cookie clearing, which
+  the WebView does not support over CDP.

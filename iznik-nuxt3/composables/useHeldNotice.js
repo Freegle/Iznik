@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { asRefusalMessage } from '~/api/refusal'
 
 // Shared handling for "another moderator is holding this" refusals.
 //
@@ -7,6 +8,10 @@ import { ref } from 'vue'
 // through. The store has already re-fetched by the time we get here, so the
 // "Held by X" state is on screen - but they still clicked a button and must be
 // told plainly that it did not happen, and by whom.
+//
+// The same goes for a 403 carrying a message (a moderator removing themselves from a
+// community they run): the server's own words are shown rather than the action
+// silently doing nothing.
 //
 // Wrap the action in guardHold() and render heldError somewhere visible.
 export function useHeldNotice() {
@@ -18,8 +23,14 @@ export function useHeldNotice() {
     try {
       return await fn()
     } catch (e) {
-      if (!e?.heldByOtherMod) throw e
-      heldError.value = e.message
+      if (e?.heldByOtherMod) {
+        heldError.value = e.message
+        return
+      }
+
+      const refusal = asRefusalMessage(e)
+      if (!refusal) throw e
+      heldError.value = refusal
     }
   }
 

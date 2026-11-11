@@ -58,7 +58,7 @@ About {!! $senderName !!}:
 Jobs near you:
 @foreach($jobAds as $job)
 - {!! $job->title !!}@if($job->location) ({!! $job->location !!})@endif
-  {{ config('freegle.sites.user') }}/job/{{ $job->id }}
+  {!! $job->tracked_url !!}
 @endforeach
 
 View more jobs: {{ $jobsUrl }}

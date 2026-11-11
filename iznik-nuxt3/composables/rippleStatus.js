@@ -248,3 +248,25 @@ export function isHomeGroupRow(groups, groupid) {
   }
   return homeGroupId(groups) === gid
 }
+
+/**
+ * Whether the moderators of `groupid` may write to the poster about this post: the server
+ * says so per community in `canmessageposter` (PosterMessagingGroups in iznik-server-go).
+ * That is every community the post was posted on, and a community it rippled into once
+ * the poster is an ordinary member there (Discourse 10239). With no answer from the server
+ * it falls back to isHomeGroupRow.
+ *
+ * @param {Array<{groupid:number|string, rippled_in?:number|boolean, canmessageposter?:boolean}>} groups
+ * @param {number|string} groupid
+ * @returns {boolean}
+ */
+export function canMessagePosterRow(groups, groupid) {
+  const gid = parseInt(groupid)
+  const row = Array.isArray(groups)
+    ? groups.find((g) => g && parseInt(g.groupid) === gid)
+    : null
+  if (row && typeof row.canmessageposter === 'boolean') {
+    return row.canmessageposter
+  }
+  return isHomeGroupRow(groups, groupid)
+}

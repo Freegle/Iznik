@@ -14,10 +14,13 @@
           Dear {{ $name }},
         </mj-text>
         <mj-text>
-          We love to hear why you freegle and what your experiences have been — and it helps show new freeglers what it's all about.
+          We love to hear why you freegle and the difference it has made - what you've given or received, what it saved, who you've met. It helps show new freeglers what it's all about.
         </mj-text>
         <mj-text>
-          Could you take a few minutes to tell us your story? If you want to attach a photo, that's good too, but you don't have to.
+          Could you take a few minutes to tell us your story?
+        </mj-text>
+        <mj-text>
+          Please add a photo if you can: the item, where it ended up, or just a selfie. Stories with a photo are the ones people stop and read, and the ones we can share to get more people freegling.
         </mj-text>
         <mj-button href="{{ $storiesUrl }}" mj-class="btn-success" border-radius="3px" font-size="16px">
           Tell us your story!

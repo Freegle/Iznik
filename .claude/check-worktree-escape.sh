@@ -39,10 +39,12 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null |
 # $CLAUDE_CODE_SESSION_ID, which equals the .session_id the harness passes here.
 SID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)
 [[ -z "$SID" ]] && SID="${CLAUDE_CODE_SESSION_ID:-}"
+# One line per worktree the session has switched into. A session that runs sub-agents works in
+# several worktrees at once, and they all share its id, so every line is allowed, not just the last.
 ACTIVE_WT=""
 ACTIVE_WT_FILE="$PROJECT_DIR/.claude/active-worktree.${SID:-nosession}"
 if [[ -f "$ACTIVE_WT_FILE" ]]; then
-    ACTIVE_WT=$(head -n1 "$ACTIVE_WT_FILE" | tr -d '\r\n')
+    ACTIVE_WT=$(tr -d '\r' < "$ACTIVE_WT_FILE" | sed '/^$/d')
 fi
 
 PARENT_DIR=$(dirname "$PROJECT_DIR")
@@ -62,7 +64,7 @@ PROTECTED_WORKTREES=$(
         | while IFS= read -r wt; do
             [[ -z "$wt" ]] && continue
             [[ "$wt" == "$PROJECT_DIR" ]] && continue
-            [[ -n "$ACTIVE_WT" && "$wt" == "$ACTIVE_WT" ]] && continue
+            [[ -n "$ACTIVE_WT" ]] && grep -Fxq -- "$wt" <<< "$ACTIVE_WT" && continue
             # Only siblings under the same parent are reachable by the path
             # extraction below; /tmp worktrees are an allowed working area.
             [[ "$wt" == "$PARENT_DIR"/* ]] || continue
@@ -89,7 +91,7 @@ while IFS= read -r match; do
             echo "" >&2
             echo "  Current worktree: $PROJECT_DIR" >&2
             if [[ -n "$ACTIVE_WT" ]]; then
-                echo "  Switched into:    $ACTIVE_WT" >&2
+                echo "  Switched into:    $(echo $ACTIVE_WT)" >&2
             fi
             echo "" >&2
             echo "  To work in a pre-existing worktree, run: ./freegle switch <name>" >&2

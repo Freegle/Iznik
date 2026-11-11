@@ -4,6 +4,7 @@ namespace App\Console\Commands\Ssl;
 
 use App\Services\NetlifyCertService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Upload renewed SSL certificate to Netlify.
@@ -17,6 +18,7 @@ use Illuminate\Console\Command;
  *   php artisan ssl:netlify-upload --dry-run    # Check files only
  *   php artisan ssl:netlify-upload --no-notify  # Upload without email
  */
+#[AsCommand(name: 'ssl:netlify-upload')]
 class RenewNetlifyCertCommand extends Command
 {
     /**

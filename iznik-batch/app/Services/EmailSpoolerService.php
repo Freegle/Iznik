@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Jobs\SpoolMail;
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\Contracts\RetryableMailable;
 use App\Models\UserEmail;
 use App\Services\Mail\Incoming\BounceService;
@@ -15,7 +16,9 @@ use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
+use Symfony\Component\Mime\Part\DataPart;
 use Symfony\Component\Mime\Part\Multipart\AlternativePart;
+use Symfony\Component\Mime\Part\Multipart\MixedPart;
 use Symfony\Component\Mime\Part\TextPart;
 
 /**
@@ -57,6 +60,28 @@ class EmailSpoolerService
         $this->lokiService = $lokiService ?? app(LokiService::class);
 
         $this->ensureDirectoriesExist();
+    }
+
+    /**
+     * Where waiting mail sits before it is sent. Exposed so lockdown:filter-spool (plan
+     * section 11.8) can scan it without duplicating the directory layout, and so it
+     * follows a test's isolated spool directory the same way spool()/processSpool() do.
+     */
+    public function getPendingDir(): string
+    {
+        return $this->pendingDir;
+    }
+
+    /**
+     * Where lockdown:filter-spool moves a file it removes, for the incident report -
+     * not straight deletion (plan section 11.8). A sibling of pending/sending/failed/sent,
+     * computed from spoolDir rather than cached, so it follows an overridden spoolDir the
+     * same way (IsolatedSpoolDirectory sets spoolDir via reflection before any file is
+     * written).
+     */
+    public function getLockdownRemovedDir(): string
+    {
+        return $this->spoolDir . '/lockdown-removed';
     }
 
     /**
@@ -213,8 +238,14 @@ class EmailSpoolerService
             'text' => $email->getTextBody(),
             'amp_html' => $this->extractAmpContent($email),
             'headers' => $this->extractCustomHeaders($email),
+            // Files sent with the mail (name, mime, base64 content). Empty for nearly every mailable.
+            'attachments' => $this->extractAttachments($email),
             'email_type' => $emailType,
             'mailable_class' => get_class($mailable),
+            // Only present for a Mailable that quotes member content (plan section 11.8);
+            // null means "nothing here for lockdown:filter-spool to check", not "checked
+            // and found empty" - a plain array with all-empty buckets means the latter.
+            'about' => $mailable instanceof DescribesMemberContent ? $mailable->about() : null,
             'created_at' => now()->toIso8601String(),
             'attempts' => 0,
             'last_attempt' => null,
@@ -294,6 +325,16 @@ class EmailSpoolerService
             'user_id' => $data['headers']['X-Freegle-User-Id'] ?? null,
             'email_type' => $data['headers']['X-Freegle-Email-Type'] ?? null,
         ]);
+
+        // spool() never refuses (plan section 11.7): a lockdown holds member mail at
+        // the generating loop, before spool() is ever reached, so a non-allowlisted
+        // type arriving here while held is the exception rather than the rule (a
+        // caller that does not gate itself, or the tail of a loop that started
+        // before the press). Either way the file is written and queued normally;
+        // this only counts it, once, at the moment it is written - counting again on
+        // every processSpool() pass over the same still-waiting file would repeat the
+        // 10,777-in-106-minutes chat counter overcount.
+        $this->countIfHeldAtSpoolTime($emailType);
 
         return $id;
     }
@@ -459,6 +500,25 @@ class EmailSpoolerService
      *
      * AMP content is stored as a text/x-amp-html part in a multipart/alternative body.
      */
+    /**
+     * The files attached to a built message, in a form that survives the JSON spool file.
+     *
+     * @return array<int, array{name: string, mime: string, content: string}>
+     */
+    protected function extractAttachments(Email $email): array
+    {
+        $out = [];
+        foreach ($email->getAttachments() as $part) {
+            $out[] = [
+                'name' => $part->getFilename() ?? 'attachment',
+                'mime' => $part->getMediaType() . '/' . $part->getMediaSubtype(),
+                'content' => base64_encode($part->getBody()),
+            ];
+        }
+
+        return $out;
+    }
+
     protected function extractAmpContent(Email $email): ?string
     {
         $body = $email->getBody();
@@ -630,6 +690,7 @@ class EmailSpoolerService
             'retried' => 0,
             'stuck_alerts' => 0,
             'invalid' => 0,
+            'held_by_lockdown' => 0,
         ];
 
         // Strict priority: every URGENT message is taken before any HIGH, and so
@@ -712,6 +773,18 @@ class EmailSpoolerService
                 continue;
             }
 
+            // Held rather than sent or failed: put the claim back exactly as it
+            // was in pending/, so this costs no attempt and needs no retry -
+            // once email is lifted the next run picks it straight back up.
+            // email_type is the field spool() actually writes (see $data there);
+            // the header is checked first only because a handful of older spool
+            // files carry the type there instead.
+            if ($this->isBlockedForLockdown($data['headers']['X-Freegle-Email-Type'] ?? $data['email_type'] ?? null)) {
+                @rename($sendingPath, $pendingPath);
+                $stats['held_by_lockdown']++;
+                continue;
+            }
+
             $data['attempts']++;
             $data['last_attempt'] = now()->toIso8601String();
 
@@ -764,6 +837,16 @@ class EmailSpoolerService
                         $symfonyMessage->setBody(new TextPart($textBody, 'utf-8', 'plain'));
                     }
                     // If text is empty, Mail::html() has already set HTML-only body.
+
+                    // Attached files: setBody() above stops Symfony adding them itself, so wrap
+                    // whatever body there is with them.
+                    if (!empty($data['attachments'])) {
+                        $files = array_map(
+                            fn ($a) => new DataPart(base64_decode($a['content']), $a['name'], $a['mime']),
+                            $data['attachments']
+                        );
+                        $symfonyMessage->setBody(new MixedPart($symfonyMessage->getBody(), ...$files));
+                    }
                 });
 
                 // SMTP has accepted the message. Record that on local disk BEFORE
@@ -923,6 +1006,18 @@ class EmailSpoolerService
         }
 
         return $stats;
+    }
+
+    /**
+     * How many emails are waiting to be sent or are being sent now. File counts only, so it
+     * is cheap enough to take every minute however long the queue is; getBacklogStats()
+     * reads every waiting file to find the oldest.
+     */
+    public function queuedCount(): int
+    {
+        return count(glob($this->pendingDir . '/*.json') ?: [])
+            + count(glob($this->spoolDir . '/sending/*.json') ?: [])
+            + count(glob($this->spoolDir . '/sending/w*/*.json') ?: []);
     }
 
     /**
@@ -1400,5 +1495,78 @@ class EmailSpoolerService
         ]);
 
         return TRUE;
+    }
+
+    /**
+     * Counts a file written to the spool while a lockdown holds `email` (plan
+     * 2026-09-27-lockdown-switch.md, section 11.7).
+     *
+     * spool() never refuses: the mail-generating loops (chat, digests, engage,
+     * newsletters) are expected to check LockdownService::held('email') themselves
+     * before ever building a Mailable, so a non-allowlisted type reaching this point
+     * while held is the exception (a caller with no such gate, e.g. a command handler
+     * calling spool() directly, or the tail of a loop that started just before the
+     * press). Either way the file is written and queued normally - only this count
+     * marks that it happened. Counted once, here, rather than in processSpool(),
+     * because that loop revisits the same still-waiting file on every pass while the
+     * hold lasts, and counting there would recount it every time (the same shape of
+     * bug as the 10,777-in-106-minutes chat counter overcount).
+     */
+    private function countIfHeldAtSpoolTime(?string $emailType): void
+    {
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        if (!$lockdown->held('email')) {
+            return;
+        }
+
+        if ($emailType !== null && in_array(
+            $emailType,
+            \App\Services\Mail\MailSuppressionService::ALLOWLISTED_EMAIL_TYPES_WHILE_HELD,
+            true
+        )) {
+            // Allowlisted mail is not held, so there is nothing to count here - it is
+            // counted as leaked:email:<type> at the moment it actually reaches the
+            // relay (processSpool()), not at this earlier spool-time write.
+            return;
+        }
+
+        $lockdown->count('spooled_held:' . ($emailType ?? 'unknown'));
+    }
+
+    /**
+     * Whether this send must wait out a lockdown that holds `email` (plan
+     * 2026-09-27-lockdown-switch.md, section 11.7).
+     *
+     * This is the send-time gate: a non-allowlisted file is held back (renamed to
+     * pending and left untouched - no retry backoff, no failed-dir move, no
+     * age-based expiry) until the lockdown lifts, and an allowlisted type is let
+     * through and counted leaked:email:<type> at this, the actual relay handoff -
+     * not at the earlier spool-time write, so the same piece of allowlisted mail is
+     * never counted twice.
+     */
+    private function isBlockedForLockdown(?string $emailType): bool
+    {
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        // Every spooled file passes through here before send (section 11.6 point 3), so
+        // this is the one place to mark the mail-spool loop as still running.
+        $lockdown->ack('mail-spool');
+        if (!$lockdown->held('email')) {
+            return false;
+        }
+
+        if ($emailType !== null && in_array(
+            $emailType,
+            \App\Services\Mail\MailSuppressionService::ALLOWLISTED_EMAIL_TYPES_WHILE_HELD,
+            true
+        )) {
+            $lockdown->count('leaked:email:' . $emailType);
+
+            return false;
+        }
+
+        // Held back without counting - already counted once, at spool() time
+        // (spooled_held:<type>), so a file sitting through many processSpool()
+        // passes while still held is not recounted on every pass.
+        return true;
     }
 }

@@ -5,7 +5,9 @@ namespace App\Console\Commands\Volunteering;
 use App\Services\VolunteeringMaintenanceService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'volunteering:maintain')]
 class MaintainVolunteeringCommand extends Command
 {
     use LogsBatchJob;

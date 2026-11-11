@@ -10,7 +10,8 @@ import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { useLoggingContextStore } from '~/stores/loggingContext'
 import { getTraceHeaders } from '~/composables/useTrace'
-import { warn } from '~/composables/useClientLog'
+import { warn, noteApiRequestStarted } from '~/composables/useClientLog'
+import { getLiveFlowInstanceId } from '~/composables/useFlowTelemetry'
 
 export { APIError, MaintenanceError, LoginError, SignUpError }
 
@@ -60,7 +61,9 @@ export default class BaseAPI {
     this.config = config
   }
 
-  $postv2(path, data, logError = true) {
+  // options: extra fetch settings for this one request, such as keepalive for a request that
+  // has to outlive the page (see JobAPI.log).
+  $postv2(path, data, logError = true, options = {}) {
     const authStore = useAuthStore()
 
     return this.$requestv2(
@@ -72,12 +75,18 @@ export default class BaseAPI {
           Authorization: 'Iznik ' + JSON.stringify(authStore.auth?.persistent),
         },
         data,
+        ...options,
       },
       logError
     )
   }
 
   async $requestv2(method, path, config, logError = true, body = null) {
+    // Sentry groups events by title, so a title must name the endpoint, not this one request:
+    // the query string below gains loggedInAs and a request counter, which made every failure
+    // a new issue (a page-wide poll such as /lockdown opened one per member per blip).
+    const reportPath = path.split('?')[0]
+
     // timer++
     // const timerLabel = path + ' api-' + timer
 
@@ -99,6 +108,14 @@ export default class BaseAPI {
       Object.assign(headers, loggingHeaders)
     } catch (e) {
       // Store may not be initialized on server-side.
+    }
+
+    // Count requests started (the interaction plugin uses it to spot clicks that did nothing) and
+    // tie requests made during a flow to its instance.
+    noteApiRequestStarted()
+    const flowInstance = getLiveFlowInstanceId()
+    if (flowInstance) {
+      headers['X-Freegle-Flow-Instance'] = flowInstance
     }
 
     // Capture store references once, synchronously, while the caller's pinia
@@ -289,7 +306,7 @@ export default class BaseAPI {
         // when unloading (user navigated away — expected).
         if (typeof Sentry?.captureMessage === 'function') {
           Sentry.captureMessage(
-            `API network failure ${method} ${path}: ${e.message}`,
+            `API network failure ${method} ${reportPath}: ${e.message}`,
             {
               level: 'warning',
               tags: { api_path: path, error_type: 'network' },
@@ -335,7 +352,7 @@ export default class BaseAPI {
         if (typeof Sentry?.captureMessage === 'function') {
           Sentry.captureMessage(
             'API2 request failed ' +
-              path +
+              reportPath +
               ' returned HTTP ' +
               status +
               ' status ' +

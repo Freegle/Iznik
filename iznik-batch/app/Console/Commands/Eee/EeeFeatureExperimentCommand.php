@@ -6,6 +6,7 @@ use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Research experiment: component-observation approach to EEE classification.
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\Http;
  *
  * Run: php artisan eee:feature-experiment --items="Gas Cooker,Electric Cooker,Chainsaw"
  */
+#[AsCommand(name: 'eee:feature-experiment')]
 class EeeFeatureExperimentCommand extends Command
 {
     protected $signature = 'eee:feature-experiment
@@ -60,7 +62,7 @@ class EeeFeatureExperimentCommand extends Command
 
         $attachments = DB::table('messages_attachments as ma')
             ->join('messages as m', 'm.id', '=', 'ma.msgid')
-            ->whereExists(fn($q) => $q->select(DB::raw(1))
+            ->whereExists(fn($q) => $q
                 ->from('messages_items as mi')
                 ->join('items as i', 'i.id', '=', 'mi.itemid')
                 ->whereColumn('mi.msgid', 'm.id')

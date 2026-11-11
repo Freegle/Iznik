@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent, h } from 'vue'
 import ModSupportListGroups from '~/modtools/components/ModSupportListGroups.vue'
 
-// Mock modgroup store
 const mockModGroupStore = {
   allGroups: {},
   listMT: vi.fn().mockResolvedValue({}),
@@ -12,12 +12,47 @@ vi.mock('@/stores/modgroup', () => ({
   useModGroupStore: () => mockModGroupStore,
 }))
 
-// Mock dayjs
-vi.mock('dayjs', () => ({
-  default: (date) => ({
-    format: () => (date ? `formatted:${date}` : '-'),
-  }),
-}))
+// Minimal b-table: renders the header labels and one row per item, applying each
+// field's formatter and tdClass the way bootstrap-vue-next does. Sorting and paging
+// are bootstrap-vue-next's job; what we own is the fields and items we hand it.
+const BTableStub = defineComponent({
+  name: 'BTableStub',
+  props: ['items', 'fields', 'perPage', 'currentPage', 'sortBy'],
+  setup(props) {
+    return () =>
+      h('table', { class: 'stub-table' }, [
+        h(
+          'thead',
+          h(
+            'tr',
+            props.fields.map((f) => h('th', { 'data-key': f.key }, f.label))
+          )
+        ),
+        h(
+          'tbody',
+          props.items.map((item) =>
+            h(
+              'tr',
+              { class: 'stub-row' },
+              props.fields.map((f) => {
+                const raw = item[f.key]
+                const text = f.formatter ? f.formatter(raw, f.key, item) : raw
+                const cls =
+                  typeof f.tdClass === 'function'
+                    ? f.tdClass(raw, f.key, item)
+                    : f.tdClass
+                return h(
+                  'td',
+                  { 'data-key': f.key, class: cls },
+                  String(text ?? '')
+                )
+              })
+            )
+          )
+        ),
+      ])
+  },
+})
 
 describe('ModSupportListGroups', () => {
   const createGroup = (overrides = {}) => ({
@@ -27,6 +62,8 @@ describe('ModSupportListGroups', () => {
     lastautoapprove: '2024-01-15T10:00:00Z',
     recentautoapprovespercent: 25,
     recentautoapproves: 10,
+    recentmoderated: 4,
+    recentmoderatedpercent: 40,
     activeownercount: 2,
     activemodcount: 5,
     lastmoderated: '2024-01-20T10:00:00Z',
@@ -45,460 +82,248 @@ describe('ModSupportListGroups', () => {
     ...overrides,
   })
 
-  function mountComponent() {
-    return mount(ModSupportListGroups, {
+  const BPaginationStub = {
+    template: '<div class="stub-pagination" />',
+    props: ['modelValue', 'totalRows', 'perPage'],
+  }
+
+  async function mountLoaded(groups) {
+    mockModGroupStore.allGroups = Object.fromEntries(
+      groups.map((g) => [g.id, g])
+    )
+    const wrapper = mount(ModSupportListGroups, {
       global: {
-        stubs: {
-          // The HotTable and HotColumn are already mocked via vitest.config.mts aliases
-        },
+        stubs: { 'b-table': BTableStub, 'b-pagination': BPaginationStub },
       },
     })
+    await wrapper.vm.fetchCommunities()
+    await flushPromises()
+    return wrapper
   }
+
+  const rowNames = (wrapper) =>
+    wrapper
+      .findAll('.stub-row')
+      .map((r) => r.find('[data-key="nameshort"]').text())
 
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.useFakeTimers()
     mockModGroupStore.allGroups = {}
     mockModGroupStore.listMT = vi.fn().mockResolvedValue({})
-
-    // Mock import.meta.client
-    vi.stubGlobal('import', { meta: { client: true } })
   })
 
-  afterEach(() => {
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
+  it('shows a loading message while fetching', async () => {
+    const wrapper = mount(ModSupportListGroups, {
+      global: {
+        stubs: { 'b-table': BTableStub, 'b-pagination': BPaginationStub },
+      },
+    })
+    let resolve
+    mockModGroupStore.listMT = vi.fn(() => new Promise((r) => (resolve = r)))
+    const p = wrapper.vm.fetchCommunities()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Loading communities...')
+    resolve({})
+    await p
   })
 
-  describe('rendering', () => {
-    it('shows loading message when busy', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.busy = true
-      await wrapper.vm.$nextTick()
+  it('fetches support communities once', async () => {
+    const wrapper = await mountLoaded([createGroup()])
+    await wrapper.vm.fetchCommunities()
+    expect(mockModGroupStore.listMT).toHaveBeenCalledTimes(1)
+    expect(mockModGroupStore.listMT).toHaveBeenCalledWith({
+      grouptype: 'Freegle',
+      support: true,
+    })
+  })
 
-      expect(wrapper.text()).toContain('Loading communities...')
+  it('does not use Handsontable', async () => {
+    const wrapper = await mountLoaded([createGroup()])
+    expect(wrapper.find('.handsontable').exists()).toBe(false)
+    expect(wrapper.text()).toContain('caretaker groups')
+  })
+
+  describe('columns', () => {
+    it('renders every column the volunteers had', async () => {
+      const wrapper = await mountLoaded([createGroup()])
+      const titles = wrapper.findAll('th').map((t) => t.text())
+      expect(titles).toEqual([
+        'ID',
+        'Short Name',
+        'Display Name',
+        'Last Auto-Approve',
+        'Auto-Approve %',
+        'Auto-Approves',
+        'Moderated (30d)',
+        '% Moderated (30d)',
+        'Active-owner',
+        'Active Mods',
+        'Last Moderated',
+        'Publish?',
+        'FD?',
+        'TN?',
+        'LJ?',
+        'Region',
+        'Lat',
+        'Lng',
+        'Founded',
+        'Affiliation Confirmed',
+        'Backup Owners Active',
+        'Backup Mods Active',
+        'Caretaker?',
+      ])
     })
 
-    it('hides loading message when not busy', () => {
-      const wrapper = mountComponent()
-      wrapper.vm.busy = false
-      expect(wrapper.text()).not.toContain('Loading communities...')
+    it('makes every column sortable and freezes the name', async () => {
+      const wrapper = await mountLoaded([createGroup()])
+      const table = wrapper.findComponent(BTableStub)
+      const fields = table.props('fields')
+      expect(fields.every((f) => f.sortable)).toBe(true)
+      expect(fields.find((f) => f.key === 'nameshort').stickyColumn).toBe(true)
     })
 
-    it('shows info text when groups are loaded', async () => {
-      const wrapper = mountComponent()
-      mockModGroupStore.allGroups = { 1: createGroup() }
-      wrapper.vm.fetched = true
-      wrapper.vm.busy = false
-      await wrapper.vm.$nextTick()
+    it('starts sorted by short name', async () => {
+      const wrapper = await mountLoaded([createGroup()])
+      expect(wrapper.findComponent(BTableStub).props('sortBy')).toEqual([
+        { key: 'nameshort', order: 'asc' },
+      ])
+    })
+  })
 
-      expect(wrapper.text()).toContain(
-        'Here you can see info about all Freegle groups'
+  describe('cell content', () => {
+    it('formats dates, flags, coordinates and percentages', async () => {
+      const wrapper = await mountLoaded([
+        createGroup({ recentautoapprovespercent: -30, mentored: true }),
+      ])
+      const cell = (k) => wrapper.find(`td[data-key="${k}"]`).text()
+      expect(cell('lastautoapprove')).toBe('2024-01-15')
+      expect(cell('recentautoapprovespercent')).toBe('30%')
+      expect(cell('publish')).toBe('Y')
+      expect(cell('ontn')).toBe('N')
+      expect(cell('lat')).toBe('55.95')
+      expect(cell('lng')).toBe('-3.19')
+      expect(cell('mentored')).toBe('Y')
+      expect(cell('recentmoderatedpercent')).toBe('40%')
+    })
+
+    it('shows a dash for a missing date', async () => {
+      const wrapper = await mountLoaded([createGroup({ lastmoderated: null })])
+      expect(wrapper.find('td[data-key="lastmoderated"]').text()).toBe('-')
+    })
+
+    it('highlights caretaker group IDs', async () => {
+      const wrapper = await mountLoaded([
+        createGroup({ id: 1, nameshort: 'A', mentored: true }),
+        createGroup({ id: 2, nameshort: 'B', mentored: false }),
+      ])
+      const ids = wrapper.findAll('td[data-key="id"]')
+      expect(ids[0].classes()).toContain('bg-info-subtle')
+      expect(ids[1].classes()).not.toContain('bg-info-subtle')
+    })
+
+    it('highlights high auto-approve only for published groups', async () => {
+      const wrapper = await mountLoaded([
+        createGroup({ id: 1, nameshort: 'A', recentautoapprovespercent: 50 }),
+        createGroup({ id: 2, nameshort: 'B', recentautoapprovespercent: 49 }),
+        createGroup({
+          id: 3,
+          nameshort: 'C',
+          recentautoapprovespercent: 90,
+          publish: 0,
+        }),
+      ])
+      const cells = wrapper.findAll('td[data-key="recentautoapprovespercent"]')
+      expect(cells[0].classes()).toContain('bg-warning')
+      expect(cells[1].classes()).not.toContain('bg-warning')
+      expect(cells[2].classes()).not.toContain('bg-warning')
+    })
+
+    it('colours the moderated percentage by band', async () => {
+      const wrapper = await mountLoaded([
+        createGroup({ id: 1, nameshort: 'A', recentmoderatedpercent: 5 }),
+        createGroup({ id: 2, nameshort: 'B', recentmoderatedpercent: 50 }),
+        createGroup({ id: 3, nameshort: 'C', recentmoderatedpercent: 85 }),
+      ])
+      const cells = wrapper.findAll('td[data-key="recentmoderatedpercent"]')
+      expect(cells[0].classes()).toContain('bg-success-subtle')
+      expect(cells[1].classes()).not.toContain('bg-success-subtle')
+      expect(cells[1].classes()).not.toContain('bg-warning-subtle')
+      expect(cells[2].classes()).toContain('bg-warning-subtle')
+    })
+  })
+
+  describe('ordering and filtering', () => {
+    const groups = () => [
+      createGroup({ id: 1, nameshort: 'Zebra', region: 'Wales' }),
+      createGroup({ id: 2, nameshort: 'alpha', region: 'Scotland', ontn: 1 }),
+      createGroup({
+        id: 3,
+        nameshort: 'Beta',
+        region: 'Wales',
+        mentored: true,
+        publish: 0,
+      }),
+    ]
+
+    it('lists groups alphabetically ignoring case', async () => {
+      const wrapper = await mountLoaded(groups())
+      expect(rowNames(wrapper)).toEqual(['alpha', 'Beta', 'Zebra'])
+    })
+
+    it('filters by text over id, names and region', async () => {
+      const wrapper = await mountLoaded(groups())
+      await wrapper.find('input').setValue('wales')
+      expect(rowNames(wrapper)).toEqual(['Beta', 'Zebra'])
+      await wrapper.find('input').setValue('3')
+      expect(rowNames(wrapper)).toEqual(['Beta'])
+    })
+
+    it('filters by a Y/N flag', async () => {
+      const wrapper = await mountLoaded(groups())
+      wrapper.vm.flags.ontn = 'Y'
+      await wrapper.vm.$nextTick()
+      expect(rowNames(wrapper)).toEqual(['alpha'])
+
+      wrapper.vm.flags.ontn = 'N'
+      await wrapper.vm.$nextTick()
+      expect(rowNames(wrapper)).toEqual(['Beta', 'Zebra'])
+    })
+
+    it('filters by caretaker and publish together', async () => {
+      const wrapper = await mountLoaded(groups())
+      wrapper.vm.flags.mentored = 'Y'
+      wrapper.vm.flags.publish = 'N'
+      await wrapper.vm.$nextTick()
+      expect(rowNames(wrapper)).toEqual(['Beta'])
+    })
+
+    it('returns to page one when a filter changes', async () => {
+      const wrapper = await mountLoaded(groups())
+      wrapper.vm.currentPage = 3
+      await wrapper.find('input').setValue('a')
+      expect(wrapper.vm.currentPage).toBe(1)
+    })
+  })
+
+  describe('large lists', () => {
+    it('pages the table so hundreds of groups stay responsive', async () => {
+      const many = Array.from({ length: 450 }, (_, i) =>
+        createGroup({ id: i + 1, nameshort: `Group${i}` })
       )
+      const wrapper = await mountLoaded(many)
+      const table = wrapper.findComponent(BTableStub)
+      expect(table.props('perPage')).toBe(100)
+      expect(wrapper.find('.stub-pagination').exists()).toBe(true)
     })
 
-    it('mentions caretaker groups in description', async () => {
-      const wrapper = mountComponent()
-      mockModGroupStore.allGroups = { 1: createGroup() }
-      wrapper.vm.fetched = true
-      wrapper.vm.busy = false
-      await wrapper.vm.$nextTick()
-
-      expect(wrapper.text()).toContain('caretaker groups')
-    })
-  })
-
-  describe('groups computed', () => {
-    it('returns empty array when no groups', () => {
-      const wrapper = mountComponent()
-      mockModGroupStore.allGroups = {}
-      expect(wrapper.vm.groups).toEqual([])
-    })
-
-    it('returns array of groups from store', () => {
-      const wrapper = mountComponent()
-      mockModGroupStore.allGroups = {
-        1: createGroup({ id: 1, nameshort: 'GroupA' }),
-        2: createGroup({ id: 2, nameshort: 'GroupB' }),
-      }
-      expect(wrapper.vm.groups.length).toBe(2)
-    })
-
-    it('sorts groups by nameshort alphabetically (case insensitive)', () => {
-      const wrapper = mountComponent()
-      mockModGroupStore.allGroups = {
-        1: createGroup({ id: 1, nameshort: 'Zebra' }),
-        2: createGroup({ id: 2, nameshort: 'alpha' }),
-        3: createGroup({ id: 3, nameshort: 'Beta' }),
-      }
-
-      const sortedGroups = wrapper.vm.groups
-      expect(sortedGroups[0].nameshort).toBe('alpha')
-      expect(sortedGroups[1].nameshort).toBe('Beta')
-      expect(sortedGroups[2].nameshort).toBe('Zebra')
+    it('hides the pager when everything fits on one page', async () => {
+      const wrapper = await mountLoaded([createGroup()])
+      expect(wrapper.find('.stub-pagination').exists()).toBe(false)
     })
   })
 
-  describe('fetchCommunities', () => {
-    it('calls modGroupStore.listMT with correct params', async () => {
-      const wrapper = mountComponent()
-      await wrapper.vm.fetchCommunities()
-
-      expect(mockModGroupStore.listMT).toHaveBeenCalledWith({
-        grouptype: 'Freegle',
-        support: true,
-      })
-    })
-
-    it('sets busy to true while fetching', async () => {
-      const wrapper = mountComponent()
-
-      let resolvePromise
-      mockModGroupStore.listMT = vi.fn().mockImplementation(() => {
-        return new Promise((resolve) => {
-          resolvePromise = resolve
-        })
-      })
-
-      const fetchPromise = wrapper.vm.fetchCommunities()
-      expect(wrapper.vm.busy).toBe(true)
-
-      resolvePromise({})
-      await fetchPromise
-
-      expect(wrapper.vm.busy).toBe(false)
-    })
-
-    it('sets fetched to true after fetching', async () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.fetched).toBe(false)
-
-      await wrapper.vm.fetchCommunities()
-
-      expect(wrapper.vm.fetched).toBe(true)
-    })
-
-    it('does not refetch if already fetched', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.fetched = true
-
-      await wrapper.vm.fetchCommunities()
-
-      expect(mockModGroupStore.listMT).not.toHaveBeenCalled()
-    })
-
-    it('calls callback when provided', async () => {
-      const wrapper = mountComponent()
-      const callback = vi.fn()
-
-      await wrapper.vm.fetchCommunities(callback)
-
-      expect(callback).toHaveBeenCalled()
-    })
-
-    it('calls callback even when already fetched', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.fetched = true
-      const callback = vi.fn()
-
-      await wrapper.vm.fetchCommunities(callback)
-
-      expect(callback).toHaveBeenCalled()
-    })
-  })
-
-  describe('renderer functions', () => {
-    describe('idRenderer', () => {
-      it('sets lightblue background for mentored groups', () => {
-        const wrapper = mountComponent()
-        mockModGroupStore.allGroups = {
-          0: createGroup({ id: 1, mentored: true }),
-        }
-
-        const td = document.createElement('td')
-        wrapper.vm.idRenderer(null, td, 0, 0, null, 123)
-
-        expect(td.style.backgroundColor).toBe('lightblue')
-        expect(td.innerHTML).toBe('123')
-      })
-
-      it('does not set background for non-mentored groups', () => {
-        const wrapper = mountComponent()
-        mockModGroupStore.allGroups = {
-          0: createGroup({ id: 1, mentored: false }),
-        }
-
-        const td = document.createElement('td')
-        wrapper.vm.idRenderer(null, td, 0, 0, null, 456)
-
-        expect(td.style.backgroundColor).toBe('')
-        expect(td.innerHTML).toBe('456')
-      })
-    })
-
-    describe('dateRenderer', () => {
-      it('formats date value', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.dateRenderer(null, td, 0, 0, null, '2024-01-15')
-
-        expect(td.innerHTML).toBe('formatted:2024-01-15')
-        expect(td.style.textAlign).toBe('center')
-      })
-
-      it('shows dash for null value', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.dateRenderer(null, td, 0, 0, null, null)
-
-        expect(td.innerHTML).toBe('-')
-      })
-
-      it('shows dash for empty value', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.dateRenderer(null, td, 0, 0, null, '')
-
-        expect(td.innerHTML).toBe('-')
-      })
-    })
-
-    describe('autoApprovesRenderer', () => {
-      it('shows percentage with % suffix', () => {
-        const wrapper = mountComponent()
-        mockModGroupStore.allGroups = {
-          0: createGroup({ publish: 1 }),
-        }
-        const td = document.createElement('td')
-
-        wrapper.vm.autoApprovesRenderer(null, td, 0, 0, null, 45)
-
-        expect(td.innerHTML).toBe('45%')
-        expect(td.style.textAlign).toBe('center')
-      })
-
-      it('sets orange background when >= 50% and published', () => {
-        const wrapper = mountComponent()
-        mockModGroupStore.allGroups = {
-          0: createGroup({ publish: 1 }),
-        }
-        const td = document.createElement('td')
-
-        wrapper.vm.autoApprovesRenderer(null, td, 0, 0, null, 50)
-
-        expect(td.style.backgroundColor).toBe('orange')
-      })
-
-      it('sets orange background when > 50% and published', () => {
-        const wrapper = mountComponent()
-        mockModGroupStore.allGroups = {
-          0: createGroup({ publish: 1 }),
-        }
-        const td = document.createElement('td')
-
-        wrapper.vm.autoApprovesRenderer(null, td, 0, 0, null, 75)
-
-        expect(td.style.backgroundColor).toBe('orange')
-      })
-
-      it('does not set orange background when < 50%', () => {
-        const wrapper = mountComponent()
-        mockModGroupStore.allGroups = {
-          0: createGroup({ publish: 1 }),
-        }
-        const td = document.createElement('td')
-
-        wrapper.vm.autoApprovesRenderer(null, td, 0, 0, null, 49)
-
-        expect(td.style.backgroundColor).toBe('')
-      })
-
-      it('handles negative values', () => {
-        const wrapper = mountComponent()
-        mockModGroupStore.allGroups = {
-          0: createGroup({ publish: 0 }),
-        }
-        const td = document.createElement('td')
-
-        wrapper.vm.autoApprovesRenderer(null, td, 0, 0, null, -30)
-
-        expect(td.innerHTML).toBe('30%')
-      })
-    })
-
-    describe('centreRenderer', () => {
-      it('centers text and displays value', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.centreRenderer(null, td, 0, 0, null, 42)
-
-        expect(td.innerHTML).toBe('42')
-        expect(td.style.textAlign).toBe('center')
-      })
-    })
-
-    describe('latlngRenderer', () => {
-      it('rounds to 2 decimal places', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.latlngRenderer(null, td, 0, 0, null, 55.95333333)
-
-        expect(td.innerHTML).toBe('55.95')
-        expect(td.style.textAlign).toBe('center')
-      })
-
-      it('handles negative values', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.latlngRenderer(null, td, 0, 0, null, -3.18833333)
-
-        expect(td.innerHTML).toBe('-3.19')
-      })
-    })
-
-    describe('boolRenderer', () => {
-      it('shows Y for value 1', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.boolRenderer(null, td, 0, 0, null, 1)
-
-        expect(td.innerHTML).toBe('Y')
-        expect(td.style.textAlign).toBe('center')
-      })
-
-      it('shows N for value 0', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.boolRenderer(null, td, 0, 0, null, 0)
-
-        expect(td.innerHTML).toBe('N')
-      })
-
-      it('shows N for null value', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.boolRenderer(null, td, 0, 0, null, null)
-
-        expect(td.innerHTML).toBe('N')
-      })
-    })
-
-    describe('caretakerRenderer', () => {
-      it('shows Y for truthy value', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.caretakerRenderer(null, td, 0, 0, null, true)
-
-        expect(td.innerHTML).toBe('Y')
-        expect(td.style.textAlign).toBe('center')
-      })
-
-      it('shows N for falsy value', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.caretakerRenderer(null, td, 0, 0, null, false)
-
-        expect(td.innerHTML).toBe('N')
-      })
-
-      it('shows N for null', () => {
-        const wrapper = mountComponent()
-        const td = document.createElement('td')
-
-        wrapper.vm.caretakerRenderer(null, td, 0, 0, null, null)
-
-        expect(td.innerHTML).toBe('N')
-      })
-    })
-  })
-
-  describe('cells function', () => {
-    it('returns editor false to disable editing', () => {
-      const wrapper = mountComponent()
-      const result = wrapper.vm.cells()
-      expect(result).toEqual({ editor: false })
-    })
-  })
-
-  describe('expose', () => {
-    it('exposes fetchCommunities method', () => {
-      const wrapper = mountComponent()
-      expect(typeof wrapper.vm.fetchCommunities).toBe('function')
-    })
-  })
-
-  describe('height calculation', () => {
-    it('starts with default height of 600', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.height).toBe(600)
-    })
-  })
-
-  describe('HotTable columns', () => {
-    it('renders expected columns', async () => {
-      const wrapper = mountComponent()
-      mockModGroupStore.allGroups = { 1: createGroup() }
-      wrapper.vm.fetched = true
-      wrapper.vm.busy = false
-      await wrapper.vm.$nextTick()
-
-      const columns = wrapper.findAll('.hot-column')
-      const titles = columns.map((c) => c.attributes('data-title'))
-
-      expect(titles).toContain('ID')
-      expect(titles).toContain('Short Name')
-      expect(titles).toContain('Display Name')
-      expect(titles).toContain('Last Auto-Approve')
-      expect(titles).toContain('Auto-Approve %')
-      expect(titles).toContain('Auto-Approves')
-      expect(titles).toContain('Active-owner')
-      expect(titles).toContain('Active Mods')
-      expect(titles).toContain('Last Moderated')
-      expect(titles).toContain('Publish?')
-      expect(titles).toContain('FD?')
-      expect(titles).toContain('TN?')
-      expect(titles).toContain('LJ?')
-      expect(titles).toContain('Region')
-      expect(titles).toContain('Lat')
-      expect(titles).toContain('Lng')
-      expect(titles).toContain('Founded')
-      expect(titles).toContain('Affiliation Confirmed')
-      expect(titles).toContain('Backup Owners Active')
-      expect(titles).toContain('Backup Mods Active')
-      expect(titles).toContain('Caretaker?')
-    })
-  })
-
-  describe('edge cases', () => {
-    it('handles groups with missing properties', () => {
-      const wrapper = mountComponent()
-      mockModGroupStore.allGroups = {
-        1: {
-          id: 1,
-          nameshort: 'PartialGroup',
-          // Missing most properties
-        },
-      }
-
-      expect(wrapper.vm.groups.length).toBe(1)
-      expect(wrapper.vm.groups[0].nameshort).toBe('PartialGroup')
-    })
-
-    it('handles empty allGroups object', () => {
-      const wrapper = mountComponent()
-      mockModGroupStore.allGroups = {}
-      expect(wrapper.vm.groups).toEqual([])
-    })
+  it('copes with groups missing most properties', async () => {
+    const wrapper = await mountLoaded([{ id: 9, nameshort: 'Partial' }])
+    expect(rowNames(wrapper)).toEqual(['Partial'])
   })
 })

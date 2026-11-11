@@ -7,6 +7,7 @@ use App\Services\LokiService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Nightly: for every deprecated apiv2 endpoint whose x-sunset date has passed,
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Mail;
  * Retirement stays a human action. To stop nagging about an endpoint we've
  * decided to keep + chase, remove its x-sunset in swagger.json.
  */
+#[AsCommand(name: 'monitor:deprecated-endpoints')]
 class DeprecatedEndpointsCommand extends Command
 {
     protected $signature = 'monitor:deprecated-endpoints';

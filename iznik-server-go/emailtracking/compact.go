@@ -336,54 +336,13 @@ func ImageCompact(c *fiber.Ctx) error {
 		return c.Send(transparentGIF)
 	}
 
-	// Optional scroll depth param — same semantics as the long-form Image handler.
-	scrollPercent := c.QueryInt("s", -1)
-
-	db := database.DBConn
-
-	if tracking, found := findTrackingByRef(ref); found {
-		now := time.Now()
-
-		if tracking.OpenedAt == nil {
-			// Guard the write in SQL, not just on the stale Go read: when an email is
-			// opened its client loads many tracking images at once, and they all see
-			// OpenedAt==nil, so without "WHERE opened_at IS NULL" every one of them
-			// UPDATEs the same row and they serialise on its lock.
-			db.Model(tracking).Where("opened_at IS NULL").Updates(map[string]interface{}{
-				"opened_at":  now,
-				"opened_via": "image",
-			})
-		}
-
-		// The per-load row IS the record of this image load - it carries the
-		// position label used by the digest-position analytics. Deliberately do
-		// NOT also increment email_tracking.images_loaded: the N images of one
-		// digest open load near-simultaneously, and a per-hit UPDATE on the
-		// shared parent row needs an exclusive lock that every concurrent load
-		// (plus each load's own FK insert here, which takes a shared lock on the
-		// same parent row) contends for. That serialised on the row lock and hit
-		// lock-wait timeouts, which in turn drove client retries that inflated
-		// the count. The counter is unread and derivable as a COUNT over these
-		// rows, so it is no longer maintained.
-		imageLoad := EmailTrackingImage{
-			EmailTrackingID: tracking.ID,
-			ImagePosition:   position,
-			LoadedAt:        now,
-		}
-
-		if scrollPercent >= 0 && scrollPercent <= 100 {
-			sp := uint8(scrollPercent)
-			imageLoad.EstimatedScrollPercent = &sp
-
-			// Update scroll depth if this image is deeper than any previous
-			// image load for this email — mirrors Image()'s max-update logic.
-			if tracking.ScrollDepthPercent == nil || sp > *tracking.ScrollDepthPercent {
-				db.Model(tracking).Update("scroll_depth_percent", sp)
-			}
-		}
-
-		db.Create(&imageLoad)
-	}
+	// Optional scroll depth param - same semantics as the long-form Image handler.
+	//
+	// Journalled, not written (see journal.go): the N images of one digest open load at once, and
+	// writing each one meant a foreign-key insert plus a parent-row UPDATE per image, all queued on
+	// the one tracking row's lock. The nightly mail:tracking:fold stamps opened_at, keeps the
+	// deepest scroll estimate (max, never decreasing) and inserts the per-load row.
+	RecordImageLoad(ref, position, c.QueryInt("s", -1))
 
 	return c.Redirect(imageURL)
 }

@@ -93,6 +93,8 @@ class Location extends Model implements Auditable
         // Point built from the postcode's own lat/lng as POINT(lng lat) SRID 3857,
         // matching groupsNear()'s containment test (so no dependence on the SRID
         // stored on locations.geometry). FIELD() preserves the KNN nearest-first order.
+        // keep-raw: ST_Contains/ST_GeomFromText/CONCAT/FIELD() are spatial and
+        // string functions with no builder method.
         $loc = DB::selectOne(
             "SELECT p.name AS postcode, a.name AS area
              FROM locations p
@@ -146,6 +148,7 @@ class Location extends Model implements Auditable
         // polyindex polygons, those groups are authoritative and beat the centroid-
         // distance heuristic (V1 parity; fixes Discourse #9763 where a group with
         // a close centroid but non-containing polyindex shadowed the correct group).
+        // keep-raw: ST_Contains/ST_GeomFromText/haversine() have no builder method.
         $containing = DB::select(
             "SELECT id
              FROM `groups`
@@ -161,6 +164,7 @@ class Location extends Model implements Auditable
         }
 
         // No group polygon contains the point; fall back to centroid distance.
+        // keep-raw: haversine() has no builder method.
         $rows = DB::select(
             "SELECT id
              FROM `groups`
@@ -172,5 +176,36 @@ class Location extends Model implements Auditable
         );
 
         return array_column($rows, 'id');
+    }
+
+    /**
+     * The bracket a post subject carries for this location, as the Go API builds it
+     * for every post made on Freegle (message.constructLocationString): the area name
+     * and the outward half of the postcode, "Stoneygate LE2". A postcode with no area
+     * gives the outward half alone, and a location that is not a postcode gives its
+     * name. Null when the id is not in `locations`.
+     */
+    public static function subjectArea(int $locationId): ?string
+    {
+        $loc = DB::table('locations as l')
+            ->leftJoin('locations as a', 'a.id', '=', 'l.areaid')
+            ->where('l.id', $locationId)
+            ->select('l.name', 'l.type', 'a.name as area')
+            ->first();
+
+        if (!$loc || $loc->name === null || $loc->name === '') {
+            return null;
+        }
+
+        if ($loc->type !== 'Postcode') {
+            return $loc->name;
+        }
+
+        $outward = $loc->name;
+        if (($space = strpos($outward, ' ')) > 0) {
+            $outward = substr($outward, 0, $space);
+        }
+
+        return $loc->area ? "{$loc->area} {$outward}" : $outward;
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Mail\Chat;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
@@ -14,6 +15,7 @@ use App\Models\Message;
 use App\Models\User;
 use App\Models\UserAddress;
 use App\Support\AmpEmailSupport;
+use App\Support\TrashNothingSignOff;
 use App\Support\EmojiUtils;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
@@ -22,7 +24,7 @@ use Symfony\Component\Mime\Email;
 use App\Services\DonateLinkService;
 use App\Services\UnsubscribeService;
 
-class ChatNotification extends MjmlMailable implements RetryableMailable
+class ChatNotification extends MjmlMailable implements RetryableMailable, DescribesMemberContent
 {
     use AvatarResolver;
     use TrackableEmail;
@@ -90,6 +92,8 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      * The friendly group name for display (prefers namefull over nameshort).
      */
     protected string $groupDisplayName;
+
+    private ?bool $recipientIsTrashNothing = null;
 
     /**
      * Create a new message instance.
@@ -288,6 +292,26 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     }
 
     /**
+     * The triggering message plus whatever earlier messages the notification quotes for
+     * context, the post it refers to (if any), and the sender who authored them (plan
+     * section 11.8). The recipient is not included - they did not author this content.
+     */
+    public function about(): array
+    {
+        $chatmessages = array_merge(
+            [$this->message->id],
+            $this->previousMessages->pluck('id')->all()
+        );
+
+        return [
+            'chatmessages' => array_values(array_unique($chatmessages)),
+            'messages' => $this->refMessage ? [$this->refMessage->id] : [],
+            'newsfeed' => [],
+            'users' => $this->sender ? [$this->sender->id] : [],
+        ];
+    }
+
+    /**
      * Get the message envelope with custom from/replyTo.
      *
      * Uses noreply@ilovefreegle.org as the From address because it's whitelisted
@@ -311,8 +335,9 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      */
     public function build(): static
     {
-        // Prepare the message with display-friendly data.
-        $preparedMessage = $this->prepareMessage($this->message);
+        // Prepare the message with display-friendly data. Only the new message is signed
+        // for a TrashNothing member; the earlier ones are quoted for context.
+        $preparedMessage = $this->prepareMessage($this->message, signOff: true);
         $preparedPreviousMessages = $this->prepareMessages($this->previousMessages);
 
         // Check if we should show outcome buttons (for OFFER items with Interested messages).
@@ -442,8 +467,8 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 'jobsUrl' => $this->trackedUrl($this->userSite . '/jobs', 'jobs_link', 'jobs'),
                 // Our own Stripe donate page rather than the PayPal-only
                 // shortlink, so Apple Pay / Google Pay / Link are on offer too.
-                // See DonateLinkService.
-                'donateUrl' => $this->trackedUrl(
+                // See DonateLinkService. Null for a donor who asked not to be asked.
+                'donateUrl' => $this->recipient->wantsDonationAsks() ? $this->trackedUrl(
                     app(DonateLinkService::class)->url(
                         $this->recipient,
                         app(DonateLinkService::class)->defaultAmount(),
@@ -451,7 +476,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                     ),
                     'donate_link',
                     'donate'
-                ),
+                ) : NULL,
                 'donateMarksUrl' => config('freegle.images.paymethods'),
                 'ampIncluded' => $ampIncluded,
                 'isOwnMessage' => $this->isOwnMessage,
@@ -744,6 +769,14 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     }
 
     /**
+     * Whether the recipient is a TrashNothing member. Asked once: it can cost a query.
+     */
+    private function recipientIsTrashNothing(): bool
+    {
+        return $this->recipientIsTrashNothing ??= $this->recipient->isTrashNothingAccount();
+    }
+
+    /**
      * Prepare messages for display.
      */
     protected function prepareMessages(Collection $messages): Collection
@@ -759,8 +792,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      * For User2Mod chats, we follow the legacy V1 behaviour:
      * - When notifying a member, mod messages show "Volunteers" and group profile
      * - When notifying a mod, messages show actual user names/profiles
+     *
+     * $signOff is for the message the mail is about, not the earlier ones quoted with it:
+     * a moderator's message to a TrashNothing member gets the "From the volunteers who run
+     * ..." line, once.
      */
-    protected function prepareMessage(ChatMessage $message): array
+    protected function prepareMessage(ChatMessage $message, bool $signOff = false): array
     {
         $isFromRecipient = $message->userid === $this->recipient->id;
         $messageUser = $message->user;
@@ -778,6 +815,12 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         $shouldHideModIdentity = $this->chatType === ChatRoom::TYPE_USER2MOD
             && !$this->isModerator  // Recipient is a member
             && $isFromMod;          // Message is from a mod
+
+        // TrashNothing loses the "{Group} Volunteers" sender name, so its members are told
+        // in the message itself who it is from.
+        if ($signOff && $shouldHideModIdentity && $displayText !== '' && $this->recipientIsTrashNothing()) {
+            $displayText = TrashNothingSignOff::append($displayText, $this->groupDisplayName);
+        }
 
         // Get profile image URL.
         // For mod messages to members, use group profile instead of individual mod profile.
@@ -921,6 +964,10 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 return "{$otherName} cancelled their promise for:";
 
             case ChatMessage::TYPE_COMPLETED:
+                // A WANTED is not "taken": the poster no longer needs it.
+                if ($message->refMessage?->type === Message::TYPE_WANTED) {
+                    return "They are no longer looking for this:";
+                }
                 return "This item is no longer available:";
 
             case ChatMessage::TYPE_ADDRESS:
@@ -1225,7 +1272,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         );
 
         // Prepare the message with display-friendly data.
-        $preparedMessage = $this->prepareMessage($this->message);
+        $preparedMessage = $this->prepareMessage($this->message, signOff: true);
 
         // Render the AMP template.
         $this->renderAmpTemplate('emails.amp.chat.notification', [

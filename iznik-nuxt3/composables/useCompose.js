@@ -4,6 +4,13 @@ import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import { trackConversion } from '~/composables/useTrackConversion'
+import { useAskName } from '~/composables/useAskName'
+import {
+  watchComposeFields,
+  reportValidationFailure,
+} from '~/composables/useComposeTelemetry'
+
+export { reportValidationFailure }
 
 // Module-level globals
 const postType = ref(null)
@@ -35,6 +42,9 @@ export function setup(type) {
 
   // Set the post type
   postType.value = type
+
+  // Flow telemetry: fields changed on a revisit, photos removed, group switched.
+  watchComposeFields(type)
 
   // Set up computed properties
   group = computed({
@@ -287,6 +297,25 @@ export function clearItem(id) {
   }
 }
 
+/**
+ * Put back the delivery and deadline a member already chose for this post when they come back
+ * to the options step, for example with Back from the next step. Without it the step shows the
+ * defaults again, and pressing Next saves those defaults over what they chose.
+ */
+export function restoreOptionChoices(
+  message,
+  { deliveryPossible, hasDeadline, deadline }
+) {
+  if (!message) return
+
+  deliveryPossible.value = !!message.deliveryPossible
+
+  if (message.deadline) {
+    hasDeadline.value = true
+    deadline.value = String(message.deadline).substring(0, 10)
+  }
+}
+
 export function postcodeClear() {
   postcode.value = null
   group.value = null
@@ -436,6 +465,9 @@ export async function freegleIt(type, router, options = {}) {
       )
     }
     console.log('Navigated successfully')
+
+    // Experiment join-name-optional: a member who joined without a name is asked for one now.
+    useAskName().maybeAskName('post')
   } catch (e) {
     console.log('Submit failed', e, e?.response?.data?.ret)
     submitting.value = false
@@ -444,8 +476,10 @@ export async function freegleIt(type, router, options = {}) {
       if (e.message.includes('Unvalidated email')) {
         console.log('unvalidated')
         unvalidatedEmail.value = true
+        reportValidationFailure(type, 'email', 'unvalidated')
       } else if (e.message.includes('Not allowed to post on this group')) {
         notAllowed.value = true
+        reportValidationFailure(type, 'group', 'not_allowed')
       } else {
         wentWrong.value = true
       }

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Mail\Birthday\BirthdayMail;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -17,21 +18,22 @@ class BirthdayService
      */
     public function sendBirthdayEmails(?string $emailOverride = null, ?array $groupIds = null, bool $dryRun = false): int
     {
-        $today = now()->format('m-d');
-
         $query = DB::table('groups')
-            ->whereRaw("DATE_FORMAT(founded, '%m-%d') = ?", [$today])
+            ->whereMonth('founded', now()->month)
+            ->whereDay('founded', now()->day)
             ->where('type', 'Freegle')
             ->where('publish', 1)
             ->where('onmap', 1)
-            ->whereRaw('YEAR(NOW()) - YEAR(founded) > 0')
-            ->select(['id', 'nameshort', 'namefull', 'contactmail', DB::raw('YEAR(NOW()) - YEAR(founded) AS age')]);
+            ->whereYear('founded', '<', now()->year)
+            ->select(['id', 'nameshort', 'namefull', 'contactmail', 'founded']);
 
         if ($groupIds !== null) {
             $query->whereIn('id', $groupIds);
         }
 
-        $groups = $query->orderBy('nameshort')->get();
+        $groups = $query->orderBy('nameshort')->get()->each(function ($group) {
+            $group->age = now()->year - \Illuminate\Support\Carbon::parse($group->founded)->year;
+        });
 
         $count = 0;
 
@@ -48,9 +50,11 @@ class BirthdayService
                 ->join('memberships', 'users.id', '=', 'memberships.userid')
                 ->where('memberships.groupid', $group->id)
                 ->where('memberships.collection', 'Approved')
-                // Exclude Rippling Out auto-joins: a birthday appeal must never appear to come
-                // "from" a community the member never knowingly joined.
+                // Exclude Rippling Out auto-joins and TrashNothing posters placed on a group they did
+                // not pick: a birthday appeal must never appear to come "from" a community the
+                // member never knowingly joined. rippled goes when Phase 5 moves this to implicit.
                 ->where('memberships.rippled', 0)
+                ->where('memberships.implicit', 0)
                 ->whereNull('users.deleted')
                 ->where('users.marketingconsent', 1)
                 ->select('users.id', 'users.settings')
@@ -69,6 +73,11 @@ class BirthdayService
                 }
 
                 if (!$emailOverride && $this->sentBirthdayAppealRecently($member->settings)) {
+                    continue;
+                }
+
+                // The birthday mail is a donation appeal.
+                if (!$emailOverride && !User::settingsAllowDonationAsks($member->settings)) {
                     continue;
                 }
 
@@ -120,10 +129,13 @@ class BirthdayService
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
             ->where('memberships.collection', 'Approved')
-            ->whereIn('memberships.role', ['Moderator', 'Owner'])
+            ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->whereNull('users.deleted')
             ->where('users.lastaccess', '>=', $oneYearAgo)
-            ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('users.settings->showmod')
+                    ->orWhere('users.settings->showmod', true);
+            })
             ->select(['users.id', 'users.fullname', 'users.firstname'])
             ->get();
 

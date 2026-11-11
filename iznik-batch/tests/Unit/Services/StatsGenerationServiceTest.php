@@ -108,11 +108,11 @@ class StatsGenerationServiceTest extends TestCase
         $u4 = $this->createTestUser();
 
         DB::table('memberships')->insert([
-            ['userid' => $u1->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => '2026-01-01 10:00:00'],
-            ['userid' => $u2->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => '2026-02-01 10:00:00'],
-            ['userid' => $u3->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => $this->date.' 10:00:00'],
+            ['userid' => $u1->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'added' => '2026-01-01 10:00:00'],
+            ['userid' => $u2->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'added' => '2026-02-01 10:00:00'],
+            ['userid' => $u3->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'added' => $this->date.' 10:00:00'],
             // Joined after — not counted.
-            ['userid' => $u4->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => 'Member', 'added' => '2026-04-02 10:00:00'],
+            ['userid' => $u4->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'added' => '2026-04-02 10:00:00'],
         ]);
 
         $this->service->generate($group->id, $this->date);
@@ -208,6 +208,40 @@ class StatsGenerationServiceTest extends TestCase
         $this->service->generate($group->id, $this->date);
 
         $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 2);
+    }
+
+    public function test_replies_leaves_out_a_reply_held_for_its_sender_s_answer_or_refused(): void
+    {
+        // A reply to a damaged or bulky offer waits while its sender is asked whether they still want it. The poster has
+        // not got it, so it is not a reply: not while the question is open, and not after a no.
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $freegle = $this->createTestUser();
+        $msg = $this->createTestMessage($poster, $group, ['arrival' => $this->date.' 09:00:00']);
+
+        $make = function (array $prompt, int $at) use ($poster, $freegle, $msg) {
+            $replier = $this->createTestUser();
+            $room = $this->createTestChatRoom($poster, $replier);
+            $reply = $this->createTestChatMessage($room, $replier, [
+                'type' => ChatMessage::TYPE_INTERESTED, 'refmsgid' => $msg->id, 'date' => $this->date.' 10:0'.$at.':00',
+            ]);
+            $question = $this->createTestChatMessage($room, $freegle, [
+                'type' => ChatMessage::TYPE_PROMPT, 'refmsgid' => $msg->id, 'date' => $this->date.' 10:0'.$at.':01',
+                'processingsuccessful' => 0,
+            ]);
+            DB::table('chat_prompts')->insert($prompt + [
+                'chatmsgid' => $question->id, 'msgid' => $msg->id, 'msgids' => json_encode([$msg->id]), 'userid' => $replier->id,
+                'heldchatmsgid' => $reply->id, 'kind' => 'confirm_reply', 'options' => '[]',
+                'created_at' => $this->date.' 10:00:00', 'expires_at' => now()->addDays(3),
+            ]);
+        };
+        $make([], 1);                                                                                              // the question is open
+        $make(['answer' => 'no', 'answered_via' => 'button', 'answered_at' => $this->date.' 11:00:00'], 2);       // refused
+        $make(['answer' => 'yes', 'answered_via' => 'button', 'answered_at' => $this->date.' 11:00:00'], 3);      // released
+
+        $this->service->generate($group->id, $this->date);
+
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 1);
     }
 
     public function test_replies_excludes_senders_on_the_spammer_list(): void
@@ -761,7 +795,7 @@ class StatsGenerationServiceTest extends TestCase
 
         return array_values(array_filter(
             array_map(fn ($q) => $q['query'], $log),
-            fn ($sql) => str_contains($sql, 'items i ON i.name = bi.name')
+            fn ($sql) => str_contains($sql, '`i`.`name` = `bi`.`name`')
         ));
     }
 
@@ -786,7 +820,7 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertNotEmpty($joins, 'Expected the daily context to run the items-by-name join');
         foreach ($joins as $sql) {
             $this->assertStringContainsString(
-                'i.name = bi.name COLLATE utf8mb4_unicode_ci',
+                '`i`.`name` = `bi`.`name` COLLATE utf8mb4_unicode_ci',
                 $sql,
                 'items-by-name join must force utf8mb4_unicode_ci to match items.name'
             );
@@ -816,10 +850,48 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertNotEmpty($joins, 'Expected weight regeneration to run the items-by-name join');
         foreach ($joins as $sql) {
             $this->assertStringContainsString(
-                'i.name = bi.name COLLATE utf8mb4_unicode_ci',
+                '`i`.`name` = `bi`.`name` COLLATE utf8mb4_unicode_ci',
                 $sql,
                 'items-by-name join must force utf8mb4_unicode_ci to match items.name'
             );
         }
+    }
+
+    /**
+     * The connection is not strict, so a type missing from the stats.type ENUM
+     * is stored as '' with no error. OurPostingBreakdown was written that way
+     * from 2015 to 2026. Every type the generator writes must be a legal value.
+     */
+    public function test_every_generated_type_is_a_legal_stats_type_value(): void
+    {
+        $column = DB::selectOne(
+            "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stats' AND COLUMN_NAME = 'type'"
+        );
+        preg_match_all("/'([^']+)'/", $column->t, $m);
+        $allowed = $m[1];
+
+        $constants = (new \ReflectionClass(StatsGenerationService::class))->getConstants();
+        foreach ($constants as $name => $value) {
+            if (str_starts_with($name, 'TYPE_')) {
+                $this->assertContains($value, $allowed, "{$name} = '{$value}' is not in the stats.type ENUM and would be stored as ''");
+            }
+        }
+    }
+
+    public function test_our_posting_breakdown_is_stored_under_its_own_type(): void
+    {
+        $group = $this->createTestGroup();
+        $u1 = $this->createTestUser();
+        $u2 = $this->createTestUser();
+        DB::table('memberships')->insert([
+            ['userid' => $u1->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'ourPostingStatus' => 'MODERATED'],
+            ['userid' => $u2->id, 'groupid' => $group->id, 'collection' => Membership::COLLECTION_APPROVED, 'role' => Membership::ROLE_MEMBER, 'ourPostingStatus' => 'DEFAULT'],
+        ]);
+
+        $this->service->generate($group->id, $this->date);
+
+        $this->assertBreakdown($group->id, StatsGenerationService::TYPE_OUR_POSTING_BREAKDOWN, ['MODERATED' => 1, 'DEFAULT' => 1]);
+        $this->assertSame(0, DB::table('stats')->where('groupid', $group->id)->where('type', '')->count());
     }
 }

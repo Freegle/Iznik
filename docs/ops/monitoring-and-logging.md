@@ -1,10 +1,12 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-10-16
 owner: Freegle dev team
 covers:
   - docs/ops/reference/logging.md
   - iznik-nuxt3/modtools/components/ModStatus.vue
   - iznik-batch/app/Monitoring/PlatformStatusWriter.php
+  - iznik-batch/app/Console/Commands/Monitor/ApiBackupTrafficCommand.php
+  - iznik-batch/app/Console/Commands/Monitor/ChatRosterCommand.php
 ---
 
 # Monitoring and logging
@@ -49,6 +51,12 @@ at all. Click it and a **Platform Status** panel opens listing what is wrong.
 The panel headline reads **Not sure** if the browser has not had an answer for ten
 minutes, which means the API itself is unreachable rather than that it reported a problem.
 
+A [lockdown](runbooks/lockdown.md) turns this dot red too, for everyone, the same as a
+platform fault, because it is one. It sits alongside the separate red banner that
+appears on every ModTools page while a lockdown is on (see
+[Getting started](../moderators/getting-started.md)); the dot is the general "something
+is wrong" signal, the banner names the specific incident.
+
 What feeds it matters, because it decides what the dot can and cannot tell you:
 
 - Laravel's `monitor:scheduled-outcomes` runs every ten minutes. It does not ask whether
@@ -76,6 +84,41 @@ see [Domains, services and runbooks](domains-services-and-runbooks.md).
 **Sentry** captures application errors. The **monitor-fsm** (see `monitor-fsm/README.md`)
 scans unresolved Sentry issues each iteration and can propose fixes for recurring issues as
 pull requests for a human to review.
+
+### Members' API requests on a backup node
+
+The load balancer sends every API request to one active apiv2 node and uses the others only
+as backups while it is down. A backup that goes on serving members after the active node is
+back raises no error anywhere: everything works, but the backup is also the database read
+node and carries load it should not.
+
+`monitor:api-backup-traffic` looks for that every night at 05:40. It counts, from Loki, the
+requests each node served in each hour of the previous day, leaving out the nodes' own health
+checks, and takes the busiest node to be the active one. It raises a Sentry error when another
+node served more than a tenth of any hour's requests. A restart's failover lasts a minute or
+two and stays well under that; clients held on a backup for hours do not. The error names the
+node, the hours and the peak share. The first place to look is the load balancer's stick rules
+for the API backend, which should only ever pin a client to the active node.
+
+The whole day is checked because pinned clients drift back by themselves overnight, so a
+night-only window would miss a pin-up after a daytime deploy. If Loki cannot be queried, or
+holds no API traffic for the day, that is reported as an error too rather than as a pass.
+
+### Chat participants who are never emailed
+
+The chat mailer only emails people who have a row in `chat_roster` for the room, and
+marking a chat read only updates an existing row. A participant without one sees messages
+arrive in the chat but never gets an email, and their read state never sticks. Nothing
+reports it: old account merges left thousands of rooms like that, found only when a member
+asked why they had not been emailed.
+
+`monitor:chat-roster` looks for that every night at 05:45. It takes every member chat with a
+message in the last two days and raises a Sentry error for any live participant with no
+roster row: both members of a member-to-member chat, and the member of a chat with
+moderators (moderators are added to that roster when they are mailed). The error counts them
+and names up to ten rooms and users. Look first at whatever creates or moves rooms, such as
+account merges, for a path that leaves the roster behind. No member chat at all in two days
+is reported as an error too, not a pass.
 
 ## Development and test visibility: the status dashboard
 

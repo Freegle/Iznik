@@ -12,7 +12,12 @@ const {
   DEFAULT_TEST_PASSWORD,
 } = require('./config')
 const logger = require('./logger')
-const { logoutIfLoggedIn } = require('./utils/user')
+const { logoutIfLoggedIn, loginViaModTools } = require('./utils/user')
+const {
+  trackFailedLoads,
+  waitForAppMount,
+  noteRecovery,
+} = require('./utils/app-mount')
 
 const NUXT_TEST_UTILS_AVAILABLE = (() => {
   try {
@@ -103,10 +108,246 @@ const generateUniqueTestEmail = (prefix = 'test') => {
   return email
 }
 
+// The Android app project (playwright.config.js 'app'): scripts/app-e2e/run.sh in
+// FreegleDocker boots an emulator, installs the e2e build of the app and sets these.
+// There is no browser to launch; the fixtures attach to the app's WebView over CDP
+// through Playwright's Android support, and every test starts from the app's own
+// origin with its web storage wiped.
+const APP_SERIAL = process.env.APP_E2E_SERIAL
+const APP_PACKAGE = process.env.APP_E2E_PACKAGE || 'org.ilovefreegle.direct'
+const APP_ACTIVITY = process.env.APP_E2E_ACTIVITY || '.MainActivity'
+const APP_ORIGIN = (process.env.APP_E2E_ORIGIN || '').replace(/\/$/, '')
+const APP_MODE = !!APP_SERIAL
+
+// Console errors only the Android WebView produces. They are allowed in the app project
+// alone, so the browser suite still fails on them.
+const APP_ALLOWED_ERROR_PATTERNS = [
+  /Failed to load resource: net::ERR_FAILED.*delivery\.localhost/, // The test env's missing image (a 404 in Chromium), as the WebView reports it.
+  /Failed to load resource: the server responded with a status of 400.*delivery\.localhost/, // The same missing image: on the CI stack (port 9080) the delivery service answers 400 when it cannot fetch the original.
+  /Failed to load resource: net::ERR_FAILED.*\/api\/scrolldepth/, // useScrollDepth's sendBeacon on visibilitychange, cancelled when the fixture reloads the app between tests; fire-and-forget by design.
+  /Failed to save credentials.*does not support public key credentials/, // The WebView's wording of the credential errors allowed below.
+  /NotSupportedError: The user agent does not support public key credentials/,
+]
+
+async function connectAppWebView() {
+  if (!APP_ORIGIN) {
+    throw new Error('APP_E2E_ORIGIN must be set with APP_E2E_SERIAL')
+  }
+  const { _android: android } = require('playwright')
+  const findDevice = async (waitMs) => {
+    // A loaded machine can make the adb server drop the emulator for a few seconds
+    // before its port scan finds it again (scripts/app-e2e/lib.sh); wait for it.
+    const deadline = Date.now() + waitMs
+    for (;;) {
+      const devices = await android.devices({
+        port: Number(process.env.ANDROID_ADB_SERVER_PORT) || 5037,
+      })
+      const found = devices.find((d) => d.serial() === APP_SERIAL)
+      if (found || Date.now() >= deadline) {
+        return { device: found || null, devices }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+    }
+  }
+  let { device, devices } = await findDevice(30000)
+  if (!device) {
+    // The emulator itself has gone: its software renderer has been seen to segfault
+    // between tests ("RenderThread: potentially unexpected fatal signal 11"). Boot it
+    // again and relaunch the app, so the rest of the run goes on; the test that was
+    // running when it died is retried (the app project has one retry).
+    const scripts = path.join(__dirname, '../../../scripts/app-e2e')
+    console.log(
+      `[RECOVERED] emulator: ${APP_SERIAL} is gone (attached: ${devices
+        .map((d) => d.serial())
+        .join(', ')}); booting it again`
+    )
+    require('child_process').execFileSync(
+      'bash',
+      [
+        '-c',
+        `bash "${scripts}/start-emulator.sh" && bash "${scripts}/launch-app.sh" >/dev/null`,
+      ],
+      { stdio: 'inherit', timeout: 600000 }
+    )
+    ;({ device, devices } = await findDevice(60000))
+  }
+  if (!device) {
+    throw new Error(
+      `Android device ${APP_SERIAL} not found (attached: ${devices
+        .map((d) => d.serial())
+        .join(', ')})`
+    )
+  }
+  device.setDefaultTimeout(timeouts.navigation.initial)
+  // The WebView is chosen by its devtools socket, named after the app's pid, never by
+  // package: Playwright works out a WebView's package from the last line of
+  // `ps -A | grep <pid>`, which any process whose figures contain those digits can
+  // win, and then a WebView that is there is never matched (CI job 39427).
+  //
+  // The activity is brought up first: Android kills the app when a Play services
+  // process it depends on dies ("depends on provider ... FontsProvider in dying proc",
+  // a just-booted CI emulator), then restarts it for a push-plugin broadcast with no
+  // activity, so no WebView and nothing to attach to (CI job 39434).
+  const attachToRunningApp = async () => {
+    const deadline = Date.now() + 120000
+    for (;;) {
+      await device.shell(`am start -W -n ${APP_PACKAGE}/${APP_ACTIVITY}`)
+      const appPid = parseInt(
+        String(await device.shell(`pidof ${APP_PACKAGE}`)).trim(),
+        10
+      )
+      const sockets = appPid
+        ? String(await device.shell('cat /proc/net/unix'))
+        : ''
+      if (appPid && sockets.includes(`webview_devtools_remote_${appPid}`)) {
+        const webView = await device.webView({
+          socketName: `webview_devtools_remote_${appPid}`,
+        })
+        return { webView, page: await webView.page(), appPid }
+      }
+      if (Date.now() > deadline) {
+        throw new Error(
+          `${APP_PACKAGE} did not come up with a WebView (pid ${appPid || 'none'})`
+        )
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+    }
+  }
+  const first = await attachToRunningApp()
+  console.log(
+    `Attached to ${APP_PACKAGE} WebView (pid ${first.appPid}) on ${APP_SERIAL}: ${first.page.url()}`
+  )
+  const attached = { device, webView: first.webView, page: first.page }
+  // After a test kills the app (a cold start), attach to the new process's WebView;
+  // its socket carries the new pid, so the old one cannot answer instead.
+  attached.reattach = async () => {
+    const next = await attachToRunningApp()
+    attached.webView = next.webView
+    attached.page = next.page
+    console.log(`Re-attached to ${APP_PACKAGE} WebView (pid ${next.appPid})`)
+    return attached.page
+  }
+  return attached
+}
+
+// A fresh start for each test without a new context: the WebView is the only page the
+// app has. Everything the previous test left in web storage goes, then the app reloads
+// from its origin, which re-runs its startup (Capacitor bridge, plugin listeners).
+async function resetAppState(page) {
+  if (!page.url().startsWith(APP_ORIGIN)) {
+    await page.goto(APP_ORIGIN + '/', {
+      waitUntil: 'domcontentloaded',
+      timeout: timeouts.navigation.initial,
+    })
+  }
+  await page.evaluate(async () => {
+    try {
+      localStorage.clear()
+      sessionStorage.clear()
+    } catch {}
+    // The app also keeps the session in Block Store (Google Play services) and
+    // restores it when web storage is empty: a logout clears it, so does a reset.
+    try {
+      const blockStore = window.Capacitor?.Plugins?.BlockStore
+      if (blockStore) {
+        await blockStore.clearSession()
+      }
+    } catch {}
+    try {
+      const dbs = await indexedDB.databases()
+      await Promise.all(
+        dbs.map(
+          (db) =>
+            new Promise((resolve) => {
+              const req = indexedDB.deleteDatabase(db.name)
+              req.onsuccess = req.onerror = req.onblocked = () => resolve()
+            })
+        )
+      )
+    } catch {}
+  })
+  await page
+    .context()
+    .clearCookies()
+    .catch(() => {})
+  // domcontentloaded comes before Vue mounts; a test that reads the app straight away
+  // (its Pinia store, say) would find nothing there yet.
+  const navigatedAt = Date.now()
+  await page.goto(APP_ORIGIN + '/', {
+    waitUntil: 'domcontentloaded',
+    timeout: timeouts.navigation.initial,
+  })
+  await waitForAppMount(page, '/', navigatedAt)
+}
+
+// Opening a page takes well under a second, but Chromium has been seen to leave
+// newPage() unanswered until the ten-minute test timeout, before any of our code runs.
+// Bound it and ask once more; the retry is reported as a recovery, so a run where it
+// happens says so. A first page that turns up late is closed.
+async function newPageWithRetry(context) {
+  const NEW_PAGE_WAIT = 60000
+  const first = context.newPage()
+  let timer
+  let page = await Promise.race([
+    first,
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), NEW_PAGE_WAIT)
+    }),
+  ])
+  clearTimeout(timer)
+  if (!page) {
+    noteRecovery(
+      'new-page',
+      `context.newPage() unanswered after ${NEW_PAGE_WAIT / 1000}s, asked again`
+    )
+    first.then((late) => late.close()).catch(() => {})
+    page = await context.newPage()
+  }
+  return page
+}
+
 // Define a custom test function that wraps the base test to add automatic screenshot capture
-const test = base.test.extend({
+const fixtures = {
+  // The app's WebView for the whole worker, null for the browser projects.
+  appWebView: [
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, use) => {
+      if (!APP_MODE) {
+        await use(null)
+        return
+      }
+      const attached = await connectAppWebView()
+      await use(attached)
+      await attached.device.close().catch(() => {})
+    },
+    { scope: 'worker' },
+  ],
+
   // Create a new isolated context for each test
-  context: async ({ browser }, use) => {
+  context: async ({ browser, appWebView }, use) => {
+    if (appWebView) {
+      // An earlier test may have killed the app (a cold start); start from the
+      // WebView that is there now.
+      if (appWebView.page.isClosed()) {
+        await appWebView.reattach()
+      }
+      try {
+        await resetAppState(appWebView.page)
+      } catch (e) {
+        // The page can also close under the reset itself, with the app still running:
+        // seen after a stalled emulator restarted systemui, which changes the screen
+        // size. Attach to the page there now and reset that.
+        if (!appWebView.page.isClosed()) throw e
+        noteRecovery(
+          'app-webview-closed',
+          `the app WebView closed during the reset (${e.message.split('\n')[0]}), re-attached`
+        )
+        await appWebView.reattach()
+        await resetAppState(appWebView.page)
+      }
+      await use(appWebView.page.context())
+      return
+    }
     // Create a fresh context for this test with explicitly empty storage
     // This ensures no localStorage/sessionStorage/cookies leak between tests
     const context = await browser.newContext({
@@ -240,14 +481,33 @@ const test = base.test.extend({
   ],
 
   // Override the page fixture to use our isolated context
-  page: async ({ context }, use, testInfo) => {
-    // Create a page in our isolated context
-    const page = await context.newPage()
-    console.log(`Created new page in isolated context`)
+  page: async ({ context, appWebView }, use, testInfo) => {
+    let page
+    if (appWebView) {
+      // The app's one page, already reset by the context fixture. Relative paths
+      // resolve against the app's origin, as baseURL would for a context of our own.
+      page = appWebView.page
+      const rawGoto = page.goto.bind(page)
+      page.goto = (url, options) =>
+        rawGoto(
+          /^[a-z]+:/i.test(url) ? url : new URL(url, APP_ORIGIN + '/').href,
+          options
+        )
+      console.log(`Using the app WebView page at ${page.url()}`)
+    } else {
+      page = await newPageWithRetry(context)
+      console.log(`Created new page in isolated context`)
+    }
 
-    // Enable coverage collection only in Chromium
+    // From the first request: a lost script chunk is what gotoAndVerify
+    // reloads for (see utils/app-mount.js).
+    trackFailedLoads(page)
+
+    // Enable coverage collection only in Chromium. Not in the app: the WebView's
+    // script URLs are the bundle's own, which the coverage reporter cannot map back
+    // to sources, and the project's coverage comes from the browser run.
     let coverageStarted = false
-    if (context.browser().browserType().name() === 'chromium') {
+    if (!appWebView && context.browser().browserType().name() === 'chromium') {
       try {
         await Promise.all([
           page.coverage.startJSCoverage({
@@ -261,6 +521,85 @@ const test = base.test.extend({
         console.log('Coverage collection started')
       } catch (error) {
         console.warn('Failed to start coverage collection:', error.message)
+      }
+    }
+
+    // Playwright reads JS coverage once, when it is stopped, and V8 reports
+    // only the scripts it still holds. A page left by a hard navigation keeps
+    // its coverage until garbage collection runs, so a file's covered lines
+    // moved from run to run with nothing changed (GroupSelect 20 or 1 of 26,
+    // ModYesterday 23 or 0 of 25). Flush before each test-driven navigation:
+    // stop, hand the entries to the reporter, start again.
+    const flushCoverage = async (reason) => {
+      if (!coverageStarted) return
+      let stopped = false
+      try {
+        const result = await Promise.race([
+          Promise.all([
+            page.coverage.stopJSCoverage(),
+            page.coverage.stopCSSCoverage(),
+          ]),
+          new Promise((resolve) => setTimeout(resolve, 10000)),
+        ])
+        if (!Array.isArray(result)) {
+          // Still running: leave it to the end-of-test collection.
+          console.warn(`Coverage flush before ${reason} timed out`)
+          return
+        }
+        stopped = true
+        const [jsCoverage, cssCoverage] = result
+        const coverage = [...jsCoverage, ...cssCoverage]
+        if (coverage.length > 0) {
+          await addCoverageReport(coverage, test.info())
+        }
+      } catch (error) {
+        console.warn(`Coverage flush before ${reason} failed:`, error.message)
+        if (!stopped) return
+      }
+      try {
+        await Promise.all([
+          page.coverage.startJSCoverage({ resetOnNavigation: false }),
+          page.coverage.startCSSCoverage({ resetOnNavigation: false }),
+        ])
+      } catch (error) {
+        coverageStarted = false
+        console.warn('Coverage could not restart:', error.message)
+      }
+    }
+    for (const method of ['goto', 'reload']) {
+      const original = page[method].bind(page)
+      page[method] = async (...args) => {
+        await flushCoverage(method)
+        return original(...args)
+      }
+    }
+
+    // Google's sign-in script throws inside its own callbacks when Google's service answers it
+    // with an error (seen as "Error: pa" after a 400 from accounts.google.com). That is no fault
+    // of ours, and it failed whichever spec was collecting page errors at that moment. A spec's
+    // pageerror listener never sees an error whose top stack frame is in that script; one thrown
+    // by our code, even when Google's script called it, still reaches it.
+    const isGoogleSignInError = (error) => {
+      const topFrame = (error?.stack || '')
+        .split('\n')
+        .find((line) => /^\s*at /.test(line))
+      return /accounts\.google\.com\/gsi\//.test(topFrame || '')
+    }
+    for (const method of ['on', 'once', 'addListener']) {
+      const original = page[method].bind(page)
+      page[method] = (event, listener) => {
+        if (event !== 'pageerror') {
+          return original(event, listener)
+        }
+        return original(event, (error) => {
+          if (isGoogleSignInError(error)) {
+            console.log(
+              `[page error from Google sign-in, ignored] ${error.message}`
+            )
+            return
+          }
+          return listener(error)
+        })
       }
     }
 
@@ -319,6 +658,16 @@ const test = base.test.extend({
       /\[Exc?eption for Sentry\]:.*TypeError: Cannot read properties of undefined \(reading '_leaflet_pos'\)/, // Sentry capturing leaflet errors
       /\[Exc?eption for Sentry\]:.*\(Error: \w+\)/, // Sentry capturing minified errors (e.g., "Error: oa")
       /accounts\.google\.com\/gsi/, // Google authentication/sign-in errors in test
+      // LoginModal.vue reports to Sentry when Google's own script has not
+      // drawn its button 21 seconds after the modal opened (GOOGLE_WAIT_MS
+      // plus four draw checks). In Docker that script arrives late or not at
+      // all, so a login modal left open under load trips it. Nothing of ours
+      // is involved, as with the FedCM and gstatic entries around this one.
+      // The report itself is tested where it can be controlled: the "Google
+      // button" tests in tests/unit/components/LoginModal.spec.js check that it
+      // fires, that it waits while the script is loading, and that closing the
+      // modal stops it.
+      /\[Exc?eption for Sentry\]:.*Google sign-in button did not draw/,
       /malformed JSON response:.*Error 400 \(Bad Request\)/, // Google API malformed JSON responses
       // CSP (Content Security Policy) violations - common in development/testing
       /Refused to apply inline style because it violates the following Content Security Policy directive/,
@@ -356,6 +705,10 @@ const test = base.test.extend({
       /Failed to load resource.*adtrafficquality\.google.*sodar/, // Google CSE script internally calls sodar (ad traffic quality) — external service, not our code
     ]
 
+    if (APP_MODE) {
+      originalAllowedErrorPatterns.push(...APP_ALLOWED_ERROR_PATTERNS)
+    }
+
     // Initialize the working copy of allowed error patterns
     const allowedErrorPatterns = [...originalAllowedErrorPatterns]
 
@@ -388,6 +741,23 @@ const test = base.test.extend({
       return allowedErrorPatterns.some((pattern) => pattern.test(errorText))
     }
 
+    // Put the page's own console in the test log. Until now only the postMessage
+    // fixture did, so a login that never completed left no trace of why: the
+    // errors, warnings, reloads, chunk failures and "Login failed" lines were
+    // all in the browser and nowhere else. Errors the suite already allows
+    // (Google and FedCM noise, several hundred a run) are left out.
+    page.on('console', (message) => {
+      const type = message.type()
+      const text = message.text()
+      const interesting =
+        type === 'warning' ||
+        /reload|chunk|Login failed/i.test(text) ||
+        (type === 'error' && !isAllowedError(text))
+      if (interesting) {
+        console.log(`[page console ${type}] ${text.substring(0, 500)}`)
+      }
+    })
+
     // Track console errors and fail immediately on critical ones
     page.on('console', async (message) => {
       if (message.type() === 'error') {
@@ -402,10 +772,14 @@ const test = base.test.extend({
           fullErrorText += ` (at ${locationStr})`
         }
 
-        // Try to extract stack trace from console arguments
+        // Try to extract stack trace from console arguments. Only worth the
+        // two round trips into the renderer when the error is one that will
+        // fail the test: the stack goes into that failure message and
+        // nowhere else, and the allowed Google/FedCM noise alone is several
+        // hundred errors a run.
         let stackTrace = ''
         try {
-          const args = message.args()
+          const args = isAllowedError(fullErrorText) ? [] : message.args()
           if (args.length > 0) {
             // Look for Error objects in the arguments that might contain stack traces
             for (const arg of args) {
@@ -704,6 +1078,7 @@ const test = base.test.extend({
           // Default 'load' waits for all resources; 'domcontentloaded' is faster
           // for pages with external resources (e.g., Stripe, PayPal) that may be slow in CI.
           failStep = 'page.goto'
+          const navigatedAt = Date.now()
           await page.goto(path, { timeout, waitUntil })
           console.log(`[gotoAndVerify] page.goto done for ${path}`)
 
@@ -724,6 +1099,18 @@ const test = base.test.extend({
           await base.expect(body).toBeVisible({
             timeout: Math.min(timeout, 30000),
           })
+
+          // Wait for the client app to have mounted, which is the point by
+          // which the route's own chunk has been imported and run. A test
+          // that only loads a page and checks its title would otherwise end,
+          // and stop coverage, before hydration reached that chunk, and the
+          // page's source file then appears in the coverage report on some
+          // runs and not others. A page that lost a script chunk during the
+          // load never mounts; this reloads it once and otherwise fails here,
+          // naming the lost URLs, rather than carrying on to selector waits
+          // that cannot succeed (see utils/app-mount.js).
+          failStep = 'hydration'
+          await waitForAppMount(page, path, navigatedAt)
 
           // Check if page contains error messages
           failStep = 'content-check'
@@ -826,17 +1213,21 @@ const test = base.test.extend({
             )
           }
 
-          // Check if it's a retryable connection/navigation error
+          // Check if it's a retryable connection/navigation error. A page
+          // that did not mount has already had its one reload, and its
+          // message names the lost loads, so it is not retried again here
+          // whatever error text it quotes.
           const isRetryable =
-            error.message.includes('ERR_CONNECTION_RESET') ||
-            error.message.includes('ERR_SOCKET_NOT_CONNECTED') ||
-            error.message.includes('ERR_NETWORK_CHANGED') ||
-            error.message.includes('net::ERR_') ||
-            error.message.includes('Execution context was destroyed') ||
-            error.message.includes('is interrupted by another navigation') ||
-            error.message.includes(
-              'Target page, context or browser has been closed'
-            )
+            !error.message.startsWith('App did not mount') &&
+            (error.message.includes('ERR_CONNECTION_RESET') ||
+              error.message.includes('ERR_SOCKET_NOT_CONNECTED') ||
+              error.message.includes('ERR_NETWORK_CHANGED') ||
+              error.message.includes('net::ERR_') ||
+              error.message.includes('Execution context was destroyed') ||
+              error.message.includes('is interrupted by another navigation') ||
+              error.message.includes(
+                'Target page, context or browser has been closed'
+              ))
 
           if (isRetryable && attempt < maxRetries) {
             console.log(
@@ -992,9 +1383,18 @@ const test = base.test.extend({
       level: 'normal',
     })
 
-    // Ensure user is logged out at the start of each test (after all methods are set up)
-    await logoutIfLoggedIn(loggingPage)
-    console.log('Ensured user is logged out for fresh test state')
+    // Every test gets a brand-new context with no cookies and empty storage
+    // (see the context fixture above), so nobody is signed in and there is no
+    // app page open yet. Do not call logoutIfLoggedIn() here: on about:blank
+    // it waits its full ten seconds for a logout button that cannot exist and
+    // then loads the homepage, and across 205 tests that was 36 of the 80
+    // minutes of test time in a profiled run. The one thing it did for the
+    // test is kept: in-flight requests can still answer 401 while a test
+    // signs in and out, and specs are written against that being allowed.
+    page.addAllowedErrorPattern(
+      /Failed to load resource: the server responded with a status of 401/
+    )
+    console.log('Fresh context, nobody signed in')
 
     // Freeze-detection heartbeat. Sends a trivial page.evaluate() every 8s with a
     // 35s timeout. If the renderer stops responding the spec file is appended to
@@ -1042,9 +1442,12 @@ const test = base.test.extend({
           try {
             fs.appendFileSync(FREEZE_SPECS_FILE, testInfo.file + '\n')
           } catch {}
-          try {
-            await page.close()
-          } catch {}
+          // The app's WebView is its only page; closing it would close the app.
+          if (!appWebView) {
+            try {
+              await page.close()
+            } catch {}
+          }
         }
       } finally {
         heartbeatBusy = false
@@ -1130,7 +1533,52 @@ const test = base.test.extend({
       await performTeardown()
     }
   },
-})
+}
+
+if (APP_MODE) {
+  // The app's WebView is the page under test, but a flow with a second member (the
+  // reply fixtures open a fresh context for them) needs a browser: a headless
+  // Chromium against the web front end, which run.sh names in TEST_BASE_URL. It is
+  // launched on first use, so a worker that never needs it never pays for it.
+  fixtures.browser = [
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, use) => {
+      const { chromium } = require('playwright')
+      let launched = null
+      const launch = async () => {
+        if (!launched) {
+          launched = await chromium.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+          })
+        }
+        return launched
+      }
+      const webBaseURL =
+        process.env.TEST_BASE_URL || 'http://freegle-prod-local.localhost'
+      const proxy = {
+        newContext: async (options = {}) => {
+          const b = await launch()
+          return b.newContext({
+            baseURL: webBaseURL,
+            ignoreHTTPSErrors: true,
+            ...options,
+          })
+        },
+        browserType: () => chromium,
+        contexts: () => (launched ? launched.contexts() : []),
+        close: async () => {
+          if (launched) await launched.close()
+        },
+      }
+      await use(proxy)
+      await proxy.close().catch(() => {})
+    },
+    { scope: 'worker' },
+  ]
+}
+
+const test = base.test.extend(fixtures)
 
 // Add a global hook to cleanup screenshots after all tests
 test.afterAll(async () => {
@@ -1171,13 +1619,43 @@ const testWithFixtures = test.extend({
         throw new Error('Email is required for posting a message')
       }
 
-      if (mobile && type.toLowerCase() === 'wanted') {
-        // Mobile ask flow: /ask/mobile/photos → skip → /ask/mobile/details → /ask/mobile/whereami
-        await page.gotoAndVerify('/ask/mobile/photos', {
+      // The mobile flow is asked for (mobile: true) or arrived at: /give and /ask send a
+      // phone-sized screen (the app, or a mobile viewport) to /<type>/mobile/photos.
+      let mobileFlow = mobile
+      const mobileBase =
+        type.toLowerCase() === 'wanted' ? '/ask/mobile' : '/give/mobile'
+      const desktopItemInput = page.locator(
+        '[id^="what"], .type-input, input[placeholder*="give"]'
+      )
+      if (!mobileFlow) {
+        // Navigate to the correct page based on type
+        const startPath = type.toLowerCase() === 'wanted' ? '/ask' : '/give'
+        await page.gotoAndVerify(startPath, {
           timeout: timeouts.navigation.initial,
           waitUntil: 'domcontentloaded',
           maxRetries: 1,
         })
+        await Promise.race([
+          desktopItemInput
+            .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+            .catch(() => {}),
+          page
+            .waitForURL(/\/mobile\/photos/, { timeout: timeouts.ui.appearance })
+            .catch(() => {}),
+        ])
+        mobileFlow = /\/mobile\/photos/.test(page.url())
+      }
+
+      if (mobileFlow) {
+        // Mobile flow: /<type>/mobile/photos → skip → details → (give: options) →
+        // whereami, which has postcode, email and the submit button on one page.
+        if (!page.url().includes(`${mobileBase}/photos`)) {
+          await page.gotoAndVerify(`${mobileBase}/photos`, {
+            timeout: timeouts.navigation.initial,
+            waitUntil: 'domcontentloaded',
+            maxRetries: 1,
+          })
+        }
 
         // Skip the photo upload step
         const skipLink = page.locator('button').filter({ hasText: /skip/i })
@@ -1188,7 +1666,7 @@ const testWithFixtures = test.extend({
         await skipLink.click()
 
         // Fill item and description on the details page
-        await page.waitForURL(/\/ask\/mobile\/details/, {
+        await page.waitForURL(new RegExp(`${mobileBase}/details`), {
           timeout: timeouts.navigation.default,
         })
 
@@ -1202,7 +1680,7 @@ const testWithFixtures = test.extend({
         const mobileDescInput = page.locator('#description')
         await mobileDescInput.fill(description)
 
-        // Click Next to proceed to whereami (postcode + email + submit on one page)
+        // Click Next to proceed (ask: whereami; give: options, then whereami)
         const mobileNextBtn = page.locator('button.btn', { hasText: 'Next' })
         await mobileNextBtn.waitFor({
           state: 'visible',
@@ -1210,7 +1688,45 @@ const testWithFixtures = test.extend({
         })
         await mobileNextBtn.click()
 
-        await page.waitForURL(/\/ask\/mobile\/whereami/, {
+        if (type.toLowerCase() !== 'wanted') {
+          // Options page: delivery "Maybe" (the UX telemetry spec expects that one choice), no
+          // deadline unless one is asked for.
+          await page.waitForURL(/\/give\/mobile\/options/, {
+            timeout: timeouts.navigation.default,
+          })
+          const maybeDelivery = page.locator('.toggle-btn:has-text("Maybe")')
+          await maybeDelivery.waitFor({
+            state: 'visible',
+            timeout: timeouts.ui.appearance,
+          })
+          await maybeDelivery.click()
+          if (deadline) {
+            const setDeadlineButton = page.locator(
+              '.toggle-btn:has-text("Set deadline")'
+            )
+            await setDeadlineButton.waitFor({
+              state: 'visible',
+              timeout: timeouts.ui.appearance,
+            })
+            await setDeadlineButton.click()
+            const deadlineInput = page.locator('input[type="date"]').first()
+            await deadlineInput.waitFor({
+              state: 'visible',
+              timeout: timeouts.ui.appearance,
+            })
+            await deadlineInput.fill(deadline)
+          }
+          const optionsNext = page
+            .locator('button.w-100')
+            .filter({ hasText: 'Next' })
+          await optionsNext.waitFor({
+            state: 'visible',
+            timeout: timeouts.ui.appearance,
+          })
+          await optionsNext.click()
+        }
+
+        await page.waitForURL(new RegExp(`${mobileBase}/whereami`), {
           timeout: timeouts.navigation.default,
         })
 
@@ -1218,22 +1734,12 @@ const testWithFixtures = test.extend({
         // fall through to the shared postcode-entry code below, skipping the
         // desktop-only second "Next" and whoami navigation.
       } else {
-        // Navigate to the correct page based on type
-        const startPath = type.toLowerCase() === 'wanted' ? '/ask' : '/give'
-        await page.gotoAndVerify(startPath, {
-          timeout: timeouts.navigation.initial,
-          waitUntil: 'domcontentloaded',
-          maxRetries: 1,
-        })
-
         // Verify we're on the correct page
         const pageTitle = await page.title()
         base.expect(pageTitle).toContain(type.toUpperCase())
 
         // Fill in the item type using fill() — triggers Vue v-model via input event
-        const itemInput = page.locator(
-          '[id^="what"], .type-input, input[placeholder*="give"]'
-        )
+        const itemInput = desktopItemInput
         await itemInput.click()
         await itemInput.fill(item)
 
@@ -1318,13 +1824,13 @@ const testWithFixtures = test.extend({
 
       // Desktop only: click Next to advance from whereami to whoami/options page.
       // Mobile flow has postcode, email, and submit all on one page — no Next click needed.
-      if (!mobile) {
+      if (!mobileFlow) {
         await page.locator('.next-btn:has-text("Next")').click()
       }
 
       // For OFFER posts, handle the /give/options page (delivery and deadline options)
       // WANTED posts go directly to whoami (no options page)
-      if (!mobile && type.toUpperCase() === 'OFFER') {
+      if (!mobileFlow && type.toUpperCase() === 'OFFER') {
         console.log(
           'Handling /give/options page - inline deadline and delivery options'
         )
@@ -1388,20 +1894,40 @@ const testWithFixtures = test.extend({
       const emailInput = page
         .locator('input[name="email"], input.email, input[type="email"]')
         .first()
+      // The mobile whereami page shows no email section at all to a signed-in
+      // member: its submit button simply becomes available.
+      const mobileSubmitReady = page
+        .locator('button:has-text("Freegle it!")')
+        .first()
 
-      // Race between the two possible states
-      const winner = await Promise.race([
-        loggedInEmailDisplay
+      // Wait once for whichever of the states renders. On desktop they are a
+      // v-if/v-else pair in PostLoggedInEmail.vue, so only one ever exists.
+      // Two racing waitFor() calls would leave the loser polling the page in
+      // the background for its whole timeout after the winner had resolved.
+      let winner
+      try {
+        let candidates = loggedInEmailDisplay.or(emailInput)
+        if (mobileFlow) {
+          candidates = candidates.or(mobileSubmitReady)
+        }
+        await candidates
+          .filter({ visible: true })
+          .first()
           .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
-          .then(() => 'loggedIn')
-          .catch(() => null),
-        emailInput
-          .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
-          .then(() => 'notLoggedIn')
-          .catch(() => null),
-      ])
+        if (await loggedInEmailDisplay.isVisible()) {
+          winner = 'loggedIn'
+        } else if (await emailInput.isVisible()) {
+          winner = 'notLoggedIn'
+        } else {
+          winner = 'loggedInMobile'
+        }
+      } catch {
+        winner = null
+      }
 
-      if (winner === 'loggedIn') {
+      if (winner === 'loggedInMobile') {
+        console.log('Signed in on the mobile flow: no email to enter')
+      } else if (winner === 'loggedIn') {
         console.log('User is already logged in, skipping email input')
 
         // Assert that the displayed email matches the one passed to the function
@@ -1444,17 +1970,10 @@ const testWithFixtures = test.extend({
         )
       }
 
-      // Take a debug screenshot — bounded timeout prevents hang on unresponsive renderer
-      const emailScreenshotTimestamp = new Date()
-        .toISOString()
-        .replace(/[:.]/g, '-')
-      await page
-        .screenshot({
-          path: `playwright-screenshots/email-filled-${emailScreenshotTimestamp}.png`,
-          fullPage: true,
-          timeout: 10000,
-        })
-        .catch(() => {})
+      // No debug screenshot here: nothing reads it (the directory is cleared
+      // after a passing run and a failing test gets Playwright's own
+      // screenshot and trace), and a full-page capture under load cost up
+      // to a second per post.
 
       // Wait for validation to complete and the button to appear using web assertions
       console.log(
@@ -1654,17 +2173,9 @@ const testWithFixtures = test.extend({
 
       console.log('=== POST-SUBMISSION NAVIGATION DEBUG END ===')
 
-      // Take a screenshot of the success — bounded timeout prevents hang on unresponsive renderer
-      const screenshotTimestamp = new Date().toISOString().replace(/[:.]/g, '-')
-      await page
-        .screenshot({
-          path: `playwright-screenshots/item-post-success-${screenshotTimestamp}.png`,
-          fullPage: true,
-          timeout: 10000,
-        })
-        .catch(() => {})
-
-      // Check for the posted item
+      // Check for the posted item (no success screenshot: see the note above
+      // the email step; the full-page capture of /myposts averaged over a
+      // second and peaked at eight under load).
       // Look for the message card which uses .message-card class (with hyphen)
       const messageCard = page
         .locator(`.message-card:has-text("${item}")`)
@@ -1802,6 +2313,53 @@ const testWithFixtures = test.extend({
     await use(takeTimestampedScreenshot)
   },
 
+  // Approve a post as the admin test mod, through the Go API. A fresh member's
+  // post is Pending (message_submit.go: an auto-joined member has no posting
+  // status), so it never reaches the browse or explore lists for anyone else.
+  // A test that replies from a list has to approve its post first. Leaves the
+  // browser logged out on the Freegle site.
+  approvePost: async ({ page, testEnv }, use) => {
+    const approvePost = async (msgId) => {
+      if (!msgId) {
+        throw new Error('A message id is required to approve a post')
+      }
+      // The Freegle site and ModTools are different origins with their own
+      // stored logins. Log the poster out of the Freegle site first, or they
+      // are still signed in there afterwards and see their own post with no
+      // Reply button.
+      await logoutIfLoggedIn(page)
+      await loginViaModTools(page, testEnv.mod.email)
+      const jwt = await page.evaluate(() => {
+        const auth = JSON.parse(localStorage.getItem('auth') || '{}')
+        return auth?.auth?.jwt
+      })
+      if (!jwt) {
+        throw new Error('No JWT after ModTools login, cannot approve the post')
+      }
+      // Go router: POST /message with an action is the mod operation (not PATCH).
+      // Authorization is the raw JWT, no "Bearer " prefix. The id must be a JSON
+      // number: postMessage returns it as a string, and a quoted id fails the
+      // Go body parse with "Invalid request body".
+      const response = await page.request.post(
+        `${environment.apiV2BaseUrl}/message`,
+        {
+          data: { id: Number(msgId), action: 'Approve' },
+          headers: { Authorization: jwt },
+        }
+      )
+      if (!response.ok()) {
+        throw new Error(
+          `Approving post ${msgId} failed: ${response.status()} ${await response.text()}`
+        )
+      }
+      console.log(`[Approve] Post ${msgId} approved as ${testEnv.mod.email}`)
+      await logoutIfLoggedIn(page)
+      // Back to the Freegle site, signed out, for whatever the test does next.
+      await page.goto('/', { waitUntil: 'domcontentloaded' })
+    }
+    await use(approvePost)
+  },
+
   withdrawPost: async ({ page }, use) => {
     /**
      * Finds a post on the My Posts page and withdraws it
@@ -1810,7 +2368,7 @@ const testWithFixtures = test.extend({
      * @returns {Promise<boolean>} - True if post was withdrawn successfully
      */
     const withdrawPost = async (options) => {
-      const { item } = options
+      const { item, expectReplies } = options
 
       if (!item) {
         throw new Error('Item text is required for withdrawing a post')
@@ -1838,13 +2396,31 @@ const testWithFixtures = test.extend({
           `Post card for "${item}" is visible, proceeding with withdrawal`
         )
 
+        // A reply-flow test knows how many replies the poster should see.
+        // Check it here: the replies header is what proves the reply reached
+        // the poster, and MyMessage's reply code only runs once it renders.
+        if (expectReplies) {
+          await base
+            .expect(postCard.locator('.replies-count'))
+            .toHaveText(
+              new RegExp(`^\\s*${expectReplies}\\s+repl(y|ies)\\s*$`),
+              { timeout: timeouts.api.default }
+            )
+          await base
+            .expect(postCard.locator('.reply-avatar').first())
+            .toBeVisible({ timeout: timeouts.ui.appearance })
+        }
+
         // Look for the withdraw button within the post card
         // Note: MyMessage.vue uses .action-btn class, not .btn
         console.log(`Looking for withdraw button in post card for "${item}"`)
+        // MyMessage.vue renders the desktop and the phone action bars both,
+        // and shows one by breakpoint, so take the visible Withdraw button.
         const withdrawButton = postCard
           .locator(
             '.action-btn:has-text("Withdraw"), .btn:has-text("Withdraw")'
           )
+          .filter({ visible: true })
           .first()
 
         try {
@@ -1868,6 +2444,7 @@ const testWithFixtures = test.extend({
           const broadWithdrawButton = postCard
             .locator('.action-btn, .btn')
             .filter({ hasText: /withdraw/i })
+            .filter({ visible: true })
           const broadButtonCount = await broadWithdrawButton.count()
           console.log(`Found ${broadButtonCount} buttons with "withdraw" text`)
 
@@ -1885,6 +2462,12 @@ const testWithFixtures = test.extend({
           }
         }
 
+        // Count before clicking, so the drop can be seen afterwards.
+        const postsBeforeWait = await page.locator(postSelector).count()
+        console.log(
+          `Posts with "${item}" before withdrawing: ${postsBeforeWait}`
+        )
+
         // Ensure button is enabled before clicking
         const isEnabled = await withdrawButton
           .isEnabled({ timeout: 5000 })
@@ -1896,6 +2479,7 @@ const testWithFixtures = test.extend({
           const broadWithdrawButton = postCard
             .locator('.action-btn, .btn')
             .filter({ hasText: /withdraw/i })
+            .filter({ visible: true })
             .first()
           const isBroadEnabled = await broadWithdrawButton
             .isEnabled({ timeout: 5000 })
@@ -1911,128 +2495,46 @@ const testWithFixtures = test.extend({
           await withdrawButton.click()
         }
 
-        // Look for any modals that might appear
-        const modalSelectors = [
-          '.modal',
-          '.swal2-popup',
-          '.confirm-modal',
-          '[role="dialog"]',
-        ]
+        // The confirmation is OutcomeModal, an async component, so it can
+        // arrive late while its chunk loads: wait for it rather than probe with
+        // isVisible(), which ignores its timeout. Every withdraw path in
+        // MyMessage opens this modal, so its absence fails the withdrawal.
+        const dialog = page
+          .locator('[role="dialog"], .modal')
+          .filter({ visible: true })
+          .filter({ has: page.locator('.btn:has-text("Withdraw")') })
+          .first()
+        await dialog.waitFor({
+          state: 'visible',
+          timeout: timeouts.ui.appearance,
+        })
+        console.log('Found withdraw confirmation modal')
 
-        let modalFound = false
-        for (const modalSelector of modalSelectors) {
-          try {
-            const modal = page.locator(modalSelector).filter({ visible: true })
-            const isVisible = await modal
-              .isVisible({ timeout: timeouts.ui.interaction })
-              .catch(() => false)
-            if (isVisible) {
-              console.log(`Found modal: ${modalSelector}`)
-              modalFound = true
+        const confirmButton = dialog
+          .locator('.btn:has-text("Withdraw")')
+          .filter({ visible: true })
+          .last()
 
-              // Look for confirmation buttons within this modal
-              const confirmSelectors = [
-                `${modalSelector} .btn:has-text("Withdraw")`,
-                `${modalSelector} .btn:has-text("Yes")`,
-                `${modalSelector} .btn:has-text("Confirm")`,
-                `${modalSelector} .btn:has-text("OK")`,
-                `${modalSelector} .btn-primary`,
-                `${modalSelector} .swal2-confirm`,
-              ]
+        // Withdrawing pending posts can cause legitimate "not found" errors when refetching
+        page.addAllowedErrorPattern(/the server responded with a status of 404/)
 
-              let confirmClicked = false
-              for (const confirmSelector of confirmSelectors) {
-                try {
-                  const confirmButton = page
-                    .locator(confirmSelector)
-                    .filter({ visible: true })
-                  const confirmVisible = await confirmButton
-                    .isVisible({ timeout: timeouts.ui.interaction / 10 })
-                    .catch(() => false)
-                  if (confirmVisible) {
-                    console.log(
-                      `Clicking confirmation button: ${confirmSelector}`
-                    )
+        console.log('Clicking confirmation button in withdraw modal')
+        await confirmButton.click()
 
-                    // Withdrawing pending posts can cause legitimate "not found" errors when refetching
-                    page.addAllowedErrorPattern(
-                      /the server responded with a status of 404/
-                    )
-
-                    await confirmButton.click()
-                    confirmClicked = true
-                    break
-                  }
-                } catch (error) {
-                  // Continue to next selector
-                }
-              }
-
-              if (!confirmClicked) {
-                console.log(`Modal found but no confirmation button clicked`)
-              }
-              break
-            }
-          } catch (error) {
-            // Continue to next modal selector
-          }
-        }
-
-        if (!modalFound) {
-          console.log('No confirmation modal found - withdrawal may be direct')
-        }
-
-        // Wait for any UI updates after confirmation
-        await page.waitForTimeout(timeouts.ui.settleTime)
-
-        // Debug: Count posts before waiting for removal
-        const postsBeforeWait = await page.locator(postSelector).count()
-        console.log(`Posts with "${item}" before waiting: ${postsBeforeWait}`)
-
-        // Debug: Check if our specific post card is still visible
-        const isSpecificPostVisible = await postCard
-          .isVisible({ timeout: 5000 })
-          .catch(() => false)
-        console.log(
-          `Specific post card still visible: ${isSpecificPostVisible}`
-        )
-
-        // Wait for UI to update after withdrawal click
-        await page.waitForTimeout(timeouts.ui.settleTime)
-
-        // Debug: Check post count after settle time
-        const postsAfterSettle = await page.locator(postSelector).count()
-        console.log(
-          `Posts with "${item}" after settle time: ${postsAfterSettle}`
-        )
-
-        // Verify the post was removed by checking the count decreased
-        // This is more reliable than waiting for a specific element to detach
-        // because Vue/Nuxt may re-render the entire list
-        const postsAfterWithdrawal = await page.locator(postSelector).count()
-        console.log(`Posts after withdrawal: ${postsAfterWithdrawal}`)
-
-        if (postsAfterWithdrawal < postsBeforeWait) {
-          console.log('✓ Post count decreased - withdrawal successful')
-        } else {
-          console.log('Post count unchanged - waiting for UI update...')
-          // Wait a bit longer for UI to update
-          await page.waitForTimeout(2000)
-          const finalCount = await page.locator(postSelector).count()
-          if (finalCount < postsBeforeWait) {
-            console.log(
-              '✓ Post count decreased after delay - withdrawal successful'
-            )
-          } else {
-            console.log(
-              '⚠ Warning: Post count did not decrease, but API call succeeded'
-            )
-          }
-        }
-
-        // Debug: Count posts after removal attempt
-        const postsAfterWait = await page.locator(postSelector).count()
-        console.log(`Posts with "${item}" after waiting: ${postsAfterWait}`)
+        // Wait for the list to drop the post. Vue may re-render the whole list
+        // rather than detach one card, so watch the count rather than the card.
+        // This polls instead of sleeping for fixed settle times: the list
+        // usually catches up well inside a second. It is an assertion: a
+        // withdrawal that leaves the post on the list has failed, and this
+        // used to log a warning and return true. In every green run all the
+        // withdrawals dropped the post, so this costs a healthy run nothing.
+        await base.expect
+          .poll(() => page.locator(postSelector).count(), {
+            message: `post "${item}" should leave the list after withdrawing it`,
+            timeout: timeouts.api.default,
+          })
+          .toBeLessThan(postsBeforeWait)
+        console.log('✓ Post count decreased - withdrawal successful')
 
         page.resetAllowedErrorPatterns()
         return true
@@ -2069,17 +2571,44 @@ const testWithFixtures = test.extend({
         ) {
           console.log('Found password input, setting password')
           await passwordInput.type(password)
-          await saveButton.click()
-          console.log('Set password successfully')
 
-          // Wait a moment for the password to be saved
-          await page.waitForTimeout(1000)
+          // NewUserInfo saves through PATCH /session. Wait for that response
+          // rather than a fixed second, so the test moves on as soon as the
+          // password really is saved and never before. A save that never
+          // happens, or that the server refuses, fails here: later steps log
+          // in with this password, and a silent miss would surface there as
+          // a confusing login failure.
+          const saved = page.waitForResponse(
+            (r) =>
+              r.request().method() === 'PATCH' &&
+              /\/api\/session(\?|$)/.test(r.url()),
+            { timeout: timeouts.api.default }
+          )
+          await saveButton.click()
+          let response
+          try {
+            response = await saved
+          } catch (error) {
+            error.passwordSaveFailed = true
+            throw error
+          }
+          if (!response.ok()) {
+            const error = new Error(
+              `Saving the new password failed: PATCH /session returned ${response.status()}`
+            )
+            error.passwordSaveFailed = true
+            throw error
+          }
+          console.log('Set password successfully')
           return true
         } else {
           console.log('Password input not visible, may not be needed')
           return false
         }
       } catch (error) {
+        // Not finding the password box is a normal outcome (the user may not need
+        // one). A save that was attempted and failed is not, and must reach the test.
+        if (error.passwordSaveFailed) throw error
         console.log('Password input not found or not needed:', error.message)
         return false
       }
@@ -2088,7 +2617,7 @@ const testWithFixtures = test.extend({
     await use(setNewUserPassword)
   },
 
-  replyToMessageWithSignup: async ({ page }, use) => {
+  replyToMessageWithSignup: async ({ page, browser }, use) => {
     /**
      * Navigates to a message page and replies with signup as a new user
      * @param {Object} options - The reply options
@@ -2117,7 +2646,8 @@ const testWithFixtures = test.extend({
       // Create a completely fresh browser context to ensure clean state
       // This is more reliable than trying to clear storage/cookies
       // Use explicit viewport to avoid two-column layout (triggered at width >= 992px AND height <= 800px)
-      const browser = page.context().browser()
+      // The browser fixture, not page.context().browser(): in the app project the
+      // page is the app's WebView, and the second member replies from a browser.
       const freshContext = await browser.newContext({
         viewport: { width: 1280, height: 900 },
         storageState: { cookies: [], origins: [] },
@@ -2301,7 +2831,26 @@ const testWithFixtures = test.extend({
             hasText: 'Welcome to Freegle',
           })
           try {
-            await welcomeModal.waitFor({ state: 'visible', timeout: 30000 })
+            // The modal lives in the reply pane, which the state machine
+            // unmounts when it routes to /chats/, so once the chat page is
+            // showing there is no modal coming and nothing to close. Stop
+            // then, rather than wait the whole modal timeout on the runs
+            // where the modal is not shown (67 seconds in a test that
+            // otherwise takes 30).
+            const arrived = await Promise.race([
+              welcomeModal
+                .waitFor({ state: 'visible', timeout: 30000 })
+                .then(() => true),
+              freshPage
+                .waitForURL('**/chats/**', { timeout: 30000 })
+                .then(() => false),
+            ])
+            if (!arrived) {
+              console.log(
+                'Chat page showing with no Welcome to Freegle modal, nothing to close'
+              )
+              return
+            }
             console.log('Welcome to Freegle modal appeared')
             const closeButton = welcomeModal.locator(
               '.btn:has-text("Close and Continue")'
@@ -2310,10 +2859,27 @@ const testWithFixtures = test.extend({
               state: 'visible',
               timeout: timeouts.ui.appearance,
             })
-            await closeButton.click()
+            // The reply state machine routes to /chats/ by itself, and that
+            // unmounts the reply pane this modal lives in. Once the modal has
+            // gone there is nothing left to click, so stop then instead of
+            // retrying a click against a detached button until the action
+            // timeout runs out.
+            await Promise.race([
+              closeButton.click({ timeout: timeouts.ui.interaction }),
+              welcomeModal
+                .waitFor({
+                  state: 'detached',
+                  timeout: timeouts.navigation.default,
+                })
+                .then(() => {
+                  throw new Error('welcome modal was closed by the navigation')
+                }),
+            ])
             console.log('Clicked Close and Continue')
-          } catch {
-            console.log('Welcome modal did not appear within timeout')
+          } catch (e) {
+            console.log(
+              `Welcome modal not clicked: ${e.message.split('\n')[0]}`
+            )
           }
         }
 

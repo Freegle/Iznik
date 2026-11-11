@@ -262,4 +262,48 @@ class VolunteeringDigestMailTest extends TestCase
             'Preheader must fall back to the generic string when the opportunities list is empty'
         );
     }
+
+    /**
+     * The destination of each job link, by position. Job links go through the click tracker
+     * (/e/d/r/<id>?url=<base64>&p=job_ad_<n>&a=job_click); when tracking is off they are raw.
+     */
+    private function extractJobDestinations(string $html): array
+    {
+        $out = [];
+        if (preg_match_all('/href=["\']([^"\']*)["\']/', $html, $matches)) {
+            foreach ($matches[1] as $href) {
+                $decoded = html_entity_decode($href);
+                if (preg_match('/[?&]p=job_ad_(\d+)/', $decoded, $pos) &&
+                    preg_match('/[?&]url=([^&"\']+)/', $decoded, $url)) {
+                    // The base64 is URL-encoded in the href (= becomes %3D).
+                    $out[(int) $pos[1]] = base64_decode(urldecode($url[1]));
+                } elseif (preg_match('#/job/\d+\?[^"\']*position=(\d+)#', $decoded, $pos)) {
+                    $out[(int) $pos[1]] = $decoded;
+                }
+            }
+        }
+        ksort($out);
+        return array_values($out);
+    }
+
+    public function test_job_links_carry_the_email_source_and_their_position(): void
+    {
+        // The landing page /job/<id> logs source, campaign, position and list length from the
+        // query string, as the chat notification's job links already carry. Without them a
+        // click from this digest was logged as source=direct, the bucket that scanners and old
+        // links fall into (WhatJobs clicks, October 2026).
+        $userSite = config('freegle.sites.user');
+        $mail = new VolunteeringDigestMail(
+            recipientEmail: 'test@example.com',
+            volunteerings:  [$this->makeVolunteering(1)],
+            unsubscribeUrl: "{$userSite}/unsubscribe?email=" . urlencode('test@example.com'),
+            jobAds:         collect([$this->makeJobAd(98), $this->makeJobAd(99)]),
+        );
+        $html = $mail->render();
+
+        $this->assertSame([
+            "{$userSite}/job/98?source=email&campaign=volunteering_digest&position=0&list_length=2",
+            "{$userSite}/job/99?source=email&campaign=volunteering_digest&position=1&list_length=2",
+        ], $this->extractJobDestinations($html));
+    }
 }

@@ -29,6 +29,12 @@
             <file>tests/Feature/Mail/AmpEmailSpoolIntegrationTest.php</file>
         </testsuite>
     </testsuites>
+    <!-- Per-test timings, so a slow test or class can be found from a run's
+         artifacts rather than by re-running the suite with instrumentation.
+         One file written at the end of the run; it costs nothing measurable. -->
+    <logging>
+        <junit outputFile="/tmp/laravel-junit.xml"/>
+    </logging>
     <source>
         <include>
             <directory>app</directory>

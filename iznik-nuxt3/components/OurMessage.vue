@@ -22,7 +22,6 @@
         :replyable="replyable"
         :hide-close="hideClose"
         :actions="actions"
-        @replied="emit('replied')"
       />
     </div>
     <div v-else>
@@ -46,7 +45,6 @@
         :actions="actions"
         fullscreen-overlay
         @close="closeMobileExpanded"
-        @replied="emit('replied')"
       />
     </div>
   </div>
@@ -148,7 +146,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['notFound', 'view', 'visible', 'replied'])
+const emit = defineEmits(['notFound', 'view', 'visible'])
 
 // Stores
 const messageStore = useMessageStore()

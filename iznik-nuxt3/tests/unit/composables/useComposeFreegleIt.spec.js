@@ -12,6 +12,16 @@ vi.mock('~/composables/useTrackConversion', () => ({
   trackConversion: (...args) => mockTrackConversion(...args),
 }))
 
+const flowCalls = vi.hoisted(() => ({ byFlow: {} }))
+vi.mock('~/composables/useFlowTelemetry', () => ({
+  FlowName: { GIVE: 'give', ASK: 'ask' },
+  ChangeKind: {},
+  useFlowTelemetry: (name) => {
+    flowCalls.byFlow[name] ||= { validationFailed: vi.fn() }
+    return flowCalls.byFlow[name]
+  },
+}))
+
 let mockSubmitResults
 
 vi.mock('~/stores/compose', () => ({
@@ -141,5 +151,66 @@ describe('freegleIt posted ids in history state', () => {
         state: expect.objectContaining({ ids: [123, 456] }),
       })
     )
+  })
+})
+
+// Where the wizard refuses to let the post go through, the flow telemetry is told which field
+// and why, as names only.
+describe('freegleIt validation failures for flow telemetry', () => {
+  beforeEach(() => {
+    mockTrackConversion.mockReset()
+    flowCalls.byFlow = {}
+    globalThis.__mockAuthStore = {
+      user: null,
+      login: vi.fn().mockResolvedValue(undefined),
+      saveAndGet: vi.fn().mockResolvedValue(undefined),
+    }
+  })
+
+  it('reports an unvalidated email against the email field on the give flow', async () => {
+    mockSubmitResults = () => Promise.reject(new Error('Unvalidated email'))
+    await freegleIt('Offer', makeRouter())
+    expect(flowCalls.byFlow.give.validationFailed).toHaveBeenCalledWith(
+      'email',
+      'unvalidated'
+    )
+  })
+
+  it('reports a group that does not allow posting on the ask flow', async () => {
+    mockSubmitResults = () =>
+      Promise.reject(new Error('Not allowed to post on this group'))
+    await freegleIt('Wanted', makeRouter())
+    expect(flowCalls.byFlow.ask.validationFailed).toHaveBeenCalledWith(
+      'group',
+      'not_allowed'
+    )
+  })
+
+  it('reports nothing for a generic failure or a success', async () => {
+    mockSubmitResults = () => Promise.reject(new Error('server error'))
+    await freegleIt('Offer', makeRouter())
+    mockSubmitResults = () => Promise.resolve([{ id: 1, groupid: null }])
+    await freegleIt('Offer', makeRouter())
+    expect(flowCalls.byFlow.give).toBeUndefined()
+  })
+})
+
+describe('reportValidationFailure', () => {
+  it('goes to the flow of the message type and ignores other types', async () => {
+    const { reportValidationFailure } =
+      await import('~/composables/useCompose.js')
+    flowCalls.byFlow = {}
+    reportValidationFailure('Offer', 'email', 'in_use')
+    reportValidationFailure('Wanted', 'email', 'in_use')
+    reportValidationFailure('Other', 'email', 'in_use')
+    expect(flowCalls.byFlow.give.validationFailed).toHaveBeenCalledWith(
+      'email',
+      'in_use'
+    )
+    expect(flowCalls.byFlow.ask.validationFailed).toHaveBeenCalledWith(
+      'email',
+      'in_use'
+    )
+    expect(Object.keys(flowCalls.byFlow).sort()).toEqual(['ask', 'give'])
   })
 })

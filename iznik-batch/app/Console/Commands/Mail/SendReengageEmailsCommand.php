@@ -4,7 +4,9 @@ namespace App\Console\Commands\Mail;
 
 use App\Services\ReengageService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:reengage')]
 class SendReengageEmailsCommand extends Command
 {
     protected $signature = 'mail:reengage

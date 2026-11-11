@@ -50,6 +50,14 @@ model) and refuses it unless:
 
 A refused PR is closed (its description blanked first if it held personal details), the report is
 held as `needs-detail`, and the reporter is asked for what would let the next attempt look it up.
+The gate proves reads were made, not that they show the failure: PR #1665 read that nearly every
+post ripples and fixed the wrong digest, and #1664's evidence was an absence of errors. So the
+adversarial review of a Discourse bug fix is also shown the reporter's own words and the evidence
+record (`reviewGroundingSection`, to the review model only), and three findings close the PR rather
+than expand it: **misread report** (it fixes something other than what the reporter saw),
+**ungrounded diagnosis** (the evidence is context, an absence or a failed read, not the failure
+itself), and **false premise** (it claims the system behaves in a way it does not).
+
 Fix agents run `ground.js check-pr <file> T/P` before opening, so a refusal is rare. An agent that
 cannot ground its diagnosis because the report names nothing emits `OUTCOME=needs-detail` and
 opens no PR. Fixes for Sentry errors and CI failures are not checked this way: they have no
@@ -67,6 +75,16 @@ Each iteration is a fresh engine instance. The driver runs a step loop (hard cap
 - **Red-PR invariant**: if the LLM tries to wrap up while any open PR authored by `@me` has failing CI checks, the driver force-transitions to `CHECK_CI`. The LLM cannot rationalize past this.
 - **Driver lock**: `/tmp/freegle-monitor-driver.lock` holds the current PID. If the file exists and the PID is alive, a second driver invocation exits immediately. Stale locks (dead PID) are cleaned automatically.
 - **Loop-breakers**: the driver tracks picks and consecutive visits to detect stuck states. If `DIAGNOSE_BUG` runs more than 4 consecutive turns on one bug without producing a brief, the bug is force-deferred and the driver routes on. If the same `(topic, post)` pair is picked twice in one iteration without being recorded in `bugsFixed`, it is force-deferred.
+
+### Reports that are waiting
+
+`chase_waiting_reports` runs in `LOAD_STATE` every lap (`src/chase.ts`).
+
+- **Waiting on the reporter** (`needs-detail`, or deferred because a fix needed detail from them): after 7 quiet days, one reminder is posted under the report, at most 5 a lap and one per person per topic. A report quiet for over 30 days is not chased. With nothing from the reporter 7 days after the reminder, the report closes as `no-reply`.
+- **Their replies.** Anything the reporter posts in the topic stops the no-reply close. A report deferred for detail, or closed as `no-reply`, reopens. A `needs-detail` report reopens only when the reply names what was missing. A reply saying it now works closes the report as `confirmed`, however it was fixed.
+- **Waiting on us** ("needs a human answer"): never chased on Discourse. After 7 days they are listed under "Needs your answer" in `/tmp/freegle-monitor/summary.md`.
+
+The 7 and 30 days are `MONITOR_CHASE_AFTER_DAYS` and `MONITOR_CHASE_MAX_AGE_DAYS`.
 
 ### State flow
 
@@ -101,7 +119,8 @@ LOAD_STATE → CHECK_CI → CI_ROUTER
 
 `COVERAGE_GATE` checks:
 - Any red PRs → back to `CI_ROUTER`
-- Dirty PRs (need rebase) → `REBASE_DIRTY_PRS`
+- Dirty PRs (need rebase) → `REBASE_DIRTY_PRS`, which force-pushes a rebase onto master. A PR carrying a blocking label is skipped: it is parked on purpose, and the blocked framework PRs are stacked on one another.
+- A PR red only on Coveralls (tests green) → `WRITE_COVERAGE` adds coverage to that branch. A PR carrying a blocking label is left alone, coverage dip or not: it is parked on purpose, and often under review.
 - No PR created this iteration → `WRITE_COVERAGE` (mandatory coverage PR, rotating Go → Vitest → Laravel)
 - Gate passed → `WRAP_UP → SCHEDULE_NEXT → END`
 
@@ -118,20 +137,24 @@ for the answer in `docs/` and in the code that actually runs - Go, Nuxt and Lara
 V1 PHP - and writes two to four sentences for somebody reading them once, on a phone. It emits
 `ANSWERS=[{topic, post, answer, confidence, link?}]`, or says a human should take it.
 
-`persist_question_answers` (in `COLLATE_RESULTS`) turns each answer into a reply **waiting for
-approval**, in the same `discourse_draft` table the fix replies use. Three things can stop an answer
-getting that far:
+`persist_question_answers` (in `COLLATE_RESULTS`) **posts** each answer to Discourse straight away, quoted
+and threaded under the question, and records it in the `discourse_draft` table (the same table the fix
+replies use) with `approved_at` and `posted_at` set. There is no human approval step. Four things can stop
+an answer getting that far:
 
 - the sub-agent says it is not confident, or asks for a human - the question is deferred, with the reason
 - the answer reads like documentation rather than English - it is thrown away and the question is asked
   again next time round. `.claude/pr-complexity.mjs`, the same scorer the Discourse posting hook uses,
   decides this (reading grade 11, sentences of 30 words). Two failures in a row defer it to a human.
 - there is nothing to quote, so the reply could not show what it answers
+- the post already has a reply on record, so nothing is posted twice
 
-Answers are sent from the **Replies to send** panel on the dashboard, not posted by the run. An
-answer is new prose asserting how Freegle works, so a person reads it before a moderator does.
-Rejecting one puts the question back in the queue, and the reason given is handed to the next
-attempt. Asking for missing detail is different and goes straight out: see below.
+If Discourse refuses the post, the row stays unposted and `post_pending_discourse_drafts` (in `LOAD_STATE`)
+retries it next iteration. `post_discourse_reply_draft` works the same way. Asking for missing detail is
+posted too: see below.
+
+To post whatever is still waiting by hand (for example drafts queued before replies were automatic), from
+`monitor-fsm`: `npx tsx scripts/post-pending-drafts.ts` (`--dry-run` lists them first).
 
 ### Reports that are too vague to act on
 
@@ -198,7 +221,7 @@ Also: `deferred`, `off-topic`, `duplicate`, `feature-request`, `question`, `need
 
 `check_bug_feedback` (run each `LOAD_STATE`) scans follow-up Discourse posts for reporter confirmations and Edward's "working on it" / "fix applied" / "expected behaviour" replies, updating states automatically.
 
-Once a PR is merged and its fix is confirmed live (by comparing the merge SHA against `/api/version` for Go/Laravel and the Netlify published-deploy commit for the frontend), `queue_deployed_reply_drafts` auto-posts the verbatim "AI Edward: possible fix applied, please retest and report back" reply threaded under the specific reporting post. Every such reply ends with a `Technical details:` line linking the change — the PR here, the commit in `reconcile_direct_master_fixes` — so a moderator reading the thread can see what was actually done. Two exceptions: a **tooling-only** fix (no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed *without* a reply, because there is nothing the reporter could retest; and a **failed post** (e.g. Discourse rate limit) resets the PR's deploy state so the reply is retried next iteration. `reconcile_direct_master_fixes` applies the same two rules to direct-to-master fixes.
+Once a PR is merged and its fix is confirmed live (by comparing the merge SHA against `/api/version` for Go/Laravel and the Netlify published-deploy commit for the frontend), `queue_deployed_reply_drafts` auto-posts the verbatim "AIdward: possible fix applied, please retest and report back" reply threaded under the specific reporting post. Every such reply ends with a `Technical details:` line linking the change — the PR here, the commit in `reconcile_direct_master_fixes` — so a moderator reading the thread can see what was actually done. Two exceptions: a **tooling-only** fix (no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed *without* a reply, because there is nothing the reporter could retest; and a **failed post** (e.g. Discourse rate limit) resets the PR's deploy state so the reply is retried next iteration. `reconcile_direct_master_fixes` applies the same two rules to direct-to-master fixes.
 
 ### Model assignment
 
@@ -217,7 +240,7 @@ The `MONITOR_PHASE` env var can force `analysis` or `implementation` (the peak-h
 | `discourse_bug` | One row per reported bug (primary key: topic+post). Tracks state, PR number, rejection count, symptom tags, code area. |
 | `topic_cursor` | Per-topic read position — only new posts are fetched each iteration. |
 | `pr` | PRs the monitor has opened. Tracks CI state and deploy state. |
-| `discourse_draft` | "Please retest" reply drafts (queued → posted). |
+| `discourse_draft` | Discourse replies (queued → posted). A row with `posted_at` set is the record that the post was answered. |
 | `reviewer_feedback` | Human rejection notices and bug-reopen instructions. |
 | `iteration` | Audit log of every driver run (steps used, outcome, PR count). |
 | `kv` | Miscellaneous key-value (last coverage target, etc.). |
@@ -292,11 +315,11 @@ Each iteration has a hard cap of 40 steps. Real iterations typically use 15–25
 
 The driver lock at `/tmp/freegle-monitor-driver.lock` means only one driver can run at a time. If you see "another iteration is still running" and you know it's stale, remove the file: `rm /tmp/freegle-monitor-driver.lock`.
 
-### Discourse replies are not auto-posted during fixing
+### When Discourse replies are posted
 
-Post-fix Discourse replies are auto-posted (verbatim "AI Edward: possible fix applied, please retest and report back", plus a `Technical details:` link to the PR or commit) only **after the fix is confirmed live in production** — verified by comparing the PR's merge commit against `/api/version` (Go/Laravel) and the Netlify published-deploy SHA (frontend). During the fix pipeline the monitor does not post to Discourse.
+Post-fix Discourse replies are auto-posted (verbatim "AIdward: possible fix applied, please retest and report back", plus a `Technical details:` link to the PR or commit) only **after the fix is confirmed live in production** — verified by comparing the PR's merge commit against `/api/version` (Go/Laravel) and the Netlify published-deploy SHA (frontend). During the fix pipeline the monitor does not post to Discourse.
 
-Discourse replies are posted as Edward_Hibbert (using the API key from `profile.json`). There is no per-reply human approval — the auto-post behaviour is enabled by design. If you want to suppress it in local/dev runs, set `SKIP_DISCOURSE_STATUS=1`.
+Discourse replies are posted as Edward_Hibbert (using the API key from `profile.json`). There is no per-reply human approval, for fix replies, question answers and reporter questions alike - the auto-post behaviour is enabled by design (standing decision, 2026-10-10). Every reply still has to pass its gates (confidence, plain-English scorer, a non-empty quote), and nothing is posted twice. If you want to suppress it in local/dev runs, set `SKIP_DISCOURSE_STATUS=1` for the status post, or `SKIP_DISCOURSE_POSTS=1` to make every reply post fail closed (rows stay unposted and go out on the first run without it).
 
 ### V1 PHP is dead code — the monitor knows this
 

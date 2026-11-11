@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -55,6 +56,7 @@ type StdMsg struct {
 	Newdelstatus string  `json:"newdelstatus"`
 	Edittext     string  `json:"edittext"`
 	Insert       *string `json:"insert"`
+	Replybody    *string `json:"replybody"`
 }
 
 func (StdMsg) TableName() string {
@@ -106,7 +108,7 @@ func canSee(myid uint64, cfg *ModConfig) bool {
 const configColumns = "id, name, createdby, fromname, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, protected, messageorder, network, coloursubj, subjreg, subjlen, `default`, chatread"
 
 // stdMsgColumns is the explicit column list for mod_stdmsgs queries.
-const stdMsgColumns = "id, configid, title, action, subjpref, subjsuff, body, rarelyused, autosend, newmodstatus, newdelstatus, edittext, `insert`"
+const stdMsgColumns = "id, configid, title, action, subjpref, subjsuff, body, rarelyused, autosend, newmodstatus, newdelstatus, edittext, `insert`, replybody"
 
 // GetModConfig handles GET /modconfig.
 // With id param: returns single config with stdmsgs.
@@ -315,6 +317,10 @@ func PostModConfig(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	if !auth.IsSystemMod(myid) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to create configs"})
 	}
@@ -399,6 +405,7 @@ func PostModConfig(c *fiber.Ctx) error {
 				"newdelstatus": m.Newdelstatus,
 				"edittext":     m.Edittext,
 				"insert":       m.Insert,
+				"replybody":    m.Replybody,
 			})
 		}
 
@@ -470,6 +477,10 @@ func PatchModConfig(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	type PatchRequest struct {
@@ -621,6 +632,10 @@ func DeleteModConfig(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)

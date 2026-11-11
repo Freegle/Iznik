@@ -7,7 +7,9 @@ use App\Models\Group;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:admin:copy')]
 class CopyAdminsCommand extends Command
 {
     protected $signature = 'mail:admin:copy';
@@ -106,7 +108,10 @@ class CopyAdminsCommand extends Command
                     'ctatext' => $admin->ctatext,
                     'pending' => 1,
                     'parentid' => $admin->id,
-                    'activeonly' => $admin->activeonly,
+                    // A suggested ADMIN goes to every community at once, which is a lot of mail very
+                    // quickly; sent to everyone it draws spam reports. So, as V1's copyForGroup did,
+                    // every copy only goes to recently active members, whatever the suggestion says.
+                    'activeonly' => 1,
                     'sendafter' => $admin->sendafter,
                     'essential' => $admin->essential,
                     'editprotected' => $admin->editprotected,
@@ -114,6 +119,7 @@ class CopyAdminsCommand extends Command
                     // Guidance for local mods travels with the copy so they see it when reviewing.
                     // It is its own column and is never merged into subject or text.
                     'modguidance' => $admin->modguidance,
+                    'mjml' => $admin->mjml,
                 ]);
 
                 $copied++;

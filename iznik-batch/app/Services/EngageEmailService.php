@@ -34,7 +34,7 @@ class EngageEmailService
         // "At risk" — users who will become inactive in 7 days (send even if they've opted out of regular emails)
         $atRiskDate = now()->subSeconds(self::USER_INACTIVE_SECONDS)->addDays(self::AT_RISK_WARNING_DAYS)->toDateString();
         $atRiskUserIds = DB::table('users')
-            ->whereRaw('DATE(lastaccess) = ?', [$atRiskDate])
+            ->whereDate('lastaccess', '=', $atRiskDate)
             ->whereNull('deleted')
             ->pluck('id')
             ->toArray();
@@ -62,6 +62,12 @@ class EngageEmailService
         foreach ($userIds as $userId) {
             $user = User::find($userId);
             if (!$user || !$user->email_preferred) {
+                continue;
+            }
+
+            // Not for TrashNothing members, whatever memberships they hold, and even when
+            // forced: TrashNothing keeps in touch with its own members.
+            if ($user->isTrashNothingAccount()) {
                 continue;
             }
 
@@ -96,6 +102,9 @@ class EngageEmailService
             }
 
             // Respect group-level engagement setting
+            // keep-raw: COALESCE + JSON_UNQUOTE/JSON_EXTRACT under a MAX() aggregate
+            // have no query-builder equivalent - both are functions the builder
+            // cannot express, layered inside an aliased aggregate.
             $engagementEnabled = DB::table('memberships')
                 ->join('groups', 'groups.id', '=', 'memberships.groupid')
                 ->where('memberships.userid', $userId)
@@ -113,6 +122,19 @@ class EngageEmailService
                 ->max('timestamp');
 
             if ($lastSent && now()->diffInDays($lastSent, false) > -self::RESEND_INTERVAL_DAYS) {
+                continue;
+            }
+
+            // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
+            // deliberately after every eligibility check above, for the same reason as the
+            // suppression check - a member who was never going to get this mail is not
+            // "deferred" by the hold. Skipped without recordAttempt(), so the `engage` table
+            // is not written and the RESEND_INTERVAL_DAYS clock does not start: once email
+            // resumes this member is picked up on the very next run as if nothing happened.
+            $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+            $lockdown->ack('mail-loops');
+            if ($lockdown->held('email')) {
+                $lockdown->count('deferred:engage');
                 continue;
             }
 
@@ -159,7 +181,7 @@ class EngageEmailService
         $variants = DB::table('engage_mails')
             ->where('engagement', $engagement)
             ->orderByDesc('rate')
-            ->orderByRaw('RAND()')
+            ->inRandomOrder()
             ->get();
 
         if ($variants->isEmpty()) {
@@ -196,6 +218,8 @@ class EngageEmailService
             ->where('id', $mailId)
             ->increment('shown');
 
+        // keep-raw: COALESCE plus arithmetic (100 * action / shown) over two
+        // columns has no query-builder equivalent.
         DB::statement(
             'UPDATE engage_mails SET rate = COALESCE(100 * action / shown, 0) WHERE id = ?',
             [$mailId]

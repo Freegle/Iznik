@@ -73,6 +73,9 @@ class ChatReviewService
         $mentorsAddr = config('freegle.mail.mentors_addr');
         $modSite = config('freegle.sites.mod');
 
+        // keep-raw: an aliased COUNT(*) alongside a grouped column (no builder
+        // form), and the JOIN condition needs a CASE WHEN to pick "the other
+        // party" - neither has a builder method.
         $groups = DB::select(
             "SELECT DISTINCT(memberships.groupid), COUNT(*) AS count
              FROM chat_messages

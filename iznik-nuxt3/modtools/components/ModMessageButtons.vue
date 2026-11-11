@@ -2,6 +2,7 @@
   <div v-if="message">
     <div v-if="editreview" class="d-inline">
       <ModMessageButton
+        v-if="!modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -10,6 +11,7 @@
         label="Accept Edit"
       />
       <ModMessageButton
+        v-if="!modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -18,7 +20,7 @@
         label="Reject Edit"
       />
       <ModMessageButton
-        v-if="modMessagingAllowed"
+        v-if="modMessagingAllowed && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -28,36 +30,47 @@
       />
     </div>
     <div v-else-if="pending || spam" class="d-inline">
+      <!-- Approve, Reject, Delete and the standard messages act on every community in
+           groupids when there is more than one; Hold, Release and Delete as Spam stay on
+           this community. -->
       <ModMessageButton
         v-if="canApprove"
         :messageid="message.id"
         :groupid="groupid"
+        :groupids="groupids"
         variant="primary"
         icon="check"
         approve
         label="Approve"
       />
       <ModMessageButton
+        v-if="!modsHeld"
         :messageid="message.id"
         :groupid="groupid"
+        :groupids="groupids"
         :is-home-group="isHomeGroup"
+        :can-message-poster="messagesPoster"
         :no-member-message="!modMessagingAllowed"
         variant="warning"
         icon="times"
         reject
         label="Reject"
       />
+      <!-- Where this community may write to the poster, Reject composes a message, so
+           Delete is the way to take the post off quietly. It acts on this copy only
+           (Discourse 9808/867). -->
       <ModMessageButton
-        v-if="isHomeGroup"
+        v-if="(isHomeGroup || messagesPoster) && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
+        :groupids="groupids"
         variant="danger"
         icon="trash-alt"
         delete
         label="Delete"
       />
       <ModMessageButton
-        v-if="!heldByOnThisGroup"
+        v-if="!heldByOnThisGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="warning"
@@ -66,7 +79,7 @@
         label="Hold"
       />
       <ModMessageButton
-        v-else
+        v-else-if="heldByOnThisGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="success"
@@ -75,7 +88,7 @@
         label="Release"
       />
       <ModMessageButton
-        v-if="isHomeGroup"
+        v-if="isHomeGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -86,7 +99,7 @@
     </div>
     <div v-else-if="approved" class="d-inline">
       <ModMessageButton
-        v-if="isHomeGroup && modMessagingAllowed"
+        v-if="messagesPoster && modMessagingAllowed && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -95,7 +108,7 @@
         label="Blank Reply"
       />
       <ModMessageButton
-        v-if="isHomeGroup"
+        v-if="(isHomeGroup || messagesPoster) && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -104,7 +117,7 @@
         label="Delete"
       />
       <ModMessageButton
-        v-if="isHomeGroup"
+        v-if="isHomeGroup && !modsHeld"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -117,7 +130,10 @@
            the post merely rippled into, so do not offer them there (Discourse 10102). -->
       <SpinButton
         v-if="
-          isHomeGroup && message.type === 'Offer' && !message.outcomes?.length
+          isHomeGroup &&
+          message.type === 'Offer' &&
+          !message.outcomes?.length &&
+          !modsHeld
         "
         variant="white"
         class="m-1"
@@ -129,7 +145,10 @@
       />
       <SpinButton
         v-if="
-          isHomeGroup && message.type === 'Wanted' && !message.outcomes?.length
+          isHomeGroup &&
+          message.type === 'Wanted' &&
+          !message.outcomes?.length &&
+          !modsHeld
         "
         variant="white"
         class="m-1"
@@ -140,7 +159,7 @@
         @handle="outcome($event, 'Received')"
       />
       <SpinButton
-        v-if="isHomeGroup && !message.outcomes?.length"
+        v-if="isHomeGroup && !message.outcomes?.length && !modsHeld"
         variant="white"
         class="m-1"
         icon-name="trash-alt"
@@ -150,7 +169,7 @@
         @handle="outcome($event, 'Withdrawn')"
       />
     </div>
-    <div v-if="!editreview" class="d-lg-inline">
+    <div v-if="!editreview && !modsHeld" class="d-lg-inline">
       <ModMessageButton
         v-for="stdmsg in filtered"
         :key="stdmsg.id"
@@ -160,7 +179,9 @@
         :stdmsgid="stdmsg.id"
         :messageid="message.id"
         :groupid="groupid"
+        :groupids="pending || spam ? groupids : null"
         :is-home-group="isHomeGroup"
+        :can-message-poster="messagesPoster"
         :autosend="Boolean(stdmsg.autosend && allowAutoSend)"
       />
       <b-button
@@ -173,7 +194,10 @@
       </b-button>
     </div>
     <client-only>
-      <div v-if="modMessagingAllowed" class="mt-1 mb-1 d-flex flex-wrap">
+      <div
+        v-if="modMessagingAllowed && !modsHeld"
+        class="mt-1 mb-1 d-flex flex-wrap"
+      >
         <OurToggle
           v-model="allowAutoSend"
           :height="30"
@@ -197,6 +221,7 @@ import { ref, computed, watch } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useModConfigStore } from '~/stores/modconfig'
 import { copyStdMsgs, icon, variant } from '~/composables/useStdMsgs'
+import { useLockdown } from '~/modtools/composables/useLockdown'
 
 const props = defineProps({
   messageid: {
@@ -223,10 +248,24 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Every community a pending post's Approve, Reject and Delete act on at once, groupid
+  // first; null for this community alone. See modtools/composables/multiGroupModeration.js.
+  groupids: {
+    type: Array,
+    required: false,
+    default: null,
+  },
   // Whether this is the post's home/origin group. Removal is per-group in the API, but a
   // rippled-in group's moderators get the scoped, silent version of it (and Delete as
   // Spam, which is a judgement on the poster, not on the copy, stays with the home
   // group). Defaults true so non-rippling contexts are unaffected.
+  // Whether this community may write to the poster about the post (canMessagePosterRow).
+  // Null means not known, which falls back to isHomeGroup.
+  canMessagePoster: {
+    type: [Boolean, null],
+    required: false,
+    default: null,
+  },
   isHomeGroup: {
     type: Boolean,
     required: false,
@@ -242,6 +281,8 @@ const props = defineProps({
     default: true,
   },
 })
+
+const { modsHeld } = useLockdown()
 
 const messageStore = useMessageStore()
 const modConfigStore = useModConfigStore()
@@ -316,29 +357,47 @@ const spam = computed(() => {
   return hasCollection('Spam')
 })
 
-// On a copy the post merely rippled into, a standard message whose only effect is to
-// write to the freegler has nothing to do: correspondence about a post belongs to the
-// community it was posted on, and the server refuses it (Discourse 10102). Offer only
-// the ones that act on this group's own copy. Approving and holding are still available
-// as plain buttons, they just carry no note.
+// Whether this community may write to the poster: its home, or one the post rippled into
+// where the poster is an ordinary member (Discourse 10239). Unknown falls back to home.
+const messagesPoster = computed(() =>
+  props.canMessagePoster === null ? props.isHomeGroup : props.canMessagePoster
+)
+
+// Where this community may not write to the poster - a copy the post merely rippled into,
+// whose poster has nothing to do with it - a standard message whose only effect is to
+// write to the freegler has nothing to do, and the server refuses it (Discourse 10102).
+// Offer only the ones that act on this group's own copy. Approving and holding are still
+// available as plain buttons, they just carry no note.
 const validActions = computed(() => {
   // The standard messages we show depend on the valid ones for this type of message.
   if (pending.value || spam.value) {
-    if (!props.isHomeGroup) {
+    if (!messagesPoster.value) {
       return ['Reject', 'Delete', 'Edit']
     }
 
-    const ret = ['Reject', 'Leave', 'Delete', 'Edit', 'Hold Message']
+    const ret = [
+      'Reject',
+      'Leave',
+      'Delete',
+      'Edit',
+      'Edit and Message',
+      'Hold Message',
+    ]
     if (canApprove.value) {
       ret.push('Approve')
     }
     return ret
   } else if (approved.value) {
-    if (!props.isHomeGroup) {
+    if (!messagesPoster.value) {
       return ['Delete Approved Message', 'Edit']
     }
 
-    return ['Leave Approved Message', 'Delete Approved Message', 'Edit']
+    return [
+      'Leave Approved Message',
+      'Delete Approved Message',
+      'Edit',
+      'Edit and Message',
+    ]
   }
 
   return []

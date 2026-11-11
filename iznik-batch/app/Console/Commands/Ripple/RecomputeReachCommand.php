@@ -4,6 +4,7 @@ namespace App\Console\Commands\Ripple;
 
 use App\Services\Ripple\ExpandService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * ripple:recompute-reach — one-off backfill that shrinks the stored reach of
@@ -15,6 +16,7 @@ use Illuminate\Console\Command;
  * retract already-delivered copies (see ExpandService::recomputeReach). Safe to
  * re-run; --dry-run reports without writing.
  */
+#[AsCommand(name: 'ripple:recompute-reach')]
 class RecomputeReachCommand extends Command
 {
     protected $signature = 'ripple:recompute-reach

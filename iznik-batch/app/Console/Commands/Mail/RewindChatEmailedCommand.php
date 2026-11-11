@@ -5,6 +5,7 @@ namespace App\Console\Commands\Mail;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Make a relay purge safe for chat notifications.
@@ -34,6 +35,7 @@ use Illuminate\Support\Facades\Log;
  * Only ever moves the marker BACKWARDS. A chat whose marker is already behind
  * the stuck message, or absent, is left alone.
  */
+#[AsCommand(name: 'mail:deferrals:rewind-chat')]
 class RewindChatEmailedCommand extends Command
 {
     protected $signature = 'mail:deferrals:rewind-chat

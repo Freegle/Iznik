@@ -5,7 +5,9 @@ namespace App\Console\Commands\Mail;
 use App\Services\VolunteeringDigestService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:volunteering-digest')]
 class SendVolunteeringDigestCommand extends Command
 {
     use LogsBatchJob;

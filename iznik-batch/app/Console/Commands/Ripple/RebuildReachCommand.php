@@ -5,6 +5,7 @@ namespace App\Console\Commands\Ripple;
 use App\Services\Ripple\ExpandService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * ripple:rebuild-reach — one-off backfill after the reach algorithm change (fine
@@ -27,6 +28,7 @@ use Illuminate\Support\Facades\Cache;
  * Run with the reachable gate (RIPPLE_REACHABLE_GATE) on for the full effect; with
  * it off only the polygon is tightened and polygon-based retraction applies.
  */
+#[AsCommand(name: 'ripple:rebuild-reach')]
 class RebuildReachCommand extends Command
 {
     protected $signature = 'ripple:rebuild-reach

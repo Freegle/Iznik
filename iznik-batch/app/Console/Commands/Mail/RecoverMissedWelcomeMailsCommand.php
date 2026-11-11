@@ -10,7 +10,9 @@ use App\Services\EmailSpoolerService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:welcome:recover')]
 class RecoverMissedWelcomeMailsCommand extends Command
 {
     use FeatureFlags;
@@ -94,7 +96,7 @@ class RecoverMissedWelcomeMailsCommand extends Command
             $query->where(function ($q) {
                 // No logins since creation.
                 $q->whereNull('lastaccess')
-                    ->orWhereRaw('lastaccess = added');
+                    ->orWhereColumn('lastaccess', 'added');
             });
         }
 

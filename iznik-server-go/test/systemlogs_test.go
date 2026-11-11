@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -46,7 +47,7 @@ func TestSystemLogs_Unauthorized(t *testing.T) {
 
 func TestSystemLogs_ForbiddenForRegularUser(t *testing.T) {
 	prefix := uniquePrefix("syslogs_reg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Regular user without moderator role should be forbidden.
@@ -59,8 +60,8 @@ func TestSystemLogs_ForbiddenForRegularUser(t *testing.T) {
 func TestSystemLogs_ModeratorAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogs_mod")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	// Moderator should get through auth. The actual query will likely fail
@@ -75,7 +76,7 @@ func TestSystemLogs_ModeratorAccess(t *testing.T) {
 
 func TestSystemLogs_SupportAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogs_sup")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Support user should get through auth.
@@ -88,7 +89,7 @@ func TestSystemLogs_SupportAccess(t *testing.T) {
 
 func TestSystemLogs_AdminAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogs_admin")
-	userID := CreateTestUser(t, prefix, "Admin")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, userID)
 
 	code, ok := testSystemLogsRequest(t, "/api/modtools/systemlogs?jwt="+token)
@@ -101,12 +102,12 @@ func TestSystemLogs_AdminAccess(t *testing.T) {
 func TestSystemLogs_ModeratorCannotViewUnrelatedUser(t *testing.T) {
 	prefix := uniquePrefix("syslogs_moduser")
 	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modUserID)
 
 	// Create a user who is NOT in the moderator's group.
-	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+	otherUserID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	// Moderator should not be able to view logs for a user not in their groups.
 	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", modToken, otherUserID))
@@ -118,13 +119,13 @@ func TestSystemLogs_ModeratorCannotViewUnrelatedUser(t *testing.T) {
 func TestSystemLogs_ModeratorCanViewGroupMember(t *testing.T) {
 	prefix := uniquePrefix("syslogs_modmem")
 	groupID := CreateTestGroup(t, prefix)
-	modUserID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modUserID)
 
 	// Create a user who IS in the moderator's group.
-	memberUserID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberUserID, groupID, "Member")
+	memberUserID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberUserID, groupID, utils.ROLE_MEMBER)
 
 	// Moderator should be able to view logs for users in their groups.
 	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", modToken, memberUserID))
@@ -136,11 +137,11 @@ func TestSystemLogs_ModeratorCanViewGroupMember(t *testing.T) {
 
 func TestSystemLogs_SupportBypassesGroupCheck(t *testing.T) {
 	prefix := uniquePrefix("syslogs_supbypass")
-	supportUserID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportUserID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, supToken := CreateTestSession(t, supportUserID)
 
 	// Create any user.
-	otherUserID := CreateTestUser(t, prefix+"_other", "User")
+	otherUserID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 
 	// Support should bypass group membership checks.
 	code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&userid=%d", supToken, otherUserID))
@@ -162,7 +163,7 @@ func TestSystemLogsCounts_Unauthorized(t *testing.T) {
 
 func TestSystemLogsCounts_ForbiddenForRegularUser(t *testing.T) {
 	prefix := uniquePrefix("syslogscnt_reg")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	code, ok := testSystemLogsRequest(t, "/api/modtools/systemlogs/counts?jwt="+token)
@@ -173,7 +174,7 @@ func TestSystemLogsCounts_ForbiddenForRegularUser(t *testing.T) {
 
 func TestSystemLogsCounts_MissingSources(t *testing.T) {
 	prefix := uniquePrefix("syslogscnt_nosrc")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Missing required 'sources' parameter should return 400.
@@ -185,7 +186,7 @@ func TestSystemLogsCounts_MissingSources(t *testing.T) {
 
 func TestSystemLogsCounts_WithSources(t *testing.T) {
 	prefix := uniquePrefix("syslogscnt_src")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// With sources parameter should get past validation.
@@ -201,8 +202,8 @@ func TestSystemLogsCounts_WithSources(t *testing.T) {
 func TestSystemLogsCounts_ModeratorAccess(t *testing.T) {
 	prefix := uniquePrefix("syslogscnt_mod")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	code, ok := testSystemLogsRequest(t, "/api/modtools/systemlogs/counts?jwt="+token+"&sources=api")

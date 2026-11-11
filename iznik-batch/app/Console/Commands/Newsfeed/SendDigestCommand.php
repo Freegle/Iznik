@@ -5,7 +5,9 @@ namespace App\Console\Commands\Newsfeed;
 use App\Services\NewsfeedDigestService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:newsfeed:digest')]
 class SendDigestCommand extends Command
 {
     use LogsBatchJob;

@@ -152,6 +152,12 @@ spatial-live:
 
 Traefik routes `spatial.localhost` and `spatial-live.localhost` to port 8196 (external/authenticated). Internal services call `spatial:8194` directly (no auth).
 
+The Dockerfile builds two images. With no target (dev and CI) it is the full toolchain image,
+because the test runners `go test` inside the running container. Production builds the
+`runtime` target (`docker-compose.override.batchprod.yml`): the server and the `cmd/` tools
+(`placesextract`, `calibrate` and the rest, as programs) on Alpine with curl for the health
+checks, tens of MB instead of about 3 GB.
+
 ---
 
 ## Related: KNN index service (`iznik-spatial-go`)

@@ -4,7 +4,9 @@ namespace App\Console\Commands\Group;
 
 use App\Services\ModWelfareService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'groups:check-mod-welfare')]
 class ModActiveWelfareCommand extends Command
 {
     protected $signature = 'groups:check-mod-welfare

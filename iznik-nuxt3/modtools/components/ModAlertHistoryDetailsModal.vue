@@ -5,10 +5,15 @@
         {{ alert.subject }}
       </template>
       <template #default>
-        <label>Text version</label>
-        <b-form-textarea v-model="alert.text" rows="10" readonly />
+        <label :for="`${formId}-text-version`">Text version</label>
+        <b-form-textarea
+          :id="`${formId}-text-version`"
+          v-model="alert.text"
+          rows="10"
+          readonly
+        />
         <div v-if="alert.html" class="bg-light mt-2">
-          <label>HTML version (optional)</label>
+          <div class="field-caption">HTML version (optional)</div>
           <!-- eslint-disable-next-line -->
           <div v-html="alert.html" class="bg-info" />
         </div>
@@ -20,9 +25,12 @@
   </div>
 </template>
 <script setup>
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import { useAlertStore } from '~/stores/alert'
 import { useOurModal } from '~/composables/useOurModal'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   id: {
@@ -39,7 +47,8 @@ const alert = computed(() => alertStore.get(props.id))
 defineExpose({ show, hide })
 </script>
 <style scoped>
-label {
+label,
+.field-caption {
   font-weight: bold;
 }
 </style>

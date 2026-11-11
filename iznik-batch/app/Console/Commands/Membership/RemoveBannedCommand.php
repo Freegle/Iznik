@@ -4,6 +4,7 @@ namespace App\Console\Commands\Membership;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * membership:remove-banned - a ban means "off this group, and cannot rejoin", so a
@@ -20,6 +21,7 @@ use Illuminate\Support\Facades\DB;
  * them, so that stays a moderator decision. Galera-safe: one row per statement. Reports
  * only unless you pass --commit.
  */
+#[AsCommand(name: 'membership:remove-banned')]
 class RemoveBannedCommand extends Command
 {
     protected $signature = 'membership:remove-banned

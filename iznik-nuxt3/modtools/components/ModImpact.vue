@@ -30,7 +30,7 @@
             <component :is="heading" class="gold">
               £{{ roundIt(totalBenefit).toLocaleString() }}
               <br />
-              BENEFIT
+              BENEFIT<span v-if="benefitNote">*</span>
               <span v-if="range && fullStats">
                 <br />
                 <span class="text-muted small">
@@ -109,6 +109,11 @@
         <b-row v-if="range && !fullStats">
           <b-col class="text-center text-muted">
             These three figures are totals over {{ range }}.
+          </b-col>
+        </b-row>
+        <b-row v-if="benefitNote">
+          <b-col class="text-muted small pb-2">
+            <span class="benefit-note">* {{ benefitNote }}</span>
           </b-col>
         </b-row>
       </b-card-body>
@@ -260,6 +265,12 @@ const props = defineProps({
     type: Boolean,
     required: false,
     default: false,
+  },
+  // A footnote to the benefit figure, such as what it includes.
+  benefitNote: {
+    type: String,
+    required: false,
+    default: null,
   },
 })
 

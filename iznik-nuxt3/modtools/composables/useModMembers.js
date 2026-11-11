@@ -11,6 +11,8 @@ const group = ref(null)
 const limit = ref(10)
 const search = ref('')
 const filter = ref('0')
+// 'newest' or 'oldest' membership first. The server orders and pages; the sort below keeps that order.
+const order = ref('newest')
 // const workType = ref(null)
 const show = ref(0)
 const sort = ref(true)
@@ -38,18 +40,13 @@ const members = computed(() => {
   }
   // We need to sort as otherwise new members may appear at the end.
   if (sort.value) {
+    const newestFirst = order.value !== 'oldest'
     members.sort((a, b) => {
-      if (a.groups && b.groups) {
-        return (
-          new Date(b.groups[0].arrival).getTime() -
-          new Date(a.groups[0].arrival).getTime()
-        )
-      } else {
-        return (
-          new Date(b.added || b.joined).getTime() -
-          new Date(a.added || a.joined).getTime()
-        )
-      }
+      const when = (m) =>
+        new Date(
+          a.groups && b.groups ? m.groups[0].arrival : m.added || m.joined
+        ).getTime()
+      return newestFirst ? when(b) - when(a) : when(a) - when(b)
     })
   } else {
     members.sort((a, b) => {
@@ -91,6 +88,7 @@ const loadMore = async function ($state) {
       limit: limit.value,
       search: search.value,
       filter: filter.value,
+      order: order.value,
     }
     // console.log('UMM fetchMembers', params)
     await memberStore.fetchMembers(params)
@@ -148,6 +146,7 @@ export function setupModMembers(reset) {
     limit.value = 10
     search.value = ''
     filter.value = '0'
+    order.value = 'newest'
     show.value = 0
     sort.value = true
 
@@ -182,6 +181,7 @@ export function setupModMembers(reset) {
     limit, // Y
     search, // Y
     filter, // Y
+    order,
     // workType, // N
     show,
     sort,

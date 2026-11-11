@@ -63,7 +63,7 @@ if (location.value && lat && lng) {
 
 // Computed for list
 const list = computed(() => {
-  return jobStore.list.slice(0, 3)
+  return jobStore.available.slice(0, 3)
 })
 </script>
 <style scoped lang="scss">

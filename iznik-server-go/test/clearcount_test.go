@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -32,8 +33,8 @@ func TestClearCountDrainsCountWithoutClientIDs(t *testing.T) {
 	prefix := uniquePrefix("clearcount")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_u", "User")
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	userID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?)", userID, groupID)
@@ -73,9 +74,9 @@ func TestClearCountIsScopedToTheCaller(t *testing.T) {
 	prefix := uniquePrefix("clearcountscope")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_u", "User")
-	otherID := CreateTestUser(t, prefix+"_o", "User")
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	userID := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_o", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	_, otherToken := CreateTestSession(t, otherID)
 
@@ -128,7 +129,7 @@ func TestChitChatSeenAllClearsTheCount(t *testing.T) {
 
 	// A full user, because the ChitChat feed is filtered by distance from the viewer.
 	userID, token := CreateFullTestUser(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_p", "User")
+	posterID := CreateTestUser(t, prefix+"_p", utils.SYSTEMROLE_USER)
 
 	lat := 55.9533
 	lng := -3.1883

@@ -28,6 +28,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from '#imports'
 import { useJobStore } from '~/stores/job'
+import { filterNonsense, jobLocation } from '~/composables/useJobText'
 import ExternalLink from '~/components/ExternalLink'
 import { JOB_ICON_COLOURS } from '~/constants'
 
@@ -67,12 +68,7 @@ const title = computed(() => {
   return filterNonsense(job.value.title)
 })
 
-const location = computed(() => {
-  if (job.value?.location?.indexOf(', ') === 0) {
-    return job.value.location.substring(2)
-  }
-  return job.value?.location || ''
-})
+const location = computed(() => jobLocation(job.value?.location))
 
 // Use server-provided image URL if available
 const imageUrl = computed(() => {
@@ -98,16 +94,6 @@ function clicked() {
   if (router?.currentRoute?.value?.path !== '/jobs') {
     router.push('/jobs')
   }
-}
-
-function filterNonsense(val) {
-  return val
-    .replace(/\\n/g, '\n')
-    .replace(/<br>/g, '\n')
-    .replace(/Â£/g, '£')
-    .trim()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036F]/g, '')
 }
 </script>
 <style scoped lang="scss">

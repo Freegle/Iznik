@@ -31,7 +31,7 @@
           <div v-else class="my-posts-body">
             <NewUserInfo v-if="newUserPassword" :password="newUserPassword" />
             <MyPostsDonationAsk
-              v-else-if="type === 'Offer' && !donated"
+              v-else-if="type === 'Offer' && !donated && askForDonations"
               @donation-made="donationMade"
             />
 
@@ -45,6 +45,8 @@
             />
 
             <MyPostsClearances :posts="posts" />
+
+            <MyPostsInterested />
 
             <MyPostsPostsList
               :posts="posts"
@@ -85,6 +87,7 @@ import {
   computed,
   watch,
   onMounted,
+  onBeforeUnmount,
   defineAsyncComponent,
   useHead,
   useRouter,
@@ -97,6 +100,7 @@ import ExpectedRepliesWarning from '~/components/ExpectedRepliesWarning'
 import WantedMatches from '~/components/WantedMatches.vue'
 import MyPostsPostsList from '~/components/MyPostsPostsList.vue'
 import MyPostsClearances from '~/components/MyPostsClearances.vue'
+import MyPostsInterested from '~/components/MyPostsInterested.vue'
 import MyPostsSearchesList from '~/components/MyPostsSearchesList.vue'
 import MyPostsDonationAsk from '~/components/MyPostsDonationAsk.vue'
 import NewUserInfo from '~/components/NewUserInfo.vue'
@@ -117,7 +121,7 @@ const searchStore = useSearchStore()
 const trystStore = useTrystStore()
 const router = useRouter()
 // Use me and myid computed properties from useMe composable for consistency
-const { me, myid } = useMe()
+const { me, myid, askForDonations } = useMe()
 
 const runtimeConfig = useRuntimeConfig()
 const ids = ref([])
@@ -265,7 +269,39 @@ onMounted(() => {
     ids.value = window.history.state.ids
     newUserPassword.value = window.history.state.newpassword
   }
+
+  if (type.value === 'Offer' && ids.value?.length) {
+    watchForSplit(ids.value)
+  }
 })
+
+// A new OFFER of several things is split into items a minute or two after it is
+// posted (docs/developers/reference/auto-split.md). Refresh it for a few minutes so
+// the split appears here, with its Undo, without a reload.
+const SPLIT_POLL_MS = 20000
+const SPLIT_POLL_TIMES = 9
+let splitPoll = null
+function stopSplitPoll() {
+  if (splitPoll) {
+    window.clearInterval(splitPoll)
+    splitPoll = null
+  }
+}
+function watchForSplit(msgids) {
+  let times = 0
+  splitPoll = window.setInterval(async () => {
+    times++
+    const waiting = msgids.filter((id) => !messageStore.byId(id)?.autosplit)
+    if (!waiting.length || times > SPLIT_POLL_TIMES) {
+      stopSplitPoll()
+      return
+    }
+    await Promise.all(
+      waiting.map((id) => messageStore.fetch(id, true).catch(() => null))
+    )
+  }, SPLIT_POLL_MS)
+}
+onBeforeUnmount(stopSplitPoll)
 
 function donationMade() {
   action('Donation made from myposts', { messageIds: ids.value })

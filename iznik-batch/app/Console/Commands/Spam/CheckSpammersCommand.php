@@ -5,7 +5,9 @@ namespace App\Console\Commands\Spam;
 use App\Services\SpamCleanupService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'users:remove-spammers')]
 class CheckSpammersCommand extends Command
 {
     protected $signature = 'users:remove-spammers

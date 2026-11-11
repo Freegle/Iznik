@@ -3,10 +3,25 @@ package clientlog
 
 import (
 	"encoding/json"
+	"sync"
+	"time"
+
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 )
+
+// inflight counts the async writers so tests can wait for them.
+var inflight sync.WaitGroup
+
+var lokiOverride *misc.LokiClient
+
+func currentLoki() *misc.LokiClient {
+	if lokiOverride != nil {
+		return lokiOverride
+	}
+	return misc.GetLoki()
+}
 
 // LogEntry represents a single client log entry.
 type LogEntry struct {
@@ -45,7 +60,7 @@ type ClientLogRequest struct {
 // @Param logs body ClientLogRequest true "Client log entries"
 // @Success 204 "No Content"
 func ReceiveClientLogs(c *fiber.Ctx) error {
-	loki := misc.GetLoki()
+	loki := currentLoki()
 
 	// Always return 204 regardless of errors - fire and forget.
 	defer func() {
@@ -60,6 +75,54 @@ func ReceiveClientLogs(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusNoContent)
 	}
 
+	// Per-IP rate limit, counted in entries. The excess is dropped without telling the client, who
+	// gets the same 204 as ever, and the first trip in a minute leaves one line in Loki.
+	clientIP := c.IP()
+	limit := ratePerMin()
+
+	// Flow events have their own, much larger allowance, so a shared address (CGNAT, a school)
+	// does not lose funnel data to other traffic, while a client sending nothing but "flow"
+	// entries is still limited. Entries over either limit are dropped where they stand, so the
+	// batch keeps its order: Loki stamps lines as they are written.
+	isFlow := make([]bool, len(req.Logs))
+	nFlows := 0
+	for i, raw := range req.Logs {
+		var probe struct {
+			EventType string `json:"event_type"`
+		}
+		if json.Unmarshal(raw, &probe) == nil && probe.EventType == "flow" {
+			isFlow[i] = true
+			nFlows++
+		}
+	}
+	key, now := clientKey(c), time.Now()
+	flowLimit := limit * flowLimitMultiple
+	keepFlows, flowTripped := flowLimiter.take(key, nFlows, flowLimit, now)
+	keepOthers, tripped := defaultLimiter.take(key, len(req.Logs)-nFlows, limit, now)
+	if tripped || flowTripped {
+		loki.LogCustom("clientlog_ratelimit", nil, map[string]interface{}{
+			"message":            "clientlog rate limit tripped; excess entries dropped",
+			"client_ip":          clientIP,
+			"limit_per_min":      limit,
+			"flow_limit_per_min": flowLimit,
+			"flow_limit_tripped": flowTripped,
+			"batch_entries":      len(req.Logs),
+		})
+	}
+	kept := req.Logs[:0]
+	for i, raw := range req.Logs {
+		if isFlow[i] {
+			if keepFlows > 0 {
+				kept = append(kept, raw)
+				keepFlows--
+			}
+		} else if keepOthers > 0 {
+			kept = append(kept, raw)
+			keepOthers--
+		}
+	}
+	req.Logs = kept
+
 	// Get user ID from context if available.
 	var userId *uint64
 	userIdInJWT, _, _ := user.GetJWTFromRequest(c)
@@ -70,10 +133,11 @@ func ReceiveClientLogs(c *fiber.Ctx) error {
 	// Extract trace headers and client IP from request.
 	traceID := c.Get("X-Trace-ID")
 	sessionID := c.Get("X-Session-ID")
-	clientIP := c.IP()
 
 	// Process each log entry asynchronously.
+	inflight.Add(1)
 	go func() {
+		defer inflight.Done()
 		for _, rawLog := range req.Logs {
 			// Parse into a generic map to preserve all fields.
 			var logData map[string]interface{}

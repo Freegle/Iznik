@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const mockFetchMe = vi.fn()
 const mockGetModGroups = vi.fn()
+const mockFetchMod = vi.fn()
 const mockMiscStore = {
   workTimer: null,
   deferGetMessages: false,
@@ -40,6 +41,13 @@ vi.mock('~/stores/mobile', () => ({
   }),
 }))
 
+// checkWork() also refreshes the moderator lockdown state (see
+// useModMeLockdown.spec.js) - mocked here too so these pre-existing tests
+// aren't at the mercy of a real, unmocked Pinia store and network call.
+vi.mock('~/stores/lockdown', () => ({
+  useLockdownStore: () => ({ fetchMod: mockFetchMod }),
+}))
+
 // --- Audio mock ---
 
 let mockAudioPlay
@@ -48,6 +56,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   mockAudioPlay = vi.fn().mockResolvedValue(undefined)
   mockSetBadgeCount.mockReset()
+  mockFetchMod.mockReset().mockResolvedValue({ active: false, surfaces: {} })
   global.Audio = class MockAudio {
     play() {
       return mockAudioPlay()

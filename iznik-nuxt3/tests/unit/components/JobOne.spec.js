@@ -18,6 +18,9 @@ const mockJob = {
 const mockJobStore = {
   byId: vi.fn().mockReturnValue(mockJob),
   log: vi.fn(),
+  isDoubleTap: vi.fn().mockReturnValue(false),
+  openedRecently: vi.fn().mockReturnValue(false),
+  recordOpened: vi.fn(),
 }
 
 const mockRouter = {
@@ -49,6 +52,10 @@ vi.mock('~/composables/useClientLog', () => ({
   action: (...args) => mockAction(...args),
 }))
 
+vi.mock('~/composables/useExperiment', () => ({
+  experimentVariant: () => 'some-experiment:b',
+}))
+
 vi.mock('~/constants', () => ({
   JOB_ICON_COLOURS: {
     'dark green': '#2d5016',
@@ -60,6 +67,8 @@ describe('JobOne', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockJobStore.byId.mockReturnValue({ ...mockJob })
+    mockJobStore.isDoubleTap.mockReturnValue(false)
+    mockJobStore.openedRecently.mockReturnValue(false)
     mockRouter.currentRoute = {
       value: { path: '/browse', name: 'browse-term' },
     }
@@ -252,6 +261,18 @@ describe('JobOne', () => {
       )
     })
 
+    it("stamps the click with the member's experiment arms, so it can be counted by arm", async () => {
+      const wrapper = createWrapper({ id: 123, context: 'reply_interstitial' })
+      await wrapper.find('.job-item').trigger('click')
+      expect(mockAction).toHaveBeenCalledWith(
+        'job_ad_click',
+        expect.objectContaining({
+          context: 'reply_interstitial',
+          variant: 'some-experiment:b',
+        })
+      )
+    })
+
     it('captures the current route NAME as page (low cardinality), not the path', async () => {
       // On the jobs page the route name is 'jobs'; /explore/123 would be 'explore-id'
       // etc, so dynamic ids never explode the cardinality of the page dimension.
@@ -300,6 +321,59 @@ describe('JobOne', () => {
       links.forEach((link) => {
         expect(link.attributes('href')).not.toBe('/jobs')
       })
+    })
+  })
+
+  describe('repeat clicks', () => {
+    // WhatJobs does not pay for a repeat click on the same advert, and counts it against
+    // the first one, so a repeat must not reach the advert at all.
+    it('records the advert as opened so the slots swap it out', async () => {
+      const wrapper = createWrapper({ id: 123 })
+      await wrapper.find('.job-item').trigger('click')
+      expect(mockJobStore.recordOpened).toHaveBeenCalledWith(123)
+    })
+
+    it('drops a double-tap without logging, opening or emitting', async () => {
+      mockJobStore.isDoubleTap.mockReturnValue(true)
+      const wrapper = createWrapper({ context: 'sticky_footer_mobile' })
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      wrapper.find('a').element.dispatchEvent(event)
+
+      expect(event.defaultPrevented).toBe(true)
+      expect(mockJobStore.log).not.toHaveBeenCalled()
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'job_ad_click',
+        expect.anything()
+      )
+      expect(mockJobStore.recordOpened).not.toHaveBeenCalled()
+      expect(wrapper.emitted('clicked')).toBeFalsy()
+    })
+
+    it('drops a tap on an advert this device opened recently', async () => {
+      mockJobStore.openedRecently.mockReturnValue(true)
+      const wrapper = createWrapper()
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      wrapper.find('a').element.dispatchEvent(event)
+
+      expect(mockJobStore.openedRecently).toHaveBeenCalledWith(123)
+      expect(event.defaultPrevented).toBe(true)
+      expect(mockJobStore.log).not.toHaveBeenCalled()
+    })
+
+    it('stops a dropped tap before it reaches the link', async () => {
+      // In the app the link opens the advert from its own click handler, so preventing the
+      // default is not enough - the tap must not reach it.
+      mockJobStore.isDoubleTap.mockReturnValue(true)
+      const wrapper = createWrapper()
+      const linkClick = vi.fn()
+      wrapper.find('a').element.addEventListener('click', linkClick)
+      wrapper
+        .find('a')
+        .element.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true })
+        )
+
+      expect(linkClick).not.toHaveBeenCalled()
     })
   })
 

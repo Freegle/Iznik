@@ -71,6 +71,18 @@ describe('StoryAddModal', () => {
       .trigger('click')
   }
 
+  // Open the uploader and have it hand back one uploaded photo, as the real
+  // OurUploader does once a file is processed.
+  async function attachPhoto(wrapper, id = 7) {
+    await clickButton(wrapper, 'Add a photo')
+    wrapper
+      .findComponent('.our-uploader')
+      .vm.$emit('update:modelValue', [
+        { id, ouruid: 'uid' + id, externalmods: {} },
+      ])
+    await flushPromises()
+  }
+
   function createWrapper() {
     return mount(StoryAddModal, {
       global: {
@@ -178,6 +190,18 @@ describe('StoryAddModal', () => {
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('share your story')
     })
+
+    it('names the Freegle name that will be shared', () => {
+      globalThis.__mockAuthStore.user.displayname = 'Jo Freegler'
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('with your Freegle name (Jo Freegler)')
+    })
+
+    it('leaves out the brackets when there is no name', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('with your Freegle name')
+      expect(wrapper.text()).not.toContain('name (')
+    })
   })
 
   describe('form labels', () => {
@@ -194,6 +218,19 @@ describe('StoryAddModal', () => {
     it('shows photo prompt', () => {
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('Please add a photo')
+    })
+
+    it('says why a photo matters', () => {
+      // Only about one story in six arrives with a photo, so the ask has to
+      // explain what the photo does rather than call it optional.
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('more people freegling')
+      expect(wrapper.text()).not.toContain('Photos are option')
+    })
+
+    it('asks what difference freegling made', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('difference')
     })
   })
 
@@ -255,21 +292,42 @@ describe('StoryAddModal', () => {
   })
 
   describe('successful submission', () => {
-    it('calls storyStore.add with correct params', async () => {
+    it('posts straight away when a photo is attached', async () => {
       const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+      await attachPhoto(wrapper, 7)
+      expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
 
-      // Fill headline
-      const input = wrapper.find('.b-form-input')
-      await input.setValue('Test Headline')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
 
-      // Fill story
-      const textarea = wrapper.find('.b-form-textarea')
-      await textarea.setValue('Test Story Content')
+      expect(wrapper.text()).not.toContain('No photo yet')
+      expect(mockStoryStore.add).toHaveBeenCalledWith(
+        'Test Headline',
+        'Test Story Content',
+        7,
+        true
+      )
+    })
 
-      const submitBtn = wrapper
-        .findAll('.b-button')
-        .find((b) => b.text().includes('Add Your Story'))
-      await submitBtn.trigger('click')
+    it('asks for a photo once before posting without one', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      expect(mockStoryStore.add).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('No photo yet')
+    })
+
+    it('posts without a photo when they say so', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      await clickButton(wrapper, 'Post without a photo')
       await flushPromises()
 
       expect(mockStoryStore.add).toHaveBeenCalledWith(
@@ -280,19 +338,108 @@ describe('StoryAddModal', () => {
       )
     })
 
-    it('shows thank you message after submission', async () => {
+    it('posts without a photo on a second press of the main button', async () => {
+      // The nudge is asked once; pressing Add Your Story again means "no, post it".
       const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
 
-      // Fill headline and story
-      const input = wrapper.find('.b-form-input')
-      await input.setValue('Test Headline')
-      const textarea = wrapper.find('.b-form-textarea')
-      await textarea.setValue('Test Story Content')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
 
-      const submitBtn = wrapper
+      expect(mockStoryStore.add).toHaveBeenCalledTimes(1)
+      expect(mockStoryStore.add).toHaveBeenCalledWith(
+        'Test Headline',
+        'Test Story Content',
+        null,
+        true
+      )
+    })
+
+    it('lets them add a photo from the nudge instead', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      const nudgeAdd = wrapper
+        .find('.photo-nudge')
+        .findAll('.b-button')
+        .find((b) => b.text().includes('Add a photo'))
+      await nudgeAdd.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.our-uploader').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('No photo yet')
+      expect(mockStoryStore.add).not.toHaveBeenCalled()
+    })
+
+    it('does not post twice while the first post is still in flight', async () => {
+      let finish
+      mockStoryStore.add.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve
+        })
+      )
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      await clickButton(wrapper, 'Post without a photo')
+      await clickButton(wrapper, 'Post without a photo')
+      await clickButton(wrapper, 'Add Your Story')
+      finish()
+      await flushPromises()
+
+      expect(mockStoryStore.add).toHaveBeenCalledTimes(1)
+      expect(wrapper.text()).toContain('grateful')
+    })
+
+    it('treats a double-click on the main button as one press', async () => {
+      // The second click of a double-click lands before the nudge has rendered,
+      // so it must not count as the answer to a question nobody has seen yet.
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+
+      const submit = wrapper
         .findAll('.b-button')
         .find((b) => b.text().includes('Add Your Story'))
-      await submitBtn.trigger('click')
+      submit.trigger('click')
+      submit.trigger('click')
+      await flushPromises()
+
+      expect(mockStoryStore.add).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('No photo yet')
+    })
+
+    it('asks about a photo again after a validation error', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+      expect(wrapper.text()).toContain('No photo yet')
+
+      await wrapper.find('.b-form-input').setValue('')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('No photo yet')
+
+      await wrapper.find('.b-form-input').setValue('Fixed Headline')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      expect(mockStoryStore.add).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('No photo yet')
+    })
+
+    it('shows thank you message after submission', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+      await clickButton(wrapper, 'Post without a photo')
       await flushPromises()
 
       expect(wrapper.text()).toContain('grateful')
@@ -369,7 +516,7 @@ describe('StoryAddModal', () => {
       mockComposeStore.storyDraft = {
         headline: 'Saved Headline',
         story: 'Saved Story',
-        image: null,
+        image: { id: 9, imageuid: 'uid9', imagemods: {} },
       }
 
       const wrapper = createWrapper()
@@ -379,7 +526,7 @@ describe('StoryAddModal', () => {
       expect(mockStoryStore.add).toHaveBeenCalledWith(
         'Saved Headline',
         'Saved Story',
-        null,
+        9,
         true
       )
     })
@@ -389,6 +536,8 @@ describe('StoryAddModal', () => {
       await fillIn(wrapper, 'Test Headline', 'Test Story Content')
 
       await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+      await clickButton(wrapper, 'Post without a photo')
       await flushPromises()
 
       expect(mockComposeStore.clearStoryDraft).toHaveBeenCalled()

@@ -7,6 +7,7 @@ use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Backfill historical messages with EEE classifications.
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\DB;
  *   php artisan eee:backfill --from=2024-05-01 --to=2025-05-01
  *   php artisan eee:backfill --from=2024-05-01 --limit=5000 --dry-run
  */
+#[AsCommand(name: 'eee:backfill')]
 class EeeBackfillCommand extends Command
 {
     protected $signature = 'eee:backfill

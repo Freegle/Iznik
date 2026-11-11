@@ -64,6 +64,17 @@ android {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+        // The emulator gate (FreegleDocker scripts/app-e2e) drives this build type: the
+        // release configuration above - R8 shrink, optimise and obfuscate, not debuggable -
+        // signed with the debug key so the gate runs without the Play keystore. Its only
+        // other differences are declared where they apply: src/e2e/AndroidManifest.xml
+        // permits cleartext HTTP (the local stack's API is http), and capacitor.config.ts
+        // turns on WebView remote debugging and mixed content when FREEGLE_APP_E2E=true.
+        e2e {
+            initWith release
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ['release']
+        }
     }
 }
 

@@ -42,6 +42,7 @@ describe('ModSupportFindUser', () => {
               "<i :class=\"[`icon-${icon}`, { 'fa-spin': icon === 'sync' && $parent.searching }]\" />",
             props: ['icon'],
           },
+          'b-badge': { template: '<span class="badge"><slot /></span>' },
           ModSupportUser: {
             template:
               '<div class="mod-support-user" :data-id="id" :data-expand="expand">User {{ id }}</div>',
@@ -73,6 +74,43 @@ describe('ModSupportFindUser', () => {
     mockUserStore.searchUsers = vi.fn().mockResolvedValue([])
   })
 
+  describe('match reasons', () => {
+    it('shows why a result matched', async () => {
+      const wrapper = mountComponent()
+      mockUserStore.searchMatches = {
+        5: ['donation_payer', 'giftaid_postcode'],
+      }
+      mockUserStore.searchUsers = vi.fn().mockImplementation(async () => {
+        mockUserStore.list = { 5: { id: 5 }, 6: { id: 6 } }
+        return []
+      })
+
+      wrapper.vm.searchuser = 'someone@example.com'
+      await wrapper.vm.usersearch()
+      wrapper.vm.show = 10
+      await flushPromises()
+
+      const reasons = wrapper.findAll('.match-reasons')
+      expect(reasons.length).toBe(1)
+      expect(reasons[0].text()).toContain('Matched donation payer email')
+      expect(reasons[0].text()).toContain('Matched gift aid postcode')
+    })
+
+    it('shows nothing for plain name/email matches', async () => {
+      const wrapper = mountComponent()
+      mockUserStore.searchMatches = {}
+      mockUserStore.searchUsers = vi.fn().mockImplementation(async () => {
+        mockUserStore.list = { 7: { id: 7 } }
+        return []
+      })
+      wrapper.vm.searchuser = 'bob'
+      await wrapper.vm.usersearch()
+      wrapper.vm.show = 10
+      await flushPromises()
+      expect(wrapper.find('.match-reasons').exists()).toBe(false)
+    })
+  })
+
   describe('rendering', () => {
     it('renders the search input', () => {
       const wrapper = mountComponent()
@@ -89,7 +127,7 @@ describe('ModSupportFindUser', () => {
       const wrapper = mountComponent()
       const input = wrapper.find('.form-input')
       expect(input.attributes('placeholder')).toBe(
-        'Email, numerical id, or ~- encoded id'
+        'Email (incl. donation payer email), postcode, name, numerical id, or ~- encoded id'
       )
     })
 

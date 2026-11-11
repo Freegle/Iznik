@@ -1,11 +1,14 @@
 ---
-last_reviewed: 2026-09-13
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
   - iznik-nuxt3/components/settings/**
   - iznik-nuxt3/pages/unsubscribe/**
   - iznik-nuxt3/pages/mydata.vue
+  - iznik-nuxt3/components/StoryAddModal.vue
+  - iznik-nuxt3/pages/stories/[[groupid]].vue
+  - iznik-nuxt3/pages/story/[id].vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-settings.spec.js
   - iznik-nuxt3/tests/e2e/test-register-unsubscribe.spec.js
@@ -49,6 +52,17 @@ events. It is on by default and can be turned off in Settings.
 
 If you are in the app, you can also turn on a **daily push notification** of new posts.
 
+**Freegle updates** in Settings is news and ways to support Freegle, including fundraising
+emails and the newsletters your community's volunteers send. It is off unless you turned it on,
+here or with the box under the login form. You can turn it off at any time. The opt-out link at
+the foot of a community newsletter turns it off too.
+
+If you have ever donated to Freegle, Settings also has a **Donation requests** switch. Turn it
+off and we will not ask you to donate for a year, on the site or by email. Settings shows the
+date it ends. After that we may ask again, and you can turn it off for another year. The switch
+stays there for good, so you can turn it back on whenever you like. If you have never donated, you will not
+see it.
+
 Above the email settings there is a **Feed** section with a "How far away" slider, marked
 Nearer at one end and Further at the other. It changes what you see when browsing, what we
 email you about, and how far away other people can be and still see your posts. How far
@@ -71,8 +85,9 @@ moderators, so there is no benefit to joining everywhere.
 - Each community has its own email frequency, set in Email settings above.
 - To **leave** a community, use **Unsubscribe** (`/unsubscribe`) and pick the community.
   Leaving stops its posts reaching you.
-- If you are a **moderator or owner** of a community, it is not in that list, and Freegle
-  refuses a leave request for it. Ask another owner to change your role first. This stops
+- If you are a **moderator or owner** of a community, you cannot leave it from here, and
+  Freegle refuses a leave request for it, because leaving would drop your role. To leave,
+  change your own role to **Member** in ModTools first, or ask another owner to. This stops
   you dropping your own role by accident; a community a post rippled you into is not
   protected this way, because leaving it is how you stop that post reaching there.
 
@@ -94,6 +109,11 @@ You can change any of it, or turn everything off, on the Settings page.
 - Other members can leave you **ratings** (a thank-you and thumbs up or down) on your
   public profile at `/profile/<id>`. Being reliable and polite keeps your ratings good,
   which helps people choose to give to you.
+
+If Freegle is in the middle of a security incident, profile changes are paused for
+everyone for a few hours. You will see a message explaining why if you try to change
+your name, photo or About Me while it is on; nothing is lost, and you can try again once
+it is lifted.
 
 ## Your posts
 
@@ -130,8 +150,9 @@ community statistics and so you always have a record of what you gave or receive
 - **ChitChat** (`/chitchat`): a community discussion feed, separate from OFFER and WANTED
   posts. Chat about local goings-on, ask for recommendations, and so on. If a ChitChat
   post looks like an item request, Freegle nudges you to use Give or Ask instead.
-- **Stories** (`/stories`): share why you freegle. Good stories may feature in a
-  community newsletter.
+- **Stories** (`/stories`): share why you freegle and the difference it has made,
+  with a photo if you can. Stories with a photo are the ones Freegle can share to
+  get more people freegling, and good stories may feature in a community newsletter.
 - **Community events** (`/communityevents`) and **volunteering** (`/volunteerings`):
   browse and add local events and volunteering opportunities.
 - **Invite a friend** (`/promote`): invite someone by email, or print a poster.

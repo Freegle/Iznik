@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Bring users_emails.canon and users_emails.backwards back to one definition.
@@ -27,6 +28,7 @@ use Illuminate\Support\Facades\Log;
  * Reads nothing it does not write and writes nothing it has not compared, so it is
  * safe to stop and restart: --resume picks up from the last id it finished.
  */
+#[AsCommand(name: 'users:backfill-email-canon')]
 class BackfillEmailCanonCommand extends Command
 {
     protected $signature = 'users:backfill-email-canon

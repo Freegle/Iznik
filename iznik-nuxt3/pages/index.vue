@@ -69,6 +69,7 @@
           href="https://play.google.com/store/apps/details?id=org.ilovefreegle.direct"
           target="_blank"
           rel="noopener noreferrer"
+          aria-label="Get it on Google Play"
         >
           <ProxyImage
             alt="Get it on Google Play"
@@ -84,6 +85,7 @@
           href="https://itunes.apple.com/gb/app/freegle/id970045029?ls=1&amp;mt=8"
           target="_blank"
           rel="noopener noreferrer"
+          aria-label="Download on the App Store"
         >
           <ProxyImage
             alt="Download on the App Store"
@@ -263,11 +265,25 @@ async function explorePlace(place) {
   router.push('/explore/place/' + JSON.stringify(place))
 }
 
+// The landing and its buttons only count as shown when a logged-out visitor is looking at them.
+function recordLandingShown() {
+  api.bandit.shown({ uid: 'landing', variant: type.value })
+
+  for (const button of ['give', 'ask', 'place']) {
+    api.bandit.shown({
+      uid: 'landing-button',
+      variant: type.value + '-' + button,
+    })
+  }
+}
+
 // Lifecycle hooks
 onMounted(() => {
   if (import.meta.client) {
     if (me.value) {
       goHome()
+    } else {
+      recordLandingShown()
     }
   }
 })

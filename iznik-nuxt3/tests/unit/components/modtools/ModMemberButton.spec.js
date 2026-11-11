@@ -380,53 +380,27 @@ describe('ModMemberButton', () => {
     })
   })
 
-  // Removing a member whose only tie to the group is a ripple happens, but they are not
-  // told (Discourse 10102). So there is no message to compose: offer the plain
-  // confirmation instead of a compose box whose words would be dropped.
-  describe('ripple-created membership', () => {
-    it('confirms a silent removal instead of composing a message', async () => {
-      mockStdmsgStore.fetch.mockResolvedValue({
-        id: 7,
-        action: 'Delete Approved Member',
-      })
+  // A moderator removing themselves is refused by the server (403 with a message saying
+  // how to leave). It used to be swallowed, so nothing at all seemed to happen
+  // (Discourse 10242).
+  describe('removing yourself is refused', () => {
+    const MSG =
+      'You are a moderator of this community, so leaving would drop that role. To leave, change your own role to Member first, or ask another owner to.'
 
-      const wrapper = mountComponent({ stdmsgid: 7, rippleOnly: true })
+    function refused() {
+      const e = new Error('API Error POST /memberships -> status: 403')
+      e.response = { status: 403, data: { error: 403, message: MSG } }
+      return e
+    }
+
+    it('shows the message when a confirmed delete is refused', async () => {
+      mockMemberStore.delete.mockRejectedValue(refused())
+      const wrapper = mountComponent({ delete: true })
       await wrapper.find('button').trigger('click')
-      await flushPromises()
-
-      expect(wrapper.find('.confirm-modal').exists()).toBe(true)
-      expect(wrapper.find('.std-message-modal').exists()).toBe(false)
-    })
-
-    it('removes them with no message when confirmed', async () => {
-      mockStdmsgStore.fetch.mockResolvedValue({
-        id: 7,
-        action: 'Delete Approved Member',
-      })
-
-      const wrapper = mountComponent({ stdmsgid: 7, rippleOnly: true })
-      await wrapper.find('button').trigger('click')
-      await flushPromises()
       await wrapper.findComponent({ name: 'ConfirmModal' }).vm.$emit('confirm')
       await flushPromises()
 
-      expect(mockMemberStore.delete).toHaveBeenCalledWith({
-        id: 456,
-        groupid: 789,
-      })
-    })
-
-    it('still composes a message for an ordinary member', async () => {
-      mockStdmsgStore.fetch.mockResolvedValue({
-        id: 7,
-        action: 'Delete Approved Member',
-      })
-
-      const wrapper = mountComponent({ stdmsgid: 7, rippleOnly: false })
-      await wrapper.find('button').trigger('click')
-      await flushPromises()
-
-      expect(wrapper.find('.std-message-modal').exists()).toBe(true)
+      expect(wrapper.text()).toContain('change your own role to Member first')
     })
   })
 })

@@ -391,6 +391,26 @@ describe('ModPartnershipEditModal', () => {
     expect(values).toContain('Southbury')
   })
 
+  it('does not list a community that only touches the council boundary', async () => {
+    mockAuthoritySearch.mockResolvedValue([
+      { id: 42, name: 'Southbury', area_code: 'County Council' },
+    ])
+    mockAuthorityFetch.mockResolvedValue({
+      groups: [
+        { id: 1, namedisplay: 'Edge Only', overlap: 0.01, significant: false },
+        { id: 2, namedisplay: 'Properly In', overlap: 1, significant: true },
+      ],
+    })
+
+    const wrapper = mountModal()
+    await searchCouncils(wrapper, 'Southbury')
+    await pickCouncil(wrapper, 'Southbury')
+
+    const rows = wrapper.findAll('label.cb').map((l) => l.text())
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain('Properly In')
+  })
+
   it('saves a new deal with the communities left out and added', async () => {
     mockAuthoritySearch.mockResolvedValue([
       { id: 42, name: 'Southbury', area_code: 'County Council' },

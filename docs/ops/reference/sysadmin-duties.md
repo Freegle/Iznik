@@ -1,11 +1,10 @@
 ---
-last_reviewed: 2026-09-18
+last_reviewed: 2026-10-07
 owner: Freegle ops
 covers:
   - ops/hosts/README.md
   - ops/hosts/SERVICES.md
   - ops/hosts/monit/batch-host/conf.d/disk.conf
-  - ops/hosts/monit/batch-host/conf.d/tusd
   - ops/hosts/monit/db-node/conf.d/mysql.conf
   - yesterday/README.md
 ---
@@ -74,6 +73,7 @@ Two monit traps from that page, repeated here because they bite:
 
 | Check | How | Why |
 |---|---|---|
+| Automated maintenance ran | `freegle-maint status` on the Docker host, and the run mails | A failed run holds the lock until a person clears it, so no machine gets patched until then. See [automated host maintenance](../runbooks/automated-host-maintenance.md) |
 | `monit summary` on each machine | every service should read OK | A check that has been failing for days is invisible unless you look |
 | Disk headroom on all machines | monit `disk.conf` alarms plus your own eyes | The Yesterday pool grows by 10-20G a day; disk is the most common slow-motion outage |
 | Galera cluster health | `SHOW STATUS LIKE 'wsrep_%'` - cluster size 3, all nodes Synced | A node can drop out and the site stays up, so nothing tells you until the second one goes |
@@ -92,10 +92,7 @@ Two monit traps from that page, repeated here because they bite:
 ## What alerts you, and what does not
 
 **You will be told about:** monit service failures and disk alarms (by email to the ops
-alert address), uploads stalling behind a scan of the upload store (monit kills the scanner
-and mails you its command line - see
-[`ops/hosts/monit/batch-host/conf.d/tusd`](../../../ops/hosts/monit/batch-host/conf.d/tusd)),
-application exceptions (Sentry), CI failures (CircleCI), and members complaining, which is a
+alert address), application exceptions (Sentry), CI failures (CircleCI), and members complaining, which is a
 real and fast monitoring channel.
 
 **Nothing currently tells you about:**
@@ -105,8 +102,10 @@ real and fast monitoring channel.
 - Mail deferrals building up for one provider. The adaptive shaper reacts on its own,
   but nobody is notified that it did.
 - A warning-level outcome breach. Error-level ones raise a Sentry alert; warning-level
-  ones only colour the ModTools status dot amber, deliberately, so a machine that has
-  needed a reboot for a fortnight does not page somebody every ten minutes.
+  ones only colour the ModTools status dot amber, deliberately, so a monit service that
+  has been parked for a fortnight does not page somebody every ten minutes. Pending
+  patches and reboots are not on the dot at all: they are the `host-patch` rows on the
+  SysAdmin Cron Jobs tab, red only once they pass the host's limit.
 - A monit configuration that fails to load.
 - Certificates approaching expiry.
 - A single Galera node leaving the cluster.

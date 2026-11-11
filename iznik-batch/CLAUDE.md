@@ -18,7 +18,6 @@ All domain-specific configuration is in `config/freegle.php` and can be overridd
 - `FREEGLE_MOD_SITE` - Moderator tools URL (default: https://modtools.org)
 - `FREEGLE_SITE_NAME` - Site name for branding (default: Freegle)
 - `FREEGLE_LOGO_URL` - Logo image URL
-- `FREEGLE_WALLPAPER_URL` - Email header background image
 - `FREEGLE_SRID` - Geospatial SRID (default: 3857, Web Mercator)
 
 ## Running Tests

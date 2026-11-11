@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { WorkflowEngine, MemoryStorage } from 'ai-flower'
-import { getDb, resetDbForTests, upsertDiscourseBug, listPendingDrafts } from '../db/index.js'
+import { getDb, resetDbForTests, upsertDiscourseBug } from '../db/index.js'
 
 // COLLATE_RESULTS writes the delegates' answers into context.questionAnswers and asks for
 // persist_question_answers in the SAME decision. The engine must run that action against
 // the updated context. When it ran against the context from before the step, the action
-// always saw no answers and queued nothing, so every answer the delegates wrote was lost
+// always saw no answers and posted nothing, so every answer the delegates wrote was lost
 // without a trace.
 
 const PLAIN_ANSWER =
@@ -25,7 +25,7 @@ afterEach(() => {
 })
 
 describe('an LLM state that writes answers and persists them in one step', () => {
-  it('queues the answers it has just written', async () => {
+  it('posts the answers it has just written', async () => {
     upsertDiscourseBug(db, {
       topic: 10005, post: 18, state: 'question', reporter: 'Jeni',
       excerpt: 'Does deleting a rippled post delete it everywhere?',
@@ -35,6 +35,7 @@ describe('an LLM state that writes answers and persists them in one step', () =>
     const mod = await import('../actions/index.js')
     vi.spyOn(mod.questionAnswerDeps, 'fetchReporterQuote')
       .mockResolvedValue('Does deleting a rippled post delete it everywhere?')
+    const post = vi.spyOn(mod.questionAnswerDeps, 'postDiscourseReply').mockResolvedValue({ ok: true })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const persist = mod.actions.find((a: any) => a.name === 'persist_question_answers')!
 
@@ -63,7 +64,7 @@ describe('an LLM state that writes answers and persists them in one step', () =>
     const instance = await engine.createInstance()
     const result = await engine.processInput(instance.id, { type: 'tick', data: {} })
 
-    expect(result.actionsExecuted[0].result).toMatchObject({ queued: 1 })
-    expect(listPendingDrafts(db).map((d: { topic: number }) => d.topic)).toContain(10005)
+    expect(result.actionsExecuted[0].result).toMatchObject({ posted: 1 })
+    expect(post).toHaveBeenCalledWith(10005, expect.stringContaining('only removes it'), 18)
   })
 })

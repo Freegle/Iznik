@@ -5,6 +5,7 @@ namespace App\Console\Commands\Eee;
 use App\Services\EeeSqliteService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Push eee_classifications rows from the iznik-batch SQLite up to the
@@ -20,6 +21,7 @@ use Illuminate\Support\Facades\Http;
  * The receiver upserts on (messageid, attid, model, prompt_version), so
  * re-runs are idempotent and safe.
  */
+#[AsCommand(name: 'eee:sync-classifications')]
 class EeeSyncClassificationsCommand extends Command
 {
     protected $signature = 'eee:sync-classifications

@@ -8,6 +8,7 @@ use App\Models\UserEmail;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Import community organisations (from the community-reuse-outreach CSV) as Freegle
@@ -19,6 +20,7 @@ use Illuminate\Support\Facades\DB;
  * Email, Website, Likely wants / why, Cluster, Activity evidence, Confidence, Source.
  * Only Organisation + Email are required per row.
  */
+#[AsCommand(name: 'bulkoffer:import-orgs')]
 class ImportOrgsCommand extends Command
 {
     protected $signature = 'bulkoffer:import-orgs

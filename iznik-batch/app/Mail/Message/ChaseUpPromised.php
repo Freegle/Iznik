@@ -2,6 +2,7 @@
 
 namespace App\Mail\Message;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
@@ -9,7 +10,7 @@ use App\Models\Message;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class ChaseUpPromised extends MjmlMailable
+class ChaseUpPromised extends MjmlMailable implements DescribesMemberContent
 {
     use TrackableEmail;
     use LoggableEmail;
@@ -17,9 +18,9 @@ class ChaseUpPromised extends MjmlMailable
     /**
      * Create a new message instance.
      *
-     * V1: Promised variant of the chase-up email. Large "Mark as TAKEN" button,
-     * then smaller Repost/Withdraw. Different wording: "You promised this to
-     * someone. If they've already collected it, please let us know."
+     * Promised variant of the chase-up email. Large "Mark as TAKEN" button,
+     * then smaller Repost/Withdraw. Names the member it was promised to, or
+     * "someone" when no name can be found.
      */
     public function __construct(
         public int $messageId,
@@ -29,6 +30,7 @@ class ChaseUpPromised extends MjmlMailable
         public string $userName,
         public string $userEmail,
         public ?int $groupId = null,
+        public ?string $promisedTo = null,
     ) {
         parent::__construct();
 
@@ -54,6 +56,7 @@ class ChaseUpPromised extends MjmlMailable
             ->mjmlView('emails.mjml.message.chaseup-promised', array_merge([
                 'userName' => $this->userName,
                 'messageSubject' => $this->messageSubject,
+                'promisedTo' => $this->promisedTo ?: 'someone',
                 'outcomeType' => $outcomeType,
                 'completedUrl' => $this->trackedUrl(
                     "{$userSite}/mypost/{$this->messageId}/completed",
@@ -69,11 +72,6 @@ class ChaseUpPromised extends MjmlMailable
                     "{$userSite}/mypost/{$this->messageId}/withdraw",
                     'withdraw_button',
                     'withdraw'
-                ),
-                'myPostsUrl' => $this->trackedUrl(
-                    "{$userSite}/myposts",
-                    'myposts_link',
-                    'myposts'
                 ),
                 'settingsUrl' => $this->trackedUrl(
                     "{$userSite}/settings",
@@ -112,5 +110,20 @@ class ChaseUpPromised extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->userId;
+    }
+
+    /**
+     * Names the post it chases up and the poster it is addressed to (plan section 11.8);
+     * filter-spool removes this mail once that post is no longer Approved or the poster is
+     * now a spammer.
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [$this->messageId],
+            'newsfeed' => [],
+            'users' => [$this->userId],
+        ];
     }
 }

@@ -4,6 +4,7 @@ namespace Tests\Feature\Command;
 
 use App\Console\Commands\Deploy\RefreshCommand;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
 
 class DeployWatchCommandTest extends TestCase
@@ -11,6 +12,10 @@ class DeployWatchCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // --force runs deploy:refresh, which restarts the spooler workers through
+        // supervisorctl. Not from inside the test suite: see DeployRefreshCommandTest.
+        Process::fake();
 
         // Clear cached version before each test.
         Cache::forget(RefreshCommand::VERSION_CACHE_KEY);

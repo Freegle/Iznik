@@ -2,6 +2,7 @@
 
 namespace App\Mail\Ripple;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Models\Message;
@@ -20,7 +21,7 @@ use Illuminate\Mail\Mailables\Envelope;
  * volunteering left as their normal setting), and how to change them or leave - not to "welcome"
  * them to a specific group. Sent from the Freegle-wide no-reply address, not a group address.
  */
-class RippleIntroMail extends MjmlMailable
+class RippleIntroMail extends MjmlMailable implements DescribesMemberContent
 {
     use LoggableEmail;
 
@@ -48,6 +49,22 @@ class RippleIntroMail extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id;
+    }
+
+    /**
+     * Names the post that rippled (light context only - a null message just means no
+     * `messages` entry) and the poster it is addressed to (plan section 11.8);
+     * filter-spool removes this mail once that post is no longer Approved or the poster
+     * is now a spammer.
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => $this->message ? [$this->message->id] : [],
+            'newsfeed' => [],
+            'users' => [$this->user->id],
+        ];
     }
 
     public function envelope(): Envelope

@@ -219,13 +219,33 @@ because of that hour. A 401 or 403 from the bucket is that incident again: check
 bucket's public-read setting and the key in the provider console before anything else.
 
 `php artisan images:object-store-check` reads a probe back anonymously at the public URL
-and is the only thing that proves the bucket is public. Run it before enabling
-`IMAGE_STORE_ENABLED` and after any change to the bucket or its keys
-(`docs/ops/runbooks/images-to-object-storage.md`).
+and is the only thing that proves the bucket is public. Run it after any change to the
+bucket or its keys (`docs/ops/runbooks/images-to-object-storage.md`).
 
 The same file is an envsubst template. Only `${IMAGE_STORE_*}` is substituted, because
 compose sets `NGINX_ENVSUBST_FILTER`; without the filter every nginx `$variable` is
 blanked and `nginx -t` fails, so that one at least is loud.
+
+## Copying files into a running Nuxt dev container kills it
+
+`docker cp` of a directory into `modtools-dev-local` or `dev-local` while Nuxt's watcher is
+running makes the dev server crash (`ENOENT` on a file mid-replace, or a `nuxt.config.ts`
+restart that cannot find a module); the container then exits and the status API's Vitest run
+answers "container is not running" with 0 tests. Copy a whole tree only into the **stopped**
+container (`docker cp` works on stopped containers), then start it; copy single files while it
+runs. `npm ci` inside the running container is the same trap twice over: it deletes
+`node_modules` first, and if the container dies mid-way it can no longer start (`nuxt: not
+found`). Run a lint that needs the branch's packages on the host from the worktree instead.
+
+## The batch dev container is a bind mount: never `docker cp` into it
+
+`batch` mounts the worktree's `iznik-batch` at `/var/www/html` (`docker inspect` shows a `bind`
+mount; `apiv2`, `modtools-dev-local` and `automod` carry copies instead). A `docker cp` of a
+directory into it copies the tree onto itself, and two such copies overlapping truncate files
+to zero bytes, root-owned, which then shows as a pure-deletion diff and a `Class ... not found`
+in the next test run. Edits on the host are already visible inside; just run the tests. If a
+run behaves oddly, `git status` and `find iznik-batch -size 0 -type f` show the damage, and
+`git checkout HEAD -- <file>` repairs it.
 
 ## `sed -i` on a bind-mounted file edits nothing the container can see
 
@@ -244,12 +264,23 @@ relative `mime.types` include resolves against the config's own directory.
 - **Creating a worktree branches off your local master**, which may be behind or ahead of the
   remote, so the base can include unpushed local commits.
 - **Removing a worktree keeps the branch**, so the branch accumulates even when the directory
-  does not.
+  does not. `./freegle worktree prune` is the same: it removes the directory and the project's
+  volumes for a merged or closed PR and leaves the local branch behind.
+- **`./freegle worktree prune` has no `--help`.** An unrecognised flag is ignored and the real
+  prune runs. Piping its output through `head` can then cut it off part way. The only safe way
+  to see the plan is `--dry-run`, and run it unpiped.
 - **Agents sharing one clone switch branches underneath each other**, and a push can end up a
   silent no-op.
 - **The worktree guard is session-wide**, and a subagent can move it, after which commands are
   refused or land in the wrong place.
 - **`pkill -f` matches its own command line** and kills the shell that ran it.
+- **A worktree whose branch was rewritten elsewhere wakes up with a stale index.** When the
+  same branch is amended or rebased in another checkout and the ref moves, the worktree's
+  `HEAD` follows it but its index and working files do not. `git status` then shows hundreds
+  of staged changes that are really "old tree minus new tree", with nothing lost and nothing
+  to keep. Check `git reflog` for the old commit, confirm `git diff --cached --quiet <old>`
+  is clean, then `git reset --hard HEAD`. Do not commit the staged set: it reverts the
+  rewrite.
 
 ## `git checkout --ours` replaces the whole file
 
@@ -294,6 +325,35 @@ the stack used before, so old data is still there. In memory, `conf/percona-ram.
 system tablespace from `percona-my.cnf`'s preallocated 2000M, which would otherwise cost 2GB
 of RAM per stack. Never apply that file to an existing on-disk datadir: InnoDB refuses to
 start when the tablespace layout differs.
+
+## A Nuxt dev server can keep serving a stale compile of a file that sync has updated
+
+`modtools-dev-local` sent a browser the old compiled `pages/job/[id].vue` (`fetchOne(id.value)`,
+the old `tidy`) for hours after the file in the container matched the host byte for byte, and
+`touch` did not move it. `stores/job.js` beside it was current, so a browser walk ran half old code
+and half new. The unit suites read files from disk, so they passed on code the browser never got.
+
+Before believing a browser result, fetch what the server sends:
+`curl -g http://localhost:3003/_nuxt/@fs/app/pages/job/[id].vue | grep <a new identifier>`. If it is
+stale, restart the container, or lay the files over a current image in a throwaway container
+(`docker cp` into a stopped container is safe) and drive that.
+
+## The dev Go API serves the binary it compiled at start, not the source it has now
+
+`apiv2` runs `go run main.go` in a loop. File sync keeps `/app` current, but the process
+keeps the binary compiled when it started, so a route that is in the container's own
+source can answer `405 Method Not Allowed` with an `Allow:` header naming the methods of
+some *other* route on that path. Seen 2026-10-11: `PUT /api/message/submit` 405 with
+`Allow: GET, HEAD, DELETE` from a container started three days earlier. Kill the `go run`
+process inside the container (`docker exec freegle-apiv2 sh -c 'kill <pid of go run>'`)
+and the loop recompiles in about ten seconds; no container restart, so no network churn
+for anyone else's Playwright run.
+
+Kill the compiled `exe/main` too, as a separate argument (`kill <go run pid> <exe/main pid>`,
+not a newline-separated list). `go run` does not take its child with it. Seen 2026-10-16: with the
+old binary still alive, the freshly compiled one sat idle, not listening and with nothing in
+`/tmp/iznik_api.out`, and the API stopped answering on its host port. `kill -QUIT` on the idle
+one made the loop start another that did listen.
 
 ## See also
 

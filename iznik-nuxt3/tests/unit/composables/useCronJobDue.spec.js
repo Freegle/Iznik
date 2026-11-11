@@ -49,9 +49,9 @@ describe('useCronJobDue', () => {
       ).toISOString()
     )
     expect(cronJobNextDueText(job, NOW)).toBe('due')
-    expect(
-      isCronJobOverdue(jobStartedMinutesAgo(25 * 60 + 1, 1440), NOW)
-    ).toBe(true)
+    expect(isCronJobOverdue(jobStartedMinutesAgo(25 * 60 + 1, 1440), NOW)).toBe(
+      true
+    )
   })
 
   it('shows minutes remaining for the last five minutes and defers beyond', () => {

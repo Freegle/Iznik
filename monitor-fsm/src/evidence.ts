@@ -181,3 +181,38 @@ export function assessPrEvidence(body: string, topic: number, post: number, reco
 
   return { ok: problems.length === 0, problems, confidential: kinds.length > 0 }
 }
+
+/**
+ * What the adversarial reviewer is shown about a Discourse bug fix: the reporter's own
+ * words and the evidence record. The gate above proves reads were made; it cannot tell
+ * whether they show the reported failure or only its surroundings. PR #1665 read that
+ * nearly every post ripples and fixed the wrong digest; #1664's evidence was an absence
+ * of errors. The reviewer judges that, with this in front of it. This goes to the
+ * review model only, never to GitHub.
+ */
+export function reviewGroundingSection(reporterWords: string, record: EvidenceEntry[]): string {
+  const MAX_RESULT = 600
+  const MAX_TOTAL = 9000
+  const lines: string[] = []
+  lines.push('WHAT THE REPORTER WROTE:', (reporterWords || '(could not be fetched)').trim().slice(0, 2500), '')
+  if (record.length === 0) {
+    lines.push('EVIDENCE RECORD: no production reads were recorded for this report.')
+    return lines.join('\n')
+  }
+  lines.push('EVIDENCE RECORD (the production reads the fix agent made, and its notes):')
+  for (const e of record) {
+    if (e.kind === 'note') {
+      lines.push(`- NOTE: ${String(e.text ?? '').slice(0, 800)}`)
+      continue
+    }
+    const status = e.available !== true ? 'failed' : e.source === 'local-dev' ? 'local-dev, not production' : `${e.rowCount ?? 0} rows`
+    const r = e.result as any
+    const shown = r?.columns && r?.rows ? { columns: r.columns, rows: r.rows.slice(0, 10) }
+      : r?.entries ? r.entries.slice(0, 5).map((x: any) => x.line)
+      : r
+    lines.push(`- ${e.kind.toUpperCase()} (${status})${e.purpose ? ` for "${e.purpose}"` : ''}: ${String(e.query ?? '').slice(0, 400)}`)
+    lines.push(`  returned: ${JSON.stringify(shown ?? null).slice(0, MAX_RESULT)}`)
+  }
+  const out = lines.join('\n')
+  return out.length > MAX_TOTAL ? out.slice(0, MAX_TOTAL) + '\n(evidence truncated)' : out
+}

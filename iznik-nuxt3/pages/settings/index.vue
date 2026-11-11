@@ -46,6 +46,7 @@ import { ref, onMounted, defineAsyncComponent } from 'vue'
 import { useRoute } from '#imports'
 import { useMe, fetchMe } from '~/composables/useMe'
 import { buildHead } from '~/composables/useBuildHead'
+import { startSettingsFlow } from '~/composables/useSettingsTelemetry'
 
 // Import the main components
 import ProfileSection from '~/components/settings/ProfileSection.vue'
@@ -75,6 +76,9 @@ useHead(
     }
   )
 )
+
+// Flow telemetry for this visit: which settings get changed and then changed again.
+startSettingsFlow()
 
 // Use the composable to get me and related functions
 const { me } = useMe()

@@ -29,7 +29,9 @@ use App\Services\UnsubscribeService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:test')]
 class TestMailCommand extends Command
 {
     use AvatarResolver;
@@ -845,7 +847,7 @@ class TestMailCommand extends Command
                 ->whereHas('group', function ($q) use ($recipient) {
                     $q->whereHas('memberships', function ($mq) use ($recipient) {
                         $mq->where('userid', $recipient->id)
-                            ->whereIn('role', ['Moderator', 'Owner']);
+                            ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
                     });
                 });
         } else {
@@ -870,6 +872,9 @@ class TestMailCommand extends Command
 
             $chatRoom = ChatRoom::where('chattype', $chatType)
                 ->whereHas('messages', function ($q) {
+                    // keep-raw: HAVING on a DISTINCT-counted aggregate - having()
+                    // can only compare an already-selected column/alias to a
+                    // value, it cannot express COUNT(DISTINCT ...) itself.
                     $q->select('chatid')
                         ->groupBy('chatid')
                         ->havingRaw('COUNT(DISTINCT userid) > 1');
@@ -1355,7 +1360,7 @@ class TestMailCommand extends Command
             ->where('users_stories.newsletterreviewed', 1)
             ->where('users_stories.newsletter', 1)
             ->select(['users_stories.id'])
-            ->selectRaw('users_stories_images.id AS photoid')
+            ->addSelect('users_stories_images.id as photoid')
             ->groupBy('users_stories.id', 'users_stories_images.id')
             ->inRandomOrder()
             ->limit(StoriesNewsletterService::MAX_STORIES)
@@ -1372,6 +1377,7 @@ class TestMailCommand extends Command
                 ->join('groups', 'groups.id', '=', 'memberships.groupid')
                 ->where('memberships.userid', $story->userid)
                 ->where('groups.type', Group::TYPE_FREEGLE)
+                // keep-raw: COALESCE() over two columns has no builder method.
                 ->selectRaw('COALESCE(groups.namefull, groups.nameshort) AS namedisplay')
                 ->value('namedisplay');
 

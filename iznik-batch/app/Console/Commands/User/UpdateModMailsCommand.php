@@ -5,7 +5,9 @@ namespace App\Console\Commands\User;
 use App\Services\UserModMailsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'users:update-modmails')]
 class UpdateModMailsCommand extends Command
 {
     protected $signature = 'users:update-modmails

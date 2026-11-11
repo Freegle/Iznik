@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 )
@@ -30,6 +31,13 @@ func PostExport(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	// Section 11.3 of the lockdown plan: a member's data export is a download,
+	// refused while "export" is held - nobody is exempt from this one, not even
+	// Support or Admin (GateDownload's own rule).
+	if lockdown.GateDownload(c) {
+		return nil
 	}
 
 	// Check for existing pending export to prevent abuse.
@@ -85,6 +93,13 @@ func GetExport(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	// Section 11.3 of the lockdown plan: a member's data export is a download,
+	// refused while "export" is held - nobody is exempt from this one, not even
+	// Support or Admin (GateDownload's own rule).
+	if lockdown.GateDownload(c) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)

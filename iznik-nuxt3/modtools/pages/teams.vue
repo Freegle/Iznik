@@ -94,12 +94,20 @@ const selectTeam = async (t) => {
   selected.value = t.id
 }
 const addMember = async (callback, name) => {
-  if (memberToAdd.value && selected.value) {
-    await teamStore.add({
-      id: selected.value,
-      userid: memberToAdd.value,
-    })
-    team.value = await teamStore.fetch(name)
+  // The SpinButton waits for the callback on every path, and a refused add
+  // must not escape to the global handler (see .claude/rules/frontend-traps.md).
+  try {
+    if (memberToAdd.value && selected.value) {
+      await teamStore.add({
+        id: selected.value,
+        userid: memberToAdd.value,
+      })
+      team.value = await teamStore.fetch(name)
+    }
+  } catch (e) {
+    // The team list simply stays as it was; the member did not get added.
+    console.error('teams addMember failed:', e)
+  } finally {
     callback()
   }
 }

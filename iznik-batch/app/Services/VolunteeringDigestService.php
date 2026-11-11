@@ -168,6 +168,7 @@ class VolunteeringDigestService
             ->where('volunteering.expired', 0)
             ->select([
                 'volunteering.id',
+                'volunteering.userid',
                 'volunteering.title',
                 'volunteering.location',
                 'volunteering.description',
@@ -177,10 +178,10 @@ class VolunteeringDigestService
                 'volunteering.contactphone',
                 'volunteering.contactemail',
                 'volunteering.contacturl',
-                DB::raw('volunteering_images.id AS photo_id'),
-                DB::raw('volunteering_images.externaluid AS photo_externaluid'),
-                DB::raw('volunteering_images.externalmods AS photo_externalmods'),
-                DB::raw('volunteering_dates.applyby AS applyby'),
+                'volunteering_images.id as photo_id',
+                'volunteering_images.externaluid as photo_externaluid',
+                'volunteering_images.externalmods as photo_externalmods',
+                'volunteering_dates.applyby as applyby',
             ])
             ->orderByDesc('volunteering.id')
             ->get()
@@ -242,6 +243,7 @@ class VolunteeringDigestService
 
             $oppsById[$id] = [
                 'id'             => $id,
+                'userid'         => $v->userid !== null ? (int) $v->userid : null,
                 'title'          => $decode($v->title),
                 'location'       => $decode($v->location),
                 'description'    => $decode($v->description),

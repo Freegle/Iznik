@@ -563,3 +563,35 @@ The sofa poster ("Rio Chesterfield Sofa", 55 repliers) replied to EVERY person w
 6. Detect mismatch replies — redirect rather than ignore.
 7. Messages sent as offerer, not identified as AI.
 8. Human makes allocation decisions, Helper manages conversation flow.
+
+---
+
+## Email outreach and two-transport design (2026-06-29, merged here 2026-10-28)
+
+The concierge shipped through PRs #838 and #928 as the `freegle-helper-concierge` skill; PR #911 was closed. The design file was removed on 2026-10-28 (git history at `3e65b6af25`, `plans/active/outreach-and-two-transport-concierge-design.md`). The parts that are about people and go-live rather than code are kept here.
+
+### 8. Human prerequisites (block go-live, not the build)
+
+1. **Mailbox** `natalie-wagg@ilovefreegle.org` exists as a real licensed Workspace mailbox.
+2. **Service account + domain-wide delegation**: SA created in a GCP project with the Gmail API
+   enabled; in Admin Console grant its client ID the scopes
+   `https://www.googleapis.com/auth/gmail.send,https://www.googleapis.com/auth/gmail.modify`.
+3. SA JSON key placed on the host (outside the repo); path given to us; wired as
+   `GMAIL_OUTREACH_CREDENTIALS_PATH` (host-path mount, Firebase-key pattern).
+4. The 10 OFFER posts made from the dedicated Freegle account; the list of post URLs given to us.
+
+### 12. Risks / open questions
+
+- Org-policy "disable SA key creation" could block the key (fallback: workload identity - overkill).
+- Mailbox must be a real mailbox, not an alias, or replies won't be readable.
+- Whether mailbox-transport FSM state lives in `helper_*` (shared, `transport` column) or a JSON
+  ledger - default JSON for the standalone trial; revisit if we productise.
+- Gmail per-day send cap (2,000 Workspace); trivial at trial scale.
+
+### 13. Out of scope (for the trial)
+
+- A web unsubscribe page (mailbox-native is enough).
+- Productising the concierge-for-Freeglers offer (transport #2 already exists via #911; this
+  spec only keeps it a first-class path).
+- Any change to the #618 bulk-offer feature.
+

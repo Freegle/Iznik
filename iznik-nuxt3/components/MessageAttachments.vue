@@ -2,7 +2,7 @@
   <button class="p-0 border-0 position-relative" :disabled="disabled">
     <MessageTag :id="id" class="ps-2 pe-2" />
     <div
-      v-if="!defaultAttachments && !thumbnail && attachments?.length"
+      v-if="!defaultAttachments && !thumbnail && showablePhoto"
       class="photozoom"
       @click="$emit('zoom')"
     >
@@ -25,7 +25,10 @@
       }"
     >
       <b-img
-        v-if="defaultAttachments || (!attachments?.length && !sampleImage)"
+        v-if="
+          defaultAttachments ||
+          (!showablePhoto && !(!attachments?.length && sampleImage))
+        "
         :width="width"
         :height="height"
         src="/camera.png"
@@ -115,6 +118,12 @@ const props = defineProps({
     default: null,
   },
 })
+
+// A suppressed or rejected AI picture arrives with no ouruid and no path, so there is nothing to show
+// and we fall back to the same no-photo placeholder as a post with no photo at all.
+const showablePhoto = computed(
+  () => !!(props.attachments?.[0]?.ouruid || props.attachments?.[0]?.path)
+)
 
 const photoAlt = computed(() => props.subject || 'Item photo')
 

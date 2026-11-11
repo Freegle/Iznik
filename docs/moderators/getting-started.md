@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-25
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/index.vue
@@ -44,7 +44,8 @@ It shows:
 
 The **red badges** next to the menu items are your work list: pending posts, chat review,
 spam reports, stories and so on. They update automatically, so the numbers tell you where
-attention is needed.
+attention is needed. Support and Admin also see a count on **Support**: chats moderators have
+referred to Support that are waiting for a reply.
 
 ## Roles and permissions
 
@@ -60,7 +61,7 @@ Freegle has two independent kinds of role. It helps to know which is which.
 **Your system-wide role** (across all of Freegle):
 
 - **User**, then **Moderator**, then **Support**, then **Admin**. Support and Admin unlock
-  the support and sysadmin tools (see
+  the support tools, and Admin alone the sysadmin tools (see
   [running your community](running-your-community.md)).
 
 On top of that, some features are gated by specific **permissions** (for example
@@ -101,6 +102,27 @@ moderator role on at least one community. If it does not - for example after you
 down from your only community - the link shows a message saying so instead of signing you in;
 ask an owner of your community to restore your role. If ModTools cannot verify your session,
 it asks you to log out and log in again before trying the link again.
+
+## When Freegle is in lockdown
+
+If Freegle is dealing with a spam or phishing wave, you will see a red banner at the top
+of every ModTools page, whatever community or tool you are looking at. It stays up for
+every moderator until Support or Admin closes the incident, and it is separate from the
+platform traffic light on the dashboard (see [monitoring and logging](../ops/monitoring-and-logging.md)).
+Most of your day-to-day tools keep working; the ones that are held or refused are called
+out in [Managing members](managing-members.md) and the [lockdown runbook](../ops/runbooks/lockdown.md).
+
+## When Support needs you to reply
+
+Occasionally Support, who run the support mailbox, need an answer from the volunteers of one
+community before anything else happens, for example about a member who wrote to them. They can
+mark their message as needing a reply. If you are a moderator or owner of that community you
+will then see a box over every ModTools page, titled "The <community> volunteers need a reply".
+It shows their message, and the member's original email if they included it, with a "Your
+reply" box. You can't close it or carry on until you send a reply, which goes to whoever sent
+the message as a chat. If you can't answer straight away, "Sleep for 30 minutes (once only)"
+hides it for half an hour, once per message. It stops after 14 days, or when Support turn it
+off. See [contacting a community's volunteers](../developers/reference/contact-group-alerts.md).
 
 ## Next steps
 

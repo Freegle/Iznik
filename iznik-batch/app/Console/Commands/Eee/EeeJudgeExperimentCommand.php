@@ -5,6 +5,7 @@ namespace App\Console\Commands\Eee;
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Cheap experiment to validate the LLM-as-judge reconciliation approach.
@@ -15,6 +16,7 @@ use Illuminate\Support\Facades\Http;
  *
  * Run: php artisan eee:judge-experiment
  */
+#[AsCommand(name: 'eee:judge-experiment')]
 class EeeJudgeExperimentCommand extends Command
 {
     protected $signature = 'eee:judge-experiment

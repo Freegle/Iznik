@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
+import { useMessageStore } from '~/stores/message'
+import { useNewsfeedStore } from '~/stores/newsfeed'
+
 const messageApi = { clearCount: vi.fn().mockResolvedValue({ success: true }) }
 const newsApi = { seenAll: vi.fn().mockResolvedValue(undefined) }
 
 vi.mock('~/api', () => ({
   default: () => ({ message: messageApi, news: newsApi }),
 }))
-
-import { useMessageStore } from '~/stores/message'
-import { useNewsfeedStore } from '~/stores/newsfeed'
 
 describe('clearing a count without enumerating what is in it', () => {
   beforeEach(() => {

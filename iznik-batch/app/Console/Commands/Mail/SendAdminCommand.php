@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Mail;
 
+use App\Models\Membership;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Traits\AvatarResolver;
@@ -14,7 +15,9 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:admin:send')]
 class SendAdminCommand extends Command
 {
     use AvatarResolver;
@@ -55,6 +58,18 @@ class SendAdminCommand extends Command
             return Command::SUCCESS;
         }
 
+        // While a lockdown holds email, generate nothing (plan 2026-09-27-lockdown-switch.md
+        // section 11.11). Admins a moderator queued before the press have already been sent
+        // back to pending by lockdown:tick, so they wait for a fresh approval.
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        $lockdown->ack('mail-loops');
+        if ($lockdown->held('email')) {
+            $lockdown->count('deferred:admin');
+            $this->info('Email is held by the lockdown; no admins sent.');
+
+            return Command::SUCCESS;
+        }
+
         if (!$this->acquireLock()) {
             $this->warn('Another instance of mail:admin:send is already running.');
 
@@ -73,6 +88,9 @@ class SendAdminCommand extends Command
             'emails_sent' => 0,
             'skipped_activeonly' => 0,
             'skipped_relevantallowed' => 0,
+            'skipped_marketingconsent' => 0,
+            'skipped_donationasks' => 0,
+            'skipped_not_chosen' => 0,
             'skipped_dedup' => 0,
             'skipped_no_email' => 0,
             'skipped_simplemail' => 0,
@@ -112,6 +130,9 @@ class SendAdminCommand extends Command
                 ['Emails Sent', $stats['emails_sent']],
                 ['Skipped (active only)', $stats['skipped_activeonly']],
                 ['Skipped (relevantallowed)', $stats['skipped_relevantallowed']],
+                ['Skipped (no marketing consent)', $stats['skipped_marketingconsent']],
+                ['Skipped (donation requests off)', $stats['skipped_donationasks']],
+                ['Skipped (not chosen by member)', $stats['skipped_not_chosen']],
                 ['Skipped (dedup)', $stats['skipped_dedup']],
                 ['Skipped (no email)', $stats['skipped_no_email']],
                 ['Skipped (simplemail=None)', $stats['skipped_simplemail']],
@@ -134,8 +155,12 @@ class SendAdminCommand extends Command
      * Mirrors V1's process() query:
      * - complete IS NULL (not yet sent)
      * - pending = 0 (approved)
-     * - Created or edited within last 7 days
+     * - Created or edited within last 7 days, or its sendafter time fell within them
      * - sendafter has passed (if set)
+     *
+     * The 7 days stop an old, forgotten admin going out late. A sendafter time is a deliberate
+     * choice, so the window runs from it too: otherwise an admin approved more than 7 days
+     * before its sendafter time was never sent at all (V1 had the same gap).
      */
     protected function findReadyAdmins(?int $specificId = null): \Illuminate\Support\Collection
     {
@@ -149,6 +174,10 @@ class SendAdminCommand extends Command
                     ->orWhere(function ($q2) use ($cutoff) {
                         $q2->whereNotNull('editedat')
                             ->where('editedat', '>', $cutoff);
+                    })
+                    ->orWhere(function ($q3) use ($cutoff) {
+                        $q3->whereNotNull('sendafter')
+                            ->where('sendafter', '>', $cutoff);
                     });
             })
             ->where(function ($q) {
@@ -161,6 +190,24 @@ class SendAdminCommand extends Command
         }
 
         return $query->get();
+    }
+
+    /**
+     * Fill in the template variables, matching V1's constructMessage(). The MJML part is markup,
+     * so the values going into it are HTML-escaped: a member's name must not become a tag.
+     */
+    public static function personalise(array $admin, ?string $groupName, ?string $modsEmail, User $user): array
+    {
+        $names = ['$groupname', '$owneremail', '$membername', '$memberid'];
+        $values = [$groupName ?? '', $modsEmail ?? '', $user->fullname ?? '', (string) $user->id];
+
+        $admin['text'] = str_replace($names, $values, $admin['text']);
+
+        if (!empty($admin['mjml'])) {
+            $admin['mjml'] = str_replace($names, array_map('e', $values), $admin['mjml']);
+        }
+
+        return $admin;
     }
 
     /**
@@ -184,9 +231,12 @@ class SendAdminCommand extends Command
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->where('memberships.groupid', $groupId)
             ->where('memberships.collection', 'Approved')
-            ->whereIn('memberships.role', ['Moderator', 'Owner'])
+            ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->where('users.lastaccess', '>', $oneYearAgo)
-            ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('users.settings->showmod')
+                    ->orWhere('users.settings->showmod', true);
+            })
             ->whereNull('users.deleted')
             ->limit(100)
             ->get();
@@ -257,8 +307,8 @@ class SendAdminCommand extends Command
             ->pluck('userid')
             ->flip();
 
-        // Get local volunteers for the group footer.
-        $volunteers = self::getLocalVolunteers($admin->groupid);
+        // Get local volunteers for the group footer, unless the ADMIN is sent for someone else.
+        $volunteers = ($admin->volunteercredits ?? 1) ? self::getLocalVolunteers($admin->groupid) : [];
 
         // Query members with relevantallowed from users table.
         // Note: V1 queries all memberships regardless of collection. We intentionally
@@ -270,7 +320,10 @@ class SendAdminCommand extends Command
             ->select([
                 'memberships.userid',
                 'memberships.role',
+                'memberships.rippled',
+                'memberships.implicit',
                 'users.relevantallowed',
+                'users.marketingconsent',
                 'users.lastaccess',
                 'users.deleted',
             ])
@@ -278,6 +331,13 @@ class SendAdminCommand extends Command
 
         $activeThreshold = now()->subDays(User::USER_INACTIVE_DAYS);
         $adminArr = (array) $admin;
+
+        // A designed version that will not build is dropped once here, so members get the plain
+        // text without every one of their copies failing to compile first.
+        if (!empty($adminArr['mjml']) && !AdminMail::mjmlBuilds($adminArr['mjml'])) {
+            Log::warning("Admin {$admin->id}: MJML part does not build, sending the plain text only.");
+            $adminArr['mjml'] = NULL;
+        }
 
         $interrupted = FALSE;
 
@@ -320,12 +380,27 @@ class SendAdminCommand extends Command
             // Filter: non-essential admins skip users with relevantallowed=0.
             // Moderators are always included (they can't opt out).
             if (!$admin->essential && !$member->relevantallowed) {
-                $isMod = in_array($member->role, ['Moderator', 'Owner']);
+                $isMod = in_array($member->role, [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
                 if (!$isMod) {
                     $stats['skipped_relevantallowed']++;
 
                     continue;
                 }
+            }
+
+            // A Newsletter ADMIN can be a fundraising appeal, which needs the member's marketing
+            // consent. That holds for moderators too.
+            if (!$admin->essential && !$member->marketingconsent) {
+                $stats['skipped_marketingconsent']++;
+
+                continue;
+            }
+
+            // Nor may it come from a community Rippling or TrashNothing put the member on.
+            if (!$admin->essential && ($member->rippled || $member->implicit)) {
+                $stats['skipped_not_chosen']++;
+
+                continue;
             }
 
             // Filter: dedup via pre-loaded set (covers both suggested and regular admins).
@@ -428,6 +503,14 @@ class SendAdminCommand extends Command
                 continue;
             }
 
+            // Filter: a member who turned off donation requests gets no Newsletter ADMIN until
+            // that lapses.
+            if (!$admin->essential && !User::settingsAllowDonationAsks($user->settings)) {
+                $stats['skipped_donationasks']++;
+
+                continue;
+            }
+
             if ($dryRun) {
                 $stats['emails_sent']++;
                 $sent++;
@@ -436,13 +519,7 @@ class SendAdminCommand extends Command
             }
 
             try {
-                // Substitute template variables in admin text, matching V1's constructMessage().
-                $substitutedAdmin = $adminArr;
-                $substitutedAdmin['text'] = str_replace(
-                    ['$groupname', '$owneremail', '$membername', '$memberid'],
-                    [$groupName ?? '', $modsEmail ?? '', $user->fullname ?? '', (string) $user->id],
-                    $substitutedAdmin['text']
-                );
+                $substitutedAdmin = self::personalise($adminArr, $groupName, $modsEmail, $user);
 
                 $mailable = new AdminMail($user, $substitutedAdmin, $groupName, $modsEmail, $groupShort, $volunteers);
 

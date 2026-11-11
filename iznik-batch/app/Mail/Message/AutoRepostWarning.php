@@ -2,14 +2,16 @@
 
 namespace App\Mail\Message;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\Message;
 use Illuminate\Mail\Mailables\Address;
+use Illuminate\Support\Carbon;
 use Illuminate\Mail\Mailables\Envelope;
 
-class AutoRepostWarning extends MjmlMailable
+class AutoRepostWarning extends MjmlMailable implements DescribesMemberContent
 {
     use TrackableEmail;
     use LoggableEmail;
@@ -28,6 +30,7 @@ class AutoRepostWarning extends MjmlMailable
         public string $userName,
         public string $userEmail,
         public ?int $groupId = null,
+        public ?string $repostDate = null,
     ) {
         parent::__construct();
 
@@ -54,6 +57,7 @@ class AutoRepostWarning extends MjmlMailable
                 'messageSubject' => $this->messageSubject,
                 'outcomeType' => $outcomeType,
                 'isOffer' => $isOffer,
+                'repostWhen' => $this->repostWhen(),
                 'completedUrl' => $this->trackedUrl(
                     "{$userSite}/mypost/{$this->messageId}/completed",
                     'completed_button',
@@ -77,6 +81,23 @@ class AutoRepostWarning extends MjmlMailable
                 'email' => $this->userEmail,
             ], $this->getTrackingData()))
             ->applyLogging('AutoRepostWarning');
+    }
+
+    /**
+     * The day the repost is due, in plain words ("on Friday 31 October"), or "soon"
+     * when the date is not known.
+     */
+    protected function repostWhen(): string
+    {
+        if (!$this->repostDate) {
+            return 'soon';
+        }
+
+        try {
+            return 'on ' . Carbon::parse($this->repostDate)->format('l j F');
+        } catch (\Throwable) {
+            return 'soon';
+        }
     }
 
     public function envelope(): Envelope
@@ -106,5 +127,20 @@ class AutoRepostWarning extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->userId;
+    }
+
+    /**
+     * Names the post it warns about and the poster it is addressed to (plan section 11.8);
+     * filter-spool removes this mail once that post is no longer Approved or the poster is
+     * now a spammer.
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [$this->messageId],
+            'newsfeed' => [],
+            'users' => [$this->userId],
+        ];
     }
 }

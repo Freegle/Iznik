@@ -44,6 +44,10 @@
 		"classpath": "com.capacitorjs.plugins.app.AppPlugin"
 	},
 	{
+		"pkg": "@capacitor/text-zoom",
+		"classpath": "com.capacitorjs.plugins.textzoom.TextZoomPlugin"
+	},
+	{
 		"pkg": "@capacitor/screen-orientation",
 		"classpath": "com.capacitorjs.plugins.screenorientation.ScreenOrientationPlugin"
 	}

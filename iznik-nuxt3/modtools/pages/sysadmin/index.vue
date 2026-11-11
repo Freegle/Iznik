@@ -1,16 +1,13 @@
 <template>
   <div>
-    <div v-if="supportOrAdmin">
+    <div v-if="admin">
       <b-tabs v-model="activeTab" content-class="mt-3" card>
         <!-- Housekeeping Tab -->
         <b-tab @click="onHousekeepingTab">
           <template #title>
             <h2 class="ms-2 me-2">
               Housekeeping
-              <b-badge
-                v-if="supportOrAdmin && work?.housekeeping"
-                variant="danger"
-              >
+              <b-badge v-if="work?.housekeeping" variant="danger">
                 {{ work.housekeeping }}
               </b-badge>
             </h2>
@@ -18,6 +15,7 @@
           <ModSysAdminHousekeeping
             v-if="showHousekeeping"
             :key="'housekeeping-' + housekeepingBump"
+            :open-paf="openPaf"
           />
         </b-tab>
 
@@ -26,7 +24,7 @@
           <template #title>
             <h2 class="ms-2 me-2">
               Cron Jobs
-              <b-badge v-if="supportOrAdmin && work?.cronjobs" variant="danger">
+              <b-badge v-if="work?.cronjobs" variant="danger">
                 {{ work.cronjobs }}
               </b-badge>
             </h2>
@@ -43,14 +41,14 @@
             <h2 class="ms-2 me-2">
               Mail
               <b-badge
-                v-if="supportOrAdmin && work?.maildeferrals"
+                v-if="work?.maildeferrals"
                 variant="danger"
                 :title="work.maildeferrals + ' domain(s) we cannot deliver to'"
               >
                 {{ work.maildeferrals }}
               </b-badge>
               <b-badge
-                v-else-if="supportOrAdmin && (work?.emailout || work?.emailin)"
+                v-else-if="work?.emailout || work?.emailin"
                 variant="danger"
               >
                 !
@@ -62,12 +60,7 @@
               <template #title>
                 <span class="subtab-label">
                   Outgoing
-                  <b-badge
-                    v-if="supportOrAdmin && work?.emailout"
-                    variant="danger"
-                  >
-                    !
-                  </b-badge>
+                  <b-badge v-if="work?.emailout" variant="danger"> ! </b-badge>
                 </span>
               </template>
               <ModSupportEmailStats
@@ -79,12 +72,7 @@
               <template #title>
                 <span class="subtab-label">
                   Incoming
-                  <b-badge
-                    v-if="supportOrAdmin && work?.emailin"
-                    variant="danger"
-                  >
-                    !
-                  </b-badge>
+                  <b-badge v-if="work?.emailin" variant="danger"> ! </b-badge>
                 </span>
               </template>
               <ModSupportIncomingEmail
@@ -96,10 +84,7 @@
               <template #title>
                 <span class="subtab-label">
                   Delayed
-                  <b-badge
-                    v-if="supportOrAdmin && work?.maildeferrals"
-                    variant="danger"
-                  >
+                  <b-badge v-if="work?.maildeferrals" variant="danger">
                     {{ work.maildeferrals }}
                   </b-badge>
                 </span>
@@ -112,13 +97,45 @@
           </b-tabs>
         </b-tab>
 
-        <!-- Behaviour Tab: scrolling, recommendations and reengagement
+        <!-- Behaviour Tab: UX (the default), scrolling and reengagement
              effectiveness, grouped as sub-tabs. -->
         <b-tab @click="onBehaviourTab">
           <template #title>
-            <h2 class="ms-2 me-2">Behaviour</h2>
+            <h2 class="ms-2 me-2">
+              Behaviour
+              <b-badge
+                v-if="work?.uxexperiments"
+                variant="danger"
+                :title="uxVerdictTitle"
+              >
+                {{ work.uxexperiments }}
+              </b-badge>
+            </h2>
           </template>
           <b-tabs v-model="behaviourSubTab" content-class="mt-3" pills>
+            <!-- UX: the default sub-tab, so the red number on Behaviour is explained
+                 on arrival. -->
+            <b-tab @click="onUxTab">
+              <template #title>
+                <span class="subtab-label">
+                  UX
+                  <b-badge
+                    v-if="work?.uxexperiments"
+                    variant="danger"
+                    :title="uxVerdictTitle"
+                  >
+                    {{ work.uxexperiments }}
+                  </b-badge>
+                </span>
+              </template>
+              <p v-if="work?.uxexperiments" class="ux-verdict-note ms-2">
+                {{ uxVerdictTitle }}.
+                <a href="?tab=ux&ux_section=experiments"
+                  >Open Experiments to act on them.</a
+                >
+              </p>
+              <ModSysAdminUx v-if="showUx" :key="'ux-' + uxBump" />
+            </b-tab>
             <!-- Scrolling: how far people scroll/engage — digest click-through by
                  position, and browse-feed scroll depth. -->
             <b-tab @click="onDigestClicksTab">
@@ -136,15 +153,6 @@
                   :key="'browsescroll-' + digestClicksBump"
                 />
               </template>
-            </b-tab>
-            <b-tab @click="onRecommendationsTab">
-              <template #title>
-                <span class="subtab-label">Recommendations</span>
-              </template>
-              <ModSysAdminRecommendations
-                v-if="showRecommendations"
-                :key="'recommendations-' + recommendationsBump"
-              />
             </b-tab>
             <b-tab @click="onReengageTab">
               <template #title>
@@ -172,6 +180,18 @@
             :key="'rippling-analytics-' + ripplingBump"
           />
         </b-tab>
+
+        <!-- AI Helper Tab: every question put to the AI Support Helper and
+             how the volunteer rated the answer, so poor answers can be found. -->
+        <b-tab @click="onSupportAITab">
+          <template #title>
+            <h2 class="ms-2 me-2">AI Helper</h2>
+          </template>
+          <ModSysAdminSupportAI
+            v-if="showSupportAI"
+            :key="'supportai-' + supportAIBump"
+          />
+        </b-tab>
       </b-tabs>
     </div>
     <NoticeMessage v-else variant="warning">
@@ -183,15 +203,25 @@
 <script setup>
 import { useMe } from '~/composables/useMe'
 import { useAuthStore } from '@/stores/auth'
+import { verdictTitle } from '~/modtools/composables/useUxVerdict'
 
-const { supportOrAdmin } = useMe()
+const { admin } = useMe()
 const authStore = useAuthStore()
 const work = computed(() => authStore.work)
+
+// Says what the red number on the Behaviour tab is waiting for.
+const uxVerdictTitle = computed(() =>
+  verdictTitle(
+    work.value?.uxexperimentsconfirm,
+    work.value?.uxexperimentsremove
+  )
+)
 
 const route = useRoute()
 
 const activeTab = ref(0)
 const mailSubTab = ref(0)
+// UX is sub-tab 0 (the default), Scrolling 1, Reengagement 2.
 const behaviourSubTab = ref(0)
 
 const showHousekeeping = ref(false)
@@ -208,14 +238,20 @@ const showDeferrals = ref(false)
 const deferralsBump = ref(0)
 const showRippling = ref(false)
 const ripplingBump = ref(0)
-const showRecommendations = ref(false)
-const recommendationsBump = ref(0)
 const showReengage = ref(false)
 const reengageBump = ref(0)
+const showUx = ref(false)
+const uxBump = ref(0)
+const showSupportAI = ref(false)
+const supportAIBump = ref(0)
+// A link to the PAF update (?tab=paf, or the old ?tab=addresses) opens it on the Housekeeping tab.
+const openPaf = ref(false)
 
 // Top-level tab index per deep-link query param. Outgoing/incoming both open the
-// Mail tab; scrolling/recommendations/reengagement all open the Behaviour tab.
-// The old per-tab params are kept so existing bookmarks/links still land right.
+// Mail tab; scrolling/reengagement/ux all open the Behaviour tab, on their own
+// sub-tab. The old per-tab params are kept so existing bookmarks/links still
+// land right (recommendations was a sub-tab that has gone, so it lands on
+// Scrolling). A bare ?tab=behaviour opens the default sub-tab, UX.
 const topTabMap = {
   housekeeping: 0,
   cronjobs: 1,
@@ -229,10 +265,16 @@ const topTabMap = {
   scrolling: 3,
   recommendations: 3,
   reengagement: 3,
+  ux: 3,
   rippling: 4,
+  aihelper: 5,
+  paf: 0,
+  addresses: 0,
 }
 
 function onHousekeepingTab() {
+  // Opening the tab by hand does not reopen the PAF update a link once opened.
+  openPaf.value = false
   showHousekeeping.value = true
   housekeepingBump.value = Date.now()
 }
@@ -270,27 +312,31 @@ function onDigestClicksTab() {
   digestClicksBump.value = Date.now()
 }
 
-function onRecommendationsTab() {
-  showRecommendations.value = true
-  recommendationsBump.value = Date.now()
-}
-
 function onReengageTab() {
   showReengage.value = true
   reengageBump.value = Date.now()
 }
 
-// Opening the Behaviour tab shows whichever sub-tab is active (Scrolling by
-// default).
+function onUxTab() {
+  showUx.value = true
+  uxBump.value = Date.now()
+}
+
+// Opening the Behaviour tab shows whichever sub-tab is active (UX by default).
 function onBehaviourTab() {
   if (behaviourSubTab.value === 2) onReengageTab()
-  else if (behaviourSubTab.value === 1) onRecommendationsTab()
-  else onDigestClicksTab()
+  else if (behaviourSubTab.value === 1) onDigestClicksTab()
+  else onUxTab()
 }
 
 function onRipplingTab() {
   showRippling.value = true
   ripplingBump.value = Date.now()
+}
+
+function onSupportAITab() {
+  showSupportAI.value = true
+  supportAIBump.value = Date.now()
 }
 
 onMounted(() => {
@@ -309,16 +355,25 @@ onMounted(() => {
     } else if (tab === 'delayed' || tab === 'deferrals') {
       mailSubTab.value = 2
       onDeferralsTab()
-    } else if (tab === 'behaviour' || tab === 'digest' || tab === 'scrolling') {
+    } else if (tab === 'behaviour' || tab === 'ux') {
       behaviourSubTab.value = 0
-      onDigestClicksTab()
-    } else if (tab === 'recommendations') {
+      onUxTab()
+    } else if (
+      tab === 'digest' ||
+      tab === 'scrolling' ||
+      tab === 'recommendations'
+    ) {
       behaviourSubTab.value = 1
-      onRecommendationsTab()
+      onDigestClicksTab()
     } else if (tab === 'reengagement') {
       behaviourSubTab.value = 2
       onReengageTab()
     } else if (tab === 'rippling') onRipplingTab()
+    else if (tab === 'aihelper') onSupportAITab()
+    else if (tab === 'paf' || tab === 'addresses') {
+      onHousekeepingTab()
+      openPaf.value = true
+    }
   } else {
     // Default to showing housekeeping
     onHousekeepingTab()
@@ -327,6 +382,10 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
+.ux-verdict-note {
+  font-weight: 600;
+}
+
 .subtab-label {
   font-size: 1rem;
   font-weight: 600;

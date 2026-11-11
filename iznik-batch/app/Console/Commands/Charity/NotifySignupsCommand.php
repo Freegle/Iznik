@@ -5,7 +5,9 @@ namespace App\Console\Commands\Charity;
 use App\Services\CharitySignupNotifyService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'charity:notify-signups')]
 class NotifySignupsCommand extends Command
 {
     protected $signature = 'charity:notify-signups

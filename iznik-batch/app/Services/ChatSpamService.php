@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Mail\Chat\SpamWarningMail;
 use App\Models\ChatMessage;
 use App\Models\Group;
@@ -40,18 +41,20 @@ class ChatSpamService
     {
         $since = now()->subDays(7)->toDateTimeString();
 
-        $rooms = DB::select(
-            "SELECT chat_rooms.id, spam_users.userid AS spammer_id, user1, user2
-             FROM chat_rooms
-             INNER JOIN spam_users ON user1 = spam_users.userid
-             WHERE latestmessage >= ? AND flaggedspam = 0 AND spam_users.collection = 'Spammer'
-             UNION
-             SELECT chat_rooms.id, spam_users.userid AS spammer_id, user1, user2
-             FROM chat_rooms
-             INNER JOIN spam_users ON user2 = spam_users.userid
-             WHERE latestmessage >= ? AND flaggedspam = 0 AND spam_users.collection = 'Spammer'",
-            [$since, $since]
-        );
+        // One arm per side of the room: a spammer can be user1 or user2, and
+        // the raw statement UNIONed the two rather than using an OR so that
+        // each arm can use the index on its own join column.
+        $arm = fn (string $side) => DB::table('chat_rooms')
+            ->select('chat_rooms.id', 'spam_users.userid as spammer_id', 'user1', 'user2')
+            ->join('spam_users', $side, '=', 'spam_users.userid')
+            ->where('latestmessage', '>=', $since)
+            ->where('flaggedspam', 0)
+            ->where('spam_users.collection', 'Spammer');
+
+        // ->union(), not ->unionAll(): the raw statement said UNION, which
+        // de-duplicates. A room where BOTH users are spammers appears in both
+        // arms, so unionAll would double-warn it.
+        $rooms = $arm('user1')->union($arm('user2'))->get()->all();
 
         $sent = 0;
 
@@ -86,7 +89,7 @@ class ChatSpamService
                     $mail = new SpamWarningMail($innocent, $spammerName, $subject, $replyTo, $replyName);
                     app(\App\Services\EmailSpoolerService::class)->spool($mail, $innocent->email_preferred);
 
-                    DB::update('UPDATE chat_rooms SET flaggedspam = 1 WHERE id = ?', [$room->id]);
+                    DB::table('chat_rooms')->where('id', $room->id)->update(['flaggedspam' => 1]);
 
                     Log::info('Chat spam warning sent', [
                         'chat_id'    => $room->id,
@@ -120,6 +123,8 @@ class ChatSpamService
     {
         $start = now()->subDays(self::SPAM_LOOKBACK_DAYS)->toDateString();
 
+        // keep-raw: an aliased COUNT(*) alongside the grouped userid column in
+        // a multi-row SELECT list under GROUP BY has no builder form.
         $users = DB::select(
             "SELECT DISTINCT chat_messages.userid, COUNT(*) AS count
              FROM chat_messages
@@ -128,11 +133,11 @@ class ChatSpamService
              WHERE chat_messages.date >= ?
                AND reviewrejected = 1
                AND (spam_users.collection IS NULL OR spam_users.collection != 'Whitelisted')
-               AND users.systemrole = 'User'
+               AND users.systemrole = ?
              GROUP BY chat_messages.userid
              HAVING count > ?
              ORDER BY count DESC",
-            [$start, self::AUTO_MARK_THRESHOLD]
+            [$start, User::SYSTEMROLE_USER, self::AUTO_MARK_THRESHOLD]
         );
 
         $count = 0;
@@ -142,7 +147,7 @@ class ChatSpamService
 
             $isModerator = DB::table('memberships')
                 ->where('userid', $user->userid)
-                ->whereIn('role', ['Moderator', 'Owner'])
+                ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
                 ->exists();
 
             if ($isModerator) {
@@ -172,13 +177,17 @@ class ChatSpamService
             }
 
             if (!$dryRun) {
-                DB::update(
-                    "UPDATE chat_messages
-                     SET reviewrequired = 0, processingrequired = 0, processingsuccessful = 0,
-                         reviewrejected = 1, reviewedby = NULL
-                     WHERE userid = ? AND reviewrequired = 1 AND reviewedby IS NULL",
-                    [$user->userid]
-                );
+                DB::table('chat_messages')
+                    ->where('userid', $user->userid)
+                    ->where('reviewrequired', 1)
+                    ->whereNull('reviewedby')
+                    ->update([
+                        'reviewrequired' => 0,
+                        'processingrequired' => 0,
+                        'processingsuccessful' => 0,
+                        'reviewrejected' => 1,
+                        'reviewedby' => null,
+                    ]);
 
                 Log::info('Auto-marked chat messages as spam', [
                     'userid'  => $user->userid,

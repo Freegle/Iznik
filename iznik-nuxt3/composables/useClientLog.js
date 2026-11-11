@@ -5,6 +5,7 @@
  * to avoid showing errors to users.
  */
 
+import { Capacitor } from '@capacitor/core'
 import { getTraceHeaders, getTraceId, getSessionId } from './useTrace'
 
 // Runtime config reference - will be set when useClientLog is called.
@@ -21,6 +22,125 @@ export function setAppVersion(v) {
   nativeAppVersion = v || null
 }
 
+// Providers set by plugins at startup, so this module needs no router or store imports.
+let routeNameProvider = null
+let loggingContextProvider = null
+
+export function setRouteNameProvider(fn) {
+  routeNameProvider = fn
+}
+
+export function setLoggingContextProvider(fn) {
+  loggingContextProvider = fn
+}
+
+function currentRouteName() {
+  try {
+    return routeNameProvider?.()?.toString() || null
+  } catch {
+    return null
+  }
+}
+
+function nativePlatform() {
+  try {
+    const p = Capacitor.getPlatform()
+    return p === 'ios' || p === 'android' ? p : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * app-ios, app-android, or a viewport band: mobile < 768, tablet 768 to 1199, desktop.
+ */
+export function getDeviceClass() {
+  const platform = nativePlatform()
+  if (platform) return 'app-' + platform
+  const w = typeof window !== 'undefined' ? window.innerWidth : 1200
+  if (w < 768) return 'mobile'
+  if (w < 1200) return 'tablet'
+  return 'desktop'
+}
+
+// Count of API requests started, so the interaction plugin can tell a click that did
+// nothing from one that triggered a request.
+let apiRequestCount = 0
+
+export function noteApiRequestStarted() {
+  apiRequestCount++
+  const now = Date.now()
+  apiStarts.push(now)
+  while (apiStarts.length && now - apiStarts[0] > 60000) apiStarts.shift()
+}
+
+// Start times of recent API requests, for asking whether one followed a given moment.
+const apiStarts = []
+
+export function apiRequestStartedBetween(from, to) {
+  return apiStarts.some((t) => t >= from && t <= to)
+}
+
+export function getApiRequestCount() {
+  return apiRequestCount
+}
+
+// The component last clicked, so a flow that starts on the next route change can say how it was
+// entered (navbar, floating button...).
+let lastClick = null
+
+export function noteClickComponent(component) {
+  lastClick = { component: component || null, at: Date.now() }
+}
+
+export function getRecentClickComponent(maxAgeMs) {
+  return lastClick && Date.now() - lastClick.at <= maxAgeMs
+    ? lastClick.component
+    : null
+}
+
+// Flow, interaction and impressions lines are kept for analysis, and the address can hold an
+// auto-login key (?u=&k=) or search terms, so they carry the path only.
+const PATH_ONLY_TYPES = new Set(['flow', 'interaction', 'impressions'])
+
+function pageUrl(eventType) {
+  if (typeof window === 'undefined') return null
+  if (!PATH_ONLY_TYPES.has(eventType)) return window.location.href
+  return window.location.origin + window.location.pathname
+}
+
+export const SAMPLE_RATE = 0.1
+const SAMPLE_KEY = 'freegle_ux_sampled'
+let sampledThisSession = null
+
+/**
+ * Whether this browser session is in the sample for scroll and impression events. The coin is
+ * flipped once and kept in sessionStorage.
+ */
+export function sessionSampled() {
+  if (sampledThisSession !== null) return sampledThisSession
+
+  let stored = null
+  try {
+    stored = sessionStorage.getItem(SAMPLE_KEY)
+  } catch {
+    // Storage blocked - decide in memory.
+  }
+
+  if (stored === '1' || stored === '0') {
+    sampledThisSession = stored === '1'
+  } else {
+    sampledThisSession = Math.random() < SAMPLE_RATE
+    try {
+      sessionStorage.setItem(SAMPLE_KEY, sampledThisSession ? '1' : '0')
+    } catch {
+      // Storage blocked.
+    }
+  }
+
+  return sampledThisSession
+}
+
 /**
  * Get the current user ID if logged in.
  * Returns null if not logged in or store not available.
@@ -34,6 +154,14 @@ function getCurrentUserId() {
     // Store not available yet.
   }
   return null
+}
+
+/**
+ * Whether a member is signed in right now. Flow telemetry freezes this when a flow starts, so an
+ * experiment can be compared among people who were in the same state when they began.
+ */
+export function isSignedIn() {
+  return !!getCurrentUserId()
 }
 
 /**
@@ -244,8 +372,12 @@ function queueLog(level, message, context = {}) {
     trace_id: getTraceId(),
     session_id: getSessionId(),
     user_id: getCurrentUserId(),
-    url: typeof window !== 'undefined' ? window.location.href : null,
+    url: pageUrl(context.event_type),
     user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+    device_class: getDeviceClass(),
+    logged_in: !!getCurrentUserId(),
+    is_app: nativePlatform() !== null,
+    page_route: currentRouteName(),
     ...context,
   }
 
@@ -417,9 +549,19 @@ function sentryError(errorMessage, sentryEventId, context = {}) {
  * Log a page view event.
  */
 function pageView(pageName, context = {}) {
+  let loggingContext = {}
+  try {
+    loggingContext = loggingContextProvider?.() || {}
+  } catch {
+    // No logging context yet.
+  }
+
   queueLog(LogLevel.INFO, `Page view: ${pageName}`, {
     event_type: 'page_view',
     page_name: pageName,
+    page_id: loggingContext.page_id,
+    modal_stack: loggingContext.modal_stack,
+    modal_names: loggingContext.modal_names,
     ...context,
   })
 }
@@ -531,8 +673,8 @@ function handleOrientationChange() {
 /**
  * Flush logs immediately (call before page unload).
  */
-function flush() {
-  flushLogs()
+function flush(force = false) {
+  flushLogs(force)
 }
 
 /**

@@ -227,7 +227,6 @@ describe('PostPhoto', () => {
       await wrapper.find('.our-uploaded-image').trigger('click')
       expect(wrapper.emitted('click')).toBeTruthy()
     })
-
   })
 
   describe('responsive width', () => {

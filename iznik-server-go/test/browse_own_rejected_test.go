@@ -19,7 +19,7 @@ import (
 func TestBrowseHidesOwnRejectedPost(t *testing.T) {
 	db := database.DBConn
 	groupID := CreateTestGroup(t, "brownrej")
-	userID := CreateTestUser(t, "brownrej", "User")
+	userID := CreateTestUser(t, "brownrej", utils.SYSTEMROLE_USER)
 	token := getToken(t, userID)
 
 	approvedMsg := CreateTestMessage(t, userID, groupID, "OFFER: approved brownrej", 51.5, -0.1)

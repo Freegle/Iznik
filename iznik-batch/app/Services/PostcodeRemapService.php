@@ -2,6 +2,12 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\StAsText;
+use App\Database\Expressions\StContains;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -51,7 +57,9 @@ class PostcodeRemapService
         $pcQuery = DB::table('locations_spatial')
             ->join('locations', 'locations_spatial.locationid', '=', 'locations.id')
             ->where('locations.type', 'Postcode')
-            ->whereRaw("LOCATE(' ', locations.name) > 0")
+            // LOCATE(' ', name) > 0 is "name contains a space"; verified identical on
+            // edge cases (empty string, leading/trailing space) against LIKE '% %'.
+            ->where('locations.name', 'like', '% %')
             ->select(
                 'locations.id as locations_id',
                 'locations_spatial.locationid',
@@ -63,18 +71,17 @@ class PostcodeRemapService
 
         if ($polygon) {
             $srid = (int) config('freegle.srid', 3857);
+            $contains = new StContains(
+                new StGeomFromText(Value::of($polygon), $srid),
+                'locations_spatial.geometry'
+            );
+
             if ($locationId) {
-                $pcQuery->where(function ($q) use ($polygon, $locationId, $srid) {
-                    $q->whereRaw(
-                        "ST_Contains(ST_GeomFromText(?, {$srid}), locations_spatial.geometry)",
-                        [$polygon],
-                    )->orWhere('locations.areaid', $locationId);
+                $pcQuery->where(function ($q) use ($contains, $locationId) {
+                    $q->where($contains)->orWhere('locations.areaid', $locationId);
                 });
             } else {
-                $pcQuery->whereRaw(
-                    "ST_Contains(ST_GeomFromText(?, {$srid}), locations_spatial.geometry)",
-                    [$polygon],
-                );
+                $pcQuery->where($contains);
             }
         }
 
@@ -86,10 +93,9 @@ class PostcodeRemapService
                 $newAreaId = $this->findNearestArea($pc->lng, $pc->lat);
 
                 if ($newAreaId && $newAreaId != $pc->areaid) {
-                    DB::update('UPDATE locations SET areaid = ? WHERE id = ?', [
-                        $newAreaId,
-                        $pc->locationid,
-                    ]);
+                    DB::table('locations')
+                        ->where('id', $pc->locationid)
+                        ->update(['areaid' => $newAreaId]);
                     $updated++;
                 }
 
@@ -116,7 +122,7 @@ class PostcodeRemapService
     {
         $row = DB::table('locations')
             ->where('id', $locationId)
-            ->selectRaw('name, `type`, ST_AsText(COALESCE(ourgeometry, geometry)) AS wkt')
+            ->select('name', 'type', new Alias(new StAsText(new Coalesce('ourgeometry', 'geometry')), 'wkt'))
             ->first();
 
         if (!$row || empty($row->wkt)) {

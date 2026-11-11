@@ -118,12 +118,24 @@ ports them into this pipeline:
 
 | Probe | V1 equivalent | Severity |
 |---|---|---|
-| `/var/run/reboot-required` exists | "Server reboot required" | warning (names the packages) |
-| `apt-get upgrade -s` lists security packages | "Security patches to apply" | warning (with count) |
+| `/var/run/reboot-required` exists | "Server reboot required" | none: judged by age on SysAdmin (see below) |
+| `apt-get upgrade -s` lists security packages | "Security patches to apply" | none: judged by age on SysAdmin (see below) |
 | `monit summary -B` per-service status | per-line OK-pattern match | `Not monitored` / `Initializing` / `Resource limit matched` ⇒ warning; anything else non-OK (incl. a dead monit daemon) ⇒ **error** — monit restarts the API services, and a silent monit death has caused a real outage |
 | host unreachable over ssh | (implicit) | warning |
 
-One ssh round-trip per host gathers all three signals. V1's beanstalkd,
+One ssh round-trip per host gathers all three signals.
+
+Pending patches and reboots no longer turn the dot amber. `freegle-maint`
+patches and reboots the estate on a schedule, so "pending" is normal for most
+of a week. `HostPatchTracker` records how long each has been pending as the
+`host-patch <host>` row on the SysAdmin Cron Jobs tab, and that row fails (a
+red number) once something has been pending longer than the host's
+maintenance interval plus grace: `FREEGLE_MONITORING_PATCH_MAX_AGE_DAYS`
+(default 9, for weekly hosts) and `FREEGLE_MONITORING_PATCH_MAX_AGE_OVERRIDES`
+(for example `db2=16,db3=16`, for the hosts patched in alternate weeks).
+"Pending since" lives on the last line of the row's own output, so it needs
+no schema change. An unreachable host records nothing, and the row goes
+overdue. V1's beanstalkd,
 exim-queue and V1-spool checks are deliberately not ported (dead tech /
 covered by `email:health`).
 
@@ -151,6 +163,8 @@ per ssh target in `FREEGLE_MONITORING_HOSTS` (see "Host health checks" above):
 | `memberships:process` | `BacklogCheck` | `memberships_history` `processingrequired=1` (by `added`) older than 15 min | Welcome-mail / review processing queue. |
 | `users:process-exports` | `BacklogCheck` | `users_exports` `completed IS NULL` (by `requested`) older than 30 min | GDPR exports are rare, so an empty queue is normal — only a genuinely-stuck export fires. |
 | `ripple:expand` | `BacklogCheck` | `rippling_reach` `status='expanding'` with `next_expansion_at` more than 24h past due, threshold 50 | The expander wedged for days in Aug 2026 (~10k rows overdue) with no alarm. A day past due is far beyond the deliberate overnight pause + morning catch-up, so day-late rows = a stalled engine or run lock, never scheduling jitter. Only active while `ripple.enabled`. |
+| `embeddings:generate` | `BacklogCheck` | live `messages_spatial` rows (`successful=0 AND promised=0`) with no `messages_embeddings` row, arrived 30 min to 6h ago, threshold 5 | Nothing throws when embedding falls behind; posts just vanish from vector search. The 6h horizon lets the few posts that can never be embedded age out. Thresholds in `freegle.monitoring.embeddings_lag_*`. |
+| `embeddings:generate coverage` | `CallbackCheck` | share of live `messages_spatial` rows carrying an embedding, floor 97% (healthy is about 99%) | Catches a slow slide the lag check cannot. Floor in `freegle.monitoring.embeddings_min_coverage_percent`. |
 | `spam:refresh-mobile-cidrs` | `FreshnessCheck` | `max(spam_whitelist_ips.date)` WHERE `comment LIKE 'UK mobile:%'`, ≤ 40 days | Monthly job; the 40-day floor tolerates the cadence. |
 | `integrations:sync-whatjobs` | `FreshnessCheck` | `max(jobs.seenat)`, ≤ 24h | Gated on `freegle.whatjobs.feed1` being set. 24h floor tolerates the 08:00–22:00 window + slow cold runs. |
 | `data:git-summary` | `CallbackCheck` (config) | unix timestamp in `config['git_summary_last_run']`, ≤ 10 days | Weekly. Missing key ⇒ skipped (may not have run since deploy); unparseable ⇒ breach. |
@@ -217,7 +231,6 @@ prioritised (each needs its exact "pending" predicate verified first):
 
 | Task | Backlog/freshness signal |
 |---|---|
-| `embeddings:generate` | messages awaiting embeddings (`messages_spatial successful=0 promised=0` minus `messages_embeddings`) — multi-table predicate, verify before adding |
 | `messages:update-spatial-index` / `messages:update-index` | newest indexed vs newest message |
 | `newsfeed:generate-link-previews` | `link_previews.retrieved` recency vs new URLs (quiet-period false-alarm risk) |
 | `microvolunteering:notify`, `chats:update-expected`, `users:update-modmails` | cursor recency |

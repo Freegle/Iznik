@@ -521,3 +521,9 @@ Used for: threshold calibration, moderator trust-building, false-positive analys
 - **Beanstalkd persistence in production**: Enable `-b /var/lib/beanstalkd/binlog` in the production beanstalkd config to survive restarts. Confirm this is done before enabling `ai_review` on any group.
 - **together.io**: Out of scope for prototype. The ai-flower adapter interface makes it a later drop-in if Gemini cost or availability becomes a concern.
 - **Rspamd score tuning**: The initial thresholds (add_header=5, reject=15) are conservative guesses. After a few weeks of production traffic, review the score distribution in rspamd's web UI (`rspamd.localhost`) and adjust.
+
+---
+
+## Status (2026-10-28)
+
+Not built as designed: there is no `AutoReview` or `post_review` code. The keyword consolidation it depended on has shipped (`MigrateConcernKeywordsCommand`, the `concern_keywords` migrations). The live work in this space is PR #639, post-moderation with a flowchart automated review, trial only; reconcile this design with that before building. The 1,754-line implementation plan was removed on 2026-10-28 (git history at `3e65b6af25`, `plans/2026-05-04-C-post-review-service.md`).

@@ -11,6 +11,7 @@ use App\Services\Mail\MailSuppressionService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Find out whether a provider has stopped accepting our mail, and stop
@@ -27,6 +28,7 @@ use Illuminate\Support\Facades\Log;
  * and then does the two things that were missing: it says so loudly, and it
  * stops the sending jobs generating mail that cannot be delivered.
  */
+#[AsCommand(name: 'mail:deferrals:scan')]
 class ScanDeferralsCommand extends Command
 {
     protected $signature = 'mail:deferrals:scan

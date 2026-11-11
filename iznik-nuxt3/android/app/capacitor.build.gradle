@@ -20,6 +20,7 @@ dependencies {
     implementation project(':capacitor-camera')
     implementation project(':capacitor-share')
     implementation project(':capacitor-app')
+    implementation project(':capacitor-text-zoom')
     implementation project(':capacitor-screen-orientation')
 
 }

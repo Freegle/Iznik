@@ -54,6 +54,7 @@
 <script setup>
 import { computed, ref, useHead, useRuntimeConfig, useRoute } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
+import { exploreTitle } from '~/composables/exploreTitle'
 import { useGroupStore } from '~/stores/group'
 import ExploreGroup from '~/components/ExploreGroup'
 import NoticeMessage from '~/components/NoticeMessage'
@@ -109,7 +110,7 @@ if (id) {
     const head = buildHead(
       route,
       runtimeConfig,
-      'Explore ' + group.value.namedisplay,
+      exploreTitle(group.value.namedisplay),
       group.value.description
         ? group.value.description
         : "Give and get stuff for free. Offer things you don't need, and ask for things you'd like. Don't just recycle - reuse with Freegle!",
@@ -140,7 +141,7 @@ if (id) {
     buildHead(
       route,
       runtimeConfig,
-      'Explore Freegle',
+      exploreTitle(),
       "Give and get stuff for free. Offer things you don't need, and ask for things you'd like. Don't just recycle - reuse with Freegle!"
     )
   )

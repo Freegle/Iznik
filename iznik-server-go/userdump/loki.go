@@ -142,7 +142,7 @@ const (
 // deliberately NOT here: it is ~67GB per 7 days on prod - the dominant cost of
 // the old 7-source pass - so it gets its own pass, pass D, confined to the
 // minutes the member was active.
-const unlabelledSources = "batch|batch_event|email|incoming_mail|similar_posts|vector_search"
+const unlabelledSources = "batch|batch_event|email|incoming_mail|vector_search"
 
 // maxLokiRange is how far back a single query_range may reach. Production Loki
 // enforces 30d1h and rejects anything longer with a 400, so asking for more is

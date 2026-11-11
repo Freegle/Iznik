@@ -7,7 +7,9 @@ use App\Services\ChatProcessService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'chats:process-incoming')]
 class ProcessIncomingChatCommand extends Command
 {
     use PreventsOverlapping;

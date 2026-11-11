@@ -8,6 +8,7 @@ use App\Traits\SingleInstanceLock;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * ripple:proximity-notes — computes the moderator "quicker to get to" P/Q note for posts that
@@ -28,6 +29,7 @@ use Illuminate\Support\Facades\Log;
  * disabled by a dedicated flag (freegle.ripple.proximity_notes) so it can be turned off without
  * touching the master RIPPLE_ENABLED switch.
  */
+#[AsCommand(name: 'ripple:proximity-notes')]
 class ProximityNotesCommand extends Command
 {
     protected $signature = 'ripple:proximity-notes

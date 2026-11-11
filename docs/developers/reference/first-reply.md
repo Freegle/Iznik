@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-01
+last_reviewed: 2026-10-17
 covers:
   - iznik-batch/app/Services/FirstReply/**
   - iznik-batch/app/Console/Commands/FirstReply/**
@@ -193,8 +193,7 @@ no code path reads that value any more.
 ### Matching is vector, at the bar for mail
 
 Both match signals go through apiv2 and are held to **`MinMatchedPostScore` (0.85)** - the same
-constant the matched-posts email uses, not the `MinSimilarScore` (0.80) of the on-site "similar
-posts" strip.
+constant the matched-posts email uses.
 
 Those are separate numbers because precision falls off a cliff. Hand-judged on live posts:
 0.85-0.90 scores 0.92, 0.80-0.85 scores **0.43**. A strip somebody chose to look at can carry a
@@ -452,12 +451,15 @@ stopped being silent - replied to, given an outcome, or deleted. While any of th
 waiting the question still means something, and answering applies to whichever remain. A live
 "could you deliver?" under items collected yesterday is not clutter, it is wrong: answering it
 would edit finished posts. They expire rather than vanish so the thread still reads back in
-order, and an already-answered prompt is never rewritten.
+order, and an already-answered prompt is never rewritten. A `confirm_reply` prompt is never retired this
+way. It names one post, and the reply it holds is the other member's reply that this sweep reads as "this
+question has stopped applying"; it ends on its own, with its answer or after three days.
 
 ### The chat header
 
 A Freegle chat gets its own header (`chat.systemchat`, set by the API when the other party is
-the Freegle account). Rating, blocking and reporting are dropped, because almost nothing here is
+the Freegle account, found by `firstreply.SystemUserID`, which keeps the id once the account
+exists, and until then looks once a minute, so the chat list does not ask again for every chat). Rating, blocking and reporting are dropped, because almost nothing here is
 a conversation and none of those verbs mean anything pointed at Freegle. The "these are
 automated" note lives there **once** rather than on every message, and Hide is offered plainly -
 as is the settings toggle that stops them entirely.

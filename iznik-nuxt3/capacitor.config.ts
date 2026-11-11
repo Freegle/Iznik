@@ -51,7 +51,6 @@ const config: CapacitorConfig = {
       "cordova-plugin-calendar", // C6 https://github.com/uzurv/Calendar-PhoneGap-Plugin-ios-17-support
       "@capacitor-community/stripe",
       "@capacitor/app-launcher", // C7 OK eg donate
-      "@capacitor/browser",
       "@capacitor/device", // C7 OK
       "@capacitor/network",
       // "@capacitor/push-notifications",
@@ -80,7 +79,6 @@ const config: CapacitorConfig = {
       "cordova-plugin-calendar", // iOS 17: https://github.com/uzurv/Calendar-PhoneGap-Plugin-ios-17-support
       "@capacitor-community/stripe",
       "@capacitor/app-launcher",
-      "@capacitor/browser",
       "@capacitor/device",
       "@capacitor/network",
       //"@capacitor/push-notifications",
@@ -116,6 +114,18 @@ const config: CapacitorConfig = {
     //}
   },
 };
+
+// The emulator gate (FreegleDocker scripts/app-e2e) builds the Android e2e build type: a
+// release-configured, non-debuggable APK, so the WebView must be told to expose remote
+// debugging (Playwright drives it over CDP) and to accept the local stack's http API from
+// the app's https origin. Neither setting is applied to any other build.
+if (process.env['FREEGLE_APP_E2E'] === 'true') {
+  config.android = {
+    ...config.android,
+    allowMixedContent: true,
+    webContentsDebuggingEnabled: true,
+  }
+}
 
 if( process.env['USE_COOKIES']==='True') { // Android
   console.log('SET CAPACITOR base to https://ilovefreegle.org')

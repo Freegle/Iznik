@@ -19,12 +19,10 @@ func matchedPostsEnabled() bool {
 }
 
 // MinMatchedPostScore is the minimum subject cosine for an opposite-type post to
-// be worth emailing about. Deliberately higher than MinSimilarScore (0.80):
-// that floor governs the on-site similar-posts strip, where the viewer is
-// already browsing and a weak suggestion costs nothing. Two things make this
-// surface different: the match is pushed into someone's inbox unasked, and
-// both sides are stored "search_document:" embeddings, so cosines sit far
-// higher than the query-vs-document scores these floors were picked against.
+// be worth emailing about. Deliberately high: the match is pushed into
+// someone's inbox unasked, and both sides are stored "search_document:"
+// embeddings, so cosines sit far higher than the query-vs-document scores
+// search's floor was picked against.
 //
 // Measured on 150 randomly sampled live Offers scored against the live Wanted
 // pool, hand-judging the top match ("would someone who posted this Wanted be
@@ -44,6 +42,16 @@ func matchedPostsEnabled() bool {
 // match costs one email, a junk match teaches people to ignore the next one.
 const MinMatchedPostScore = 0.85
 
+// itemsDiffer is true when both posts' items are known and are different things. A close
+// subject cosine still lets through near-misses that would be wasted mail: "Beer dispenser"
+// for a "Water dispenser", "Portable TV" for a "Portable TV aerial", "Cello" for a "Violin".
+// Measured on 30 days of live posts: pairs that pass the cosine and have the same item were
+// judged 95% welcome; pairs that pass the cosine only, 60%. A post whose item is not known yet
+// is matched on cosine alone, as before. docs/developers/reference/message-items.md.
+func itemsDiffer(a, b string) bool {
+	return a != "" && b != "" && a != b
+}
+
 // oppositeType maps Offer↔Wanted; any other type yields "" (no matching).
 func oppositeType(t string) string {
 	switch t {
@@ -59,8 +67,8 @@ func oppositeType(t string) string {
 // PostMatches returns open posts of the OPPOSITE type that semantically match a
 // given post and are near it — the candidate set for the matched-posts email.
 //
-// It differs from /similar in three ways, all because it serves a batch job
-// rather than an on-site viewer: (1) opposite type (an Offer's matches are
+// It serves a batch job rather than an on-site viewer, which shapes it in
+// three ways: (1) opposite type (an Offer's matches are
 // Wanteds and vice versa); (2) boxed to collectable distance around the post;
 // (3) reach-filtered against the POST's own location, not the caller's — the
 // batch calls this unauthenticated, and the recipient is the post's owner, so a
@@ -101,6 +109,7 @@ func PostMatches(c *fiber.Ctx) error {
 	var srcType string
 	var srcFromuser uint64
 	var srcLat, srcLng float64
+	var srcItemKey string
 
 	if e, ok := embedding.Global.FindByMsgid(id); ok {
 		srcVec = e.SubjectVec[:]
@@ -108,6 +117,7 @@ func PostMatches(c *fiber.Ctx) error {
 		srcFromuser = e.Fromuser
 		srcLat = e.Lat
 		srcLng = e.Lng
+		srcItemKey = e.ItemKey
 	} else {
 		var row struct {
 			SubjectEmbedding []byte  `gorm:"column:subject_embedding"`
@@ -134,6 +144,7 @@ func PostMatches(c *fiber.Ctx) error {
 		srcFromuser = row.Fromuser
 		srcLat = row.Lat
 		srcLng = row.Lng
+		database.DBConn.Table("messages_cleaned_items").Select("COALESCE(itemkey, '')").Where("msgid = ?", id).Scan(&srcItemKey)
 	}
 
 	opp := oppositeType(srcType)
@@ -167,6 +178,9 @@ func PostMatches(c *fiber.Ctx) error {
 			continue // the owner's own posts
 		}
 		if cnd.SubjectCos < MinMatchedPostScore {
+			continue
+		}
+		if itemsDiffer(srcItemKey, cnd.ItemKey) {
 			continue
 		}
 		if blocked[cnd.Msgid] {

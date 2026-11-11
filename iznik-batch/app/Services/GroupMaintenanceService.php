@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -33,7 +34,7 @@ class GroupMaintenanceService
 
         // keep-raw: same aggregate-beside-grouped-column limitation.
         $modCounts = DB::table('memberships')
-            ->whereIn('role', ['Owner', 'Moderator'])
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->groupBy('groupid')
             ->selectRaw('groupid, COUNT(*) AS cnt')
             ->pluck('cnt', 'groupid');
@@ -86,9 +87,15 @@ class GroupMaintenanceService
             'messages_fixed' => 0,
         ];
 
-        $locations = DB::select(
-            "SELECT DISTINCT locations.id, lat, lng, name FROM locations WHERE lat < lng AND locations.name NOT LIKE 'BF%'"
-        );
+        $locations = DB::table('locations')
+            ->distinct()
+            ->select('locations.id', 'lat', 'lng', 'name')
+            // lat < lng compares two COLUMNS, so it needs whereColumn - a plain
+            // where() would bind 'lng' as a string literal and match nothing.
+            ->whereColumn('lat', '<', 'lng')
+            ->where('locations.name', 'NOT LIKE', 'BF%')
+            ->get()
+            ->all();
 
         $details = '';
 

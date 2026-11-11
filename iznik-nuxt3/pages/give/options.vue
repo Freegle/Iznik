@@ -13,7 +13,7 @@
 
           <!-- Delivery option -->
           <div class="option-section">
-            <label class="option-label">Could you deliver?</label>
+            <div class="option-label">Could you deliver?</div>
             <div class="toggle-options">
               <button
                 class="toggle-btn"
@@ -34,7 +34,7 @@
 
           <!-- Deadline option -->
           <div class="option-section">
-            <label class="option-label">Is there a deadline?</label>
+            <div class="option-label">Is there a deadline?</div>
             <div class="toggle-options">
               <button
                 class="toggle-btn"
@@ -92,8 +92,13 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute, useHead, useRuntimeConfig } from '#imports'
 import WizardProgressCompact from '~/components/WizardProgressCompact.vue'
 import { useComposeStore } from '~/stores/compose'
+import {
+  watchOptionChoices,
+  reportValidationFailure,
+} from '~/composables/useComposeTelemetry'
 import { useAuthStore } from '~/stores/auth'
 import { buildHead } from '~/composables/useBuildHead'
+import { restoreOptionChoices } from '~/composables/useCompose'
 import { MESSAGE_EXPIRE_TIME } from '~/constants'
 
 const router = useRouter()
@@ -141,10 +146,23 @@ onMounted(() => {
 
   if (existingMessages.length > 0) {
     messageId.value = existingMessages[0].id
+    restoreOptionChoices(existingMessages[0], {
+      deliveryPossible,
+      hasDeadline,
+      deadline,
+    })
   } else {
     // No message found, go back to start
     router.replace('/give')
   }
+
+  // Flow telemetry: the delivery and deadline choices, and a deadline in the past. Watched
+  // from here, after the earlier choices were put back, so putting them back is not counted
+  // as the member changing them.
+  watchOptionChoices('Offer', {
+    delivery: deliveryPossible,
+    deadline: hasDeadline,
+  })
 })
 
 function setDeadlineAndShowPicker() {
@@ -170,6 +188,7 @@ function goNext() {
   // Validate deadline is not in the past
   if (hasDeadline.value && deadline.value && deadline.value < today.value) {
     deadlineError.value = true
+    reportValidationFailure('Offer', 'deadline', 'in_past')
     const input = deadlineInput.value?.element
     if (input) {
       input.focus()

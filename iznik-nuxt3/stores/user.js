@@ -3,6 +3,8 @@ import { nextTick } from 'vue'
 import api from '~/api'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
+import { action } from '~/composables/useClientLog'
+import { experimentVariant } from '~/composables/useExperiment'
 
 // Debounce delay for batching user fetches (ms)
 const BATCH_DELAY = 50
@@ -11,6 +13,8 @@ export const useUserStore = defineStore('user', {
   state: () => ({
     list: {},
     locationList: {},
+    // Why each result of the last support search matched (id -> reasons), beyond name/email/id.
+    searchMatches: {},
   }),
   actions: {
     init(config) {
@@ -26,6 +30,7 @@ export const useUserStore = defineStore('user', {
       console.log('uUS clear')
       this.list = {}
       this.locationList = {}
+      this.searchMatches = {}
       this.fetching = {}
       this.fetchingLocation = {}
     },
@@ -35,6 +40,7 @@ export const useUserStore = defineStore('user', {
     },
     async searchUsers(searchTerm) {
       const data = await api(this.config).user.search(searchTerm)
+      this.searchMatches = data?.matches || {}
       if (data?.users?.length) {
         // V2 API returns user IDs; fetch each user with modtools data.
         await Promise.all(
@@ -94,8 +100,8 @@ export const useUserStore = defineStore('user', {
       }
 
       // In modtools context, always use fetchMT so we get emails, memberships,
-      // location, comments etc. This avoids stale cache from non-modtools fetches
-      // and means components don't need to choose between fetch/fetchMT.
+      // location, comments etc., and components don't need to choose between
+      // fetch/fetchMT. Like fetch, it returns the cached copy unless forced.
       const miscStore = useMiscStore()
       if (miscStore.modtools) {
         return this.fetchMT({ id, info: true }, force)
@@ -123,8 +129,8 @@ export const useUserStore = defineStore('user', {
       }
 
       // Add to pending batch and wait for the batch to complete
-      return new Promise((resolve) => {
-        this.pendingFetches.push({ id, resolve, force })
+      return new Promise((resolve, reject) => {
+        this.pendingFetches.push({ id, resolve, reject, force })
 
         // Clear existing timer and set a new one
         if (this.batchTimer) {
@@ -165,7 +171,26 @@ export const useUserStore = defineStore('user', {
       }
 
       if (idsToFetch.length > 0) {
-        await this.fetchMultiple(idsToFetch)
+        try {
+          await this.fetchMultiple(idsToFetch)
+        } catch (e) {
+          // The request failed, so nothing new reached the cache. Settle every
+          // waiter: leaving them pending for ever wedges anything awaiting them.
+          // A single unknown id makes the API return 404, which used to leave
+          // pages/profile/[id] stuck on its top-level await and render nothing
+          // at all - its own 404 handling could never run.
+          for (const { id, resolve, reject } of pending) {
+            if (this.list[id] || !idsToFetch.includes(id)) {
+              // Either we have data anyway, or this id wasn't part of the
+              // request that failed - it's being fetched elsewhere.
+              resolve(this.list[id])
+            } else {
+              reject(e)
+            }
+          }
+
+          return
+        }
       }
 
       // Resolve all promises with the cached data
@@ -247,9 +272,27 @@ export const useUserStore = defineStore('user', {
 
       return this.locationList[id]
     },
-    async rate(id, rating, reason, text) {
+    // `source` says where the thumbs were pressed (chat_header, outcome, rating_nudge...). Every
+    // rating given, from anywhere, is logged as user_rated with the member's experiment arms, so an
+    // experiment can be judged on ratings per start (docs/developers/reference/ux-experiments.md).
+    // Taking a rating back (rating null) is not a rating and is not logged.
+    async rate(id, rating, reason, text, source = null) {
       await api(this.config).user.rate(id, rating, reason, text)
+      if (rating) {
+        action('user_rated', { rating, source, variant: experimentVariant() })
+      }
       await this.fetch(id, true)
+    },
+    async fetchUnrated() {
+      const ret = await api(this.config).user.unrated()
+      return Array.isArray(ret) ? ret : []
+    },
+    async fetchHostingAd() {
+      const ret = await api(this.config).user.hostingAd()
+      return ret?.show === true
+    },
+    async hostingAdEvent(event) {
+      await api(this.config).user.hostingAdEvent(event)
     },
     async engaged(engageid) {
       await api(this.config).user.engaged(engageid)

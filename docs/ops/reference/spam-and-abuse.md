@@ -1,7 +1,8 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-11-10
 owner: Freegle ops
 covers:
+  - conf/postfix
   - conf/rspamd
   - iznik-batch/app/Services/Mail/Incoming/SpamCheckService.php
   - iznik-batch/app/Services/ContentCheckService.php
@@ -58,7 +59,9 @@ The web UI is password-protected; set the password as an encrypted hash with
 **Where milter-modified mail actually goes.** Mail to `groups.ilovefreegle.org`,
 `users.ilovefreegle.org` and similar is routed by `transport_maps` to the
 `freegle-mail-handler` pipe, which POSTs the now-decorated message to the batch
-processor's `/api/mail/incoming` endpoint. It does **not** go to mailpit. To check
+processor's `/api/mail/incoming` endpoint. It does **not** go to mailpit. The pipe
+handles one recipient per run (`freegle_destination_recipient_limit = 1`), so a message sent to
+several group addresses is delivered once per address. To check
 headers and scores, look at the batch logs or the rspamd History tab.
 
 ## Mail layer: SpamAssassin, in parallel
@@ -127,6 +130,14 @@ the same thing; they are different decisions.
   from the text, and a match can be waived when the embedding sidecar judges the
   context innocent ("glue gun" against a weapons keyword). Both exist to spare
   ordinary words in ordinary posts.
+
+  A flag keyword is also waived when it sits inside the name of a place within 3 km of
+  the post or its poster ("Cock Clarks", "Brightwell-cum-Sotwell"), so a place does not
+  have to be whitelisted by hand. The name must be in `locations` as a populated place
+  or street (not a shop or amenity) and be longer than the keyword; only that phrase is
+  removed, so the same word used elsewhere in the post still flags. Posts only: chat
+  messages have no location. 3 km comes from 90 days of flagged posts, where every real
+  place name was within 1.6 km and the first look-alike was 4.5 km away.
 - **block** is absolute. The keyword is matched against the text as written: allowed
   phrases are not removed first (the whitelist holds everyday words such as "shop",
   and stripping one out of the middle of "ilovefreegle.shop" would leave the keyword
@@ -236,6 +247,16 @@ See [`llm-modbot/RESULTS.md`](../../../llm-modbot/RESULTS.md) before proposing t
 The useful reading is that AI helps with formatting and spelling, and does not help with
 judgement.
 
+## Lockdown
+
+When a wave outruns the layers above, any Support user can press the lockdown switch.
+Members can still post, reply and chat, and it all looks sent, but it reaches nobody until
+a person lifts it; no member email or push goes out; moderators keep only the basic
+Approve button; downloads stop. The lockdown only holds: Support finds and deals with the
+accounts behind the wave with the existing tools, then lifts it area by area, and what was
+held goes through the usual checks. Pressing, checking it has taken effect, and lifting are
+in the [lockdown runbook](../runbooks/lockdown.md).
+
 ## Operational notes
 
 - Spam filtering is not the same problem as **deliverability**. If members are not
@@ -246,3 +267,4 @@ judgement.
   addresses.
 - Changing a threshold is cheap; changing what happens at a threshold is not. Prefer
   moving a score boundary over adding a new rule.
+- The spam and content-check queries use the Laravel query builder; a statement that stays raw carries a written reason in the raw-SQL inventory.

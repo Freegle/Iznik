@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\WorkerPool;
 
 use App\Services\WorkerPool\BoundedPool;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
 /**
@@ -25,6 +26,11 @@ class BoundedPoolResilienceTest extends TestCase
         parent::setUp();
         $this->testPoolName = 'test_resilience_'.uniqid('', true);
 
+        // Every Redis call here fails, so the pool retries each one with its real
+        // backoff (50ms then 200ms). The retries still happen; only the waiting
+        // between them is faked away.
+        Sleep::fake();
+
         // Reset the per-pool throttle so each test sees a fresh report window.
         $reflection = new \ReflectionClass(BoundedPool::class);
         $prop = $reflection->getProperty('lastOutageReportAt');
@@ -45,6 +51,22 @@ class BoundedPoolResilienceTest extends TestCase
         Redis::shouldReceive('get')->andThrow(new \RedisException('connection refused'));
         Redis::shouldReceive('setex')->andThrow(new \RedisException('connection refused'));
         Redis::shouldReceive('del')->andThrow(new \RedisException('connection refused'));
+    }
+
+    public function test_a_failing_redis_call_is_tried_three_times_with_backoff(): void
+    {
+        // The comment in setUp says the retries still happen with only the waiting
+        // faked away; this is the test that holds it to that. Three attempts, and
+        // the 50ms then 200ms waits between them, in that order.
+        Redis::shouldReceive('rpush')->times(3)->andThrow(new \RedisException('connection refused'));
+
+        $pool = new BoundedPool($this->testPoolName, 5);
+        $pool->release();
+
+        Sleep::assertSequence([
+            Sleep::usleep(50000),
+            Sleep::usleep(200000),
+        ]);
     }
 
     public function test_initialize_does_not_throw_when_redis_unreachable(): void

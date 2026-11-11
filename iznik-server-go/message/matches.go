@@ -17,6 +17,16 @@ import (
 // sense if the offer is realistically collectable.
 const matchBoxDegrees = 0.15
 
+// SimilarResult is one recommended post: enough for the frontend to render a
+// card (it fetches full message details separately) and place it on the map.
+type SimilarResult struct {
+	Msgid   uint64  `json:"id"`
+	Groupid uint64  `json:"groupid"`
+	Score   float32 `json:"score"`
+	Lat     float64 `json:"lat"`
+	Lng     float64 `json:"lng"`
+}
+
 // wantedMatchEnabled reports whether wanted→offer matching is on.
 // FEATURE_WANTED_MATCH=off is a no-deploy killswitch (default on); when off the
 // endpoint returns an empty list so the compose panel just hides.
@@ -26,9 +36,9 @@ func wantedMatchEnabled() bool {
 
 // Matches returns existing OFFERs near a location that semantically match a
 // free-text query — for the "people are offering these near you" panel shown
-// while someone composes a WANTED. Unlike /similar (which reuses a stored
-// embedding), this embeds the query text via the sidecar because the wanted
-// isn't saved yet. Reach-filtered against the given location so a matched offer
+// while someone composes a WANTED. The wanted is not saved yet, so this
+// embeds the query text via the sidecar rather than reading a stored
+// embedding. Reach-filtered against the given location so a matched offer
 // the poster couldn't reply to is never shown; the poster's own offers are
 // excluded.
 //

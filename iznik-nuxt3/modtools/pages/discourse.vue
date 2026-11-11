@@ -6,8 +6,8 @@
         account isn't currently a moderator of any community.
       </p>
       <p>
-        If you think it should be, ask one of your community's owners to
-        restore your role, or email
+        If you think it should be, ask one of your community's owners to restore
+        your role, or email
         <a href="mailto:geeks@ilovefreegle.org">geeks@ilovefreegle.org</a>.
       </p>
       <p><a href="/">Back to ModTools</a></p>

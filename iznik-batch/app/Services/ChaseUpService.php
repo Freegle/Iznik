@@ -2,16 +2,17 @@
 
 namespace App\Services;
 
+use App\Services\AutoSplit\AutoSplitService;
 use App\Helpers\MailHelper;
 use App\Mail\Message\ChaseUp as ChaseUpMail;
 use App\Mail\Message\ChaseUpPromised;
 use App\Mail\Traits\FeatureFlags;
+use App\Models\ChatMessage;
 use App\Models\Group;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\Notification;
 use App\Models\User;
-use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -122,8 +123,8 @@ class ChaseUpService
         $count = 0;
 
         $intendeds = DB::table('messages_outcomes_intended')
-            ->whereRaw('TIMESTAMPDIFF(MINUTE, timestamp, NOW()) > 30')
-            ->whereRaw('TIMESTAMPDIFF(DAY, timestamp, NOW()) <= 7')
+            ->where('timestamp', '<=', now()->subMinutes(31))
+            ->where('timestamp', '>', now()->subDays(8))
             ->get();
 
         foreach ($intendeds as $intended) {
@@ -153,6 +154,8 @@ class ChaseUpService
                         'outcome' => Message::OUTCOME_TAKEN,
                         'timestamp' => now(),
                     ]);
+                    // An automatically split post's items went with it.
+                    AutoSplitService::markItemsGone((int) $intended->msgid);
                     $count++;
                     break;
 
@@ -208,8 +211,15 @@ class ChaseUpService
 
         $groups = DB::table('messages_groups')
             ->where('msgid', $msgid)
-            ->select('groupid', DB::raw('TIMESTAMPDIFF(HOUR, arrival, NOW()) AS hoursago'))
+            ->select('groupid', 'arrival')
             ->get();
+
+        // TIMESTAMPDIFF(HOUR, arrival, NOW()) truncates toward zero; (int)-casting
+        // Carbon's diffInHours() gives the identical whole-hour count for the
+        // always-past `arrival` timestamps here (verified against MySQL directly).
+        // NOW() is captured once, matching the single SELECT's one-NOW()-per-query
+        // semantics.
+        $now = now();
 
         foreach ($groups as $group) {
             $groupModel = Group::find($group->groupid);
@@ -222,7 +232,9 @@ class ChaseUpService
                 ? ($reposts['offer'] ?? 3)
                 : ($reposts['wanted'] ?? 7);
 
-            if ($group->hoursago > $interval * 24) {
+            $hoursago = (int) \Illuminate\Support\Carbon::parse($group->arrival)->diffInHours($now);
+
+            if ($hoursago > $interval * 24) {
                 return true;
             }
         }
@@ -239,10 +251,7 @@ class ChaseUpService
     {
         DB::table('messages_groups')
             ->where('msgid', $msgid)
-            ->update([
-                'arrival' => now(),
-                'autoreposts' => DB::raw('autoreposts + 1'),
-            ]);
+            ->increment('autoreposts', 1, ['arrival' => now()]);
     }
 
     /**
@@ -309,7 +318,13 @@ class ChaseUpService
                 ->where('date', '>=', $end)
                 // A rippling-held reply hasn't reached the poster yet, so it isn't "activity" that
                 // should suppress the still-available chase-up. Once released it counts as normal.
-                ->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'))
+                // Inlined equivalent of RippleReplyService::deliveryGateSql('chat_messages.id')
+                // as a real NOT EXISTS subquery rather than a raw SQL fragment.
+                ->whereNotExists(function ($q) {
+                    $q->from('rippling_held_replies as cmr')
+                        ->whereColumn('cmr.chatmsgid', 'chat_messages.id')
+                        ->where('cmr.status', '<>', 'released');
+                })
                 ->max('date');
 
             if ($recentChat) {
@@ -469,11 +484,21 @@ class ChaseUpService
             }
 
             // V1: find last reply time in chat.
+            // A ModMail is not a reply from a member (AutoRepostService::hasRecentReply
+            // excludes it too), and a rippling-held reply has not reached the poster yet
+            // (notifyLanguishing excludes it); once released it counts as normal.
             $lastReplyDate = DB::table('chat_messages')
                 ->whereIn('chatid', function ($q) use ($msg) {
                     $q->select('chatid')
                         ->from('chat_messages')
-                        ->where('refmsgid', $msg->msgid);
+                        ->where('refmsgid', $msg->msgid)
+                        ->where('type', '!=', ChatMessage::TYPE_MODMAIL);
+                })
+                ->where('type', '!=', ChatMessage::TYPE_MODMAIL)
+                ->whereNotExists(function ($q) {
+                    $q->from('rippling_held_replies as cmr')
+                        ->whereColumn('cmr.chatmsgid', 'chat_messages.id')
+                        ->where('cmr.status', '<>', 'released');
                 })
                 ->max('date');
 
@@ -529,6 +554,7 @@ class ChaseUpService
                         userName: $user->displayname,
                         userEmail: $user->email_preferred,
                         groupId: $group->id,
+                        promisedTo: $this->promiseeName($msg->msgid),
                     )
                     : new ChaseUpMail(
                         messageId: $msg->msgid,
@@ -552,9 +578,11 @@ class ChaseUpService
     /**
      * Get chase-up candidate messages for a specific group.
      *
-     * V1: UNION query for messages_related on id1 and id2.
-     * Simplified here: exclude messages that have related messages.
      * Messages must have at least one chat reply (INNER JOIN chat_messages).
+     * A post with an outcome is excluded; that is the only "already done" test.
+     * (V1 also excluded posts linked in messages_related, a table only V1
+     * wrote, from subject distance between a TAKEN mail and the offer it
+     * closed. Platform posts record their outcome through the app instead.)
      */
     protected function getCandidates(int $groupid, string $mindate, array $reposts = self::DEFAULT_REPOSTS)
     {
@@ -572,12 +600,11 @@ class ChaseUpService
 
         $query = DB::table('messages_groups')
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+            ->join('users', 'messages.fromuser', '=', 'users.id')
             ->join('memberships', function ($join) {
                 $join->on('memberships.userid', '=', 'messages.fromuser')
                     ->on('memberships.groupid', '=', 'messages_groups.groupid');
             })
-            ->leftJoin('messages_related AS mr1', 'mr1.id1', '=', 'messages.id')
-            ->leftJoin('messages_related AS mr2', 'mr2.id2', '=', 'messages.id')
             ->leftJoin('messages_outcomes', 'messages.id', '=', 'messages_outcomes.msgid')
             ->join('chat_messages', 'messages.id', '=', 'chat_messages.refmsgid')
             ->select(
@@ -586,21 +613,22 @@ class ChaseUpService
                 'messages_groups.lastchaseup',
                 'messages_groups.autoreposts',
                 'messages_groups.rippled_in',
+                'messages_groups.arrival',
                 'messages.type',
                 'messages.subject',
                 'messages.fromaddr',
-                'messages.fromuser',
-                DB::raw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS hoursago')
+                'messages.fromuser'
             )
             ->where('messages_groups.arrival', '>', $mindate)
             ->where('messages_groups.groupid', $groupid)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            ->whereNull('mr1.id1')
-            ->whereNull('mr2.id2')
+            // A retracted rippled copy keeps collection = Approved; only deleted = 1 marks it.
+            ->where('messages_groups.deleted', 0)
             ->whereNull('messages_outcomes.msgid')
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
             ->where('messages.source', Message::SOURCE_PLATFORM)
             ->whereNull('messages.deleted')
+            ->whereNull('users.deleted')
             ->groupBy(
                 'messages_groups.msgid',
                 'messages_groups.groupid',
@@ -716,7 +744,12 @@ class ChaseUpService
             ? ($reposts['offer'] ?? 3)
             : ($reposts['wanted'] ?? 7);
 
-        return $msg->hoursago > $interval * 24;
+        // TIMESTAMPDIFF(HOUR, arrival, NOW()) truncates toward zero; (int)-casting
+        // Carbon's diffInHours() gives the identical whole-hour count for the
+        // always-past `arrival` timestamp here (verified against MySQL directly).
+        $hoursago = (int) \Illuminate\Support\Carbon::parse($msg->arrival)->diffInHours(now());
+
+        return $hoursago > $interval * 24;
     }
 
     /**
@@ -731,4 +764,24 @@ class ChaseUpService
             ->exists();
     }
 
+    /**
+     * Display name of the member the post was most recently promised to, or null when
+     * there is no promise or no name can be found.
+     */
+    protected function promiseeName(int $msgid): ?string
+    {
+        $userid = DB::table('messages_promises')
+            ->where('msgid', $msgid)
+            ->orderByDesc('promisedat')
+            ->orderByDesc('id')
+            ->value('userid');
+
+        if (!$userid) {
+            return null;
+        }
+
+        $name = trim((string) User::find($userid)?->displayname);
+
+        return $name !== '' ? $name : null;
+    }
 }

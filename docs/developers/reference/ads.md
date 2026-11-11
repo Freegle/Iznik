@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-13
+last_reviewed: 2026-10-21
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/ExternalDa.vue
@@ -9,6 +9,14 @@ covers:
   - iznik-batch/app/Console/Commands/Donation/UpdateAdsTargetCommand.php
   - iznik-batch/app/Services/WhatJobsService.php
   - iznik-nuxt3/components/JobsDaSlot.vue
+  - iznik-nuxt3/stores/job.js
+  - iznik-nuxt3/pages/job/[id].vue
+  - iznik-server-go/job/job.go
+  - iznik-server-go/job/autoopen.go
+  - iznik-server-go/job/hosting.go
+  - iznik-server-go/utils/geoip_asn.go
+  - iznik-server-go/misc/clientaddress.go
+  - iznik-nuxt3/composables/useJobText.js
 ---
 
 # Adverts
@@ -80,12 +88,120 @@ Things to know before touching it:
   gate itself breaks.
 - Jobs are geocoded on ingest and the `jobs` table is also the geocode cache, so a wrong
   placement does not heal by itself.
+- **Order is pay first.** The API ranks the nearest jobs by cost per click, with clickability
+  only breaking ties, and the digest does the same (`Job::nearLocation`). `JobsDaSlot` takes
+  the top 20 and orders them at random weighted by pay (`composables/payWeightedOrder.js`, the
+  digest's own weighting), so several slots on one page differ but better-paid jobs still lead.
+  A uniform shuffle there would discard the ranking.
+- **A device is never sent to the same advert twice within 24 hours.** WhatJobs does not pay
+  for a repeat click from the same user, IP or browser on the same advert in that window, and
+  counts it against the first. The job store remembers in `localStorage` which adverts this
+  device opened; the ad slots read `jobStore.available`, which leaves them out, so a slot
+  swaps an opened advert for another a moment after the tap. A tap within two seconds of
+  opening any advert is a double-tap and is dropped before it reaches the link. The email
+  landing page (`pages/job/[id].vue`) does not redirect to an advert already opened, and
+  offers other jobs instead. It also sets `miscStore.unloading` before it leaves, because
+  leaving cancels in-flight module loads and the reload that `error.vue` and `app.vue` do
+  for a failed import would otherwise load the page again and send a second click. Our own
+  `logs_jobs` records every tap, so it counts more clicks than WhatJobs bills.
+
+## The email job page does not open the advert for mail scanners
+
+Digest emails link to `pages/job/[id].vue`, which logs the click and sends the browser on to
+WhatJobs. Mail-security scanners open those links in real browsers. From 9 to 15 October 2026,
+280 clicks on that page from nobody signed in came from hosting networks (Microsoft 111, Amazon 79,
+Google 39, M247 26, Leaseweb 21, others 4). The 273 clicks the rule below holds came a median of
+84 seconds after the email was sent (174 could be timed). Real people click hours later from UK
+home or mobile networks: a median of 1.75 hours on a phone and 3.4 on a desktop. WhatJobs discards
+the scanners' clicks, and its Foreign column followed our non-UK clicks from nobody day by day.
+
+So the API says, per caller, whether the page may still open the advert at once.
+`GET /apiv2/job/:id` (`job.GetJob`) adds `autoopen` and `autoopen_reason`, worked out by
+`job.AutoOpen` from the caller's address, login and clock. The checks, in order:
+
+- **Signed in** on that browser: `autoopen` is true. A JWT counts even when its session has gone,
+  because it still names its member. A persistent token (`Authorization2`) counts only while its
+  session is there.
+- **A UK clock**: the page sends the browser's time zone as the `tz` query. `Europe/London`,
+  `Europe/Belfast`, `Europe/Isle_of_Man`, `Europe/Jersey` and `Europe/Guernsey` open the advert,
+  abroad or not. Scanners reported other zones (Microsoft's `America/Los_Angeles`, Amazon's `UTC`)
+  or none (Google's front ends). A scanner could copy a UK zone, so every decision logs the zone.
+- **`abroad`**: GeoLite2-Country puts the address anywhere but GB, on any network.
+- **`hosting`**: the address is in the UK, or has no country, and GeoLite2-ASN puts it on a
+  Microsoft network (the Azure family by number, or any operator named Microsoft). Azure UK South
+  and UK West sent 57 of the week's scanner clicks from UK addresses.
+- **Anything else opens.** That includes an address neither database knows, a switch value nobody
+  defined, and every other hosting network on a UK address. The week had 6 such clicks (Amazon
+  London 3, Google 3). All had a UK clock and five came from a phone, so they were people. The
+  decision log records them as `other_hosting`, which is the evidence for holding more networks.
+
+The hosting list is `iznik-server-go/job/hosting.go`, with the numbers it was built from. It lists
+a network by number where scanners outnumbered people in that week's clicks, and well-known
+hosting providers by name. It never lists Cloudflare, Fastly, Apple, Jisc, Akamai's CDN networks
+or a UK home or mobile network. Over the week the rule leaves all 312 signed-in clicks alone, holds
+273 of the 479 from nobody (216 abroad, 57 on Microsoft) and leaves 206. Two of those held look
+like people, both abroad: a phone in Cyprus and one in Spain.
+
+When `autoopen` is false the page shows the job's title and place, "Tap to open this job." and an
+"Open this job" button. The button is not a link, so a browser that only follows links never gets
+WhatJobs's address. The tap logs the click exactly as the automatic open does (placement
+`email_redirect`, so `logs_jobs` still compares with the partner) and adds `gated: true` to the
+client `job_ad_click` event. Showing the card logs a client `job_ad_gated` event with the reason.
+The first tap is remembered on the device (`jobGateTapped` in `localStorage`, with no expiry), so a
+person is asked once, for any job. A scanner's browser starts with fresh storage every time and
+never has it. A page that gets no `autoopen` opens the advert at once, and an API that gets no `tz`
+ignores it, so either can deploy first. The page should go first: until it is live, nobody sends a
+clock or has a remembered tap.
+
+The switch is the `config` row `jobs_email_gate`. Each API process reads it once a minute, so a
+change shows within about a minute:
+
+| Value | What happens |
+|---|---|
+| absent, or `on` | The rule above. |
+| `off` | Always open: the kill switch, with no deploy. |
+| `shadow` | Works the decision out and reports it in `autoopen_reason`, but `autoopen` stays true. It reports what `on` would do, a UK clock included. |
+| `force` | Gates everyone who is not signed in, a UK clock too, for testing and screenshots. |
+
+Every decision is written to Loki as `source="job_gate"`, with `open`, `reason`, `seen` (what the
+address alone says: `abroad`, `hosting`, `other_hosting` or empty), `mode`, `signed_in`,
+`uk_clock`, `country`, `asn`, `org` and `tz`. The address is not copied there; the request log
+line has it. A day of `shadow` can be read with
+`{app="freegle", source="job_gate"} | json | reason != ""`, and the hosting networks that were let
+through with `| seen="other_hosting"`.
+
+Things that bite:
+
+- **The caller's address is `misc.ClientAddress`: `X-Real-IP`, which haproxy sets to the peer
+  address and which replaces whatever the client sent.** It is not `c.IP()`. `main.go` trusts
+  `X-Forwarded-For` without checking it, and a client can write its leading entries, so a gate
+  that read it could be dodged with one header. With no `X-Real-IP` (direct access, tests) the
+  address is the socket peer, which no database knows, so the gate opens.
+  `TestJobGate_AForgedForwardedForIsIgnored` pins this.
+- **The response is `Cache-Control: private, no-store`**, because the answer depends on the caller.
+- **Asking `WhoAmI` makes the auth middleware answer 401 for a token whose session has gone.**
+  `job.gate`, which `GetJob` calls, sets `skipPostAuthCheck`, or a member with a stale login
+  would be told the job is no longer available.
+- **Both databases are embedded in the binary** (`iznik-server-go/utils/*.mmdb`) and are only as
+  new as the committed files: rebuilding the API does not refresh them. `scripts/geoip-update.sh`
+  keeps a system copy current (`GEOIP_EDITION=GeoLite2-ASN` for the network database), and
+  `GEOIP_MMDB_PATH` and `GEOIP_ASN_MMDB_PATH` point the API at fresher copies without a rebuild.
+  Nothing in the repo runs it on a schedule. A refresh that renames an operator fails
+  `job/hosting_test.go` on purpose, so the list is looked at.
+
+When it works, the WhatJobs dashboard shows Foreign falling from about 34 a day to 3 to 5. Duplicate
+falls from 131 a week to about 70 to 80, mostly on the burst days. Invalid is 0 to 8 a day lower,
+and Billable is level or up to 8 a day lower (57 clicks a week, 4% of its 1,284): the partner's
+own labels for those clicks are not known. On our side, member-less `email_redirect` rows in
+`logs_jobs` fall from about 68 a day to about 30, and the `job_gate` lines count the decisions by
+reason.
 
 ## The mobile app
 
 The app runs without cookie consent, so no ad network can run in it. Every slot shows the
 job listings instead, which need no consent, and the donate banner stands in while there
-are no listings for the member's location. Supporters (recent donors) see neither. There
+are no listings for the member's location. Supporters (recent donors) see neither, and a
+donor who has turned donation requests off never sees the donate banner. There
 is no "bored" switch to another network in the app, because there is none to switch to.
 The decision is the app-without-cookies branch at the top of `visibilityChanged` in
 `iznik-nuxt3/components/ExternalDa.vue`.

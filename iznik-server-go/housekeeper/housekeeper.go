@@ -277,14 +277,15 @@ type cronJobStatus struct {
 	LastOutput     *string    `json:"last_output"`
 }
 
-// cronJobs is the static registry of all Laravel scheduled commands.
+// cronJobs is the static registry of all Laravel scheduled commands, and of the
+// host maintenance jobs that report through `artisan cron:record` (at the end).
 //
-// To keep this in sync with the live scheduler, run:
+// To keep the Laravel entries in sync with the live scheduler, run:
 //   docker exec freegledocker-batch-prod php artisan schedule:list
 // and update the entries below to match.
 var cronJobs = []CronJob{
 	// System
-	{Command: "deploy:watch", Name: "Deployment Watcher", Description: "Detects code updates and auto-refreshes application", Schedule: "Every minute", IntervalMinutes: 1, Category: "System", Active: false},
+	{Command: "deploy:green-master", Name: "Code Deployed", Description: "Overdue when a commit that passed CI on master has not been deployed within 7 days; deploy:check-lag works this out hourly from the production branch", Schedule: "Checked hourly", IntervalMinutes: 10080, Category: "System", Active: true},
 	{Command: "queue:background-tasks", Name: "Background Task Queue", Description: "Processes tasks queued by Go API (push notifications, emails)", Schedule: "Every minute", IntervalMinutes: 1, Category: "System", Active: true},
 
 	// Email — Chat Notifications
@@ -405,6 +406,7 @@ var cronJobs = []CronJob{
 	// (8h) tolerates that + a slow cold sync without false "overdue". Real failures
 	// are caught by the batch-side 24h outcome monitor (ScheduledOutcomeRegistry).
 	{Command: "integrations:sync-whatjobs", Name: "WhatJobs Sync", Description: "Imports WhatJobs XML job feeds, geocodes locations, filters spam, scores clickability", Schedule: "Every 3h, 8am–10pm", IntervalMinutes: 480, Category: "Data", Active: true},
+	{Command: "integrations:check-whatjobs-freshness", Name: "WhatJobs Feed Freshness", Description: "Fails when the newest job from WhatJobs is more than 48 hours old: the feed has stopped updating, or the sync has stopped. Turns this tab red, so a stale feed is noticed within two days rather than when every job looks old", Schedule: "Hourly", IntervalMinutes: 60, Category: "Data", Active: true},
 	{Command: "integrations:sync-restartproject", Name: "Restart Project Sync", Description: "Imports upcoming Restart Project repair café events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
 	{Command: "integrations:sync-repaircafewales", Name: "Repair Cafe Wales Sync", Description: "Imports upcoming Repair Cafe Wales iCal events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
 
@@ -431,7 +433,7 @@ var cronJobs = []CronJob{
 	{Command: "notifications:exhort", Name: "Exhort Active Users", Description: "On-site notification nudge (default \"Tell us your Freegle story!\") to recently-active established users; 90-day per-user cooldown", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Engagement", Active: true},
 	{Command: "locations:update-postcodes", Name: "Postcode Refresh", Description: "Downloads the Doogal UK postcode dataset and adds new postcodes / refreshes moved lat/lng in the locations table", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Locations", Active: true},
 	{Command: "donations:paypal-download", Name: "PayPal Download (fallback)", Description: "Fallback: scans the last 30 days of PayPal NVP TransactionSearch results and upserts donations the IPN missed", Schedule: "Every 4 hours (:30)", IntervalMinutes: 240, Category: "Data", Active: true},
-	{Command: "discourse:not-signed-up", Name: "Discourse Coverage Check", Description: "Reports Freegle groups with no active mod on Discourse, active mods not signed up, and mods with TrashNothing preferred emails", Schedule: "Daily at 3:23am", IntervalMinutes: 1440, Category: "Discourse", Active: true},
+	{Command: "discourse:not-signed-up", Name: "Discourse Coverage Check", Description: "Reports Freegle groups with no active mod on Discourse, active mods not signed up, and TrashNothing accounts holding a mod role", Schedule: "Daily at 3:23am", IntervalMinutes: 1440, Category: "Discourse", Active: true},
 
 	// Reconciliation 2026-07-21: tracked scheduler commands that had no registry
 	// entry (so they never appeared on the dashboard). IntervalMinutes >= each
@@ -440,6 +442,7 @@ var cronJobs = []CronJob{
 	{Command: "matches:notify", Name: "Matched-Posts Email", Description: "\"Any of these take your fancy?\" — emails members open Offers/Wanteds near them that vector-match their own posts", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Email — Engagement", Active: true},
 	{Command: "mail:digest:unified", Name: "Unified Digest", Description: "The digest engine (daily/immediate/reach modes, sharded); immediate+reach shards run every minute", Schedule: "Continuous, sharded", IntervalMinutes: 15, Category: "Email — Digests", Active: true},
 	{Command: "mail:digest:mark-seen", Name: "Digest Mark-Seen", Description: "Marks digested messages as seen for recipients", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Digests", Active: true},
+	{Command: "mail:tracking:fold", Name: "Email Tracking Fold", Description: "Applies the email tracking journal (image loads and pixel opens) to email_tracking and email_tracking_images, then marks digest posts seen for the opens it applied", Schedule: "Daily at 1:35am", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
 	{Command: "mail:volunteering-digest", Name: "Volunteering Digest", Description: "Weekly digest of nearby volunteering opportunities", Schedule: "Weekly (Mon 11pm)", IntervalMinutes: 10080, Category: "Email — Digests", Active: true},
 	{Command: "mail:events-digest", Name: "Community Events Digest", Description: "Weekly digest of nearby community events", Schedule: "Weekly (Thu 11pm)", IntervalMinutes: 10080, Category: "Email — Digests", Active: true},
 	{Command: "push:daily-posts", Name: "Daily Posts Push", Description: "Daily app push of new nearby posts; every 30 min in a 7:30am-12pm window with a once-per-day guard", Schedule: "Daily push (7:30am–12pm)", IntervalMinutes: 1440, Category: "Push", Active: true},
@@ -454,10 +457,10 @@ var cronJobs = []CronJob{
 	{Command: "mail:donations:thank-prep", Name: "Donation Thank-Prep", Description: "Prepares the coordinated daily donor-thanking digest", Schedule: "Daily at 8:30pm", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
 	{Command: "mail:alerts:send", Name: "Alert Sender", Description: "Sends queued admin/system alert emails to members", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Email — Engagement", Active: true},
 	{Command: "charity:notify-signups", Name: "Charity Signup Notify", Description: "Notifies about new charity signups", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Engagement", Active: true},
-	{Command: "noticeboards:thank-users", Name: "Noticeboard Thanks", Description: "Thanks members who host Freegle noticeboards", Schedule: "Daily at 3:30pm", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
 	{Command: "stories:newsletter", Name: "Stories Newsletter", Description: "Monthly member-stories newsletter", Schedule: "Monthly (12th 11pm)", IntervalMinutes: 43200, Category: "Email — Engagement", Active: true},
 
 	// Donations / data / groups
+	{Command: "donations:lapse-optouts", Name: "Donation Opt-out Lapse", Description: "Dates undated \"don't ask me to donate\" opt-outs a year ahead and switches off the ones that have lapsed", Schedule: "Daily at 3:15am", IntervalMinutes: 1440, Category: "Data", Active: true},
 	{Command: "donations:correct-userids", Name: "Donation Userid Reconcile", Description: "Re-links unmatched/stranded donations to live accounts (safety net)", Schedule: "Weekly (Tue 2:20am)", IntervalMinutes: 10080, Category: "Data", Active: true},
 	{Command: "stats:generate-daily", Name: "Daily Stats", Description: "Generates per-group daily stats", Schedule: "Daily at 2:30am", IntervalMinutes: 1440, Category: "Data", Active: true},
 	{Command: "volunteering:maintain", Name: "Volunteering Maintenance", Description: "Maintains volunteering opportunities (expiry/renewal upkeep)", Schedule: "Daily at 10pm", IntervalMinutes: 1440, Category: "Data", Active: true},
@@ -465,6 +468,8 @@ var cronJobs = []CronJob{
 	{Command: "eee:sync-mv-labels", Name: "EEE MV Label Sync", Description: "Syncs microvolunteering item-type labels for the EEE classifier", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "AI & Analytics", Active: true},
 	{Command: "groups:remind-closed", Name: "Closed-Group Reminder", Description: "Reminds owners of groups closed to new members", Schedule: "Weekly (Mon 9am)", IntervalMinutes: 10080, Category: "Groups & Chats", Active: true},
 	{Command: "locations:remap-postcodes", Name: "Postcode Remap", Description: "Remaps messages/users to their nearest current postcode", Schedule: "Daily at 1am", IntervalMinutes: 1440, Category: "Locations", Active: true},
+	{Command: "paf:import-run", Name: "PAF Address Import", Description: "Downloads and applies a Royal Mail address data release requested from the PAF update on SysAdmin Housekeeping; does nothing until one is requested", Schedule: "Every minute", IntervalMinutes: 1, Category: "Locations", Active: true},
+	{Command: "paf:check-latest", Name: "PAF Latest Release", Description: "Records which Royal Mail address data release is on the AFD site, for the PAF update on SysAdmin Housekeeping to show", Schedule: "Hourly", IntervalMinutes: 60, Category: "Locations", Active: true},
 
 	// System / monitoring / infra
 	{Command: "deploy:record-commit", Name: "Record Deployed Commit", Description: "Records the live Laravel commit so /api/version reports the running build", Schedule: "Every 15 minutes", IntervalMinutes: 15, Category: "System", Active: true},
@@ -479,6 +484,28 @@ var cronJobs = []CronJob{
 	{Command: "ripple:expand", Name: "Rippling Expand", Description: "Maintains rippling-out reach for active posts (gated by ripple.enabled / within_groups)", Schedule: "Every minute (when rippling on)", IntervalMinutes: 1, Category: "Rippling", Active: false},
 	{Command: "ripple:release-replies", Name: "Rippling Release Replies", Description: "Releases/expires held external replies as posts ripple out", Schedule: "Every minute (when rippling on)", IntervalMinutes: 1, Category: "Rippling", Active: false},
 	{Command: "ripple:proximity-notes", Name: "Rippling Proximity Notes", Description: "Computes \"quicker to get to\" mod notes for rippled-in posts (gated by ripple.proximity_notes)", Schedule: "Every 5 minutes (when on)", IntervalMinutes: 5, Category: "Rippling", Active: false},
+
+	// Host maintenance - not Laravel: systemd timers on the Docker host run
+	// scripts/maintenance/freegle-maint, which records each run here through
+	// `artisan cron:record`. A dry run is recorded too, with "Dry run:" first in
+	// its output. Runbook: docs/ops/runbooks/automated-host-maintenance.md.
+	{Command: "freegle-maint lb", Name: "OS Patching: Load Balancer", Description: "Patches and, when needed, reboots the load balancer (ha)", Schedule: "Weekly (Mon 4am UK time)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
+	{Command: "freegle-maint db", Name: "OS Patching: Data Nodes", Description: "Patches and reboots one Galera data node, db2 and db3 in alternate weeks, draining it first", Schedule: "Weekly (Tue 4:40am UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
+	{Command: "freegle-maint mail", Name: "OS Patching: Mail Relay", Description: "Patches and, when needed, reboots the mail relay (bulk2)", Schedule: "Weekly (Wed 2:15am UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
+	{Command: "freegle-maint docker", Name: "OS Patching: Docker Host", Description: "Patches and, when needed, reboots this Docker host; the run is recorded after the reboot", Schedule: "Weekly (Wed 11:35pm UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
+	{Command: "freegle-maint arbitrator", Name: "OS Patching: Arbitrator", Description: "Patches and, when needed, reboots the Galera arbitrator (db1), stopping garbd first", Schedule: "Weekly (Fri 4:40am UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
+	{Command: "freegle-maint rollout", Name: "OS Patching: Turn On Every Host", Description: "Which hosts are live and which still dry runs; overdue when no host has been made live for 14 days", Schedule: "When the live hosts change", IntervalMinutes: 20160, Category: "Host Maintenance", Active: true},
+
+	// Patch freshness - written by the batch host monitor (HostPatchTracker), not
+	// by freegle-maint, so it covers every host whether its maintenance is live or
+	// a dry run. A failure means something has been pending too long; overdue
+	// means the monitor has stopped probing the host.
+	{Command: "host-patch db1", Name: "Patch Freshness: db1", Description: "How long security updates or a reboot have been pending on db1. Red when longer than its maintenance interval plus grace", Schedule: "Probed every 10 minutes", IntervalMinutes: 60, Category: "Host Maintenance", Active: true},
+	{Command: "host-patch db2", Name: "Patch Freshness: db2", Description: "How long security updates or a reboot have been pending on db2. Red when longer than its maintenance interval plus grace", Schedule: "Probed every 10 minutes", IntervalMinutes: 60, Category: "Host Maintenance", Active: true},
+	{Command: "host-patch db3", Name: "Patch Freshness: db3", Description: "How long security updates or a reboot have been pending on db3. Red when longer than its maintenance interval plus grace", Schedule: "Probed every 10 minutes", IntervalMinutes: 60, Category: "Host Maintenance", Active: true},
+	{Command: "host-patch bulk2", Name: "Patch Freshness: bulk2", Description: "How long security updates or a reboot have been pending on bulk2. Red when longer than its maintenance interval plus grace", Schedule: "Probed every 10 minutes", IntervalMinutes: 60, Category: "Host Maintenance", Active: true},
+	{Command: "host-patch ha", Name: "Patch Freshness: ha", Description: "How long security updates or a reboot have been pending on ha. Red when longer than its maintenance interval plus grace", Schedule: "Probed every 10 minutes", IntervalMinutes: 60, Category: "Host Maintenance", Active: true},
+	{Command: "host-patch docker", Name: "Patch Freshness: Docker Host", Description: "How long security updates or a reboot have been pending on the Docker host. Red when longer than its maintenance interval plus grace", Schedule: "Probed every 10 minutes", IntervalMinutes: 60, Category: "Host Maintenance", Active: true},
 }
 
 // ActiveCronJobCount returns the number of active cron jobs in the static registry.
@@ -490,6 +517,73 @@ func ActiveCronJobCount() int {
 		}
 	}
 	return count
+}
+
+// cronJobGraceMinutes is how long past its next nominal run a job may be before it
+// counts as overdue: a whole cycle capped at an hour, and at least two minutes of
+// scheduler jitter. The scheduler stamps last_run_at when a job starts, so
+// comparing against one bare interval would mark every per-minute job overdue
+// within a minute. The SysAdmin Cron Jobs tab applies the same rule
+// (modtools/composables/useCronJobDue.js).
+func cronJobGraceMinutes(intervalMinutes int) int {
+	grace := intervalMinutes
+	if grace > 60 {
+		grace = 60
+	}
+	if grace < 2 {
+		grace = 2
+	}
+	return grace
+}
+
+// cronJobOverdue reports whether a job last started at lastRun has missed its
+// next run by more than the grace period. A job that has never run is not
+// overdue here; CronJobNeedsAttention counts it separately.
+func cronJobOverdue(lastRun *time.Time, intervalMinutes int, now time.Time) bool {
+	if lastRun == nil || intervalMinutes <= 0 {
+		return false
+	}
+	deadline := lastRun.Add(time.Duration(intervalMinutes+cronJobGraceMinutes(intervalMinutes)) * time.Minute)
+	return now.After(deadline)
+}
+
+// CronJobNeedsAttention reports whether a registry entry should show on the
+// SysAdmin badge: its last run failed, it has never run, or it is overdue.
+// Inactive entries never do.
+func CronJobNeedsAttention(job CronJob, s *cronJobStatus, now time.Time) bool {
+	if !job.Active {
+		return false
+	}
+	if s == nil || s.LastRunAt == nil {
+		return true
+	}
+	if s.LastExitCode != nil && *s.LastExitCode != 0 {
+		return true
+	}
+	return cronJobOverdue(s.LastRunAt, job.IntervalMinutes, now)
+}
+
+// countCronJobsNeedingAttention walks the registry once and counts the entries
+// that need attention, so the badge counts what the Cron Jobs tab shows.
+func countCronJobsNeedingAttention(statuses []cronJobStatus, now time.Time) int64 {
+	var n int64
+	for _, job := range cronJobs {
+		if CronJobNeedsAttention(job, pickCronJobStatus(job.Command, statuses), now) {
+			n++
+		}
+	}
+	return n
+}
+
+// CountCronJobsNeedingAttention is the SysAdmin Cron Jobs badge: registry
+// entries whose last run failed, that have never run, or that are overdue.
+func CountCronJobsNeedingAttention() int64 {
+	var statuses []cronJobStatus
+	if err := database.DBConn.Table("cron_job_status").Scan(&statuses).Error; err != nil {
+		log.Printf("[Housekeeper] CountCronJobsNeedingAttention cron_job_status query error: %v", err)
+		return 0
+	}
+	return countCronJobsNeedingAttention(statuses, time.Now())
 }
 
 // ListCronJobs returns the static list of Laravel scheduled commands enriched

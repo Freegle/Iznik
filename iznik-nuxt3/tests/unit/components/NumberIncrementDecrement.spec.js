@@ -10,7 +10,7 @@ vi.mock('@chenfengyuan/vue-number-input', () => ({
   default: {
     name: 'VueNumberInput',
     template:
-      '<div class="vue-number-input" :class="$attrs.class"><input :value="modelValue" v-bind="attrs" /></div>',
+      '<div class="vue-number-input" :class="$attrs.class"><button class="vue-number-input__button vue-number-input__button--minus" /><input :value="modelValue" v-bind="attrs" /><button class="vue-number-input__button vue-number-input__button--plus" /></div>',
     props: {
       modelValue: null,
       controls: Boolean,
@@ -32,6 +32,18 @@ vi.mock('@chenfengyuan/vue-number-input', () => ({
 describe('NumberIncrementDecrement', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('names the icon-only +/- buttons for screen readers', () => {
+    const wrapper = mount(NumberIncrementDecrement, {
+      props: { modelValue: 5 },
+    })
+    expect(
+      wrapper.find('.vue-number-input__button--minus').attributes('aria-label')
+    ).toBe('Decrease')
+    expect(
+      wrapper.find('.vue-number-input__button--plus').attributes('aria-label')
+    ).toBe('Increase')
   })
 
   function createWrapper(props = {}) {

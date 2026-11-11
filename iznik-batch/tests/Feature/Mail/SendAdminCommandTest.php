@@ -32,6 +32,56 @@ class SendAdminCommandTest extends TestCase
     }
 
     /**
+     * Test: the MJML part goes out with the member placeholders filled in, escaped as markup,
+     * while the text part gets them as typed.
+     */
+    public function test_mjml_admin_sends_with_escaped_member_details(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now(), 'fullname' => 'Alex <i>Member</i>']);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, [
+            'text' => 'Dear $membername',
+            'mjml' => '<mj-section><mj-column><mj-text>Dear $membername</mj-text></mj-column></mj-section>',
+        ]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, function (AdminMail $mail) {
+            return $mail->adminText === 'Dear Alex <i>Member</i>'
+                && str_contains($mail->adminMjml, 'Dear Alex &lt;i&gt;Member&lt;/i&gt;');
+        });
+    }
+
+    /**
+     * Test: an MJML part that will not build is dropped once, and members get the plain text.
+     */
+    public function test_broken_mjml_admin_sends_the_plain_text(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, [
+            'text' => 'Plain news',
+            'mjml' => '<mj-section><mj-column><mj-text>Broken</mj-column></mj-section>',
+        ]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, function (AdminMail $mail) {
+            return $mail->adminMjml === null && $mail->adminText === 'Plain news';
+        });
+    }
+
+    /**
      * Test: Approved admin sends to group members.
      * Mirrors V1 testBasic.
      */
@@ -56,6 +106,28 @@ class SendAdminCommandTest extends TestCase
         // Admin should be marked complete.
         $admin = DB::table('admins')->where('id', $adminId)->first();
         $this->assertNotNull($admin->complete);
+    }
+
+    public function test_nothing_is_sent_while_a_lockdown_holds_email(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+        DB::table('lockdowns')->delete();
+        \App\Services\Lockdown\LockdownService::flushCache();
+        (new \App\Services\Lockdown\LockdownService())->press(null, 'wave');
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+        $adminId = $this->createAdmin($group);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->expectsOutputToContain('Email is held by the lockdown')
+            ->assertSuccessful();
+
+        Mail::assertNothingSent();
+        $this->assertNull(DB::table('admins')->where('id', $adminId)->value('complete'), 'not marked sent');
+        \App\Services\Lockdown\LockdownService::flushCache();
     }
 
     /**
@@ -279,7 +351,7 @@ class SendAdminCommandTest extends TestCase
 
         $group = $this->createTestGroup();
 
-        $user = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 0]);
+        $user = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 0, 'marketingconsent' => 1]);
         $this->createMembership($user, $group);
 
         $adminId = $this->createAdmin($group, ['essential' => false]);
@@ -291,7 +363,7 @@ class SendAdminCommandTest extends TestCase
     }
 
     /**
-     * Test: essential=0 + moderator → always sent.
+     * Test: essential=0 + moderator with relevantallowed=0 → sent.
      * Mirrors V1 testNonessential.
      */
     public function test_nonessential_always_sends_to_moderator(): void
@@ -301,7 +373,7 @@ class SendAdminCommandTest extends TestCase
 
         $group = $this->createTestGroup();
 
-        $mod = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 0]);
+        $mod = $this->createTestUser(['lastaccess' => now(), 'relevantallowed' => 0, 'marketingconsent' => 1]);
         $this->createMembership($mod, $group, [
             'role' => Membership::ROLE_MODERATOR,
         ]);
@@ -334,6 +406,161 @@ class SendAdminCommandTest extends TestCase
             ->assertSuccessful();
 
         Mail::assertSent(AdminMail::class, 1);
+    }
+
+    /**
+     * A Newsletter ADMIN can be a fundraising appeal, so it only goes to people who agreed to hear
+     * about ways to support Freegle (users.marketingconsent). Moderators are no exception.
+     */
+    public function test_nonessential_skips_member_and_moderator_without_marketing_consent(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+
+        $member = $this->createTestUser(['lastaccess' => now(), 'marketingconsent' => 0]);
+        $this->createMembership($member, $group);
+        $mod = $this->createTestUser(['lastaccess' => now(), 'marketingconsent' => 0]);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $adminId = $this->createAdmin($group, ['essential' => false]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->expectsTable(['Metric', 'Count'], $this->statsRows(['Skipped (no marketing consent)' => 2]))
+            ->assertSuccessful();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_nonessential_sends_to_member_with_marketing_consent(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+
+        $user = $this->createTestUser(['lastaccess' => now(), 'marketingconsent' => 1]);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, ['essential' => false]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, 1);
+    }
+
+    /**
+     * Turning off donation requests in Settings also keeps Newsletter ADMINs away, until the
+     * pause lapses.
+     */
+    public function test_nonessential_skips_member_who_paused_donation_requests(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+
+        $paused = $this->createTestUser([
+            'lastaccess' => now(),
+            'marketingconsent' => 1,
+            'settings' => ['nodonationasks' => TRUE, 'nodonationasksuntil' => now()->addMonth()->toIso8601String()],
+        ]);
+        $this->createMembership($paused, $group);
+
+        $lapsed = $this->createTestUser([
+            'lastaccess' => now(),
+            'marketingconsent' => 1,
+            'settings' => ['nodonationasks' => TRUE, 'nodonationasksuntil' => now()->subDay()->toIso8601String()],
+        ]);
+        $this->createMembership($lapsed, $group);
+
+        $adminId = $this->createAdmin($group, ['essential' => false]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->expectsTable(['Metric', 'Count'], $this->statsRows([
+                'Emails Sent' => 1,
+                'Skipped (donation requests off)' => 1,
+            ]))
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, 1);
+        Mail::assertSent(AdminMail::class, fn (AdminMail $mail) => $mail->user->id === $lapsed->id);
+    }
+
+    /**
+     * Rippling and TrashNothing put people on communities they never chose. A Newsletter ADMIN
+     * must not reach them in that community's name.
+     */
+    public function test_nonessential_skips_rippled_and_implicit_memberships(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+
+        $rippled = $this->createTestUser(['lastaccess' => now(), 'marketingconsent' => 1]);
+        $this->createMembership($rippled, $group, ['rippled' => 1]);
+        $implicit = $this->createTestUser(['lastaccess' => now(), 'marketingconsent' => 1]);
+        $this->createMembership($implicit, $group, ['implicit' => 1]);
+
+        $adminId = $this->createAdmin($group, ['essential' => false]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->expectsTable(['Metric', 'Count'], $this->statsRows(['Skipped (not chosen by member)' => 2]))
+            ->assertSuccessful();
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_essential_ignores_marketing_consent_and_donation_requests(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+
+        $user = $this->createTestUser([
+            'lastaccess' => now(),
+            'marketingconsent' => 0,
+            'settings' => ['nodonationasks' => TRUE],
+        ]);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, ['essential' => true]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, 1);
+    }
+
+    /**
+     * The summary table the command prints, with every count zero except those given.
+     */
+    private function statsRows(array $counts): array
+    {
+        $rows = [
+            'Admins Processed' => 1,
+            'Emails Sent' => 0,
+            'Skipped (active only)' => 0,
+            'Skipped (relevantallowed)' => 0,
+            'Skipped (no marketing consent)' => 0,
+            'Skipped (donation requests off)' => 0,
+            'Skipped (not chosen by member)' => 0,
+            'Skipped (dedup)' => 0,
+            'Skipped (no email)' => 0,
+            'Skipped (simplemail=None)' => 0,
+            'Errors' => 0,
+        ];
+
+        $out = [];
+        foreach (array_replace($rows, $counts) as $metric => $count) {
+            $out[] = [$metric, $count];
+        }
+
+        return $out;
     }
 
     /**
@@ -449,6 +676,53 @@ class SendAdminCommandTest extends TestCase
     }
 
     /**
+     * Test: an admin approved long before its sendafter time is still sent when that time comes,
+     * as a suggested copy approved a fortnight ahead of the date would be.
+     */
+    public function test_sendafter_long_after_approval_is_still_sent(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, [
+            'created' => now()->subDays(15),
+            'editedat' => now()->subDays(14),
+            'sendafter' => now()->subHour(),
+        ]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, 1);
+    }
+
+    /**
+     * Test: an old admin with no recent sendafter is still not sent late.
+     */
+    public function test_old_admin_with_old_sendafter_is_not_sent(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        $adminId = $this->createAdmin($group, [
+            'created' => now()->subDays(30),
+            'editedat' => now()->subDays(30),
+            'sendafter' => now()->subDays(20),
+        ]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])->assertSuccessful();
+
+        Mail::assertNothingSent();
+    }
+
+    /**
      * Test: sendafter in the past → sent.
      */
     public function test_sendafter_past_is_sent(): void
@@ -480,6 +754,7 @@ class SendAdminCommandTest extends TestCase
 
         $user = $this->createTestUser([
             'lastaccess' => now(),
+            'marketingconsent' => 1,
             'settings' => ['simplemail' => 'None'],
         ]);
         $this->createMembership($user, $group);
@@ -678,6 +953,31 @@ class SendAdminCommandTest extends TestCase
             $firstnames = array_column($mail->volunteers ?? [], 'firstname');
             return ! in_array('Hidden', $firstnames, true);
         });
+    }
+
+    /**
+     * Test: an ADMIN with volunteercredits off goes out without the local volunteers, for a
+     * message from someone else rather than from the community's volunteers.
+     */
+    public function test_volunteer_credits_off_sends_no_volunteers(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        $mod = $this->createTestUser(['lastaccess' => now(), 'fullname' => 'Jane Smith']);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $adminId = $this->createAdmin($group, ['volunteercredits' => 0]);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, fn (AdminMail $mail) => $mail->volunteers === []
+            && $mail->envelope()->from->name === config('freegle.branding.name'));
     }
 
     /**

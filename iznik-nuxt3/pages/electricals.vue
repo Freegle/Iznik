@@ -116,10 +116,8 @@
               <template v-if="isEstimated">an estimated</template>
               {{ headlineTonnes.toLocaleString() }} tonnes. That is
               {{ headlineCo2e.toLocaleString() }} tonnes of CO2e saved, worth
-              £{{ headlineCarbonValue.toLocaleString() }} at the
-              government's carbon value of £{{
-                stats.impact.carbon_proxy_gbp_per_tonne
-              }}
+              £{{ headlineCarbonValue.toLocaleString() }} at the government's
+              carbon value of £{{ stats.impact.carbon_proxy_gbp_per_tonne }}
               a tonne. The average electrical item weighs
               {{ stats.impact.mean_item_kg }}kg.
             </p>

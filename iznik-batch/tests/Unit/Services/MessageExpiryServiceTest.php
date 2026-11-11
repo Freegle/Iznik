@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Mail\Message\DeadlineReached;
 use App\Models\Message;
+use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Services\MessageExpiryService;
 use Illuminate\Support\Facades\DB;
@@ -191,6 +192,88 @@ class MessageExpiryServiceTest extends TestCase
     }
 
     /**
+     * @return array{0: Message, 1: \App\Models\User}
+     */
+    private function expiredDeadlineMessage(): array
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group);
+        $message->deadline = now()->subDays(1)->format('Y-m-d');
+        $message->save();
+
+        return [$message, $user];
+    }
+
+    private function assertNotExpiredOrMailed(Message $message): void
+    {
+        $stats = $this->service->processDeadlineExpired();
+
+        $this->assertEquals(0, $stats['processed']);
+        $this->assertEquals(0, $stats['emails_sent']);
+        $this->assertEquals(0, MessageOutcome::where('msgid', $message->id)->count());
+        Mail::assertNothingSent();
+    }
+
+    public function test_deleted_message_is_not_expired_or_mailed(): void
+    {
+        Mail::fake();
+        [$message] = $this->expiredDeadlineMessage();
+        DB::table('messages')->where('id', $message->id)->update(['deleted' => now()]);
+
+        $this->assertNotExpiredOrMailed($message);
+    }
+
+    public function test_message_not_in_the_approved_collection_is_not_expired_or_mailed(): void
+    {
+        Mail::fake();
+        [$message] = $this->expiredDeadlineMessage();
+        DB::table('messages_groups')->where('msgid', $message->id)->update(['collection' => 'Pending']);
+
+        $this->assertNotExpiredOrMailed($message);
+    }
+
+    public function test_retracted_rippled_copy_alone_is_not_expired_or_mailed(): void
+    {
+        Mail::fake();
+        [$message] = $this->expiredDeadlineMessage();
+        DB::table('messages_groups')->where('msgid', $message->id)->update(['deleted' => 1]);
+
+        $this->assertNotExpiredOrMailed($message);
+    }
+
+    public function test_message_from_a_deleted_user_is_not_expired_or_mailed(): void
+    {
+        Mail::fake();
+        [$message, $user] = $this->expiredDeadlineMessage();
+        DB::table('users')->where('id', $user->id)->update(['deleted' => now()]);
+
+        $this->assertNotExpiredOrMailed($message);
+    }
+
+    public function test_live_approved_posting_still_expires_beside_a_retracted_copy(): void
+    {
+        Mail::fake();
+        [$message] = $this->expiredDeadlineMessage();
+        $other = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $other->id,
+            'collection' => 'Approved',
+            'arrival' => now()->subDays(2),
+            'rippled_in' => 1,
+            'deleted' => 1,
+        ]);
+
+        $stats = $this->service->processDeadlineExpired();
+
+        $this->assertEquals(1, $stats['processed']);
+        $this->assertEquals(1, MessageOutcome::where('msgid', $message->id)->count());
+    }
+
+    /**
      * The candidate ids are collected in one pass and the full models fetched in
      * chunks, so a candidate set that straddles a chunk boundary must still be
      * processed in full.
@@ -206,11 +289,34 @@ class MessageExpiryServiceTest extends TestCase
         $deadline = now()->subDays(1)->format('Y-m-d');
         $wanted = MessageExpiryService::EXPIRE_CHUNK + 2;
 
+        // The same rows createTestMessage() would make, inserted in two
+        // statements rather than four queries per post: this test is about
+        // the count, and 2,000 round trips to make 502 posts was most of its
+        // running time.
+        $rows = [];
         for ($i = 0; $i < $wanted; $i++) {
-            $message = $this->createTestMessage($user, $group);
-            $message->deadline = $deadline;
-            $message->save();
+            $rows[] = [
+                'type' => Message::TYPE_OFFER,
+                'fromuser' => $user->id,
+                'subject' => 'OFFER: Test Item (TestLocation)',
+                'textbody' => 'This is a test offer message.',
+                'source' => 'Platform',
+                'date' => now(),
+                'arrival' => now(),
+                'lat' => $group->lat,
+                'lng' => $group->lng,
+                'deadline' => $deadline,
+            ];
         }
+        DB::table('messages')->insert($rows);
+        $msgids = DB::table('messages')->where('fromuser', $user->id)->pluck('id');
+        $this->assertCount($wanted, $msgids);
+        DB::table('messages_groups')->insert($msgids->map(fn ($id) => [
+            'msgid' => $id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now(),
+        ])->all());
 
         // Dry run: this is about the chunking, and writing 502 outcomes and
         // sending 502 mails to prove it would only make the test slow.

@@ -227,7 +227,10 @@ vi.mock('#app', () => ({
   useNuxtApp: () => ({
     $api: {
       chat: { referToSupport: mockReferToSupport },
-      bandit: { shown: vi.fn().mockResolvedValue() },
+      bandit: {
+        shown: vi.fn().mockResolvedValue(),
+        chosen: vi.fn().mockResolvedValue(),
+      },
     },
   }),
   useRuntimeConfig: () => ({}),
@@ -236,7 +239,7 @@ vi.mock('#app', () => ({
 // Mock API
 vi.mock('~/api', () => ({
   default: () => ({
-    bandit: { shown: vi.fn() },
+    bandit: { shown: vi.fn(), chosen: vi.fn() },
   }),
 }))
 
@@ -307,7 +310,7 @@ describe('ModChatFooter', () => {
     },
     NudgeWarningModal: { template: '<div class="nudge-warning-modal" />' },
     MicroVolunteering: { template: '<div class="micro-volunteering" />' },
-    ConfirmModal: { template: '<div class="confirm-modal" />' },
+    ConfirmModal: { template: '<div class="confirm-modal"><slot /></div>' },
     ModSpammerReport: { template: '<div class="mod-spammer-report" />' },
     ModCommentAddModal: { template: '<div class="mod-comment-add-modal" />' },
     'v-icon': { template: '<i />', props: ['icon'] },
@@ -540,6 +543,15 @@ describe('ModChatFooter', () => {
     })
   })
 
+  describe('a User2Mod chat the moderators can always answer', () => {
+    it('keeps its reply box, even for a member who has left', async () => {
+      const wrapper = await mountComponent()
+      expect(wrapper.find('textarea').exists()).toBe(true)
+      expect(wrapper.find('.spin-button').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain("can't reply")
+    })
+  })
+
   describe('component behavior when mounted', () => {
     it('fetches user data when chat has user1', async () => {
       mockChat.value = createChat({ user1: 789 })
@@ -629,15 +641,49 @@ describe('ModChatFooter', () => {
     })
 
     it('tells the moderator when the referral has gone to Support', async () => {
-      mockReferToSupport.mockResolvedValue()
+      mockReferToSupport.mockResolvedValue({ ret: 0, caseid: 31 })
       const wrapper = await mountComponent({ id: 456 })
 
       await wrapper.findComponent(ModChatFooter).vm.referToSupport()
       await flushPromises()
 
-      expect(mockReferToSupport).toHaveBeenCalledWith(456)
+      expect(mockReferToSupport).toHaveBeenCalledWith(456, '')
       expect(wrapper.find('[data-test="refer-sent"]').exists()).toBe(true)
       expect(wrapper.find('[data-test="refer-failed"]').exists()).toBe(false)
+    })
+
+    it('sends the reason typed in the modal and links to the case', async () => {
+      mockReferToSupport.mockResolvedValue({ ret: 0, caseid: 31 })
+      const wrapper = await mountComponent({ id: 456 })
+      const footer = wrapper.findComponent(ModChatFooter)
+
+      footer.vm.confirmReferToSupport()
+      await flushPromises()
+      const box = wrapper.find('[data-test="refer-reason"]')
+      expect(box.exists()).toBe(true)
+      expect(box.attributes('maxlength')).toBe('2000')
+      await box.setValue('  They keep getting an error  ')
+      await footer.vm.referToSupport()
+      await flushPromises()
+
+      expect(mockReferToSupport).toHaveBeenCalledWith(
+        456,
+        'They keep getting an error'
+      )
+      const link = wrapper.find('[data-test="refer-case-link"]')
+      expect(link.exists()).toBe(true)
+      expect(link.attributes('to') || link.attributes('href')).toBe(
+        '/support/cases/31'
+      )
+    })
+
+    it('shows no case link when the response has no case id', async () => {
+      mockReferToSupport.mockResolvedValue({ ret: 0 })
+      const wrapper = await mountComponent({ id: 456 })
+      await wrapper.findComponent(ModChatFooter).vm.referToSupport()
+      await flushPromises()
+      expect(wrapper.find('[data-test="refer-sent"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="refer-case-link"]').exists()).toBe(false)
     })
 
     it('says so when the referral is refused, and where to turn instead', async () => {
@@ -648,8 +694,87 @@ describe('ModChatFooter', () => {
       await flushPromises()
 
       expect(wrapper.find('[data-test="refer-failed"]').exists()).toBe(true)
-      expect(wrapper.find('[data-test="refer-failed"]').text()).toContain('support@ilovefreegle.org')
+      expect(wrapper.find('[data-test="refer-failed"]').text()).toContain(
+        'support@ilovefreegle.org'
+      )
       expect(wrapper.find('[data-test="refer-sent"]').exists()).toBe(false)
+    })
+  })
+
+  describe('Ctrl+Enter / Cmd+Enter sends', () => {
+    async function typeAndPress(wrapper, text, keys) {
+      const area = wrapper.find('#chatmessage')
+      await area.setValue(text)
+      await area.trigger('keydown', { key: 'Enter', ...keys })
+      await flushPromises()
+    }
+
+    // enternewlinemt unset: Enter inserts a new line, so only the shortcut sends.
+    it('sends on Ctrl+Enter when Enter inserts a new line', async () => {
+      mockMiscStore.get.mockReturnValue(false)
+      const wrapper = await mountComponent({ id: 123 })
+      await typeAndPress(wrapper, 'hello', { ctrlKey: true })
+      expect(mockChatStore.send).toHaveBeenCalledWith(123, 'hello')
+    })
+
+    it('sends on Cmd+Enter', async () => {
+      mockMiscStore.get.mockReturnValue(false)
+      const wrapper = await mountComponent({ id: 123 })
+      await typeAndPress(wrapper, 'hello', { metaKey: true })
+      expect(mockChatStore.send).toHaveBeenCalledWith(123, 'hello')
+    })
+
+    it('does not send on plain Enter when Enter inserts a new line', async () => {
+      mockMiscStore.get.mockReturnValue(false)
+      const wrapper = await mountComponent({ id: 123 })
+      await typeAndPress(wrapper, 'hello', {})
+      expect(mockChatStore.send).not.toHaveBeenCalled()
+    })
+
+    it('sends on Ctrl+Enter when Enter sends', async () => {
+      mockMiscStore.get.mockReturnValue(true)
+      const wrapper = await mountComponent({ id: 123 })
+      await typeAndPress(wrapper, 'hello', { ctrlKey: true })
+      expect(mockChatStore.send).toHaveBeenCalledWith(123, 'hello')
+      mockMiscStore.get.mockReturnValue(false)
+    })
+  })
+
+  describe('failed send', () => {
+    it('explains inline, keeps the text and stops the SpinButton', async () => {
+      // A refused send must not throw to the error page, must not lose what the
+      // moderator typed, and must still call the SpinButton callback (the trap
+      // in .claude/rules/frontend-traps.md) - as ChatFooter already does.
+      mockChatStore.send.mockRejectedValueOnce({ response: { status: 404 } })
+      const wrapper = await mountComponent({ id: 123 })
+      const footer = wrapper.findComponent(ModChatFooter)
+      await footer.find('#chatmessage').setValue('hello')
+
+      const finishSpy = vi.fn()
+      await footer.vm.send(finishSpy)
+      await flushPromises()
+
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-test="send-failed"]').text()).toContain(
+        'no longer available'
+      )
+      expect(footer.find('#chatmessage').element.value).toBe('hello')
+    })
+
+    it('gives the generic apology for a refusal without a known status', async () => {
+      mockChatStore.send.mockRejectedValueOnce(new Error('network'))
+      const wrapper = await mountComponent({ id: 123 })
+      const footer = wrapper.findComponent(ModChatFooter)
+      await footer.find('#chatmessage').setValue('hello')
+
+      const finishSpy = vi.fn()
+      await footer.vm.send(finishSpy)
+      await flushPromises()
+
+      expect(finishSpy).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-test="send-failed"]').text()).toContain(
+        'Please try again'
+      )
     })
   })
 })

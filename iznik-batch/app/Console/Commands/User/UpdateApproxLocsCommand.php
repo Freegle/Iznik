@@ -5,12 +5,14 @@ namespace App\Console\Commands\User;
 use App\Services\UserApproxLocService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * No GracefulShutdown: the refresh takes seconds (5,000 members in ~1s locally, so the ~112k
  * active members on live are well inside a minute) and is fully idempotent, so there is nothing
  * for a shutdown handler to protect — being killed mid-run just means tonight's run redoes it.
  */
+#[AsCommand(name: 'users:update-approx-locs')]
 class UpdateApproxLocsCommand extends Command
 {
     use LogsBatchJob;

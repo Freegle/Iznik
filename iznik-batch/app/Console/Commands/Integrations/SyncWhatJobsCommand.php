@@ -6,7 +6,9 @@ use App\Services\WhatJobsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'integrations:sync-whatjobs')]
 class SyncWhatJobsCommand extends Command
 {
     protected $signature = 'integrations:sync-whatjobs

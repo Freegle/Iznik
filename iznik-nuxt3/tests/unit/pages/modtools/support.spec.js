@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref } from 'vue'
+import { ref, reactive, nextTick } from 'vue'
 import SupportPage from '~/modtools/pages/support/[[id]].vue'
+import { useLockdownStore } from '~/stores/lockdown'
 
 // Mock stores
 const mockChatStore = {
@@ -79,10 +80,10 @@ globalThis.__testUseRoute = () => ({
 })
 
 describe('support/[[id]].vue page', () => {
-  function mountComponent() {
+  function mountComponent(pinia = createPinia()) {
     return mount(SupportPage, {
       global: {
-        plugins: [createPinia()],
+        plugins: [pinia],
         stubs: {
           ModSupportFindUser: {
             template: '<div class="mod-support-find-user" />',
@@ -132,6 +133,12 @@ describe('support/[[id]].vue page', () => {
           ModSupportConcernKeywords: {
             template: '<div class="mod-support-concern-keywords" />',
           },
+          ModSupportLockdown: {
+            template: '<div class="mod-support-lockdown" />',
+          },
+          ModSupportCaseList: {
+            template: '<div class="mod-support-case-list" />',
+          },
           NoticeMessage: {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],
@@ -175,6 +182,30 @@ describe('support/[[id]].vue page', () => {
     it('renders user tab component', () => {
       const wrapper = mountComponent()
       expect(wrapper.find('.mod-support-find-user').exists()).toBe(true)
+    })
+
+    // plans/active/2026-09-27-lockdown-switch.md section 11.11: the Lockdown
+    // tab is red and sits just before the Cases tab.
+    it('renders the Lockdown tab component', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.mod-support-lockdown').exists()).toBe(true)
+    })
+
+    it('appends the Cases tab at the end, after Lockdown', () => {
+      const wrapper = mountComponent()
+      const titles = wrapper.findAll('.b-tab').map((t) => t.text())
+      expect(titles[titles.length - 1]).toContain('Cases')
+      expect(titles[titles.length - 2]).toContain('Lockdown')
+      expect(wrapper.find('.mod-support-case-list').exists()).toBe(true)
+    })
+
+    it('renders the Lockdown tab title in red', () => {
+      const wrapper = mountComponent()
+      const titles = wrapper.findAll('.b-tab').map((t) => t.text())
+      expect(titles[0]).not.toContain('Lockdown')
+      const lockdownTitle = wrapper.find('[data-testid="lockdown-tab-title"]')
+      expect(lockdownTitle.exists()).toBe(true)
+      expect(lockdownTitle.classes()).toContain('text-danger')
     })
   })
 
@@ -259,6 +290,108 @@ describe('support/[[id]].vue page', () => {
       await wrapper.vm.$nextTick()
       await flushPromises()
       expect(wrapper.vm.activeTab).toBe(1)
+    })
+
+    it('sets activeTab to 5 for the lockdown tab', async () => {
+      mockRouteQuery.value = { tab: 'lockdown' }
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      await flushPromises()
+      expect(wrapper.vm.activeTab).toBe(5)
+    })
+  })
+
+  describe('cases tab', () => {
+    it('opens on the Cases tab for ?tab=cases', async () => {
+      mockRouteQuery.value = { tab: 'cases' }
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.vm.activeTab).toBe(6)
+    })
+
+    // The auth store is the shared test mock, which reads globalThis.__mockAuthStore.
+    function withWaiting(n) {
+      globalThis.__mockAuthStore = { work: { supportcases: n } }
+      const pinia = createPinia()
+      setActivePinia(pinia)
+      return pinia
+    }
+
+    afterEach(() => {
+      delete globalThis.__mockAuthStore
+    })
+
+    it('shows the cases waiting for Support as a red count on the tab', () => {
+      const wrapper = mountComponent(withWaiting(3))
+      const count = wrapper.find('[data-testid="cases-tab-count"]')
+      expect(count.exists()).toBe(true)
+      expect(count.text()).toBe('3')
+      expect(count.attributes('title')).toBe('3 waiting for Support')
+    })
+
+    it('shows no count on the tab when nothing is waiting', () => {
+      const wrapper = mountComponent(withWaiting(0))
+      expect(wrapper.find('[data-testid="cases-tab-count"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('opens on the Cases tab while cases are waiting for Support', () => {
+      const wrapper = mountComponent(withWaiting(2))
+      expect(wrapper.vm.activeTab).toBe(6)
+    })
+
+    it('still opens on User for a link to a member, even with cases waiting', () => {
+      mockRouteParams.value = { id: '123' }
+      const wrapper = mountComponent(withWaiting(2))
+      expect(wrapper.vm.activeTab).toBe(0)
+    })
+
+    it('moves to Cases when the count arrives after the page opened', async () => {
+      const pinia = withWaiting(0)
+      const store = (globalThis.__mockAuthStore = reactive({ work: {} }))
+      const wrapper = mountComponent(pinia)
+      expect(wrapper.vm.activeTab).toBe(0)
+      store.work = { supportcases: 2 }
+      await nextTick()
+      expect(wrapper.vm.activeTab).toBe(6)
+    })
+
+    it('stays on the tab the visitor picked when the count arrives later', async () => {
+      const pinia = withWaiting(0)
+      const store = (globalThis.__mockAuthStore = reactive({ work: {} }))
+      const wrapper = mountComponent(pinia)
+      wrapper.vm.activeTab = 2
+      await nextTick()
+      store.work = { supportcases: 2 }
+      await nextTick()
+      expect(wrapper.vm.activeTab).toBe(2)
+    })
+
+    it('opens on Lockdown rather than Cases while a lockdown is on', () => {
+      const pinia = withWaiting(2)
+      useLockdownStore().active = true
+      const wrapper = mountComponent(pinia)
+      expect(wrapper.vm.activeTab).toBe(5)
+    })
+  })
+
+  // A bookmarked or shared /support link with no ?tab must keep opening on
+  // User, same as before the Lockdown tab existed - it only jumps the
+  // default when there's actually an incident to react to (or the link asks
+  // for it explicitly, covered above).
+  describe('default tab', () => {
+    it('defaults to the User tab when no lockdown is active and no tab query param is set', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.activeTab).toBe(0)
+    })
+
+    it('defaults to the Lockdown tab when a lockdown is active', () => {
+      const pinia = createPinia()
+      setActivePinia(pinia)
+      useLockdownStore().active = true
+      const wrapper = mountComponent(pinia)
+      expect(wrapper.vm.activeTab).toBe(5)
     })
   })
 })

@@ -196,8 +196,113 @@ continuously, 926,265 calls a day, and 621ms against 86ms over 15 members.
 Check each `SELECT DISTINCT` against its own join list rather than assuming either way. An equal
 row count proves a DISTINCT removed nothing, because DISTINCT can only ever remove.
 
+## A cache key must carry every filter the request can send
+
+`serve()` in `iznik-server-go/ux/ux.go` caches each answer for ten minutes under
+`name|start|end|flow|device|signed_in`. A filter missing from the key serves the first caller's
+answer to everyone who asks the same dates for ten minutes, whatever they asked for, with a 200 and
+the right shape. The key is built from the values the request **sent**, including a filter that
+read ignores, or one caller's list of ignored filters reaches the next. Add a part to the key in the
+same commit as the parameter. `TestUxFilterIsPartOfTheCacheKey` fails when one is missing.
+## `c.IP()` is whatever the client wrote in `X-Forwarded-For`
+
+`main.go` sets `ProxyHeader: "X-Forwarded-For"` and does not validate it, so Fiber v2.52's
+`c.IP()` returns the header **as the client sent it**: any leading entries, in one line or several.
+haproxy's `option forwardfor` only adds its own line after them. A client can choose `c.IP()` with
+one header, so anything that decides from it can be dodged by every client that sends its own, and
+a gate that falls open on an unknown address most of all: it opens, with no error and no log.
+
+Use `misc.ClientAddress(c)`. It is `X-Real-IP`, which haproxy sets from the peer address with
+`set-header`, replacing whatever the client sent, or the socket peer when there is none (direct
+access, tests). The `clientlog` rate limit counts on it and the email job page gate decides on it.
+`misc.getClientIP` takes the leading `X-Forwarded-For` entry on purpose, for log lines only.
+`TestJobGate_AForgedForwardedForIsIgnored` and `TestClientAddress_NeverTakesTheLeadingForwardedFor`
+pin it. Production sends `X-Real-IP` on every request: all 1,089 `GET /apiv2/job/<id>` header lines
+in Loki for 9 to 16 October 2026 had it, equal to their single `X-Forwarded-For` entry.
+
+## Asking `WhoAmI` turns a stale login into a 401
+
+`auth.WhoAmI` marks the request with `c.Locals("authUsed")`, and when the token's session has gone
+the auth middleware then answers **401 "JWT for invalid user or session"** over whatever the
+handler returned. On a public endpoint that only wants to know whether someone is signed in, that
+gives a member with an old login an error for a page that never needed them. `BaseAPI` throws on
+the 401 and does not retry without the token, so the email job page would have told them the job
+was no longer available.
+
+Set `c.Locals("skipPostAuthCheck", true)` before asking, as `job.gate` does for `GetJob`, and a
+stale JWT reads as signed in, because it still names its member. A persistent token
+(`Authorization2`) is checked against the sessions table, so one whose session has gone reads as
+not signed in. `TestJobGate_AStaleSessionStillGetsTheJob` and
+`TestJobGate_APersistentTokenCountsAsSignedIn` check both.
+
+## An experiment arm is a copy up to a minute old, and its exposure goes on the primary
+
+`ux.ExperimentArm` reads the `ux_experiments` and `ux_server_arms` config rows once and keeps them for 60
+seconds, so turning `ux_server_arms` off takes up to a minute to reach a running API, and a test that
+changes the rows must call `ux.FlushServerArmCache()` or it reads the copy it made earlier. A read error is
+control and is remembered for the same minute, so it looks like "the experiment is off" with nothing wrong
+in the logs but one line.
+
+`ux.RecordExposure` writes the member's row. Pass the transaction of the thing decided (the promise, the
+reply), not a read handle, so the row stands or falls with it and goes to the primary. It returns an error
+for the tests and logs it; the caller must carry on, because a failed analytics row must not stop a reply.
+
+## A chat message held by leaving it unprocessed is hidden by some surfaces and counted by others
+
+Holding a reply for its sender's answer (`chat_prompts.heldchatmsgid`, the confirm-reply question) works by leaving it
+`processingrequired = 1`, which every surface that reads `processingsuccessful` already skips. A surface that does not read
+it lists the held reply as if it had arrived, with no error: the poster's My Posts reply list and count
+(`message/message.go`), the Browse reply counts (`isochrone/message.go`), the digest ranking (`UnifiedDigestService.php`)
+and the daily stats (`StatsGenerationService.php`) all leave it out through one gate, `utils.ReplyHeldByQuestionSQL`
+(`ChatMessage::heldByQuestionSql` in the batch), which also covers what the replier wrote behind the question. The
+first-reply scouts (`MatchMailService.php`, `firstreply/passthrough.go`) ask whether anyone has replied at all, and a
+replier who has been asked a question has, so they do not use it. When you hold a
+message a new way, grep every `refmsgid` and `type = 'Interested'` count for the flag it forgot.
+
+## A hold must be written in the transaction of the message it holds
+
+`chats:process-incoming` takes every committed chat message with `processingrequired = 1`, whatever its age, once a
+minute. A hold that is a row written after the message commits (the confirm-reply question in `chat_prompts`) leaves a
+gap in which a run delivers the message first, and a miss cannot be repaired: nothing holds it any more, and the
+replier is asked about a reply the poster already has. Decide before the message is written, and write the message and
+its hold in one transaction (`planReplyConfirm` and `CreateChatMessage`), with the part that may fail in a savepoint
+so that a failed hold leaves an ordinary message. A hold is released only by the answer to its question, never by the
+text of a later message: what the replier writes meanwhile is held behind it by the batch, not read as a yes. A test can see the gap with a gorm callback that reads
+from the pool, which sees only what is committed, at the moment the hold is written.
+
+## A fixture for an experiment needs its table row, and the API sees it up to a minute late
+
+The `ux_experiments` row in `config` is rebuilt from the `ux_experiments` table by `ux:experiments-tick` (17 past the hour,
+`UxExperimentService::rebuildConfig`), which writes `{}` when no row is running. A fixture that writes only the config row
+is gone within the hour wherever the batch container's scheduler runs: the dev stack, a long-lived worktree and CI. Seed a
+table row as well (`test-fixtures-extra.sql`), and the tick republishes the same entry. Separately, `ux.ExperimentArm`
+keeps its copy of the config rows for a minute, and a Playwright run resets the database as it starts, so the first minute
+of a run can still be served the old copy: a case that depends on those rows (`test-reply-to-chat.spec.js`, "still want
+it?") must not be the first thing its run does. A browser cannot flush the copy; a Go test can (`ux.FlushServerArmCache()`).
+
+## An edit's photo list deletes every photo it does not name, including item crops
+
+`PATCH /message` with `attachments` keeps the listed photos and deletes the rest of the post's
+rows. The member's edit sends the photos they can see, and an auto-split item crop is not one of
+them (the message read leaves crops out of `attachments`), so a plain keep-list deletes every
+crop and the items lose their photos, while the save reports success. `keepCropsOfKeptPhotos`
+adds the crops of kept photos to the list. Anything else that rewrites a post's photos has to do
+the same, and a crop has to go when the photo it was cut from goes.
+
+## The delivery service crops after it turns the photo, whatever its source suggests
+
+An auto-split crop is stored in pixels of the photo **as the poster turned it** (`externalmods`
+`rotate` plus `cx`, `cy`, `cw`, `ch`), because our delivery service applies `ro` first and the
+crop second. Reading weserv's 5.x source points the other way, and an agent that read it reported
+every rotated crop as wrong. Measured on the live and the local services on 2026-11-07: a 300x200
+crop with `ro=90` comes back 300x200, not 200x300, and cropping a lamp's place in the unturned
+photo with `ro=90` shows bare wall, because turning has moved the lamp. Before changing
+`misc.Mods.Rotated` or the splitter's crop maths, measure it on the service again.
+
 ## See also
 
 - `.claude/rules/laravel-batch-traps.md` - JSON null casting, in-place foreign keys.
 - `.claude/rules/rippling.md` - one post, many group rows.
 - `docs/developers/reference/rippling-algorithm.md` - what the reach geometry means.
+- `.claude/rules/frontend-traps.md` - a new public config key or request shape goes live in the
+  browser before this API does; deploy Go first (`isPublicConfigKey`).

@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,7 +25,7 @@ func TestPayPalIPN_ValidCharge(t *testing.T) {
 	prefix := uniquePrefix("paypalipn")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 	txnID := "PAY_" + prefix
 
@@ -80,7 +81,7 @@ func TestPayPalIPN_MatchByEmail(t *testing.T) {
 	prefix := uniquePrefix("paypalemail")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 	txnID := "PAY_" + prefix
 
@@ -187,7 +188,7 @@ func TestPayPalIPN_RecurringVsOneOff(t *testing.T) {
 	prefix := uniquePrefix("paypalrecur")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 	txnID := "PAY_" + prefix
 
@@ -227,7 +228,7 @@ func TestPayPalIPN_OneOffBelowThresholdNoThankYou(t *testing.T) {
 	prefix := uniquePrefix("paypalsmall")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	email := prefix + "_donor@test.com"
 	txnID := "PAY_" + prefix
 
@@ -265,7 +266,7 @@ func TestPayPalIPN_MatchByPriorDonation(t *testing.T) {
 	prefix := uniquePrefix("paypalprior")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	// PayPal email that is NOT registered on the account.
 	payerEmail := prefix + "_paypal@external.com"
 	priorTxn := "PRIOR_" + prefix
@@ -348,13 +349,15 @@ func TestPayPalIPN_MatchByCanon(t *testing.T) {
 	prefix := uniquePrefix("paypalcanon")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_donor", "User")
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 
 	// Register a canonicalised email; the incoming payer is a dotted variant
 	// that is NOT an exact match but shares the same canon.
-	payerEmail := prefix + ".donor@test.com"
-	canon := user.CanonicalizeEmail(payerEmail)
-	storedEmail := canon // exact-different from payerEmail (no dot), same canon
+	// Gmail ignores dots in the username, so canon matches the two; other domains keep them.
+	payerEmail := prefix + ".donor@gmail.com"
+	storedEmail := prefix + "donor@gmail.com" // exact-different from payerEmail (no dot), same canon
+	canon := user.CanonicalizeEmail(storedEmail)
+	assert.Equal(t, canon, user.CanonicalizeEmail(payerEmail))
 	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (?, ?, ?)", userID, storedEmail, canon)
 
 	newTxn := "PAY_" + prefix
@@ -398,4 +401,41 @@ func TestPayPalIPN_NoMcGross(t *testing.T) {
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
+}
+
+// PayPal resends an IPN until it gets a 200. A resend of a recorded transaction is
+// acknowledged with a 200 and leaves the one row as it was.
+func TestPayPalIPN_ResendOfRecordedTransactionIsAcknowledged(t *testing.T) {
+	prefix := uniquePrefix("paypalresend")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
+	email := prefix + "_donor@test.com"
+	txnID := "PAY_" + prefix
+
+	body := makePayPalForm(map[string]string{
+		"mc_gross":     "1.00",
+		"payer_email":  email,
+		"first_name":   "Test",
+		"last_name":    "Donor",
+		"txn_id":       txnID,
+		"txn_type":     "subscr_payment",
+		"payment_date": "2026-01-15 10:30:00",
+	})
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("POST", "/donateipn", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode, "attempt %d must be acknowledged", i+1)
+	}
+
+	var donationCount int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE TransactionID = ?", txnID).Scan(&donationCount)
+	assert.Equal(t, int64(1), donationCount, "a resend must not add a second row")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", txnID)
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'email_donate_external' AND data LIKE ?",
+		fmt.Sprintf("%%\"user_id\":%d%%", userID))
 }

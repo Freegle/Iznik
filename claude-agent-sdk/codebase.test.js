@@ -29,25 +29,35 @@ test('clones when the checkout is not there yet', () => {
   assert.match(r.calls[0].cmd, /^git clone --depth 1 \S+ \/app\/codebase/)
 })
 
-test('pulls when the checkout is already there', () => {
+test('updates when the checkout is already there', () => {
   const r = recorder()
 
   const status = syncCodebase({ dir: '/app/codebase', run: r.run, exists: () => true })
 
   assert.deepStrictEqual(status, { present: true, action: 'pulled', error: null })
   assert.strictEqual(r.calls.length, 1)
-  assert.match(r.calls[0].cmd, /^git pull --ff-only --depth 1/)
+  assert.match(r.calls[0].cmd, /^git fetch --depth 1 origin HEAD .*&& git reset --hard FETCH_HEAD/)
   assert.strictEqual(r.calls[0].opts.cwd, '/app/codebase')
 })
 
-// The clone is shallow, so the pull has to be too. Without --depth 1 git fetches the entire
+// The clone is shallow, so the fetch has to be too. Without --depth 1 git fetches the entire
 // history the clone deliberately skipped, on every sync, forever.
-test('keeps the pull shallow to match the clone', () => {
+test('keeps the fetch shallow to match the clone', () => {
   const r = recorder()
 
   syncCodebase({ dir: '/app/codebase', run: r.run, exists: () => true })
 
   assert.match(r.calls[0].cmd, /--depth 1/)
+})
+
+// A depth-1 fetch has no history linking the old tip to the new one, so a fast-forward-only
+// pull refused every sync and the checkout stayed frozen (2026-10-20 to 2026-11-02).
+test('does not depend on a fast-forward', () => {
+  const r = recorder()
+
+  syncCodebase({ dir: '/app/codebase', run: r.run, exists: () => true })
+
+  assert.doesNotMatch(r.calls[0].cmd, /--ff-only/)
 })
 
 // The failure this whole module exists for. github.com being unreachable must leave a container
@@ -62,10 +72,10 @@ test('a failed clone reports no codebase rather than throwing', () => {
   assert.match(status.error, /boom/)
 })
 
-// A failed pull is not the same thing: the previous checkout is still there and still worth
+// A failed update is not the same thing: the previous checkout is still there and still worth
 // searching, just slightly stale.
-test('a failed pull keeps the existing checkout', () => {
-  const r = recorder('git pull')
+test('a failed update keeps the existing checkout', () => {
+  const r = recorder('git fetch')
 
   const status = syncCodebase({ dir: '/app/codebase', run: r.run, exists: () => true })
 
@@ -85,4 +95,19 @@ test('honours an alternative repo url', () => {
   })
 
   assert.match(r.calls[0].cmd, /https:\/\/example\.test\/thing\.git \/tmp\/x/)
+})
+
+// The image creates the checkout directory empty (Dockerfile mkdir). That must read as "not
+// cloned yet": a pull in an empty folder fails and nothing ever clones, which is how the
+// production helper ran without a codebase from 2026-09-02 to 2026-10-03.
+test('an empty pre-created directory is cloned into, not pulled', () => {
+  const r = recorder()
+  const status = syncCodebase({
+    dir: '/app/codebase',
+    run: r.run,
+    exists: (p) => p === '/app/codebase',
+  })
+  assert.equal(status.action, 'cloned')
+  assert.equal(status.error, null)
+  assert.match(r.calls[0].cmd, /^git clone --depth 1 /)
 })

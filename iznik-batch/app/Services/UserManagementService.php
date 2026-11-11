@@ -2,12 +2,23 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Count;
+use App\Database\Expressions\Greatest;
+use App\Database\Expressions\TimestampDiff;
+use App\Database\Expressions\Value;
 use App\Helpers\MailHelper;
+use App\Models\ChatMessage;
 use App\Models\Message;
 use App\Models\User;
 use App\Models\UserDeletion;
 use App\Models\UserEmail;
+use App\Models\UxExperimentExposure;
+use App\Services\Ux\UxPromptService;
 use App\Traits\ChunkedProcessing;
+use Illuminate\Database\Query\Expression as RawExpression;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -60,9 +71,12 @@ class UserManagementService
         ];
 
         // Find email addresses linked to multiple users.
+        // having() accepts a ConditionExpression directly (Query\Builder::having()
+        // special-cases it, same as where()), so the DISTINCT-counted aggregate
+        // condition is expressed structurally via Count + Comparison.
         $duplicates = UserEmail::select('email')
             ->groupBy('email')
-            ->havingRaw('COUNT(DISTINCT userid) > 1')
+            ->having(new Comparison(new Count('userid', distinct: true), '>', 1))
             ->get();
 
         $stats['duplicates_found'] = $duplicates->count();
@@ -268,37 +282,46 @@ class UserManagementService
 
         // Find candidates: no memberships, no spammer record, no mod notes,
         // last access > 6 months, systemrole = User, not deleted.
-        $candidates = DB::select("
-            SELECT users.id
-            FROM users
-            LEFT JOIN memberships ON users.id = memberships.userid
-            LEFT JOIN spam_users ON users.id = spam_users.userid
-            LEFT JOIN users_comments ON users.id = users_comments.userid
-            WHERE memberships.userid IS NULL
-              AND spam_users.userid IS NULL
-              AND users_comments.userid IS NULL
-              AND users.lastaccess < ?
-              AND users.systemrole = ?
-              AND users.deleted IS NULL
-              AND users.forgotten IS NULL
-            LIMIT {$limit}
-        ", [$sixMonthsAgo, 'User']);
+        $candidates = DB::table('users')
+            ->select('users.id')
+            ->leftJoin('memberships', 'users.id', '=', 'memberships.userid')
+            ->leftJoin('spam_users', 'users.id', '=', 'spam_users.userid')
+            ->leftJoin('users_comments', 'users.id', '=', 'users_comments.userid')
+            ->whereNull('memberships.userid')
+            ->whereNull('spam_users.userid')
+            ->whereNull('users_comments.userid')
+            ->where('users.lastaccess', '<', $sixMonthsAgo)
+            ->where('users.systemrole', User::SYSTEMROLE_USER)
+            ->whereNull('users.deleted')
+            ->whereNull('users.forgotten')
+            ->limit($limit)
+            ->get();
 
         $count = 0;
 
         foreach ($candidates as $candidate) {
             // Check for recent meaningful logs (excluding User/Created and User/Deleted).
-            $logs = DB::select("
-                SELECT DATEDIFF(NOW(), timestamp) AS logsago
-                FROM logs
-                WHERE user = ?
-                  AND (type != 'User' OR (subtype != 'Created' AND subtype != 'Deleted'))
-                ORDER BY id DESC
-                LIMIT 1
-            ", [$candidate->id]);
+            // Equivalent to the original "no logs at all OR most recent meaningful
+            // log's DATEDIFF(NOW(), timestamp) > 90": DATEDIFF > 90 is DATEDIFF >= 91,
+            // which is whereDate(timestamp, '<=', today()->subDays(91)); negating
+            // that (the "recent enough" case) gives whereDate('>', today()->subDays(91)).
+            // Checking existence rather than fetching the single most-recent row is
+            // equivalent because logs.id increases with timestamp, so if any
+            // qualifying log is recent enough the most-recent one is too.
+            $hasRecentLog = DB::table('logs')
+                ->where('user', $candidate->id)
+                ->where(function ($q) {
+                    $q->where('type', '!=', 'User')
+                        ->orWhere(function ($q2) {
+                            $q2->where('subtype', '!=', 'Created')
+                                ->where('subtype', '!=', 'Deleted');
+                        });
+                })
+                ->whereDate('timestamp', '>', today()->subDays(91))
+                ->exists();
 
             // Forget if no logs at all, or most recent meaningful log is > 90 days old.
-            if (count($logs) === 0 || $logs[0]->logsago > 90) {
+            if (!$hasRecentLog) {
                 if (!$dryRun) {
                     Log::info("Forgetting inactive user #{$candidate->id}");
                     $this->forgetUser($candidate->id, 'Inactive');
@@ -319,16 +342,17 @@ class UserManagementService
     {
         $limit = $limit ?? 50000;
 
-        $users = DB::select("
-            SELECT id
-            FROM users
-            WHERE deleted IS NOT NULL
-              AND DATEDIFF(NOW(), deleted) > 14
-              AND forgotten IS NULL
-            LIMIT {$limit}
-        ");
+        // DATEDIFF(NOW(), deleted) > 14 is DATEDIFF >= 15, i.e.
+        // whereDate(deleted, '<=', today()->subDays(15)).
+        $users = DB::table('users')
+            ->select('id')
+            ->whereNotNull('deleted')
+            ->whereDate('deleted', '<=', today()->subDays(15))
+            ->whereNull('forgotten')
+            ->limit($limit)
+            ->get();
 
-        $count = count($users);
+        $count = $users->count();
 
         if (!$dryRun) {
             foreach ($users as $user) {
@@ -404,6 +428,8 @@ class UserManagementService
             'message' => NULL,
         ]);
 
+        $this->forgetReplyQuestions($userId);
+
         // Delete community events, volunteering, newsfeed, stories, searches, about me.
         DB::table('communityevents')->where('userid', $userId)->delete();
         DB::table('volunteering')->where('userid', $userId)->delete();
@@ -434,6 +460,32 @@ class UserManagementService
         // Remove promises.
         DB::table('messages_promises')->where('userid', $userId)->delete();
 
+        // Remove the posts they marked "I'm interested" in.
+        DB::table('messages_interested')->where('userid', $userId)->delete();
+
+        // Remove the record of which experiment arm a send, a reply or a promise used. An erasure must
+        // not depend on an analytics table, so a table that has not been created yet is skipped. The write
+        // node is asked, because a read node that is behind would say the table is not there.
+        if (UxExperimentExposure::tableExists()) {
+            DB::table('ux_experiment_exposures')->where('userid', $userId)->delete();
+        }
+
+        // Answers to the questions microvolunteers are asked (ux_prompt_responses): they can hold
+        // free text in the member's own words, which is personal data.
+        // The themes they fed hold verbatim spans of those words, so those go first.
+        UxPromptService::forgetAnswers(DB::table('ux_prompt_responses')->where('userid', $userId)->pluck('id')->all());
+        DB::table('ux_prompt_responses')->where('userid', $userId)->delete();
+
+        // Support cases about this member: the brief and what the referrer said hold facts about them,
+        // and so do the case thread and the first pass and helper runs written for them.
+        // One UPDATE with a subquery, so the erasure reads nothing through the read connection and depends
+        // only on the node it writes to.
+        DB::table('support_case_messages')
+            ->whereIn('caseid', fn ($q) => $q->select('id')->from('support_cases')->where('userid', $userId))
+            ->update(['body' => '']);
+        DB::table('support_cases')->where('userid', $userId)->update(['brief' => NULL, 'reason' => NULL]);
+        DB::table('support_ai_runs')->where('userid', $userId)->update(['analysis' => NULL, 'transcript' => NULL]);
+
         // Mark as forgotten and clear TN user ID.
         DB::table('users')->where('id', $userId)->update([
             'forgotten' => now(),
@@ -457,6 +509,60 @@ class UserManagementService
     }
 
     /**
+     * The questions Freegle asked a member about their replies (chat_prompts kind confirm_reply) are written by the
+     * Freegle account and begin with the member's name, so blanking what the member wrote does not reach them, and
+     * the poster's chat would go on showing the name. Each is blanked and taken out of the chat, and the rows that tie
+     * it to the member are deleted. A reply of theirs that is still waiting for the batch is dropped, with whatever they
+     * wrote after it while the question was open: with the row gone nothing would hold them, and the batch would
+     * deliver them blank.
+     */
+    private function forgetReplyQuestions(int $userId): void
+    {
+        $prompts = DB::table('chat_prompts')->where('userid', $userId)->get(['chatmsgid', 'heldchatmsgid']);
+
+        if ($prompts->isEmpty()) {
+            return;
+        }
+
+        DB::table('chat_messages')->whereIn('id', $prompts->pluck('chatmsgid')->all())->update([
+            'message' => NULL,
+            'processingsuccessful' => 0,
+        ]);
+
+        $this->dropRepliesHeldForAnswer($userId);
+
+        DB::table('chat_prompts')->where('userid', $userId)->delete();
+    }
+
+    /**
+     * Drop the replies of a member that are waiting for them to answer a question (chat_prompts kind confirm_reply), and
+     * whatever they wrote after each while it was open. Run before the member's questions are deleted: a reply that
+     * nothing holds any more would be delivered to the poster with no question asked. A member who is deleted outright
+     * needs no such step, because their chat messages are deleted with them (the foreign key cascades).
+     */
+    private function dropRepliesHeldForAnswer(int $userId): void
+    {
+        $heldIds = DB::table('chat_prompts')
+            ->where('userid', $userId)
+            ->where('kind', 'confirm_reply')
+            ->whereNotNull('heldchatmsgid')
+            ->pluck('heldchatmsgid');
+
+        foreach ($heldIds as $heldId) {
+            DB::table('chat_messages')
+                ->where('chatid', DB::table('chat_messages')->where('id', $heldId)->value('chatid'))
+                ->where('userid', $userId)
+                ->where('id', '>=', $heldId)
+                ->where('processingrequired', 1)
+                ->update([
+                    'processingrequired' => 0,
+                    'processingsuccessful' => 0,
+                    'processingfailreason' => ChatMessage::PROCESSFAIL_NOT_CONFIRMED,
+                ]);
+        }
+    }
+
+    /**
      * Delete fully forgotten users who have no remaining messages.
      *
      * These users have been forgotten (personal data wiped) and have no messages
@@ -468,17 +574,16 @@ class UserManagementService
         $sixMonthsAgo = now()->subMonths(6)->format('Y-m-d');
         $limit = $limit ?? 100000;
 
-        $users = DB::select("
-            SELECT users.id
-            FROM users
-            LEFT JOIN messages ON messages.fromuser = users.id
-            WHERE users.forgotten IS NOT NULL
-              AND users.lastaccess < ?
-              AND messages.id IS NULL
-            LIMIT {$limit}
-        ", [$sixMonthsAgo]);
+        $users = DB::table('users')
+            ->select('users.id')
+            ->leftJoin('messages', 'messages.fromuser', '=', 'users.id')
+            ->whereNotNull('users.forgotten')
+            ->where('users.lastaccess', '<', $sixMonthsAgo)
+            ->whereNull('messages.id')
+            ->limit($limit)
+            ->get();
 
-        $count = count($users);
+        $count = $users->count();
 
         if (!$dryRun) {
             $processed = 0;
@@ -552,25 +657,35 @@ class UserManagementService
         // optional - it is the whole correctness argument for narrowing the hourly one.
         $since = $full ? null : $this->lastAccessWindowStart();
 
-        // keep-raw: both arms compare one table's column against another's with an
-        // interval, and union two DISTINCT sets. The query builder cannot express the
-        // correlated column-to-column comparison without raw fragments anyway, and the
-        // shape is unchanged from the version this replaces bar the window.
-        $users = DB::select("
-            SELECT DISTINCT(userid) FROM (
-                SELECT DISTINCT(userid) FROM users
-                INNER JOIN chat_messages ON chat_messages.userid = users.id
-                WHERE users.lastaccess < chat_messages.date
-                    AND TIMESTAMPDIFF(SECOND, users.lastaccess, chat_messages.date) > 600
-                    AND (? IS NULL OR chat_messages.date >= ?)
-                UNION
-                SELECT DISTINCT(userid) FROM memberships
-                INNER JOIN users ON users.id = memberships.userid
-                WHERE TIMESTAMPDIFF(SECOND, users.lastaccess, memberships.added) > 600
-                    AND (? IS NULL OR memberships.added >= ?)
-            ) t
-            LIMIT 50000
-        ", [$since, $since, $since, $since]);
+        // TIMESTAMPDIFF(SECOND, a, b) here compares two COLUMNS (not a column
+        // against NOW()) - whereColumn() only supports a direct column-to-column
+        // operator comparison, not an offset/interval between them, hence the
+        // TimestampDiff expression wrapped in Comparison (a ConditionExpression,
+        // which where() special-cases directly, same as having() above).
+        $chatCandidates = DB::table('users')
+            ->join('chat_messages', 'chat_messages.userid', '=', 'users.id')
+            ->whereColumn('users.lastaccess', '<', 'chat_messages.date')
+            ->where(new Comparison(new TimestampDiff('SECOND', 'users.lastaccess', 'chat_messages.date'), '>', 600))
+            ->when($since !== null, function ($q) use ($since) {
+                $q->where('chat_messages.date', '>=', $since);
+            })
+            ->distinct()
+            ->select('chat_messages.userid');
+
+        $membershipCandidates = DB::table('memberships')
+            ->join('users', 'users.id', '=', 'memberships.userid')
+            ->where(new Comparison(new TimestampDiff('SECOND', 'users.lastaccess', 'memberships.added'), '>', 600))
+            ->when($since !== null, function ($q) use ($since) {
+                $q->where('memberships.added', '>=', $since);
+            })
+            ->distinct()
+            ->select('memberships.userid');
+
+        $users = DB::table($chatCandidates->union($membershipCandidates), 't')
+            ->select('userid')
+            ->distinct()
+            ->limit(50000)
+            ->get();
 
         $stats['full'] = $full;
         $stats['since'] = $since;
@@ -580,12 +695,28 @@ class UserManagementService
 
         foreach ($users as $user) {
             // Find the latest activity timestamp from chat messages or memberships.
-            $result = DB::selectOne("
-                SELECT GREATEST(
-                    COALESCE((SELECT MAX(date) FROM chat_messages WHERE userid = ?), '1970-01-01'),
-                    COALESCE((SELECT MAX(added) FROM memberships WHERE userid = ?), '1970-01-01')
-                ) AS max
-            ", [$user->userid, $user->userid]);
+            // GREATEST()/COALESCE() are composed via the Expressions library; the
+            // correlated MAX(...) subqueries embed userid as a literal (Value::of())
+            // rather than a binding, per this library's NOT BOUND convention (see
+            // App\Database\Expressions\Value's docblock), so the assembled scalar
+            // expression carries zero bindings and can be projected via
+            // selectSub() on a from-less query (Query\Builder::parseSub()
+            // special-cases plain strings) exactly as GREATEST/COALESCE's own
+            // docblocks illustrate.
+            $chatMaxSub = DB::table('chat_messages')->where('userid', Value::of($user->userid));
+            $chatMaxSub->aggregate = ['function' => 'max', 'columns' => ['date']];
+
+            $membershipMaxSub = DB::table('memberships')->where('userid', Value::of($user->userid));
+            $membershipMaxSub->aggregate = ['function' => 'max', 'columns' => ['added']];
+
+            $maxExpr = new Greatest(
+                new Coalesce(new RawExpression('('.$chatMaxSub->toSql().')'), Value::of('1970-01-01')),
+                new Coalesce(new RawExpression('('.$membershipMaxSub->toSql().')'), Value::of('1970-01-01'))
+            );
+
+            $maxQuery = DB::query();
+            $maxQuery->selectSub($maxExpr->getValue($maxQuery->getGrammar()), 'max');
+            $result = $maxQuery->first();
 
             if ($result && $result->max && $result->max !== '1970-01-01') {
                 $currentAccess = DB::table('users')
@@ -667,7 +798,7 @@ class UserManagementService
 
         // Users who currently have Support or Admin role.
         $currentSupport = DB::table('users')
-            ->whereIn('systemrole', ['Support', 'Admin'])
+            ->whereIn('systemrole', [User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
             ->pluck('id')
             ->all();
 
@@ -685,7 +816,7 @@ class UserManagementService
                 if (!$dryRun) {
                     DB::table('users')
                         ->where('id', $userId)
-                        ->update(['systemrole' => 'Support']);
+                        ->update(['systemrole' => User::SYSTEMROLE_SUPPORT]);
 
                     Log::info("Granted support role to user #{$userId}");
                 }
@@ -704,11 +835,11 @@ class UserManagementService
                 ->value('systemrole');
 
             // Only downgrade Support, never Admin.
-            if ($currentRole === 'Support') {
+            if ($currentRole === User::SYSTEMROLE_SUPPORT) {
                 if (!$dryRun) {
                     DB::table('users')
                         ->where('id', $userId)
-                        ->update(['systemrole' => 'Moderator']);
+                        ->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
                     Log::info("Removed support role from user #{$userId}");
                 }
@@ -740,12 +871,14 @@ class UserManagementService
         $stats = ['demoted' => 0];
 
         $staleMods = DB::table('users')
-            ->where('systemrole', 'Moderator')
+            ->where('systemrole', User::SYSTEMROLE_MODERATOR)
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('memberships')
+                // No select() call needed: the subquery is used only for its
+                // existence, not its column list, so the default "select *" is
+                // functionally identical to "select 1" here.
+                $q->from('memberships')
                     ->whereColumn('memberships.userid', 'users.id')
-                    ->whereIn('memberships.role', ['Moderator', 'Owner']);
+                    ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
             })
             ->pluck('id')
             ->all();
@@ -754,8 +887,8 @@ class UserManagementService
             if (!$dryRun) {
                 DB::table('users')
                     ->where('id', $userId)
-                    ->where('systemrole', 'Moderator')
-                    ->update(['systemrole' => 'User']);
+                    ->where('systemrole', User::SYSTEMROLE_MODERATOR)
+                    ->update(['systemrole' => User::SYSTEMROLE_USER]);
 
                 Log::info("Demoted stale Moderator systemrole to User for user #{$userId}");
             }

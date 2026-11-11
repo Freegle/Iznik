@@ -21,6 +21,8 @@ def dump_mem_samples(label, lines)
   UI.message(File.read(MEM_SAMPLE_LOG).split("\n").last(lines).join("\n"))
 end
 
+require File.expand_path('apple_agreements.rb', __dir__)
+
 platform :android do
   error do |lane, exception|
     dump_mem_samples("#{lane} failed", 90)
@@ -429,6 +431,14 @@ platform :android do
 end
 
 platform :ios do
+  # Any iOS lane can be stopped by an agreement waiting in Apple's portal. Say what to do,
+  # rather than leave it to Apple's raw error further up the log.
+  error do |lane, exception|
+    if AppleAgreements.waiting?(exception&.message)
+      UI.error("🚨 #{lane} stopped: #{AppleAgreements.instruction}")
+    end
+  end
+
   desc "Build and upload to TestFlight"
   lane :beta do
     # Validate environment variables
@@ -1456,5 +1466,34 @@ platform :ios do
     else
       UI.success("✅ iOS and Android live releases are in step (iOS #{ios_version}, Play #{android_version}).")
     end
+  end
+
+  desc "Fail if Apple is waiting for the Account Holder to accept an agreement"
+  # Run daily by the CircleCI schedule "daily-apple-agreement-check", so a new agreement is
+  # noticed before it stops a deploy. It makes the two kinds of request the deploys make: the
+  # developer portal (provisioning profiles, refused on 2026-10-29 for an updated Program
+  # License Agreement) and App Store Connect (the app record). A refusal for an agreement fails
+  # the job, which sends CircleCI's failure notice. Any other error also fails it, so a check
+  # that has stopped working is noticed too.
+  lane :check_apple_agreements do
+    %w[APP_STORE_CONNECT_API_KEY_KEY_ID APP_STORE_CONNECT_API_KEY_ISSUER_ID APP_STORE_CONNECT_API_KEY_KEY].each do |name|
+      UI.user_error!("❌ CRITICAL: #{name} not set") unless ENV[name]
+    end
+
+    app_store_connect_api_key(
+      key_id: ENV['APP_STORE_CONNECT_API_KEY_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID'],
+      key_content: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY_KEY']),
+      is_key_content_base64: false
+    )
+
+    profiles = Spaceship::ConnectAPI::Profile.all
+    UI.message("Developer portal: #{profiles.count} provisioning profiles readable.")
+
+    app = Spaceship::ConnectAPI::App.find('org.ilovefreegle.iphone')
+    UI.user_error!('❌ Could not find app with identifier org.ilovefreegle.iphone') unless app
+    UI.message("App Store Connect: #{app.name} readable.")
+
+    UI.success('✅ No Apple agreement is waiting.')
   end
 end

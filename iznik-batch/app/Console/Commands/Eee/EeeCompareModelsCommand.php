@@ -7,6 +7,7 @@ use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Run the same sample through multiple models and report inter-model agreement.
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\DB;
  *   2. php artisan eee:compare-models --sample=200       (run all other models on same items)
  *   3. php artisan eee:score-vs-human                    (score each model against humans)
  */
+#[AsCommand(name: 'eee:compare-models')]
 class EeeCompareModelsCommand extends Command
 {
     protected $signature = 'eee:compare-models

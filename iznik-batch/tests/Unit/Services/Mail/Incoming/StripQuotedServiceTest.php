@@ -300,4 +300,34 @@ class StripQuotedServiceTest extends TestCase
         $this->assertStringNotContainsString('penguin power', $result);
         $this->assertStringNotContainsString('Suitable for helping', $result);
     }
+
+    /**
+     * BlueMail (and similar clients) send a plain-text part that has the member's reply,
+     * then our quoted notification flattened to text, stylesheet first, with no
+     * "On ... wrote:" line (that header is only in the HTML part). Our MJML head CSS
+     * never appears in anything a member types, so it marks where the quote starts.
+     */
+    public function test_cuts_at_our_own_quoted_email_stylesheet(): void
+    {
+        $input = "Collection after 5pm is fine, thanks\r\n \r\n \r\n\r\n"
+            . "#outlook a { padding: 0; }\r\n"
+            . "body { margin: 0; padding: 0; -webkit-text-size-adjust: 100%; }\r\n"
+            . "@import url(https://fonts.googleapis.com/css?family=Roboto:300,400,500,700);"
+            . "@media only screen and (min-width:480px) { .mj-column-per-100 { width:100% !important; } }\r\n\r\n"
+            . "someone: Post code please\r\n\r\n"
+            . "Jobs near you\r\n\r\n"
+            . "This email was sent to member@example.com\r\n";
+
+        $result = $this->service->strip($input);
+
+        $this->assertSame('Collection after 5pm is fine, thanks', trim($result));
+    }
+
+    public function test_a_hash_rule_typed_by_a_member_is_kept(): void
+    {
+        // Only our stylesheet's signature cuts; ordinary text with a # is left alone.
+        $input = "Lot #outlook-12 is still here, come any time";
+
+        $this->assertSame($input, trim($this->service->strip($input)));
+    }
 }

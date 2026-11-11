@@ -6,6 +6,7 @@ import {
   homeGroupFirst,
   isHomeGroup,
   isHomeGroupRow,
+  canMessagePosterRow,
   rippledInAreaDates,
   RIPPLE_ORIGIN_WINDOW_MS,
 } from '~/composables/rippleStatus'
@@ -491,5 +492,27 @@ describe('a TrashNothing cross-post (several direct copies)', () => {
 
   it('is not home for a group the post is not on', () => {
     expect(isHomeGroupRow(groups, 99)).toBe(false)
+  })
+})
+
+// Discourse 10239: a community a post rippled into may write to its poster once the poster
+// is an ordinary member there. The server says so per community in canmessageposter.
+describe('canMessagePosterRow', () => {
+  const groups = [
+    { groupid: 10, rippled_in: 0, canmessageposter: true },
+    { groupid: 20, rippled_in: 1, canmessageposter: true },
+    { groupid: 30, rippled_in: 1, canmessageposter: false },
+    { groupid: 40, rippled_in: 1 },
+  ]
+
+  it('follows what the server says for each community', () => {
+    expect(canMessagePosterRow(groups, 10)).toBe(true)
+    expect(canMessagePosterRow(groups, 20)).toBe(true)
+    expect(canMessagePosterRow(groups, 30)).toBe(false)
+  })
+
+  it('falls back to whether the community is home when the server says nothing', () => {
+    expect(canMessagePosterRow(groups, 40)).toBe(false)
+    expect(canMessagePosterRow([{ groupid: 50, rippled_in: 0 }], 50)).toBe(true)
   })
 })

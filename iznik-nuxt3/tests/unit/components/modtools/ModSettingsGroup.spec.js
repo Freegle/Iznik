@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ModSettingsGroup from '~/modtools/components/ModSettingsGroup.vue'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Mock stores
 const mockModGroupStore = {
@@ -71,7 +72,7 @@ describe('ModSettingsGroup', () => {
     id: 123,
     nameshort: 'TestGroup',
     namedisplay: 'Test Group',
-    myrole: 'Owner',
+    myrole: ROLE_OWNER,
     modsemail: 'mods@testgroup.org',
     groupemail: 'testgroup@freegle.org',
     region: 'London',
@@ -360,9 +361,9 @@ describe('ModSettingsGroup', () => {
   describe('computed properties', () => {
     describe('readonly', () => {
       it.each([
-        ['Owner', false],
-        ['Moderator', true],
-        ['Member', true],
+        [ROLE_OWNER, false],
+        [ROLE_MODERATOR, true],
+        [ROLE_MEMBER, true],
       ])('returns %s for myrole=%s', (myrole, expected) => {
         const wrapper = mountComponent({}, { myrole })
         expect(wrapper.vm.readonly).toBe(expected)
@@ -478,7 +479,7 @@ describe('ModSettingsGroup', () => {
 
   describe('readonly mode', () => {
     it('shows readonly notice and hides edit buttons for non-owners', () => {
-      const wrapper = mountComponent({}, { myrole: 'Moderator' })
+      const wrapper = mountComponent({}, { myrole: ROLE_MODERATOR })
       expect(wrapper.text()).toContain('Only owners can change')
 
       const uploadBtn = wrapper

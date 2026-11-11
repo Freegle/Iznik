@@ -7,7 +7,9 @@ use App\Services\MicroVolunteeringScoreService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'microvolunteering:score')]
 class MicroVolunteeringScoreCommand extends Command
 {
     use PreventsOverlapping;

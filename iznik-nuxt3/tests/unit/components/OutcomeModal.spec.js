@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import OutcomeModal from '~/components/OutcomeModal.vue'
+import { flowCalls, resetFlowCalls } from '../helpers/flowTelemetryMock'
+
+vi.mock('~/composables/useFlowTelemetry', async () => {
+  const m = await import('../helpers/flowTelemetryMock')
+  return m.flowTelemetryModule
+})
 
 const { mockModal, mockHide } = vi.hoisted(() => {
   const { ref } = require('vue')
@@ -41,6 +47,7 @@ vi.stubGlobal('useNuxtApp', () => ({
 describe('OutcomeModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetFlowCalls()
     mockById.mockReturnValue({
       id: 123,
       subject: 'Test Item',
@@ -123,6 +130,55 @@ describe('OutcomeModal', () => {
       },
     })
   }
+
+  describe('flow telemetry', () => {
+    it('starts the chat_outcome flow, entered by outcome type, when it opens', () => {
+      createWrapper({ type: 'Received' })
+      expect(flowCalls.slice(0, 2)).toEqual([
+        ['start', 'Received'],
+        ['enterStep', 'choose'],
+      ])
+    })
+
+    it('reports Taken with nobody chosen as a validation failure', async () => {
+      const wrapper = createWrapper({ type: 'Taken' })
+      await wrapper.find('.spin-button').trigger('click')
+      expect(flowCalls).toContainEqual(['validationFailed', 'taker', 'missing'])
+      expect(flowCalls.map((c) => c[0])).not.toContain('submit')
+    })
+
+    it('sends submit, an ok result and complete for a withdrawal', async () => {
+      mockUpdate.mockResolvedValue()
+      mockFetch.mockResolvedValue()
+      const wrapper = createWrapper({ type: 'Withdrawn' })
+      flowCalls.length = 0
+      await wrapper.vm.submit(() => {})
+      expect(flowCalls.map((c) => c[0])).toEqual([
+        'submit',
+        'submitResult',
+        'completeStep',
+        'complete',
+      ])
+      expect(flowCalls[1]).toEqual(['submitResult', true, 200, null])
+    })
+
+    it('sends a failed result when the outcome update throws', async () => {
+      mockUpdate.mockRejectedValueOnce(
+        Object.assign(new Error('nope'), { response: { status: 500 } })
+      )
+      const wrapper = createWrapper({ type: 'Withdrawn' })
+      flowCalls.length = 0
+      await expect(wrapper.vm.submit(() => {})).rejects.toThrow('nope')
+      expect(flowCalls).toContainEqual(['submitResult', false, 500, 'error'])
+    })
+
+    it('abandons as closed when hidden without an outcome', () => {
+      const wrapper = createWrapper({ type: 'Taken' })
+      flowCalls.length = 0
+      wrapper.vm.onHide()
+      expect(flowCalls).toEqual([['abandon', 'closed']])
+    })
+  })
 
   describe('rendering', () => {
     it('renders modal container', () => {
@@ -556,6 +612,14 @@ describe('OutcomeModal', () => {
       expect(wrapper.find('.some-left').exists()).toBe(false)
     })
 
+    it('does not offer the choice on an automatically split post', () => {
+      // Its items are marked TAKEN one by one in My Posts; TAKEN means all of them.
+      multiItem({ bulkcount: 2, bulkitems: [{}, {}], autosplit: true })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.some-left').exists()).toBe(false)
+      expect(wrapper.vm.isBulk).toBe(false)
+    })
+
     it('assumes everything has gone until told otherwise', () => {
       multiItem()
       const wrapper = createWrapper()
@@ -610,6 +674,46 @@ describe('OutcomeModal', () => {
       await wrapper.vm.submit(() => {})
       expect(mockAddBy).toHaveBeenCalledWith(123, 7)
       expect(mockUpdate).not.toHaveBeenCalled()
+    })
+
+    it('ticks the chosen answer', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      const tick = (sel) =>
+        wrapper.find(`${sel} .v-icon`).attributes('data-icon')
+      expect(tick('.all-gone')).toBe('check-circle')
+      expect(tick('.some-left')).toBe('circle')
+      await wrapper.find('.some-left').trigger('click')
+      expect(tick('.all-gone')).toBe('circle')
+      expect(tick('.some-left')).toBe('check-circle')
+    })
+
+    it('does not say Mark as TAKEN when the post will stay up', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      expect(wrapper.vm.buttonLabel).toBe('Mark as TAKEN')
+      await wrapper.find('.some-left').trigger('click')
+      expect(wrapper.vm.buttonLabel).toBe('Save, keep my post up')
+      expect(wrapper.text()).toContain('Your post will stay up')
+    })
+
+    it('fetches the post again when some are left, so the card shows it', async () => {
+      multiItem()
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: 7 }]
+      await wrapper.find('.some-left').trigger('click')
+      await wrapper.vm.submit(() => {})
+      expect(mockFetch).toHaveBeenCalledWith(123, true)
+    })
+
+    it('finishes a post that is already part gone', async () => {
+      multiItem({ partgone: true, by: { userid: 7, displayname: 'A' } })
+      const wrapper = createWrapper()
+      wrapper.vm.tookUsers = [{ userid: 7 }]
+      await wrapper.vm.submit(() => {})
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'Outcome', outcome: 'Taken' })
+      )
     })
 
     it('passes a null userid through for someone else', async () => {

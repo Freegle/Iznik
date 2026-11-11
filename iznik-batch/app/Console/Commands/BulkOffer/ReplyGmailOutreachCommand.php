@@ -7,6 +7,7 @@ use App\Services\Gmail\GmailService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Mime\Address;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Send a concierge reply in an existing outreach mail thread. This is the
@@ -14,6 +15,7 @@ use Symfony\Component\Mime\Address;
  * the reply text and calls this to deliver it, threaded onto the org's reply so
  * it lands in the same conversation.
  */
+#[AsCommand(name: 'bulkoffer:reply-outreach')]
 class ReplyGmailOutreachCommand extends Command
 {
     protected $signature = 'bulkoffer:reply-outreach

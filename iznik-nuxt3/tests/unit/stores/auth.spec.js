@@ -15,6 +15,8 @@ import { setActivePinia, createPinia } from 'pinia'
 // This test needs the real store implementation.
 import { useAuthStore } from '~/stores/auth.js'
 import { abortAllPendingRequests } from '~/api/BaseAPI'
+import { flowCalls, resetFlowCalls } from '../helpers/flowTelemetryMock'
+import { ROLE_MEMBER, ROLE_OWNER } from '~/constants'
 
 const mockLogin = vi.fn()
 const mockLogout = vi.fn()
@@ -39,6 +41,18 @@ const mockJoinGroup = vi.fn()
 
 vi.mock('~/composables/useClientLog', () => ({
   action: vi.fn(),
+}))
+
+vi.mock('~/composables/useFlowTelemetry', async () => {
+  const m = await import('../helpers/flowTelemetryMock')
+  return m.flowTelemetryModule
+})
+const mockNoteSettingsSave = vi.fn()
+vi.mock('~/composables/useSettingsTelemetry', () => ({
+  beginSettingsSave: vi.fn(),
+  changedFields: (user, params) =>
+    Object.keys(params).map((field) => ({ field, kind: 'replaced' })),
+  noteSettingsSave: (...args) => mockNoteSettingsSave(...args),
 }))
 
 vi.mock('~/api', () => ({
@@ -103,8 +117,17 @@ vi.mock('@capgo/capacitor-social-login', () => ({
   SocialLogin: { initialize: vi.fn(), logout: vi.fn() },
 }))
 
+// A controllable compose-store mock so we can verify the resume-after-login wiring
+// in setUser(). resumePendingSubmit returns a promise because setUser calls .catch()
+// on it.
+const mockCompose = vi.hoisted(() => ({
+  pendingSubmit: null,
+  clearPendingSubmit: vi.fn(),
+  resumePendingSubmit: vi.fn(() => Promise.resolve()),
+}))
+
 vi.mock('~/stores/compose', () => ({
-  useComposeStore: () => ({}),
+  useComposeStore: () => mockCompose,
 }))
 
 const mockFetchBatch = vi.fn()
@@ -127,7 +150,10 @@ const mockMiscStore = {
   modtools: false,
   source: null,
   setAppOutOfDate: mockSetAppOutOfDate,
-  marketingConsent: undefined,
+  marketingConsentTicked: false,
+  setMarketingConsentTicked(value) {
+    this.marketingConsentTicked = value
+  },
 }
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
@@ -170,10 +196,30 @@ describe('auth store', () => {
     Object.assign(mockMiscStore, {
       modtools: false,
       source: null,
-      marketingConsent: undefined,
+      marketingConsentTicked: false,
     })
+    mockCompose.pendingSubmit = null
     store = useAuthStore()
     store.init({ public: { BUILD_DATE: '2026-01-01' }, app: {} })
+  })
+
+  describe('resume deferred submit on login', () => {
+    it('fires resumePendingSubmit when a deferred submit is pending', () => {
+      mockCompose.pendingSubmit = {
+        message: { type: 'Offer', item: 'Sofa' },
+        email: 'a@b.com',
+        options: {},
+        at: Date.now(),
+      }
+      store.setUser({ id: 42, displayname: 'Test' })
+      expect(mockCompose.resumePendingSubmit).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not fire resumePendingSubmit when nothing is pending', () => {
+      mockCompose.pendingSubmit = null
+      store.setUser({ id: 42, displayname: 'Test' })
+      expect(mockCompose.resumePendingSubmit).not.toHaveBeenCalled()
+    })
   })
 
   describe('initial state', () => {
@@ -670,6 +716,87 @@ describe('auth store', () => {
     })
   })
 
+  // plans/active/2026-09-27-lockdown-switch.md section 10.5: display name,
+  // about me and avatar changes are refused with a short message while the
+  // "profile" surface is held; other PATCH /session fields (own settings)
+  // are unaffected. saveAndGet is the single choke point both go through, so
+  // it wraps the save in runLockdownAware and rethrows a tagged, readable
+  // error instead of a raw 409 - see api/lockdownConflict.js.
+  describe('saveAndGet flow telemetry', () => {
+    beforeEach(() => {
+      resetFlowCalls()
+      mockNoteSettingsSave.mockClear()
+    })
+
+    it('notes which fields the save changes, then records a submit and an ok result', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockSave.mockResolvedValue({})
+      mockFetchv2.mockResolvedValue({ me: { id: 42 }, groups: [] })
+
+      await store.saveAndGet({ displayname: 'New Name' })
+
+      expect(mockNoteSettingsSave).toHaveBeenCalledWith([
+        { field: 'displayname', kind: 'replaced' },
+      ])
+      expect(flowCalls).toEqual([['submit'], ['submitResult', true, 200, null]])
+    })
+
+    it('records a failed result with the status, and rethrows', async () => {
+      const err = new Error('Server said: secret@example.com is wrong')
+      err.response = { status: 500 }
+      mockSave.mockRejectedValue(err)
+
+      await expect(store.saveAndGet({ displayname: 'x' })).rejects.toThrow()
+
+      expect(flowCalls).toContainEqual(['submitResult', false, 500, 'error'])
+      expect(JSON.stringify(flowCalls)).not.toContain('secret')
+    })
+
+    it('codes a lockdown refusal as lockdown', async () => {
+      const err = new Error('Conflict')
+      err.response = { status: 409, data: { lockdown: true, status: 'Paused' } }
+      mockSave.mockRejectedValue(err)
+
+      await expect(store.saveAndGet({ displayname: 'x' })).rejects.toThrow()
+
+      expect(flowCalls).toContainEqual(['submitResult', false, 409, 'lockdown'])
+    })
+  })
+
+  describe('saveAndGet lockdown refusal', () => {
+    it('rethrows a tagged, readable error when PATCH /session returns a lockdown 409', async () => {
+      const err = new Error('Conflict')
+      err.response = {
+        status: 409,
+        data: {
+          lockdown: true,
+          status:
+            'Changes are paused for a few hours while we deal with a security incident.',
+        },
+      }
+      mockSave.mockRejectedValue(err)
+      mockFetchv2.mockResolvedValue({ me: { id: 42 }, groups: [] })
+
+      await expect(
+        store.saveAndGet({ displayname: 'New Name' })
+      ).rejects.toMatchObject({
+        lockdownRefused: true,
+        message:
+          'Changes are paused for a few hours while we deal with a security incident.',
+      })
+    })
+
+    it('does not tag an ordinary error as a lockdown refusal', async () => {
+      const err = new Error('Unauthorized')
+      err.response = { status: 401 }
+      mockSave.mockRejectedValue(err)
+
+      await expect(
+        store.saveAndGet({ displayname: 'New Name' })
+      ).rejects.toThrow('Unauthorized')
+    })
+  })
+
   describe('fetchUser app out of date (ret:123)', () => {
     it('flags the app as out of date and preserves auth when session returns ret:123', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
@@ -928,17 +1055,17 @@ describe('auth store', () => {
       store.setAuth('valid-jwt', 'valid-persistent')
       mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
 
-      await store.setGroup({ groupid: 5, role: 'Member' })
+      await store.setGroup({ groupid: 5, role: ROLE_MEMBER })
 
       expect(mockUpdateMembership).toHaveBeenCalledWith({
         groupid: 5,
-        role: 'Member',
+        role: ROLE_MEMBER,
       })
       expect(mockFetchv2).toHaveBeenCalled()
     })
 
     it('setGroup skips the refetch when nofetch is set', async () => {
-      await store.setGroup({ groupid: 5, role: 'Member' }, true)
+      await store.setGroup({ groupid: 5, role: ROLE_MEMBER }, true)
 
       expect(mockUpdateMembership).toHaveBeenCalled()
       expect(mockFetchv2).not.toHaveBeenCalled()
@@ -959,15 +1086,39 @@ describe('auth store', () => {
       mockJoinGroup.mockResolvedValue({})
       mockFetchv2.mockResolvedValue({ me: { id: 9 }, groups: [] })
 
-      const user = await store.joinGroup(9, 20, true)
+      const user = await store.joinGroup(9, 20, 'manual')
 
       expect(mockJoinGroup).toHaveBeenCalledWith({
         userid: 9,
         groupid: 20,
+        origin: 'manual',
         manual: true,
       })
       expect(user.id).toBe(9)
     })
+
+    it('joinGroup still sends manual=false for a reply join, for an API from before origin', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockJoinGroup.mockResolvedValue({})
+      mockFetchv2.mockResolvedValue({ me: { id: 9 }, groups: [] })
+
+      await store.joinGroup(9, 20, 'replied')
+
+      expect(mockJoinGroup).toHaveBeenCalledWith({
+        userid: 9,
+        groupid: 20,
+        origin: 'replied',
+        manual: false,
+      })
+    })
+
+    it.each([undefined, '', 'moderator', 'tn_unaddressed', true, false])(
+      'joinGroup refuses an origin a member cannot give (%s) without calling the API',
+      async (origin) => {
+        await expect(store.joinGroup(9, 20, origin)).rejects.toThrow(/origin/)
+        expect(mockJoinGroup).not.toHaveBeenCalled()
+      }
+    )
 
     it('joinGroup swallows a banned-member 403 and returns the current user silently', async () => {
       store.user = { id: 9 }
@@ -975,7 +1126,7 @@ describe('auth store', () => {
       err.response = { status: 403, data: 'Failed - banned' }
       mockJoinGroup.mockRejectedValue(err)
 
-      const user = await store.joinGroup(9, 20, false)
+      const user = await store.joinGroup(9, 20, 'replied')
 
       expect(user.id).toBe(9)
       expect(mockFetchv2).not.toHaveBeenCalled()
@@ -986,7 +1137,7 @@ describe('auth store', () => {
       err.response = { status: 500, data: 'boom' }
       mockJoinGroup.mockRejectedValue(err)
 
-      await expect(store.joinGroup(9, 20, false)).rejects.toThrow(
+      await expect(store.joinGroup(9, 20, 'replied')).rejects.toThrow(
         'Server error'
       )
     })
@@ -1118,10 +1269,11 @@ describe('auth store', () => {
     })
   })
 
-  describe('fetchUser marketing consent sync', () => {
-    it('syncs local marketing consent to the profile when it differs', async () => {
+  // The server holds marketing consent. The login box only ever gives it, and only when ticked.
+  describe('fetchUser marketing consent from the login box', () => {
+    it('saves consent when the member ticked the box, then clears the tick', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
-      mockMiscStore.marketingConsent = true
+      mockMiscStore.marketingConsentTicked = true
       mockFetchv2.mockResolvedValue({
         me: { id: 1, marketingconsent: false },
         groups: [],
@@ -1132,11 +1284,28 @@ describe('auth store', () => {
 
       expect(mockSave).toHaveBeenCalledWith({ marketingconsent: true })
       expect(store.user.marketingconsent).toBe(true)
+      expect(mockMiscStore.marketingConsentTicked).toBe(false)
     })
 
-    it('does not resync when local consent already matches the profile', async () => {
+    it('leaves the profile alone when the box was not ticked', async () => {
+      for (const marketingconsent of [false, true]) {
+        store.setAuth('valid-jwt', 'valid-persistent')
+        mockMiscStore.marketingConsentTicked = false
+        mockFetchv2.mockResolvedValue({
+          me: { id: 1, marketingconsent },
+          groups: [],
+        })
+
+        await store.fetchUser()
+
+        expect(mockSave).not.toHaveBeenCalled()
+        expect(store.user.marketingconsent).toBe(marketingconsent)
+      }
+    })
+
+    it('does not save when the member has already agreed, and clears the tick', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
-      mockMiscStore.marketingConsent = true
+      mockMiscStore.marketingConsentTicked = true
       mockFetchv2.mockResolvedValue({
         me: { id: 1, marketingconsent: true },
         groups: [],
@@ -1145,11 +1314,12 @@ describe('auth store', () => {
       await store.fetchUser()
 
       expect(mockSave).not.toHaveBeenCalled()
+      expect(mockMiscStore.marketingConsentTicked).toBe(false)
     })
 
-    it('survives the consent-sync save failing', async () => {
+    it('keeps the tick when the save fails, so the next fetch tries again', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
-      mockMiscStore.marketingConsent = true
+      mockMiscStore.marketingConsentTicked = true
       mockFetchv2.mockResolvedValue({
         me: { id: 1, marketingconsent: false },
         groups: [],
@@ -1158,6 +1328,7 @@ describe('auth store', () => {
 
       await expect(store.fetchUser()).resolves.toBeDefined()
       expect(store.user.id).toBe(1)
+      expect(mockMiscStore.marketingConsentTicked).toBe(true)
     })
   })
 
@@ -1217,9 +1388,24 @@ describe('auth store', () => {
       expect(store.user).toBeNull()
     })
 
-    it('wipes auth on a network error with no response', async () => {
+    // A phone resuming before its connection is back gets "Too many retries"
+    // with no HTTP response at all. That says nothing about the credentials,
+    // so it must not log the member out.
+    it('preserves auth on a network error with no response', async () => {
       store.setAuth('valid-jwt', 'valid-persistent')
-      mockFetchv2.mockRejectedValue(new Error('network down'))
+      mockFetchv2.mockRejectedValue(new Error('Too many retries, give up'))
+
+      await store.fetchUser()
+
+      expect(store.auth.jwt).toBe('valid-jwt')
+      expect(store.auth.persistent).toBe('valid-persistent')
+    })
+
+    it('wipes auth on 404', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      const err = new Error('Not found')
+      err.response = { status: 404 }
+      mockFetchv2.mockRejectedValue(err)
 
       await store.fetchUser()
 
@@ -1230,15 +1416,15 @@ describe('auth store', () => {
   describe('member getter', () => {
     it('returns the role for a group the user belongs to', () => {
       store.user = { id: 1 }
-      store.groups = [{ groupid: 10, role: 'Owner' }]
+      store.groups = [{ groupid: 10, role: ROLE_OWNER }]
 
-      expect(store.member(10)).toBe('Owner')
-      expect(store.member('10')).toBe('Owner')
+      expect(store.member(10)).toBe(ROLE_OWNER)
+      expect(store.member('10')).toBe(ROLE_OWNER)
     })
 
     it('returns false when the user does not belong to the group', () => {
       store.user = { id: 1 }
-      store.groups = [{ groupid: 10, role: 'Owner' }]
+      store.groups = [{ groupid: 10, role: ROLE_OWNER }]
 
       expect(store.member(20)).toBe(false)
     })

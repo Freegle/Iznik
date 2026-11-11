@@ -2,6 +2,7 @@ package misc
 
 import (
 	"bytes"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -82,6 +83,23 @@ func TestNewLokiMiddleware_FreegleContextHeadersPropagated(t *testing.T) {
 	assert.Equal(t, "modtools", msg["freegle_site"])
 }
 
+// The flow instance header lets the message-create api line be joined to its UX flow events.
+func TestNewLokiMiddleware_FlowInstanceHeaderPropagated(t *testing.T) {
+	dir := t.TempDir()
+	app := newTraceHeaderApp(t, dir)
+	app.Get("/hello", func(c *fiber.Ctx) error { return c.SendString("world") })
+
+	req := httptest.NewRequest("GET", "/hello", nil)
+	req.Header.Set("X-Freegle-Flow-Instance", "3f1c0b52-aaaa-bbbb-cccc-0123456789ab")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	GetLoki().Flush()
+	msg := messageOf(t, findEntryBySource(t, dir, "api"))
+	assert.Equal(t, "3f1c0b52-aaaa-bbbb-cccc-0123456789ab", msg["freegle_flow_instance"])
+}
+
 func TestNewLokiMiddleware_AbsentTraceHeaders_OmittedFromMessage(t *testing.T) {
 	// Covers the false side of each "ok && value != ''" guard: none of the
 	// optional trace/session/freegle keys should appear when the headers
@@ -97,7 +115,7 @@ func TestNewLokiMiddleware_AbsentTraceHeaders_OmittedFromMessage(t *testing.T) {
 
 	GetLoki().Flush()
 	msg := messageOf(t, findEntryBySource(t, dir, "api"))
-	for _, key := range []string{"trace_id", "session_id", "client_timestamp", "freegle_session", "freegle_page", "freegle_modal", "freegle_site"} {
+	for _, key := range []string{"trace_id", "session_id", "client_timestamp", "freegle_session", "freegle_page", "freegle_modal", "freegle_site", "freegle_flow_instance"} {
 		_, present := msg[key]
 		assert.False(t, present, "unexpected key %q in message", key)
 	}
@@ -221,4 +239,52 @@ func TestNewLokiMiddleware_QueryParamsCaptured(t *testing.T) {
 	require.True(t, ok, "query_params must be present when the request has a query string")
 	assert.Equal(t, "chair", params["term"])
 	assert.Equal(t, "2", params["page"])
+}
+
+func TestNewLokiMiddleware_LoginSecretsRedacted(t *testing.T) {
+	// A login carries the password in, and the persistent session token and jwt
+	// out. None of them may reach Loki; the email and the rest of the entry stay.
+	dir := t.TempDir()
+	app := newTraceHeaderApp(t, dir)
+	app.Post("/session", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"ret":        0,
+			"jwt":        "eyJhbGciOiJIUzI1NiJ9.secretjwt",
+			"persistent": fiber.Map{"id": 1, "series": 2, "token": "abcd1234", "userid": 3},
+		})
+	})
+
+	body := []byte(`{"email":"someone@example.com","password":"hunter2!","modtools":false}`)
+	req := httptest.NewRequest("POST", "/session?k=unsubkey&partner=partnerkey&page=2", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	GetLoki().Flush()
+	msg := messageOf(t, findEntryBySource(t, dir, "api"))
+
+	reqBody, ok := msg["request_body"].(map[string]interface{})
+	require.True(t, ok, "request_body must be captured for a JSON request")
+	assert.Equal(t, redactedValue, reqBody["password"])
+	assert.Equal(t, "someone@example.com", reqBody["email"])
+
+	respBody, ok := msg["response_body"].(map[string]interface{})
+	require.True(t, ok, "response_body must be captured for a JSON response")
+	assert.Equal(t, redactedValue, respBody["jwt"])
+	assert.Equal(t, redactedValue, respBody["persistent"])
+
+	params, ok := msg["query_params"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, redactedValue, params["k"])
+	assert.Equal(t, redactedValue, params["partner"])
+	assert.Equal(t, "2", params["page"])
+
+	// No secret appears anywhere in what was written.
+	for _, e := range readAllLogEntries(t, dir) {
+		line := fmt.Sprint(e)
+		for _, secret := range []string{"hunter2!", "abcd1234", "secretjwt", "unsubkey", "partnerkey"} {
+			assert.NotContains(t, line, secret)
+		}
+	}
 }

@@ -331,7 +331,7 @@ export function constructMultiLine(address) {
     address.subbuildingname,
     address.pobox,
     address.departmentname,
-    address.organizationname,
+    address.organisationname,
     address.postcodetype,
     address.suorganizationindicator,
     address.deliverypointsuffix

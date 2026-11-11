@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -60,14 +61,14 @@ func TestListMessagesMT_SearchMemberFindsPostsByNameAndEmail(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// CreateTestUser gives the poster fullname "Test User <prefix>_poster",
 	// lastname "<prefix>_poster" and email "<prefix>_poster@test.com".
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: searchmemb sofa (EH1)", 55.9533, -3.1883)
 	defer func() {
 		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
@@ -115,12 +116,12 @@ func TestListMessagesMT_SearchMemberIsScopedToCurrentMembers(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
-	posterID := CreateTestUser(t, prefix+"_gone", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_gone", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: departed sofa (EH1)", 55.9533, -3.1883)
 	defer func() {
 		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
@@ -151,8 +152,8 @@ func TestListMessagesMT_SearchMemberQueryErrorIsNotNothingFound(t *testing.T) {
 	prefix := uniquePrefix("srchmemb_err")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	status, _ := mtSearchMemberIDs(t, modToken, groupID, prefix)

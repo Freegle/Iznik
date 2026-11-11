@@ -2,6 +2,7 @@
 
 namespace App\Monitoring;
 
+use App\Models\ChatMessage;
 use App\Models\MessageGroup;
 use App\Monitoring\Checks\BacklogCheck;
 use App\Monitoring\Checks\CallbackCheck;
@@ -118,7 +119,7 @@ class ScheduledOutcomeRegistry
                 ->enabledWhen(fn () => trim((string) config('freegle.digest.daily_allowlist', '')) !== '')
                 ->activeBetween(13, 24, $tz),
 
-            // tn:sync (every minute) ingests TrashNothing posts into `messages`,
+            // tn:sync (every ten seconds) ingests TrashNothing posts into `messages`,
             // stamping messages.tnpostid. TN is a high-volume feed, so a window
             // with NO post at all means either TN is down/returning nothing or
             // our ingestion is failing every cycle — the two cases this alert
@@ -183,7 +184,9 @@ class ScheduledOutcomeRegistry
             // push:daily-posts trails the digest by 30 minutes and reads the SAME
             // getPostsForUser(), so it shares the failure mode exactly: if that query gets
             // slow again, this overruns too and members get push notifications at odd hours.
-            // Its cursor is its own row (mode='push').
+            // Its cursor is its own row (mode='push'). It can also overrun on its own: on
+            // 2026-10-15 the digest finished early and the push, then one process, ran a fifth
+            // slower and passed 12:00. So the hint says to compare the two.
             $this->finishedInsideWindow(
                 'push:daily-posts window',
                 'Daily posts push finished inside its send window',
@@ -193,11 +196,83 @@ class ScheduledOutcomeRegistry
                 12,
                 'members were pushed one',
                 fn ($q) => $q->where('mode', 'push'),
-                'It reads the same query as the daily digest - check that first.'
+                'It reads the same query as the daily digest: if the digest also ran late, look there; if not, compare the push shard logs.'
             )
                 ->enabledWhen(fn () => trim((string) config('freegle.posts_push_allowlist', '')) !== ''),
 
             // ---- Cursor/queue: is a worker stuck (backlog piling up)? -------
+
+            // embeddings:generate (every 5 min) embeds each live post in messages_spatial that
+            // has no messages_embeddings row; without one the post is invisible to vector
+            // search and to the matched-posts email. Nothing throws when it falls behind, so
+            // two checks watch it from outside, on the exact predicate the command uses.
+            //
+            // Lag: a post that arrived between the lookback horizon and the max age and still
+            // has no embedding was passed over by several runs. The horizon matters: a
+            // handful of posts can never be embedded (about 0.8% of live posts at the last
+            // count), and once they age past it they stop counting, so they cannot hold the
+            // check red forever.
+            (new BacklogCheck(
+                'embeddings:generate',
+                'messages_spatial as ms',
+                'ms.arrival',
+                (int) config('freegle.monitoring.embeddings_lag_max_age_minutes', 30),
+                fn ($q) => $q
+                    ->leftJoin('messages_embeddings as me', 'me.msgid', '=', 'ms.msgid')
+                    ->whereNull('me.msgid')
+                    ->where('ms.successful', 0)
+                    ->where('ms.promised', 0)
+                    ->where('ms.arrival', '>=', Carbon::now()->subHours(
+                        (int) config('freegle.monitoring.embeddings_lag_lookback_hours', 6)
+                    )),
+                (int) config('freegle.monitoring.embeddings_lag_threshold', 5),
+            ))
+                ->describedAs('New live posts getting embedded for vector search')
+                ->inCategory('cursor-staleness'),
+
+            // Coverage: the share of live posts that carry an embedding. This catches the slow
+            // slide the lag check cannot, such as the embedder failing on a class of posts, or
+            // a model change that leaves old rows behind.
+            (new CallbackCheck(
+                'embeddings:generate coverage',
+                function (CarbonInterface $now) {
+                    $slug = 'embeddings:generate coverage';
+
+                    $live = DB::table('messages_spatial')
+                        ->where('successful', 0)
+                        ->where('promised', 0)
+                        ->count();
+
+                    if ($live === 0) {
+                        return OutcomeResult::skipped($slug, 'no live posts in messages_spatial');
+                    }
+
+                    $embedded = DB::table('messages_spatial as ms')
+                        ->join('messages_embeddings as me', 'me.msgid', '=', 'ms.msgid')
+                        ->where('ms.successful', 0)
+                        ->where('ms.promised', 0)
+                        ->count();
+
+                    $percent = round(100 * $embedded / $live, 1);
+                    $floor = (float) config('freegle.monitoring.embeddings_min_coverage_percent', 97);
+                    $missing = $live - $embedded;
+
+                    if ($percent < $floor) {
+                        return OutcomeResult::breach(
+                            $slug,
+                            "only {$percent}% of {$live} live posts have an embedding "
+                            ."({$missing} missing, floor {$floor}%) - is embeddings:generate failing?"
+                        );
+                    }
+
+                    return OutcomeResult::ok(
+                        $slug,
+                        "{$percent}% of {$live} live posts have an embedding (floor {$floor}%)"
+                    );
+                }
+            ))
+                ->describedAs('Live posts carrying a subject embedding')
+                ->inCategory('cursor-staleness'),
 
             // queue:background-tasks drains the Go-API -> Laravel task bridge.
             (new BacklogCheck(
@@ -209,6 +284,31 @@ class ScheduledOutcomeRegistry
                 (int) config('freegle.monitoring.background_tasks_backlog_threshold', 0),
             ))
                 ->describedAs('Go-API background task queue not backing up')
+                ->inCategory('cursor-staleness'),
+
+            // support:first-pass runs the AI first pass for each referred support case and is the
+            // only thing that mails the referral to Support. A case that has reached a final state
+            // and is still unmailed after 15 minutes means the mailer is stuck; a case still Pending
+            // or Running after 70 minutes means the pass is stuck (the command fails an aged Pending
+            // case after 60 and reaps a Running one after about 13).
+            (new BacklogCheck(
+                'support:first-pass',
+                'support_cases',
+                'created_at',
+                15,
+                fn ($q) => $q->whereIn('firstpass_status', ['Done', 'Failed', 'Skipped'])->whereNull('mailed_at'),
+            ))
+                ->describedAs('Support case referral mails not backing up')
+                ->inCategory('cursor-staleness'),
+
+            (new BacklogCheck(
+                'support:first-pass stuck',
+                'support_cases',
+                'created_at',
+                70,
+                fn ($q) => $q->whereIn('firstpass_status', ['Pending', 'Running']),
+            ))
+                ->describedAs('Support case first passes not stuck')
                 ->inCategory('cursor-staleness'),
 
             // ripple:expand (every minute) advances rippling_reach rows whose
@@ -263,26 +363,35 @@ class ScheduledOutcomeRegistry
 
             // chats:process-incoming (every minute) clears processingrequired
             // on every visited chat message (success or fail). A row still
-            // flagged past $backlogMin = the chat processor is stuck.
+            // flagged past $backlogMin = the chat processor is stuck. A reply
+            // waiting for its sender to confirm it (chat_prompts.heldchatmsgid),
+            // and what the sender wrote after it while the question is open, are
+            // left flagged on purpose, so they are not backlog.
             (new BacklogCheck(
                 'chats:process-incoming',
                 'chat_messages',
                 'date',
                 $backlogMin,
-                fn ($q) => $q->where('processingrequired', 1),
+                fn ($q) => $q->where('processingrequired', 1)
+                    // keep-raw: the shared correlated EXISTS of ChatMessage::heldByQuestionSql, which two subqueries over chat_prompts and an OR make impossible to state with the builder.
+                    ->whereRaw('NOT '.ChatMessage::heldByQuestionSql('chat_messages', true)),
             ))
                 ->describedAs('Incoming chat-message processing queue not backing up')
                 ->inCategory('cursor-staleness'),
 
             // memberships:process (every minute) clears processingrequired on
             // every history row it visits. A row still flagged past $backlogMin
-            // = welcome-mail / review processing is stuck.
+            // = welcome-mail / review processing is stuck. added is the join
+            // date, and a backfill writes rows dated from joins months ago, so
+            // only rows that joined within the last day count: a stuck worker
+            // still leaves those behind.
             (new BacklogCheck(
                 'memberships:process',
                 'memberships_history',
                 'added',
                 $backlogMin,
-                fn ($q) => $q->where('processingrequired', 1),
+                fn ($q) => $q->where('processingrequired', 1)
+                    ->where('added', '>=', now()->subDay()),
             ))
                 ->describedAs('Membership-history processing queue not backing up')
                 ->inCategory('cursor-staleness'),

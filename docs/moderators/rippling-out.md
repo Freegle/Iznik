@@ -26,6 +26,28 @@ a post you think is out of their area.
 
 ---
 
+## A rippled-in post is not a rippled member
+
+Two different things get called "rippled", and what you can do depends on which one you
+are looking at:
+
+- **A post that rippled in.** It started on a neighbouring community and reached yours. The
+  blue "rippled in" notice on the post says so. This is about the *post*.
+- **A member whose membership rippling created.** They are on your list only because a post
+  of theirs came in. This is about the *member*, and it ends once they do something with your
+  community (below).
+
+The two are linked, because the member's membership is what carries the post. But the post
+stays "rippled in" for good, while the member can become an ordinary one within a day. So a
+rippled-in post can have a poster who is, by now, one of your own members. The notice on the
+post then says so, and **the poster is written to as any member is**: Reject sends your
+usual message, and Blank Reply and the standard messages are offered.
+
+If you just want a post gone with nothing sent, use **Delete**. It takes the post off your
+community only and sends nothing.
+
+---
+
 ## How posters appear in your community
 
 When a post ripples into your community, **the poster is automatically joined as a
@@ -36,21 +58,33 @@ It is not a relationship with your community, though, and it does not make the p
 yours to write to. They posted somewhere else and may never have heard of you - see
 [Talking to the poster](#talking-to-the-poster) below.
 
+The exception is a Trash Nothing post whose poster didn't choose the community it was placed
+on. That post still ripples, but the poster isn't joined to the communities it reaches and
+isn't sent the intro email.
+
 What this means in practice:
 
 - You moderate their post exactly as you would any other: approve it, or take it off
   your community.
-- The poster appears in your member list, but with no Chat button and no standard
-  messages that only write to a member, because there is no conversation for you to
-  start. If they write to you first, that chat works as normal.
-- You can still take them off your community or ban them, and that happens as usual. It
-  is done quietly: they never joined you, so a message about it would be as confusing as
-  one about their post.
+- The poster appears in your member list, and you can contact them from there as you
+  would any member: **Chat**, **Mail** and the member standard messages all work. Taking
+  them off your community or banning them works as usual too, with the message you choose.
+  Only replies about the rippled post itself stay with the community they posted it on (see
+  below).
 - Your community's member count may include rippled members.
 - The join is recorded as **'Rippled'** in the membership log, so you can distinguish it
-  from a manual or organic join if you need to.
-- If they later join your community themselves, or move house into your area, the
-  membership becomes an ordinary one and none of the above applies any more.
+  from a manual or organic join if you need to. A TrashNothing poster placed on your
+  community is logged **'TrashNothing unaddressed'** instead, and is treated the same way
+  until they do something with it.
+- The membership becomes an ordinary one once they have something to do with your
+  community. That is when they:
+  - join it themselves, or move house into your area;
+  - post on it;
+  - reply to a post that was posted on it;
+  - write back to one of your members about their rippled post, for example to arrange a
+    collection.
+
+  This is checked every few minutes, so the change is not instant.
 
 ### Talking to the poster
 
@@ -63,6 +97,11 @@ So on a rippled-in post you will not see Blank Reply, or the standard messages w
 job is to write to the poster. Approving it and taking it off your community are still
 yours to do. This holds however you remove it - the Reject button, a standard message
 that rejects, or a standard message that deletes.
+
+Once the poster is an ordinary member of your community (see above), you can write to them
+about the post too: Blank Reply and those standard messages come back, and taking the post
+off your community tells them, as it would for their own community. Marking the post
+Taken, Received or Withdrawn stays with the community they posted it on.
 
 ---
 
@@ -367,9 +406,11 @@ whose item has rippled widely will not be incorrectly flagged as a spammer.
 
 If you reject a post that rippled in from another community, two things happen:
 
-1. **The poster is not told.** They posted to their own community and the post is still
-   visible there. A faraway community saying "not for us" is not something they need to
-   hear about.
+1. **The poster is not told** - unless they have become an ordinary member of your
+   community (see above), in which case Reject sends your usual message like any other
+   rejection, and Delete is the way to remove it silently. Otherwise they posted to
+   their own community and the post is still visible there. A faraway community saying
+   "not for us" is not something they need to hear about.
 2. **The post stops showing in your community's area.** It carries on being visible
    everywhere else it has been approved. Your rejection simply trims your patch off the map.
 
@@ -402,9 +443,11 @@ stranded on the neighbouring communities it had already reached.
 The clean-up happens on the next rippling run (within about a minute), not the instant you
 click - so a rippled copy may linger very briefly before it disappears.
 
-(**Back to Pending** now works differently from Delete/Reject: it keeps each community's
-copy for per-group review and does **not** re-ripple on re-approval - see **Reporting a
-post** below.)
+(**Back to Pending** works differently from Delete/Reject. From the home community it withdraws
+the rippled copies at once and the post never ripples again; from anywhere else it keeps each
+community's copy for per-group review and does **not** re-ripple on re-approval. Either way, a
+copy a community's own moderator has already approved by hand stays live there - see
+**Moving a post back to pending in ModTools** below.)
 
 While a post is in that frozen state we stop advertising it: it is not included in daily
 digests, immediate emails or phone notifications, because it is under review and we should
@@ -496,7 +539,10 @@ A post being **held** (shown as "held by" a moderator) is **per community**, on 
 community's own Pending copy, and only applies while the copy is Pending. It is
 **independent**: a copy being held on one community has no effect on the same post's copy on
 any other community. You approve or reject your own community's copy regardless of whether
-another community has held, approved, or rejected theirs.
+another community has held, approved, or rejected theirs. If you moderate several of the
+communities a post is waiting on, one Approve, Reject or Delete on its card acts on all of
+your copies at once - see
+[a post pending on several of your communities](moderating-posts.md#a-post-pending-on-several-of-your-communities).
 
 Because each community's copy is independent and stays put, a reported post **cannot
 flip-flop**: one community approving it will never re-create a copy on a community that has
@@ -505,36 +551,42 @@ rejected it.
 ### Moving a post back to pending in ModTools
 
 You don't have to go via the Freegle site at all. Moving a post from **Approved back to
-Pending** in **ModTools** - the ordinary moderation action - now does the same thing as a
-report: it pulls the post to Pending on **every** community it is on (its home community and
-every rippled copy), not just yours.
+Pending** in **ModTools** - the ordinary moderation action - pulls the post to Pending on
+every community it is on (its home community and every rippled copy), not just yours.
 
-So one moderator catching a problem in ModTools takes the post off the board **everywhere**
-for review, instead of leaving live copies stranded on the neighbouring communities you
-cannot see. As with a report, the copies are **kept** (not deleted), each community approves
-or rejects its own, and **re-approving brings a copy back without re-notifying members or
-re-rippling from scratch**.
+So one moderator catching a problem in ModTools takes the post off the board for review,
+instead of leaving live copies stranded on the neighbouring communities you cannot see. As
+with a report, the copies are **kept** (not deleted), each community approves or rejects its
+own, and **re-approving brings a copy back without re-notifying members or re-rippling from
+scratch**.
 
-If you moderate the post's **home** community, the other communities cannot approve their
-copies until you approve yours again (see above). If you only moderate a community it
-rippled into, your Back to Pending does not stop anyone else approving theirs.
+**A copy another community's moderator has already approved by hand stays live.** That
+community has reviewed the post, so it is not asked to again: its copy stays Approved, still
+shows as approved by that moderator, and nothing about it appears in their pending list or
+their logs. This applies to the home community's copy too, when one of its moderators
+approved it. A copy that went live without a moderator approving it - by the content check,
+by auto-approval, or by rippling in - is pulled back. Your own community's copy always goes
+back, whoever approved it.
+
+If you only moderate a community it rippled into, your Back to Pending does not stop anyone
+else approving theirs.
 
 **There is one exception, when a moderator of the post's home community does it.** The
-home community is where the poster posted, so if one of its moderators sends the post back,
-the neighbouring communities' copies are **locked**: their moderators cannot approve them
-until the home community approves its own copy again. Their pending list says why ("The
-home community is reviewing this post, so it can't be approved here until they approve
-it"), and so does the log, which names the home community rather than just "a moderator".
-They can still reject their copy or hold it.
+home community is where the poster posted, and its moderators have taken the decision, so the
+neighbouring communities are not each given a copy to decide again. The post is **withdrawn**
+from every community it rippled into, straight away, and their logs say it was withdrawn
+because the home community sent it back. It does **not** appear in their pending lists. A
+community whose own moderator had already approved its copy by hand keeps it live.
 
-When the home copy is approved, the locks lift and each copy goes back to ordinary
-per-community moderation: nothing is re-sent to members and the post does not ripple out
-again from scratch. If the home community deletes or rejects the post instead, every
-rippled copy is removed, even though it had been sent back to pending first.
+The post then **never ripples again**: not when the home community approves it, and not after
+the poster reposts it or it expires and is reposted. It stays on its home community, and on any
+community that kept its hand-approved copy.
 
 A Back to Pending by a moderator of a community the post only rippled **into**, and a
-report by members, do **not** lock anything. Those copies stay independent, as described
-above.
+report by members, withdraw nothing. Those copies stay independent, as described above.
+
+A report by members, or by a moderator, is not a moderator's review of each copy, so it pulls
+every copy back to Pending, hand-approved ones included.
 
 ---
 
@@ -548,8 +600,9 @@ otherwise each copy would carry the same item further on its own account. Once t
 copies have been merged into a single post, it ripples normally. A TrashNothing item
 posted to one community ripples straight away, exactly like a member's post.
 
-TrashNothing posts now arrive as a single post per item, placed on the community whose
-area contains the item, so new items never start out as several copies and ripple straight
+TrashNothing posts now arrive as a single post per item, placed on the community the
+member chose on TrashNothing, or on the community whose area contains the item if they chose
+none, so new items never start out as several copies and ripple straight
 away. The exception only still applies to older items that already exist as several copies,
 until those are merged. On your own community, TrashNothing posts behave exactly as they
 always have, and replies to them follow the same reach rules as everything else.

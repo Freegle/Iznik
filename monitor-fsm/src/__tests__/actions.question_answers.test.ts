@@ -41,6 +41,7 @@ beforeEach(async () => {
   // The quote normally comes from Discourse over the network. Stub it so tests
   // exercise the queueing logic, not connectivity.
   vi.spyOn(mod.questionAnswerDeps, 'fetchReporterQuote').mockResolvedValue('')
+  vi.spyOn(mod.questionAnswerDeps, 'postDiscourseReply').mockResolvedValue({ ok: true })
 })
 
 afterEach(() => {
@@ -72,7 +73,7 @@ describe('list_unanswered_questions action', () => {
     expect(res.questions[0]).toMatchObject({ topic: 10005, post: 18, reporter: 'Jeni' })
   })
 
-  it('leaves out a question that already has a draft waiting for approval', async () => {
+  it('leaves out a question that already has a reply waiting to be sent', async () => {
     addQuestion(10005, 18)
     queueDiscourseDraft(db, { topic: 10005, post: 18, username: 'Jeni', quote: 'q', body: 'a' })
     expect((await listQuestions({}, {})).count).toBe(0)
@@ -117,16 +118,16 @@ describe('list_unanswered_questions action', () => {
 })
 
 describe('persist_question_answers action', () => {
-  it('queues a plain-English answer as a draft awaiting human approval', async () => {
+  it('posts a plain-English answer and records it as approved and sent', async () => {
     addQuestion(10005, 18)
     const res = await persistAnswers({}, {
       questionAnswers: [{ topic: 10005, post: 18, answer: PLAIN_ANSWER, confidence: 'high' }],
     })
-    expect(res.queued).toBe(1)
+    expect(res.posted).toBe(1)
     const draft = db.prepare('SELECT * FROM discourse_draft WHERE topic = 10005 AND post = 18').get() as any
     expect(draft.body).toContain('only removes it from the group you are on')
-    expect(draft.approved_at).toBeNull()
-    expect(draft.posted_at).toBeNull()
+    expect(draft.approved_at).not.toBeNull()
+    expect(draft.posted_at).not.toBeNull()
     expect(draft.quote).toContain('Does deleting a rippled post')
   })
 
@@ -139,21 +140,12 @@ describe('persist_question_answers action', () => {
     expect(draft.body).toContain('Technical details: https://example.org/docs/rippling')
   })
 
-  it('does not post anything to Discourse', async () => {
-    addQuestion(10005, 18)
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
-    await persistAnswers({}, {
-      questionAnswers: [{ topic: 10005, post: 18, answer: PLAIN_ANSWER, confidence: 'high' }],
-    })
-    expect(fetchSpy).not.toHaveBeenCalled()
-  })
-
   it('defers to a human when the delegate is not confident', async () => {
     addQuestion(10005, 18)
     const res = await persistAnswers({}, {
       questionAnswers: [{ topic: 10005, post: 18, answer: PLAIN_ANSWER, confidence: 'low' }],
     })
-    expect(res.queued).toBe(0)
+    expect(res.posted).toBe(0)
     expect(res.deferred).toBe(1)
     const bug = getDiscourseBug(db, 10005, 18)
     expect(bug?.state).toBe('deferred')
@@ -175,7 +167,7 @@ describe('persist_question_answers action', () => {
     const res = await persistAnswers({}, {
       questionAnswers: [{ topic: 10005, post: 18, answer: JARGON_ANSWER, confidence: 'high' }],
     })
-    expect(res.queued).toBe(0)
+    expect(res.posted).toBe(0)
     expect(res.rejected).toBe(1)
     expect(db.prepare('SELECT COUNT(*) c FROM discourse_draft').get()).toMatchObject({ c: 0 })
     expect(getDiscourseBug(db, 10005, 18)?.state).toBe('question')
@@ -199,11 +191,11 @@ describe('persist_question_answers action', () => {
         { topic: 1234, post: 5, answer: PLAIN_ANSWER, confidence: 'high' },
       ],
     })
-    expect(res.queued).toBe(0)
+    expect(res.posted).toBe(0)
     expect(res.skipped).toBe(2)
   })
 
-  it('does not queue a second draft for a question that already has one', async () => {
+  it('does not post a second answer to a question that already has one', async () => {
     addQuestion(10005, 18)
     const entry = { topic: 10005, post: 18, answer: PLAIN_ANSWER, confidence: 'high' }
     await persistAnswers({}, { questionAnswers: [entry] })

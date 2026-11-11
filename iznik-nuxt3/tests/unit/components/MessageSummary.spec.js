@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import MessageSummary from '~/components/MessageSummary.vue'
@@ -494,6 +494,57 @@ describe('MessageSummary', () => {
       const wrapper = mountMessageSummary()
       await wrapper.trigger('click')
       expect(wrapper.emitted('expand')).toBeUndefined()
+    })
+  })
+
+  // Issue #115: the card should behave like a link when someone asks for a new tab.
+  describe('opening in a new tab', () => {
+    let open
+
+    beforeEach(() => {
+      open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    })
+
+    afterEach(() => {
+      open.mockRestore()
+    })
+
+    it.each(['ctrlKey', 'metaKey', 'shiftKey'])(
+      'opens the post page with %s held, instead of expanding',
+      async (key) => {
+        const wrapper = mountMessageSummary()
+        await wrapper.trigger('click', { [key]: true })
+        expect(open).toHaveBeenCalledWith('/message/123', '_blank', 'noopener')
+        expect(wrapper.emitted('expand')).toBeUndefined()
+      }
+    )
+
+    it('opens the post page on a middle click', async () => {
+      const wrapper = mountMessageSummary()
+      await wrapper.trigger('auxclick', { button: 1 })
+      expect(open).toHaveBeenCalledWith('/message/123', '_blank', 'noopener')
+      expect(wrapper.emitted('expand')).toBeUndefined()
+    })
+
+    it('does nothing on a right click', async () => {
+      const wrapper = mountMessageSummary()
+      await wrapper.trigger('auxclick', { button: 2 })
+      expect(open).not.toHaveBeenCalled()
+      expect(wrapper.emitted('expand')).toBeUndefined()
+    })
+
+    it('still expands on a plain click', async () => {
+      const wrapper = mountMessageSummary()
+      await wrapper.trigger('click')
+      expect(open).not.toHaveBeenCalled()
+      expect(wrapper.emitted('expand')).toHaveLength(1)
+    })
+
+    it('opens a successful post too, which a plain click does not expand', async () => {
+      state.message.successful = true
+      const wrapper = mountMessageSummary()
+      await wrapper.trigger('click', { ctrlKey: true })
+      expect(open).toHaveBeenCalledWith('/message/123', '_blank', 'noopener')
     })
   })
 

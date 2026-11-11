@@ -6,6 +6,7 @@ use App\Services\Ripple\GroupRippleOptOut;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * ripple:opt-out — switch rippling off (or back on) for a community, in either direction.
@@ -31,6 +32,7 @@ use Illuminate\Support\Facades\Log;
  * JSON_SET will not create `$.rippling.out` when `$.rippling` is missing (or is a scalar), so
  * the SQL form silently does nothing on exactly the communities that have never had it set.
  */
+#[AsCommand(name: 'ripple:opt-out')]
 class OptOutCommand extends Command
 {
     protected $signature = 'ripple:opt-out

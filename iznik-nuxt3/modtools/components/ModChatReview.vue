@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div v-if="message">
     <b-card no-body>
       <b-card-header>
         <div class="d-flex justify-content-between flex-wrap">
@@ -140,6 +140,22 @@
             Not delivered: the sender was flagged as a spammer when this was
             processed, so it never reached the recipient.
           </span>
+          <span v-else-if="message.processingfailreason === 'ReplyWithdrawn'">
+            Not delivered: Freegle asked the sender whether they still wanted an
+            item that looked damaged or too big to carry, and they said no.
+          </span>
+          <span
+            v-else-if="message.processingfailreason === 'ReplyNotConfirmed'"
+          >
+            Not delivered: Freegle asked the sender whether they still wanted an
+            item that looked damaged or too big to carry, and they never
+            answered.
+          </span>
+          <span v-else-if="message.processingfailreason === 'ReplyPostGone'">
+            Not delivered: Freegle asked the sender whether they still wanted an
+            item that looked damaged or too big to carry, and the item went
+            before this was sent on.
+          </span>
           <span v-else>
             Not delivered ({{ message.processingfailreason }}) - this never
             reached the recipient.
@@ -239,7 +255,7 @@
       </b-card-body>
       <b-card-footer>
         <div class="d-flex flex-wrap justify-content-start">
-          <template v-if="!message.widerchatreview && isActiveMod">
+          <template v-if="!message.widerchatreview && isActiveMod && !modsHeld">
             <ModChatViewButton :id="message.chatid" :pov="chatPov" />
             <b-button
               v-if="message.held && me.id === message.held.id"
@@ -275,7 +291,7 @@
             class="me-2 mb-1"
             @handle="approve"
           />
-          <template v-if="!message.widerchatreview && isActiveMod">
+          <template v-if="!message.widerchatreview && isActiveMod && !modsHeld">
             <SpinButton
               v-if="!message.held"
               icon-name="check"
@@ -335,10 +351,12 @@ import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/modtools/composables/useModMe'
 import { useChatStore } from '~/stores/chat'
 import { useAuthStore } from '~/stores/auth'
+import { useLockdown } from '~/modtools/composables/useLockdown'
 // Imported rather than relying on the Nuxt auto-import: the component unit tests mount without
 // the auto-import layer (they inject timeago as a mock), and a hold duration is worth asserting
 // against the real formatter rather than a stub.
 import { durationMinutes } from '~/composables/useTimeFormat'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
   id: {
@@ -353,6 +371,7 @@ const props = defineProps({
 
 const chatStore = useChatStore()
 const authStore = useAuthStore()
+const { modsHeld } = useLockdown()
 
 const message = computed(() => chatStore.messageById(props.messageid))
 
@@ -406,7 +425,7 @@ const isActiveMod = computed(() => {
   // chat reviews — even if active=0 (backup mod).  The API already decided to
   // show us this review; we should be able to take action on it.
   if (!membership) return false
-  return membership.role === 'Moderator' || membership.role === 'Owner'
+  return membership.role === ROLE_MODERATOR || membership.role === ROLE_OWNER
 })
 
 const emit = defineEmits(['reload'])
@@ -525,6 +544,10 @@ const reviewreason = computed(() => {
       }
       case 'DodgyImage': {
         ret = 'Suspect text or email found in image, so needs checking.'
+        break
+      }
+      case 'Lockdown': {
+        ret = 'Held by lockdown during a security incident. Approve if genuine.'
         break
       }
       default: {

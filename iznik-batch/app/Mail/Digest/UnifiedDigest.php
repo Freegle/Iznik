@@ -2,6 +2,7 @@
 
 namespace App\Mail\Digest;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
@@ -29,7 +30,7 @@ use App\Services\UnsubscribeService;
  * Contains posts from all communities the user is a member of,
  * with cross-posted items deduplicated.
  */
-class UnifiedDigest extends MjmlMailable implements RetryableMailable
+class UnifiedDigest extends MjmlMailable implements RetryableMailable, DescribesMemberContent
 {
     use AmpEmail;
     use AvatarResolver;
@@ -282,6 +283,27 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     }
 
     /**
+     * The live posts and the "came and went" section both quote a Message and its author
+     * (plan section 11.8); filter-spool removes this mail if every one of those posts has
+     * since stopped being Approved, or every author is now a spammer, leaving nothing left
+     * that is still fit to send.
+     */
+    public function about(): array
+    {
+        $messages = $this->posts->map(fn ($post) => $post['message']->id)
+            ->merge($this->completedPosts->map(fn ($message) => $message->id));
+        $users = $this->posts->map(fn ($post) => $post['message']->fromuser)
+            ->merge($this->completedPosts->map(fn ($message) => $message->fromuser));
+
+        return [
+            'chatmessages' => [],
+            'messages' => $messages->unique()->values()->all(),
+            'newsfeed' => [],
+            'users' => $users->unique()->values()->all(),
+        ];
+    }
+
+    /**
      * Rebuild a fresh digest from a descriptor, re-fetching from the DB.
      *
      * Re-fetches the live posts, the recipient's sponsors, and the daily "came
@@ -518,11 +540,12 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $jobsUrl = $this->trackedUrl($this->userSite . '/jobs', 'jobs_view_more', 'jobs_view_more');
         // Our own Stripe donate page (Apple Pay / Google Pay / PayPal / card)
         // rather than the PayPal-only shortlink. See DonateLinkService.
-        $donateUrl = $this->trackedUrl(
+        // Null for a donor who asked not to be asked, which drops every donate element.
+        $donateUrl = $this->user->wantsDonationAsks() ? $this->trackedUrl(
             app(DonateLinkService::class)->url($this->user, app(DonateLinkService::class)->defaultAmount(), 'digest'),
             'donate',
             'donate'
-        );
+        ) : NULL;
         $donateMarksUrl = config('freegle.images.paymethods');
 
         // Per-group footer heading: "you're a member of {group}, set to

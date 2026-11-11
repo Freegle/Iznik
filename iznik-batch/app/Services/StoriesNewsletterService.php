@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Coalesce;
 use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Group;
@@ -43,12 +44,17 @@ class StoriesNewsletterService
         $rawStories = DB::table('users_stories')
             ->leftJoin('users_stories_likes', 'users_stories_likes.storyid', '=', 'users_stories.id')
             ->leftJoin('users_stories_images', 'users_stories_images.storyid', '=', 'users_stories.id')
+            // A story approved for the newsletter can later be hidden, so check it is
+            // still reviewed and public as well.
+            ->where('users_stories.reviewed', 1)
+            ->where('users_stories.public', 1)
             ->where('users_stories.newsletterreviewed', 1)
             ->where('users_stories.newsletter', 1)
             ->where('users_stories.mailedtomembers', 0)
             ->when($since, fn ($q) => $q->where('users_stories.updated', '>', $since))
             ->select(['users_stories.id'])
-            ->selectRaw('users_stories_images.id AS photoid')
+            ->addSelect('users_stories_images.id as photoid')
+            // keep-raw: aliased COUNT(*) aggregate alongside non-aggregate columns (id, photoid) under GROUP BY.
             ->selectRaw('COUNT(*) AS vote_count')
             ->groupBy('users_stories.id', 'users_stories_images.id')
             ->orderByDesc('vote_count')
@@ -78,7 +84,13 @@ class StoriesNewsletterService
                 ->where('memberships.userid', $story->userid)
                 ->where('groups.type', Group::TYPE_FREEGLE)
                 ->where('groups.onmap', 1)
-                ->selectRaw('COALESCE(groups.namefull, groups.nameshort) AS namedisplay')
+                // ->value('namedisplay') is positional, not name-lookup: Builder::value()
+                // calls first([$column]) then Arr::first() on the resulting row, and since
+                // columns are already set by select() above, the passed column name is not
+                // used to re-select - it just returns the first (only) selected value.
+                // Confirmed live: value('namedisplay') and value('anything-else') return the
+                // same result here. So no alias is needed on the Coalesce.
+                ->select(new Coalesce('groups.namefull', 'groups.nameshort'))
                 ->value('namedisplay');
 
             $photoUrl = null;
@@ -116,12 +128,29 @@ class StoriesNewsletterService
                 'photo'      => $photoUrl,
                 'username'   => $userName,
                 'profileurl' => $profileUrl,
+                'userid'     => (int) $story->userid,
             ];
         }
 
         $stats['stories'] = count($storyData);
 
         if ($dryRun) {
+            return $stats;
+        }
+
+        // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
+        // checked here, before the newsletter row is created and stories are marked
+        // mailedtomembers, not down in the per-member loop below. This batch's watermark
+        // is that commit - once it happens these stories can never be selected again by
+        // the `$since`/`mailedtomembers` query above - so a press must stop before it,
+        // the same as the "check before each group" rule for a per-group watermark.
+        // Checking only per-recipient would still let the batch be consumed with nobody
+        // mailed. Counted once for the whole run, not per member - this is one deferred
+        // newsletter round, not N deferred recipients.
+        $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+        $lockdown->ack('mail-loops');
+        if ($lockdown->held('email')) {
+            $lockdown->count('deferred:stories');
             return $stats;
         }
 
@@ -179,8 +208,16 @@ class StoriesNewsletterService
             })
             ->where('users.newslettersallowed', 1)
             ->receivingOurMails()
+            // Not for TrashNothing members, whatever memberships they hold.
+            ->notTrashNothing()
             ->where(function ($q) {
                 // newsletter defaults to on (1) when not set; only excluded if explicitly set to 0.
+                // keep-raw: the COALESCE half could use App\Database\Expressions\Coalesce, but
+                // it is fused with JSON_EXTRACT(), for which the Expressions library has no
+                // class - converting just the outer COALESCE would still need JSON_EXTRACT
+                // nested inside via a raw Expression operand, leaving a raw call at this exact
+                // site for no reduction. whereJsonContains()/where('->') also don't support a
+                // default-value fallback for a missing key.
                 $q->whereNull('groups.settings')
                     ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 1) != 0");
             })

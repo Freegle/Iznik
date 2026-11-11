@@ -592,8 +592,9 @@ class SpamCheckService
     /**
      * Check a URL against Spamhaus DBL.
      *
-     * Performs a DNS lookup against dbl.spamhaus.org to check if the domain
-     * is on the block list.
+     * The lookup itself is a DNS query, made by SpamhausDblLookup, which is
+     * resolved from the container so that the test suite can answer it without
+     * the network.
      */
     public function checkSpamhausDbl(string $url): bool
     {
@@ -608,12 +609,7 @@ class SpamCheckService
             // Strip www. prefix
             $host = preg_replace('/^www\./', '', $host);
 
-            // Query Spamhaus DBL
-            $lookup = $host.'.dbl.spamhaus.org';
-            $records = @dns_get_record($lookup, DNS_A);
-
-            // If we get a result, the domain is listed
-            return ! empty($records);
+            return app(SpamhausDblLookup::class)->isListed($host);
         } catch (\Exception $e) {
             Log::debug('Spamhaus DBL check failed', ['url' => $url, 'error' => $e->getMessage()]);
 
@@ -712,6 +708,7 @@ class SpamCheckService
             // Get whitelisted domains (count >= 3, length > 5, excluding shorteners)
             $whitelistedDomains = DB::table('spam_whitelist_links')
                 ->where('count', '>=', 3)
+                // keep-raw: LENGTH() has no builder method.
                 ->whereRaw('LENGTH(domain) > 5')
                 ->where('domain', 'NOT LIKE', '%linkedin%')
                 ->where('domain', 'NOT LIKE', '%goo.gl%')
@@ -860,7 +857,7 @@ class SpamCheckService
         $count = DB::table('chat_images')
             ->join('chat_messages', 'chat_images.id', '=', 'chat_messages.imageid')
             ->where('chat_images.hash', $hash)
-            ->whereRaw('TIMESTAMPDIFF(HOUR, chat_messages.date, NOW()) <= ?', [self::IMAGE_THRESHOLD_TIME])
+            ->where('chat_messages.date', '>', now()->subHours(self::IMAGE_THRESHOLD_TIME + 1))
             ->count();
 
         return $count > self::IMAGE_THRESHOLD;

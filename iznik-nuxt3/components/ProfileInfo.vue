@@ -79,15 +79,39 @@
       <!-- Action Buttons -->
       <div class="action-buttons">
         <UserRatings :id="id" size="md" :disabled="!myid" class="ratings" />
+        <!-- Most messages sent from a profile are about one of the person's
+             posts, so when they have some up the button asks which one first
+             (#11). The ChatButton does the chat opening; our own button goes in
+             its slot so the question comes before it. -->
         <ChatButton
           v-if="myid && id !== myid"
+          ref="chatButton"
           :userid="id"
           size="md"
           title="Message"
           variant="primary"
-          class="message-btn"
-        />
+        >
+          <b-button
+            size="md"
+            variant="primary"
+            class="message-btn"
+            @click="onMessageClick"
+          >
+            <v-icon icon="comments" />
+            <span class="ms-1">Message</span>
+          </b-button>
+        </ChatButton>
       </div>
+      <PostSelectionModal
+        v-if="showPostSelection"
+        :posts="activePosts"
+        :name="user.displayname"
+        :sending="sending"
+        :error="sendError"
+        @select="onPostSelected"
+        @other="onSomethingElse"
+        @hidden="showPostSelection = false"
+      />
     </div>
 
     <!-- Content Section -->
@@ -147,7 +171,7 @@
 
 <script setup>
 import pluralize from 'pluralize'
-import { computed, defineAsyncComponent } from 'vue'
+import { ref, computed, defineAsyncComponent } from 'vue'
 import { useUserStore } from '~/stores/user'
 import { milesAway } from '~/composables/useDistance'
 import { DISTANCE_TOOLTIP, DISTANCE_TOOLTIP_ROAD } from '~/constants'
@@ -159,6 +183,7 @@ import { dateonly } from '~/composables/useTimeFormat'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import ChatButton from '~/components/ChatButton'
+import PostSelectionModal from '~/components/PostSelectionModal'
 
 const MessageList = defineAsyncComponent(
   () => import('~/components/MessageList.vue')
@@ -206,6 +231,87 @@ function active(type) {
 
 const activeOffers = computed(() => active('Offer'))
 const activeWanteds = computed(() => active('Wanted'))
+// The posts a message can be about. The list from fetchByUser carries ids and
+// types; the subjects, promises and deadlines arrive with the full records the
+// loop above fetches into the store, so read them from there. A post the member
+// could not reply to from its own page (promised to somebody else, finished, or
+// past its deadline) is left out, so this route cannot get round those checks.
+const activePosts = computed(() =>
+  [...activeOffers.value, ...activeWanteds.value]
+    .filter((post) => {
+      const full = messageStore.byId(post.id)
+      if (post.hasoutcome || full?.outcomes?.length) {
+        return false
+      }
+      if (full?.promised && !full?.promisedtoyou) {
+        return false
+      }
+      if (full?.deadline && new Date(full.deadline).getTime() < Date.now()) {
+        return false
+      }
+      return true
+    })
+    .map((post) => {
+      const full = messageStore.byId(post.id)
+      return {
+        id: post.id,
+        type: post.type,
+        subject:
+          full?.subject ||
+          post.subject ||
+          (post.type === 'Offer' ? 'An OFFER' : 'A WANTED'),
+      }
+    })
+)
+
+// Messaging them: ask which post it is about when they have any up (#11).
+// A ctrl-click, cmd-click or middle-click wants a new tab, which the question
+// cannot follow into, so that opens the chat directly as before.
+const chatButton = ref(null)
+const showPostSelection = ref(false)
+const sending = ref(false)
+const sendError = ref(null)
+
+function onMessageClick(event) {
+  const openInNewTab = Boolean(
+    event && (event.ctrlKey || event.metaKey || event.button === 1)
+  )
+
+  if (activePosts.value.length && !openInNewTab) {
+    showPostSelection.value = true
+  } else {
+    chatButton.value?.openChat(null, null, null, openInNewTab)
+  }
+}
+
+// The question stays open until the chat is on screen, so a send that fails
+// leaves the message where they typed it with a note, rather than losing it.
+async function openChatFromQuestion(text, msgid) {
+  if (sending.value) {
+    return
+  }
+
+  sending.value = true
+  sendError.value = null
+
+  try {
+    await chatButton.value?.openChat(null, text, msgid, false, false, 'profile')
+  } catch (e) {
+    sendError.value = "Sorry, that didn't send. Please try again."
+  } finally {
+    sending.value = false
+  }
+}
+
+function onPostSelected({ id, text }) {
+  // Sent as a reply to the post, so it arrives as an "interested" message
+  // that names the post, the same as replying from the post itself.
+  return openChatFromQuestion(text, id)
+}
+
+function onSomethingElse() {
+  return openChatFromQuestion(null, null)
+}
 
 const aboutme = computed(() => {
   return user.value?.aboutme ? twem(user.value.aboutme.text) : null
@@ -522,10 +628,8 @@ const replyTimeText = computed(() => {
   margin-top: 0.5rem;
 }
 
-.message-btn {
-  :deep(.btn) {
-    font-weight: 600;
-  }
+.message-btn.btn {
+  font-weight: 600;
 }
 
 // Content Section

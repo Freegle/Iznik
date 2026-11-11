@@ -1,5 +1,5 @@
 #!/bin/bash
-# Lightweight Discourse reply watcher for the threads where AI Edward posted
+# Lightweight Discourse reply watcher for the threads where AIdward posted
 # fix-confirmations this session. Surfaces only NEW posts (after startup) NOT
 # authored by Edward_Hibbert (mod/member replies, incl. retest results), then
 # exits so the harness notifies the agent to assess + refix; the agent restarts

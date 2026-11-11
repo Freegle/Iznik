@@ -8,12 +8,14 @@ use App\Services\CookieYes\CookieYesWatchdogService;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Weekly CookieYes watchdog. Replaces the housekeeper Chrome extension's
  * CookieYes task: the result lands in housekeeper_tasks (the ModTools
  * housekeeping badge) and a failure is emailed to Geeks.
  */
+#[AsCommand(name: 'cookieyes:check')]
 class CheckCommand extends Command
 {
     public const TASK_KEY = 'cookieyes';

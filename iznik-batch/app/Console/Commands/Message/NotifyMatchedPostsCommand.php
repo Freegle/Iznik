@@ -15,6 +15,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Emails members the opposite-type posts near them that match their own open
@@ -23,6 +24,7 @@ use Illuminate\Support\Str;
  * already applies every dedup/eligibility guard, so this command just renders,
  * spools, and records what was sent so nothing is mailed twice.
  */
+#[AsCommand(name: 'matches:notify')]
 class NotifyMatchedPostsCommand extends Command
 {
     use GracefulShutdown, LogsBatchJob;

@@ -226,7 +226,10 @@ func calcEmailRates(totalSent, opened, clicked, linkedBounces int64) (openRate, 
 func Pixel(c *fiber.Ctx) error {
 	trackingID := c.Params("id")
 
-	recordOpen(trackingID, "pixel")
+	// A HEAD is a probe, not a person opening the email (see Click).
+	if c.Method() != fiber.MethodHead {
+		RecordPixelOpen(trackingID)
+	}
 
 	c.Set("Content-Type", "image/gif")
 	c.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -298,6 +301,14 @@ func Click(c *fiber.Ctx) error {
 		return sendDestination(c, "/")
 	}
 
+	// A HEAD is a link checker or a mail scanner probing the link, never a person: answer with
+	// the redirect and record nothing. Fiber answers HEAD on every GET route, and 12% of tracker
+	// hits in a six hour sample on 16 Oct 2026 were HEADs (python aiohttp, empty user agents, AWS),
+	// each counted as an open and a click.
+	if c.Method() == fiber.MethodHead {
+		return sendDestination(c, destinationURL)
+	}
+
 	// Get tracking record
 	var tracking EmailTracking
 	result := db.Where("tracking_id = ?", trackingID).First(&tracking)
@@ -364,57 +375,12 @@ func Click(c *fiber.Ctx) error {
 // @Param s query integer false "Scroll percentage"
 // @Success 302 {string} string "Redirect to original image"
 func Image(c *fiber.Ctx) error {
-	db := database.DBConn
-	trackingID := c.Params("id")
-
-	// Get tracking record
-	var tracking EmailTracking
-	result := db.Where("tracking_id = ?", trackingID).First(&tracking)
-
-	if result.Error == nil {
-		position := c.Query("p", "unknown")
-		scrollPercent := c.QueryInt("s", -1)
-
-		now := time.Now()
-
-		// If not opened yet, mark as opened via image. Guard the write in SQL,
-		// not just on the stale Go read: an email's images load near-together and
-		// all see OpenedAt==nil, so without "WHERE opened_at IS NULL" every one of
-		// them UPDATEs the same parent row and they serialise on its lock.
-		if tracking.OpenedAt == nil {
-			openedVia := "image"
-			db.Model(&tracking).Where("opened_at IS NULL").Updates(map[string]interface{}{
-				"opened_at":  now,
-				"opened_via": openedVia,
-			})
-		}
-
-		// Create image load record. This per-load row (with its position and
-		// estimated scroll percent) is the source of truth for image/scroll-depth
-		// analytics.
-		imageLoad := EmailTrackingImage{
-			EmailTrackingID: tracking.ID,
-			ImagePosition:   position,
-			LoadedAt:        now,
-		}
-
-		if scrollPercent >= 0 && scrollPercent <= 100 {
-			sp := uint8(scrollPercent)
-			imageLoad.EstimatedScrollPercent = &sp
-
-			// Update scroll depth if this is deeper.
-			if tracking.ScrollDepthPercent == nil || sp > *tracking.ScrollDepthPercent {
-				db.Model(&tracking).Update("scroll_depth_percent", sp)
-			}
-		}
-
-		db.Create(&imageLoad)
-
-		// Deliberately do NOT increment email_tracking.images_loaded. A per-hit
-		// counter UPDATE takes an exclusive lock on the parent row that every
-		// concurrent image load contends for (see ImageCompact) - and the old
-		// read-modify-write form here also lost updates. The count is unread and
-		// derivable as a COUNT over email_tracking_images, so it is not kept.
+	// Journalled, not written: see journal.go. The request does no database work at all, so the
+	// images of one email no longer queue on its parent row. The first-open stamp, the deepest
+	// scroll estimate and the per-load row are applied by the nightly mail:tracking:fold.
+	// A HEAD is a probe, not a person loading the image (see Click).
+	if c.Method() != fiber.MethodHead {
+		RecordImageLoad(c.Params("id"), c.Query("p", "unknown"), c.QueryInt("s", -1))
 	}
 
 	// Redirect to original image
@@ -824,28 +790,19 @@ func UserEmails(c *fiber.Ctx) error {
 		var userLookup struct {
 			UserID uint64 `gorm:"column:userid"`
 		}
-		// First try users_emails table (for users with multiple emails).
+		// Look the address up in users_emails.
 		//
 		// This used to carry "AND backwards IS NULL", which made it miss almost every
 		// real address: only 140,057 of 4,476,456 rows have a null there, and 136,047 of
 		// those are Freegle's own @users.ilovefreegle.org proxy addresses. A member
-		// looked up by their own address fell through to the users.email fallback
-		// instead. V1 has no such condition anywhere.
+		// looked up by their own address was not found. V1 has no such condition anywhere.
+		//
+		// users_emails is the only place an address lives; users has no email column.
+		// An address that matches no member is searched for in email_tracking itself.
 		result := db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&userLookup)
 		if result.Error != nil || userLookup.UserID == 0 {
-			// Fallback to users table (for new users whose email is only in users.email)
-			var userFallback struct {
-				ID uint64 `gorm:"column:id"`
-			}
-			result = db.Table("users").Select("id").Where("email = ?", email).Limit(1).Scan(&userFallback)
-			if result.Error != nil || userFallback.ID == 0 {
-				// No user found - search by recipient_email in email_tracking table directly
-				searchByRecipientEmail = true
-			} else {
-				userLookup.UserID = userFallback.ID
-			}
-		}
-		if !searchByRecipientEmail {
+			searchByRecipientEmail = true
+		} else {
 			targetUserID = int(userLookup.UserID)
 		}
 	}
@@ -929,28 +886,6 @@ func UserEmails(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(responseMap)
-}
-
-// recordOpen records an email open event
-func recordOpen(trackingID string, via string) {
-	db := database.DBConn
-
-	var tracking EmailTracking
-	result := db.Where("tracking_id = ?", trackingID).First(&tracking)
-	if result.Error != nil {
-		return
-	}
-
-	// Only record first open
-	if tracking.OpenedAt != nil {
-		return
-	}
-
-	now := time.Now()
-	db.Model(&tracking).Updates(map[string]interface{}{
-		"opened_at":  now,
-		"opened_via": via,
-	})
 }
 
 // DailyStats represents statistics for a single day
@@ -1705,135 +1640,42 @@ func DigestClickPositions(c *fiber.Ctx) error {
 		endDateTime = endDate + " 23:59:59"
 	}
 
-	// By default consider all unified digest types; allow an exact-type override.
+	// All unified digest types by default; an exact type overrides.
 	emailType := c.Query("type", "")
-	typeClause := "e.email_type LIKE 'UnifiedDigest%'"
-	var typeArgs []interface{}
-	if emailType != "" {
-		typeClause = "e.email_type = ?"
-		typeArgs = append(typeArgs, emailType)
-	}
 
-	// Conditions shared by both queries to keep the cohort consistent.
-	cohort := typeClause + `
-		AND u.tnuserid IS NULL
-		AND e.metadata IS NOT NULL
-		AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0
-		AND e.sent_at BETWEEN ? AND ?`
-
-	// 1. Denominator: distribution of digest sizes. A digest with `num_posts`
-	//    posts displayed positions 0..num_posts-1.
-	denomQuery := `
-		SELECT JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt
-		-- Force the sent_at index: otherwise the optimiser full-scans the whole
-		-- table (millions of rows + per-row JSON) instead of range-scanning the
-		-- date window, which made the chart hang.
-		FROM email_tracking e FORCE INDEX (sent_at)
-		LEFT JOIN users u ON e.userid = u.id
-		WHERE ` + cohort + `
-		GROUP BY num_posts`
-
-	// Run both this query and clickQuery below in short date sub-windows
-	// instead of one scan over the whole requested range - see
-	// chunkDateWindows. Falls back to a single window over the whole range
-	// if the bounds don't parse in an expected format, matching the prior
-	// (unchunked) behaviour.
+	// Days already summarised by email:digest-positions-rollup are summed from
+	// email_digest_positions_daily. Only the unified digest types are rolled up;
+	// any other exact type is computed live for the whole range, as before.
 	windows, err := chunkDateWindows(startDate, endDateTime, digestChunkDays)
 	if err != nil {
 		windows = []digestDateWindow{{Start: startDate, End: endDateTime}}
 	}
 
-	sizeCounts := make(map[int]int64)
-	for _, w := range windows {
-		denomArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
-		var chunkRows []struct {
-			NumPosts int   `gorm:"column:num_posts"`
-			Cnt      int64 `gorm:"column:cnt"`
+	shown := make(map[int]int64)
+	emailsClickedByPos := make(map[int]int64)
+	clicksByPos := make(map[int]int64)
+	missingDays := 0
+	liveDays := 0
+
+	liveWindows := windows
+	if digestTypeIsRolledUp(emailType) {
+		var rolledDays []string
+		liveWindows, rolledDays, missingDays = planDigestWindows(db, windows, time.Now())
+		if len(rolledDays) > 0 && !addRolledUpDigestPositions(db, rolledDays, emailType, shown, emailsClickedByPos, clicksByPos) {
+			// The summary could not be read: report those days as missing
+			// rather than as zeros.
+			missingDays += len(rolledDays)
 		}
-		if err := db.Raw(denomQuery, denomArgs...).Scan(&chunkRows).Error; err != nil {
-			// Fail the whole distribution (empty chart, like the replaced
-			// single statement did on error) rather than silently returning
-			// totals missing an unknown subset of days.
-			sizeCounts = map[int]int64{}
-			break
-		}
-		for _, r := range chunkRows {
-			sizeCounts[r.NumPosts] += r.Cnt
-		}
+	}
+	liveDays = len(liveWindows)
+	if len(liveWindows) > 0 {
+		addLiveDigestPositions(db, liveWindows, emailType, shown, emailsClickedByPos, clicksByPos)
 	}
 
 	maxPosts := 0
-	for numPosts := range sizeCounts {
-		if numPosts > maxPosts {
-			maxPosts = numPosts
-		}
-	}
-
-	// shown[n] = number of digests whose size was greater than n (i.e. displayed
-	// a post at position n).
-	shown := make([]int64, maxPosts)
-	for numPosts, cnt := range sizeCounts {
-		for n := 0; n < numPosts && n < maxPosts; n++ {
-			shown[n] += cnt
-		}
-	}
-
-	// 2. Numerator: clicks on a post CARD at position N, grouped by position label.
-	//
-	// Two label schemes coexist:
-	//   - "post_N": the legacy (verbose) digest card link.
-	//   - "pN":     the current compact card link (TrackableEmail compact form,
-	//               UnifiedDigest emits "p{index}" for the per-post Reply CTA).
-	// Both mean "clicked the card for the post shown at vertical position N", so
-	// both must be counted - otherwise this stat only sees old emails and silently
-	// under-reports (compact "pN" clicks dominate live traffic). We deliberately
-	// exclude the summary-index links ("yN") and image links ("iN"): the summary
-	// sits at the top of the email, so a "yN" click is not a signal about the
-	// post's vertical position.
-	clickQuery := `
-		SELECT c.link_position AS link_position,
-		       COUNT(DISTINCT c.email_tracking_id) AS emails_clicked,
-		       COUNT(*) AS clicks
-		FROM email_tracking_clicks c
-		JOIN email_tracking e ON c.email_tracking_id = e.id
-		LEFT JOIN users u ON e.userid = u.id
-		WHERE ` + cohort + `
-		  AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'
-		GROUP BY c.link_position`
-
-	emailsClickedByPos := make(map[int]int64)
-	clicksByPos := make(map[int]int64)
-	for _, w := range windows {
-		clickArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
-		var chunkRows []struct {
-			LinkPosition  string `gorm:"column:link_position"`
-			EmailsClicked int64  `gorm:"column:emails_clicked"`
-			Clicks        int64  `gorm:"column:clicks"`
-		}
-		if err := db.Raw(clickQuery, clickArgs...).Scan(&chunkRows).Error; err != nil {
-			// As above: all-or-nothing for the click counts.
-			emailsClickedByPos = map[int]int64{}
-			clicksByPos = map[int]int64{}
-			break
-		}
-		for _, r := range chunkRows {
-			// link_position is "post_N" or "pN"; extract the trailing integer
-			// position regardless of the prefix/separator.
-			s := r.LinkPosition
-			i := len(s)
-			for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
-				i--
-			}
-			if i == len(s) {
-				// No trailing digits - not a positional label.
-				continue
-			}
-			n, err := strconv.Atoi(s[i:])
-			if err != nil || n < 0 {
-				continue
-			}
-			emailsClickedByPos[n] += r.EmailsClicked
-			clicksByPos[n] += r.Clicks
+	for n, cnt := range shown {
+		if cnt > 0 && n+1 > maxPosts {
+			maxPosts = n + 1
 		}
 	}
 
@@ -1863,7 +1705,243 @@ func DigestClickPositions(c *fiber.Ctx) error {
 			"end":   endDate,
 			"type":  emailType,
 		},
+		// missing_days: days in the range that are neither summarised nor
+		// computed live because the live cap was reached. live_days: days
+		// computed live in this request.
+		"missing_days": missingDays,
+		"live_days":    liveDays,
 	})
+}
+
+// digestLiveDayCap is the most days DigestClickPositions computes live in one
+// request. A day costs about 5 seconds on live (the denominator scans the day's
+// email_tracking rows), so this keeps the request inside its deadline however
+// wide the range. Days beyond it are reported as missing_days.
+const digestLiveDayCap = 3
+
+// digestRollupMarkerType is the email_type of the marker row that
+// email:digest-positions-rollup writes for every day it has rolled up, so a day
+// with no digests is distinguishable from a day not yet rolled up.
+const digestRollupMarkerType = ""
+
+// digestTypeIsRolledUp is true when the requested type is covered by the
+// nightly rollup: all unified digest types, or one of them by name.
+func digestTypeIsRolledUp(emailType string) bool {
+	return emailType == "" || strings.HasPrefix(emailType, "UnifiedDigest")
+}
+
+// planDigestWindows splits windows into those to compute live, the days to read
+// from the rollup, and a count of days that are neither (live cap reached).
+// A window is served from the rollup only if it is exactly one whole day that
+// has a marker row; partial days and unrolled days are live candidates.
+// Windows that start in the future are skipped: nothing has been sent in them.
+// The most recent live candidates are kept, as those are the days the nightly
+// rollup has not reached.
+func planDigestWindows(db *gorm.DB, windows []digestDateWindow, now time.Time) (live []digestDateWindow, rolledDays []string, missing int) {
+	var wholeDays []string
+	for _, w := range windows {
+		if isWholeDayWindow(w) {
+			wholeDays = append(wholeDays, w.Start[:10])
+		}
+	}
+
+	rolled := make(map[string]bool)
+	if len(wholeDays) > 0 {
+		var days []string
+		// keep-raw: DATE_FORMAT on the selected column scanned positionally into a string slice.
+		db.Raw("SELECT DATE_FORMAT(day, '%Y-%m-%d') FROM email_digest_positions_daily WHERE email_type = ? AND day IN ?",
+			digestRollupMarkerType, wholeDays).Scan(&days)
+		for _, d := range days {
+			rolled[d] = true
+		}
+	}
+
+	var candidates []digestDateWindow
+	for _, w := range windows {
+		if start, err := parseDigestBound(w.Start); err == nil && start.After(now) {
+			continue
+		}
+		if isWholeDayWindow(w) && rolled[w.Start[:10]] {
+			rolledDays = append(rolledDays, w.Start[:10])
+			continue
+		}
+		candidates = append(candidates, w)
+	}
+
+	if len(candidates) > digestLiveDayCap {
+		missing = len(candidates) - digestLiveDayCap
+		candidates = candidates[missing:]
+	}
+	return candidates, rolledDays, missing
+}
+
+// isWholeDayWindow is true for a window covering exactly 00:00:00 to 23:59:59 of
+// one date, the shape email:digest-positions-rollup summarises.
+func isWholeDayWindow(w digestDateWindow) bool {
+	return len(w.Start) == 19 && len(w.End) == 19 &&
+		strings.HasSuffix(w.Start, " 00:00:00") && strings.HasSuffix(w.End, " 23:59:59") &&
+		w.Start[:10] == w.End[:10]
+}
+
+// addRolledUpDigestPositions adds the rolled-up figures for days into the maps.
+// It returns false if the table could not be read.
+func addRolledUpDigestPositions(db *gorm.DB, days []string, emailType string, shown, emailsClicked, clicks map[int]int64) bool {
+	typeClause := "email_type LIKE 'UnifiedDigest%'"
+	args := []interface{}{days}
+	if emailType != "" {
+		typeClause = "email_type = ?"
+		args = append(args, emailType)
+	}
+
+	// Positional Row().Scan: several aggregates scanned into a struct come back as zeros.
+	// keep-raw: positional Row().Scan of several aggregates with a dynamic type clause; a GORM struct Scan returns zeros.
+	rows, err := db.Raw(`
+		SELECT position, CAST(SUM(shown) AS SIGNED), CAST(SUM(emails_clicked) AS SIGNED), CAST(SUM(clicks) AS SIGNED)
+		FROM email_digest_positions_daily
+		WHERE day IN ? AND `+typeClause+`
+		GROUP BY position`, args...).Rows()
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var position int
+		var s, e, c int64
+		if err := rows.Scan(&position, &s, &e, &c); err != nil {
+			return false
+		}
+		shown[position] += s
+		emailsClicked[position] += e
+		clicks[position] += c
+	}
+	return rows.Err() == nil
+}
+
+// addLiveDigestPositions computes the figures straight from email_tracking for
+// windows and adds them into the maps. The cohort and counting rules are
+// mirrored by DigestPositionsRollupService in iznik-batch, which fills the
+// rollup table: the two must agree, or a chart would change shape as days move
+// from live to summarised.
+func addLiveDigestPositions(db *gorm.DB, windows []digestDateWindow, emailType string, shown, emailsClickedByPos, clicksByPos map[int]int64) {
+	// By default consider all unified digest types; allow an exact-type override.
+	typeClause := "e.email_type LIKE 'UnifiedDigest%'"
+	var typeArgs []interface{}
+	if emailType != "" {
+		typeClause = "e.email_type = ?"
+		typeArgs = append(typeArgs, emailType)
+	}
+
+	// Conditions shared by both queries to keep the cohort consistent.
+	cohort := typeClause + `
+		AND u.tnuserid IS NULL
+		AND e.metadata IS NOT NULL
+		AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0
+		AND e.sent_at BETWEEN ? AND ?`
+
+	// 1. Denominator: distribution of digest sizes. A digest with `num_posts`
+	//    posts displayed positions 0..num_posts-1.
+	denomQuery := `
+		SELECT JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt
+		-- Force the sent_at index: otherwise the optimiser full-scans the whole
+		-- table (millions of rows + per-row JSON) instead of range-scanning the
+		-- date window, which made the chart hang.
+		FROM email_tracking e FORCE INDEX (sent_at)
+		LEFT JOIN users u ON e.userid = u.id
+		WHERE ` + cohort + `
+		GROUP BY num_posts`
+
+	sizeCounts := make(map[int]int64)
+	for _, w := range windows {
+		denomArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
+		var chunkRows []struct {
+			NumPosts int   `gorm:"column:num_posts"`
+			Cnt      int64 `gorm:"column:cnt"`
+		}
+		if err := db.Raw(denomQuery, denomArgs...).Scan(&chunkRows).Error; err != nil {
+			// Fail the whole distribution (empty chart, like the replaced
+			// single statement did on error) rather than silently returning
+			// totals missing an unknown subset of days.
+			sizeCounts = map[int]int64{}
+			break
+		}
+		for _, r := range chunkRows {
+			sizeCounts[r.NumPosts] += r.Cnt
+		}
+	}
+
+	// shown[n] = number of digests whose size was greater than n (i.e. displayed
+	// a post at position n).
+	for numPosts, cnt := range sizeCounts {
+		for n := 0; n < numPosts; n++ {
+			shown[n] += cnt
+		}
+	}
+
+	// 2. Numerator: clicks on a post CARD at position N, grouped by position label.
+	//
+	// Two label schemes coexist:
+	//   - "post_N": the legacy (verbose) digest card link.
+	//   - "pN":     the current compact card link (TrackableEmail compact form,
+	//               UnifiedDigest emits "p{index}" for the per-post Reply CTA).
+	// Both mean "clicked the card for the post shown at vertical position N", so
+	// both must be counted - otherwise this stat only sees old emails and silently
+	// under-reports (compact "pN" clicks dominate live traffic). We deliberately
+	// exclude the summary-index links ("yN") and image links ("iN"): the summary
+	// sits at the top of the email, so a "yN" click is not a signal about the
+	// post's vertical position.
+	clickQuery := `
+		SELECT c.link_position AS link_position,
+		       COUNT(DISTINCT c.email_tracking_id) AS emails_clicked,
+		       COUNT(*) AS clicks
+		FROM email_tracking_clicks c
+		JOIN email_tracking e ON c.email_tracking_id = e.id
+		LEFT JOIN users u ON e.userid = u.id
+		WHERE ` + cohort + `
+		  AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'
+		GROUP BY c.link_position`
+
+	emailsClicked := make(map[int]int64)
+	clicks := make(map[int]int64)
+	for _, w := range windows {
+		clickArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
+		var chunkRows []struct {
+			LinkPosition  string `gorm:"column:link_position"`
+			EmailsClicked int64  `gorm:"column:emails_clicked"`
+			Clicks        int64  `gorm:"column:clicks"`
+		}
+		if err := db.Raw(clickQuery, clickArgs...).Scan(&chunkRows).Error; err != nil {
+			// As above: all-or-nothing for the click counts.
+			emailsClicked = map[int]int64{}
+			clicks = map[int]int64{}
+			break
+		}
+		for _, r := range chunkRows {
+			// link_position is "post_N" or "pN"; extract the trailing integer
+			// position regardless of the prefix/separator.
+			s := r.LinkPosition
+			i := len(s)
+			for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+				i--
+			}
+			if i == len(s) {
+				// No trailing digits - not a positional label.
+				continue
+			}
+			n, err := strconv.Atoi(s[i:])
+			if err != nil || n < 0 {
+				continue
+			}
+			emailsClicked[n] += r.EmailsClicked
+			clicks[n] += r.Clicks
+		}
+	}
+	for n, v := range emailsClicked {
+		emailsClickedByPos[n] += v
+	}
+	for n, v := range clicks {
+		clicksByPos[n] += v
+	}
 }
 
 // ReengageFunnel represents overall funnel counts for the localised

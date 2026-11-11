@@ -18,7 +18,7 @@
       </Teleport>
 
       <!-- Close button for two-column layout (positioned at modal top-right) -->
-      <button class="close-button" @click.stop="goBack">
+      <button class="close-button" aria-label="Close" @click.stop="goBack">
         <v-icon icon="times" />
       </button>
 
@@ -27,7 +27,7 @@
         <!-- Photo Area with Ken Burns animation -->
         <div ref="photoAreaRef" class="photo-area" @click="showPhotosModal">
           <!-- Back button on photo (hidden in two-column) -->
-          <button class="back-button" @click.stop="goBack">
+          <button class="back-button" aria-label="Back" @click.stop="goBack">
             <v-icon icon="arrow-left" />
           </button>
 
@@ -302,6 +302,10 @@
               </div>
             </div>
 
+            <!-- An ordinary post the server split into items: the list only,
+                 replied to like any other post. -->
+            <MessageItemList v-if="isSplit" :id="id" />
+
             <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
             <BulkItemsInterest
               v-if="isBulk"
@@ -438,6 +442,11 @@
                   We'll pass it on to the owner as soon as it does.
                 </span>
               </NoticeMessage>
+              <MessageOwnActions
+                v-if="fromme && !message.outcomes?.length"
+                :message="message"
+                class="mb-2"
+              />
               <div
                 v-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
@@ -468,6 +477,7 @@
                 >
                   Cancel
                 </b-button>
+                <MessageInterested v-if="canMarkInterested" :id="message.id" />
                 <b-button
                   v-if="!fromme"
                   variant="primary"
@@ -493,6 +503,13 @@
               >
                 Message sent! Check your
                 <nuxt-link to="/chats">Chats</nuxt-link>.
+                <span
+                  v-if="sentCountdown"
+                  class="sent-countdown"
+                  data-testid="sent-countdown"
+                >
+                  Closing in {{ sentCountdown }}s…
+                </span>
               </b-alert>
             </div>
           </div>
@@ -533,6 +550,11 @@
             pass it on to the owner as soon as it does.
           </span>
         </NoticeMessage>
+        <MessageOwnActions
+          v-if="fromme && !message.outcomes?.length"
+          :message="message"
+          class="mb-2"
+        />
         <div
           v-if="replyable && !replied && !message.successful"
           class="footer-buttons"
@@ -562,6 +584,7 @@
           >
             Cancel
           </b-button>
+          <MessageInterested v-if="canMarkInterested" :id="message.id" />
           <b-button
             v-if="!fromme"
             variant="primary"
@@ -581,6 +604,13 @@
         </div>
         <b-alert v-if="replied" variant="info" :model-value="true" class="mb-0">
           Message sent! Check your <nuxt-link to="/chats">Chats</nuxt-link>.
+          <span
+            v-if="sentCountdown"
+            class="sent-countdown"
+            data-testid="sent-countdown"
+          >
+            Closing in {{ sentCountdown }}s…
+          </span>
         </b-alert>
       </div>
     </div>
@@ -602,7 +632,11 @@
     <!-- Map Modal - Full Screen -->
     <Teleport v-if="showMapModal" to="body">
       <div class="fullscreen-map-viewer">
-        <button class="map-back-button" @click="showMapModal = false">
+        <button
+          class="map-back-button"
+          aria-label="Close map"
+          @click="showMapModal = false"
+        >
           <v-icon icon="arrow-left" />
         </button>
         <client-only>
@@ -674,6 +708,10 @@ import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
 import ChatReplyPane from '~/components/ChatReplyPane'
 import BulkItemsInterest from '~/components/BulkItemsInterest'
+import MessageItemList from '~/components/MessageItemList'
+import { isAutoSplit, isClearance } from '~/composables/useAutoSplit'
+import MessageInterested from '~/components/MessageInterested'
+import MessageOwnActions from '~/components/MessageOwnActions'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
@@ -716,7 +754,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['zoom', 'close', 'replied'])
+const emit = defineEmits(['zoom', 'close'])
 
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
@@ -819,9 +857,10 @@ const reachFinished = computed(() => message.value?.reachfinished === true)
 // web page that just duplicates the catalogue — so suppress it. A giver's own
 // free-text description doesn't start with this generated marker, so it still
 // shows. (Marker kept in sync with buildBulkSummary in iznik-server-go.)
-const isBulk = computed(
-  () => (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
-)
+// Only a clearance; an automatically split post has an item list too, but is replied
+// to like any other post (composables/useAutoSplit.js).
+const isBulk = computed(() => isClearance(message.value))
+const isSplit = computed(() => isAutoSplit(message.value))
 const hideGeneratedBulkBody = computed(() => {
   const body = message.value?.textbody || ''
   return isBulk.value && body.startsWith('Items available in this offer:')
@@ -830,6 +869,16 @@ const hideGeneratedBulkBody = computed(() => {
 // A bulk offer is replied to by registering per-item interest, not by opening a
 // reply box — so the main reply button becomes "Register interest". These mirror
 // the BulkItemsInterest child's state (emitted up) so the button can reflect it.
+// The "I'm interested" mark is for a signed-in member looking at someone else's open, single-item post.
+const canMarkInterested = computed(
+  () =>
+    loggedIn.value &&
+    !fromme.value &&
+    !isBulk.value &&
+    !message.value?.successful &&
+    message.value?.id > 0
+)
+
 const bulkInterestRef = ref(null)
 const bulkCanRegister = ref(false)
 const bulkSubmitted = ref(false)
@@ -868,6 +917,13 @@ const thumbnailsRef = ref(null)
 const thumbnailTouchStartX = ref(0)
 const thumbnailScrollStart = ref(0)
 let thumbnailScrollInterval = null
+
+// Long enough to read the "Message sent" confirmation, and to tap its Chats
+// link, before the message closes back to the list. The confirmation counts
+// down the seconds left so the close does not come as a surprise.
+const SENT_CLOSE_DELAY_SECS = 5
+const sentCountdown = ref(null)
+let sentCloseTimer = null
 let photoAreaObserver = null
 
 // Computed (additional to composable)
@@ -1045,19 +1101,22 @@ function sent() {
   showReplyOverlay.value = false
   replied.value = true
 
-  // Tell the page a reply went through, so on mobile it can surface the
-  // "more like this" recommendations as a modal (they're clutter inline there).
-  emit('replied')
-
   // When we're a message inside a list (browse / explore), the reply was sent
   // WITHOUT navigating to the chat. Show the "Message sent" confirmation
-  // briefly, then close this message so the user is back on the list and can
-  // reply to more items. On the standalone message page the state machine has
-  // already navigated to the chat, so we leave navigation alone.
+  // for a few seconds, then close this message so the user is back on the
+  // list and can reply to more items. On the standalone message page the
+  // state machine has already navigated to the chat, so we leave navigation
+  // alone.
   if (props.inModal || props.fullscreenOverlay) {
-    setTimeout(() => {
-      emit('close')
-    }, 1500)
+    sentCountdown.value = SENT_CLOSE_DELAY_SECS
+    sentCloseTimer = setInterval(() => {
+      sentCountdown.value--
+      if (sentCountdown.value <= 0) {
+        clearInterval(sentCloseTimer)
+        sentCloseTimer = null
+        emit('close')
+      }
+    }, 1000)
   }
 }
 
@@ -1126,6 +1185,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (sentCloseTimer) {
+    clearInterval(sentCloseTimer)
+    sentCloseTimer = null
+  }
+
   const timeOpenMs = mountTime.value ? Date.now() - mountTime.value : null
 
   action('message_expanded_unmount', {
@@ -2445,6 +2509,11 @@ onUnmounted(() => {
     justify-content: center;
   }
 
+  /* With the interested control beside it, Reply takes the rest of the row rather than all of it. */
+  &:has(.interested-control) .reply-button {
+    width: auto !important;
+  }
+
   /* Mobile: only Reply button visible, full width */
   @media (max-width: 767.98px) {
     .cancel-button {
@@ -2461,6 +2530,11 @@ onUnmounted(() => {
 .footer-buttons:has(.cancel-button:only-child) .cancel-button {
   flex: 1;
   width: 100% !important;
+}
+
+.sent-countdown {
+  white-space: nowrap;
+  opacity: 0.75;
 }
 
 .promised-notice {

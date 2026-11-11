@@ -145,6 +145,112 @@ Three things make this worse than it sounds:
 - **A white screen on app launch** is usually the combination of no splash plugin, an empty body
   in the entry HTML, and a root component that suspends.
 
+## Every button is kept on one line, site-wide
+
+`assets/css/buttons.scss` sets `button { white-space: nowrap !important; }`. A button whose label
+can be a sentence (an answer option, a problem title, a step name) therefore runs off the right
+edge of a phone screen, with no error and no scrollbar, and a scoped `white-space: normal` does
+nothing. Wrap it with `white-space: normal !important` on a more specific selector, as
+`components/ModSysAdminUxFunnelChart.vue` does for its row labels, and check it at phone width.
+The member question card (components/MicroVolunteeringUxPrompt.vue) is the second place this bit.
+
+## A filter the old API ignores shows unfiltered figures as filtered
+
+The frontend ships itself: a green master merges to `production` and Netlify builds it. The Go API
+is rebuilt by hand, hours or days later. A tab that sends a new filter parameter is therefore
+**live before the code that honours it**. The old API ignores a parameter it does not know and
+answers 200 with the figures for everyone, so the screen says "Device: iOS app" over figures that are
+not cut by device, and both test suites pass.
+
+- Every filtered answer must say which filters it used (`filters`) and which it left alone
+  (`ignored`), and the frontend must compare that with what it asked. An answer with no
+  `filters` at all is an old server: say its figures may not be filtered
+  (`filterNotes` in `modtools/composables/useUxFormat.js`).
+- Compare the echo with the request **that produced that answer**, not with the newest request.
+  While a changed filter loads, the slot still holds the answer to the one before, so comparing
+  its echo with the new request prints the old-server warning on every filter change, from a
+  server that is up to date. The sentence then means nothing, and a real old server is missed. The
+  store keeps what each answer was asked with (`answered` in `modtools/stores/ux.js`) and
+  `store.notes(name)` reads it.
+- Say so in the PR description: deploy the Go change first.
+
+## Change the address with `router.replace`, never `push`, inside a view
+
+`plugins/back-navigation.client.js` tracks paths only. For someone who arrived on a link, the first
+Back after a pushed **query** change calls `router.replace('/')` and sends them to the home page.
+A view that keeps its state in the query string (the SysAdmin UX tab, `composables/useUxView.js`)
+must write it with `replace`, so there is no history entry for Back to find and Back leaves the
+page, which is what a person expects. Do not call `replace` when the new query equals the current
+one: a date filter emits on mount.
+
+## An `onErrorCaptured` hook that returns `false` also stops the report
+
+Returning `false` ends Vue's error propagation, so `app.config.errorHandler` is never called. That
+is where Sentry is wired in (`plugins/sentry.client.ts`) and where
+`plugins/something-went-wrong.client.js` sits. A component that catches a child's error to draw
+its own notice and returns `false` reports nothing: no Sentry event and no console line, and the
+person sees only the notice. Return nothing, as `modtools/components/ModSysAdminUx.vue` does, and
+the error carries on to the handler. On the client Nuxt's root only turns a fatal Nuxt error into
+the error page, so an ordinary error is not made worse by this.
+
+In a unit test, Vue Test Utils re-throws any error that reaches the app handler while a component
+is mounting. Mount the part that works, then open the part that fails, and give `global.config` an
+`errorHandler` to see what was reported.
+
+## A UX experiment switch must be a literal name, listed in the manifest
+
+`tests/unit/uxExperimentsManifest.spec.js` finds switches by grepping the source for
+`useExperiment('<name>')` and `flowArm(<flow>, '<name>')` with a string literal. A name held in a
+variable or a wrapper that passes it on would be invisible to it, so that switch would never be
+listed, never age out and never be cleaned up; the test now fails on any call whose name is not a
+literal. A call under `tests/` is still not scanned. Write the literal at the call site.
+
+Every switch needs an entry in `ux-experiments.manifest.json` (`name`, `opened` as `YYYY-MM-DD`,
+`pr`). An entry more than 14 days old only prints a warning; more than 30 days (`max_age_days`)
+fails the test on **every** branch, not only the one that added it, unless it has a future
+`keep_until` and a `reason`. Remove the switch in the cleanup PR rather than raising the limit. The
+manifest also tells the client which switches its own bundle contains, and only those are stamped
+into `variant`, so a switch whose name is missing from it is counted as no arm at all.
+
+The hourly read matches a name only at the start of the `variant` field or after a comma, so `give`
+and `my-give` do not collide; it still reads better not to reuse one as the tail of another. See
+`docs/developers/reference/ux-experiments.md`.
+
+## A config key the frontend reads ships before the API allows it
+
+The frontend ships itself: green master merges to `production` and Netlify builds it. The Go API is
+rebuilt by hand, hours or days later. A key the new frontend fetches from `GET /config/<key>`, or an
+answer shape it sends, is therefore **live in the browser before the Go code that serves it**. For a
+key `isPublicConfigKey` (`iznik-server-go/config/config.go`) does not yet list, every page view gets
+a 403, and `BaseAPI` reports a failed API call to Sentry on each one: one event per page view for as
+long as the deploy takes, with a plausible-looking cause ("API2 request failed /config/..."). Nothing
+is wrong in either codebase taken alone, and both test suites pass.
+
+- Fetch such a key with `logError` off (`api(config).config.fetchv2(key, false)`), treat a refusal as
+  "no value", and make the missing value mean the safe default (for an experiment, control).
+- Deploy the Go change first, then let the frontend merge. Say so in the PR description; do not call
+  the opposite order "harmless".
+- The same goes for a new field or accepted value in a POST body: old Go answers 400, and the client
+  must cope.
+- UX experiments: `docs/developers/reference/ux-experiments.md`, "How arms reach members, live" and
+  "Deploying it".
+
+## A modal opened after a navigation can be thrown away, or cancel it
+
+Something that should pop up "once the member reaches the next page" (after a reply, say) has two
+silent ways to fail, and a unit test with one mounted copy catches neither:
+
+- **Opened while the navigation is under way, it cancels it.** `useOurModal` registers a
+  `beforeEach` guard that treats any navigation while a modal is shown as the back button: it hides
+  the modal and calls `next(false)`. Only a route with `?noguard=true` gets through. The member stays
+  where they were, with no error.
+- **The router's `afterEach` is too early when the layout changes.** `/message` and `/chats` use
+  different layouts, so `LayoutCommon` and everything mounted in it are unmounted and mounted again
+  during the move. `afterEach` runs before that, so a modal opened there belongs to the copy that is
+  about to go: it is thrown away, and the new copy never knew. Wait for Nuxt's `page:finish`
+  instead, and keep the request somewhere outside the component (a module-level ref) until the copy
+  that opens it is the one on the new page.
+
 ## See also
 
 - `docs/developers/` for how the feeds and stores are meant to work.

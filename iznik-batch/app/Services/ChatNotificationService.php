@@ -8,7 +8,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
 use App\Models\User;
-use App\Services\Ripple\RippleReplyService;
+use App\Services\Lockdown\LockdownHoldsService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -139,6 +139,44 @@ class ChatNotificationService
             ->pluck('chatmsgid')
             ->all();
 
+        // Lockdown holds (plan 2026-09-27-lockdown-switch.md, section 11.4): a message held
+        // while chat was locked down is released - low risk, delivered - by ChatProcessService
+        // possibly hours after chat_messages.date, for exactly the same reason as a released
+        // rippling hold above, so it gets exactly the same fix: admit by lockdown_holds.releasedat.
+        $lockdownReleasedRecently = DB::table('lockdown_holds')
+            ->where('kind', LockdownHoldsService::KIND_CHAT)
+            ->where('outcome', 'released')
+            ->where('releasedat', '>=', $startTime)
+            ->pluck('refid')
+            ->all();
+
+        // A reply held for the sender's answer (chat_prompts.kind confirm_reply) is delivered when the question is answered,
+        // up to three days after it was written, so it is admitted by the time of the answer, as a released hold is by its
+        // release. Only a yes delivers a reply; the other gates below still apply.
+        $confirmedRecently = DB::table('chat_prompts')
+            ->where('kind', 'confirm_reply')
+            ->where('answer', 'yes')
+            ->whereNotNull('heldchatmsgid')
+            ->where('answered_at', '>=', $startTime)
+            ->pluck('heldchatmsgid')
+            ->all();
+
+        // A message held for chat review is delivered when a moderator approves it, which leaves chat_messages.date alone
+        // and can be hours later, so it is admitted by the time of the approval, as a released hold is by its release.
+        // The approval's time is only in its log row, written by approveChatMessage in iznik-server-go/chat/chatmessage.go
+        // with this exact text; the (timestamp, type, subtype) index answers it. Without this a reply approved more than
+        // the look-back after it was written was never mailed: 4 of 502 approved in the week to 2026-11-10.
+        $approvedRecently = DB::table('logs')
+            ->where('timestamp', '>=', $startTime)
+            ->where('type', 'Chat')
+            ->where('subtype', 'Approved')
+            ->pluck('text')
+            ->map(fn ($text) => preg_match('/^Chat message (\d+) approved$/', (string) $text, $m) ? (int) $m[1] : null)
+            ->filter()
+            ->all();
+
+        $releasedRecently = array_values(array_unique(array_merge($releasedRecently, $lockdownReleasedRecently, $confirmedRecently, $approvedRecently)));
+
         $query = ChatMessage::query()
             ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
             ->join('users', 'chat_messages.userid', '=', 'users.id')
@@ -159,13 +197,35 @@ class ChatNotificationService
         // the rippling_held_replies delivery gate — NOT chat_messages.reviewrequired (that
         // bit is shared with the spam/mod hold). Until any reply is held the table is empty,
         // so the gate is always true and nothing changes.
-        $query->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'));
+        // Inlined equivalent of RippleReplyService::deliveryGateSql('chat_messages.id').
+        $query->whereNotExists(function ($q) {
+            $q->from('rippling_held_replies as cmr')
+                ->whereColumn('cmr.chatmsgid', 'chat_messages.id')
+                ->where('cmr.status', '<>', 'released');
+        });
 
-        // For User2User chats, only include reviewed messages.
+        // For User2User chats, only include reviewed messages. The question Freegle asks a replier about a reply
+        // (chat_prompts kind confirm_reply) is the one exception while it is open: it is written unsuccessful so that
+        // the poster is told nothing of it, and it is for the replier alone (getMembersToNotify), who is mailed about it
+        // as about any chat message. Without that the replier who leaves the chat never learns of the question, and the
+        // reply is dropped three days later with nobody told.
         if ($chatType === ChatRoom::TYPE_USER2USER) {
             $query->where('chat_messages.reviewrequired', 0)
                 ->where('chat_messages.processingrequired', 0)
-                ->where('chat_messages.processingsuccessful', 1);
+                ->where(function ($q) {
+                    $q->where('chat_messages.processingsuccessful', 1)
+                        ->orWhereExists(function ($open) {
+                            $open->select(DB::raw(1))
+                                ->from('chat_prompts as cq')
+                                ->whereColumn('cq.chatmsgid', 'chat_messages.id')
+                                ->where('cq.kind', 'confirm_reply')
+                                ->whereNotNull('cq.userid')
+                                ->whereNull('cq.answered_at')
+                                ->where(function ($live) {
+                                    $live->whereNull('cq.expires_at')->orWhere('cq.expires_at', '>', now());
+                                });
+                        });
+                });
         }
 
         if (! $forceAll) {
@@ -231,6 +291,27 @@ class ChatNotificationService
                     continue;
                 }
 
+                // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
+                // deliberately AFTER the preference check above, for the same reason as the
+                // suppression check below - a member who has chat notifications off was never
+                // getting this mail, so there is nothing here to defer.
+                //
+                // Stops without touching chat_roster.lastmsgemailed, so this message is still
+                // unmailed on the next run: nothing is dropped, and once email resumes the
+                // ordinary claim-then-send path above picks it up exactly as if it were new.
+                //
+                // Counted once per pass over this recipient, not once per member-mail - unlike
+                // mail_suppressed_counts below, which exists to drive an accurate one-off
+                // catch-up and so guards against recounting the same held mail on every run,
+                // deferred:chat is a coarser "how much of this loop's work is being held right
+                // now" signal, expected to move every time the loop runs while email is held.
+                $lockdown = app(\App\Services\Lockdown\LockdownService::class);
+                $lockdown->ack('mail-loops');
+                if ($lockdown->held('email')) {
+                    $lockdown->count('deferred:chat');
+                    continue;
+                }
+
                 // The member's provider is refusing our mail. Deliberately
                 // AFTER the preference check: someone who has chat
                 // notifications turned off was never going to get this email,
@@ -262,6 +343,10 @@ class ChatNotificationService
                     $sendingFrom = $message->user;
                 } elseif ($message->userid === $sendingTo->id) {
                     // Copy-to-self: recipient is the message author, so sender should be themselves.
+                    $sendingFrom = $message->user;
+                } elseif ($message->type === ChatMessage::TYPE_PROMPT
+                    && ! in_array($message->userid, [$chatRoom->user1, $chatRoom->user2], true)) {
+                    // A question from Freegle in a chat between two members is from Freegle, not from the other member.
                     $sendingFrom = $message->user;
                 } else {
                     $sendingFrom = $this->getOtherUser($chatRoom, $sendingTo);
@@ -429,6 +514,12 @@ class ChatNotificationService
             ->whereIn('userid', [$chatRoom->user1, $chatRoom->user2])
             ->notBlocked()
             ->with('user');
+
+        // A reply question the poster has not been shown goes to the replier it was asked of and to nobody else.
+        $askedOnly = $message->type === ChatMessage::TYPE_PROMPT ? ChatMessage::questionAskedOnlyOf((int) $message->id) : null;
+        if ($askedOnly !== null) {
+            $query->where('userid', $askedOnly);
+        }
 
         if (! $forceAll) {
             // Only get members who haven't been mailed this message yet.

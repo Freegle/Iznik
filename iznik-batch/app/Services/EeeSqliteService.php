@@ -693,7 +693,7 @@ class EeeSqliteService
         return $row ?: null;
     }
 
-    public function getComponentTypes(string $category = null): array
+    public function getComponentTypes(?string $category = null): array
     {
         $pdo = $this->getPdo();
         if ($category) {

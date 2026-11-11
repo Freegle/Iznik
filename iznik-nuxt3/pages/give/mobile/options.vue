@@ -4,7 +4,7 @@
     <div class="app-content">
       <!-- Delivery option -->
       <div class="form-section">
-        <label class="form-label">Could you deliver?</label>
+        <div class="form-label">Could you deliver?</div>
         <div class="toggle-options">
           <button
             class="toggle-btn"
@@ -25,7 +25,7 @@
 
       <!-- Deadline option -->
       <div class="form-section">
-        <label class="form-label">Is there a deadline?</label>
+        <div class="form-label">Is there a deadline?</div>
         <div class="toggle-options">
           <button
             class="toggle-btn"
@@ -73,8 +73,13 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from '#imports'
 import { useComposeStore } from '~/stores/compose'
+import {
+  watchOptionChoices,
+  reportValidationFailure,
+} from '~/composables/useComposeTelemetry'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
+import { restoreOptionChoices } from '~/composables/useCompose'
 import { MESSAGE_EXPIRE_TIME } from '~/constants'
 
 const router = useRouter()
@@ -115,10 +120,23 @@ onMounted(() => {
 
   if (existingMessages.length > 0) {
     messageId.value = existingMessages[0].id
+    restoreOptionChoices(existingMessages[0], {
+      deliveryPossible,
+      hasDeadline,
+      deadline,
+    })
   } else {
     // No message found, go back to photos
     router.replace('/give/mobile/photos')
   }
+
+  // Flow telemetry: the delivery and deadline choices, and a deadline in the past. Watched
+  // from here, after the earlier choices were put back, so putting them back is not counted
+  // as the member changing them.
+  watchOptionChoices('Offer', {
+    delivery: deliveryPossible,
+    deadline: hasDeadline,
+  })
 })
 
 function setDeadlineAndShowPicker() {
@@ -146,6 +164,7 @@ function goNext() {
   // Validate deadline is not in the past
   if (hasDeadline.value && deadline.value && deadline.value < today.value) {
     deadlineError.value = true
+    reportValidationFailure('Offer', 'deadline', 'in_past')
     const input = deadlineInput.value?.element
     if (input) {
       input.focus()

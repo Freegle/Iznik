@@ -789,6 +789,34 @@ DSN;
         $this->assertEquals('unparseable', $result['error']);
     }
 
+    /**
+     * An unparseable bounce is kept for later analysis, in a directory made on first use.
+     * The real directory survives between runs in the batch container, so this gives the
+     * service one of its own that does not exist yet.
+     */
+    public function test_saves_an_unparseable_bounce_creating_the_error_directory(): void
+    {
+        $dir = sys_get_temp_dir().'/bounce-error-test-'.uniqid('', true).'/error';
+        (new \ReflectionProperty(BounceService::class, 'errorDirectory'))->setValue($this->service, $dir);
+
+        try {
+            $result = $this->service->processBounce($this->createParsedEmail([
+                'rawMessage' => 'This is not a valid DSN',
+                'envelopeTo' => 'bounce-99999-1699000000@users.ilovefreegle.org',
+            ]));
+
+            $this->assertSame('unparseable', $result['error']);
+            $this->assertDirectoryExists($dir, 'the error directory is created when missing');
+            $saved = glob($dir.'/*.eml');
+            $this->assertCount(1, $saved);
+            $this->assertSame('This is not a valid DSN', file_get_contents($saved[0]));
+        } finally {
+            array_map('unlink', glob($dir.'/*') ?: []);
+            @rmdir($dir);
+            @rmdir(dirname($dir));
+        }
+    }
+
     public function test_returns_error_for_unknown_recipient(): void
     {
         $rawBounce = <<<DSN

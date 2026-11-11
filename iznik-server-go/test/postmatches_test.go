@@ -43,13 +43,13 @@ func makeVecWithCosine(base [embedding.EmbeddingDim]float32, target float64) [em
 }
 
 // TestPostMatchesThresholdExcludesMidBand pins the matched-posts floor at
-// MinMatchedPostScore rather than the similar-posts MinSimilarScore (0.60).
+// MinMatchedPostScore rather than the 0.60 floor a browsing strip once used.
 //
 // The band between them is exactly where this feature used to hurt: on 150
 // hand-judged live samples, candidates scoring 0.75-0.85 were relevant only ~36%
 // of the time, so a 0.60 floor put an irrelevant item in roughly half the emails.
 // A 0.78-similarity candidate clears the old floor comfortably and must still be
-// dropped here; without this test, reverting to MinSimilarScore stays green.
+// dropped here; without this test, reverting to 0.60 stays green.
 func TestPostMatchesThresholdExcludesMidBand(t *testing.T) {
 	base := makeTestVec(0.5)
 	const srcID, midID, strongID = 852001, 852002, 852003
@@ -159,7 +159,7 @@ func TestPostMatchesReachFilteredForOwner(t *testing.T) {
 
 	prefix := uniquePrefix("postmatchesreach")
 	groupID := CreateTestGroup(t, prefix)
-	posterOut := CreateTestUser(t, prefix+"po", "Member")
+	posterOut := CreateTestUser(t, prefix+"po", "Member") // role-literal-ok: not a system role, see #2023
 	// Out-of-reach candidate needs a real message row (rippling_reach FK).
 	outReachID := CreateTestMessage(t, posterOut, groupID, "out of reach wanted", 51.5, -0.1)
 

@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Fix bounces that were misrouted to chat review instead of being processed as bounces.
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\Log;
  * creating chat messages. Bounces arriving at notify-{chatId}-{userId}@ addresses
  * were incorrectly treated as chat messages.
  */
+#[AsCommand(name: 'mail:fix-misrouted-bounces')]
 class FixMisroutedBouncesCommand extends Command
 {
     protected $signature = 'mail:fix-misrouted-bounces

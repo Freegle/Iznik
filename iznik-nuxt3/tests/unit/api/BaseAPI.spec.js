@@ -47,8 +47,14 @@ vi.mock('@sentry/vue', () => ({
 }))
 
 const mockWarn = vi.fn()
+const mockNoteApiRequestStarted = vi.fn()
+const mockLiveFlowInstance = vi.fn(() => null)
 vi.mock('~/composables/useClientLog', () => ({
   warn: (...args) => mockWarn(...args),
+  noteApiRequestStarted: (...args) => mockNoteApiRequestStarted(...args),
+}))
+vi.mock('~/composables/useFlowTelemetry', () => ({
+  getLiveFlowInstanceId: () => mockLiveFlowInstance(),
 }))
 
 // Mock fetchRetry to return a function that uses our mock fetch
@@ -162,6 +168,55 @@ describe('BaseAPI', () => {
 
       expect(mockCaptureMessage).toHaveBeenCalled()
     })
+
+    it('names the endpoint without its query string, so failures group in Sentry', async () => {
+      mockFetch.mockResolvedValue([500, { error: 'Server error' }])
+
+      const api = createApi()
+
+      try {
+        await api.$requestv2('GET', '/lockdown?x=1', {})
+      } catch (e) {
+        // expected
+      }
+
+      const title = mockCaptureMessage.mock.calls[0][0]
+      expect(title).toMatch(/^API2 request failed \/lockdown returned HTTP 500/)
+      expect(title).not.toContain('?')
+    })
+  })
+
+  describe('UX telemetry', () => {
+    beforeEach(() => {
+      mockLiveFlowInstance.mockReturnValue(null)
+      mockFetch.mockResolvedValue([200, { ret: 0 }])
+    })
+
+    it('counts each request started', async () => {
+      const api = createApi()
+      await api.$requestv2('GET', '/a', {})
+      await api.$requestv2('GET', '/b', {})
+      expect(mockNoteApiRequestStarted).toHaveBeenCalledTimes(2)
+    })
+
+    it('sends X-Freegle-Flow-Instance while a flow instance is live', async () => {
+      mockLiveFlowInstance.mockReturnValue(
+        '0b1c2d3e-aaaa-4bbb-8ccc-123456789abc'
+      )
+      const api = createApi()
+      await api.$requestv2('GET', '/a', {})
+      const headers = mockFetch.mock.calls.at(-1)[1].headers
+      expect(headers['X-Freegle-Flow-Instance']).toBe(
+        '0b1c2d3e-aaaa-4bbb-8ccc-123456789abc'
+      )
+    })
+
+    it('sends no flow header when no instance is live', async () => {
+      const api = createApi()
+      await api.$requestv2('GET', '/a', {})
+      const headers = mockFetch.mock.calls.at(-1)[1].headers
+      expect(headers).not.toHaveProperty('X-Freegle-Flow-Instance')
+    })
   })
 
   describe('successful responses', () => {
@@ -195,6 +250,24 @@ describe('BaseAPI', () => {
           level: 'warning',
           tags: expect.objectContaining({ error_type: 'network' }),
         })
+      )
+    })
+
+    it('names the endpoint without its query string on a network failure', async () => {
+      mockMiscStore.online = true
+      mockFetch.mockRejectedValue(new Error('Too many retries, give up'))
+
+      const api = createApi()
+
+      try {
+        await api.$requestv2('GET', '/lockdown?x=1', {})
+      } catch (e) {
+        // expected to throw
+      }
+
+      expect(mockCaptureMessage).toHaveBeenCalledWith(
+        'API network failure GET /lockdown: Too many retries, give up',
+        expect.anything()
       )
     })
 

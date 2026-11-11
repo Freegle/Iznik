@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func TestJoinAndPostSetsMembershipMsgtype(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) "+
@@ -50,6 +51,7 @@ func TestJoinAndPostSetsMembershipMsgtype(t *testing.T) {
 	db.Raw("SELECT msgtype FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Row().Scan(&msgtype)
 	require.NotNil(t, msgtype, "the membership created at submit must record the type, not leave it NULL")
 	assert.Equal(t, "Wanted", *msgtype)
+	assert.Equal(t, "posted", addedOriginOf(t, "memberships", userID, groupID), "JoinAndPost joined them in order to post")
 }
 
 // A post submitted straight to a group the member already belongs to skips the
@@ -59,8 +61,8 @@ func TestPutMessageSetsMembershipMsgtype(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body, _ := json.Marshal(map[string]interface{}{

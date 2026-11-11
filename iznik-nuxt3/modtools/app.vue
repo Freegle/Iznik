@@ -30,7 +30,6 @@
   </div>
 </template>
 <script setup>
-import { useNoticeboardStore } from '~/stores/noticeboard'
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
@@ -62,6 +61,7 @@ import { useShortlinkStore } from '~/stores/shortlinks'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import { useConfigStore } from '~/stores/config'
+import { useLockdownStore } from '~/stores/lockdown'
 // polyfills
 import 'core-js/actual/array/to-sorted'
 
@@ -115,7 +115,6 @@ const teamStore = useTeamStore()
 const donationStore = useDonationStore()
 const giftAidStore = useGiftAidStore()
 const authorityStore = useAuthorityStore()
-const noticeboardStore = useNoticeboardStore()
 const statsStore = useStatsStore()
 const microVolunteeringStore = useMicroVolunteeringStore()
 const imageStore = useImageStore()
@@ -123,6 +122,7 @@ const domainStore = useDomainStore()
 const locationStore = useLocationStore()
 const shortlinkStore = useShortlinkStore()
 const configStore = useConfigStore()
+const lockdownStore = useLockdownStore()
 const adminsStore = useAdminsStore()
 const alertStore = useAlertStore()
 const commentStore = useCommentStore()
@@ -158,7 +158,6 @@ teamStore.init(runtimeConfig)
 donationStore.init(runtimeConfig)
 giftAidStore.init(runtimeConfig)
 authorityStore.init(runtimeConfig)
-noticeboardStore.init(runtimeConfig)
 statsStore.init(runtimeConfig)
 microVolunteeringStore.init(runtimeConfig)
 imageStore.init(runtimeConfig)
@@ -166,6 +165,7 @@ domainStore.init(runtimeConfig)
 locationStore.init(runtimeConfig)
 shortlinkStore.init(runtimeConfig)
 configStore.init(runtimeConfig)
+lockdownStore.init(runtimeConfig)
 adminsStore.init(runtimeConfig)
 alertStore.init(runtimeConfig)
 commentStore.init(runtimeConfig)

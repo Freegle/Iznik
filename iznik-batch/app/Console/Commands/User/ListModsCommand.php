@@ -4,11 +4,13 @@ namespace App\Console\Commands\User;
 
 use App\Services\ListModsService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Port of the V1 script scripts/fix/fix_listmods.php: CSV of every group
  * moderator/owner with their emails, name, last access and mod groups.
  */
+#[AsCommand(name: 'user:list-mods')]
 class ListModsCommand extends Command
 {
     protected $signature = 'user:list-mods

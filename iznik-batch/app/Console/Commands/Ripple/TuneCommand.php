@@ -4,6 +4,7 @@ namespace App\Console\Commands\Ripple;
 
 use App\Services\Ripple\RippleTuneService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * §16 self-tuning loop (advisory). Rolls up the week's rippling metrics, flags geographically
@@ -14,6 +15,7 @@ use Illuminate\Console\Command;
  * Like ripple:monitor, this is runnable now but left unscheduled pending the production rollout
  * decision (see plans/rippling-out-rollout/design.md §16).
  */
+#[AsCommand(name: 'ripple:tune')]
 class TuneCommand extends Command
 {
     protected $signature = 'ripple:tune

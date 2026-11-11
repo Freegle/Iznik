@@ -32,7 +32,10 @@
         >
           <v-icon icon="trash" class="me-2" />Delete
         </b-dropdown-item>
-        <b-dropdown-item v-if="chitChatMod && !reply.hidden" @click="hideReply">
+        <b-dropdown-item
+          v-if="chitChatMod && !reply.hidden && !modsHeld"
+          @click="hideReply"
+        >
           <v-icon icon="eye-slash" class="me-2" />Hide
         </b-dropdown-item>
         <b-dropdown-item
@@ -335,6 +338,12 @@ import ProfileImage from '~/components/ProfileImage'
 import AutoHeightTextarea from '~/components/AutoHeightTextarea'
 import { timeago, timeagoShort } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
+import { useLockdown } from '~/modtools/composables/useLockdown'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 const NewsPhotoModal = defineAsyncComponent(
   () => import('./NewsPhotoModal.vue')
@@ -394,6 +403,7 @@ const miscStore = useMiscStore()
 const authStore = useAuthStore()
 const me = computed(() => authStore.user)
 const myid = computed(() => me.value?.id)
+const { modsHeld } = useLockdown()
 
 const isMobile = computed(() => {
   return miscStore.breakpoint === 'xs' || miscStore.breakpoint === 'sm'
@@ -465,16 +475,17 @@ const tagusers = computed(() => {
 const mod = computed(() => {
   return (
     me.value &&
-    (me.value.systemrole === 'Moderator' ||
-      me.value.systemrole === 'Admin' ||
-      me.value.systemrole === 'Support')
+    (me.value.systemrole === SYSTEMROLE_MODERATOR ||
+      me.value.systemrole === SYSTEMROLE_ADMIN ||
+      me.value.systemrole === SYSTEMROLE_SUPPORT)
   )
 })
 
 const admin = computed(() => {
   return (
     me.value &&
-    (me.value.systemrole === 'Admin' || me.value.systemrole === 'Support')
+    (me.value.systemrole === SYSTEMROLE_ADMIN ||
+      me.value.systemrole === SYSTEMROLE_SUPPORT)
   )
 })
 

@@ -15,10 +15,20 @@
           @selected="postcodeSelect"
           @cleared="postcodeClear"
         />
+        <!-- Experiment give-skip-options-screen: arm b skipped the options screen, so offer a way to it. -->
+        <button
+          v-if="skippedOptions"
+          type="button"
+          class="options-link"
+          data-testid="options-link"
+          @click="router.push('/give/mobile/options')"
+        >
+          Delivery or a deadline?
+        </button>
       </div>
 
       <div v-if="!closed && postcodeValid" class="form-section">
-        <label class="form-label">Your local community:</label>
+        <div class="form-label">Your local community:</div>
         <ComposeGroup />
         <PostPersonalInfoWarning :group="group" :text="postText" />
       </div>
@@ -107,7 +117,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from '#imports'
 import PostCode from '~/components/PostCode.vue'
@@ -127,7 +137,9 @@ import {
   postcodeClear,
   freegleIt,
   makeCanSubmit,
+  reportValidationFailure,
 } from '~/composables/useCompose'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 
 const router = useRouter()
 const composeStore = useComposeStore()
@@ -144,6 +156,15 @@ const { email } = storeToRefs(composeStore)
 // Local state
 const emailValid = ref(false)
 const emailBelongsToSomeoneElse = ref(false)
+
+// Experiment give-skip-options-screen: the arm lives in the browser, so the server render and the
+// first client render are control and the arm is read once the page is mounted. Anything but arm
+// 'b' is control and shows nothing extra.
+const skippedOptions = ref(false)
+onMounted(() => {
+  skippedOptions.value =
+    flowArm(FlowName.GIVE, 'give-skip-options-screen') === 'b'
+})
 
 // Get setup data from composable
 const {
@@ -195,12 +216,16 @@ async function submitOffer() {
       if (inuse) {
         if (!loggedIn.value) {
           // User is not logged in and the email belongs to an existing account.
-          // Force them to log in rather than showing the merge dialog.
+          // Force them to log in rather than showing the merge dialog. Remember
+          // the post so it submits automatically after login (survives refresh).
+          composeStore.deferSubmit('Offer')
+          reportValidationFailure('Offer', 'email', 'existing_account')
           authStore.forceLogin = true
           return
         }
         // User is logged in but trying to use an email from a different account.
         // Show the merge dialog.
+        reportValidationFailure('Offer', 'email', 'belongs_to_other')
         emailBelongsToSomeoneElse.value = true
         return
       }
@@ -268,6 +293,17 @@ async function submitOffer() {
   margin-bottom: 0.5rem;
   font-weight: 500;
   color: $color-gray--darker;
+}
+
+.options-link {
+  display: block;
+  margin: 0.75rem auto 0;
+  padding: 0.25rem 0.5rem;
+  background: none;
+  border: 0;
+  color: var(--color-link);
+  text-decoration: underline;
+  font-size: 0.95rem;
 }
 
 .no-groups-notice {

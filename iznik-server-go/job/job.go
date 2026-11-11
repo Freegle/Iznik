@@ -35,6 +35,12 @@ type Job struct {
 	Clickability float64 `json:"clickability"`
 	Expectation  float64 `json:"expectation"`
 	Image        string  `json:"image,omitempty"`
+	// AutoOpen is set only by GET /job/:id. False tells the email job page to show a button
+	// instead of opening the advert at once. True, or absent, means the page opens the advert at once.
+	AutoOpen *bool `json:"autoopen,omitempty" gorm:"-"`
+	// AutoOpenReason says why AutoOpen is false: abroad, hosting or forced. In shadow mode it says
+	// why it would be, while AutoOpen stays true. Empty when the advert opens.
+	AutoOpenReason string `json:"autoopen_reason,omitempty" gorm:"-"`
 }
 
 const JOBS_LIMIT = 50
@@ -82,7 +88,11 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 		return make([]Job, 0)
 	}
 
-	categoryClause := "category IS NOT NULL"
+	// Category only narrows the list when the member picks one on the jobs
+	// page. A third of the feed carries no category, and requiring one by
+	// default hid those jobs: the nearest 50 from the spatial server were
+	// mostly uncategorised in some towns, so a member there saw three.
+	categoryClause := "1 = 1"
 	var categoryArgs []any
 	if category != "" {
 		categoryClause = "category REGEXP ?"
@@ -157,13 +167,15 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 			lng, lat).
 		Joins("LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title").
 		Where(whereSQL, whereArgs...).
-		// Rank by expected value (cpc * clickability) discounted by a mild
-		// freshness factor: older WhatJobs postings are likelier already
-		// filled/closed, so a click redirects to a different job and doesn't
-		// convert. Decay the score with posting age (floored at 0.5 by ~7
-		// days); posted_at NULL -> treated as fresh. Kept identical to the
-		// digest ordering in iznik-batch Job::nearLocation.
-		Order("jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC").
+		// Rank by pay first. Clickability is a count of title keywords seen in
+		// recently clicked jobs, not a click rate: it ranges far wider than cpc
+		// and favours whatever was shown before, so as a multiplier it let
+		// common 8p jobs outrank 36p ones. It only breaks ties at equal pay,
+		// discounted by posting age (older WhatJobs postings are likelier
+		// filled/closed): factor 1.0 when fresh, floored at 0.5 by ~7 days,
+		// posted_at NULL -> fresh. Kept identical to the digest ordering in
+		// iznik-batch Job::nearLocation.
+		Order("jobs.cpc DESC, jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC").
 		Limit(JOBS_LIMIT).
 		Scan(&rows)
 
@@ -173,9 +185,9 @@ func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, categ
 	// the *same* town many times with slightly varied body text — e.g. Deliveroo
 	// posts "Deliveroo Rider / preston" a dozen times, each a different bodyhash —
 	// so they arrive here as distinct ids and render as duplicate cards. To the
-	// user, same title + same location is one job. Rows arrive ordered by expected
-	// value (cpc*clickability*freshness), so keeping the first occurrence keeps the
-	// best-ranked copy. Different locations stay distinct (genuine local variety).
+	// user, same title + same location is one job. Rows arrive ranked (pay first),
+	// so keeping the first occurrence keeps the best-ranked copy. Different
+	// locations stay distinct (genuine local variety).
 	ret := make([]Job, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
 	for _, r := range rows {
@@ -210,6 +222,10 @@ func GetJob(c *fiber.Ctx) error {
 	var job Job
 	var externaluid sql.NullString
 
+	// The answer depends on who is asking (their address, their clock, and whether they are signed
+	// in), so no cache between here and the browser may keep it for anyone else.
+	c.Set("Cache-Control", "private, no-store")
+
 	if c.Params("id") != "" {
 		id, err := strconv.ParseUint(c.Params("id"), 10, 64)
 
@@ -226,6 +242,11 @@ func GetJob(c *fiber.Ctx) error {
 				if externaluid.Valid && len(externaluid.String) > 0 {
 					job.Image = misc.GetImageDeliveryUrl(externaluid.String, "")
 				}
+
+				decision := gate(c)
+				job.AutoOpen = &decision.Open
+				job.AutoOpenReason = decision.Reason
+
 				return c.JSON(job)
 			}
 		}

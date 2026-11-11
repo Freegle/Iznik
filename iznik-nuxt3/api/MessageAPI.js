@@ -2,12 +2,20 @@ import BaseAPI from '@/api/BaseAPI'
 import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 
 import { notAHeldConflict } from '~/api/heldConflict'
+import { notOutcomeAlreadyRecorded } from '~/api/outcomeConflict'
 
 // A ChitChat moderator posting on a member's behalf names the member here. The
 // server checks the caller is a ChitChat moderator and derives that member's
 // location and community itself, so this only says WHO the post is for.
 function onBehalfOfQuery(userid) {
   return userid ? '?onbehalfof=' + encodeURIComponent(userid) : ''
+}
+
+// Approve, Reject and Delete can act on several of a moderator's communities at once. The
+// field is only sent when there are communities to name, so a single-community action
+// goes out exactly as it always has.
+function severalCommunities(groupids) {
+  return Array.isArray(groupids) && groupids.length ? { groupids } : {}
 }
 
 export default class MessageAPI extends BaseAPI {
@@ -18,6 +26,21 @@ export default class MessageAPI extends BaseAPI {
   async fetchMT(params, logError = true) {
     const { id, ...rest } = params
     return await this.$getv2('/message/' + id, rest, logError)
+  }
+
+  // The "I'm interested" mark on someone else's post. Failures are not logged: an API that does
+  // not have the routes yet answers 404, and that must read as "no button", not as an error.
+  interestedState(id) {
+    return this.$getv2('/message/' + id + '/interested', {}, false)
+  }
+
+  setInterested(id, interested) {
+    return this.$postv2('/message/' + id + '/interested', { interested }, false)
+  }
+
+  // The member's marks, newest first.
+  interestedList() {
+    return this.$getv2('/message/interested', {}, false)
   }
 
   // Actual rippling-out progress of a post, for the moderation reach map (mod-of-group only).
@@ -53,12 +76,6 @@ export default class MessageAPI extends BaseAPI {
     )
   }
 
-  // Posts semantically similar to a given post, for the "more like this nearby"
-  // recommendation strip. Returns [{id, groupid, score, lat, lng}].
-  similar(id, limit) {
-    return this.$getv2('/message/' + id + '/similar', limit ? { limit } : {})
-  }
-
   // Existing OFFERs near a location matching a free-text query, for the
   // "people are offering these near you" panel shown while composing a WANTED.
   // Returns [{id, groupid, score, lat, lng}].
@@ -80,7 +97,11 @@ export default class MessageAPI extends BaseAPI {
   }
 
   update(event) {
-    return this.$postv2('/message', event)
+    return this.$postv2(
+      '/message',
+      event,
+      event?.action === 'Outcome' ? notOutcomeAlreadyRecorded : true
+    )
   }
 
   save(event) {
@@ -120,6 +141,14 @@ export default class MessageAPI extends BaseAPI {
     return this.$putv2('/message' + onBehalfOfQuery(onbehalfof), body)
   }
 
+  // Single-call compose: create + attach (inline) + join + post in one request.
+  // data: { type, item, textbody, groupid, locationid, availablenow, deadline,
+  //         deliverypossible, email, attachments:[{externaluid, externalmods}] }
+  // Returns { id, groupid, jwt?, persistent?, newuser?, newpassword? }.
+  submit(data, logError = true) {
+    return this.$putv2('/message/submit', data, logError)
+  }
+
   intend(id, outcome) {
     return this.$postv2('/message', {
       action: 'OutcomeIntended',
@@ -155,6 +184,22 @@ export default class MessageAPI extends BaseAPI {
       ...(interestuserid ? { interestuserid } : {}),
       ...(comment ? { comment } : {}),
     })
+  }
+
+  // Owner/mod: mark one item of a multi-item post TAKEN (available false), or undo
+  // that (available true).
+  bulkItemAvailable(id, bulkitemid, available) {
+    return this.$postv2('/message', {
+      action: 'BulkItemAvailable',
+      id,
+      bulkitemid,
+      available,
+    })
+  }
+
+  // Owner/mod: take back an automatic split, so the post is as it was written.
+  autoSplitUndo(id) {
+    return this.$postv2('/message', { action: 'AutoSplitUndo', id })
   }
 
   // Offerer/mod transition of one interest row (Interested → Reserved →
@@ -200,7 +245,16 @@ export default class MessageAPI extends BaseAPI {
     return null
   }
 
-  approve(id, groupid, subject = null, stdmsgid = null, body = null) {
+  // groupids, when given, is every community the action is to act on at once (the Go API's
+  // resolveActionGroups); without it the action is on groupid alone.
+  approve(
+    id,
+    groupid,
+    subject = null,
+    stdmsgid = null,
+    body = null,
+    groupids = null
+  ) {
     return this.$postv2(
       '/message',
       {
@@ -210,6 +264,7 @@ export default class MessageAPI extends BaseAPI {
         subject,
         stdmsgid,
         body,
+        ...severalCommunities(groupids),
       },
       notAHeldConflict
     )
@@ -238,7 +293,14 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  reject(id, groupid, subject = null, stdmsgid = null, body = null) {
+  reject(
+    id,
+    groupid,
+    subject = null,
+    stdmsgid = null,
+    body = null,
+    groupids = null
+  ) {
     return this.$postv2(
       '/message',
       {
@@ -248,12 +310,20 @@ export default class MessageAPI extends BaseAPI {
         subject,
         stdmsgid,
         body,
+        ...severalCommunities(groupids),
       },
       notAHeldConflict
     )
   }
 
-  delete(id, groupid, subject = null, stdmsgid = null, body = null) {
+  delete(
+    id,
+    groupid,
+    subject = null,
+    stdmsgid = null,
+    body = null,
+    groupids = null
+  ) {
     return this.$postv2(
       '/message',
       {
@@ -263,6 +333,7 @@ export default class MessageAPI extends BaseAPI {
         subject,
         stdmsgid,
         body,
+        ...severalCommunities(groupids),
       },
       notAHeldConflict
     )
@@ -339,7 +410,7 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
-  async count(browseView, maxDistance, log) {
+  async count(browseView, maxDistance, log, browseType, browseGroup) {
     const params = {
       browseView,
     }
@@ -351,12 +422,23 @@ export default class MessageAPI extends BaseAPI {
       params.maxDistance = maxDistance
     }
 
+    // The feed filters to Offers or Wanteds client-side, so the badge must count the same
+    // type. Sent explicitly (including 'All') because the saved setting the server falls
+    // back on may not have landed yet right after the member changes the filter.
+    if (browseType) {
+      params.type = browseType
+    }
+
+    // Likewise "Show posts from" naming one community. Always sent, 0 meaning no community,
+    // so an explicit choice of "all" beats a stale saved one.
+    params.groupid = parseInt(browseGroup) > 0 ? parseInt(browseGroup) : 0
+
     return await this.$getv2('/message/count', params, log)
   }
 
   async markSeen(ids, source) {
     const body = { ids }
-    // Optional impression source tag (e.g. 'similar_posts') so a recommendation
+    // Optional impression source tag (e.g. 'wanted_match') so a recommendation
     // widget's impressions can be measured. Omitted for ordinary browse views.
     if (source) {
       body.source = source

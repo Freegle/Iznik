@@ -19,6 +19,50 @@ const {
   fillReplyForm,
   waitForNuxtHydration,
 } = require('./utils/reply-helpers')
+const { waitForLoginModalClosed } = require('./utils/login-diagnostics')
+
+/*
+ * The forced-login modal opens in sign-up mode when this browser has never logged in
+ * (loggedInEver goes when storage is cleared). Typing into that form fills the sign-up
+ * fields, and keystrokes typed while it re-renders can be lost: job 42554 left the email
+ * as "e" with the modal still saying "Join the Reuse Revolution!", so it never closed.
+ * Switch to log in when needed, fill each field, and check what landed before submitting.
+ */
+async function completeForcedLogin(page, loginModal, email) {
+  const loginLink = loginModal
+    .locator('.test-already-a-freegler')
+    .filter({ visible: true })
+  if ((await loginLink.count()) > 0) {
+    await loginLink.first().click()
+    await expect(loginLink).toHaveCount(0, { timeout: timeouts.ui.appearance })
+    console.log('[Test] Modal opened in sign-up mode; switched to log in')
+  }
+
+  const emailInput = loginModal.locator('input[type="email"]')
+  await emailInput.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await emailInput.fill(email)
+  await expect(emailInput).toHaveValue(email, {
+    timeout: timeouts.ui.appearance,
+  })
+  console.log(`[Test] Filled login email: ${email}`)
+
+  const passwordInput = loginModal.locator('input[type="password"]')
+  await passwordInput.waitFor({
+    state: 'visible',
+    timeout: timeouts.ui.appearance,
+  })
+  await passwordInput.fill(DEFAULT_TEST_PASSWORD)
+  await expect(passwordInput).toHaveValue(DEFAULT_TEST_PASSWORD, {
+    timeout: timeouts.ui.appearance,
+  })
+  console.log('[Test] Filled login password')
+
+  await passwordInput.press('Enter')
+  console.log('[Test] Pressed Enter to submit login form')
+}
 
 test.describe('Reply Flow - Existing User Forced Login', () => {
   test('3.1 can login and reply from Message Page', async ({
@@ -84,38 +128,10 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     console.log('[Test] Login modal appeared for existing user')
 
-    // Complete login - need to fill both email and password
-    // Wait for email input to be fully rendered and interactive
-    const emailInput = loginModal.locator('input[type="email"]')
-    await emailInput.waitFor({
-      state: 'visible',
-      timeout: timeouts.ui.appearance,
-    })
-    // Clear any pre-filled value and use type() for more realistic input
-    await emailInput.clear()
-    await emailInput.type(existingEmail, { delay: 10 })
-    console.log(`[Test] Filled login email: ${existingEmail}`)
-
-    const passwordInput = loginModal.locator('input[type="password"]')
-    await passwordInput.waitFor({
-      state: 'visible',
-      timeout: timeouts.ui.appearance,
-    })
-    await passwordInput.fill(DEFAULT_TEST_PASSWORD)
-    console.log('[Test] Filled login password')
-
-    // Small delay to let VeeForm validation settle
-    await page.waitForTimeout(timeouts.ui.settleTime)
-
-    // Press Enter to submit the form (more reliable than clicking button)
-    await passwordInput.press('Enter')
-    console.log('[Test] Pressed Enter to submit login form')
+    await completeForcedLogin(page, loginModal, existingEmail)
 
     // Wait for login modal to close (login success)
-    await loginModal.waitFor({
-      state: 'hidden',
-      timeout: timeouts.navigation.default,
-    })
+    await waitForLoginModalClosed(page, loginModal, 'forced login')
     console.log('[Test] Login modal closed')
 
     // After forced login, the state machine should resume automatically.
@@ -151,12 +167,13 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     // Cleanup
     await logoutIfLoggedIn(page)
     await loginViaHomepage(page, testEmail)
-    await withdrawPost({ item: result.item })
+    await withdrawPost({ item: result.item, expectReplies: 1 })
   })
 
   test('3.2 can login and reply from Browse Page', async ({
     page,
     postMessage,
+    approvePost,
     testEmail,
     getTestEmail,
     withdrawPost,
@@ -182,6 +199,8 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       email: testEmail,
     })
     expect(result.id).toBeTruthy()
+    // A fresh member's post is Pending, and only an approved post is listed.
+    await approvePost(result.id)
 
     await logoutIfLoggedIn(page)
 
@@ -223,38 +242,10 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     console.log('[Test] Login modal appeared')
 
-    // Complete login - need to fill both email and password
-    // Wait for email input to be fully rendered and interactive
-    const emailInput = loginModal.locator('input[type="email"]')
-    await emailInput.waitFor({
-      state: 'visible',
-      timeout: timeouts.ui.appearance,
-    })
-    // Clear any pre-filled value and use type() for more realistic input
-    await emailInput.clear()
-    await emailInput.type(existingEmail, { delay: 10 })
-    console.log(`[Test] Filled login email: ${existingEmail}`)
-
-    const passwordInput = loginModal.locator('input[type="password"]')
-    await passwordInput.waitFor({
-      state: 'visible',
-      timeout: timeouts.ui.appearance,
-    })
-    await passwordInput.fill(DEFAULT_TEST_PASSWORD)
-    console.log('[Test] Filled login password')
-
-    // Small delay to let VeeForm validation settle
-    await page.waitForTimeout(timeouts.ui.settleTime)
-
-    // Press Enter to submit the form
-    await passwordInput.press('Enter')
-    console.log('[Test] Pressed Enter to submit login form')
+    await completeForcedLogin(page, loginModal, existingEmail)
 
     // Wait for login modal to close
-    await loginModal.waitFor({
-      state: 'hidden',
-      timeout: timeouts.navigation.default,
-    })
+    await waitForLoginModalClosed(page, loginModal, 'forced login')
     console.log('[Test] Login modal closed')
 
     // We replied from a list (browse), so after the forced login the reply is
@@ -271,12 +262,13 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     // Cleanup
     await logoutIfLoggedIn(page)
     await loginViaHomepage(page, testEmail)
-    await withdrawPost({ item: result.item })
+    await withdrawPost({ item: result.item, expectReplies: 1 })
   })
 
   test('3.3 can login and reply from Explore Page', async ({
     page,
     postMessage,
+    approvePost,
     testEmail,
     getTestEmail,
     withdrawPost,
@@ -302,6 +294,8 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       email: testEmail,
     })
     expect(result.id).toBeTruthy()
+    // A fresh member's post is Pending, and only an approved post is listed.
+    await approvePost(result.id)
 
     await logoutIfLoggedIn(page)
 
@@ -338,38 +332,10 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     console.log('[Test] Login modal appeared')
 
-    // Complete login - need to fill both email and password
-    // Wait for email input to be fully rendered and interactive
-    const emailInput = loginModal.locator('input[type="email"]')
-    await emailInput.waitFor({
-      state: 'visible',
-      timeout: timeouts.ui.appearance,
-    })
-    // Clear any pre-filled value and use type() for more realistic input
-    await emailInput.clear()
-    await emailInput.type(existingEmail, { delay: 10 })
-    console.log(`[Test] Filled login email: ${existingEmail}`)
-
-    const passwordInput = loginModal.locator('input[type="password"]')
-    await passwordInput.waitFor({
-      state: 'visible',
-      timeout: timeouts.ui.appearance,
-    })
-    await passwordInput.fill(DEFAULT_TEST_PASSWORD)
-    console.log('[Test] Filled login password')
-
-    // Small delay to let VeeForm validation settle
-    await page.waitForTimeout(timeouts.ui.settleTime)
-
-    // Press Enter to submit the form
-    await passwordInput.press('Enter')
-    console.log('[Test] Pressed Enter to submit login form')
+    await completeForcedLogin(page, loginModal, existingEmail)
 
     // Wait for login modal to close
-    await loginModal.waitFor({
-      state: 'hidden',
-      timeout: timeouts.navigation.default,
-    })
+    await waitForLoginModalClosed(page, loginModal, 'forced login')
     console.log('[Test] Login modal closed')
 
     // We replied from a list (explore), so after the forced login the reply is
@@ -386,6 +352,6 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     // Cleanup
     await logoutIfLoggedIn(page)
     await loginViaHomepage(page, testEmail)
-    await withdrawPost({ item: result.item })
+    await withdrawPost({ item: result.item, expectReplies: 1 })
   })
 })

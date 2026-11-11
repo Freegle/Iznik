@@ -1,5 +1,7 @@
 <?php
 
+use App\Support\EnvSetting;
+
 return [
     /*
     |--------------------------------------------------------------------------
@@ -12,18 +14,18 @@ return [
     */
 
     'sites' => [
-        'user' => env('FREEGLE_USER_SITE', 'https://www.ilovefreegle.org'),
-        'mod' => env('FREEGLE_MOD_SITE', 'https://modtools.org'),
+        'user' => EnvSetting::env('FREEGLE_USER_SITE', 'https://www.ilovefreegle.org'),
+        'mod' => EnvSetting::env('FREEGLE_MOD_SITE', 'https://modtools.org'),
     ],
 
     // Local timezone for member-facing scheduling (e.g. the daily digest's
     // 07:00 send). The app itself runs in UTC; scheduled tasks that should
     // track UK wall-clock pin to this zone so Laravel resolves BST/GMT.
-    'timezone' => env('FREEGLE_TIMEZONE', 'Europe/London'),
+    'timezone' => EnvSetting::env('FREEGLE_TIMEZONE', 'Europe/London'),
 
     'api' => [
-        'base_url' => env('FREEGLE_API_BASE_URL', 'https://api.ilovefreegle.org'),
-        'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
+        'base_url' => EnvSetting::env('FREEGLE_API_BASE_URL', 'https://api.ilovefreegle.org'),
+        'v2_url' => EnvSetting::env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
     ],
 
     // Matched-posts email (matches:notify): emails a member the opposite-type
@@ -32,41 +34,67 @@ return [
     // without a deploy (apiv2 has its own FEATURE_MATCHED_POSTS killswitch for
     // the vector endpoint).
     'matched' => [
-        'enabled' => env('FREEGLE_MATCHED_ENABLED', true),
+        'enabled' => EnvSetting::env('FREEGLE_MATCHED_ENABLED', true),
         // How far back to treat a post as "fresh" each run. Wider than the 10-min
         // schedule so a post embedded a few minutes after arrival is still caught;
         // the per-(msgid,userid) ledger stops the overlap re-mailing anything.
-        'fresh_window_minutes' => env('FREEGLE_MATCHED_FRESH_WINDOW_MINUTES', 20),
+        'fresh_window_minutes' => EnvSetting::env('FREEGLE_MATCHED_FRESH_WINDOW_MINUTES', 20),
         // Matches requested from apiv2 per fresh post.
-        'match_limit_per_post' => env('FREEGLE_MATCHED_LIMIT_PER_POST', 10),
+        'match_limit_per_post' => EnvSetting::env('FREEGLE_MATCHED_LIMIT_PER_POST', 10),
         // Max matched posts shown in one email (rest wait for a later run / the site).
-        'max_items_per_email' => env('FREEGLE_MATCHED_MAX_ITEMS', 10),
+        'max_items_per_email' => EnvSetting::env('FREEGLE_MATCHED_MAX_ITEMS', 10),
         // Minimum apiv2 vector-similarity score for a match to be shown. apiv2
         // returns the nearest neighbours regardless of similarity, and the scores
         // are only weakly discriminative (a relevant "bicycle inner tube" ~0.668
         // barely beats an irrelevant "pot pourri" ~0.656 for "bicycle pump"), so
         // this is a coarse tail-trim, not a quality guarantee — tune per corpus,
         // and treat the underlying embedding quality as the real lever.
-        'match_min_score' => (float) env('FREEGLE_MATCHED_MIN_SCORE', 0.66),
+        'match_min_score' => (float) EnvSetting::env('FREEGLE_MATCHED_MIN_SCORE', 0.66),
         // Don't email the same member more often than this (hours). Uses
         // users.lastrelevantcheck, on top of the never-mail-the-same-post ledger.
-        'cooldown_hours' => env('FREEGLE_MATCHED_COOLDOWN_HOURS', 4),
+        'cooldown_hours' => EnvSetting::env('FREEGLE_MATCHED_COOLDOWN_HOURS', 4),
         // Don't email members who haven't visited in this many days.
-        'min_lastaccess_days' => env('FREEGLE_MATCHED_MIN_LASTACCESS_DAYS', 90),
+        'min_lastaccess_days' => EnvSetting::env('FREEGLE_MATCHED_MIN_LASTACCESS_DAYS', 90),
     ],
 
-    'avatar_server_url' => env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
+    // The "I'm interested" chase-up (messages:interested-chaseup): a mark that has stood this long with no reply,
+    // on a post that is still open, is named once in an email. Marks older than max_age_days are left alone.
+    'interested' => [
+        'chaseup_after_hours' => (int) EnvSetting::env('FREEGLE_INTERESTED_CHASEUP_AFTER_HOURS', 24),
+        'max_age_days' => (int) EnvSetting::env('FREEGLE_INTERESTED_MAX_AGE_DAYS', 7),
+        // Members handled per round, so one run never holds every member's rows at once.
+        'chunk' => (int) EnvSetting::env('FREEGLE_INTERESTED_CHUNK', 200),
+    ],
+
+    // The experiment familiar-poster: new posts from people a member has chatted with
+    // (messages:familiar-posts). docs/developers/reference/familiar-posts-email.md.
+    'familiar_posts' => [
+        // A chat counts when each of the two wrote in it within this many days.
+        'lookback_days' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_LOOKBACK_DAYS', 90),
+        // At most this many members are told about one post, those chatted with most recently first.
+        'max_recipients_per_post' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MAX_RECIPIENTS_PER_POST', 20),
+        // At most this many posts in one email.
+        'max_posts_per_email' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MAX_POSTS_PER_EMAIL', 3),
+        // A member is reached at most once in this many hours...
+        'min_gap_hours' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MIN_GAP_HOURS', 24),
+        // ...and on at most this many of the last seven days.
+        'max_days_per_week' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_MAX_DAYS_PER_WEEK', 2),
+        // A run never reads posts older than this, however long since the last run.
+        'window_hours' => (int) EnvSetting::env('FREEGLE_FAMILIAR_POSTS_WINDOW_HOURS', 6),
+    ],
+
+    'avatar_server_url' => EnvSetting::env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
 
     'donations' => [
         // One-off donations below this amount (£) don't warrant a manual
         // thank-you (V1 Donations::MANUAL_THANKS). Recurring donations are
         // thanked once, on the first payment, regardless of amount.
-        'manual_thanks' => (float) env('FREEGLE_MANUAL_THANKS', 20),
+        'manual_thanks' => (float) EnvSetting::env('FREEGLE_MANUAL_THANKS', 20),
 
         // Payer emails that must never trigger a thank-you (PayPal Giving Fund,
         // Tipalti). Comma-separated; mirrors the Go DONATIONS_EXCLUDE so both
         // sides share one source of truth.
-        'excluded_payers' => env('DONATIONS_EXCLUDE', 'ppgfukpay@paypalgivingfund.org,paypal.msb@tipalti.com'),
+        'excluded_payers' => EnvSetting::env('DONATIONS_EXCLUDE', 'ppgfukpay@paypalgivingfund.org,paypal.msb@tipalti.com'),
     ],
 
     // Where the "donate" buttons in emails send people.
@@ -78,22 +106,22 @@ return [
     // that is the default destination now. See DonateLinkService.
     'donate' => [
         // Path on the user site that renders the Stripe donate page.
-        'path' => env('FREEGLE_DONATE_PATH', '/donate'),
+        'path' => EnvSetting::env('FREEGLE_DONATE_PATH', '/donate'),
 
         // Suggested amounts (£) offered as one-tap buttons in emails. The
         // first is used where there is only room for a single button.
         'amounts' => array_values(array_filter(array_map(
             'intval',
-            explode(',', (string) env('FREEGLE_DONATE_AMOUNTS', '2,3,5'))
+            explode(',', (string) EnvSetting::env('FREEGLE_DONATE_AMOUNTS', '2,3,5'))
         ))),
 
         // Set to the PayPal shortlink to revert email donate buttons to the
         // old PayPal-only behaviour without a code change.
-        'override_url' => env('FREEGLE_DONATE_OVERRIDE_URL'),
+        'override_url' => EnvSetting::env('FREEGLE_DONATE_OVERRIDE_URL'),
 
         // Kept so the PayPal route is still reachable where we want it
         // explicitly (e.g. "prefer PayPal?" links).
-        'paypal_url' => env('FREEGLE_DONATE_PAYPAL_URL', 'https://freegle.in/paypal1510'),
+        'paypal_url' => EnvSetting::env('FREEGLE_DONATE_PAYPAL_URL', 'https://freegle.in/paypal1510'),
     ],
 
     // Deployment switches. Each one defaults to how Freegle behaves today, so
@@ -105,19 +133,26 @@ return [
         // sign-in link email (App\Mail\Session\LoginLinkMail) that lands on
         // login_link_path with ?u=&k=, which the web app consumes to sign the
         // member in - instead of the "set a new password" email.
-        'passwordless' => filter_var(env('FREEGLE_PASSWORDLESS_LOGIN', false), FILTER_VALIDATE_BOOLEAN),
-        'login_link_path' => env('FREEGLE_LOGIN_LINK_PATH', '/'),
+        'passwordless' => filter_var(EnvSetting::env('FREEGLE_PASSWORDLESS_LOGIN', false), FILTER_VALIDATE_BOOLEAN),
+        'login_link_path' => EnvSetting::env('FREEGLE_LOGIN_LINK_PATH', '/'),
     ],
     'schedule' => [
         // 'full' (default) runs everything in routes/console.php. 'overlay-only'
         // runs nothing from that file except what the overlay below schedules,
         // for deployments that want a small hand-picked set of jobs. Any other
         // value behaves as 'full', so a typo can never silently stop the schedule.
-        'profile' => env('FREEGLE_SCHEDULE_PROFILE', 'full'),
+        'profile' => EnvSetting::env('FREEGLE_SCHEDULE_PROFILE', 'full'),
         // Optional extra schedule file, loaded if it exists (path relative to the
         // app root unless absolute). Freegle ships no such file; a deployment
         // adds its own jobs there instead of editing routes/console.php.
-        'overlay' => env('FREEGLE_SCHEDULE_OVERLAY', 'routes/console.deployment.php'),
+        'overlay' => EnvSetting::env('FREEGLE_SCHEDULE_OVERLAY', 'routes/console.deployment.php'),
+    ],
+
+    // Daily rollup of digest click-through by post position (email:digest-positions-rollup), which the
+    // ModTools SysAdmin chart sums. Clicks keep arriving for days after a digest goes out, so each run
+    // recomputes this many days ending yesterday.
+    'digest_positions_rollup' => [
+        'days' => (int) EnvSetting::env('DIGEST_POSITIONS_ROLLUP_DAYS', 14),
     ],
 
     'backup' => [
@@ -129,19 +164,31 @@ return [
         // batch host. A malformed start time or a duration of zero also leaves it off,
         // so a typo can never hold the whole schedule back.
         'drain' => [
-            'enabled' => (bool) env('BACKUP_DRAIN_ENABLED', false),
+            'enabled' => (bool) EnvSetting::env('BACKUP_DRAIN_ENABLED', false),
             // HH:MM in the app timezone. Set this EARLIER than the backup's own cron so
             // jobs already running have time to finish: that gap is the drain, the rest
             // of the window is the delay.
-            'start' => env('BACKUP_DRAIN_START', '03:50'),
+            'start' => EnvSetting::env('BACKUP_DRAIN_START', '03:50'),
             // Long enough to cover the pre-roll plus the backup, with headroom. The
             // backup itself measured about 18 minutes on 18 September 2026.
-            'minutes' => (int) env('BACKUP_DRAIN_MINUTES', 45),
+            'minutes' => (int) EnvSetting::env('BACKUP_DRAIN_MINUTES', 45),
             // Artisan command names that run anyway, matched without their arguments.
             // Keep this short: anything here is competing with the backup.
+            //
+            // lockdown:tick and lockdown:report default to always running: a lockdown
+            // is a live security incident, and the announce mail, holding and releasing,
+            // and the hourly report must not wait out a 45-minute backup window on top of whatever
+            // is actually happening. Override via BACKUP_DRAIN_ALWAYS_RUN if that default
+            // is ever wrong for a specific deployment.
+            //
+            // ux:experiments-tick also runs through the window: it only reads Loki and writes a
+            // few small rows, and it is the clock a 24-hour experiment is decided by. An hourly
+            // job inside the window is skipped, not delayed, so holding it would leave an
+            // experiment that ends in the window decided an hour late, on more than a day of
+            // data, and would leave the early-revert guardrails unchecked for two hours.
             'always_run' => array_values(array_filter(array_map(
                 'trim',
-                explode(',', (string) env('BACKUP_DRAIN_ALWAYS_RUN', ''))
+                explode(',', (string) EnvSetting::env('BACKUP_DRAIN_ALWAYS_RUN', 'lockdown:tick,lockdown:report,ux:experiments-tick'))
             ))),
         ],
 
@@ -149,42 +196,41 @@ return [
         // the shell script on the database node remains the thing that runs, and this
         // command refuses to do anything.
         'database' => [
-            'enabled' => (bool) env('BACKUP_DB_ENABLED', false),
+            'enabled' => (bool) EnvSetting::env('BACKUP_DB_ENABLED', false),
             // The node being backed up. xtrabackup copies a local data directory, so the
             // whole pipeline runs there and only control flow crosses ssh.
-            'host' => env('BACKUP_DB_HOST', ''),
+            'host' => EnvSetting::env('BACKUP_DB_HOST', ''),
             // The key AppServiceProvider hands this command's ssh runner. docker-compose mounts
             // the monitoring key at this path; the backup needs the same root shell on the
             // node (xtrabackup reads the data directory, mysql sets wsrep_desync), so it is
             // the default rather than a path nothing mounts.
-            'ssh_key' => env('BACKUP_DB_SSH_KEY', '/etc/monitoring-ssh-key'),
+            'ssh_key' => EnvSetting::env('BACKUP_DB_SSH_KEY', '/etc/monitoring-ssh-key'),
             // The backup measured about 18 minutes; allow generously for a bad night. The
             // monitoring runner's 30 seconds would kill it partway.
-            'ssh_timeout_seconds' => (int) env('BACKUP_DB_SSH_TIMEOUT', 7200),
-            'xtrabackup' => env('BACKUP_DB_XTRABACKUP', '/usr/bin/xtrabackup'),
+            'ssh_timeout_seconds' => (int) EnvSetting::env('BACKUP_DB_SSH_TIMEOUT', 7200),
+            'xtrabackup' => EnvSetting::env('BACKUP_DB_XTRABACKUP', '/usr/bin/xtrabackup'),
             // xtrabackup's scratch directory on the node. Streaming writes nothing of size
             // there, but the shell script always gave one and the default would otherwise be
             // a directory under the ssh user's home.
-            'target_dir' => env('BACKUP_DB_TARGET_DIR', '/backup'),
-            'gsutil' => env('BACKUP_DB_GSUTIL', '/usr/lib/google-cloud-sdk/platform/gsutil/gsutil'),
-            'bucket' => env('BACKUP_DB_BUCKET', 'gs://freegle_backup_uk'),
-            'compress_threads' => (int) env('BACKUP_DB_COMPRESS_THREADS', 4),
-            'alert_email' => env('BACKUP_DB_ALERT_EMAIL', 'geek-alerts@ilovefreegle.org'),
+            'target_dir' => EnvSetting::env('BACKUP_DB_TARGET_DIR', '/backup'),
+            'gsutil' => EnvSetting::env('BACKUP_DB_GSUTIL', '/usr/lib/google-cloud-sdk/platform/gsutil/gsutil'),
+            'bucket' => EnvSetting::env('BACKUP_DB_BUCKET', 'gs://freegle_backup_uk'),
+            'compress_threads' => (int) EnvSetting::env('BACKUP_DB_COMPRESS_THREADS', 4),
+            'alert_email' => EnvSetting::env('BACKUP_DB_ALERT_EMAIL', 'geek-alerts@ilovefreegle.org'),
         ],
     ],
 
     'branding' => [
-        'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
-        'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
-        'wallpaper_url' => env('FREEGLE_WALLPAPER_URL', 'https://www.ilovefreegle.org/wallpaper.png'),
-        'modtools_logo_url' => env('MODTOOLS_LOGO_URL', 'https://modtools.org/icon_modtools.png'),
-        'registered_address' => env('FREEGLE_REGISTERED_ADDRESS', '64a North Road, Ormesby, Great Yarmouth, Norfolk NR29 3LE'),
+        'name' => EnvSetting::env('FREEGLE_SITE_NAME', 'Freegle'),
+        'logo_url' => EnvSetting::env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
+        'modtools_logo_url' => EnvSetting::env('MODTOOLS_LOGO_URL', 'https://modtools.org/icon_modtools.png'),
+        'registered_address' => EnvSetting::env('FREEGLE_REGISTERED_ADDRESS', '64a North Road, Ormesby, Great Yarmouth, Norfolk NR29 3LE'),
     ],
 
     'mail' => [
-        'noreply_addr' => env('FREEGLE_NOREPLY_ADDR', 'noreply@ilovefreegle.org'),
-        'user_domain' => env('FREEGLE_USER_DOMAIN', 'users.ilovefreegle.org'),
-        'group_domain' => env('FREEGLE_GROUP_DOMAIN', 'groups.ilovefreegle.org'),
+        'noreply_addr' => EnvSetting::env('FREEGLE_NOREPLY_ADDR', 'noreply@ilovefreegle.org'),
+        'user_domain' => EnvSetting::env('FREEGLE_USER_DOMAIN', 'users.ilovefreegle.org'),
+        'group_domain' => EnvSetting::env('FREEGLE_GROUP_DOMAIN', 'groups.ilovefreegle.org'),
         // Internal domains that should be excluded when selecting a user's preferred email.
         // These are Freegle-internal addresses that can't receive external mail.
         // Matches the legacy V1 PHP implementation's Mail::ourDomain() + GROUP_DOMAIN + yahoogroups.
@@ -207,58 +253,58 @@ return [
         ],
         // Email logging - send BCC copies of specific email types for debugging/monitoring.
         // Format: comma-separated list of email types to log (e.g., "Welcome,ChatNotification").
-        'log_types' => env('FREEGLE_MAIL_LOG_TYPES', ''),
-        'log_address' => env('FREEGLE_MAIL_LOG_ADDRESS', ''),
+        'log_types' => EnvSetting::env('FREEGLE_MAIL_LOG_TYPES', ''),
+        'log_address' => EnvSetting::env('FREEGLE_MAIL_LOG_ADDRESS', ''),
         // Email types enabled for sending from iznik-batch.
         // Comma-separated list of email type names that this system should send.
         // Email types: Welcome, ChatNotification, etc.
         // If empty, NO emails will be sent (fail-safe default).
-        'enabled_types' => env('FREEGLE_MAIL_ENABLED_TYPES', ''),
+        'enabled_types' => EnvSetting::env('FREEGLE_MAIL_ENABLED_TYPES', ''),
         // Open/click tracking (the email_tracking row, tracked links, the pixel).
         // Off, every mailable's tracked*() helpers hand back the plain destination
         // URL and no email_tracking row is written - for deployments whose API
         // does not serve the tracking redirect/pixel endpoints.
-        'tracking_enabled' => filter_var(env('FREEGLE_MAIL_TRACKING_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        'tracking_enabled' => filter_var(EnvSetting::env('FREEGLE_MAIL_TRACKING_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         // GeekAlerts email for system alerts and failure notifications.
-        'geek_alerts_addr' => env('FREEGLE_GEEK_ALERTS_ADDR', 'geek-alerts@ilovefreegle.org'),
+        'geek_alerts_addr' => EnvSetting::env('FREEGLE_GEEK_ALERTS_ADDR', 'geek-alerts@ilovefreegle.org'),
         // Geeks address for system emails (FROM address for reports etc).
-        'geeks_addr' => env('FREEGLE_GEEKS_ADDR', 'geeks@ilovefreegle.org'),
+        'geeks_addr' => EnvSetting::env('FREEGLE_GEEKS_ADDR', 'geeks@ilovefreegle.org'),
         // Support address for user-facing support.
-        'support_addr' => env('FREEGLE_SUPPORT_ADDR', 'support@ilovefreegle.org'),
+        'support_addr' => EnvSetting::env('FREEGLE_SUPPORT_ADDR', 'support@ilovefreegle.org'),
         // ChitChat support - receives newsfeed report emails.
-        'chitchat_support_addr' => env('FREEGLE_CHITCHAT_SUPPORT_ADDR', 'support@ilovefreegle.org'),
+        'chitchat_support_addr' => EnvSetting::env('FREEGLE_CHITCHAT_SUPPORT_ADDR', 'support@ilovefreegle.org'),
         // Spam team - receives chat reports where the two users share no group.
-        'spam_addr' => env('FREEGLE_SPAM_ADDR', env('FREEGLE_SUPPORT_ADDR', 'support@ilovefreegle.org')),
+        'spam_addr' => EnvSetting::env('FREEGLE_SPAM_ADDR', EnvSetting::env('FREEGLE_SUPPORT_ADDR', 'support@ilovefreegle.org')),
         // Partnerships address for charity partner signups.
-        'partnerships_addr' => env('FREEGLE_PARTNERSHIPS_ADDR', 'partnerships@ilovefreegle.org'),
+        'partnerships_addr' => EnvSetting::env('FREEGLE_PARTNERSHIPS_ADDR', 'partnerships@ilovefreegle.org'),
         // Info address for donation notifications and general admin emails.
-        'info_addr' => env('FREEGLE_INFO_ADDR', 'info@ilovefreegle.org'),
+        'info_addr' => EnvSetting::env('FREEGLE_INFO_ADDR', 'info@ilovefreegle.org'),
         // Fundraising address — receives the daily donation summary email.
-        'fundraising_addr' => env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org'),
+        'fundraising_addr' => EnvSetting::env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org'),
         // Thanks address — receives the daily thank-prep digest (rich per-donor
         // cards aimed at composing thank-you replies). Defaults to the
         // fundraising address; override to route the digest elsewhere
         // (e.g. directly to Jacky).
-        'thanks_addr' => env('FREEGLE_THANKS_ADDR', env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org')),
+        'thanks_addr' => EnvSetting::env('FREEGLE_THANKS_ADDR', EnvSetting::env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org')),
         // Mentors address — volunteer support team who handle escalations.
-        'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
+        'mentors_addr' => EnvSetting::env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
         // Central mods / Volunteer Support address — receives the Discourse
         // checkuser / not-signed-up reports (V1 CENTRALMODS_ADDR).
-        'centralmods_addr' => env('FREEGLE_CENTRALMODS_ADDR', 'volunteersupport@ilovefreegle.org'),
+        'centralmods_addr' => EnvSetting::env('FREEGLE_CENTRALMODS_ADDR', 'volunteersupport@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
-        'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
+        'donation_cc_addr' => EnvSetting::env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
         // TrashNothing contact that receives the monthly LoveJunk invoice request
         // (V1 TN_ADDR). Held in env as it's a partner contact; no committed default.
-        'tn_invoice_addr' => env('FREEGLE_TN_INVOICE_ADDR', ''),
+        'tn_invoice_addr' => EnvSetting::env('FREEGLE_TN_INVOICE_ADDR', ''),
         // Treasurer address quoted in the invoice body — where TN should send the
         // PDF invoice (V1 TREASURER_ADDR).
-        'treasurer_addr' => env('FREEGLE_TREASURER_ADDR', 'treasurer@ilovefreegle.org'),
+        'treasurer_addr' => EnvSetting::env('FREEGLE_TREASURER_ADDR', 'treasurer@ilovefreegle.org'),
         // Modbot email — the automated moderator account; excluded from mod-welfare checks.
-        'moderator_email' => env('FREEGLE_MODERATOR_EMAIL', 'modbot@users.ilovefreegle.org'),
+        'moderator_email' => EnvSetting::env('FREEGLE_MODERATOR_EMAIL', 'modbot@users.ilovefreegle.org'),
         // Trash Nothing domain for incoming mail detection
-        'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
+        'trashnothing_domain' => EnvSetting::env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)
-        'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
+        'trashnothing_secret' => EnvSetting::env('FREEGLE_TRASHNOTHING_SECRET', ''),
 
         // Deferral-aware suppression (mail:deferrals:scan).
         //
@@ -269,57 +315,57 @@ return [
         'deferrals' => [
             // Master switch. Off means the command no-ops and is not even
             // scheduled, matching how ripple/firstreply are gated.
-            'enabled' => (bool) env('FREEGLE_MAIL_DEFERRALS_ENABLED', true),
+            'enabled' => (bool) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_ENABLED', true),
 
             // ssh target for the outbound relay, e.g. "deferrals@10.0.0.1".
             // As with FREEGLE_MONITORING_HOSTS the estate's topology lives
             // ONLY in the environment (.env.background on the batch host),
             // never in committed code. Empty = disabled (dev/CI).
-            'host' => env('FREEGLE_MAIL_DEFERRALS_HOST', ''),
+            'host' => EnvSetting::env('FREEGLE_MAIL_DEFERRALS_HOST', ''),
 
             // Private key path INSIDE the container, bind-mounted from
             // MAIL_DEFERRALS_SSH_KEY_HOST_PATH. Deliberately its own key
             // rather than the monitoring one: that key is a root shell across
             // the whole estate, whereas this only ever needs to read a queue.
             // Ops restricts it with a forced command in authorized_keys.
-            'ssh_key' => env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key'),
+            'ssh_key' => EnvSetting::env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key'),
 
             // Longer than the monitoring probe's 30s: during an incident the
             // queue listing is the bulk of the payload, and a timeout here
             // means flying blind for another cycle.
-            'ssh_timeout_seconds' => (int) env('FREEGLE_MAIL_DEFERRALS_SSH_TIMEOUT', 120),
+            'ssh_timeout_seconds' => (int) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_SSH_TIMEOUT', 120),
 
             // Cap on the queue listing we will pull back, so a runaway queue
             // cannot exhaust PHP's memory. Truncation is reported and only
             // ever understates the counts, which is safe against thresholds
             // that are themselves lower bounds.
-            'max_queue_bytes' => (int) env('FREEGLE_MAIL_DEFERRALS_MAX_QUEUE_BYTES', 64 * 1024 * 1024),
+            'max_queue_bytes' => (int) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_MAX_QUEUE_BYTES', 64 * 1024 * 1024),
 
             // MX-group tier. Suppress a relay family once this many of its
             // messages are deferred AND deliveries to it have all but
             // stopped. During the 2026-08-15 Yahoo incident the ratio was
             // about one delivery an hour against tens of thousands of
             // deferral events, so this is not a close call in practice.
-            'mxgroup_min_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MIN', 500),
-            'mxgroup_max_delivered_per_hour' => (int) env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MAX_DELIVERED', 10),
+            'mxgroup_min_deferred' => (int) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MIN', 500),
+            'mxgroup_max_delivered_per_hour' => (int) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MAX_DELIVERED', 10),
 
             // Per-address tier. Catches "452 4.2.2 ... over quota", which is
             // one person's mailbox rather than our reputation, so it wants a
             // slower and more forgiving trigger.
-            'address_min_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_ADDRESS_MIN', 5),
-            'address_min_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_ADDRESS_HOURS', 24),
+            'address_min_deferred' => (int) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_ADDRESS_MIN', 5),
+            'address_min_hours' => (int) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_ADDRESS_HOURS', 24),
 
             // Release. Deliveries must have resumed and the deferred count
             // must have fallen below this for two consecutive scans, so a
             // single quiet scan inside a backoff window cannot reopen the
             // floodgates.
-            'release_max_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_RELEASE_MAX', 100),
-            'release_clear_scans' => (int) env('FREEGLE_MAIL_DEFERRALS_RELEASE_SCANS', 2),
+            'release_max_deferred' => (int) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_RELEASE_MAX', 100),
+            'release_clear_scans' => (int) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_RELEASE_SCANS', 2),
 
             // How long a suppression may stand without the scan confirming it
             // still applies. If the probe breaks we must fail open rather
             // than silently stop mailing a provider for ever.
-            'stale_after_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_STALE_HOURS', 24),
+            'stale_after_hours' => (int) EnvSetting::env('FREEGLE_MAIL_DEFERRALS_STALE_HOURS', 24),
         ],
 
         // What the delayed view shows about the queue itself, as opposed to
@@ -329,11 +375,11 @@ return [
         'relay_queue' => [
             // Two ways in, because depth and age catch different failures:
             // a domain qualifies on either.
-            'min_queued' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MIN', 25),
-            'min_age_minutes' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MIN_AGE', 120),
+            'min_queued' => (int) EnvSetting::env('FREEGLE_MAIL_RELAY_QUEUE_MIN', 25),
+            'min_age_minutes' => (int) EnvSetting::env('FREEGLE_MAIL_RELAY_QUEUE_MIN_AGE', 120),
             // An estate-wide episode names thousands of domains and nobody
             // reads the hundredth.
-            'max_rows' => (int) env('FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS', 500),
+            'max_rows' => (int) EnvSetting::env('FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS', 500),
         ],
 
         // Reading the relay's maillog into logs_emails, so a member can be
@@ -341,20 +387,20 @@ return [
         // scripts/cron/eximlogs.php, which ran from root's crontab on the
         // relay itself.
         'relay_logs' => [
-            'enabled' => (bool) env('FREEGLE_MAIL_RELAY_LOGS_ENABLED', true),
+            'enabled' => (bool) EnvSetting::env('FREEGLE_MAIL_RELAY_LOGS_ENABLED', true),
 
             // ssh target, same shape and same restricted account as the
             // deferral probe - it needs only to read a file the `adm` group
             // can already read. Topology lives ONLY in the environment.
             // Empty = disabled (dev/CI).
-            'host' => env('FREEGLE_MAIL_RELAY_LOGS_HOST', env('FREEGLE_MAIL_DEFERRALS_HOST', '')),
+            'host' => EnvSetting::env('FREEGLE_MAIL_RELAY_LOGS_HOST', EnvSetting::env('FREEGLE_MAIL_DEFERRALS_HOST', '')),
 
             // Same restricted key as the deferral probe: this only reads a log
             // file the relay account can already read.
-            'ssh_key' => env('FREEGLE_MAIL_RELAY_LOGS_SSH_KEY', env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key')),
-            'ssh_timeout_seconds' => (int) env('FREEGLE_MAIL_RELAY_LOGS_SSH_TIMEOUT', 120),
+            'ssh_key' => EnvSetting::env('FREEGLE_MAIL_RELAY_LOGS_SSH_KEY', EnvSetting::env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key')),
+            'ssh_timeout_seconds' => (int) EnvSetting::env('FREEGLE_MAIL_RELAY_LOGS_SSH_TIMEOUT', 120),
 
-            'path' => env('FREEGLE_MAIL_RELAY_LOGS_PATH', '/var/log/mail.log'),
+            'path' => EnvSetting::env('FREEGLE_MAIL_RELAY_LOGS_PATH', '/var/log/mail.log'),
 
             // We keep a byte offset and fetch only what was appended, which is
             // about 5MB a run. The cap is for the case where the offset is
@@ -365,22 +411,22 @@ return [
             // A ten-minute slice is about 5MB, so this is generous headroom
             // rather than a target. It has to cross ssh and be held in memory,
             // so it is not sized in tens of megabytes.
-            'max_slice_bytes' => (int) env('FREEGLE_MAIL_RELAY_LOGS_MAX_SLICE_BYTES', 16 * 1024 * 1024),
+            'max_slice_bytes' => (int) EnvSetting::env('FREEGLE_MAIL_RELAY_LOGS_MAX_SLICE_BYTES', 16 * 1024 * 1024),
 
             // The relay hands paced providers to a second postfix instance
             // over a loopback hop. That hop logs exactly like a delivery, so
             // it must not be recorded as one. Two independent signals, so that
             // one going stale on its own cannot quietly turn hops back into
             // "sent". Keep in step with scripts/bulk2/ip-warmup.sh.
-            'handover_port' => (int) env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_PORT', 10026),
-            'handover_transport' => env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_TRANSPORT', 'relaywarm'),
+            'handover_port' => (int) EnvSetting::env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_PORT', 10026),
+            'handover_transport' => EnvSetting::env('FREEGLE_MAIL_RELAY_LOGS_HANDOVER_TRANSPORT', 'relaywarm'),
         ],
     ],
 
     'mod_welfare' => [
         // Paused 2026-08-03: mentors asked us to stop the weekly "X does not
         // have an active owner" alerts for now. Set to true to resume.
-        'notify_no_owner' => env('FREEGLE_MOD_WELFARE_NOTIFY_NO_OWNER', false),
+        'notify_no_owner' => EnvSetting::env('FREEGLE_MOD_WELFARE_NOTIFY_NO_OWNER', false),
     ],
 
     'trashnothing' => [
@@ -392,10 +438,10 @@ return [
         // parameter", and the partner endpoints reject a developer key in turn.
         // public_api_key falls back to api_key only so a dev environment with a
         // single key still runs; production needs both set.
-        'api_key' => env('FREEGLE_TN_API_KEY', ''),
-        'public_api_key' => env('FREEGLE_TN_PUBLIC_API_KEY', env('FREEGLE_TN_API_KEY', '')),
-        'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
-        'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
+        'api_key' => EnvSetting::env('FREEGLE_TN_API_KEY', ''),
+        'public_api_key' => EnvSetting::env('FREEGLE_TN_PUBLIC_API_KEY', EnvSetting::env('FREEGLE_TN_API_KEY', '')),
+        'api_base_url' => EnvSetting::env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
+        'sync_date_file' => EnvSetting::env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
         // MASTER CUTOVER SWITCH for TN group posts. Default false (disabled) so the
         // email path stays authoritative until parity is confirmed. Flipping it to
         // true moves the whole post pipeline over in one step:
@@ -419,7 +465,7 @@ return [
         // email-off-with-API-off drops TN posts entirely. Neither half is safe alone,
         // and pre-cutover comparison is done with `tn:sync --dry-run` / tn:parity-check
         // instead, neither of which needs the email path switched off.
-        'ingest_posts_via_api' => env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
+        'ingest_posts_via_api' => EnvSetting::env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
 
         // Minimum gap between ANY two Trash Nothing API requests, in
         // microseconds. TN allows 2 requests/second and rate-limits per API
@@ -427,7 +473,7 @@ return [
         // TrashNothingRateLimiter rather than per endpoint. Set to 0 to
         // disable (the test suite does, via phpunit.xml — Http::fake() never
         // reaches TN, and 750ms per faked request would add minutes).
-        'min_request_interval_us' => (int) env('FREEGLE_TN_MIN_REQUEST_INTERVAL_US', 750000),
+        'min_request_interval_us' => (int) EnvSetting::env('FREEGLE_TN_MIN_REQUEST_INTERVAL_US', 750000),
 
         // Post-cutover coverage verification — tn:verify-email-coverage.
         // See plans/tn-api-post-ingestion.md section S.
@@ -436,62 +482,57 @@ return [
             // above by the incoming-archive retention (mail:cleanup-archive,
             // 48h): lag + window + headroom for a missed run must stay well
             // inside it, or files are deleted before they are ever checked.
-            'lag_hours' => (int) env('FREEGLE_TN_VERIFY_LAG_HOURS', 8),
+            'lag_hours' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_LAG_HOURS', 8),
 
             // Window length. Matches the schedule interval so consecutive runs
             // tile the timeline with no gap.
-            'window_hours' => (int) env('FREEGLE_TN_VERIFY_WINDOW_HOURS', 1),
+            'window_hours' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_WINDOW_HOURS', 1),
 
             // Backward overlap, so a post landing on a window boundary is never
             // lost between two runs. Re-checking an already-covered post is
             // free and idempotent, so this errs generous — same reasoning as
             // the sync's own overlap (section B).
-            'overlap_minutes' => (int) env('FREEGLE_TN_VERIFY_OVERLAP_MINUTES', 15),
+            'overlap_minutes' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_OVERLAP_MINUTES', 15),
 
             // Write genuinely-missing posts back via the API path (section
             // S.5). Defaults FALSE deliberately: ship the verifier
             // report-only until the observed miss population matches what
             // section S.4 predicts, then enable writes.
-            'auto_ingest' => env('FREEGLE_TN_VERIFY_AUTO_INGEST', false),
+            'auto_ingest' => EnvSetting::env('FREEGLE_TN_VERIFY_AUTO_INGEST', false),
 
             // Rail 4. Above this many genuine misses in one run, ingest
             // NOTHING and alert instead: a mass miss means the sync is broken,
             // and quietly backfilling hundreds of hours-late posts is worse
             // than paging a human.
-            'auto_ingest_max' => (int) env('FREEGLE_TN_VERIFY_AUTO_INGEST_MAX', 20),
+            'auto_ingest_max' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_AUTO_INGEST_MAX', 20),
 
             // Rail 5. Refuse to backfill a post whose TN date is older than
             // this — a very stale post surfacing suddenly is more likely a data
             // problem than a real miss.
-            'max_age_hours' => (int) env('FREEGLE_TN_VERIFY_MAX_AGE_HOURS', 72),
+            'max_age_hours' => (int) EnvSetting::env('FREEGLE_TN_VERIFY_MAX_AGE_HOURS', 72),
         ],
-
-        // Merge the duplicate TN accounts the old address filter could not see. Off
-        // until the backlog has been reviewed with "tn:sync --report-duplicates": it is
-        // ~96 pairs of live members and merging a pair deletes one of them.
-        'merge_legacy_duplicates' => env('FREEGLE_TN_MERGE_LEGACY_DUPLICATES', false),
     ],
 
     // Discourse forum REST API (V1 discourse_not_signed_up.php).
     // When api_key is empty the Discourse cron commands skip with a warning.
     'discourse' => [
-        'url' => env('DISCOURSE_URL', 'https://discourse.ilovefreegle.org'),
-        'api_key' => env('DISCOURSE_APIKEY', ''),
-        'api_username' => env('DISCOURSE_API_USERNAME', 'system'),
+        'url' => EnvSetting::env('DISCOURSE_URL', 'https://discourse.ilovefreegle.org'),
+        'api_key' => EnvSetting::env('DISCOURSE_APIKEY', ''),
+        'api_username' => EnvSetting::env('DISCOURSE_API_USERNAME', 'system'),
         // Per-user pacing between Discourse API calls (V1 used usleep(250000)).
-        'throttle_us' => (int) env('DISCOURSE_THROTTLE_US', 250000),
+        'throttle_us' => (int) EnvSetting::env('DISCOURSE_THROTTLE_US', 250000),
         // Rate-limit retry policy (V1 Utils::curlWithRetry: 60 retries, 1s delay).
-        'max_retries' => (int) env('DISCOURSE_MAX_RETRIES', 60),
-        'retry_delay_s' => (int) env('DISCOURSE_RETRY_DELAY_S', 1),
+        'max_retries' => (int) EnvSetting::env('DISCOURSE_MAX_RETRIES', 60),
+        'retry_delay_s' => (int) EnvSetting::env('DISCOURSE_RETRY_DELAY_S', 1),
 
         // The annual AGM category (discourse:agm). Only staff and this group
         // may start topics in it; everyone else may read and reply.
         'agm' => [
-            'announcers_group' => env('DISCOURSE_AGM_ANNOUNCERS_GROUP', 'Announcers'),
-            'colour' => env('DISCOURSE_AGM_COLOUR', '0088CC'),
-            'text_colour' => env('DISCOURSE_AGM_TEXT_COLOUR', 'FFFFFF'),
+            'announcers_group' => EnvSetting::env('DISCOURSE_AGM_ANNOUNCERS_GROUP', 'Announcers'),
+            'colour' => EnvSetting::env('DISCOURSE_AGM_COLOUR', '0088CC'),
+            'text_colour' => EnvSetting::env('DISCOURSE_AGM_TEXT_COLOUR', 'FFFFFF'),
             // Seeds the "About the ... category" topic. :name is the category name.
-            'description' => env(
+            'description' => EnvSetting::env(
                 'DISCOURSE_AGM_DESCRIPTION',
                 'All users of Discourse have been put on settings so that they are watching this group. '
                 .'You can switch this off, if you wish, by clicking on the user-cog icon at the top of the page '
@@ -503,18 +544,18 @@ return [
     // PayPal NVP/SOAP API (V1 paypal_download.php fallback transaction downloader).
     // When username is empty the donations:paypal-download command skips with a warning.
     'paypal' => [
-        'username' => env('PAYPAL_USERNAME', ''),
-        'password' => env('PAYPAL_PASSWORD', ''),
-        'signature' => env('PAYPAL_SIGNATURE', ''),
+        'username' => EnvSetting::env('PAYPAL_USERNAME', ''),
+        'password' => EnvSetting::env('PAYPAL_PASSWORD', ''),
+        'signature' => EnvSetting::env('PAYPAL_SIGNATURE', ''),
         // Live NVP endpoint; sandbox is https://api-3t.sandbox.paypal.com/nvp
-        'nvp_endpoint' => env('PAYPAL_NVP_ENDPOINT', 'https://api-3t.paypal.com/nvp'),
+        'nvp_endpoint' => EnvSetting::env('PAYPAL_NVP_ENDPOINT', 'https://api-3t.paypal.com/nvp'),
         // How many days back to scan for missed transactions.
-        'download_days' => (int) env('PAYPAL_DOWNLOAD_DAYS', 30),
+        'download_days' => (int) EnvSetting::env('PAYPAL_DOWNLOAD_DAYS', 30),
     ],
 
     // Doogal UK postcode dataset (V1 cli/doogal.php + cron/doogal wrapper).
     'doogal' => [
-        'zip_url' => env('DOOGAL_ZIP_URL', 'https://www.doogal.co.uk/files/postcodes.zip'),
+        'zip_url' => EnvSetting::env('DOOGAL_ZIP_URL', 'https://www.doogal.co.uk/files/postcodes.zip'),
     ],
 
     // First-week ONBOARDING tip sequence (mail:reengage). One short tip a day
@@ -525,17 +566,17 @@ return [
         //   ''            → send to nobody (default — feature is dark)
         //   '*'           → send to everyone eligible
         //   'a@x,b@y'     → only these recipient addresses (rollout pilot)
-        'allowlist' => env('FREEGLE_REENGAGE_ALLOWLIST', ''),
+        'allowlist' => EnvSetting::env('FREEGLE_REENGAGE_ALLOWLIST', ''),
         // Day the FIRST tip lands (account age in days). 1 leaves day 0 for the
         // welcome mail, so tip 1 arrives the day after joining.
-        'start_day' => (int) env('FREEGLE_ONBOARD_START_DAY', 1),
+        'start_day' => (int) EnvSetting::env('FREEGLE_ONBOARD_START_DAY', 1),
         // Gap between tips — one a day. Tip N lands on day start_day+(N-1)*gap,
         // i.e. days 1..5 with the defaults.
-        'stage_gap_days' => (int) env('FREEGLE_ONBOARD_STAGE_GAP_DAYS', 1),
+        'stage_gap_days' => (int) EnvSetting::env('FREEGLE_ONBOARD_STAGE_GAP_DAYS', 1),
         // Never START the sequence for an account already older than this. Stops
         // a first enable from back-blasting everyone who joined recently; a member
         // mid-sequence keeps getting the rest regardless.
-        'max_start_days' => (int) env('FREEGLE_ONBOARD_MAX_START_DAYS', 7),
+        'max_start_days' => (int) EnvSetting::env('FREEGLE_ONBOARD_MAX_START_DAYS', 7),
 
         // A/B experiment layer. Stays inert by default: rollout_pct=0 means
         // nobody is in the experiment, everyone eligible falls through to the
@@ -546,10 +587,10 @@ return [
         'experiment' => [
             // Salts the deterministic per-user bucket; bump to reshuffle arms
             // for a brand-new experiment (do NOT bump mid-experiment).
-            'name' => env('FREEGLE_REENGAGE_EXPERIMENT', 'reengage-v1'),
+            'name' => EnvSetting::env('FREEGLE_REENGAGE_EXPERIMENT', 'reengage-v1'),
             // Fraction of eligible users pulled into the experiment (0-100).
             // Those outside it get the default 'a' arm with no holdout.
-            'rollout_pct' => (int) env('FREEGLE_REENGAGE_EXPERIMENT_ROLLOUT_PCT', 0),
+            'rollout_pct' => (int) EnvSetting::env('FREEGLE_REENGAGE_EXPERIMENT_ROLLOUT_PCT', 0),
             // Arm split over the 0-99 bucket space (inclusive, must tile 0-99).
             // 'control' is a REAL holdout: recorded but never mailed, so lift is
             // measurable. 'a' = current copy, 'b' = alternate copy variant.
@@ -560,7 +601,7 @@ return [
             ],
             // Window (days after a send) in which a login/reply/post counts as
             // re-engagement caused by the mail, written by mail:reengage-outcomes.
-            'outcome_window_days' => (int) env('FREEGLE_REENGAGE_OUTCOME_WINDOW_DAYS', 14),
+            'outcome_window_days' => (int) EnvSetting::env('FREEGLE_REENGAGE_OUTCOME_WINDOW_DAYS', 14),
         ],
     ],
 
@@ -573,7 +614,7 @@ return [
         // disabled on 2026-05-27 so this is the only source of immediate
         // notifications. Set FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST in env to
         // restrict (e.g. a comma-separated list for a re-pilot).
-        'immediate_allowlist' => env('FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST', '*'),
+        'immediate_allowlist' => EnvSetting::env('FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST', '*'),
 
         // Safety gate for the unified-digest DAILY mode ("What's New").
         //   ''              → send to NOBODY (the default). V1's bulk3
@@ -586,7 +627,7 @@ return [
         //   '*'             → everyone (the eventual full cutover switch).
         // The scheduled `mail:digest:unified --mode=daily` is inert until this
         // is set; an explicit `--user=` bypasses the gate for manual sampling.
-        'daily_allowlist' => env('FREEGLE_DIGEST_DAILY_ALLOWLIST', ''),
+        'daily_allowlist' => EnvSetting::env('FREEGLE_DIGEST_DAILY_ALLOWLIST', ''),
 
         // Score multiplier for a daily-digest post the recipient has already had a
         // chance to see (an in-app view, or an opened/clicked digest that contained
@@ -597,12 +638,12 @@ return [
         // FREEGLE_DIGEST_SEEN_PENALTY did nothing at all — UnifiedDigestService only
         // behaved because config()'s own default (the same 0.15) covered the gap.
         // Keep every digest setting in this one array.
-        'seen_penalty' => (float) env('FREEGLE_DIGEST_SEEN_PENALTY', 0.15),
+        'seen_penalty' => (float) EnvSetting::env('FREEGLE_DIGEST_SEEN_PENALTY', 0.15),
     ],
 
     // Firebase Cloud Messaging for push notifications
     'firebase' => [
-        'credentials_path' => env('FIREBASE_CREDENTIALS_PATH', '/etc/firebase.json'),
+        'credentials_path' => EnvSetting::env('FIREBASE_CREDENTIALS_PATH', '/etc/firebase.json'),
     ],
 
     // Safety gate for the daily new-posts push notification (push:daily-posts).
@@ -611,37 +652,37 @@ return [
     //   '*'  → all eligible users (FD-app token + opted-in).
     //   'a@x.com,b@y' → comma-separated email list for pilot testing.
     // An explicit --user= on the command bypasses this gate for manual sampling.
-    'posts_push_allowlist' => env('FREEGLE_POSTS_PUSH_ALLOWLIST', ''),
+    'posts_push_allowlist' => EnvSetting::env('FREEGLE_POSTS_PUSH_ALLOWLIST', ''),
 
     'images' => [
         // Image domain for user profile images
-        'domain' => env('FREEGLE_IMAGES_DOMAIN', 'https://images.ilovefreegle.org'),
+        'domain' => EnvSetting::env('FREEGLE_IMAGES_DOMAIN', 'https://images.ilovefreegle.org'),
         // Domain for legacy archived images (Azure blob storage)
-        'archived_domain' => env('FREEGLE_IMAGES_ARCHIVED_DOMAIN', 'https://freegle.blob.core.windows.net'),
+        'archived_domain' => EnvSetting::env('FREEGLE_IMAGES_ARCHIVED_DOMAIN', 'https://freegle.blob.core.windows.net'),
 
         // Base URLs for source images
-        'welcome1' => env('FREEGLE_WELCOME_IMAGE1', 'https://www.ilovefreegle.org/images/welcome1.jpg'),
-        'welcome2' => env('FREEGLE_WELCOME_IMAGE2', 'https://www.ilovefreegle.org/images/welcome2.jpg'),
-        'welcome3' => env('FREEGLE_WELCOME_IMAGE3', 'https://www.ilovefreegle.org/images/welcome3.jpg'),
+        'welcome1' => EnvSetting::env('FREEGLE_WELCOME_IMAGE1', 'https://www.ilovefreegle.org/images/welcome1.jpg'),
+        'welcome2' => EnvSetting::env('FREEGLE_WELCOME_IMAGE2', 'https://www.ilovefreegle.org/images/welcome2.jpg'),
+        'welcome3' => EnvSetting::env('FREEGLE_WELCOME_IMAGE3', 'https://www.ilovefreegle.org/images/welcome3.jpg'),
         // Email assets (icons and small graphics for email templates)
-        'email_assets' => env('FREEGLE_EMAIL_ASSETS_URL', 'https://www.ilovefreegle.org/emailimages'),
+        'email_assets' => EnvSetting::env('FREEGLE_EMAIL_ASSETS_URL', 'https://www.ilovefreegle.org/emailimages'),
 
         // Rule images for welcome emails (from email_assets folder)
         // Payment marks shown under donate buttons (Apple Pay / Google Pay /
         // PayPal / card), so the low-friction options are visible before the
         // click rather than only after it.
-        'paymethods' => env('FREEGLE_PAYMETHODS_IMAGE', 'https://www.ilovefreegle.org/emailimages/paymethods.png'),
+        'paymethods' => EnvSetting::env('FREEGLE_PAYMETHODS_IMAGE', 'https://www.ilovefreegle.org/emailimages/paymethods.png'),
 
-        'rule_free' => env('FREEGLE_RULE_FREE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-free.png'),
-        'rule_nice' => env('FREEGLE_RULE_NICE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-nice.png'),
-        'rule_safe' => env('FREEGLE_RULE_SAFE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-safe.png'),
+        'rule_free' => EnvSetting::env('FREEGLE_RULE_FREE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-free.png'),
+        'rule_nice' => EnvSetting::env('FREEGLE_RULE_NICE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-nice.png'),
+        'rule_safe' => EnvSetting::env('FREEGLE_RULE_SAFE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-safe.png'),
 
         // Placeholder images for posts without photos (digest emails).
         // Type-specific: green OFFER / blue WANTED, matching the in-app
         // MessagePhotoPlaceholder gradients. Served from the user site
         // (iznik-nuxt3/public/placeholder-offer.png / placeholder-wanted.png).
-        'offer_placeholder' => env('FREEGLE_OFFER_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-offer.png'),
-        'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-wanted.png'),
+        'offer_placeholder' => EnvSetting::env('FREEGLE_OFFER_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-offer.png'),
+        'wanted_placeholder' => EnvSetting::env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder-wanted.png'),
     ],
 
     // GeoIP database for IP country lookups. Defaults to the copy bundled in
@@ -649,35 +690,35 @@ return [
     // the app is deployed - no separately-provisioned mmdb file required.
     // GEOIP_MMDB_PATH can point at a system-managed/fresher database.
     'geoip' => [
-        'mmdb_path' => env('GEOIP_MMDB_PATH', base_path('resources/geoip/GeoLite2-Country.mmdb')),
+        'mmdb_path' => EnvSetting::env('GEOIP_MMDB_PATH', base_path('resources/geoip/GeoLite2-Country.mmdb')),
     ],
 
     // The image object store. Uploads keep going through tusd; what changes is
     // where a finished upload is kept. Off by default: the schedule only runs
-    // the pusher and the migrator when this is on, and it is turned on in
+    // the pusher and the bucket check when this is on, and it is turned on in
     // production once images:object-store-check has passed against the real
     // bucket (docs/ops/runbooks/images-to-object-storage.md).
     'image_store' => [
-        'enabled' => (bool) env('IMAGE_STORE_ENABLED', false),
+        'enabled' => (bool) EnvSetting::env('IMAGE_STORE_ENABLED', false),
         // A completed upload is pushed only after it has been unchanged this
         // long, so a client that is still reading its own upload back through
         // the delivery cache never sees a gap.
-        'push_grace_seconds' => (int) env('IMAGE_STORE_PUSH_GRACE_SECONDS', 60),
-        'push_limit' => (int) env('IMAGE_STORE_PUSH_LIMIT', 500),
+        'push_grace_seconds' => (int) EnvSetting::env('IMAGE_STORE_PUSH_GRACE_SECONDS', 60),
+        'push_limit' => (int) EnvSetting::env('IMAGE_STORE_PUSH_LIMIT', 500),
         // An upload that never reaches its declared length is deleted after this.
-        'abandon_hours' => (int) env('IMAGE_STORE_ABANDON_HOURS', 24),
-        // The legacy copy runs in short scheduled slices. Off until the edge
-        // has the read chain in place; then on until verify reports nothing missing.
-        'migrate_enabled' => (bool) env('IMAGE_STORE_MIGRATE_ENABLED', false),
-        'migrate_time_budget' => (int) env('IMAGE_STORE_MIGRATE_TIME_BUDGET', 240),
-        'migrate_chunk' => (int) env('IMAGE_STORE_MIGRATE_CHUNK', 500),
-        // Upload bandwidth cap for the copy, MB/s. 1.1 TB at 10 MB/s is about 30
-        // hours of transfer spread over however many slices it takes.
-        'migrate_max_mbps' => (float) env('IMAGE_STORE_MIGRATE_MAX_MBPS', 10),
+        'abandon_hours' => (int) EnvSetting::env('IMAGE_STORE_ABANDON_HOURS', 24),
     ],
 
     // TUS uploader for AI-generated images
-    'tus_uploader' => env('TUS_UPLOADER', 'https://uploads.ilovefreegle.org:8080'),
+    // Cloudflare Workers AI, which draws the post and job illustrations (Flux Schnell). The same
+    // account and token the Go API uses for its on-demand images.
+    'cloudflare_ai' => [
+        'account_id' => EnvSetting::env('CLOUDFLARE_ACCOUNT_ID'),
+        'token' => EnvSetting::env('CLOUDFLARE_AI_TOKEN'),
+        'base' => EnvSetting::env('CLOUDFLARE_API_BASE', 'https://api.cloudflare.com'),
+    ],
+
+    'tus_uploader' => EnvSetting::env('TUS_UPLOADER', 'https://uploads.ilovefreegle.org:8080'),
 
     /*
     |--------------------------------------------------------------------------
@@ -690,7 +731,7 @@ return [
     */
 
     'delivery' => [
-        'base_url' => env('FREEGLE_DELIVERY_URL', 'https://delivery.ilovefreegle.org'),
+        'base_url' => EnvSetting::env('FREEGLE_DELIVERY_URL', 'https://delivery.ilovefreegle.org'),
     ],
 
     /*
@@ -702,7 +743,7 @@ return [
     |
     */
 
-    'srid' => env('FREEGLE_SRID', 3857),
+    'srid' => EnvSetting::env('FREEGLE_SRID', 3857),
 
     /*
     |--------------------------------------------------------------------------
@@ -716,12 +757,12 @@ return [
     'communitynews' => [
         // Global kill switch for the SCHEDULED runs (manual artisan invocation
         // always works). Off by default so nothing fires until ops opts in.
-        'enabled' => (bool) env('COMMUNITY_NEWS_ENABLED', false),
+        'enabled' => (bool) EnvSetting::env('COMMUNITY_NEWS_ENABLED', false),
 
         // Anthropic key (shared with the eee reference labeller) + model for the
         // research-and-write call. Defaults to Opus; override for cost/latency.
-        'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
-        'model'             => env('COMMUNITY_NEWS_MODEL', 'claude-opus-4-8'),
+        'anthropic_api_key' => EnvSetting::env('ANTHROPIC_API_KEY', ''),
+        'model'             => EnvSetting::env('COMMUNITY_NEWS_MODEL', 'claude-opus-4-8'),
 
         // Run the research on a Claude SUBSCRIPTION instead of a metered API key:
         // set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`). When present it
@@ -729,44 +770,55 @@ return [
         // `claude` CLI (WebSearch tool) rather than the raw Messages API — a raw
         // OAuth Bearer call to /v1/messages is not supported by Anthropic. Needs
         // the `claude` CLI in the container (the batch image installs it).
-        'oauth_token' => env('COMMUNITY_NEWS_OAUTH_TOKEN', env('CLAUDE_CODE_OAUTH_TOKEN', '')),
+        'oauth_token' => EnvSetting::env('COMMUNITY_NEWS_OAUTH_TOKEN', EnvSetting::env('CLAUDE_CODE_OAUTH_TOKEN', '')),
         // Override the CLI binary / its config dir (blank => a clean per-run temp
         // dir, so this repo's Claude hooks/skills/settings don't load into the job).
-        'claude_bin'        => env('COMMUNITY_NEWS_CLAUDE_BIN', 'claude'),
-        'claude_config_dir' => env('COMMUNITY_NEWS_CLAUDE_CONFIG_DIR', ''),
+        'claude_bin'        => EnvSetting::env('COMMUNITY_NEWS_CLAUDE_BIN', 'claude'),
+        'claude_config_dir' => EnvSetting::env('COMMUNITY_NEWS_CLAUDE_CONFIG_DIR', ''),
 
         // Post to ChitChat / send the digest AS this account ("Freegle").
-        'system_user_email' => env('COMMUNITY_NEWS_SYSTEM_USER_EMAIL', env('FREEGLE_NOREPLY_ADDR', 'noreply@ilovefreegle.org')),
+        'system_user_email' => EnvSetting::env('COMMUNITY_NEWS_SYSTEM_USER_EMAIL', EnvSetting::env('FREEGLE_NOREPLY_ADDR', 'noreply@ilovefreegle.org')),
 
-        // Town assignment radius: an enabled group joins its nearest `towns`-table
-        // town within this many miles (the town names the area — the searchable
-        // unit); beyond it the group stands alone as its own area.
-        'area_cluster_miles' => (float) env('COMMUNITY_NEWS_AREA_MILES', 20),
+        // Anchor radius: an enabled group is anchored on a town within this many miles
+        // (the town names the area - the searchable unit); with none, the group stands
+        // alone as its own area. Candidates are the curated towns and the places
+        // gazetteer; CommunityNewsAreaService::anchorFor says which wins.
+        'area_cluster_miles' => (float) EnvSetting::env('COMMUNITY_NEWS_AREA_MILES', 20),
+
+        // A curated town this close wins outright. Failing that, the closest place of at
+        // least this population within this many miles - so an area is named after a
+        // town people know, not the village or neighbourhood nearest the group's point.
+        'anchor_town_miles' => (float) EnvSetting::env('COMMUNITY_NEWS_ANCHOR_TOWN_MILES', 3),
+        'anchor_place_min_population' => (int) EnvSetting::env('COMMUNITY_NEWS_ANCHOR_PLACE_POPULATION', 10000),
+        'anchor_place_miles' => (float) EnvSetting::env('COMMUNITY_NEWS_ANCHOR_PLACE_MILES', 6),
 
         // How many of an area's places to name in the research prompt, biggest
         // first. Areas hold a median of 6 and a p90 of 14, so this covers most
         // of them whole; past that the list crowds out the instructions without
         // telling the model anything it will use.
-        'places_per_area' => (int) env('COMMUNITY_NEWS_PLACES_PER_AREA', 8),
+        'places_per_area' => (int) EnvSetting::env('COMMUNITY_NEWS_PLACES_PER_AREA', 8),
 
         // How many nuggets the researcher aims to produce per area.
-        'items_per_area' => (int) env('COMMUNITY_NEWS_ITEMS_PER_AREA', 6),
+        'items_per_area' => (int) EnvSetting::env('COMMUNITY_NEWS_ITEMS_PER_AREA', 6),
 
         // ChitChat drip trial: items per post, and the minimum days between
         // posts for one area.
-        'chitchat_items_per_post' => (int) env('COMMUNITY_NEWS_CHITCHAT_ITEMS', 1),
-        'chitchat_min_days'       => (int) env('COMMUNITY_NEWS_CHITCHAT_MIN_DAYS', 3),
+        'chitchat_items_per_post' => (int) EnvSetting::env('COMMUNITY_NEWS_CHITCHAT_ITEMS', 1),
+        'chitchat_min_days'       => (int) EnvSetting::env('COMMUNITY_NEWS_CHITCHAT_MIN_DAYS', 3),
+        // Areas researched per hourly run, oldest first. 461 areas every 3 days is about 6.4 an hour, so 7
+        // keeps up while never sending them all in one run (the subscription is shared with the AI support helper).
+        'research_max_per_run'    => (int) EnvSetting::env('COMMUNITY_NEWS_RESEARCH_MAX_PER_RUN', 7),
 
         // Weekly email: minimum days between digests for one area, and how many
         // items to include.
-        'email_min_days'  => (int) env('COMMUNITY_NEWS_EMAIL_MIN_DAYS', 7),
-        'email_max_items' => (int) env('COMMUNITY_NEWS_EMAIL_MAX_ITEMS', 6),
+        'email_min_days'  => (int) EnvSetting::env('COMMUNITY_NEWS_EMAIL_MIN_DAYS', 7),
+        'email_max_items' => (int) EnvSetting::env('COMMUNITY_NEWS_EMAIL_MAX_ITEMS', 6),
 
         // Safety bound on the Anthropic server-tool (web_search) loop.
-        'max_search_iterations' => (int) env('COMMUNITY_NEWS_MAX_SEARCH_ITER', 8),
+        'max_search_iterations' => (int) EnvSetting::env('COMMUNITY_NEWS_MAX_SEARCH_ITER', 8),
 
         // How many days a researched item stays eligible for posting/emailing.
-        'item_freshness_days' => (int) env('COMMUNITY_NEWS_ITEM_FRESHNESS_DAYS', 10),
+        'item_freshness_days' => (int) EnvSetting::env('COMMUNITY_NEWS_ITEM_FRESHNESS_DAYS', 10),
 
         // Staleness guards (SourceFreshness): stop the research model dressing up
         // an old source as something happening now.
@@ -775,28 +827,28 @@ return [
         // event. Only applied to og:type=article pages carrying an explicit
         // article:published_time - on an evergreen page that date is just when
         // the page was created, and trusting it rejects live events.
-        'source_max_age_days' => (int) env('COMMUNITY_NEWS_SOURCE_MAX_AGE_DAYS', 365),
+        'source_max_age_days' => (int) EnvSetting::env('COMMUNITY_NEWS_SOURCE_MAX_AGE_DAYS', 365),
 
         // How long the same URL stays deduped within one area, so repeated
         // research runs don't write up the same story again and again.
-        'source_dedup_days' => (int) env('COMMUNITY_NEWS_SOURCE_DEDUP_DAYS', 180),
+        'source_dedup_days' => (int) EnvSetting::env('COMMUNITY_NEWS_SOURCE_DEDUP_DAYS', 180),
 
         // Read the year off the source's own picture and drop the item when the
         // picture advertises an earlier one (the 2014 RiverFest poster). Needs
         // anthropic_api_key; silently skipped without it.
-        'check_image_year' => (bool) env('COMMUNITY_NEWS_CHECK_IMAGE_YEAR', true),
+        'check_image_year' => (bool) EnvSetting::env('COMMUNITY_NEWS_CHECK_IMAGE_YEAR', true),
         // Deliberately a small, fast model: this is short OCR-shaped work run
         // once per researched item, not the research itself. Override to raise it.
-        'vision_model' => env('COMMUNITY_NEWS_VISION_MODEL', 'claude-haiku-4-5'),
+        'vision_model' => EnvSetting::env('COMMUNITY_NEWS_VISION_MODEL', 'claude-haiku-4-5'),
 
         // Curated per-place source store (JSON files). Research seeds the model
         // with these known-good local feeds, health-checks them each run, and
         // re-discovers new ones roughly quarterly. See
         // data/community-news-sources/README.md.
-        'sources_path' => env('COMMUNITY_NEWS_SOURCES_PATH', base_path('data/community-news-sources')),
-        'source_recheck_hours' => (int) env('COMMUNITY_NEWS_SOURCE_RECHECK_HOURS', 24),
-        'source_dead_after' => (int) env('COMMUNITY_NEWS_SOURCE_DEAD_AFTER', 3),
-        'source_discovery_days' => (int) env('COMMUNITY_NEWS_SOURCE_DISCOVERY_DAYS', 90),
+        'sources_path' => EnvSetting::env('COMMUNITY_NEWS_SOURCES_PATH', base_path('data/community-news-sources')),
+        'source_recheck_hours' => (int) EnvSetting::env('COMMUNITY_NEWS_SOURCE_RECHECK_HOURS', 24),
+        'source_dead_after' => (int) EnvSetting::env('COMMUNITY_NEWS_SOURCE_DEAD_AFTER', 3),
+        'source_discovery_days' => (int) EnvSetting::env('COMMUNITY_NEWS_SOURCE_DISCOVERY_DAYS', 90),
     ],
 
     // The spatial-knn "finder" service (iznik-spatial-go). SPATIAL_KNN_URL is the
@@ -805,13 +857,13 @@ return [
     // it's only a last-resort legacy fallback. The admin (rebuild/remove/upsert)
     // API is the same host on the next port; derive it from SPATIAL_KNN_URL so any
     // container that sets SPATIAL_KNN_URL gets a working admin URL for free.
-    'spatial_server_url' => env('SPATIAL_KNN_URL', env('SPATIAL_SERVER_URL', 'http://localhost:8194')),
-    'spatial_admin_url' => env('SPATIAL_KNN_ADMIN_URL', env('SPATIAL_ADMIN_URL', str_replace(
+    'spatial_server_url' => EnvSetting::env('SPATIAL_KNN_URL', EnvSetting::env('SPATIAL_SERVER_URL', 'http://localhost:8194')),
+    'spatial_admin_url' => EnvSetting::env('SPATIAL_KNN_ADMIN_URL', EnvSetting::env('SPATIAL_ADMIN_URL', str_replace(
         ':8194',
         ':8195',
-        env('SPATIAL_KNN_URL', 'http://localhost:8194')
+        EnvSetting::env('SPATIAL_KNN_URL', 'http://localhost:8194')
     ))),
-    'spatial_data_dir' => env('SPATIAL_DATA_DIR', '/data'),
+    'spatial_data_dir' => EnvSetting::env('SPATIAL_DATA_DIR', '/data'),
 
     // The routing/isochrone server (iznik-routing-go) — DISTINCT from the KNN
     // finder above. Hosts GET /v1/ripple-schedule and /v1/fairness, called over
@@ -825,7 +877,7 @@ return [
     // Set ROUTING_SERVER_URL in any environment whose routing server is not reachable
     // at the default below (it must point at the routing server's INTERNAL/no-auth
     // port, NOT the KNN finder and NOT the JWT-guarded external port).
-    'routing_server_url' => env('ROUTING_SERVER_URL', 'http://spatial:8194'),
+    'routing_server_url' => EnvSetting::env('ROUTING_SERVER_URL', 'http://spatial:8194'),
 
     // Rippling-out reach engine parameters (ripple:expand / ReachService).
     'ripple' => [
@@ -833,7 +885,7 @@ return [
         // server + app code can deploy (and clear the app stores) ahead of go-live; flip
         // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
         // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
-        'enabled' => (bool) env('RIPPLE_ENABLED', true),
+        'enabled' => (bool) EnvSetting::env('RIPPLE_ENABLED', true),
         // Arrival cutoff (server local time). Only posts that arrived on or after this
         // instant ever START rippling; older pending posts are left alone. This is the
         // flood guard: when rippling first turns on, every historical pending post would
@@ -844,7 +896,7 @@ return [
         // .env.background to the day you switch the experiment on, alongside
         // RIPPLE_WITHIN_GROUPS - otherwise the first run back-fills the gap to this date.
         // Empty string disables the cutoff (ripple everything, e.g. in tests).
-        'enabled_at' => env('RIPPLE_ENABLED_AT', '2026-06-23'),
+        'enabled_at' => EnvSetting::env('RIPPLE_ENABLED_AT', '2026-06-23'),
         // Group experiment scope: comma-separated group ids that ripple even while the global
         // RIPPLE_ENABLED switch is OFF. When non-empty, the scheduled ripple:expand cron runs SCOPED
         // to these groups' polygons, so ONLY these groups' posts ripple (origin-in-polygon) and
@@ -852,22 +904,22 @@ return [
         // experiment. RIPPLE_ENABLED remains the network-wide kill switch for the unscoped rollout.
         'within_groups' => array_values(array_filter(array_map(
             'intval',
-            explode(',', (string) env('RIPPLE_WITHIN_GROUPS', ''))
+            explode(',', (string) EnvSetting::env('RIPPLE_WITHIN_GROUPS', ''))
         ))),
         // Density curve passed to /v1/ripple-schedule (see iznik-routing-go ripple.go).
-        'curve' => env('RIPPLE_CURVE', 'step-70'),
+        'curve' => EnvSetting::env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.
-        'mode' => env('RIPPLE_MODE', 'drive'),
+        'mode' => EnvSetting::env('RIPPLE_MODE', 'drive'),
         // Maximum drive-time (minutes) the reach may grow to. This is the FLAT cap, used
         // when the density-conditional cap below is off or cannot measure.
-        'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        'max_minutes' => (float) EnvSetting::env('RIPPLE_MAX_MINUTES', 30),
 
         // How long one ripple:expand run may keep taking rows before it stops cleanly
         // and lets the next tick resume. MUST stay below ExpandCommand's single-instance
         // lock TTL (3600s) - a run that outlives the lock lets the every-minute schedule
         // stack another run at each expiry, which is the 2026-08-30 gate-saturation
         // collapse. 0 disables (tests / operator one-offs).
-        'expand_time_box_seconds' => (int) env('RIPPLE_EXPAND_TIME_BOX_SECONDS', 2700),
+        'expand_time_box_seconds' => (int) EnvSetting::env('RIPPLE_EXPAND_TIME_BOX_SECONDS', 2700),
         // Density-conditional cap. Measured on 887 posts split by local freegler
         // density, the chance a replier goes on to collect collapses past ~20-25
         // minutes in dense areas and does not fall at all out to 45 in sparse ones, so
@@ -876,21 +928,21 @@ return [
         // Bands are terciles of "radius of the circle holding the nearest k freeglers".
         // enabled=false puts every post back on the flat max_minutes above.
         'density' => [
-            'enabled' => filter_var(env('RIPPLE_DENSITY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
-            'k' => (int) env('RIPPLE_DENSITY_K', 400),
-            'dense_max_miles' => (float) env('RIPPLE_DENSITY_DENSE_MAX_MILES', 1.6),
-            'medium_max_miles' => (float) env('RIPPLE_DENSITY_MEDIUM_MAX_MILES', 3.1),
-            'timeout' => (int) env('RIPPLE_DENSITY_TIMEOUT', 5),
+            'enabled' => filter_var(EnvSetting::env('RIPPLE_DENSITY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'k' => (int) EnvSetting::env('RIPPLE_DENSITY_K', 400),
+            'dense_max_miles' => (float) EnvSetting::env('RIPPLE_DENSITY_DENSE_MAX_MILES', 1.6),
+            'medium_max_miles' => (float) EnvSetting::env('RIPPLE_DENSITY_MEDIUM_MAX_MILES', 3.1),
+            'timeout' => (int) EnvSetting::env('RIPPLE_DENSITY_TIMEOUT', 5),
             'max_minutes' => [
                 // Dense: 25-30 min converts at 7%, and 30-45 no better. The last third of
                 // a 30-minute budget buys almost nothing here but costs mail and crossposts.
-                'dense' => (float) env('RIPPLE_DENSITY_MAX_MINUTES_DENSE', 20),
+                'dense' => (float) EnvSetting::env('RIPPLE_DENSITY_MAX_MINUTES_DENSE', 20),
                 // Medium: unchanged, which is what makes it the comparison arm.
-                'medium' => (float) env('RIPPLE_DENSITY_MAX_MINUTES_MEDIUM', 30),
+                'medium' => (float) EnvSetting::env('RIPPLE_DENSITY_MAX_MINUTES_MEDIUM', 30),
                 // Sparse: 30-45 min converts at 20% against 18% for 0-10 min, and rural
                 // takers routinely drive 20-30. Cutting at 30 drops willing takers where
                 // the audience is thinnest to begin with.
-                'sparse' => (float) env('RIPPLE_DENSITY_MAX_MINUTES_SPARSE', 45),
+                'sparse' => (float) EnvSetting::env('RIPPLE_DENSITY_MAX_MINUTES_SPARSE', 45),
             ],
         ],
         // How many reach schedules to compute CONCURRENTLY (Http::pool fan-out in
@@ -898,23 +950,23 @@ return [
         // routing host (one Dijkstra + polygon rasterisations), so cap this near the routing
         // host's core count; exceeding it just queues on the routing server. DB writes stay
         // serial regardless. 1 = sequential (the old behaviour).
-        'compute_concurrency' => (int) env('RIPPLE_COMPUTE_CONCURRENCY', 8),
+        'compute_concurrency' => (int) EnvSetting::env('RIPPLE_COMPUTE_CONCURRENCY', 8),
         // Reuse an already-computed reach when another live post shares the SAME blurred origin,
         // instead of hitting the routing server again. The reach schedule is a deterministic
         // function of the blurred origin (4dp) + the ripple config here, so this is exact and it
         // removes the bulk of routing calls on the recompute drain (co-located posts, repeat posters
         // from home). Set false for one full recompute after changing curve/max_minutes/extent so
         // reaches computed under the OLD config are not reused. true = on.
-        'reuse_reach' => filter_var(env('RIPPLE_REUSE_REACH', true), FILTER_VALIDATE_BOOLEAN),
+        'reuse_reach' => filter_var(EnvSetting::env('RIPPLE_REUSE_REACH', true), FILTER_VALIDATE_BOOLEAN),
         // Per-request timeout (seconds) for a /v1/ripple-schedule call. A dense-origin post can
         // take tens of seconds; the pool path uses this so one slow post does not abort the chunk.
-        'request_timeout' => (int) env('RIPPLE_REQUEST_TIMEOUT', 60),
+        'request_timeout' => (int) EnvSetting::env('RIPPLE_REQUEST_TIMEOUT', 60),
         // ripple:proximity-notes (moderator "quicker to get to" note) — computed out of the hot
         // ripple:expand cron, so a slacker timeout is fine. Slow calls (> proximity_slow_ms) and
         // failures are reported to Sentry. proximity_notes gates the whole feature (kill switch
         // independent of RIPPLE_ENABLED).
-        'proximity_notes' => filter_var(env('RIPPLE_PROXIMITY_NOTES', true), FILTER_VALIDATE_BOOLEAN),
-        'proximity_timeout' => (int) env('RIPPLE_PROXIMITY_TIMEOUT', 15),
+        'proximity_notes' => filter_var(EnvSetting::env('RIPPLE_PROXIMITY_NOTES', true), FILTER_VALIDATE_BOOLEAN),
+        'proximity_timeout' => (int) EnvSetting::env('RIPPLE_PROXIMITY_TIMEOUT', 15),
         // reachable_gate: ripple targeting is gated on the routing server's
         // reachable-group signal - a group is targeted only when an active member
         // living inside the group's own polygon has a road-reachable street node,
@@ -922,7 +974,7 @@ return [
         // RIPPLE_REACHABLE_GATE=false as the killswitch (reverts targeting and
         // retraction to polygon-overlap only). Independent of RIPPLE_ENABLED; an
         // empty/absent list falls back to polygon-only for that post.
-        'reachable_gate' => filter_var(env('RIPPLE_REACHABLE_GATE', true), FILTER_VALIDATE_BOOLEAN),
+        'reachable_gate' => filter_var(EnvSetting::env('RIPPLE_REACHABLE_GATE', true), FILTER_VALIDATE_BOOLEAN),
         // coarse_tick_geometry: fetch each tick's catchment in the routing server's
         // region-scale form rather than at road resolution. Expansion only asks
         // region-scale questions of it (sandwich bounds, origin-group union, which
@@ -931,19 +983,19 @@ return [
         // slots. Only applied where the reachable gate makes the group answer exact
         // regardless (ExpandService::coarseTickGeometryOk). Default ON; set
         // RIPPLE_COARSE_TICK_GEOMETRY=false as the killswitch.
-        'coarse_tick_geometry' => filter_var(env('RIPPLE_COARSE_TICK_GEOMETRY', true), FILTER_VALIDATE_BOOLEAN),
-        'proximity_slow_ms' => (int) env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
+        'coarse_tick_geometry' => filter_var(EnvSetting::env('RIPPLE_COARSE_TICK_GEOMETRY', true), FILTER_VALIDATE_BOOLEAN),
+        'proximity_slow_ms' => (int) EnvSetting::env('RIPPLE_PROXIMITY_SLOW_MS', 3000),
         // Reply-saturation stop (extent-governor design T1.1): a post with at least this many
         // DISTINCT repliers (distinct users with an Interested chat reply on the post,
         // chat_messages.refmsgid = msgid) stops expanding - it already has plenty of interest, so
         // further reach is wasted. Applies both at init (an already-saturated post never starts
         // rippling) and per tick (a post that becomes saturated stops fanning out). 0 disables.
         // 5 = the figure from the Discourse rippling thread.
-        'reply_saturation_stop' => (int) env('RIPPLE_REPLY_SATURATION_STOP', 5),
+        'reply_saturation_stop' => (int) EnvSetting::env('RIPPLE_REPLY_SATURATION_STOP', 5),
         // A member's own repost drops the reach row; its replacement starts from when the post
         // first went live, not from the re-approval, provided the post had been live within this
         // many days before the repost. After a longer gap the reach starts afresh. 0 disables.
-        'repost_keeps_reach_days' => (int) env('RIPPLE_REPOST_KEEPS_REACH_DAYS', 7),
+        'repost_keeps_reach_days' => (int) EnvSetting::env('RIPPLE_REPOST_KEEPS_REACH_DAYS', 7),
         // Hours a rippled-in (messages_groups.rippled_in=1) post, already Approved on its
         // origin group, waits before it is approved onto the rippled-in group (it was already
         // vetted on origin). Default 0 = approve AT ripple-in time, so it never even flickers
@@ -951,15 +1003,15 @@ return [
         // receiving groups, since the post was already moderated on its origin group. >0 leaves
         // it Pending for AutoApproveService to approve after the window (a mod-veto window for
         // groups that want to eyeball rippled-in posts before they appear).
-        'rippled_in_pending_hours' => (int) env('RIPPLE_RIPPLED_IN_PENDING_HOURS', 0),
+        'rippled_in_pending_hours' => (int) EnvSetting::env('RIPPLE_RIPPLED_IN_PENDING_HOURS', 0),
         // Wall-clock hazard schedule (hours since arrival) at which the reach
         // expands one tick. One schedule tick is requested per entry, so the
         // number of ticks equals the length of this array.
         'hazard_hours' => [1, 3, 6, 12, 24, 48, 72, 120, 168],
         // Only expand during active hours (server local time): inclusive start,
         // exclusive end. Outside this window, due expansions wait.
-        'active_start_hour' => (int) env('RIPPLE_ACTIVE_START_HOUR', 6),
-        'active_end_hour' => (int) env('RIPPLE_ACTIVE_END_HOUR', 23),
+        'active_start_hour' => (int) EnvSetting::env('RIPPLE_ACTIVE_START_HOUR', 6),
+        'active_end_hour' => (int) EnvSetting::env('RIPPLE_ACTIVE_END_HOUR', 23),
 
         // Held replies are DELAYED: every hold has a due time of base + per_mile x
         // miles from the item, capped at max_minutes.
@@ -982,10 +1034,10 @@ return [
         // Coverage still wins: if the ripple reaches them before the due time they are
         // released then. enabled=false makes coverage the only exit again.
         'reply_delay' => [
-            'enabled' => filter_var(env('RIPPLE_REPLY_DELAY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
-            'base_minutes' => (float) env('RIPPLE_REPLY_DELAY_BASE_MINUTES', 15),
-            'per_mile_minutes' => (float) env('RIPPLE_REPLY_DELAY_PER_MILE_MINUTES', 3),
-            'max_minutes' => (float) env('RIPPLE_REPLY_DELAY_MAX_MINUTES', 180),
+            'enabled' => filter_var(EnvSetting::env('RIPPLE_REPLY_DELAY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'base_minutes' => (float) EnvSetting::env('RIPPLE_REPLY_DELAY_BASE_MINUTES', 15),
+            'per_mile_minutes' => (float) EnvSetting::env('RIPPLE_REPLY_DELAY_PER_MILE_MINUTES', 3),
+            'max_minutes' => (float) EnvSetting::env('RIPPLE_REPLY_DELAY_MAX_MINUTES', 180),
         ],
         // Audience-budget extent governor — Stage A (feed-forward). Caps reach at
         // the ~target_users NEAREST freeglers instead of letting a fixed drive-time
@@ -998,8 +1050,8 @@ return [
         // (Per-RU-class stratification — target_by_ru — is the planned Stage-A
         // refinement and is not yet wired; this first cut is a single global cap.)
         'extent' => [
-            'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', true),
-            'target_users' => (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000),
+            'enabled' => (bool) EnvSetting::env('RIPPLE_EXTENT_ENABLED', true),
+            'target_users' => (int) EnvSetting::env('RIPPLE_EXTENT_TARGET_USERS', 4000),
         ],
         // Rural-access overflow. The extent cap above sizes a post's audience by the NEAREST
         // N members, which in a dense area binds long before the travel-time ceiling: measured
@@ -1012,7 +1064,7 @@ return [
         // the mail path stays members-only, so this reaches people who have already joined a
         // group the post is on, never a cold recipient.
         'rural_access' => [
-            'enabled' => filter_var(env('RIPPLE_RURAL_ACCESS_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => filter_var(EnvSetting::env('RIPPLE_RURAL_ACCESS_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         ],
         // Cluster-anchor overflow. A different miss from rural-access above: that lane covers a
         // post whose audience cap bound short of the travel-time budget; this one covers a post
@@ -1028,7 +1080,7 @@ return [
         // UnifiedDigestService::overflowBranch, which reads only 'rural'/'fairness', and the
         // daily digest / daily-posts push reach gate, which consults the rural ring only.
         'cluster' => [
-            'enabled' => filter_var(env('RIPPLE_CLUSTER_ANCHOR_ENABLED', true), FILTER_VALIDATE_BOOLEAN), // live-by-default, Edward's convention
+            'enabled' => filter_var(EnvSetting::env('RIPPLE_CLUSTER_ANCHOR_ENABLED', true), FILTER_VALIDATE_BOOLEAN), // live-by-default, Edward's convention
             // Defaults to the AUDIENCE CAP, not to a number of its own, so the two
             // lanes meet rather than leaving a gap between them. Rural fires when the
             // cap BOUND; cluster fires when it did not and the post is still under
@@ -1038,10 +1090,10 @@ return [
             // THIRD of everything posted, and it is exactly the semi-rural case both
             // lanes were written for. 341 live posts across the Yorkshire Dales
             // carried no ring of any kind; one sampled at 1,896.
-            'floor' => (int) env('RIPPLE_CLUSTER_FLOOR', (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000)),
-            'cell_k' => (int) env('RIPPLE_CLUSTER_CELL_K', 150),
-            'max_wedges' => (int) env('RIPPLE_CLUSTER_MAX_WEDGES', 3),
-            'max_minutes' => (float) env('RIPPLE_CLUSTER_MAX_MINUTES', 60),
+            'floor' => (int) EnvSetting::env('RIPPLE_CLUSTER_FLOOR', (int) EnvSetting::env('RIPPLE_EXTENT_TARGET_USERS', 4000)),
+            'cell_k' => (int) EnvSetting::env('RIPPLE_CLUSTER_CELL_K', 150),
+            'max_wedges' => (int) EnvSetting::env('RIPPLE_CLUSTER_MAX_WEDGES', 3),
+            'max_minutes' => (float) EnvSetting::env('RIPPLE_CLUSTER_MAX_MINUTES', 60),
         ],
         // Demographic-fairness overflow. Measured on live: members in the most deprived fifth
         // are reached by ~457 posts per 30 days against ~574 for every other fifth, while
@@ -1054,29 +1106,29 @@ return [
         // fifth rather than a gradient, and because one fifth needs one traced ring rather
         // than four. Raising it buys the full linear gradient at proportionate cost.
         'fairness' => [
-            'enabled' => filter_var(env('RIPPLE_FAIRNESS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
-            'weight' => (float) env('RIPPLE_FAIRNESS_WEIGHT', 0.0),
-            'max_quintile' => (int) env('RIPPLE_FAIRNESS_MAX_QUINTILE', 1),
+            'enabled' => filter_var(EnvSetting::env('RIPPLE_FAIRNESS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'weight' => (float) EnvSetting::env('RIPPLE_FAIRNESS_WEIGHT', 0.0),
+            'max_quintile' => (int) EnvSetting::env('RIPPLE_FAIRNESS_MAX_QUINTILE', 1),
         ],
         // Unified-digest score-ordering (see App\Services\Ripple\DigestPostScorer).
         // Mirrors the /rippling "Digest preview" weights. Tunable via env without a deploy.
         'score' => [
             'weights' => [
-                'close'  => (float) env('RIPPLE_DIGEST_W_CLOSE', 1.0),
-                'fresh'  => (float) env('RIPPLE_DIGEST_W_FRESH', 0.0),
-                'budget' => (float) env('RIPPLE_DIGEST_W_BUDGET', 1.0),
-                'anchor' => (float) env('RIPPLE_DIGEST_W_ANCHOR', 0.0),
+                'close'  => (float) EnvSetting::env('RIPPLE_DIGEST_W_CLOSE', 1.0),
+                'fresh'  => (float) EnvSetting::env('RIPPLE_DIGEST_W_FRESH', 0.0),
+                'budget' => (float) EnvSetting::env('RIPPLE_DIGEST_W_BUDGET', 1.0),
+                'anchor' => (float) EnvSetting::env('RIPPLE_DIGEST_W_ANCHOR', 0.0),
             ],
-            'window_hours' => (float) env('RIPPLE_DIGEST_WINDOW_HOURS', 24),
-            'budget_decay' => (float) env('RIPPLE_DIGEST_BUDGET_DECAY', 25),
+            'window_hours' => (float) EnvSetting::env('RIPPLE_DIGEST_WINDOW_HOURS', 24),
+            'budget_decay' => (float) EnvSetting::env('RIPPLE_DIGEST_BUDGET_DECAY', 25),
             // The reference close term's horizon (1 - driveMin/max_minutes):
             // defaults to the ripple max_minutes knob, the same value the
             // /rippling digest preview defaults to.
-            'max_minutes' => (float) env('RIPPLE_DIGEST_SCORE_MAX_MINUTES', env('RIPPLE_MAX_MINUTES', 30)),
+            'max_minutes' => (float) EnvSetting::env('RIPPLE_DIGEST_SCORE_MAX_MINUTES', EnvSetting::env('RIPPLE_MAX_MINUTES', 30)),
             // ~30km, the 30-min drive-isochrone analogue. Used for posts with no
             // rippling_reach row (the dominant case while rippling is dark, and for
             // all backlog posts after go-live).
-            'default_reach_metres' => (float) env('RIPPLE_DIGEST_DEFAULT_REACH_M', 30000),
+            'default_reach_metres' => (float) EnvSetting::env('RIPPLE_DIGEST_DEFAULT_REACH_M', 30000),
         ],
 
         // Email distance-preference filter (Nearby browse's distance slider, extended
@@ -1091,7 +1143,7 @@ return [
         // to today's fully-unfiltered behaviour for EVERY member (including those with a
         // configured limit) with no deploy, if a bug is ever found in the filter itself.
         'distance_filter' => [
-            'enabled' => filter_var(env('RIPPLE_DISTANCE_FILTER_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => filter_var(EnvSetting::env('RIPPLE_DISTANCE_FILTER_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         ],
     ],
 
@@ -1120,7 +1172,7 @@ return [
 
     'firstreply' => [
         // Master switch. Off means none of the below runs, whatever they say.
-        'enabled' => filter_var(env('FIRSTREPLY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        'enabled' => filter_var(EnvSetting::env('FIRSTREPLY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
 
         // Share of POSTS in the trial, 0-100. A post is in or out for its whole
         // life and across all three levers at once, so the arms never overlap and
@@ -1130,7 +1182,7 @@ return [
         // set too. Forgetting the percentage then costs a quiet run that says so
         // in the cron log, where the opposite default would cost an unplanned
         // full-network rollout of something that sends mail.
-        'rollout_percent' => (int) env('FIRSTREPLY_ROLLOUT_PERCENT', 0),
+        'rollout_percent' => (int) EnvSetting::env('FIRSTREPLY_ROLLOUT_PERCENT', 0),
 
         // Let a post's first reply through even when the replier is outside the
         // reach the post has RIGHT NOW, as long as they are inside the reach it
@@ -1138,34 +1190,34 @@ return [
         // going to be allowed - so the hold only turns a fast reply into a slow
         // one, on exactly the posts that can least afford it.
         'passthrough' => [
-            'enabled' => filter_var(env('FIRSTREPLY_PASSTHROUGH_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => filter_var(EnvSetting::env('FIRSTREPLY_PASSTHROUGH_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
             // How many distinct repliers a post may already have and still get the
             // passthrough. 1 = only the very first reply. Raise to soften the cliff
             // for posts where the first replier goes quiet.
-            'max_existing_repliers' => (int) env('FIRSTREPLY_PASSTHROUGH_MAX_REPLIERS', 1),
+            'max_existing_repliers' => (int) EnvSetting::env('FIRSTREPLY_PASSTHROUGH_MAX_REPLIERS', 1),
         ],
 
         // How old a saved search may be and still earn its holder mail or an
         // embedding. Mirrors the Go side's FIRSTREPLY_SEARCH_MAX_AGE_MONTHS
         // (searchmatches.go) - the two must agree or the embedder covers a
         // different population than the matcher reads.
-        'search_max_age_months' => (int) env('FIRSTREPLY_SEARCH_MAX_AGE_MONTHS', 6),
+        'search_max_age_months' => (int) EnvSetting::env('FIRSTREPLY_SEARCH_MAX_AGE_MONTHS', 6),
 
         // Mail the people whose own open post or saved search matches a new post,
         // individually, about that one item. Matches both ways round: a new OFFER
         // finds the people with open WANTEDs for it, and a new WANTED finds the
         // people sitting on open OFFERs. See App\Services\FirstReply\MatchMailService.
         'matchmail' => [
-            'enabled' => filter_var(env('FIRSTREPLY_MATCHMAIL_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => filter_var(EnvSetting::env('FIRSTREPLY_MATCHMAIL_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
             // How long a post gets to attract a reply on its own first. ZERO: mail
             // the matches as soon as the post is seen. Whatever holding back saves
             // in mail is dwarfed by how long the recipient then takes to read it,
             // so the wait adds itself to every reply and removes nothing. Kept as a
             // knob because it is the natural lever if the mail ever needs rationing.
-            'quiet_minutes' => (int) env('FIRSTREPLY_MATCHMAIL_QUIET_MINUTES', 0),
+            'quiet_minutes' => (int) EnvSetting::env('FIRSTREPLY_MATCHMAIL_QUIET_MINUTES', 0),
             // Give up after this: a day-old post is a job for reposting, not for
             // more mail.
-            'max_age_hours' => (int) env('FIRSTREPLY_MATCHMAIL_MAX_AGE_HOURS', 24),
+            'max_age_hours' => (int) EnvSetting::env('FIRSTREPLY_MATCHMAIL_MAX_AGE_HOURS', 24),
             // Backstop on how many matches one post may mail. Everyone eligible
             // asked for this item, so there is no good reason to tell the first ten
             // and not the eleventh - this is a guard against something pathological
@@ -1175,22 +1227,22 @@ return [
             // the `config` table wins over this, so the mail bill can be turned
             // down (or off, with 0) without waiting for a deploy. This env value is
             // the default when that row is absent. See MatchMailService::matchConfig().
-            'max_per_post' => (int) env('FIRSTREPLY_MATCHMAIL_MAX_PER_POST', 50),
+            'max_per_post' => (int) EnvSetting::env('FIRSTREPLY_MATCHMAIL_MAX_PER_POST', 50),
             // Nobody should become Freegle's unpaid alerting service. A member is
             // not mailed again within this many hours...
-            'user_cooldown_hours' => (int) env('FIRSTREPLY_MATCHMAIL_USER_COOLDOWN_HOURS', 24),
+            'user_cooldown_hours' => (int) EnvSetting::env('FIRSTREPLY_MATCHMAIL_USER_COOLDOWN_HOURS', 24),
             // ...nor more than this many times in a rolling week.
-            'user_max_per_week' => (int) env('FIRSTREPLY_MATCHMAIL_USER_MAX_PER_WEEK', 5),
+            'user_max_per_week' => (int) EnvSetting::env('FIRSTREPLY_MATCHMAIL_USER_MAX_PER_WEEK', 5),
             // Minimum score to be worth mailing at all. A post with no good match
             // should mail nobody rather than pad the list out to max_per_post.
-            'min_score' => (float) env('FIRSTREPLY_MATCHMAIL_MIN_SCORE', 1.0),
+            'min_score' => (float) EnvSetting::env('FIRSTREPLY_MATCHMAIL_MIN_SCORE', 1.0),
             // Candidate pool size before scoring. Bounds the cost of the geo query.
-            'candidate_limit' => (int) env('FIRSTREPLY_MATCHMAIL_CANDIDATE_LIMIT', 500),
+            'candidate_limit' => (int) EnvSetting::env('FIRSTREPLY_MATCHMAIL_CANDIDATE_LIMIT', 500),
             // Posts examined per run. Small on purpose: each post costs seconds, and
             // a run must comfortably finish inside the DB's wait_timeout or its idle
             // write connection is closed under it. The every-minute cadence means
             // throughput is 25/min, far above the arrival rate of in-trial posts.
-            'posts_per_run' => (int) env('FIRSTREPLY_MATCHMAIL_POSTS_PER_RUN', 25),
+            'posts_per_run' => (int) EnvSetting::env('FIRSTREPLY_MATCHMAIL_POSTS_PER_RUN', 25),
         ],
 
         // The Freegle chat: Freegle itself talks to the poster.
@@ -1201,7 +1253,7 @@ return [
         // EngagementService, PromptService, FreegleUserService, the firstreply:engage
         // command, the Go answer handler and the chat-prompt UI - so turning it back on
         // means restoring the env read here:
-        //     filter_var(env('FIRSTREPLY_CHAT_ENABLED', false), FILTER_VALIDATE_BOOLEAN)
+        //     filter_var(EnvSetting::env('FIRSTREPLY_CHAT_ENABLED', false), FILTER_VALIDATE_BOOLEAN)
         // Sending is the only thing this stops: EngagementService is the single writer
         // and returns immediately when it is off. Answering deliberately stays live, so
         // prompts already sent are not left with dead buttons.
@@ -1209,49 +1261,49 @@ return [
             'enabled' => false,
             // The account the messages come from. Resolved by email, created on
             // first use if absent, so there is nothing to seed by hand.
-            'system_user_email' => env('FIRSTREPLY_SYSTEM_USER_EMAIL', 'freegle@ilovefreegle.org'),
-            'system_user_name' => env('FIRSTREPLY_SYSTEM_USER_NAME', 'Freegle'),
+            'system_user_email' => EnvSetting::env('FIRSTREPLY_SYSTEM_USER_EMAIL', 'freegle@ilovefreegle.org'),
+            'system_user_name' => EnvSetting::env('FIRSTREPLY_SYSTEM_USER_NAME', 'Freegle'),
 
             // Minimum gap between two Freegle messages to the same member. With
             // grouping this is a backstop rather than the main control - one
             // message already covers everything they have outstanding.
-            'user_gap_hours' => (int) env('FIRSTREPLY_CHAT_USER_GAP_HOURS', 6),
+            'user_gap_hours' => (int) EnvSetting::env('FIRSTREPLY_CHAT_USER_GAP_HOURS', 6),
             // How long before the same question can be asked again. The unit is
             // the MEMBER, not the post: one message covers everything they have
             // outstanding, so "have they been asked this lately" is a question
             // about them. Long, because these are nudges, not a conversation.
-            'kind_cooldown_days' => (int) env('FIRSTREPLY_CHAT_KIND_COOLDOWN_DAYS', 14),
+            'kind_cooldown_days' => (int) EnvSetting::env('FIRSTREPLY_CHAT_KIND_COOLDOWN_DAYS', 14),
             // Prompts stop being answerable after this - a week-old "could you
             // deliver?" on a long-gone item should not still have live buttons.
-            'expiry_days' => (int) env('FIRSTREPLY_CHAT_EXPIRY_DAYS', 7),
+            'expiry_days' => (int) EnvSetting::env('FIRSTREPLY_CHAT_EXPIRY_DAYS', 7),
 
             // When each prompt becomes due, in hours after the post arrived. The
             // order here is the order they are considered; the first one that is
             // due and applicable wins, and only one is sent per run per post.
             'schedule' => [
                 // Ask early, while editing still feels like part of posting.
-                'photo' => (float) env('FIRSTREPLY_CHAT_PHOTO_HOURS', 1.5),
+                'photo' => (float) EnvSetting::env('FIRSTREPLY_CHAT_PHOTO_HOURS', 1.5),
                 // Offering delivery is the single biggest thing a poster can
                 // change about a silent post, so it comes before anything else
                 // that is merely informative.
-                'delivery' => (float) env('FIRSTREPLY_CHAT_DELIVERY_HOURS', 3),
+                'delivery' => (float) EnvSetting::env('FIRSTREPLY_CHAT_DELIVERY_HOURS', 3),
                 // "People are looking" only reassures once there is something to
                 // report, hence later than the asks.
-                'views' => (float) env('FIRSTREPLY_CHAT_VIEWS_HOURS', 8),
+                'views' => (float) EnvSetting::env('FIRSTREPLY_CHAT_VIEWS_HOURS', 8),
                 // A deadline is what turns "someday" into "this weekend", and it
                 // only makes sense once the easy wins have not worked.
-                'deadline' => (float) env('FIRSTREPLY_CHAT_DEADLINE_HOURS', 24),
+                'deadline' => (float) EnvSetting::env('FIRSTREPLY_CHAT_DEADLINE_HOURS', 24),
             ],
 
             // Do not claim people are looking until enough of them have. One
             // curious visitor is not encouraging, it is depressing.
-            'views_min' => (int) env('FIRSTREPLY_CHAT_VIEWS_MIN', 5),
+            'views_min' => (int) EnvSetting::env('FIRSTREPLY_CHAT_VIEWS_MIN', 5),
 
             // Posts older than this are past the point where a nudge helps.
-            'max_age_hours' => (int) env('FIRSTREPLY_CHAT_MAX_AGE_HOURS', 72),
+            'max_age_hours' => (int) EnvSetting::env('FIRSTREPLY_CHAT_MAX_AGE_HOURS', 72),
 
             // How many posts one run of the cadence engine will consider.
-            'batch_limit' => (int) env('FIRSTREPLY_CHAT_BATCH_LIMIT', 200),
+            'batch_limit' => (int) EnvSetting::env('FIRSTREPLY_CHAT_BATCH_LIMIT', 200),
         ],
     ],
 
@@ -1266,10 +1318,32 @@ return [
     */
 
     'loki' => [
-        'enabled' => env('LOKI_ENABLED', false) || env('LOKI_JSON_FILE', false),
-        'log_path' => env('LOKI_JSON_PATH', '/var/log/freegle'),
+        'enabled' => EnvSetting::env('LOKI_ENABLED', false) || EnvSetting::env('LOKI_JSON_FILE', false),
+        'log_path' => EnvSetting::env('LOKI_JSON_PATH', '/var/log/freegle'),
         // Read side: Loki's HTTP query API, for monitor:deprecated-endpoints.
-        'query_url' => env('LOKI_URL', 'http://loki:3100'),
+        'query_url' => EnvSetting::env('LOKI_URL', 'http://loki:3100'),
+    ],
+
+    // monitor:api-backup-traffic - members' API requests should all reach the
+    // active apiv2 node; a backup serves them only while the active node is down.
+    'api_backup_traffic' => [
+        // Look back a whole day: clients pinned to a backup after a daytime
+        // deploy drift off overnight, so a night-only window would miss them.
+        'window_hours' => 24,
+        // A backup's share of an hour's requests above which that hour counts.
+        // A deploy's failover is a minute or two, under 5% of an hour; clients
+        // pinned to the backup on 2026-10-11 were 18-25% of every hour for four.
+        'max_hourly_share' => 0.10,
+        // Hours quieter than this are not judged, so a handful of requests
+        // cannot make a share. The quietest hours carry well over 100,000.
+        'min_hourly_requests' => 1000,
+    ],
+
+    // monitor:chat-roster - chats with a message in this many hours are checked
+    // for participants with no roster row. Two days, so a nightly run overlaps
+    // the previous one and a late run misses nothing.
+    'chat_roster_monitor' => [
+        'window_hours' => 48,
     ],
 
     // apiv2's deprecated-endpoint registry for monitor:deprecated-endpoints — the
@@ -1281,7 +1355,7 @@ return [
     // reaches it as http://apiv2:8192 (NOT port 80). PROD must set
     // APIV2_DEPRECATED_URL for its network (batch-prod isn't in this compose
     // network); if the fetch fails the command warns and exits non-zero.
-    'apiv2_deprecated_url' => env('APIV2_DEPRECATED_URL', 'http://apiv2:8192/apiv2/deprecated'),
+    'apiv2_deprecated_url' => EnvSetting::env('APIV2_DEPRECATED_URL', 'http://apiv2:8192/apiv2/deprecated'),
 
     // The routing-backed town/near endpoint browse:backfill-max-distance uses to
     // recompute the mile radius a travel-time budget reaches - the same source the
@@ -1289,13 +1363,13 @@ return [
     // the slider would get. Same reachability note as apiv2_deprecated_url: inside
     // this compose network the batch container reaches apiv2 on port 8192, and
     // batch-prod must set BROWSE_TOWN_NEAR_URL for its own network.
-    'town_near_url' => env('BROWSE_TOWN_NEAR_URL', 'http://apiv2:8192/api/town/near'),
+    'town_near_url' => EnvSetting::env('BROWSE_TOWN_NEAR_URL', 'http://apiv2:8192/api/town/near'),
 
     // monitor:deprecated-endpoints observation window (days). Bounded under Loki's
     // max_query_length (~30d) — a longer since-sunset range 400s; this many days of
     // post-sunset silence is enough to call an endpoint retirable.
     'deprecated_endpoints' => [
-        'observation_window_days' => (int) env('DEPRECATED_ENDPOINTS_WINDOW_DAYS', 29),
+        'observation_window_days' => (int) EnvSetting::env('DEPRECATED_ENDPOINTS_WINDOW_DAYS', 29),
     ],
 
     /*
@@ -1310,12 +1384,12 @@ return [
     */
 
     'spam_check' => [
-        'enabled' => env('SPAM_CHECK_ENABLED', false),
-        'spamassassin_host' => env('SPAMASSASSIN_HOST', 'spamassassin-app'),
-        'spamassassin_port' => env('SPAMASSASSIN_PORT', 783),
-        'rspamd_host' => env('RSPAMD_HOST', 'rspamd'),
-        'rspamd_port' => env('RSPAMD_PORT', 11334),
-        'fail_threshold' => env('SPAM_FAIL_THRESHOLD', 5.0),
+        'enabled' => EnvSetting::env('SPAM_CHECK_ENABLED', false),
+        'spamassassin_host' => EnvSetting::env('SPAMASSASSIN_HOST', 'spamassassin-app'),
+        'spamassassin_port' => EnvSetting::env('SPAMASSASSIN_PORT', 783),
+        'rspamd_host' => EnvSetting::env('RSPAMD_HOST', 'rspamd'),
+        'rspamd_port' => EnvSetting::env('RSPAMD_PORT', 11334),
+        'fail_threshold' => EnvSetting::env('SPAM_FAIL_THRESHOLD', 5.0),
     ],
 
     /*
@@ -1331,16 +1405,16 @@ return [
 
     'amp' => [
         // Enable/disable AMP email generation
-        'enabled' => env('AMP_EMAIL_ENABLED', true),
+        'enabled' => EnvSetting::env('AMP_EMAIL_ENABLED', true),
 
         // Secret key for HMAC token generation
-        'secret' => env('AMP_SECRET', env('FREEGLE_AMP_SECRET', '')),
+        'secret' => EnvSetting::env('AMP_SECRET', EnvSetting::env('FREEGLE_AMP_SECRET', '')),
 
         // API endpoint for AMP requests
-        'api_url' => env('AMP_API_URL', 'https://api.ilovefreegle.org/amp'),
+        'api_url' => EnvSetting::env('AMP_API_URL', 'https://api.ilovefreegle.org/amp'),
 
         // Token expiry (single token used for both read and write)
-        'token_expiry_hours' => env('AMP_TOKEN_EXPIRY', 168), // 7 days
+        'token_expiry_hours' => EnvSetting::env('AMP_TOKEN_EXPIRY', 168), // 7 days
 
         // Note: AMP CORS validation checks domain suffix, not specific sender.
         // Allowed domains are configured in the Go API: @ilovefreegle.org,
@@ -1359,10 +1433,10 @@ return [
     */
 
     'git_summary' => [
-        'gemini_api_key' => env('GOOGLE_GEMINI_API_KEY', ''),
-        'github_token' => env('GIT_SUMMARY_GITHUB_TOKEN', ''),
-        'from_address' => env('GIT_SUMMARY_FROM_ADDRESS', 'geeks@ilovefreegle.org'),
-        'from_name' => env('GIT_SUMMARY_FROM_NAME', 'Freegle Geeks'),
+        'gemini_api_key' => EnvSetting::env('GOOGLE_GEMINI_API_KEY', ''),
+        'github_token' => EnvSetting::env('GIT_SUMMARY_GITHUB_TOKEN', ''),
+        'from_address' => EnvSetting::env('GIT_SUMMARY_FROM_ADDRESS', 'geeks@ilovefreegle.org'),
+        'from_name' => EnvSetting::env('GIT_SUMMARY_FROM_NAME', 'Freegle Geeks'),
         'repositories' => [
             [
                 'name' => 'Freegle Direct & ModTools (Frontend)',
@@ -1396,7 +1470,7 @@ return [
             ],
         ],
         'max_days_back' => 7,
-        'discourse_email' => env('FREEGLE_DISCOURSE_TECH_EMAIL', ''),
+        'discourse_email' => EnvSetting::env('FREEGLE_DISCOURSE_TECH_EMAIL', ''),
     ],
 
     // Note: App release classification (hotfix: detection) is handled directly
@@ -1413,9 +1487,9 @@ return [
     */
 
     'netlify' => [
-        'token' => env('NETLIFY_TOKEN', ''),
-        'site_id' => env('NETLIFY_SITE_ID', '75fa22f1-3d32-4474-a3fc-65afbd7f4f43'),
-        'cert_path' => env('LETSENCRYPT_CERT_PATH', '/etc/letsencrypt/live/ilovefreegle.org'),
+        'token' => EnvSetting::env('NETLIFY_TOKEN', ''),
+        'site_id' => EnvSetting::env('NETLIFY_SITE_ID', '75fa22f1-3d32-4474-a3fc-65afbd7f4f43'),
+        'cert_path' => EnvSetting::env('LETSENCRYPT_CERT_PATH', '/etc/letsencrypt/live/ilovefreegle.org'),
     ],
 
     /*
@@ -1440,25 +1514,40 @@ return [
     */
 
     'freebie_alerts' => [
-        'api_url' => env('FREEBIE_ALERTS_API_URL', 'https://api.freebiealerts.app'),
-        'api_key' => env('FREEBIE_ALERTS_KEY', ''),
+        'api_url' => EnvSetting::env('FREEBIE_ALERTS_API_URL', 'https://api.freebiealerts.app'),
+        'api_key' => EnvSetting::env('FREEBIE_ALERTS_KEY', ''),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Yeybu Integration
+    |--------------------------------------------------------------------------
+    |
+    | yeybu.com takes the same Offer feed as freebiealerts.app, through the
+    | same create/delete API. Blank key = not sent.
+    |
+    */
+
+    'yeybu' => [
+        'api_url' => EnvSetting::env('YEYBU_API_URL', 'https://db.yeybu.com/feeds/v1'),
+        'api_key' => EnvSetting::env('YEYBU_KEY', ''),
     ],
 
     'email_health' => [
-        'incoming_window_hours' => env('FREEGLE_EMAIL_HEALTH_INCOMING_WINDOW_HOURS', 2),
-        'outgoing_min_per_hour' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_MIN_PER_HOUR', 10),
-        'daytime_start' => env('FREEGLE_EMAIL_HEALTH_DAYTIME_START', 7),
-        'daytime_end' => env('FREEGLE_EMAIL_HEALTH_DAYTIME_END', 22),
+        'incoming_window_hours' => EnvSetting::env('FREEGLE_EMAIL_HEALTH_INCOMING_WINDOW_HOURS', 2),
+        'outgoing_min_per_hour' => EnvSetting::env('FREEGLE_EMAIL_HEALTH_OUTGOING_MIN_PER_HOUR', 10),
+        'daytime_start' => EnvSetting::env('FREEGLE_EMAIL_HEALTH_DAYTIME_START', 7),
+        'daytime_end' => EnvSetting::env('FREEGLE_EMAIL_HEALTH_DAYTIME_END', 22),
         // Hard outgoing-stall check window. Runs 24/7: zero outgoing emails
         // across this window is a near-certain smarthost/spooler stall at any
         // hour, so it catches night-time outages the daytime-only volume floor
         // would miss.
-        'outgoing_stall_window_hours' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_STALL_WINDOW_HOURS', 1),
+        'outgoing_stall_window_hours' => EnvSetting::env('FREEGLE_EMAIL_HEALTH_OUTGOING_STALL_WINDOW_HOURS', 1),
         // Alert (24/7) when at least this many SpoolMail durable-retry jobs have
         // exhausted their 24h window and parked in failed_jobs. A non-zero
         // count almost always means a render bug is dropping a whole class of
         // email; deploy the fix then run `php artisan mail:retry-failed`.
-        'failed_mail_retry_threshold' => env('FREEGLE_EMAIL_HEALTH_FAILED_MAIL_RETRY_THRESHOLD', 1),
+        'failed_mail_retry_threshold' => EnvSetting::env('FREEGLE_EMAIL_HEALTH_FAILED_MAIL_RETRY_THRESHOLD', 1),
     ],
 
     /*
@@ -1474,59 +1563,81 @@ return [
 
     'monitoring' => [
         // Master kill-switch. When false, monitor:scheduled-outcomes no-ops.
-        'enabled' => env('FREEGLE_MONITORING_ENABLED', true),
+        'enabled' => EnvSetting::env('FREEGLE_MONITORING_ENABLED', true),
 
         // Host-level OS/service checks (HostHealthCheck — V1 status.php
         // parity: security patches, reboot-required, monit). Comma-separated
         // ssh targets, e.g. "root@10.0.0.1,root@10.0.0.2". The estate's
         // topology must live ONLY in the environment (.env.background on the
         // batch host), never in committed code. Empty = disabled (dev/CI).
-        'hosts' => env('FREEGLE_MONITORING_HOSTS', ''),
+        'hosts' => EnvSetting::env('FREEGLE_MONITORING_HOSTS', ''),
         // Private key path INSIDE the container. docker-compose bind-mounts
         // the real key from MONITORING_SSH_KEY_HOST_PATH (host-side var, same
         // split-name pattern as FIREBASE_HOST_PATH so the host path never
         // leaks into the container environment).
-        'host_ssh_key' => env('FREEGLE_MONITORING_SSH_KEY', '/etc/monitoring-ssh-key'),
+        'host_ssh_key' => EnvSetting::env('FREEGLE_MONITORING_SSH_KEY', '/etc/monitoring-ssh-key'),
+        // How long security updates or a required reboot may stay pending on a
+        // host before it is a red number on the SysAdmin Cron Jobs tab (see
+        // HostPatchTracker). The default is for the weekly hosts: freegle-maint
+        // patches each one every 7 days, plus 2 days of grace. db2 and db3 are
+        // patched in alternate weeks, so each is done every 14 days: set those
+        // to 16 in the overrides ("db2=16,db3=16", bare host names). The
+        // overrides name hosts, so like FREEGLE_MONITORING_HOSTS they live in
+        // .env.background, not here.
+        'patch_max_age_days' => (int) EnvSetting::env('FREEGLE_MONITORING_PATCH_MAX_AGE_DAYS', 9),
+        'patch_max_age_overrides' => EnvSetting::env('FREEGLE_MONITORING_PATCH_MAX_AGE_OVERRIDES', ''),
         // Per-host probe timeout. ConnectTimeout is 10s inside this budget.
-        'host_ssh_timeout_seconds' => (int) env('FREEGLE_MONITORING_SSH_TIMEOUT', 30),
+        'host_ssh_timeout_seconds' => (int) EnvSetting::env('FREEGLE_MONITORING_SSH_TIMEOUT', 30),
 
         // stats:generate-daily — minimum per-group stats rows expected for
         // yesterday once the day's 02:30 run has had time to complete.
-        'stats_daily_min_expected' => (int) env('FREEGLE_MONITORING_STATS_DAILY_MIN', 1),
+        'stats_daily_min_expected' => (int) EnvSetting::env('FREEGLE_MONITORING_STATS_DAILY_MIN', 1),
 
         // mail:digest:unified --mode=daily — minimum daily-digest sends expected
         // once the daily pilot is enabled (FREEGLE_DIGEST_DAILY_ALLOWLIST set).
-        'digest_daily_min_expected' => (int) env('FREEGLE_MONITORING_DIGEST_DAILY_MIN', 1),
+        'digest_daily_min_expected' => (int) EnvSetting::env('FREEGLE_MONITORING_DIGEST_DAILY_MIN', 1),
 
         // queue:background-tasks — a pending task (unprocessed, unfailed, under
         // the retry cap) older than this many minutes signals a stuck worker.
-        'background_tasks_max_age_minutes' => (int) env('FREEGLE_MONITORING_BG_TASKS_MAX_AGE_MIN', 10),
+        'background_tasks_max_age_minutes' => (int) EnvSetting::env('FREEGLE_MONITORING_BG_TASKS_MAX_AGE_MIN', 10),
         // Number of such stale-pending tasks tolerated before breaching.
-        'background_tasks_backlog_threshold' => (int) env('FREEGLE_MONITORING_BG_TASKS_BACKLOG', 0),
+        'background_tasks_backlog_threshold' => (int) EnvSetting::env('FREEGLE_MONITORING_BG_TASKS_BACKLOG', 0),
 
         // tn:sync — alert if no TrashNothing post has been ingested into
         // `messages` (tnpostid set) within this many hours. TN is a high-volume
         // feed, so a gap this long means TN is down or our ingestion is failing
         // every cycle. Only evaluated when FREEGLE_TN_INGEST_POSTS_VIA_API is on.
-        'tn_posts_max_age_hours' => (int) env('FREEGLE_MONITORING_TN_POSTS_MAX_AGE_HOURS', 6),
+        'tn_posts_max_age_hours' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_POSTS_MAX_AGE_HOURS', 6),
         // Minimum TN posts expected within that window.
-        'tn_posts_min_expected' => (int) env('FREEGLE_MONITORING_TN_POSTS_MIN', 1),
+        'tn_posts_min_expected' => (int) EnvSetting::env('FREEGLE_MONITORING_TN_POSTS_MIN', 1),
 
         // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
         // refresh hasn't written a row within this many days.
-        'mobile_cidrs_max_age_days' => (int) env('FREEGLE_MONITORING_MOBILE_CIDRS_MAX_AGE_DAYS', 40),
+        'mobile_cidrs_max_age_days' => (int) EnvSetting::env('FREEGLE_MONITORING_MOBILE_CIDRS_MAX_AGE_DAYS', 40),
 
         // Shared backlog window for the per-minute processing queues
         // (messages:contentcheck, chats:process-incoming, memberships:process):
         // a row left unprocessed longer than this signals a stuck worker.
-        'processing_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_PROCESSING_BACKLOG_MAX_AGE_MIN', 15),
+        'processing_backlog_max_age_minutes' => (int) EnvSetting::env('FREEGLE_MONITORING_PROCESSING_BACKLOG_MAX_AGE_MIN', 15),
 
         // users:process-exports — exports are heavier, so a larger window.
-        'exports_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_EXPORTS_BACKLOG_MAX_AGE_MIN', 30),
+        'exports_backlog_max_age_minutes' => (int) EnvSetting::env('FREEGLE_MONITORING_EXPORTS_BACKLOG_MAX_AGE_MIN', 30),
+
+        // embeddings:generate — a live post that arrived more than this many minutes ago (but
+        // within the lookback below) and still has no embedding was passed over by several
+        // runs. More than the threshold of them breaches.
+        'embeddings_lag_max_age_minutes' => (int) EnvSetting::env('FREEGLE_MONITORING_EMBEDDINGS_LAG_MAX_AGE_MIN', 30),
+        // Posts older than this are ignored by the lag check, so the few that can never be
+        // embedded do not hold it red.
+        'embeddings_lag_lookback_hours' => (int) EnvSetting::env('FREEGLE_MONITORING_EMBEDDINGS_LAG_LOOKBACK_HOURS', 6),
+        'embeddings_lag_threshold' => (int) EnvSetting::env('FREEGLE_MONITORING_EMBEDDINGS_LAG_THRESHOLD', 5),
+        // Minimum percentage of live posts in messages_spatial that must carry an embedding.
+        // Healthy is about 99%.
+        'embeddings_min_coverage_percent' => (float) EnvSetting::env('FREEGLE_MONITORING_EMBEDDINGS_MIN_COVERAGE', 97),
 
         // integrations:sync-whatjobs — alert if jobs.seenat hasn't advanced
         // within this many hours (tolerates the overnight gap + slow cold runs).
-        'whatjobs_max_age_hours' => (int) env('FREEGLE_MONITORING_WHATJOBS_MAX_AGE_HOURS', 24),
+        'whatjobs_max_age_hours' => (int) EnvSetting::env('FREEGLE_MONITORING_WHATJOBS_MAX_AGE_HOURS', 24),
 
         // ripple:expand — alert when more than the threshold of 'expanding'
         // rows are further than max_age past next_expansion_at. A day is far
@@ -1534,16 +1645,16 @@ return [
         // rows that late mean the expander is wedged (2026-08-31: ~10k rows
         // sat days overdue for days, unnoticed). The threshold tolerates a few
         // individually-stuck rows without masking a stalled pipeline.
-        'ripple_backlog_max_age_minutes' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_MAX_AGE_MIN', 1440),
-        'ripple_backlog_threshold' => (int) env('FREEGLE_MONITORING_RIPPLE_BACKLOG_THRESHOLD', 50),
+        'ripple_backlog_max_age_minutes' => (int) EnvSetting::env('FREEGLE_MONITORING_RIPPLE_BACKLOG_MAX_AGE_MIN', 1440),
+        'ripple_backlog_threshold' => (int) EnvSetting::env('FREEGLE_MONITORING_RIPPLE_BACKLOG_THRESHOLD', 50),
 
         // data:git-summary (weekly) — alert if its config timestamp is older
         // than this many days.
-        'git_summary_max_age_days' => (int) env('FREEGLE_MONITORING_GIT_SUMMARY_MAX_AGE_DAYS', 10),
+        'git_summary_max_age_days' => (int) EnvSetting::env('FREEGLE_MONITORING_GIT_SUMMARY_MAX_AGE_DAYS', 10),
 
         // data:update-cpi (monthly) — alert if its config timestamp is older
         // than this many days.
-        'cpi_max_age_days' => (int) env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
+        'cpi_max_age_days' => (int) EnvSetting::env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
     ],
 
     // CookieYes watchdog (cookieyes:check): talks to CookieYes's MCP server over
@@ -1551,17 +1662,54 @@ return [
     // cookieyes:authorize, not here. See docs/developers/reference/cookieyes-watchdog.md.
     'cookieyes' => [
         // Off stops the weekly schedule, for a deployment with no CookieYes account.
-        'enabled' => (bool) env('COOKIEYES_ENABLED', true),
-        'base_url' => env('COOKIEYES_BASE_URL', 'https://app.cookieyes.com'),
+        'enabled' => (bool) EnvSetting::env('COOKIEYES_ENABLED', true),
+        'base_url' => EnvSetting::env('COOKIEYES_BASE_URL', 'https://app.cookieyes.com'),
         // Trigger a new scan once the latest is this old.
-        'rescan_after_days' => (int) env('COOKIEYES_RESCAN_AFTER_DAYS', 30),
+        'rescan_after_days' => (int) EnvSetting::env('COOKIEYES_RESCAN_AFTER_DAYS', 30),
         // Fail the check once the latest scan is this old.
-        'stale_after_days' => (int) env('COOKIEYES_STALE_AFTER_DAYS', 45),
+        'stale_after_days' => (int) EnvSetting::env('COOKIEYES_STALE_AFTER_DAYS', 45),
+    ],
+
+    // Google housekeeping (google:search-console-check, google:ads-check). Credentials come from
+    // the environment, nothing is stored in the database. See
+    // docs/developers/reference/google-housekeeping.md for how to create them.
+    'google' => [
+        'search_console_enabled' => (bool) EnvSetting::env('GOOGLE_SEARCH_CONSOLE_CHECK_ENABLED', true),
+        'ads_enabled' => (bool) EnvSetting::env('GOOGLE_ADS_CHECK_ENABLED', true),
+        // The service account's JSON key, base64 encoded (preferred) or as a file path.
+        'service_account_b64' => EnvSetting::env('GOOGLE_SERVICE_ACCOUNT_B64', ''),
+        'service_account_file' => EnvSetting::env('GOOGLE_SERVICE_ACCOUNT_FILE', ''),
+        'search_console' => [
+            // Comma separated property URLs to check. Empty means every property the service account can see.
+            'sites' => EnvSetting::env('GOOGLE_SEARCH_CONSOLE_SITES', ''),
+            'sitemap_url' => EnvSetting::env('GOOGLE_SEARCH_CONSOLE_SITEMAP', 'https://www.ilovefreegle.org/sitemap.xml'),
+            // Only properties whose URL contains this are expected to have that sitemap.
+            'sitemap_site_match' => 'ilovefreegle.org',
+            'max_sitemap_age_days' => (int) EnvSetting::env('GOOGLE_SEARCH_CONSOLE_MAX_SITEMAP_AGE_DAYS', 14),
+            // Live posts to ask Google about each week, as well as the home page. 0 turns it off.
+            'inspect_posts' => (int) EnvSetting::env('GOOGLE_SEARCH_CONSOLE_INSPECT_POSTS', 3),
+        ],
+        'ads' => [
+            // Optional. Google now grants Ads API access to the Cloud project (Explorer or Basic level in
+            // the Cloud console), and a project with that access needs no developer token. Sent when set.
+            'developer_token' => EnvSetting::env('GOOGLE_ADS_DEVELOPER_TOKEN', ''),
+            'customer_id' => EnvSetting::env('GOOGLE_ADS_CUSTOMER_ID', ''),
+            // Only needed when the account is reached through a manager account.
+            'login_customer_id' => EnvSetting::env('GOOGLE_ADS_LOGIN_CUSTOMER_ID', ''),
+            'client_id' => EnvSetting::env('GOOGLE_ADS_CLIENT_ID', ''),
+            'client_secret' => EnvSetting::env('GOOGLE_ADS_CLIENT_SECRET', ''),
+            'refresh_token' => EnvSetting::env('GOOGLE_ADS_REFRESH_TOKEN', ''),
+            // Google retires old API versions about a year after release; bump when it does. v21 was
+            // already gone (404) and v22 refused as deprecated on 2026-10-24.
+            'api_version' => EnvSetting::env('GOOGLE_ADS_API_VERSION', 'v26'),
+            // The Ad Grants click-through floor. 0 turns the check off.
+            'min_ctr' => (float) EnvSetting::env('GOOGLE_ADS_MIN_CTR', 0.05),
+        ],
     ],
 
     'lovejunk' => [
-        'api' => env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
-        'secret' => env('LOVE_JUNK_SECRET', ''),
+        'api' => EnvSetting::env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
+        'secret' => EnvSetting::env('LOVE_JUNK_SECRET', ''),
     ],
 
     // Default matches V1's hardcoded GEOCODER constant (iznik.conf.php). The
@@ -1569,22 +1717,67 @@ return [
     // never updated — so for months WhatJobsService::geocodeAddress() silently
     // returned null on the first line, leaving the live jobs table pinned at
     // ~400 rows (only DB cache + UK postcode fallback could ever match).
-    'geocoder' => env('FREEGLE_GEOCODER_URL', 'https://geocode.ilovefreegle.org'),
+    'geocoder' => EnvSetting::env('FREEGLE_GEOCODER_URL', 'https://geocode.ilovefreegle.org'),
 
     'whatjobs' => [
-        'feed1' => env('WHATJOBS_FEED1', ''),
-        'feed2' => env('WHATJOBS_FEED2', ''),
+        'feed1' => EnvSetting::env('WHATJOBS_FEED1', ''),
+        'feed2' => EnvSetting::env('WHATJOBS_FEED2', ''),
+        // The newest job may be at most this old before integrations:check-whatjobs-freshness
+        // fails and the SysAdmin Cron Jobs tab goes red.
+        'max_feed_age_hours' => (int) EnvSetting::env('WHATJOBS_MAX_FEED_AGE_HOURS', 48),
     ],
 
     'reach_volunteering' => [
-        'feed_url' => env('REACH_VOLUNTEERING_FEED_URL', ''),
-        'username' => env('REACH_VOLUNTEERING_USER', ''),
-        'password' => env('REACH_VOLUNTEERING_PASSWORD', ''),
+        'feed_url' => EnvSetting::env('REACH_VOLUNTEERING_FEED_URL', ''),
+        'username' => EnvSetting::env('REACH_VOLUNTEERING_USER', ''),
+        'password' => EnvSetting::env('REACH_VOLUNTEERING_PASSWORD', ''),
         // Reach's Drupal feed periodically returns a PHP fatal-error page
         // (max_execution_time exceeded) with HTTP 200 instead of JSON. Retry
         // a few times before giving up, since the timeout is load-related.
-        'fetch_attempts'      => (int) env('REACH_VOLUNTEERING_FETCH_ATTEMPTS', 3),
-        'retry_delay_seconds' => (int) env('REACH_VOLUNTEERING_RETRY_DELAY_SECONDS', 30),
+        'fetch_attempts'      => (int) EnvSetting::env('REACH_VOLUNTEERING_FETCH_ATTEMPTS', 3),
+        'retry_delay_seconds' => (int) EnvSetting::env('REACH_VOLUNTEERING_RETRY_DELAY_SECONDS', 30),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI item pictures
+    |--------------------------------------------------------------------------
+    |
+    | Before a picture is generated for a new item name, Gemini says which item the
+    | name means, so variants share one picture. A fixed model, because the reuse
+    | rate and the judged quality were measured on this one: a "latest" alias would
+    | change the answers underneath. No key means no cleaning: names are generated
+    | as they were. docs/developers/reference/ai-item-images.md.
+    |
+    */
+    'ai_images' => [
+        'gemini_api_key' => EnvSetting::env('GOOGLE_GEMINI_API_KEY', ''),
+        'clean_model' => EnvSetting::env('AI_IMAGE_CLEAN_MODEL', 'gemini-3.5-flash-lite'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Auto-split of multi-item posts
+    |--------------------------------------------------------------------------
+    |
+    | A new native OFFER that lists several separate things becomes a multi-item post: the
+    | text splitter lists the items, the photo splitter gives each photo to the item it shows
+    | and crops photos of several items. docs/developers/reference/auto-split.md.
+    |
+    | mode: "off" does nothing, "shadow" records what it would do in messages_autosplit
+    | without changing the post, "on" splits. Anything else is off. The model is pinned,
+    | because the prompts were tuned and backtested on it: a "latest" alias would change the
+    | answers underneath.
+    |
+    */
+    'autosplit' => [
+        'mode' => EnvSetting::env('AUTOSPLIT_MODE', 'off'),
+        'gemini_api_key' => EnvSetting::env('GOOGLE_GEMINI_API_KEY', ''),
+        'model' => EnvSetting::env('AUTOSPLIT_MODEL', 'gemini-3.8-flash'),
+        // Posts older than this when the job first sees them are left alone.
+        'window_minutes' => (int) EnvSetting::env('AUTOSPLIT_WINDOW_MINUTES', 120),
+        // Photos looked at per post; the rest stay shared post photos.
+        'max_photos' => (int) EnvSetting::env('AUTOSPLIT_MAX_PHOTOS', 8),
     ],
 
     /*
@@ -1599,49 +1792,49 @@ return [
     |
     */
     'eee' => [
-        'sqlite_path'     => env('EEE_SQLITE_PATH', storage_path('eee/classifications.sqlite')),
-        'model'           => env('EEE_MODEL', 'gemini'),
+        'sqlite_path'     => EnvSetting::env('EEE_SQLITE_PATH', storage_path('eee/classifications.sqlite')),
+        'model'           => EnvSetting::env('EEE_MODEL', 'gemini'),
 
         // Anthropic (Claude) — reference labeller.
-        'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
-        'claude_model'      => env('EEE_CLAUDE_MODEL', 'claude-sonnet-4-6'),
+        'anthropic_api_key' => EnvSetting::env('ANTHROPIC_API_KEY', ''),
+        'claude_model'      => EnvSetting::env('EEE_CLAUDE_MODEL', 'claude-sonnet-4-6'),
 
         // Google Gemini. The default must be a model that still exists: the gemini-2.0
         // family is retired, and a retired default means every call 404s — which the
         // driver treats as a soft failure, so the hourly job "succeeds" classifying
         // nothing on any host that has not set EEE_GEMINI_MODEL.
-        'gemini_api_key'  => env('GOOGLE_GEMINI_API_KEY', ''),
-        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-3.5-flash-lite'),
+        'gemini_api_key'  => EnvSetting::env('GOOGLE_GEMINI_API_KEY', ''),
+        'gemini_model'    => EnvSetting::env('EEE_GEMINI_MODEL', 'gemini-3.5-flash-lite'),
 
         // OpenAI.
-        'openai_api_key'  => env('OPENAI_API_KEY', ''),
-        'openai_model'    => env('EEE_OPENAI_MODEL', 'gpt-4o'),
+        'openai_api_key'  => EnvSetting::env('OPENAI_API_KEY', ''),
+        'openai_model'    => EnvSetting::env('EEE_OPENAI_MODEL', 'gpt-4o'),
 
         // Together.ai — for multi-model comparison (Llama, Qwen etc.).
-        'together_api_key' => env('TOGETHER_API_KEY', ''),
-        'together_model'   => env('EEE_TOGETHER_MODEL', 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo'),
+        'together_api_key' => EnvSetting::env('TOGETHER_API_KEY', ''),
+        'together_model'   => EnvSetting::env('EEE_TOGETHER_MODEL', 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo'),
 
         // Ollama — runs on Windows host; accessible from WSL/Docker via host.docker.internal.
-        'ollama_base_url' => env('EEE_OLLAMA_BASE_URL', 'http://host.docker.internal:11434'),
-        'ollama_model'    => env('EEE_OLLAMA_MODEL', 'llama3.2-vision'),
+        'ollama_base_url' => EnvSetting::env('EEE_OLLAMA_BASE_URL', 'http://host.docker.internal:11434'),
+        'ollama_model'    => EnvSetting::env('EEE_OLLAMA_MODEL', 'llama3.2-vision'),
 
         // Claude subscription bridge — file-based IPC so Claude Code processes
         // images using the subscription rather than the pay-per-token API.
         // PHP writes job files here; Claude Code reads them and writes results.
         // Path must be visible to both the PHP container and the host Claude session.
-        'bridge_path'            => env('EEE_BRIDGE_PATH', storage_path('eee/bridge')),
-        'bridge_timeout_seconds' => env('EEE_BRIDGE_TIMEOUT', 300),
+        'bridge_path'            => EnvSetting::env('EEE_BRIDGE_PATH', storage_path('eee/bridge')),
+        'bridge_timeout_seconds' => EnvSetting::env('EEE_BRIDGE_TIMEOUT', 300),
 
         // Whether to include follow-on chat as classification context.
         // Off by default — chat messages are private between users.
-        'use_chat_data'   => env('EEE_USE_CHAT_DATA', false),
+        'use_chat_data'   => EnvSetting::env('EEE_USE_CHAT_DATA', false),
 
         // Stats page: toggle each attribute on only after model comparison
         // confirms high inter-model agreement for that attribute.
-        'publish_weight'    => env('EEE_PUBLISH_WEIGHT', false),
-        'publish_brands'    => env('EEE_PUBLISH_BRANDS', false),
-        'publish_category'  => env('EEE_PUBLISH_CATEGORY', true),
-        'publish_condition' => env('EEE_PUBLISH_CONDITION', true),
+        'publish_weight'    => EnvSetting::env('EEE_PUBLISH_WEIGHT', false),
+        'publish_brands'    => EnvSetting::env('EEE_PUBLISH_BRANDS', false),
+        'publish_category'  => EnvSetting::env('EEE_PUBLISH_CATEGORY', true),
+        'publish_condition' => EnvSetting::env('EEE_PUBLISH_CONDITION', true),
     ],
 
     /*
@@ -1657,19 +1850,19 @@ return [
     |
     */
     'desirability' => [
-        'model_version'  => env('DESIRABILITY_MODEL_VERSION', 'desir-2026-08'),
+        'model_version'  => EnvSetting::env('DESIRABILITY_MODEL_VERSION', 'desir-2026-08'),
         // Same sidecar the batch container already has wired for moderation checks.
-        'sidecar_url'    => env('EMBEDDING_SIDECAR_URL', ''),
+        'sidecar_url'    => EnvSetting::env('EMBEDDING_SIDECAR_URL', ''),
         // Cold-start kNN over the artifact's reference embeddings (query-space,
         // the sidecar's own space on both sides).
-        'knn_k'          => env('DESIRABILITY_KNN_K', 10),
-        'knn_min_cos'    => env('DESIRABILITY_KNN_MIN_COS', 0.80),
-        'knn_strong_cos' => env('DESIRABILITY_KNN_STRONG_COS', 0.90),
-        'knn_gamma'      => env('DESIRABILITY_KNN_GAMMA', 8),
+        'knn_k'          => EnvSetting::env('DESIRABILITY_KNN_K', 10),
+        'knn_min_cos'    => EnvSetting::env('DESIRABILITY_KNN_MIN_COS', 0.80),
+        'knn_strong_cos' => EnvSetting::env('DESIRABILITY_KNN_STRONG_COS', 0.90),
+        'knn_gamma'      => EnvSetting::env('DESIRABILITY_KNN_GAMMA', 8),
         // Bucket bounds for INFERRED (kNN) scores only; exact matches carry the
         // posterior-derived bucket computed at artifact build time.
-        'bucket_low_max'  => env('DESIRABILITY_BUCKET_LOW_MAX', 0.6),
-        'bucket_high_min' => env('DESIRABILITY_BUCKET_HIGH_MIN', 1.6),
+        'bucket_low_max'  => EnvSetting::env('DESIRABILITY_BUCKET_LOW_MAX', 0.6),
+        'bucket_high_min' => EnvSetting::env('DESIRABILITY_BUCKET_HIGH_MIN', 1.6),
     ],
 
     /*
@@ -1689,11 +1882,206 @@ return [
     */
     'electricals' => [
         // Same sidecar as everything else; empty means the word test runs alone.
-        'sidecar_url'                => env('EMBEDDING_SIDECAR_URL', ''),
-        'variant_identical_cos'      => env('ELECTRICALS_VARIANT_IDENTICAL_COS', 0.90),
+        'sidecar_url'                => EnvSetting::env('EMBEDDING_SIDECAR_URL', ''),
+        'variant_identical_cos'      => EnvSetting::env('ELECTRICALS_VARIANT_IDENTICAL_COS', 0.90),
         // How much commoner a rival has to be before a rare item counts as a
         // version of it, and the floor below which nothing counts as common.
-        'variant_popularity_ratio'   => env('ELECTRICALS_VARIANT_POPULARITY_RATIO', 3),
-        'variant_min_popular_count'  => env('ELECTRICALS_VARIANT_MIN_POPULAR_COUNT', 10),
+        'variant_popularity_ratio'   => EnvSetting::env('ELECTRICALS_VARIANT_POPULARITY_RATIO', 3),
+        'variant_min_popular_count'  => EnvSetting::env('ELECTRICALS_VARIANT_MIN_POPULAR_COUNT', 10),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Support case first pass
+    |--------------------------------------------------------------------------
+    |
+    | When a moderator refers a chat to Support, support:first-pass runs one bounded AI pass over
+    | the member's data and writes a brief, which the referral mail carries. The helper's address
+    | and shared secret are the UX helper's (freegle.ux.prompts). Off unless
+    | SUPPORT_FIRST_PASS_ENABLED is 1 or true; while off, the referral mail goes out without a brief.
+    |
+    | timeout: the helper's own deadline is 480 seconds (FIRST_PASS_DEADLINE_MS); this wait is 30 longer.
+    | per_referrer_per_day: model passes one moderator may use a day, so one person cannot spend the pool.
+    | max_age_minutes: a case still waiting this long gets the plain mail and is never run late.
+    | run_minutes: one support:first-pass run stops claiming new cases after this long.
+    |
+    */
+    'support' => [
+        'first_pass' => [
+            'enabled' => EnvSetting::flag(EnvSetting::env('SUPPORT_FIRST_PASS_ENABLED', false)),
+            'timeout' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_TIMEOUT', 510),
+            'per_referrer_per_day' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_PER_REFERRER_PER_DAY', 10),
+            'max_age_minutes' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_MAX_AGE_MINUTES', 60),
+            'run_minutes' => (int) EnvSetting::env('SUPPORT_FIRST_PASS_RUN_MINUTES', 10),
+            // Where the batch fetches chat images from, the way the Go API builds them.
+            'uploads_url' => EnvSetting::env('UPLOADS', 'https://uploads.ilovefreegle.org:8080/'),
+        ],
+    ],
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | UX telemetry
+    |--------------------------------------------------------------------------
+    |
+    | Read by ux:rollup-daily and ux:weekly-report. Contract:
+    | docs/developers/reference/ux-telemetry.md.
+    |
+    | features: feature key => Vue route NAMES (Nuxt names nested routes with a hyphen, so
+    | pages/volunteering/[[id]].vue is "volunteering-id"). A feature counts as used on a day
+    | when a page_view carries one of them. Add a line when a feature ships.
+    |
+    | flow_entry_routes: flow => the route names whose page_view is "someone arrived at the
+    | flow", the denominator the data-health check holds flow_start events against.
+    |
+    */
+    'ux' => [
+        'features' => [
+            'volunteering'    => ['volunteering', 'volunteering-id', 'volunteerings'],
+            'communityevents' => ['communityevents', 'communityevents-groupid', 'communityevent-id'],
+            'stories'         => ['stories', 'stories-groupid', 'story-id'],
+            'chitchat'        => ['chitchat', 'chitchat-id'],
+            'settings'        => ['settings', 'settings-confirmmail'],
+            'myposts'         => ['myposts', 'mypost-id'],
+            'chats'           => ['chats', 'chats-id', 'chats-reply'],
+            'browse'          => ['browse', 'browse-term'],
+            'promote'         => ['promote'],
+            'donate'          => ['donate'],
+            'mydata'          => ['mydata'],
+        ],
+        'flow_entry_routes' => [
+            'give'     => ['give', 'give-mobile'],
+            'ask'      => ['ask', 'ask-mobile'],
+            'reply'    => ['message-id'],
+            'settings' => ['settings'],
+        ],
+        // health_change_points: event metric => first full day it was collected the way it is
+        // today. The data-health check builds its baseline only from days on or after this, so a
+        // change in sampling (scroll and impressions went to 10% of sessions on 13 October 2026)
+        // or in what is sent (flow lines began that day) is not read as a fall or a rise.
+        'health_change_points' => [
+            'event:interaction' => '2026-10-14',
+            'event:impressions' => '2026-10-14',
+            'event:flow'        => '2026-10-14',
+        ],
+        // The member surveys (ux:prompt, ux:prompts-tick). See
+        // docs/developers/reference/ux-member-surveys.md.
+        'prompts' => [
+            'helper_url' => EnvSetting::env('UX_HELPER_URL', 'http://ai-support-helper:3000'),
+            // Coding a prompt's answers into problems uses no tools, but writing 300 answers out as
+            // JSON can take several minutes. This wait must be LONGER than the helper's own limit
+            // (10 minutes, UX_THEMES_TIMEOUT_MS in claude-agent-sdk/ux-themes.js), or the batch
+            // hangs up first, the helper aborts on the disconnect and every retry fails the same way.
+            'themes_timeout' => (int) EnvSetting::env('UX_THEMES_TIMEOUT', 660),
+            // Shared secret the helper's /internal/ux-themes and /internal/ux-groups routes require in
+            // the X-Freegle-Internal-Secret header, on top of its private-address check. Unset, the
+            // helper refuses everything and the batch does not try.
+            'internal_secret' => EnvSetting::env('UX_INTERNAL_SECRET', ''),
+            // Free-text answers go to an AI service for coding. Only 1 and true open this gate, set by
+            // a person after the public privacy wording has been checked to cover that. A bare (bool)
+            // cast would read "off" and "no" as true.
+            'privacy_cleared' => EnvSetting::flag(EnvSetting::env('UX_PRIVACY_CLEARED', false)),
+        ],
+        'report_to'       => EnvSetting::env('UX_REPORT_TO', EnvSetting::env('FREEGLE_GEEKS_ADDR', 'geeks@ilovefreegle.org')),
+        'sample_per_step' => 20,
+
+        // The automated experiment loop (ux:experiments-tick). Caps and thresholds are settings
+        // so the loop can be tuned without a deploy of the batch code. See
+        // docs/developers/reference/ux-experiments.md.
+        'experiments' => [
+            // No more than this many running at once, and none for longer than this.
+            'max_concurrent' => (int) EnvSetting::env('UX_EXPERIMENTS_MAX_CONCURRENT', 5),
+            'max_hours' => (int) EnvSetting::env('UX_EXPERIMENTS_MAX_HOURS', 24),
+            // Only flows that started at least this long ago are counted (what they did is counted
+            // up to now): a flow started later has not had time to finish, and the arm getting
+            // more traffic would look worse for it.
+            'settle_minutes' => (int) EnvSetting::env('UX_EXPERIMENTS_SETTLE_MINUTES', 45),
+            // Each arm needs this many flow starts before a decision at the end. An early stop
+            // and any re-weighting of the traffic need the larger figure (every hourly look is
+            // another chance to be fooled by noise, so they ask for much more).
+            'min_starts_per_arm' => (int) EnvSetting::env('UX_EXPERIMENTS_MIN_STARTS', 50),
+            'early_min_starts_per_arm' => (int) EnvSetting::env('UX_EXPERIMENTS_EARLY_MIN_STARTS', 300),
+            // At the end: adopt at or above this probability the change is better AND when the
+            // expected loss, if it is not, is under this many points; revert at or below one minus
+            // the probability; inconclusive (and off) otherwise.
+            'adopt_probability' => (float) EnvSetting::env('UX_EXPERIMENTS_ADOPT_P', 0.80),
+            'max_expected_loss_points' => (float) EnvSetting::env('UX_EXPERIMENTS_MAX_LOSS_POINTS', 0.5),
+            // On any hourly read, once both arms have early_min_starts_per_arm.
+            'early_adopt_probability' => (float) EnvSetting::env('UX_EXPERIMENTS_EARLY_ADOPT_P', 0.99),
+            'early_revert_probability' => (float) EnvSetting::env('UX_EXPERIMENTS_EARLY_REVERT_P', 0.02),
+            // A guardrail trips only when the arm is worse by more than this many points. The
+            // chance of a false alarm across ALL of an experiment's k guardrails together is split
+            // between them: at the end the change is blocked when one is worse with probability
+            // 1 - guardrail_error / k, and reverted at once on any read at 1 - early_guardrail_error / k
+            // (and only once both arms have early_min_starts_per_arm starts). Each is read once
+            // this many events are behind it across both arms.
+            'guardrail_margin_points' => (float) EnvSetting::env('UX_EXPERIMENTS_GUARDRAIL_MARGIN', 2.0),
+            'guardrail_error' => (float) EnvSetting::env('UX_EXPERIMENTS_GUARDRAIL_ERROR', 0.10),
+            'early_guardrail_error' => (float) EnvSetting::env('UX_EXPERIMENTS_EARLY_GUARDRAIL_ERROR', 0.03),
+            'guardrail_min_events' => (int) EnvSetting::env('UX_EXPERIMENTS_GUARDRAIL_MIN', 100),
+            // Thompson sampling moves traffic towards the arm that is winning each hour, inside a
+            // band: control keeps at least this share and no variant takes more than the cap, so
+            // the comparison keeps enough people on both sides to be read in a day.
+            'bandit' => EnvSetting::env('UX_EXPERIMENTS_BANDIT', true),
+            'min_control_share' => (int) EnvSetting::env('UX_EXPERIMENTS_MIN_CONTROL', 35),
+            'max_variant_share' => (int) EnvSetting::env('UX_EXPERIMENTS_MAX_VARIANT', 65),
+            // A variant whose share of starts is further than this many points (and more than chance
+            // allows) from the share it was served is never adopted: the completion rate is among
+            // those who started, so a change that loses people before the start event can look
+            // better while fewer people finish.
+            'sample_ratio_points' => (float) EnvSetting::env('UX_EXPERIMENTS_SAMPLE_RATIO_POINTS', 5.0),
+            // An adopted experiment whose switch has not been cleaned out of the code after this
+            // many days is reported as overdue.
+            'cleanup_days' => (int) EnvSetting::env('UX_EXPERIMENTS_CLEANUP_DAYS', 7),
+            // start() refuses an experiment whose expected effect a day of its flow would adopt
+            // with less than this probability (0 turns the check off); the expected effect is
+            // the design's expected_points, or default_expected_points when the design has none.
+            'min_power' => (float) EnvSetting::env('UX_EXPERIMENTS_MIN_POWER', 0.30),
+            'default_expected_points' => (float) EnvSetting::env('UX_EXPERIMENTS_DEFAULT_EXPECTED_POINTS', 5.0),
+            // A stored read older than this many hours is never used to adopt; past the end the
+            // tick waits up to stale_wait_hours for Loki and then marks the experiment inconclusive.
+            'stale_read_hours' => (int) EnvSetting::env('UX_EXPERIMENTS_STALE_READ_HOURS', 2),
+            'stale_wait_hours' => (int) EnvSetting::env('UX_EXPERIMENTS_STALE_WAIT_HOURS', 6),
+            // After adoption this percentage of members keeps the old version, and for holdout_days
+            // the tick compares it once a day with the adopted arm and reverts a gain that decayed.
+            'holdout_share' => (int) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_SHARE', 10),
+            'holdout_days' => (int) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_DAYS', 14),
+            // High, and needed on this many daily looks in a row: with up to 14 looks a loose bar
+            // would undo good changes by chance.
+            'holdout_revert_probability' => (float) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_REVERT_P', 0.99),
+            'holdout_revert_looks' => (int) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_REVERT_LOOKS', 2),
+        ],
+
+        // The run length of an experiment decided on the server (mail, push, server code), per
+        // channel. ceiling_hours is the longest run (max_hours) a start is allowed. intake_hours is how
+        // long arms are served by default, and the rest of the run is the window members have to
+        // convert in. A web experiment keeps the global max_hours above. docs/developers/reference/
+        // ux-experiments.md, "Experiments in mail, push and the server".
+        'channels' => [
+            'push' => ['ceiling_hours' => 48, 'intake_hours' => 24],
+            'email' => ['ceiling_hours' => 168, 'intake_hours' => 24],
+            'server' => ['ceiling_hours' => 336, 'intake_hours' => 168],
+        ],
+
+        // Metric sources: the name an experiment gives in design.source => the class that counts it
+        // from the database instead of from Loki (App\Services\Ux\UxMetricSource).
+        'sources' => [
+            'email_click' => \App\Services\Ux\Sources\EmailClickSource::class,
+            'active_after' => \App\Services\Ux\Sources\ActiveAfterSource::class,
+            'interested_reply' => \App\Services\Ux\Sources\InterestedReplySource::class,
+            'familiar_reply' => \App\Services\Ux\Sources\FamiliarReplySource::class,
+            'hosting_ad_click' => \App\Services\Ux\Sources\HostingAdClickSource::class,
+            'confirm_reply_post' => \App\Services\Ux\Sources\ConfirmReplyPostSource::class,
+        ],
+    ],
+
+    // Royal Mail address data (PAF): paf:import-run, from the PAF update on SysAdmin Housekeeping. The
+    // extractor sidecar (paf-extractor/) holds the AFD SFTP login itself. See
+    // docs/ops/runbooks/paf-address-data.md.
+    'paf' => [
+        'extractor_url' => EnvSetting::env('PAF_EXTRACTOR_URL', 'http://paf-extractor:8080'),
+        // Lines per batch, and a pause between batches to leave the database room.
+        'batch_size' => (int) EnvSetting::env('PAF_BATCH_SIZE', 1000),
+        'pause_ms' => (int) EnvSetting::env('PAF_PAUSE_MS', 0),
     ],
 ];

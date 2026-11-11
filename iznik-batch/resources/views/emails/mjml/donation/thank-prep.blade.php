@@ -62,7 +62,9 @@
 
         if ($ga) {
           if ($ga['declined']) {
-            $gaLabel = 'On file: Declined';
+            $gaLabel = !empty($ga['recordedByVolunteer'])
+              ? 'On file: Declined (recorded by a volunteer)'
+              : 'On file: Declined';
             $gaClass = 'flag-pill-warn';
           } elseif ($ga['reviewed']) {
             $gaLabel = 'Active — ' . $ga['period'];
@@ -71,6 +73,12 @@
             $gaLabel = 'Just declared — needs review (' . $ga['period'] . ')';
             $gaClass = '';
           }
+        } elseif (!empty($card['giftaidAskedOn'])) {
+          $gaAsks = $card['giftaidAsks'] ?? 1;
+          $gaLabel = $gaAsks > 1
+            ? 'Asked ' . $gaAsks . ' times, last on ' . $card['giftaidAskedOn']->format('j M Y') . ', no reply'
+            : 'Asked on ' . $card['giftaidAskedOn']->format('j M Y') . ', no reply';
+          $gaClass = 'flag-pill-warn';
         } else {
           $gaLabel = 'Never asked / not on file';
           $gaClass = 'flag-pill-warn';
@@ -123,7 +131,7 @@
                     {{ $u['displayName'] }}
                     &nbsp;<a href="{{ $links['modtoolsUser'] ?? '#' }}" style="font-size:12px;">#{{ $u['id'] }}</a>
                     @if ($u['deleted']) <span class="flag-pill flag-pill-warn">Deleted user</span>@endif
-                    @if ($u['systemrole'] !== 'User') <span class="flag-pill">{{ $u['systemrole'] }}</span>@endif
+                    @if ($u['systemrole'] !== \App\Models\User::SYSTEMROLE_USER) <span class="flag-pill">{{ $u['systemrole'] }}</span>@endif
                   </td>
                 </tr>
                 @if (!empty($aliases))
@@ -217,7 +225,7 @@
                 <tr><td colspan="2" class="card-section-head">Groups ({{ count($members) }})</td></tr>
                 @foreach ($members as $m)
                   <tr class="mini-row">
-                    <td>{{ $m['name'] }} @if ($m['role'] !== 'Member') <span class="flag-pill">{{ $m['role'] }}</span>@endif</td>
+                    <td>{{ $m['name'] }} @if ($m['role'] !== \App\Models\Membership::ROLE_MEMBER) <span class="flag-pill">{{ $m['role'] }}</span>@endif</td>
                     <td style="color:#888;text-align:right;width:120px;">since {{ $m['memberSince'] }}</td>
                   </tr>
                 @endforeach

@@ -7,7 +7,9 @@ use App\Services\LoveJunkService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use App\Traits\GracefulShutdown;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'integrations:sync-lovejunk')]
 class SyncLoveJunkCommand extends Command
 {
     use PreventsOverlapping;

@@ -9,9 +9,13 @@
     <div class="section-content">
       <!-- Email -->
       <div class="setting-row">
-        <label>Email address:</label>
+        <label :for="`${formId}-email`">Email address:</label>
         <b-input-group>
-          <b-form-input v-model="emailLocal" type="email" />
+          <b-form-input
+            :id="`${formId}-email`"
+            v-model="emailLocal"
+            type="email"
+          />
           <template #append>
             <SpinButton
               variant="primary"
@@ -61,7 +65,7 @@
 
       <!-- Postcode -->
       <div class="setting-row">
-        <label>Your postcode:</label>
+        <div class="field-caption">Your postcode:</div>
         <b-input-group>
           <PostCode @selected="selectPostcode" @cleared="clearPostcode" />
           <template #append>
@@ -87,7 +91,7 @@
 </template>
 
 <script setup>
-import { ref, computed, defineEmits, watch } from 'vue'
+import { ref, computed, defineEmits, watch, useId } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 import EmailOwn from '~/components/EmailOwn'
@@ -95,6 +99,9 @@ import PostCode from '~/components/PostCode'
 import NoticeMessage from '~/components/NoticeMessage'
 import PasswordEntry from '~/components/PasswordEntry'
 import SpinButton from '~/components/SpinButton'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const emit = defineEmits(['update', 'show-email-confirm-modal'])
 
@@ -216,7 +223,8 @@ watch(
 .setting-row {
   margin-bottom: 1rem;
 
-  label {
+  label,
+  .field-caption {
     display: block;
     font-weight: 500;
     margin-bottom: 0.25rem;

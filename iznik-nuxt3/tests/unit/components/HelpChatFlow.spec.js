@@ -10,6 +10,11 @@ vi.mock('~/stores/auth', () => ({
   })),
 }))
 
+const mockNoteHelpSought = vi.hoisted(() => vi.fn())
+vi.mock('~/composables/useFlowTelemetry', () => ({
+  noteHelpSought: mockNoteHelpSought,
+}))
+
 describe('HelpChatFlow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -220,6 +225,13 @@ describe('HelpChatFlow', () => {
     })
 
     describe('option selection', () => {
+      it('tells flow telemetry the member sought help when an option is clicked', async () => {
+        const wrapper = createWrapper()
+        expect(mockNoteHelpSought).not.toHaveBeenCalled()
+        await wrapper.find('.flow-option').trigger('click')
+        expect(mockNoteHelpSought).toHaveBeenCalledTimes(1)
+      })
+
       it('navigates to Posting section when clicked', async () => {
         const wrapper = createWrapper()
         const postingOption = wrapper

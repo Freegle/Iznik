@@ -45,8 +45,9 @@ vi.mock('~/stores/group', () => ({
   useGroupStore: () => ({ fetch: mockGroupFetch }),
 }))
 
+const mockBandit = vi.hoisted(() => ({ chosen: vi.fn(), shown: vi.fn() }))
 vi.mock('~/api', () => ({
-  default: () => ({ bandit: { chosen: vi.fn() } }),
+  default: () => ({ bandit: mockBandit }),
 }))
 
 vi.mock('~/components/FreeglerPhotoGrid.vue', () => ({
@@ -171,5 +172,29 @@ describe('pages/index boot data cascade', () => {
     expect(mockMessageFetch).toHaveBeenCalledTimes(1)
     expect(mockMessageFetch).toHaveBeenCalledWith(1)
     expect(wrapper.find('.landing-page').exists()).toBe(true)
+  })
+
+  it('records the landing variant and each landing button as shown when the landing is displayed', async () => {
+    mountPage()
+    await flushPromises()
+
+    const shown = mockBandit.shown.mock.calls.map((c) => c[0])
+    expect(shown).toEqual(
+      expect.arrayContaining([
+        { uid: 'landing', variant: 'landing' },
+        { uid: 'landing-button', variant: 'landing-give' },
+        { uid: 'landing-button', variant: 'landing-ask' },
+        { uid: 'landing-button', variant: 'landing-place' },
+      ])
+    )
+    expect(shown).toHaveLength(4)
+  })
+
+  it('does not record shown for a logged-in member who is sent home', async () => {
+    setAuth({ user: { id: 1 }, loginStateKnown: true })
+    mountPage()
+    await flushPromises()
+
+    expect(mockBandit.shown).not.toHaveBeenCalled()
   })
 })

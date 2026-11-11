@@ -3,6 +3,8 @@ import { setActivePinia, createPinia } from 'pinia'
 
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
+import { APIError } from '~/api/APIErrors'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const mockFetchByUser = vi.fn()
 const mockSave = vi.fn()
@@ -16,6 +18,10 @@ const mockNearbyMarkSeen = vi.fn()
 const mockHold = vi.fn()
 const mockRelease = vi.fn()
 const mockFetchMT = vi.fn()
+const mockUpdate = vi.fn()
+const mockApprove = vi.fn()
+const mockReject = vi.fn()
+const mockDelete = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -31,6 +37,10 @@ vi.mock('~/api', () => ({
       hold: mockHold,
       release: mockRelease,
       fetchMT: mockFetchMT,
+      update: mockUpdate,
+      approve: mockApprove,
+      reject: mockReject,
+      delete: mockDelete,
     },
   }),
 }))
@@ -514,7 +524,12 @@ describe('message store - markSeen()', () => {
     useAuthStore.mockReturnValue({
       user: {
         id: 1,
-        settings: { browseView: 'mygroups', browseMaxDistance: 10 },
+        settings: {
+          browseView: 'mygroups',
+          browseMaxDistance: 10,
+          browseType: 'Wanted',
+          browseGroup: 7,
+        },
       },
     })
     const store = useMessageStore()
@@ -523,10 +538,11 @@ describe('message store - markSeen()', () => {
 
     await store.markSeen([1])
 
-    // fetchCount -> api.message.count(browseView, maxDistance, log): the badge must be
-    // recomputed for the member's actual view, else a mygroups/slider member sees a
-    // different view's number and it never drops to zero.
-    expect(mockCount).toHaveBeenCalledWith('mygroups', 10, true)
+    // fetchCount -> api.message.count(browseView, maxDistance, log, browseType): the badge
+    // must be recomputed for the member's actual view, else a mygroups/slider member sees a
+    // different view's number and it never drops to zero. Likewise the Offer/Wanted filter:
+    // the feed shows one type, so the badge must count that type.
+    expect(mockCount).toHaveBeenCalledWith('mygroups', 10, true, 'Wanted', 7)
   })
 })
 
@@ -648,6 +664,33 @@ describe('message store - refreshOrRemoveFromMTList()', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    // The moderator moderates groups 1 and 2, and is only a member of group 3.
+    useAuthStore.mockReturnValue({
+      user: { id: 99 },
+      member: (gid) =>
+        ({ 1: ROLE_MODERATOR, 2: ROLE_OWNER, 3: ROLE_MEMBER })[parseInt(gid)] ||
+        null,
+    })
+  })
+
+  // After an approve, the copies a rippled post still has pending are mostly on communities
+  // the moderator does not moderate (133 of 138 in a day of production approvals). Counting
+  // them kept the post in "All my communities" with its card showing the copy just approved.
+  it('removes the message when the only pending copies are on groups I do not moderate', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500 }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 3, collection: 'Pending' },
+        { groupid: 77, collection: 'Pending' },
+      ],
+    })
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeUndefined()
   })
 
   it('keeps the (refreshed) message when a group copy is still pending', async () => {
@@ -697,6 +740,52 @@ describe('message store - refreshOrRemoveFromMTList()', () => {
     expect(store.list[500]).toBeDefined()
   })
 
+  // After acting on several communities at once, the copies the action left alone - held by
+  // another moderator, or locked by the home community - were named on the card and are
+  // not this moderator's to act on, so they must not bring the card straight back.
+  it('after an action on several communities, drops the card when only copies left alone remain', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500 }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 2, collection: 'Pending', heldby: 12 },
+        { groupid: 1, collection: 'Pending', locked_by_home: 1 },
+      ],
+    })
+
+    await store.refreshOrRemoveFromMTList(500, { severalCommunities: true })
+
+    expect(store.list[500]).toBeUndefined()
+  })
+
+  it('after an action on several communities, keeps the card for a copy I hold myself', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500 }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [{ groupid: 2, collection: 'Pending', heldby: 99 }],
+    })
+
+    await store.refreshOrRemoveFromMTList(500, { severalCommunities: true })
+
+    expect(store.list[500]).toBeDefined()
+  })
+
+  it('after a single-community action, still keeps the card for a copy held by somebody else', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500 }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [{ groupid: 2, collection: 'Pending', heldby: 12 }],
+    })
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeDefined()
+  })
+
   it('removes the message if the re-fetch fails', async () => {
     const store = useMessageStore()
     store.list[500] = { id: 500 }
@@ -705,5 +794,187 @@ describe('message store - refreshOrRemoveFromMTList()', () => {
     await store.refreshOrRemoveFromMTList(500)
 
     expect(store.list[500]).toBeUndefined()
+  })
+})
+
+describe('message store - update() when the outcome is already recorded', () => {
+  const alreadyRecorded = () =>
+    new APIError(
+      {
+        request: { path: '/message' },
+        response: {
+          status: 409,
+          data: { error: 409, message: 'Outcome already recorded' },
+        },
+      },
+      'API Error POST /message -> status: 409'
+    )
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockMiscStore.modtools = false
+    useAuthStore.mockReturnValue({ user: { id: 99 } })
+  })
+
+  it('treats it as done: refetches and moves the post to old posts', async () => {
+    const store = useMessageStore()
+    store.byUserList[99] = [{ id: 1001, subject: 'Sofa', hasoutcome: false }]
+    mockUpdate.mockRejectedValue(alreadyRecorded())
+    const fetchSpy = vi
+      .spyOn(store, 'fetch')
+      .mockResolvedValue({ id: 1001, subject: 'Sofa' })
+
+    await expect(
+      store.update({ action: 'Outcome', id: 1001, outcome: 'Taken' })
+    ).resolves.toEqual({})
+
+    expect(fetchSpy).toHaveBeenCalledWith(1001, true)
+    expect(store.byUserList[99][0].hasoutcome).toBe(true)
+  })
+
+  it('still throws a 409 that is not about the outcome', async () => {
+    const store = useMessageStore()
+    const held = new APIError(
+      {
+        request: { path: '/message' },
+        response: { status: 409, data: { heldby: 5 } },
+      },
+      'held'
+    )
+    mockUpdate.mockRejectedValue(held)
+
+    await expect(
+      store.update({ action: 'Outcome', id: 1001, outcome: 'Taken' })
+    ).rejects.toBe(held)
+  })
+
+  it('still throws "already recorded" for an action that is not an outcome', async () => {
+    const store = useMessageStore()
+    const err = alreadyRecorded()
+    mockUpdate.mockRejectedValue(err)
+
+    await expect(store.update({ action: 'Promise', id: 1001 })).rejects.toBe(
+      err
+    )
+  })
+})
+
+// Approve, Reject and Delete on a post pending on several of a moderator's communities name
+// them all; on one community the API is called exactly as it always was.
+describe('message store - acting on several communities', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore.mockReturnValue({
+      user: { id: 99 },
+      member: () => ROLE_MODERATOR,
+    })
+    mockApprove.mockResolvedValue({})
+    mockReject.mockResolvedValue({})
+    mockDelete.mockResolvedValue({})
+  })
+
+  function storeWithMessage() {
+    const store = useMessageStore()
+    store.list[600] = { id: 600 }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 600,
+      groups: [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 2, collection: 'Approved' },
+      ],
+    })
+    return store
+  }
+
+  it('approves on every community given', async () => {
+    const store = storeWithMessage()
+    await store.approve(600, 1, null, null, null, [1, 2])
+
+    expect(mockApprove).toHaveBeenCalledWith(600, 1, null, null, null, [1, 2])
+    expect(store.list[600]).toBeUndefined()
+  })
+
+  it('approves on one community with the same arguments as before', async () => {
+    const store = storeWithMessage()
+    await store.approve(600, 1)
+
+    expect(mockApprove.mock.calls[0]).toHaveLength(5)
+  })
+
+  it('rejects on every community given', async () => {
+    const store = storeWithMessage()
+    await store.reject(600, 1, 'Sorry', 3, 'Body', [1, 2])
+
+    expect(mockReject).toHaveBeenCalledWith(600, 1, 'Sorry', 3, 'Body', [1, 2])
+  })
+
+  it('deletes from every community given, then refreshes rather than assuming it is gone', async () => {
+    const store = storeWithMessage()
+    await store.delete({ id: 600, groupid: 1, groupids: [1, 2] })
+
+    expect(mockDelete.mock.calls[0][5]).toEqual([1, 2])
+    expect(store.fetchMT).toHaveBeenCalled()
+    expect(store.list[600]).toBeUndefined()
+  })
+
+  it('deletes from one community with the same arguments as before', async () => {
+    const store = storeWithMessage()
+    await store.delete({ id: 600, groupid: 1 })
+
+    expect(mockDelete.mock.calls[0]).toHaveLength(5)
+    expect(store.fetchMT).not.toHaveBeenCalled()
+  })
+})
+
+describe('message store - fetchFailed tells an API failure from a missing post', () => {
+  const apiError = (status) =>
+    new APIError(
+      {
+        request: { path: '/message/5' },
+        response: { status, data: { error: status } },
+      },
+      `API Error GET /message/5 -> status: ${status}`
+    )
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockMiscStore.modtools = false
+    useAuthStore.mockReturnValue({ user: null })
+  })
+
+  it('marks the ids of a batch that failed with a server error', async () => {
+    const store = useMessageStore()
+    store.init({})
+    mockFetch.mockRejectedValueOnce(apiError(502))
+
+    await expect(store.fetchMultiple([5, 6])).rejects.toThrow()
+
+    expect(store.fetchFailed[5]).toBe(true)
+    expect(store.fetchFailed[6]).toBe(true)
+  })
+
+  it('does not mark a post that is not found', async () => {
+    const store = useMessageStore()
+    store.init({})
+    mockFetch.mockRejectedValueOnce(apiError(404))
+
+    await store.fetchMultiple([5])
+
+    expect(store.fetchFailed[5]).toBeUndefined()
+  })
+
+  it('clears the mark once a fetch works', async () => {
+    const store = useMessageStore()
+    store.init({})
+    store.fetchFailed[5] = true
+    mockFetch.mockResolvedValueOnce([{ id: 5, subject: 'Chair' }])
+
+    await store.fetchMultiple([5], true)
+
+    expect(store.fetchFailed[5]).toBeUndefined()
+    expect(store.list[5].subject).toBe('Chair')
   })
 })

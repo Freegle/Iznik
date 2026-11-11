@@ -5,6 +5,7 @@ namespace App\Console\Commands\Message;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Backfill messages_attachments.contenttype for rows the API created without it.
@@ -24,6 +25,7 @@ use Illuminate\Support\Facades\Log;
  * candidate set, so it is safe to stop it and run it again, and safe to run in
  * bounded slices with --limit against a table of this size.
  */
+#[AsCommand(name: 'messages:backfill-attachment-contenttype')]
 class BackfillAttachmentContentTypeCommand extends Command
 {
     protected $signature = 'messages:backfill-attachment-contenttype

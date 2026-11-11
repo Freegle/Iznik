@@ -69,10 +69,11 @@ class AppReleaseClassifierService
      */
     public function saveLastProductionSha(string $sha): void
     {
-        DB::statement(
-            "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
-            [self::CONFIG_KEY_LAST_PRODUCTION_SHA, $sha, $sha]
-        );
+        DB::table('config')->upsert(
+                [['key' => self::CONFIG_KEY_LAST_PRODUCTION_SHA, 'value' => $sha]],
+                ['key'],
+                ['value']
+            );
     }
 
     /**
@@ -255,10 +256,11 @@ class AppReleaseClassifierService
     {
         $timestamp = (string) time();
 
-        DB::statement(
-            "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
-            [self::CONFIG_KEY_LAST_NOTIFICATION, $timestamp, $timestamp]
-        );
+        DB::table('config')->upsert(
+                [['key' => self::CONFIG_KEY_LAST_NOTIFICATION, 'value' => $timestamp]],
+                ['key'],
+                ['value']
+            );
     }
 
     /**

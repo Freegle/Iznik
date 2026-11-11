@@ -59,7 +59,7 @@ if (id) {
 async function join() {
   const group = groupStore?.get(id)
 
-  await authStore.joinGroup(myid.value, id, true)
+  await authStore.joinGroup(myid.value, id, 'manual')
 
   // Route back.
   router.push('/explore/' + group.nameshort)

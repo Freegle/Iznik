@@ -49,7 +49,7 @@
           @handle="ignore"
         />
         <SpinButton
-          v-if="!heldById || heldById === myid"
+          v-if="(!heldById || heldById === myid) && !modsHeld"
           icon-name="trash-alt"
           spinclass="success"
           variant="warning"
@@ -58,7 +58,7 @@
           @handle="remove"
         />
         <ModMemberButton
-          v-if="!membership.heldby"
+          v-if="!membership.heldby && !modsHeld"
           :userid="userid"
           :membershipid="membership.membershipid || membership.id"
           :groupid="membership.groupid"
@@ -70,7 +70,7 @@
           class="me-2"
         />
         <ModMemberButton
-          v-else
+          v-else-if="!modsHeld"
           :userid="userid"
           :membershipid="membership.membershipid || membership.id"
           :groupid="membership.groupid"
@@ -113,6 +113,7 @@ import { useUserStore } from '~/stores/user'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
+import { useLockdown } from '~/modtools/composables/useLockdown'
 
 const props = defineProps({
   userid: {
@@ -132,6 +133,7 @@ const userStore = useUserStore()
 const groupStore = useGroupStore()
 const { myid } = useMe()
 const { amAModOn } = useModMe()
+const { modsHeld } = useLockdown()
 
 const removeConfirm = ref(null)
 

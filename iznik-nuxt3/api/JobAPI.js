@@ -14,8 +14,10 @@ export default class JobAPI extends BaseAPI {
     return await this.$getv2('/job', params, false)
   }
 
-  async fetchOnev2(id, logError) {
-    return await this.$getv2('/job/' + id, {}, logError)
+  // tz is the browser's time zone, such as Europe/London. The email job page sends it so that a
+  // browser whose clock is in the UK is never asked for an extra tap. It is left out when empty.
+  async fetchOnev2(id, logError, tz) {
+    return await this.$getv2('/job/' + id, tz ? { tz } : {}, logError)
   }
 
   async log(params) {

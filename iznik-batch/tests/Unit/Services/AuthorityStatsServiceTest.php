@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Services\AuthorityStatsService;
+use App\Services\CPIService;
 use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\SeedsAuthorityStats;
@@ -42,8 +43,9 @@ class AuthorityStatsServiceTest extends TestCase
     {
         $this->assertSame(93.4, ReuseBenefit::getCPI(2011));
         $this->assertSame(133.9, ReuseBenefit::getCPI(2024));
-        $this->assertSame(93.4, ReuseBenefit::getCPI(2000), 'clamps below the range');
-        $this->assertSame(133.9, ReuseBenefit::getCPI(2100), 'clamps above the range');
+        // The table runs from 2003 (fly-tipping costs) to 2025.
+        $this->assertSame(75.5, ReuseBenefit::getCPI(2000), 'clamps below the range');
+        $this->assertSame(138.4, ReuseBenefit::getCPI(2100), 'clamps above the range');
 
         $this->assertSame(711.0, ReuseBenefit::getBenefitPerTonne(2011));
         $this->assertSame(1019.0, ReuseBenefit::getBenefitPerTonne(2024));
@@ -131,7 +133,9 @@ class AuthorityStatsServiceTest extends TestCase
         $this->assertSame('Test Authority (B)', $report['name']);
         $this->assertSame(2, $report['quarter']);
         $this->assertSame(0.51, $report['co2PerTonne']);
-        $this->assertSame(ReuseBenefit::getBenefitPerTonne(), $report['benefitPerTonne']);
+        $cpi = app(CPIService::class)->getCPIData();
+        $this->assertSame(ReuseBenefit::getBenefitPerTonne(null, $cpi), $report['benefitPerTonne']);
+        $this->assertSame(ReuseBenefit::getFlyTipSavingPerItem(null, $cpi), $report['flyTipPerItem']);
 
         // Monthly totals (the trivial group is excluded by the 3 kg cutoff).
         $this->assertSame(['members' => 120, 'weight' => 150.0, 'outcomes' => 14.0], $report['totals'][0]);
@@ -172,14 +176,69 @@ class AuthorityStatsServiceTest extends TestCase
     {
         $this->seedAuthorityScenario();
 
-        // 2% of this group is inside the authority - Southend against Essex County. It is kept,
-        // and counts for 2% of its figures, as on the authority stats page.
+        // 2% of this group is inside the authority - Southend against Essex County. The stats
+        // page keeps it and counts 2% of its figures; only the Partnerships list drops it.
         $this->insertGroup(900104, 'grazegrp', 'Graze Group', 'POLYGON((0.98 10.5, 1.98 10.5, 1.98 10.6, 0.98 10.6, 0.98 10.5))');
 
         $overlaps = array_column($this->service->getAuthority($this->authorityId)['groups'], 'overlap', 'namedisplay');
 
         $this->assertArrayHasKey('Graze Group', $overlaps);
         $this->assertEqualsWithDelta(0.02, $overlaps['Graze Group'], 0.005);
+    }
+
+    public function test_get_authority_reports_how_much_of_the_authority_each_group_covers(): void
+    {
+        $this->seedAuthorityScenario();
+
+        $coverage = array_column($this->service->getAuthority($this->authorityId)['groups'], 'coverage', 'namedisplay');
+
+        // Full is 1x1 inside a 2x2 authority; Half has 0.5x1 of it inside.
+        $this->assertEqualsWithDelta(0.25, $coverage['Full Group'], 0.001);
+        $this->assertEqualsWithDelta(0.125, $coverage['Half Group'], 0.001);
+    }
+
+    public function test_significant_groups_drops_a_group_that_only_grazes_the_boundary(): void
+    {
+        $this->seedAuthorityScenario();
+        $this->insertGroup(900104, 'grazegrp', 'Graze Group', 'POLYGON((0.98 10.5, 1.98 10.5, 1.98 10.6, 0.98 10.6, 0.98 10.5))');
+
+        $names = array_column($this->service->getSignificantGroups($this->authorityId)['groups'], 'namedisplay');
+
+        $this->assertNotContains('Graze Group', $names);
+        $this->assertContains('Full Group', $names);
+        $this->assertContains('Half Group', $names);
+    }
+
+    public function test_significant_groups_keeps_a_small_group_wholly_inside_a_big_authority(): void
+    {
+        $this->seedAuthorityScenario();
+
+        // Covers a hundredth of the authority, but all of it is inside: Castle Point in Essex.
+        $this->insertGroup(900106, 'tinygrp', 'Tiny Group', 'POLYGON((0 10.5, 0.2 10.5, 0.2 10.7, 0 10.7, 0 10.5))');
+
+        $names = array_column($this->service->getSignificantGroups($this->authorityId)['groups'], 'namedisplay');
+
+        $this->assertContains('Tiny Group', $names);
+    }
+
+    public function test_significant_groups_keeps_a_big_group_that_covers_a_small_authority(): void
+    {
+        $this->seedAuthorityScenario();
+
+        // Much bigger than the authority and holds all of it, so only about 1% of the group is
+        // inside: a small council in a large community.
+        $this->insertGroup(900107, 'biggrp', 'Big Group', 'POLYGON((-10 5, 10 5, 10 20, -10 20, -10 5))');
+
+        $names = array_column($this->service->getSignificantGroups($this->authorityId)['groups'], 'namedisplay');
+
+        $this->assertContains('Big Group', $names);
+    }
+
+    public function test_is_significant_overlap_uses_the_same_five_percent_in_either_direction(): void
+    {
+        $this->assertTrue(AuthorityStatsService::isSignificantOverlap(0.05, 0.0));
+        $this->assertTrue(AuthorityStatsService::isSignificantOverlap(0.0, 0.05));
+        $this->assertFalse(AuthorityStatsService::isSignificantOverlap(0.049, 0.049));
     }
 
     public function test_compute_report_for_a_partnership_reports_exactly_its_communities(): void
@@ -225,5 +284,23 @@ class AuthorityStatsServiceTest extends TestCase
     public function test_compute_report_returns_null_for_unknown_authority(): void
     {
         $this->assertNull($this->service->computeReport(987654321, $this->quarterStart));
+    }
+
+    public function test_report_prices_from_the_cpi_config_row(): void
+    {
+        // The config row is refreshed monthly from ONS, so the report follows it
+        // rather than the hardcoded table.
+        DB::table('config')->updateOrInsert(
+            ['key' => CPIService::CONFIG_KEY],
+            ['value' => json_encode(['data' => [2011 => 50.0, 2025 => 100.0]])]
+        );
+
+        $service = new AuthorityStatsService();
+
+        // Every year after 2025 is priced at 2025.
+        $this->assertSame(1422.0, $service->getBenefitPerTonne());
+        // A fly-tip costs 29 x 100 / 77.5 (the 2003-06 average), and each gift saves 1.95% of that.
+        $base = (75.5 + 76.5 + 78.1 + 79.9) / 4;
+        $this->assertEqualsWithDelta(0.0195 * 29 * 100.0 / $base, $service->getFlyTipSavingPerItem(), 1e-9);
     }
 }

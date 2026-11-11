@@ -322,6 +322,12 @@ describe('ChatMessageReneged', () => {
       expect(wrapper.find('.b-img').exists()).toBe(false)
     })
 
+    it('does not show thumbnail for a masked AI picture with no path', async () => {
+      mockRefmsg.value.attachments = [{ path: '', paththumb: '' }]
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.b-img').exists()).toBe(false)
+    })
+
     it('does not show thumbnail when attachments is undefined', async () => {
       mockRefmsg.value.attachments = undefined
       const wrapper = await createWrapper()

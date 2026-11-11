@@ -1,13 +1,14 @@
 <template>
   <b-form-select v-model="therole" @change="change">
-    <option value="Member">Member</option>
-    <option value="Moderator">Moderator</option>
-    <option value="Owner">Owner</option>
+    <option :value="ROLE_MEMBER">Member</option>
+    <option :value="ROLE_MODERATOR">Moderator</option>
+    <option :value="ROLE_OWNER">Owner</option>
   </b-form-select>
 </template>
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useMemberStore } from '~/stores/member'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
   userid: {

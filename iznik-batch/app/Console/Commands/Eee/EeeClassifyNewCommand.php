@@ -10,6 +10,7 @@ use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Incremental EEE classification — processes messages approved since the last run.
@@ -20,6 +21,7 @@ use Illuminate\Support\Facades\Log;
  *   php artisan eee:classify-new
  *   php artisan eee:classify-new --limit=500
  */
+#[AsCommand(name: 'eee:classify-new')]
 class EeeClassifyNewCommand extends Command
 {
     protected $signature = 'eee:classify-new

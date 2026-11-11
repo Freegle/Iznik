@@ -13,8 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -161,19 +163,17 @@ func GetGroup(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
 	}
 
-	// showmods and sponsors params control whether to include those fields.
-	// Default behavior (no params) loads both for backward compatibility.
+	// showmods and sponsors params control whether to include those fields; both are loaded
+	// unless set to false.
 	showmodsParam := c.Query("showmods")
 	sponsorsParam := c.Query("sponsors")
 
 	wantShowmods := showmodsParam != "false"
 	wantSponsors := sponsorsParam != "false"
-	wantFilteredSponsors := sponsorsParam == "true"
 
 	db := database.DBConn
 	var group Group
 	var volunteers []GroupVolunteer
-	var filteredSponsors []GroupSponsor
 	found := false
 
 	// Get group, volunteers, and sponsors info in parallel for speed.
@@ -188,18 +188,6 @@ func GetGroup(c *fiber.Ctx) error {
 		}()
 	}
 
-	if wantFilteredSponsors {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-			db.Table("groups_sponsorship").
-				Where("groupid = ? AND startdate <= NOW() AND enddate >= DATE(NOW()) AND visible = 1", id).
-				Order("amount DESC").
-				Scan(&filteredSponsors)
-		}()
-	}
-
 	wg.Add(1)
 
 	go func() {
@@ -209,9 +197,8 @@ func GetGroup(c *fiber.Ctx) error {
 		// want it.  This can happen if a user has a message on a group that is then set to publish = 0, for example.
 		q := db.Session(&gorm.Session{})
 
-		if !wantFilteredSponsors && wantSponsors {
-			// Load all sponsors via GORM Preload (no date/visible filtering) - backward compatible default.
-			q = q.Preload("GroupSponsors")
+		if wantSponsors {
+			q = q.Preload("GroupSponsors", currentSponsors)
 		}
 
 		// Converted from
@@ -262,10 +249,6 @@ func GetGroup(c *fiber.Ctx) error {
 	if found {
 		if wantShowmods {
 			group.GroupVolunteers = volunteers
-		}
-
-		if wantFilteredSponsors {
-			group.GroupSponsors = filteredSponsors
 		}
 
 		// Run independent queries in parallel to reduce latency.
@@ -418,7 +401,7 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 			// conversion as GetGroup (2811b4d3acf7) above, for the same
 			// reason: see that site's comment.
 			var g Group
-			tx := db.Preload("GroupSponsors").
+			tx := db.Preload("GroupSponsors", currentSponsors).
 				Table("groups").
 				Select("`groups`.*, CAST(JSON_EXTRACT(`groups`.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
 				Where("id = ?", gid).
@@ -578,9 +561,15 @@ func ListGroups(c *fiber.Ctx) error {
 		var wg sync.WaitGroup
 		wg.Add(3)
 
+		// FORCE INDEX (timestamp_2), which is (timestamp, type, subtype): left to itself
+		// the optimiser reads these through the (type, subtype) index, which for
+		// "Approved" walks every approval ever logged (8 million rows) checking each date.
+		// On production that took 72 seconds and left Support Tools' community list
+		// loading for over a minute; through timestamp_2 it reads one month, in about 6.
+		// The hint names an index: TestListGroupsWithSupport checks these counts, so a renamed index fails it.
 		go func() {
 			defer wg.Done()
-			db.Table("logs").Select("COUNT(*) AS count, groupid").
+			db.Table("logs FORCE INDEX (timestamp_2)").Select("COUNT(*) AS count, groupid").
 				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Autoapproved").
 				Group("groupid").
 				Scan(&autoApproves)
@@ -588,7 +577,7 @@ func ListGroups(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			db.Table("logs").Select("COUNT(*) AS count, groupid").
+			db.Table("logs FORCE INDEX (timestamp_2)").Select("COUNT(*) AS count, groupid").
 				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Approved").
 				Group("groupid").
 				Scan(&manualApproves)
@@ -764,7 +753,6 @@ type PatchGroupRequest struct {
 	Microvolunteering        *int             `json:"microvolunteering"`
 	Microvolunteeringoptions *json.RawMessage `json:"microvolunteeringoptions"`
 	Mentored                 *int             `json:"mentored"`
-	Ontn                     *int             `json:"ontn"`
 	Onlovejunk               *int             `json:"onlovejunk"`
 	Profile                  *uint64          `json:"profile"`
 	Settings                 *json.RawMessage `json:"settings"`
@@ -810,6 +798,10 @@ func PatchGroup(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 	}
 
+	if lockdown.GateMod(c, myid) {
+		return nil
+	}
+
 	isAdmin := auth.IsAdminOrSupport(myid)
 
 	// Apply mod/owner settable fields
@@ -853,9 +845,6 @@ func PatchGroup(c *fiber.Ctx) error {
 	}
 	if req.Mentored != nil {
 		db.Table("groups").Where("id = ?", req.ID).Update("mentored", *req.Mentored)
-	}
-	if req.Ontn != nil {
-		db.Table("groups").Where("id = ?", req.ID).Update("ontn", *req.Ontn)
 	}
 	if req.Onlovejunk != nil {
 		db.Table("groups").Where("id = ?", req.ID).Update("onlovejunk", *req.Onlovejunk)
@@ -1030,10 +1019,11 @@ func CreateGroup(c *fiber.Ctx) error {
 
 	// Creator becomes Owner.
 	db.Table("memberships").Create(map[string]interface{}{
-		"userid":     myid,
-		"groupid":    newID,
-		"role":       utils.ROLE_OWNER,
-		"collection": utils.COLLECTION_APPROVED,
+		"userid":       myid,
+		"groupid":      newID,
+		"role":         utils.ROLE_OWNER,
+		"collection":   utils.COLLECTION_APPROVED,
+		"added_origin": addedorigin.ForInsert("group.CreateGroup", myid, newID, addedorigin.Moderator),
 	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})

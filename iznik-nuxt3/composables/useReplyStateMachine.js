@@ -116,6 +116,8 @@ import { useReplyStore } from '~/stores/reply'
 import { useMe } from '~/composables/useMe'
 import { useReplyToPost } from '~/composables/useReplyToPost'
 import { action } from '~/composables/useClientLog'
+import { useAskName } from '~/composables/useAskName'
+import { FlowName, useFlowTelemetry } from '~/composables/useFlowTelemetry'
 import { milesAway } from '~/composables/useDistance'
 
 // State enum
@@ -289,6 +291,7 @@ export function useReplyStateMachine(messageId, options = {}) {
   const replyStore = useReplyStore()
   const { me, myid, myGroups, fetchMe } = useMe()
   const { forceLogin, loggedInEver } = storeToRefs(authStore)
+  const { maybeAskName } = useAskName()
 
   // Core state
   const state = ref(ReplyState.IDLE)
@@ -300,11 +303,18 @@ export function useReplyStateMachine(messageId, options = {}) {
   // Reply source for analytics (set by component).
   const replySource = ref(null)
 
+  // Flow telemetry for the reply. Every state change is mirrored into it from transitionTo(); this
+  // machine only reports on an instance it started, because the browse page has one per card.
+  const flow = useFlowTelemetry(FlowName.REPLY)
+  let ownsFlow = false
+
   // Form data
   const replyText = ref('')
   const collectText = ref('')
   const email = ref('')
   const emailValid = ref(false)
+  // Optional photo ({ id, paththumb }), sent as a second chat message after the text.
+  const replyImage = ref(null)
 
   // Registration data
   const isNewUser = ref(false)
@@ -370,12 +380,18 @@ export function useReplyStateMachine(messageId, options = {}) {
     // completion, where the fields no longer represent an unsent draft.
     if (!canSend.value) return
 
-    if (replyText.value || collectText.value || email.value) {
+    if (
+      replyText.value ||
+      collectText.value ||
+      email.value ||
+      replyImage.value
+    ) {
       replyStore.saveDraft({
         msgId: messageId,
         message: replyText.value,
         collect: collectText.value,
         email: email.value,
+        image: replyImage.value,
       })
       log('Draft persisted', { messageLength: replyText.value.length })
     } else if (replyStore.draftMsgId === messageId) {
@@ -385,7 +401,7 @@ export function useReplyStateMachine(messageId, options = {}) {
     }
   }
 
-  watch([replyText, collectText, email], () => {
+  watch([replyText, collectText, email, replyImage], () => {
     if (draftTimer) clearTimeout(draftTimer)
     draftTimer = setTimeout(persistDraftNow, DRAFT_PERSIST_DEBOUNCE)
   })
@@ -404,6 +420,7 @@ export function useReplyStateMachine(messageId, options = {}) {
     replyText.value = replyStore.draftMessage || ''
     collectText.value = replyStore.draftCollect || ''
     email.value = replyStore.draftEmail || ''
+    replyImage.value = replyStore.draftImage || null
     log('Draft restored from store', {
       replyLength: replyText.value.length,
       collectLength: collectText.value.length,
@@ -530,6 +547,7 @@ export function useReplyStateMachine(messageId, options = {}) {
       } else {
         replyText.value = savedMessage
       }
+      replyImage.value = replyStore.replyImage || null
       log('Reply text restored from store', {
         replyLength: replyText.value.length,
         collectLength: collectText.value.length,
@@ -658,7 +676,8 @@ export function useReplyStateMachine(messageId, options = {}) {
       replyStore.draftMsgId === messageId &&
       (replyStore.draftMessage ||
         replyStore.draftCollect ||
-        replyStore.draftEmail)
+        replyStore.draftEmail ||
+        replyStore.draftImage)
     ) {
       // No pending send, but the user typed a draft here earlier and closed
       // the pane - restore it so their work isn't lost.
@@ -706,6 +725,74 @@ export function useReplyStateMachine(messageId, options = {}) {
     }
   }
 
+  // Mirror a state change into flow telemetry: states are steps, SUBMIT is a submit, a failed
+  // validation is a step back, and COMPLETED ends the flow.
+  function trackFlow(prev, newState, context) {
+    const event = context.event
+
+    if (!ownsFlow) {
+      const begins =
+        prev === ReplyState.IDLE &&
+        (event === ReplyEvent.START_TYPING || event === ReplyEvent.RESTORED)
+
+      if (!begins || flow.isLive()) return
+
+      flow.start(
+        event === ReplyEvent.RESTORED
+          ? 'restored'
+          : replySource.value || 'unknown'
+      )
+      ownsFlow = true
+    } else if (prev !== ReplyState.IDLE) {
+      // Leaving a step: back if the machine fell back to composing, otherwise it was completed.
+      if (event === ReplyEvent.VALIDATION_FAILED) {
+        flow.validationFailed(context.field || 'reply', 'invalid')
+        flow.back(newState)
+      } else if (
+        newState === ReplyState.COMPOSING &&
+        (event === ReplyEvent.FALLBACK || event === ReplyEvent.RETRY)
+      ) {
+        flow.back(newState)
+      } else {
+        flow.completeStep()
+      }
+    }
+
+    if (event === ReplyEvent.SUBMIT) {
+      flow.submit()
+    }
+
+    if (
+      (newState === ReplyState.SHOWING_WELCOME ||
+        newState === ReplyState.COMPLETED) &&
+      (event === ReplyEvent.CHAT_CREATED || event === ReplyEvent.MESSAGE_SENT)
+    ) {
+      flow.submitResult(true, 200, null)
+    }
+
+    if (newState === ReplyState.ERROR) {
+      flow.submitResult(false, null, 'error')
+    }
+
+    flow.enterStep(newState)
+
+    if (newState === ReplyState.COMPLETED) {
+      flow.complete()
+      ownsFlow = false
+    }
+  }
+
+  // Leaving the composer part way through is an abandon.
+  onScopeDispose(() => {
+    if (
+      ownsFlow &&
+      [...RESUMABLE_STATES, ReplyState.ERROR].includes(state.value)
+    ) {
+      flow.abandon(stayOnPage ? 'closed' : 'navigated')
+      ownsFlow = false
+    }
+  })
+
   // Transition to a new state
   function transitionTo(newState, context = {}) {
     previousState.value = state.value
@@ -717,6 +804,7 @@ export function useReplyStateMachine(messageId, options = {}) {
       context,
       messageId
     )
+    trackFlow(previousState.value, newState, context)
 
     // Manage processing timeout
     if (isProcessing.value) {
@@ -832,6 +920,7 @@ export function useReplyStateMachine(messageId, options = {}) {
     if (!validation.valid) {
       transitionTo(ReplyState.COMPOSING, {
         event: ReplyEvent.VALIDATION_FAILED,
+        field: 'reply',
       })
       callback?.()
       return
@@ -861,6 +950,7 @@ export function useReplyStateMachine(messageId, options = {}) {
         emailValidatorRef.value?.focus?.()
         transitionTo(ReplyState.COMPOSING, {
           event: ReplyEvent.VALIDATION_FAILED,
+          field: 'email',
         })
         callback?.()
         return
@@ -1049,7 +1139,7 @@ export function useReplyStateMachine(messageId, options = {}) {
 
       if (!isMember && groupToJoin) {
         log('Joining group:', groupToJoin)
-        await authStore.joinGroup(myid.value, groupToJoin, false)
+        await authStore.joinGroup(myid.value, groupToJoin, 'replied')
         log('Group joined successfully')
       }
 
@@ -1149,6 +1239,7 @@ export function useReplyStateMachine(messageId, options = {}) {
           })
           transitionTo(ReplyState.COMPLETED, { event: ReplyEvent.MESSAGE_SENT })
           callback?.()
+          maybeAskName('reply')
         }
       } else {
         log('replyToPost returned falsy - may be stale reply')
@@ -1198,6 +1289,7 @@ export function useReplyStateMachine(messageId, options = {}) {
         '\r\n\r\nPossible collection times: ' + collectText.value
     }
 
+    replyStore.replyImage = replyImage.value
     replyStore.replyingAt = Date.now()
     // Persist the committing surface too, so provenance survives the
     // login/registration redirect and reaches the server with the send.
@@ -1252,6 +1344,7 @@ export function useReplyStateMachine(messageId, options = {}) {
       isNewUser: isNewUser.value,
       hasReply: !!replyText.value,
       hasCollect: !!collectText.value,
+      hasImage: !!replyImage.value,
       hasEmail: !!email.value,
       emailValid: emailValid.value,
       isLoggedIn: !!me.value,
@@ -1273,6 +1366,7 @@ export function useReplyStateMachine(messageId, options = {}) {
     collectText,
     email,
     emailValid,
+    replyImage,
 
     // Registration data
     isNewUser,

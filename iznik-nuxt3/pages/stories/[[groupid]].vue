@@ -5,6 +5,7 @@
         <b-col cols="12" lg="6" class="p-0" offset-lg="3">
           <ScrollGrid
             :items="stories"
+            single-column
             key-field="id"
             empty-icon="book-open"
             empty-text="No stories yet."
@@ -12,9 +13,11 @@
             <template #header>
               <div class="page-header">
                 <p class="page-description">
-                  We love to hear why you freegle and what your experiences have
-                  been - and it helps show new freeglers what it's all about. So
-                  please tell us your story!
+                  We love to hear why you freegle and the difference it has made
+                  - and it helps show new freeglers what it's all about. So
+                  please tell us your story, with a photo if you can: stories
+                  with a photo are the ones we can share to get more people
+                  freegling.
                 </p>
                 <div class="filter-actions">
                   <GroupSelect

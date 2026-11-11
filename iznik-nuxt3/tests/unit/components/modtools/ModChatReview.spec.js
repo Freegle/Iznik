@@ -1,8 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { ref } from 'vue'
 import dayjs from 'dayjs'
 import ModChatReview from '~/modtools/components/ModChatReview.vue'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
+
+// plans/active/2026-09-27-lockdown-switch.md section 11.3: while the mods
+// surface is held, the Go API allows only a bare Approve on a chat review
+// message ("Approve allowed (basic), others refused"). useLockdown() already
+// folds in the Support/Admin exemption (tested in useLockdown.spec.js), so
+// this component only has to ask it one question.
+const mockModsHeld = ref(false)
+
+vi.mock('~/modtools/composables/useLockdown', () => ({
+  useLockdown: () => ({ modsHeld: mockModsHeld, held: () => false }),
+}))
 
 // Chat moderation methods are on the store, not $api
 const mockApproveChat = vi.fn().mockResolvedValue({})
@@ -155,7 +168,7 @@ describe('ModChatReview', () => {
       redactChat: mockRedactChat,
     }
     globalThis.__mockAuthStore = {
-      groups: [{ groupid: 789, role: 'Moderator', active: 1 }],
+      groups: [{ groupid: 789, role: ROLE_MODERATOR, active: 1 }],
     }
   })
 
@@ -171,6 +184,43 @@ describe('ModChatReview', () => {
       expect(wrapper.text()).toContain('days ago')
       expect(wrapper.text()).toContain('Test Group')
       expect(wrapper.text()).toContain('To User')
+    })
+  })
+
+  describe('missing message', () => {
+    // The review list and the message lookup can briefly disagree while the
+    // queue reloads; a card whose message is not there must render nothing
+    // rather than throw reading fromuserid of undefined (Sentry 7788561616).
+    it('renders nothing and raises no error when the message is not in the store', () => {
+      globalThis.__mockChatStore.messageById = vi.fn(() => undefined)
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const warnings = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const wrapper = mountComponent()
+
+      expect(wrapper.find('.card').exists()).toBe(false)
+      const logged = [...errors.mock.calls, ...warnings.mock.calls]
+        .flat()
+        .join(' ')
+      expect(logged).not.toMatch(/fromuserid|reviewreason|widerchatreview/)
+      errors.mockRestore()
+      warnings.mockRestore()
+    })
+  })
+
+  describe('not delivered notice', () => {
+    it('says when a replier withdrew a reply, never confirmed it, or the item went first', () => {
+      // Freegle asked whether they still wanted an item that looked damaged or
+      // too big to carry; a moderator needs to see why it never arrived.
+      expect(
+        mountComponent({ processingfailreason: 'ReplyWithdrawn' }).text()
+      ).toContain('they said no')
+      expect(
+        mountComponent({ processingfailreason: 'ReplyNotConfirmed' }).text()
+      ).toContain('they never answered')
+      expect(
+        mountComponent({ processingfailreason: 'ReplyPostGone' }).text()
+      ).toContain('the item went before this was sent on')
     })
   })
 
@@ -235,6 +285,7 @@ describe('ModChatReview', () => {
       ['Language', 'English'],
       ['SameImage', 'Same image'],
       ['DodgyImage', 'Suspect text or email'],
+      ['Lockdown', 'Held by lockdown'],
     ])('returns correct text for %s reason', (reason, expectedText) => {
       const wrapper = mountComponent({ reviewreason: reason })
       expect(wrapper.vm.reviewreason).toContain(expectedText)
@@ -355,10 +406,69 @@ describe('ModChatReview', () => {
     })
   })
 
+  // plans/active/2026-09-27-lockdown-switch.md section 11.3: the same shape as
+  // widerchatreview above - "Approve allowed (basic), others refused" - but driven
+  // by the lockdown store instead of the message's own widerchatreview flag.
+  describe('when mods is held (lockdown)', () => {
+    beforeEach(() => {
+      mockModsHeld.value = true
+    })
+
+    it('hides the view button and every action except Approve - Not Spam', () => {
+      const wrapper = mountComponent({ widerchatreview: false, held: null })
+      expect(wrapper.find('.chat-view-button').exists()).toBe(false)
+
+      const buttons = wrapper.findAll('.spin-button')
+      const hiddenLabels = [
+        'Add Mod Message',
+        'Remove highlighted emails',
+        'Approve and whitelist',
+        'Hold',
+        'Delete',
+        'Spam',
+      ]
+      hiddenLabels.forEach((label) => {
+        expect(
+          buttons.find((b) => b.attributes('data-label') === label)
+        ).toBeUndefined()
+      })
+
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Approve - Not Spam')
+      ).toBeDefined()
+    })
+
+    // Discourse #9879/1 precedent (see 'held message' above): held-by-me normally
+    // keeps Release showing instead of Hold. Lockdown takes it away regardless.
+    it('hides Release even when the message is held by me', () => {
+      const heldByMe = {
+        id: 999,
+        name: 'Mod User',
+        email: 'mod@example.com',
+        timestamp: '2025-01-01T10:00:00Z',
+      }
+      const wrapper = mountComponent({ held: heldByMe })
+      const releaseButton = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Release'))
+      expect(releaseButton).toBeUndefined()
+    })
+
+    it('shows the full button set again once mods is no longer held', () => {
+      mockModsHeld.value = false
+      const wrapper = mountComponent({ widerchatreview: false, held: null })
+      expect(wrapper.find('.chat-view-button').exists()).toBe(true)
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Hold')
+      ).toBeDefined()
+    })
+  })
+
   describe('isActiveMod — backup mod buttons', () => {
     it('shows all action buttons for backup mod (active=0, role=Moderator)', () => {
       globalThis.__mockAuthStore = {
-        groups: [{ groupid: 789, role: 'Moderator', active: 0 }],
+        groups: [{ groupid: 789, role: ROLE_MODERATOR, active: 0 }],
       }
       const wrapper = mountComponent({ widerchatreview: false, held: null })
       const buttons = wrapper.findAll('.spin-button')
@@ -379,7 +489,7 @@ describe('ModChatReview', () => {
 
     it('shows all action buttons for backup owner (active=0, role=Owner)', () => {
       globalThis.__mockAuthStore = {
-        groups: [{ groupid: 789, role: 'Owner', active: 0 }],
+        groups: [{ groupid: 789, role: ROLE_OWNER, active: 0 }],
       }
       const wrapper = mountComponent({ widerchatreview: false, held: null })
       const buttons = wrapper.findAll('.spin-button')
@@ -393,7 +503,7 @@ describe('ModChatReview', () => {
 
     it('hides mod buttons when user is not a member of the group', () => {
       globalThis.__mockAuthStore = {
-        groups: [{ groupid: 999, role: 'Moderator', active: 1 }],
+        groups: [{ groupid: 999, role: ROLE_MODERATOR, active: 1 }],
       }
       const wrapper = mountComponent({ widerchatreview: false, held: null })
       const buttons = wrapper.findAll('.spin-button')

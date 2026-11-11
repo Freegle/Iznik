@@ -2,9 +2,13 @@
 
 namespace Tests\Unit\Models;
 
+use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
+use App\Services\Ripple\RippleEngagementService;
+use App\Services\TrashNothing\Sync\TnUserIdMergeConflict;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Exceptions;
 use Tests\TestCase;
 
 /**
@@ -88,6 +92,146 @@ class UserMergeTest extends TestCase
             ->value('added');
 
         $this->assertEquals(self::OLDER_DATE, $added);
+    }
+
+    public function test_merge_takes_the_older_rows_origin_and_the_lower_implicit(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        // The survivor's row is a newer ripple join; the merged account chose the group earlier.
+        $this->createMembership($user1, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_MANUAL,
+            'implicit' => 0, 'rippled' => 0,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_MANUAL, $m->added_origin, 'the origin goes with the older added date');
+        $this->assertSame(0, (int) $m->implicit, 'either account having chosen the group is enough');
+        $this->assertSame(0, (int) $m->rippled);
+        $this->assertSame(1, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX),
+            'the ripple join became ordinary');
+    }
+
+    public function test_merge_keeps_the_survivors_origin_and_implicit_when_its_row_is_older_and_both_are_implicit(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'implicit' => 1, 'rippled' => 0,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(1, (int) $m->implicit, 'both were implicit, so the merged row still is');
+        $this->assertSame(0, (int) $m->rippled);
+        $this->assertSame(0, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX), 'nothing became ordinary');
+        $this->assertSame(0, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX_TN));
+    }
+
+    /**
+     * A TrashNothing placement merged with a newer membership the member chose keeps its origin,
+     * as the older row, and becomes ordinary. The log says so, as every other clear does, and
+     * says it was a TrashNothing placement.
+     */
+    public function test_merge_logs_a_placement_made_ordinary_by_the_other_account(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_MANUAL,
+            'implicit' => 0, 'rippled' => 0,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'implicit' => 1, 'rippled' => 0,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(0, (int) $m->implicit);
+        $this->assertSame(1, $this->becameOrdinaryLogs($user1, $group, RippleEngagementService::LOG_PREFIX_TN),
+            'the log says it was a TrashNothing placement');
+    }
+
+    private function becameOrdinaryLogs(User $user, Group $group, string $prefix): int
+    {
+        return DB::table('logs')->where('user', $user->id)->where('groupid', $group->id)
+            ->where('type', 'Group')->where('subtype', 'Joined')
+            ->where('text', $prefix.RippleEngagementService::REASON_MERGED)
+            ->count();
+    }
+
+    /**
+     * An older ripple join and a newer TN placement: the merged row is a TN placement, a state
+     * ingestion writes, not a ripple-origin row with rippled = 0 that no writer makes and that
+     * ripple clean-up would delete.
+     */
+    public function test_merge_of_an_older_ripple_join_and_a_tn_placement_is_a_tn_placement(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'implicit' => 1, 'rippled' => 0,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
+        $this->assertSame(1, (int) $m->implicit);
+        $this->assertSame(0, (int) $m->rippled);
+        $this->assertEquals(self::OLDER_DATE, $m->added);
+    }
+
+    /** Two ripple joins stay a ripple join, with the older row's flags. */
+    public function test_merge_of_two_ripple_joins_is_a_ripple_join(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $this->createMembership($user1, $group, [
+            'added' => '2024-01-01 00:00:00', 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+        $this->createMembership($user2, $group, [
+            'added' => self::OLDER_DATE, 'added_origin' => Membership::ADDED_ORIGIN_RIPPLED,
+            'implicit' => 1, 'rippled' => 1,
+        ]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $m = DB::table('memberships')->where('userid', $user1->id)->where('groupid', $group->id)->first();
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, $m->added_origin);
+        $this->assertSame([1, 1], [(int) $m->implicit, (int) $m->rippled]);
     }
 
     public function test_merge_transfers_unique_memberships(): void
@@ -219,6 +363,56 @@ class UserMergeTest extends TestCase
 
         $tnId = DB::table('users')->where('id', $user1->id)->value('tnuserid');
         $this->assertEquals(12345, $tnId);
+    }
+
+    public function test_merge_refuses_different_tn_user_ids_and_reports_it(): void
+    {
+        Exceptions::fake();
+
+        $user1 = $this->createTestUser(['tnuserid' => 99020201]);
+        $user2 = $this->createTestUser(['tnuserid' => 99020202]);
+
+        $this->assertFalse(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        $this->assertNotNull(User::find($user1->id));
+        $this->assertNotNull(User::find($user2->id));
+        $this->assertEquals(99020202, DB::table('users')->where('id', $user2->id)->value('tnuserid'));
+
+        // Reported, so it reaches Sentry: one report naming both accounts.
+        Exceptions::assertReportedCount(1);
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Refused merge')
+            && str_contains($e->getMessage(), '99020201')
+            && str_contains($e->getMessage(), '99020202'));
+    }
+
+    public function test_forced_merge_of_different_tn_user_ids_proceeds_and_reports_it(): void
+    {
+        Exceptions::fake();
+
+        $user1 = $this->createTestUser(['tnuserid' => 99020203]);
+        $user2 = $this->createTestUser(['tnuserid' => 99020204]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON, true));
+
+        $this->assertNull(User::find($user2->id));
+        $this->assertEquals(99020203, DB::table('users')->where('id', $user1->id)->value('tnuserid'));
+
+        Exceptions::assertReportedCount(1);
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'tnuserid 99020204 will be lost'));
+    }
+
+    public function test_merge_with_one_tn_user_id_is_not_reported(): void
+    {
+        Exceptions::fake();
+
+        $user1 = $this->createTestUser(['tnuserid' => 99020205]);
+        $user2 = $this->createTestUser(['tnuserid' => null]);
+
+        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+
+        Exceptions::assertNotReported(TnUserIdMergeConflict::class);
     }
 
     public function test_merge_returns_false_for_same_user(): void

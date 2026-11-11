@@ -2,6 +2,17 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\Concat;
+use App\Database\Expressions\LPad;
+use App\Database\Expressions\Month;
+use App\Database\Expressions\StAsText;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Sum;
+use App\Database\Expressions\Value;
+use App\Database\Expressions\Year;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -79,17 +90,25 @@ class GroupStatsService
         $groups = DB::table('groups')->select('id', 'nameshort')->get();
 
         foreach ($groups as $group) {
-            $row = DB::selectOne(
-                "SELECT ST_AsText(polyindex) AS current, ST_AsText(ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), ?)) AS geomtext FROM `groups` WHERE id = ?",
-                [self::SRID, $group->id]
-            );
+            $row = DB::table('groups')
+                ->where('id', $group->id)
+                ->select([
+                    new Alias(new StAsText('polyindex'), 'current'),
+                    new Alias(
+                        new StAsText(new StGeomFromText(
+                            new Coalesce('poly', 'polyofficial', Value::of('POINT(0 0)')),
+                            self::SRID
+                        )),
+                        'geomtext'
+                    ),
+                ])
+                ->first();
 
             if ($row && $row->current !== $row->geomtext) {
                 if (!$dryRun) {
-                    DB::statement(
-                        "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-                        [$row->geomtext, self::SRID, $group->id]
-                    );
+                    DB::table('groups')->where('id', $group->id)->update([
+                        'polyindex' => new StGeomFromText(Value::of($row->geomtext), self::SRID),
+                    ]);
                 }
                 $count++;
             }
@@ -119,7 +138,7 @@ class GroupStatsService
             ->where('type', self::GROUP_TYPE_FREEGLE)
             ->where('publish', 1)
             ->where('onhere', 1)
-            ->orderByRaw('LOWER(nameshort) ASC')
+            ->orderBy('nameshort') // LOWER() is redundant: nameshort is utf8mb4_unicode_ci
             ->pluck('id');
 
         $count = 0;
@@ -206,7 +225,7 @@ class GroupStatsService
             $ownerCount = DB::table('users')
                 ->join('memberships', 'memberships.userid', '=', 'users.id')
                 ->where('memberships.groupid', $groupId)
-                ->where('memberships.role', 'Owner')
+                ->where('memberships.role', Membership::ROLE_OWNER)
                 ->where('users.lastaccess', '>', $start)
                 ->distinct()
                 ->count('users.id');
@@ -214,7 +233,7 @@ class GroupStatsService
             $modCount = DB::table('users')
                 ->join('memberships', 'memberships.userid', '=', 'users.id')
                 ->where('memberships.groupid', $groupId)
-                ->where('memberships.role', 'Moderator')
+                ->where('memberships.role', Membership::ROLE_MODERATOR)
                 ->where('users.lastaccess', '>', $start)
                 ->distinct()
                 ->count('users.id');
@@ -222,7 +241,7 @@ class GroupStatsService
             // Owners active on OTHER groups but not this one.
             $backupOwners = DB::table('memberships')
                 ->where('memberships.groupid', $groupId)
-                ->whereIn('memberships.role', ['Owner'])
+                ->whereIn('memberships.role', [Membership::ROLE_OWNER])
                 ->whereNotIn('memberships.userid', function ($sub) use ($groupId, $start) {
                     $sub->select('approvedby')->from('messages_groups')
                         ->where('groupid', $groupId)->where('arrival', '>', $start)->whereNotNull('approvedby');
@@ -236,7 +255,7 @@ class GroupStatsService
 
             $backupMods = DB::table('memberships')
                 ->where('memberships.groupid', $groupId)
-                ->whereIn('memberships.role', ['Moderator'])
+                ->whereIn('memberships.role', [Membership::ROLE_MODERATOR])
                 ->whereNotIn('memberships.userid', function ($sub) use ($groupId, $start) {
                     $sub->select('approvedby')->from('messages_groups')
                         ->where('groupid', $groupId)->where('arrival', '>', $start)->whereNotNull('approvedby');
@@ -269,8 +288,15 @@ class GroupStatsService
         $stats = DB::table('stats')
             ->where('type', self::STATS_TYPE_OUTCOMES)
             ->where('date', '>', $cutoff)
-            ->selectRaw("groupid, SUM(count) AS count, CONCAT(YEAR(date), '-', LPAD(MONTH(date), 2, '0')) AS month_date")
-            ->groupByRaw('groupid, YEAR(date), MONTH(date)')
+            ->groupBy('groupid', new Year('date'), new Month('date'))
+            ->select([
+                'groupid',
+                new Alias(new Sum('count'), 'count'),
+                new Alias(
+                    new Concat(new Year('date'), Value::of('-'), new LPad(new Month('date'), 2, Value::of('0'))),
+                    'month_date'
+                ),
+            ])
             ->get();
 
         $count = 0;

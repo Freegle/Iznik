@@ -19,6 +19,14 @@ parameters:
     type: boolean
     default: false
     description: "Set to true to manually build and publish ModTools to Play Store / TestFlight"
+  run_app_emulator_test:
+    type: boolean
+    default: false
+    description: "Set to true to run the Android app emulator tests on their own (the promote workflow runs them itself)"
+  run_apple_agreement_check:
+    type: boolean
+    default: false
+    description: "Set to true to check that no Apple agreement is waiting for the Account Holder (run daily by a schedule)"
 
 orbs:
   continuation: circleci/continuation@2
@@ -51,7 +59,9 @@ jobs:
             # cancelling deploy-apps would kill production build-android/build-ios jobs.
             if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
                [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
-               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
+               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ] || \
+               [ "<< pipeline.parameters.run_app_emulator_test >>" = "true" ] || \
+               [ "<< pipeline.parameters.run_apple_agreement_check >>" = "true" ]; then
               echo "Manual workflow trigger — skipping pipeline cancellation"
               exit 0
             fi
@@ -96,7 +106,7 @@ jobs:
             # Skip API-triggered pipelines (manual runs like build_modtools_production).
             # No state filter — we want to catch both setup and continuation pipelines.
             echo "$PIPELINES" | jq -r --argjson thisNum "$THIS_NUMBER" \
-              '.items[] | select(.number < $thisNum) | select(.trigger.type != "api") | .id' | while read -r PIPELINE_ID; do
+              '.items[] | select(.number < $thisNum) | select(.trigger.type != "api" and .trigger.type != "scheduled_pipeline") | .id' | while read -r PIPELINE_ID; do
               echo "Checking workflows for pipeline ${PIPELINE_ID}..."
 
               WORKFLOWS=$(curl -sf \
@@ -138,9 +148,13 @@ jobs:
             # forwards trigger parameters to the continuation pipeline when the same parameter
             # name is defined in both configs. Re-passing them causes "Conflicting pipeline
             # parameters". Only use_self_hosted needs to be set explicitly here.
+            # The emulator job (promote and run_app_emulator_test) runs on CircleCI's
+            # Android machine image, not a runner: Hetzner Cloud VMs expose no /dev/kvm.
             if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
                [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
-               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
+               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ] || \
+               [ "<< pipeline.parameters.run_app_emulator_test >>" = "true" ] || \
+               [ "<< pipeline.parameters.run_apple_agreement_check >>" = "true" ]; then
               echo "Manual workflow trigger — skipping self-hosted runner check"
               echo "{\"use_self_hosted\": false}" > /tmp/pipeline-params.json
               cat /tmp/pipeline-params.json
@@ -167,14 +181,20 @@ jobs:
                 USER_DATA=$(sed -e "s|\${RUNNER_NAME}|$RUNNER_NAME|g" \
                                 -e "s|\${RUNNER_AUTH_TOKEN}|$RUNNER_LAUNCH_TOKEN|g" \
                                 -e "s|\${HETZNER_SELF_TOKEN}|$HTOKEN|g" scripts/hetzner/cloud-init.yaml)
+                # role=ci-runner puts it behind the "ci-runner" Hetzner firewall, which lets in SSH only. The
+                # test stack publishes phpMyAdmin (logged in as root), Traefik and the APIs on every interface.
                 BODY=$(jq -n --arg n "$RUNNER_NAME" --arg u "$USER_DATA" \
-                  '{name:$n, server_type:"cpx62", image:"ubuntu-24.04", location:"nbg1", ssh_keys:["hetzner-ci-runner"], user_data:$u, start_after_create:true}')
-                RESP=$(curl -sf -X POST "$HAPI/servers" -H "Authorization: Bearer $HTOKEN" -H "Content-Type: application/json" -d "$BODY" 2>/dev/null) || true
+                  '{name:$n, server_type:"cpx62", image:"ubuntu-24.04", location:"nbg1", ssh_keys:["hetzner-ci-runner"], labels:{role:"ci-runner"}, user_data:$u, start_after_create:true}')
+                # No -f: on a refusal Hetzner says why in the body (e.g. a resource limit), and -f
+                # threw that away, leaving "provision failed:" with nothing after it.
+                RESP=$(curl -s -w '\n%{http_code}' -X POST "$HAPI/servers" -H "Authorization: Bearer $HTOKEN" -H "Content-Type: application/json" -d "$BODY" 2>&1) || true
+                HTTP_CODE=$(echo "$RESP" | tail -n 1)
+                RESP=$(echo "$RESP" | sed '$d')
                 SID=$(echo "$RESP" | jq -r '.server.id // empty' 2>/dev/null)
                 if [ -n "$SID" ]; then
                   echo "Created Hetzner server $SID; runner registers in ~4 min and claims the build."
                 else
-                  echo "WARNING: Hetzner provision failed: $(echo "$RESP" | jq -c '.error // .' 2>/dev/null) — job will queue on existing runners"
+                  echo "WARNING: Hetzner provision failed (HTTP $HTTP_CODE): $(echo "$RESP" | jq -c '.error // .' 2>/dev/null || echo "$RESP" | head -c 300) — job will queue on existing runners"
                 fi
               else
                 echo "At Hetzner runner cap ($MAX_RUNNERS) — job will queue on existing runners"
@@ -279,12 +299,11 @@ jobs:
           name: Mark CI as running on PR
           when: always
           command: |
-            if [ -z "$CIRCLE_PULL_REQUEST" ] || [ -z "$GITHUB_TOKEN" ]; then
-              echo "Not a PR build or GITHUB_TOKEN not set — skipping label"
-              exit 0
-            fi
-            PR_NUMBER=$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$')
-            if [ -z "$PR_NUMBER" ]; then exit 0; fi
+            # A fork PR is built from a mirror branch ci/pr-<n> (.github/workflows/fork-pr-ci.yml). That branch has no PR
+            # of its own, so CIRCLE_PULL_REQUEST is empty and the PR number has to come from the branch name.
+            PR_NUMBER=$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$' || true)
+            [ -n "$PR_NUMBER" ] || PR_NUMBER=$(echo "$CIRCLE_BRANCH" | sed -nE 's#^ci/pr-([0-9]+)$#\1#p')
+            if [ -z "$PR_NUMBER" ] || [ -z "$GITHUB_TOKEN" ]; then exit 0; fi
             REPO="Freegle/Iznik"
             # Remove old CI result labels (URL-encoded: "CI: Passed" = CI%3A%20Passed)
             curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
@@ -334,7 +353,9 @@ jobs:
             # clean, uncontested run.
             if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
                [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
-               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
+               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ] || \
+               [ "<< pipeline.parameters.run_app_emulator_test >>" = "true" ] || \
+               [ "<< pipeline.parameters.run_apple_agreement_check >>" = "true" ]; then
               echo "Manual workflow trigger — skipping pipeline cancellation"
 
               SIBLINGS=$(curl -sf \
@@ -401,7 +422,7 @@ jobs:
             fi
 
             echo "$PIPELINES" | jq -r --argjson thisNum "$THIS_NUMBER" \
-              '.items[] | select(.number < $thisNum) | select(.trigger.type != "api") | .id' | while read -r PIPELINE_ID; do
+              '.items[] | select(.number < $thisNum) | select(.trigger.type != "api" and .trigger.type != "scheduled_pipeline") | .id' | while read -r PIPELINE_ID; do
               WORKFLOWS=$(curl -sf \
                 -H "Circle-Token: ${CIRCLE_TOKEN}" \
                 "https://circleci.com/api/v2/pipeline/${PIPELINE_ID}/workflow" 2>/dev/null) || continue

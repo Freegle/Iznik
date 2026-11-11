@@ -6,7 +6,9 @@ use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'user:create')]
 class CreateUserCommand extends Command
 {
     protected $signature = 'user:create

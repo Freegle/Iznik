@@ -23,11 +23,12 @@ import ExternalDa from '~/components/ExternalDa.vue'
 // branch. Override globalThis.useRuntimeConfig instead. USER_SITE must be non-empty too:
 // the system-account check is `myEmail.includes(userSite)`, and '' matches every address.
 
-const { mockMe, mockRecentDonor } = vi.hoisted(() => {
+const { mockMe, mockRecentDonor, mockAskForDonations } = vi.hoisted(() => {
   const { ref } = require('vue')
   return {
     mockMe: ref({ id: 1, email: 'member@example.com' }),
     mockRecentDonor: ref(false),
+    mockAskForDonations: ref(true),
   }
 })
 
@@ -35,7 +36,11 @@ const mockConfigStore = { fetch: vi.fn().mockResolvedValue([{ value: '1' }]) }
 const mockMiscStore = { boredWithJobs: false, adsDisabled: false }
 
 vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({ me: mockMe, recentDonor: mockRecentDonor }),
+  useMe: () => ({
+    me: mockMe,
+    recentDonor: mockRecentDonor,
+    askForDonations: mockAskForDonations,
+  }),
 }))
 vi.mock('~/stores/config', () => ({ useConfigStore: () => mockConfigStore }))
 vi.mock('~/stores/misc', () => ({ useMiscStore: () => mockMiscStore }))

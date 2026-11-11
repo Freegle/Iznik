@@ -2,55 +2,99 @@
   <div>
     <b-modal id="stdmsgmodal" ref="modal" :title="title" size="lg" no-stacking>
       <template #default>
-        <label>Title</label>
-        <b-form-input v-model="stdmsg.title" />
-        <label>Action</label>
-        <b-form-select v-model="stdmsg.action" :options="options" />
-        <label>Edit Text</label>
+        <label :for="`${formId}-title`">Title</label>
+        <b-form-input :id="`${formId}-title`" v-model="stdmsg.title" />
+        <label :for="`${formId}-action`">Action</label>
         <b-form-select
-          v-if="stdmsg.action === 'Edit'"
+          :id="`${formId}-action`"
+          v-model="stdmsg.action"
+          :options="options"
+        />
+        <label v-if="isEdit" :for="`${formId}-edit-text`">Edit Text</label>
+        <b-form-select
+          v-if="isEdit"
+          :id="`${formId}-edit-text`"
           v-model="stdmsg.edittext"
         >
           <option value="Unchanged">Unchanged</option>
           <option value="Correct Case">Correct Case</option>
         </b-form-select>
-        <label>Autosend?</label>
-        <b-form-select v-model="stdmsg.autosend">
+        <label :for="`${formId}-autosend`">Autosend?</label>
+        <b-form-select :id="`${formId}-autosend`" v-model="stdmsg.autosend">
           <option :value="0">Edit before send</option>
           <option :value="1">Send Immediately</option>
         </b-form-select>
-        <label>How often do you use this?</label>
-        <b-form-select v-model="stdmsg.rarelyused">
+        <label :for="`${formId}-how-often-do-you-use-thi`"
+          >How often do you use this?</label
+        >
+        <b-form-select
+          :id="`${formId}-how-often-do-you-use-thi`"
+          v-model="stdmsg.rarelyused"
+        >
           <option :value="0">Frequently</option>
           <option :value="1">Rarely</option>
         </b-form-select>
-        <label>Change Moderation Status *</label>
-        <b-form-select v-model="stdmsg.newmodstatus">
+        <label :for="`${formId}-change-moderation-status`"
+          >Change Moderation Status *</label
+        >
+        <b-form-select
+          :id="`${formId}-change-moderation-status`"
+          v-model="stdmsg.newmodstatus"
+        >
           <option value="UNCHANGED">Unchanged</option>
           <option value="MODERATED">Moderated</option>
           <option value="DEFAULT">Group Settings</option>
           <option value="PROHIBITED">Can't Post</option>
           <option value="UNMODERATED">Unmoderated</option>
         </b-form-select>
-        <label>Change Delivery Settings *</label>
-        <b-form-select v-model="stdmsg.newdelstatus">
+        <label :for="`${formId}-change-delivery-settings`"
+          >Change Delivery Settings *</label
+        >
+        <b-form-select
+          :id="`${formId}-change-delivery-settings`"
+          v-model="stdmsg.newdelstatus"
+        >
           <option value="UNCHANGED">Unchanged</option>
           <option value="DIGEST">Daily Digest</option>
           <option value="NONE">Web Only</option>
           <option value="SINGLE">Individual Emails</option>
           <option value="ANNOUNCEMENT">Special Notices</option>
         </b-form-select>
-        <label>Subject Prefix</label>
-        <b-form-input v-model="stdmsg.subjpref" />
-        <label>Subject Suffix</label>
-        <b-form-input v-model="stdmsg.subjsuff" />
-        <label>Insert Text</label>
-        <b-form-select v-model="stdmsg.insert">
+        <label :for="`${formId}-subject-prefix`">Subject Prefix</label>
+        <b-form-input
+          :id="`${formId}-subject-prefix`"
+          v-model="stdmsg.subjpref"
+        />
+        <label :for="`${formId}-subject-suffix`">Subject Suffix</label>
+        <b-form-input
+          :id="`${formId}-subject-suffix`"
+          v-model="stdmsg.subjsuff"
+        />
+        <label :for="`${formId}-insert-text`">Insert Text</label>
+        <b-form-select :id="`${formId}-insert-text`" v-model="stdmsg.insert">
           <option value="Top">Top</option>
           <option value="Bottom">Bottom</option>
         </b-form-select>
-        <label>Message Body</label>
-        <b-form-textarea v-model="stdmsg.body" rows="10" />
+        <label :for="`${formId}-message-body`">{{
+          isEditAndMessage ? 'Added to post' : 'Message Body'
+        }}</label>
+        <b-form-textarea
+          :id="`${formId}-message-body`"
+          v-model="stdmsg.body"
+          rows="10"
+        />
+        <template v-if="isEditAndMessage">
+          <label :for="`${formId}-reply-body`">Message to poster</label>
+          <p class="text-muted small mb-1">
+            Sent to the poster when the edit is saved. The subject prefix and
+            suffix above apply to this message.
+          </p>
+          <b-form-textarea
+            :id="`${formId}-reply-body`"
+            v-model="stdmsg.replybody"
+            rows="6"
+          />
+        </template>
       </template>
       <template #footer>
         <div class="d-flex justify-content-between flex-wrap w-100">
@@ -79,11 +123,14 @@
   </div>
 </template>
 <script setup>
-import { reactive, computed } from 'vue'
+import { reactive, computed, useId } from 'vue'
 import { useModConfigStore } from '~/stores/modconfig'
 import { useStdmsgStore } from '~/stores/stdmsg'
 import { useOurModal } from '~/composables/useOurModal'
 import { useMe } from '~/composables/useMe'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   id: {
@@ -113,6 +160,7 @@ const allOptions = [
   { value: 'Reject', text: 'Reject' },
   { value: 'Leave', text: 'Reply' },
   { value: 'Edit', text: 'Edit' },
+  { value: 'Edit and Message', text: 'Edit and Message' },
   { value: 'Hold Message', text: 'Reply and Hold' },
   { value: null, text: '-- Approved Messages -- ' },
   { value: 'Delete Approved Message', text: 'Delete' },
@@ -132,6 +180,13 @@ const options = computed(() => {
 const config = computed(() => {
   return modConfigStore.current
 })
+
+const isEditAndMessage = computed(
+  () => stdmsg.value?.action === 'Edit and Message'
+)
+const isEdit = computed(
+  () => stdmsg.value?.action === 'Edit' || isEditAndMessage.value
+)
 
 const locked = computed(() => {
   // A protected config with a null createdby has no real lock owner, so it must

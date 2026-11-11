@@ -5,10 +5,12 @@ namespace App\Console\Commands\Ripple;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Services\Ripple\ReachMemberReconcileService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Daily backstop for the member side of reach mail. See ReachMemberReconcileService.
  */
+#[AsCommand(name: 'ripple:reconcile-reach-members')]
 class ReconcileReachMembersCommand extends Command
 {
     use PreventsOverlapping;

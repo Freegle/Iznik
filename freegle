@@ -162,7 +162,11 @@ cmd_switch() {
     fi
 
     mkdir -p "$(dirname "$state_file")"
-    printf '%s\n' "$dir" > "$state_file"
+    # Add the worktree rather than replace the list: sub-agents share the session id, and each
+    # works in its own worktree, so one switching must not lock the others out.
+    if ! grep -Fxq -- "$dir" "$state_file" 2>/dev/null; then
+        printf '%s\n' "$dir" >> "$state_file"
+    fi
     rm -f "$legacy_file"
     echo -e "${GREEN}Switched active worktree to:${NC} $dir"
     [[ "$sid" == "nosession" ]] && echo -e "${RED}Warning: no CLAUDE_CODE_SESSION_ID; state is not session-isolated.${NC}"
@@ -242,6 +246,20 @@ cmd_worktree_create() {
     # Create the worktree
     git -C "$main_repo" worktree add "$worktree_dir" "$branch"
 
+    if ! _configure_worktree "$main_repo" "$worktree_dir" "$name"; then
+        git -C "$main_repo" worktree remove "$worktree_dir" --force 2>/dev/null || true
+        return 1
+    fi
+}
+
+# Give a git worktree everything the main checkout's stack needs to run beside it:
+# its own .env with a unique compose project, free host ports and Loki volume, the
+# large gitignored downloads, and running containers. Used by create, and by setup
+# for a worktree another tool made (Orca runs setup as the repo's setup hook).
+_configure_worktree() {
+    local main_repo="$1" worktree_dir="$2" name="$3"
+    local project_name="freegle-${name}"
+
     # Fix CRLF line endings in subtrees (WSL/Windows git may convert LF→CRLF,
     # breaking shell scripts like generate-swagger.sh inside containers)
     for dir in iznik-nuxt3 iznik-server-go; do
@@ -254,7 +272,6 @@ cmd_worktree_create() {
     fi
 
     # Set unique project name and remove ports overlay
-    local project_name="freegle-${name}"
     sed -i "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=${project_name}|" "$worktree_dir/.env"
     sed -i "s|^COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.yml|" "$worktree_dir/.env"
 
@@ -295,7 +312,6 @@ cmd_worktree_create() {
     if (( ${#free_ports[@]} != num_ports )); then
         echo -e "${RED}Error: could not find ${num_ports} free host ports below 65500.${NC}" >&2
         echo "Remove an unused worktree to free its ports:  freegle worktree remove <name>" >&2
-        git -C "$main_repo" worktree remove "$worktree_dir" --force 2>/dev/null || true
         return 1
     fi
 
@@ -358,6 +374,59 @@ cmd_worktree_create() {
     echo ""
     echo "Chrome MCP tip: use isolatedContext=\"${name}\" when opening tabs to avoid"
     echo "  tab conflicts with other Claude sessions using Chrome MCP."
+}
+
+# Configure a worktree that was created without this CLI, e.g. by Orca. Defaults to
+# the current directory. Leaves alone a worktree that already has its own project.
+cmd_worktree_setup() {
+    local worktree_dir
+    worktree_dir=$(git -C "${1:-$PWD}" rev-parse --show-toplevel 2>/dev/null) || {
+        echo -e "${RED}Error: ${1:-$PWD} is not inside a git worktree${NC}" >&2
+        return 1
+    }
+    local main_repo
+    main_repo=$(get_main_repo)
+    if [[ "$worktree_dir" == "$main_repo" ]]; then
+        echo -e "${RED}Error: the main checkout is not a worktree${NC}" >&2
+        return 1
+    fi
+    local project
+    project=$(get_project_name "$worktree_dir")
+    if [[ -n "$project" && "$project" != "$(get_project_name "$main_repo")" ]]; then
+        echo "Worktree already configured as compose project $project."
+        return 0
+    fi
+    _configure_worktree "$main_repo" "$worktree_dir" "$(worktree_slug "$(basename "$worktree_dir")")"
+}
+
+# Stop a worktree's stack, drop its volumes, and hand back the root-owned files its
+# containers wrote, so whatever deletes the directory next can. Defaults to the
+# current directory. Orca runs it as the repo's archive hook.
+cmd_worktree_teardown() {
+    local worktree_dir
+    worktree_dir=$(git -C "${1:-$PWD}" rev-parse --show-toplevel 2>/dev/null) || {
+        echo -e "${RED}Error: ${1:-$PWD} is not inside a git worktree${NC}" >&2
+        return 1
+    }
+    if [[ "$worktree_dir" == "$(get_main_repo)" ]]; then
+        echo -e "${RED}Error: refusing to tear down the main checkout${NC}" >&2
+        return 1
+    fi
+    local project
+    project=$(get_project_name "$worktree_dir")
+    if [[ -n "$project" ]]; then
+        echo "Stopping compose project $project..."
+        (cd "$worktree_dir" && docker-compose down -v 2>&1) || true
+    fi
+    docker run --rm -v "$worktree_dir:/w:rw" alpine \
+        chown -R "$(id -u):$(id -g)" /w 2>/dev/null || true
+}
+
+# A directory name as a compose project suffix: lower case, letters, digits and dashes.
+worktree_slug() {
+    local slug
+    slug=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
+    echo "${slug:-worktree}"
 }
 
 cmd_worktree_list() {
@@ -622,6 +691,14 @@ case "${1:-help}" in
                 shift 2
                 cmd_worktree_create "$@"
                 ;;
+            setup)
+                shift 2
+                cmd_worktree_setup "$@"
+                ;;
+            teardown)
+                shift 2
+                cmd_worktree_teardown "$@"
+                ;;
             list|ls)
                 cmd_worktree_list
                 ;;
@@ -634,7 +711,7 @@ case "${1:-help}" in
                 cmd_worktree_prune "$@"
                 ;;
             *)
-                echo "Usage: freegle worktree {create|list|remove|prune} [args]"
+                echo "Usage: freegle worktree {create|setup|teardown|list|remove|prune} [args]"
                 ;;
         esac
         ;;
@@ -648,6 +725,8 @@ case "${1:-help}" in
         echo "  switch <name>           Make Claude's escape guard treat <name>'s worktree as the working root"
         echo "  switch --clear          Revert to the launch worktree"
         echo "  worktree create <name>  Create isolated worktree (unique ports, starts containers)"
+        echo "  worktree setup [dir]    Configure a worktree made elsewhere (e.g. Orca): ports, .env, containers"
+        echo "  worktree teardown [dir] Stop a worktree's stack and drop its volumes, before deleting it"
         echo "  worktree list           List all worktrees"
         echo "  worktree remove <name>  Stop and remove a worktree"
         echo "  worktree prune [-n]     Remove worktrees for closed/merged PRs (safe only);"

@@ -6,6 +6,7 @@ use App\Console\Concerns\PreventsOverlapping;
 use App\Services\Ripple\ReplyAttributionBackfillService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * One-shot backfill of the durable graded-attribution evidence onto legacy
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\Log;
  * migration 2026_07_07_000002; safe to re-run (idempotent - only visits unfilled rows). See
  * ReplyAttributionBackfillService for what is (and deliberately is not) derivable.
  */
+#[AsCommand(name: 'ripple:backfill-reply-attribution')]
 class BackfillReplyAttributionCommand extends Command
 {
     use PreventsOverlapping;

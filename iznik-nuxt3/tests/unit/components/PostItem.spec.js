@@ -162,29 +162,25 @@ describe('PostItem', () => {
     })
   })
 
-  describe('item warnings', () => {
-    it.each([
-      ['sofa', 'Upholstered household items'],
-      ['mattress', 'Upholstered household items'],
-      ['helmet', 'Motorcycle and cycle helmets'],
-      ['car seat', 'Car seats'],
-      ['knife', 'Knives'],
-      ['contact lens solution', 'Sealed and in date'],
-      ['all in one contact lens fluid', 'Sealed and in date'],
-      ['sunscreen', 'Sealed and in date'],
-      ['eye makeup', 'Sealed and in date'],
-      ['mascara', 'Sealed and in date'],
-    ])('shows warning for "%s"', (item, expectedType) => {
-      mockMessage.mockReturnValue({ item })
-      const wrapper = createWrapper()
-      expect(wrapper.vm.warn).toBeTruthy()
-      expect(wrapper.vm.warn.type).toContain(expectedType)
+  // Which item gets which note is tested in useItemWarnings.spec.js.
+  describe('item notes', () => {
+    it('shows the note for the item under the box', () => {
+      mockMessage.mockReturnValue({ item: 'child car seat' })
+      const wrapper = createWrapper({ type: 'Offer' })
+      expect(wrapper.text()).toContain('Car seats')
+      expect(wrapper.text()).toContain('Please say the make and model')
     })
 
-    it('shows no warning for safe items', () => {
+    it('gives someone asking the wording for an asker', () => {
+      mockMessage.mockReturnValue({ item: 'child car seat' })
+      const wrapper = createWrapper({ type: 'Wanted' })
+      expect(wrapper.text()).toContain('Ask for the make, model and age')
+    })
+
+    it('shows no note for safe items', () => {
       mockMessage.mockReturnValue({ item: 'books' })
       const wrapper = createWrapper()
-      expect(wrapper.vm.warn).toBeNull()
+      expect(wrapper.find('.notice-message.warning').exists()).toBe(false)
     })
   })
 

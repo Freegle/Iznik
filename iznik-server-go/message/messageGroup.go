@@ -49,6 +49,11 @@ type MessageGroup struct {
 	// PostSyncer::processPost / GroupPostIngestionService in iznik-batch).
 	ModMessagingAllowed bool `json:"mod_messaging_allowed"`
 
+	// CanMessagePoster is whether this community's moderators may write to the poster about
+	// this post: always on a community it was posted on, and on one it rippled into only
+	// when the poster is an ordinary member there (PosterMessagingGroups). Moderators only.
+	CanMessagePoster *bool `json:"canmessageposter,omitempty" gorm:"-"`
+
 	// LockedByHome is stored 1 on a rippled-in copy pulled back by a moderator of the post's
 	// home community. In the payload it is the EFFECTIVE lock (effectiveHomeLocks): still 1
 	// only while the home copy exists and is not Approved, so ModTools can say the home

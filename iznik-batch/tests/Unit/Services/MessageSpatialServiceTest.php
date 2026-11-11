@@ -1321,4 +1321,104 @@ class MessageSpatialServiceTest extends TestCase
 
         return $seen[0];
     }
+
+    // --- promised on a post offering several of something (#1444) ---
+    //
+    // messages_spatial.promised feeds the browse feeds, so it has to mean "every item
+    // still available is spoken for", not "somebody has been promised something". A
+    // promise carries no quantity, so one promise counts as one item.
+
+    private function createOfferOfThree(): Message
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: jars (London)',
+            'textbody' => 'Three jars.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        // The model casts availablenow to boolean, so set the counts directly.
+        DB::table('messages')->where('id', $message->id)->update([
+            'availableinitially' => 3,
+            'availablenow' => 3,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(5),
+        ]);
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival, successful, promised) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?, 0, 0)",
+            [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
+        );
+
+        return $message;
+    }
+
+    private function promiseTo(Message $message): void
+    {
+        DB::table('messages_promises')->insert([
+            'msgid' => $message->id,
+            'userid' => $this->createTestUser()->id,
+        ]);
+    }
+
+    public function test_multi_item_post_is_not_promised_while_items_remain(): void
+    {
+        $message = $this->createOfferOfThree();
+        $this->promiseTo($message);
+
+        $this->service->updateSpatialIndex();
+
+        $row = DB::table('messages_spatial')->where('msgid', $message->id)->first();
+        $this->assertEquals(0, $row->promised, 'one of three promised leaves two free');
+    }
+
+    public function test_multi_item_post_is_promised_once_every_item_is_spoken_for(): void
+    {
+        $message = $this->createOfferOfThree();
+        $this->promiseTo($message);
+        $this->promiseTo($message);
+        $this->promiseTo($message);
+
+        $this->service->updateSpatialIndex();
+
+        $row = DB::table('messages_spatial')->where('msgid', $message->id)->first();
+        $this->assertEquals(1, $row->promised);
+    }
+
+    public function test_multi_item_post_wrongly_stamped_promised_is_corrected(): void
+    {
+        $message = $this->createOfferOfThree();
+        $this->promiseTo($message);
+        DB::table('messages_spatial')->where('msgid', $message->id)->update(['promised' => 1]);
+
+        $this->service->updateSpatialIndex();
+
+        $row = DB::table('messages_spatial')->where('msgid', $message->id)->first();
+        $this->assertEquals(0, $row->promised, 'a stamp left by the old one-promise rule is cleared');
+    }
+
+    public function test_single_item_post_is_promised_on_the_first_promise(): void
+    {
+        $message = $this->createOfferOfThree();
+        DB::table('messages')->where('id', $message->id)->update([
+            'availableinitially' => 1,
+            'availablenow' => 1,
+        ]);
+        $this->promiseTo($message);
+
+        $this->service->updateSpatialIndex();
+
+        $row = DB::table('messages_spatial')->where('msgid', $message->id)->first();
+        $this->assertEquals(1, $row->promised);
+    }
 }

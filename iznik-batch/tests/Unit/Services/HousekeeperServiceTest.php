@@ -241,6 +241,27 @@ class HousekeeperServiceTest extends TestCase
         $this->assertSame("line 1\nline 2", $row->last_log);
     }
 
+    public function test_record_run_names_a_new_task_after_its_key(): void
+    {
+        $taskKey = 'test-task-' . uniqid();
+
+        $this->service->recordRun($taskKey, 'success', 'ok');
+
+        $this->assertSame($taskKey, DB::table('housekeeper_tasks')->where('task_key', $taskKey)->value('name'));
+    }
+
+    public function test_record_run_keeps_the_name_the_registry_set(): void
+    {
+        $taskKey = 'test-task-' . uniqid();
+        DB::table('housekeeper_tasks')->insert(['task_key' => $taskKey, 'name' => 'Facebook deletions', 'updated_at' => now()]);
+
+        $this->service->process(['task' => $taskKey, 'status' => 'success', 'summary' => 'done', 'data' => []]);
+
+        $row = DB::table('housekeeper_tasks')->where('task_key', $taskKey)->first();
+        $this->assertSame('Facebook deletions', $row->name);
+        $this->assertSame('success', $row->last_status);
+    }
+
     private function assertStringContains(string $needle, string $haystack): void
     {
         $this->assertStringContainsString($needle, $haystack);

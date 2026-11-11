@@ -99,4 +99,54 @@ test.describe('ModTools Dashboard', () => {
     await assertNoErrors(page)
     expect(errors).toHaveLength(0)
   })
+
+  // Every other ModTools test logs in and leaves / at once, so the home page's
+  // async work (eight config fetches, then the dashboard, and ModYesterday's
+  // backup check) finished on some CI runs and not others and its coverage
+  // moved with no code change. This test waits for that work and ends on /.
+  test('home dashboard renders and the test ends on /', async ({
+    page,
+    testEnv,
+  }) => {
+    // ModYesterday asks the live Yesterday host, which is not part of the CI
+    // stack. Answer for it so the wait below never depends on that host.
+    // Registered before login because the home page mounts during login.
+    await page.route(
+      'https://yesterday.ilovefreegle.org:8444/api/**',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          headers: { 'access-control-allow-origin': '*' },
+          body: JSON.stringify(
+            route.request().url().endsWith('/restore-status')
+              ? { inProgress: false, status: 'completed' }
+              : {
+                  // Today, so the backup is not reported as over two days old.
+                  date: new Date().toISOString().slice(0, 10).replace(/-/g, ''),
+                  backup_time: '03:00',
+                }
+          ),
+        })
+    )
+
+    // testEnv.mod is seeded as Admin, which ModYesterday needs.
+    await loginViaModTools(page, testEnv.mod.email)
+
+    // The heading sits under v-if="start && end", set only after onMounted's
+    // config fetches finish and update() runs.
+    await expect(
+      page.getByRole('heading', { name: /Active Freeglers/ })
+    ).toBeVisible({ timeout: timeouts.navigation.slowPage })
+
+    // ModYesterday shows its alert only once both of its fetches have settled.
+    const yesterday = page.locator('.alert', {
+      hasText: 'System backed up on Yesterday up to:',
+    })
+    await expect(yesterday).toBeVisible({ timeout: timeouts.ui.appearance })
+    await expect(yesterday).toContainText(/\d{1,2} \w{3} \d{4}/)
+
+    // No navigation: coverage is read from this page when the test ends.
+    expect(new URL(page.url()).pathname).toBe('/')
+  })
 })

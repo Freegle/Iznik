@@ -9,7 +9,27 @@
     </div>
     <div v-else-if="error" class="text-danger">Failed to load: {{ error }}</div>
     <div v-else>
-      <b-table-simple hover responsive small>
+      <div class="mb-2">
+        <b-button
+          size="sm"
+          :variant="failingOnly ? 'outline-secondary' : 'secondary'"
+          class="me-1"
+          @click="failingOnly = false"
+        >
+          All ({{ cronJobs.length }})
+        </b-button>
+        <b-button
+          size="sm"
+          :variant="failingOnly ? 'danger' : 'outline-danger'"
+          @click="failingOnly = true"
+        >
+          Failing ({{ failingCount }})
+        </b-button>
+      </div>
+      <p v-if="failingOnly && !failingCount" class="text-success">
+        No jobs are failing.
+      </p>
+      <b-table-simple v-else hover responsive small>
         <b-thead>
           <b-tr>
             <b-th class="status-col" />
@@ -53,8 +73,9 @@
                   <span v-else class="text-muted">Never</span>
                 </b-td>
                 <b-td>
+                  <span v-if="!job.active" class="text-muted">Disabled</span>
                   <span
-                    v-if="job.last_run_at && job.interval_minutes"
+                    v-else-if="job.last_run_at && job.interval_minutes"
                     class="text-nowrap"
                     :class="{ 'text-danger fw-bold': isOverdue(job) }"
                   >
@@ -114,9 +135,16 @@ const now = ref(new Date())
 let clockTimer = null
 let ticks = 0
 
+// Failing means the same as the red cross on the row: a bad exit, never run, or overdue.
+const failingOnly = ref(false)
+const failingCount = computed(
+  () => cronJobs.value.filter((job) => !isOk(job)).length
+)
+
 const groupedJobs = computed(() => {
   const groups = {}
   for (const job of cronJobs.value) {
+    if (failingOnly.value && isOk(job)) continue
     const cat = job.category || 'Other'
     if (!groups[cat]) groups[cat] = []
     groups[cat].push(job)

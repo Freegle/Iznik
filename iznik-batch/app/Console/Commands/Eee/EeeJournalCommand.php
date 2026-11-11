@@ -4,6 +4,7 @@ namespace App\Console\Commands\Eee;
 
 use App\Services\EeeSqliteService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Display the EEE research journal — observations that have been recorded
@@ -21,6 +22,7 @@ use Illuminate\Console\Command;
  *   php artisan eee:journal --scope=mixed_types
  *   php artisan eee:journal --promote=42 --to=consistent
  */
+#[AsCommand(name: 'eee:journal')]
 class EeeJournalCommand extends Command
 {
     protected $signature = 'eee:journal

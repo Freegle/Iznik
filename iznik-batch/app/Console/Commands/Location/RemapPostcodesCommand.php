@@ -5,6 +5,7 @@ namespace App\Console\Commands\Location;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Services\PostcodeRemapService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Nightly full remap of every Postcode location to its nearest enclosing
@@ -16,6 +17,7 @@ use Illuminate\Console\Command;
  * DoogalService relies on this nightly pass to map newly-imported postcodes onto
  * group areas (it deliberately does not remap inline).
  */
+#[AsCommand(name: 'locations:remap-postcodes')]
 class RemapPostcodesCommand extends Command
 {
     use PreventsOverlapping;

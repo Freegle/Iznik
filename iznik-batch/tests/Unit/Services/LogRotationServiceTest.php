@@ -172,4 +172,63 @@ class LogRotationServiceTest extends TestCase
 
         $this->assertSame(0, $result['compressed']);
     }
+    public function test_rotate_live_archives_appended_log_and_truncates_in_place(): void
+    {
+        $path = $this->writeFile('cron/chats_process-spam.log', "run one\n", 0);
+        $handle = fopen($path, 'a');
+        fwrite($handle, "run two\n");
+        fflush($handle);
+
+        $result = $this->service->rotateLive($this->dir.'/cron');
+
+        $this->assertSame(1, $result['rotated']);
+        $this->assertSame(0, filesize($path), 'live file is emptied, not replaced');
+        $archives = glob($path.'.*.gz');
+        $this->assertCount(1, $archives);
+        $this->assertSame("run one\nrun two\n", gzdecode(file_get_contents($archives[0])));
+
+        // The appender still holds its handle; its next write must land in the live file.
+        fwrite($handle, "run three\n");
+        fclose($handle);
+        $this->assertSame("run three\n", file_get_contents($path));
+    }
+
+    public function test_rotate_live_skips_empty_logs_and_non_log_files(): void
+    {
+        $this->writeFile('cron/empty.log', '', 0);
+        $this->writeFile('cron/notes.txt', 'keep', 0);
+
+        $result = $this->service->rotateLive($this->dir.'/cron');
+
+        $this->assertSame(0, $result['rotated']);
+        $this->assertSame([], glob($this->dir.'/cron/*.gz'));
+    }
+
+    public function test_rotate_live_does_not_touch_existing_archives(): void
+    {
+        $this->writeFile('cron/a.log', 'content', 0);
+        $first = $this->service->rotateLive($this->dir.'/cron', false, 'first');
+        file_put_contents($this->dir.'/cron/a.log', 'more');
+        $second = $this->service->rotateLive($this->dir.'/cron', false, 'second');
+
+        $this->assertSame(1, $first['rotated']);
+        $this->assertSame(1, $second['rotated']);
+        $this->assertCount(2, glob($this->dir.'/cron/a.log.*.gz'));
+    }
+
+    public function test_rotate_live_dry_run_changes_nothing(): void
+    {
+        $path = $this->writeFile('cron/a.log', 'content', 0);
+
+        $result = $this->service->rotateLive($this->dir.'/cron', true);
+
+        $this->assertSame(1, $result['rotated']);
+        $this->assertSame('content', file_get_contents($path));
+        $this->assertSame([], glob($this->dir.'/cron/*.gz'));
+    }
+
+    public function test_rotate_live_on_missing_directory_is_a_noop(): void
+    {
+        $this->assertSame(0, $this->service->rotateLive($this->dir.'/nope')['rotated']);
+    }
 }

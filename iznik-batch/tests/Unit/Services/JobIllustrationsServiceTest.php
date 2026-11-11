@@ -15,7 +15,7 @@ class JobIllustrationsServiceTest extends TestCase
         DB::table('ai_images')->delete();
     }
 
-    private function makeService(array $fetchResult = null, bool $skipAll = false): JobIllustrationsService
+    private function makeService(?array $fetchResult = null, bool $skipAll = false): JobIllustrationsService
     {
         $mock = $this->createMock(PollinationsService::class);
         $mock->method('shouldSkipItem')->willReturn($skipAll);

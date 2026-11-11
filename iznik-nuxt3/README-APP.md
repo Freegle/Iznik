@@ -143,6 +143,17 @@ Custom implementation using Freegle's fork:
   `settings.notifications.dailypostspush` (app-only toggle in Settings). Tapping opens `/browse`.
   Server side is `push:daily-posts` in iznik-batch, gated by `FREEGLE_POSTS_PUSH_ALLOWLIST`.
 
+#### A tap that started the app is not replayed
+
+Chat pushes carry a `notification` block (`forceVisible` in `PushNotificationService`), so
+Firebase shows them and a tap starts `MainActivity` with the message data as extras. Android
+keeps that intent with the task. Reopened from Recents after Android has killed the app, it
+hands that intent back marked `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`, and the push plugin read
+it as a new tap: a member's app opened on the same chat every time for days.
+`MainActivity.onCreate` swaps such an intent for a plain launcher one, unless it carries a
+`google.message_id` not yet delivered (ids are kept in SharedPreferences): after a kill a genuine
+new tap can carry the history flag too, and must get through. A new tap is unaffected. `tests/e2e/app/notifications.spec.js` covers Recents, the launcher and a new tap.
+
 #### Android backup and FCM tokens
 
 Android auto-backup must NOT restore Firebase's installation prefs: a restored
@@ -239,6 +250,11 @@ Mobile-specific Stripe implementation:
    - Check for available updates
    - Version comparison logic
    - Update prompts
+   - Server kill switch: when `GET /session` returns `ret:123` (build older
+     than `app_min_webversion`), `SomethingWentWrong.vue` covers the screen
+     with an "Update required" prompt whose "Update now" button opens the
+     app store. The login modal never opens while this is showing, because
+     signing in again cannot fix an out-of-date build.
 
 8. **Rate App**
    - Native rating prompts
@@ -1277,7 +1293,29 @@ For mobile app specific issues:
 
 ---
 
-**Last Updated**: 2025-11-29
+<details>
+<summary><h2>Emulator Gate (before promotion)</h2></summary>
+
+Before the promote workflow moves a Freegle build to a live store track, CircleCI runs the
+Android app on a headless emulator against the local Docker stack
+(`freegle/app-emulator-tests` in `manual-promote-submit`, split across four parallel
+machines; on demand with the `run_app_emulator_test` pipeline parameter). The ModTools
+iOS submission does not wait for it. It builds the `e2e` Gradle build type
+(`android/app/build.gradle`): the release configuration with R8, signed with the debug
+key, with cleartext permitted by `android/app/src/e2e/AndroidManifest.xml` and WebView
+remote debugging plus mixed content switched on by `FREEGLE_APP_E2E=true` in
+`capacitor.config.ts`. The Playwright `app` project (`tests/e2e/app/`) then drives the
+app's WebView: native plugin registration (the check behind issue 14), push notification
+delivery and routing through a fake FCM broadcast, deep links, the camera (the AVD's
+emulated camera through the system camera app), the photo picker, sharing an image into
+the app warm and cold (`MainActivity`'s copy and the `FreegleShare` bridge), and the post
+and reply flows. Scripts and traps: FreegleDocker `scripts/app-e2e/README.md`.
+
+</details>
+
+---
+
+**Last Updated**: 2026-10-12
 **Current Version**: 3.2.x (production branch)
 **Capacitor Version**: 7.x
 **CI/CD**: CircleCI with Fastlane (iOS and Android fully automated)

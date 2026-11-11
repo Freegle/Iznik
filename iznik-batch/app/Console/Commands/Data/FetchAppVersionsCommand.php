@@ -6,7 +6,9 @@ use App\Services\AppVersionFetcherService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'data:fetch-app-versions')]
 class FetchAppVersionsCommand extends Command
 {
     protected $signature = 'data:fetch-app-versions

@@ -2,8 +2,11 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
+use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\User;
+use App\Services\Lockdown\LockdownService;
 use App\Services\LokiService;
 use App\Services\Ripple\RippleReplyService;
 use App\Support\EmojiUtils;
@@ -137,6 +140,33 @@ class PushNotificationService
     }
 
     /**
+     * Whether a lockdown currently holds the push surface. Checked at the top
+     * of every entry point that would otherwise send FCM notifications, so a
+     * pressed lockdown stops push the same run it takes effect (11.4) - there
+     * is no separate hold/release bookkeeping for push, unlike chat/posts,
+     * because a missed push has no backlog to catch up: the badge and the
+     * in-app notification it points at are still there next time the app
+     * polls, so nothing is lost by skipping the FCM send itself.
+     */
+    private function pushHeldByLockdown(string $context): bool
+    {
+        $lockdown = app(LockdownService::class);
+        // Called once per push, at the top of every entry point (section 11.6 point 3),
+        // so this is the one place to mark the push loop as still running.
+        $lockdown->ack('push');
+
+        if (! $lockdown->held('push')) {
+            return false;
+        }
+
+        $lockdown->count('push');
+
+        Log::info('Push notification held by lockdown', ['context' => $context]);
+
+        return true;
+    }
+
+    /**
      * Notify group moderators of new pending work.
      *
      * Matches legacy PushNotifications::notifyGroupMods().
@@ -147,10 +177,13 @@ class PushNotificationService
     {
         $count = 0;
 
-        $mods = DB::select(
-            "SELECT DISTINCT userid FROM memberships WHERE groupid = ? AND role IN ('Owner', 'Moderator')",
-            [$groupId]
-        );
+        $mods = DB::table('memberships')
+            ->distinct()
+            ->select('userid')
+            ->where('groupid', $groupId)
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
+            ->get()
+            ->all();
 
         foreach ($mods as $mod) {
             // Check per-group notification settings
@@ -181,6 +214,10 @@ class PushNotificationService
      */
     public function notify(int $userId, bool $modtools): int
     {
+        if ($this->pushHeldByLockdown('notify')) {
+            return 0;
+        }
+
         if (! $this->messaging) {
             return $this->messagingUnavailable('notify', ['user_id' => $userId]);
         }
@@ -278,14 +315,19 @@ class PushNotificationService
      */
     public function notifyUser(int $userId): int
     {
+        if ($this->pushHeldByLockdown('notify_user')) {
+            return 0;
+        }
+
         if (! $this->messaging) {
             return $this->messagingUnavailable('notify_user', ['user_id' => $userId]);
         }
 
-        $notifs = DB::select(
-            'SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?',
-            [$userId, self::APPTYPE_USER]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', self::APPTYPE_USER)
+            ->get()
+            ->all();
 
         if (empty($notifs)) {
             return 0;
@@ -368,11 +410,25 @@ class PushNotificationService
             ->join('chat_rooms as crm', 'crm.id', '=', 'cr.chatid')
             ->whereIn('crm.chattype', [ChatRoom::TYPE_USER2USER, ChatRoom::TYPE_USER2MOD])
             ->where('cr.userid', $userId)
-            ->whereRaw('(cr.lastmsgseen IS NULL OR cr.lastmsgseen < (
-                SELECT MAX(cm.id) FROM chat_messages cm
-                WHERE cm.chatid = cr.chatid AND cm.userid <> ?
-                  AND ' . RippleReplyService::deliveryGateSql('cm.id') . '
-            ))', [$userId])
+            ->where(function ($q) use ($userId) {
+                $q->whereNull('cr.lastmsgseen')
+                    ->orWhere('cr.lastmsgseen', '<', function ($sub) use ($userId) {
+                        // Inlined equivalent of RippleReplyService::deliveryGateSql('cm.id'):
+                        // a rippling-held reply hasn't reached the poster yet, so it doesn't
+                        // count as an unseen message until released.
+                        $sub->from('chat_messages as cm')
+                            ->whereColumn('cm.chatid', 'cr.chatid')
+                            ->where('cm.userid', '<>', $userId)
+                            ->whereNotExists(function ($q2) {
+                                $q2->from('rippling_held_replies as cmr')
+                                    ->whereColumn('cmr.chatmsgid', 'cm.id')
+                                    ->where('cmr.status', '<>', 'released');
+                            });
+                        // Correlated MAX(cm.id) as the subquery's single output column,
+                        // without a selectRaw escape hatch.
+                        $sub->aggregate = ['function' => 'max', 'columns' => ['cm.id']];
+                    });
+            })
             ->count();
 
         return [$chatcount, $notifcount];
@@ -520,11 +576,13 @@ class PushNotificationService
         $zero = ['pending' => 0, 'spam' => 0, 'volunteering' => 0, 'total' => 0];
 
         // Get all approved mod/owner memberships with settings to determine active/inactive.
-        $memberships = DB::select(
-            "SELECT groupid, settings FROM memberships
-             WHERE userid = ? AND role IN ('Owner', 'Moderator') AND collection = 'Approved'",
-            [$userId]
-        );
+        $memberships = DB::table('memberships')
+            ->select('groupid', 'settings')
+            ->where('userid', $userId)
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
+            ->where('collection', 'Approved')
+            ->get()
+            ->all();
 
         if (empty($memberships)) {
             return $zero;
@@ -543,56 +601,55 @@ class PushNotificationService
             return $zero;
         }
 
-        $placeholders = implode(',', array_fill(0, count($activeGroupIds), '?'));
-
         // Unheld pending messages in active groups.
-        $pendingParams = array_merge([$userId], $activeGroupIds);
-        $pending = DB::selectOne(
-            "SELECT COUNT(*) as cnt FROM messages_groups mg
-             INNER JOIN messages m ON m.id = mg.msgid
-             INNER JOIN users u ON u.id = m.fromuser AND u.deleted IS NULL
-             INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ?
-             WHERE mem.role IN ('Owner', 'Moderator')
-             AND mem.collection = 'Approved'
-             AND mg.collection = 'Pending'
-             AND mg.groupid IN ({$placeholders})
-             AND mg.deleted = 0
-             -- Per-group hold: mg.heldby, not the message-wide messages.heldby mirror,
-             -- which suppressed the push for groups that had never held anything just
-             -- because another group the post rippled to had (Discourse 9970/2).
-             AND mg.heldby IS NULL",
-            $pendingParams
-        );
+        $pendingCnt = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', function ($join) {
+                $join->on('u.id', '=', 'm.fromuser')->whereNull('u.deleted');
+            })
+            ->join('memberships as mem', function ($join) use ($userId) {
+                $join->on('mem.groupid', '=', 'mg.groupid')->where('mem.userid', '=', $userId);
+            })
+            ->whereIn('mem.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
+            ->where('mem.collection', 'Approved')
+            ->where('mg.collection', 'Pending')
+            ->whereIn('mg.groupid', $activeGroupIds)
+            ->where('mg.deleted', 0)
+            // Per-group hold: mg.heldby, not the message-wide messages.heldby mirror,
+            // which suppressed the push for groups that had never held anything just
+            // because another group the post rippled to had (Discourse 9970/2).
+            ->whereNull('mg.heldby')
+            ->count();
 
         // Spam collection messages in active groups.
-        $spamParams = array_merge([$userId], $activeGroupIds);
-        $spam = DB::selectOne(
-            "SELECT COUNT(*) as cnt FROM messages_groups mg
-             INNER JOIN messages m ON m.id = mg.msgid
-             INNER JOIN users u ON u.id = m.fromuser AND u.deleted IS NULL
-             INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ?
-             WHERE mem.role IN ('Owner', 'Moderator')
-             AND mem.collection = 'Approved'
-             AND mg.collection = 'Spam'
-             AND mg.groupid IN ({$placeholders})
-             AND mg.deleted = 0",
-            $spamParams
-        );
+        $spamCnt = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', function ($join) {
+                $join->on('u.id', '=', 'm.fromuser')->whereNull('u.deleted');
+            })
+            ->join('memberships as mem', function ($join) use ($userId) {
+                $join->on('mem.groupid', '=', 'mg.groupid')->where('mem.userid', '=', $userId);
+            })
+            ->whereIn('mem.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
+            ->where('mem.collection', 'Approved')
+            ->where('mg.collection', 'Spam')
+            ->whereIn('mg.groupid', $activeGroupIds)
+            ->where('mg.deleted', 0)
+            ->count();
 
         // Pending volunteering ops in active groups (mirrors session.go pendingvolunteering query).
-        $volunteering = DB::selectOne(
-            "SELECT COUNT(DISTINCT v.id) AS cnt FROM volunteering v
-             INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id
-             LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id
-             WHERE vg.groupid IN ({$placeholders})
-             AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0
-             AND (vd.end IS NULL OR vd.end >= NOW())",
-            $activeGroupIds
-        );
-
-        $pendingCnt = (int) ($pending->cnt ?? 0);
-        $spamCnt = (int) ($spam->cnt ?? 0);
-        $volunteeringCnt = (int) ($volunteering->cnt ?? 0);
+        $volunteeringCnt = DB::table('volunteering as v')
+            ->join('volunteering_groups as vg', 'vg.volunteeringid', '=', 'v.id')
+            ->leftJoin('volunteering_dates as vd', 'vd.volunteeringid', '=', 'v.id')
+            ->whereIn('vg.groupid', $activeGroupIds)
+            ->where('v.pending', 1)
+            ->where('v.deleted', 0)
+            ->where('v.expired', 0)
+            ->where(function ($q) {
+                $q->whereNull('vd.end')->orWhere('vd.end', '>=', now());
+            })
+            ->distinct()
+            ->count('v.id');
 
         return [
             'pending' => $pendingCnt,
@@ -739,11 +796,21 @@ class PushNotificationService
             return 0;
         }
 
+        // Deliberately ungated by the push hold (admin diagnostic tool, not
+        // member-triggered content) - counted so the closing report still shows it
+        // happened (section 11.6 point 4, "leaked since press"), rather than the presser
+        // discovering test pushes went out only from a "0 leaked" figure that missed them.
+        $lockdown = app(LockdownService::class);
+        if ($lockdown->held('push')) {
+            $lockdown->count('leaked:push');
+        }
+
         $apptype = $modtools ? self::APPTYPE_MODTOOLS : 'User';
-        $notifs = DB::select(
-            "SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?",
-            [$userId, $apptype]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', $apptype)
+            ->get()
+            ->all();
 
         $appLabel = $modtools ? 'ModTools' : 'Freegle';
         $realCount = $modtools ? $this->getBadgeCount($userId) : 0;
@@ -997,10 +1064,11 @@ class PushNotificationService
      */
     private function getGroupSettings(int $userId, int $groupId): array
     {
-        $membership = DB::selectOne(
-            "SELECT settings FROM memberships WHERE userid = ? AND groupid = ?",
-            [$userId, $groupId]
-        );
+        $membership = DB::table('memberships')
+            ->select('settings')
+            ->where('userid', $userId)
+            ->where('groupid', $groupId)
+            ->first();
 
         if (! $membership || ! $membership->settings) {
             return [];
@@ -1017,6 +1085,10 @@ class PushNotificationService
      */
     public function notifyChatMessage(int $messageId): int
     {
+        if ($this->pushHeldByLockdown('notify_chat_message')) {
+            return 0;
+        }
+
         // Rippling-out held replies (#3): don't push a reply to the poster while it is held
         // because the post hasn't yet rippled to the replier's area. Until a reply is held
         // the rippling table is empty, so this never fires. The reply is pushed normally
@@ -1054,10 +1126,11 @@ class PushNotificationService
         }
 
         $apptype = $modtools ? self::APPTYPE_MODTOOLS : 'User';
-        $notifs = DB::select(
-            'SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?',
-            [$userId, $apptype]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', $apptype)
+            ->get()
+            ->all();
 
         $count = 0;
         foreach ($notifs as $notif) {
@@ -1111,7 +1184,7 @@ class PushNotificationService
         $msg = DB::table('chat_messages as cm')
             ->join('chat_rooms as cr', 'cm.chatid', '=', 'cr.id')
             ->where('cm.id', $messageId)
-            ->select('cm.userid as sender', 'cm.reviewrequired', 'cm.reviewrejected',
+            ->select('cm.userid as sender', 'cm.type', 'cm.reviewrequired', 'cm.reviewrejected',
                 'cr.chattype', 'cr.user1', 'cr.user2', 'cr.groupid')
             ->first();
 
@@ -1126,6 +1199,13 @@ class PushNotificationService
         switch ($msg->chattype) {
             case ChatRoom::TYPE_USER2USER:
                 $fd = [(int) $msg->user1, (int) $msg->user2];
+
+                // The question Freegle asks a replier about a reply is not shown to the poster until the reply is
+                // delivered, so the push is for the replier alone.
+                $askedOnly = $msg->type === ChatMessage::TYPE_PROMPT ? ChatMessage::questionAskedOnlyOf($messageId) : null;
+                if ($askedOnly !== null) {
+                    $fd = [$askedOnly];
+                }
                 break;
 
             case ChatRoom::TYPE_USER2MOD:
@@ -1189,11 +1269,13 @@ class PushNotificationService
      */
     private function getActiveGroupMods(int $groupId): array
     {
-        $rows = DB::select(
-            "SELECT DISTINCT userid, settings FROM memberships
-             WHERE groupid = ? AND role IN (?, ?)",
-            [$groupId, 'Owner', 'Moderator']
-        );
+        $rows = DB::table('memberships')
+            ->distinct()
+            ->select('userid', 'settings')
+            ->where('groupid', $groupId)
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
+            ->get()
+            ->all();
 
         $active = [];
         foreach ($rows as $row) {
@@ -1347,6 +1429,10 @@ class PushNotificationService
      */
     public function notifyDailyNewPosts(int $userId, array $posts): int
     {
+        if ($this->pushHeldByLockdown('daily_new_posts')) {
+            return 0;
+        }
+
         if (! $this->messaging) {
             return $this->messagingUnavailable('daily_new_posts', ['user_id' => $userId]);
         }
@@ -1365,17 +1451,19 @@ class PushNotificationService
             return 0;
         }
 
-        $notifs = DB::select(
-            'SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?',
-            [$userId, self::APPTYPE_USER]
-        );
+        $notifs = DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('apptype', self::APPTYPE_USER)
+            ->get()
+            ->all();
+
+        $devices = array_values(array_filter($notifs, fn ($notif) => in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])));
+        if (empty($devices)) {
+            return 0;
+        }
 
         $count = 0;
-        foreach ($notifs as $notif) {
-            if (! in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])) {
-                continue;
-            }
-
+        foreach ($devices as $notif) {
             try {
                 // forceVisible=FALSE — Android must stay DATA-ONLY so the app's
                 // own notification builder (InboxStyle / BigPictureStyle) runs.

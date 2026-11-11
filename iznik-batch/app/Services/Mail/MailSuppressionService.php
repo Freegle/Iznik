@@ -34,6 +34,23 @@ class MailSuppressionService
     public const SCOPE_ADDRESS = 'address';
 
     /**
+     * Email types still generated while a lockdown holds `email` (plan
+     * 2026-09-27-lockdown-switch.md, section 11.7): a member mid-login or
+     * mid-signup must still get in. `shouldSkip()` below has no lockdown branch -
+     * this list is consulted only by `EmailSpoolerService`, which enforces it on
+     * every spooled file, and by each mail-generating loop (ChatNotificationService,
+     * the digest/engage/newsletter/community-news services), which checks
+     * `LockdownService::held('email')` itself before doing any work.
+     */
+    public const ALLOWLISTED_EMAIL_TYPES_WHILE_HELD = [
+        'password_reset',
+        'signin_link',
+        'verify_email',
+        'unsubscribe_confirm',
+        'account_deletion', // reserved: no sender exists yet, section 11.4 lists it anyway
+    ];
+
+    /**
      * Active suppressions, keyed "scope\0value".
      *
      * Loaded once per process. The sending loops are long-running batch jobs

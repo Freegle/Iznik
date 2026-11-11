@@ -43,10 +43,10 @@
     </b-card-header>
     <b-card-body v-if="expanded" class="p-1">
       <ModBouncing v-if="user.bouncing" :userid="user.id" class="mb-2" />
-      <NoticeMessage v-if="user.systemrole === 'Admin'" class="mb-2">
+      <NoticeMessage v-if="user.systemrole === SYSTEMROLE_ADMIN" class="mb-2">
         This user has admin rights.
       </NoticeMessage>
-      <NoticeMessage v-if="user.systemrole === 'Support'" class="mb-2">
+      <NoticeMessage v-if="user.systemrole === SYSTEMROLE_SUPPORT" class="mb-2">
         This user has support rights.
       </NoticeMessage>
       <ModSpammer v-if="user.spammer" class="mb-2" :userid="user.id" />
@@ -189,6 +189,27 @@
               </span>
             </span>
           </div>
+        </div>
+      </div>
+      <div v-if="user.donor || user.nodonationasks" class="donation-asks">
+        <h3 class="mt-2">Donation requests</h3>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <OurToggle
+            v-model="askForDonations"
+            :height="30"
+            :width="200"
+            :font-size="14"
+            :sync="true"
+            size="sm"
+            :labels="{ checked: 'Asks On', unchecked: 'Asks Off' }"
+            variant="modgreen"
+          />
+          <span class="small text-muted">
+            Off means we don't ask them to donate, on the site or by email, for
+            a year<span v-if="donationAsksUntil">
+              (until {{ donationAsksUntil }})</span
+            >. They can change this in their own Settings too.
+          </span>
         </div>
       </div>
       <h3 class="mt-2">Location</h3>
@@ -585,6 +606,7 @@
       :title="'Reset password for ' + user.displayname + '?'"
       message="<p>Are you sure you want to reset this user's password?</p>"
       @confirm="setPasswordConfirmed"
+      @hidden="passwordConfirmClosed"
     />
     <ProfileModal
       v-if="showProfile && user && user.info"
@@ -612,7 +634,9 @@ import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '~/stores/user'
 import ExternalLink from '~/components/ExternalLink'
 import api from '~/api'
+import { formatDonationAsksUntil } from '~/composables/useDonationAsks'
 import { usePreferredEmail } from '~/modtools/composables/usePreferredEmail'
+import { SYSTEMROLE_ADMIN, SYSTEMROLE_SUPPORT } from '~/constants'
 
 const SHOW = 3
 
@@ -671,7 +695,7 @@ let passwordCallback = null
 const preferredemail = usePreferredEmail(user)
 
 const admin = computed(() => {
-  return user.value && user.value.systemrole === 'Admin'
+  return user.value && user.value.systemrole === SYSTEMROLE_ADMIN
 })
 
 const freegleMemberships = computed(() => {
@@ -797,6 +821,31 @@ const newsfeedmodstatus = computed({
       id: user.value.id,
       newsfeedmodstatus: newVal,
     })
+  },
+})
+
+// When a member's "don't ask me to donate" ends. The API sends the date only while it runs.
+const donationAsksUntil = computed(() =>
+  formatDonationAsksUntil(
+    user.value?.nodonationasksuntil
+      ? new Date(user.value.nodonationasksuntil)
+      : null
+  )
+)
+
+// Donors can ask not to be asked to donate for a year; support can set it for them.
+const askForDonations = computed({
+  get() {
+    // A yes/no from the API: support may not moderate the member's groups, so
+    // does not always get their full settings.
+    return !user.value?.nodonationasks
+  },
+  async set(newVal) {
+    await userStore.edit({
+      id: user.value.id,
+      settings: { nodonationasks: !newVal },
+    })
+    await fetchUser()
   },
 })
 
@@ -926,6 +975,10 @@ function setPassword(callback) {
 }
 
 async function setPasswordConfirmed() {
+  // Take the callback before the await: the modal emits hidden as it shuts,
+  // and passwordConfirmClosed below must not stop the spinner a second time.
+  const callback = passwordCallback
+  passwordCallback = null
   if (newpassword.value) {
     await userStore.edit({
       id: user.value.id,
@@ -933,10 +986,18 @@ async function setPasswordConfirmed() {
     })
   }
   showPasswordConfirm.value = false
-  if (passwordCallback) {
-    passwordCallback()
-    passwordCallback = null
-  }
+  callback?.()
+}
+
+function passwordConfirmClosed() {
+  // The modal shuts on Cancel, and on Escape or the backdrop, as well as on
+  // Confirm. Nothing else here tells the SpinButton that opened it that the
+  // action is over, so it spins for its full 20 seconds and reports a
+  // forgotten callback to Sentry - see components/SpinButton.vue.
+  showPasswordConfirm.value = false
+  const callback = passwordCallback
+  passwordCallback = null
+  callback?.()
 }
 
 async function addEmail(callback) {

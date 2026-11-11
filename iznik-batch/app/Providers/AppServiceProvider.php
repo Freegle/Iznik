@@ -12,6 +12,7 @@ use App\Listeners\CronJobStatusListener;
 use App\Listeners\SpamCheckListener;
 use App\Services\LokiService;
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\EventMutex;
@@ -42,6 +43,10 @@ class AppServiceProvider extends ServiceProvider
         \Illuminate\Database\Connection::resolverFor('mysql', function ($connection, $database, $prefix, $config) {
             return new DeadlockRetryConnection($connection, $database, $prefix, $config);
         });
+
+        // Past mail with the support and info mailboxes for the support case first pass. Unconfigured
+        // until mailbox access is set up; bind another implementation here when it is.
+        $this->app->bind(\App\Services\Support\MailboxHistory::class, \App\Services\Support\UnconfiguredMailboxHistory::class);
 
         // Register LokiService as a singleton.
         $this->app->singleton(LokiService::class, function ($app) {
@@ -226,6 +231,7 @@ class AppServiceProvider extends ServiceProvider
         $cronListener = new CronJobStatusListener();
         Event::listen(ScheduledTaskStarting::class, [$cronListener, 'handleStarting']);
         Event::listen(ScheduledTaskFinished::class, [$cronListener, 'handleFinished']);
+        Event::listen(ScheduledBackgroundTaskFinished::class, [$cronListener, 'handleBackgroundFinished']);
     }
 
     /**

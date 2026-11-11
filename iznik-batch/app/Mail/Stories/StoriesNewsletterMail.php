@@ -2,12 +2,13 @@
 
 namespace App\Mail\Stories;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class StoriesNewsletterMail extends MjmlMailable
+class StoriesNewsletterMail extends MjmlMailable implements DescribesMemberContent
 {
     public function __construct(
         public readonly int    $userId,
@@ -50,6 +51,30 @@ class StoriesNewsletterMail extends MjmlMailable
             to: [new Address($this->recipientEmail, $this->recipientName)],
             subject: $this->getSubject(),
         );
+    }
+
+    /**
+     * Each story names its author's userid (since the additive fix alongside this); an
+     * entry built without one (e.g. an older test fixture) simply contributes nothing to
+     * users. There is no bucket in about() for a users_stories row itself, only for the
+     * people named in it - filter-spool removes this mail once every author it names is
+     * now a spammer, the same as any other member-content mail (plan section 11.8).
+     */
+    public function about(): array
+    {
+        $users = [];
+        foreach ($this->stories as $story) {
+            if (isset($story['userid'])) {
+                $users[] = (int) $story['userid'];
+            }
+        }
+
+        return [
+            'chatmessages' => [],
+            'messages' => [],
+            'newsfeed' => [],
+            'users' => array_values(array_unique($users)),
+        ];
     }
 
     public function build(): static

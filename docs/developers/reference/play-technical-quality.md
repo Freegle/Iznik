@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-28
+last_reviewed: 2026-10-12
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/android/app/build.gradle
@@ -67,9 +67,12 @@ choice of default file is not cosmetic.
 R8 breaks things by removing or renaming what only reflection or JS reaches. Capacitor,
 Firebase, Facebook, Stripe and play-services all ship their own consumer rules;
 `proguard-rules.pro` adds the WebView share bridge, the social-login activity interface, the
-push plugin's `Class.forName` on MainActivity, and the Block Store plugin. **Before a release
-goes out, smoke-test on a device:** Google, Facebook and Apple sign-in; push and the
-home-screen badge; camera and share-into-app; the Stripe donation flow.
+push plugin's `Class.forName` on MainActivity, and the Block Store plugin. The promote
+workflow's emulator gate (`scripts/app-e2e`, see [mobile-app.md](mobile-app.md)) runs the
+`e2e` build type, which is this release configuration with R8, so plugin registration, push
+delivery and routing, the camera, the photo picker and share-into-app are exercised on the
+minified code before every promotion. **Still smoke-test on a device:** Google, Facebook and
+Apple sign-in; the home-screen badge; the Stripe donation flow.
 
 ### What the minified build was measured to keep
 

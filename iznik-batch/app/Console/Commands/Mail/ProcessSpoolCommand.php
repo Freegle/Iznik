@@ -5,7 +5,9 @@ namespace App\Console\Commands\Mail;
 use App\Services\EmailSpoolerService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:spool:process')]
 class ProcessSpoolCommand extends Command
 {
     use GracefulShutdown;

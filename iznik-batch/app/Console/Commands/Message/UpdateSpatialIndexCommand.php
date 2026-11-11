@@ -7,7 +7,9 @@ use App\Services\MessageSpatialService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'messages:update-spatial-index')]
 class UpdateSpatialIndexCommand extends Command
 {
     use PreventsOverlapping;

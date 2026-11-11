@@ -167,12 +167,24 @@ describe('ModSupportMailDeferrals', () => {
   it('separates members waiting on a provider from members whose mailbox is full', async () => {
     const wrapper = await render({
       members: [
-        { userid: 1, email: 'full@gmail.com', skipped: 11694, permailbox: true },
-        { userid: 2, email: 'waiting@talktalk.net', skipped: 4, permailbox: false },
+        {
+          userid: 1,
+          email: 'full@gmail.com',
+          skipped: 11694,
+          permailbox: true,
+        },
+        {
+          userid: 2,
+          email: 'waiting@talktalk.net',
+          skipped: 4,
+          permailbox: false,
+        },
       ],
     })
 
-    const tables = wrapper.findAllComponents({ name: 'ModSupportMailHeldTable' })
+    const tables = wrapper.findAllComponents({
+      name: 'ModSupportMailHeldTable',
+    })
     expect(tables).toHaveLength(2)
     expect(tables[0].props('members').map((m) => m.userid)).toEqual([2])
     expect(tables[1].props('members').map((m) => m.userid)).toEqual([1])
@@ -184,7 +196,12 @@ describe('ModSupportMailDeferrals', () => {
     const text = words(
       await render({
         members: [
-          { userid: 1, email: 'full@gmail.com', skipped: 12351, permailbox: true },
+          {
+            userid: 1,
+            email: 'full@gmail.com',
+            skipped: 12351,
+            permailbox: true,
+          },
         ],
       })
     )
@@ -196,7 +213,12 @@ describe('ModSupportMailDeferrals', () => {
     const text = words(
       await render({
         members: [
-          { userid: 1, email: 'full@gmail.com', skipped: 12351, permailbox: true },
+          {
+            userid: 1,
+            email: 'full@gmail.com',
+            skipped: 12351,
+            permailbox: true,
+          },
         ],
       })
     )
@@ -205,7 +227,9 @@ describe('ModSupportMailDeferrals', () => {
     expect(text).toContain('Nothing here means anything is wrong with our mail')
     // "Held" read as a deliberate withholding, and as a number of emails
     // sitting somewhere. It is neither.
-    expect(text).toContain('Nothing here is a punishment or a setting anyone chose')
+    expect(text).toContain(
+      'Nothing here is a punishment or a setting anyone chose'
+    )
     expect(text).toContain("how many emails we didn't generate")
   })
 })

@@ -5,6 +5,7 @@ namespace App\Console\Commands\FirstReply;
 use App\Services\FirstReply\EngagementService;
 use App\Services\FirstReply\Rollout;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * firstreply:engage - Freegle talks to people whose posts nobody has answered.
@@ -12,6 +13,7 @@ use Illuminate\Console\Command;
  * See EngagementService for what it says and, more importantly, what it refuses
  * to say.
  */
+#[AsCommand(name: 'firstreply:engage')]
 class EngageCommand extends Command
 {
     protected $signature = 'firstreply:engage

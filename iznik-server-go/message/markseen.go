@@ -51,7 +51,7 @@ func BrowseClearedWatermark(db *gorm.DB, myid uint64) uint64 {
 type MarkSeenRequest struct {
 	IDs []uint64 `json:"ids"`
 	// Source optionally tags where these impressions came from (e.g.
-	// "similar_posts"), so a recommendation widget's impressions can be counted.
+	// "wanted_match"), so a recommendation widget's impressions can be counted.
 	// Written only when the row is first created (first-touch), like pageview.
 	Source *string `json:"source"`
 }

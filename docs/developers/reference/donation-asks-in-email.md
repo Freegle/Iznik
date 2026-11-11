@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-08-17
+last_reviewed: 2026-10-23
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/DonateLinkService.php
   - iznik-batch/app/Mail/Donation/AskForDonation.php
   - iznik-batch/resources/views/emails/mjml/components/donate-ask.blade.php
+  - iznik-batch/resources/views/emails/mjml/digest/_jobs.blade.php
   - iznik-nuxt3/pages/donate.vue
   - iznik-nuxt3/components/StripeDonate.vue
 ---
@@ -85,6 +86,15 @@ the click.
    `?monthly=1`), clamps it to what the API accepts (£1–£250), and holds the
    payment buttons back for up to 5s while the auto-login from `app.vue`
    completes, so a fast tap cannot race the login into a 401.
+
+## Donors who asked not to be asked
+
+A donor can turn donation requests off for a year (`users.settings.nodonationasks`, see
+[Donations and Gift Aid](donations-and-gift-aid.md#donors-who-ask-not-to-be-asked)). Each mail
+class sets `donateUrl` to null for that member, and the templates leave out every donate
+element when it is null, the payment-mark strip included. With jobs showing, the "More jobs"
+button then takes the full width. Without jobs, the digest's donate-only block goes entirely.
+The ask email and the birthday appeal skip the member altogether.
 
 ## The payment marks
 

@@ -29,8 +29,8 @@
 
     <DistanceSliderRow
       v-if="split"
-      ref="outboundRow"
       :id="idPrefix + 'Outbound'"
+      ref="outboundRow"
       axis="myPosts"
       label="Who sees my posts"
       aria-label="How far away people who see my posts can be"
@@ -94,7 +94,7 @@ import { DISTANCE_AXES } from '~/constants'
 // slider" literal rather than approximate. The outbound keys appear on the first DRAG in split mode,
 // whichever slider is dragged: dragging the outbound one obviously writes it, and dragging the
 // inbound one pins it (see pinOutbound, and why it has to).
-const props = defineProps({
+defineProps({
   // Ask /town/near for the reach outline too, for the browse map to shade. Browse only.
   withPolygon: { type: Boolean, default: false },
   // The drag instruction is redundant on touch and costs a line, so callers hide it on mobile.

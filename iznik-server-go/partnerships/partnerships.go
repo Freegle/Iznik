@@ -16,6 +16,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/authority"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -495,8 +496,15 @@ func saveContacts(db *gorm.DB, id uint64, contacts []contactRequest) {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/partnership [post]
 func Create(c *fiber.Ctx) error {
-	if _, err := requireUser(c); err != nil {
+	myid, err := requireUser(c)
+	if err != nil {
 		return err
+	}
+	// Review finding 4: the Partnerships team is not Support/Admin, and this write
+	// path had no lockdown gate at all - refused like any other moderator write while
+	// "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	var req createRequest
@@ -596,8 +604,15 @@ func Create(c *fiber.Ctx) error {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/partnership/{id} [patch]
 func Update(c *fiber.Ctx) error {
-	if _, err := requireUser(c); err != nil {
+	myid, err := requireUser(c)
+	if err != nil {
 		return err
+	}
+	// Review finding 4: the Partnerships team is not Support/Admin, and this write
+	// path had no lockdown gate at all - refused like any other moderator write while
+	// "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
@@ -690,8 +705,15 @@ func Update(c *fiber.Ctx) error {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/partnership/{id} [delete]
 func Delete(c *fiber.Ctx) error {
-	if _, err := requireUser(c); err != nil {
+	myid, err := requireUser(c)
+	if err != nil {
 		return err
+	}
+	// Review finding 4: the Partnerships team is not Support/Admin, and this write
+	// path had no lockdown gate at all - refused like any other moderator write while
+	// "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
@@ -718,8 +740,15 @@ func Delete(c *fiber.Ctx) error {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/partnership/{id}/group [patch]
 func PatchGroups(c *fiber.Ctx) error {
-	if _, err := requireUser(c); err != nil {
+	myid, err := requireUser(c)
+	if err != nil {
 		return err
+	}
+	// Review finding 4: the Partnerships team is not Support/Admin, and this write
+	// path had no lockdown gate at all - refused like any other moderator write while
+	// "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
@@ -776,8 +805,15 @@ func PatchGroups(c *fiber.Ctx) error {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/partnership/{id}/year [put]
 func PutYears(c *fiber.Ctx) error {
-	if _, err := requireUser(c); err != nil {
+	myid, err := requireUser(c)
+	if err != nil {
 		return err
+	}
+	// Review finding 4: the Partnerships team is not Support/Admin, and this write
+	// path had no lockdown gate at all - refused like any other moderator write while
+	// "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
@@ -839,8 +875,15 @@ type paymentRequest struct {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/partnership/{id}/payment [post]
 func CreatePayment(c *fiber.Ctx) error {
-	if _, err := requireUser(c); err != nil {
+	myid, err := requireUser(c)
+	if err != nil {
 		return err
+	}
+	// Review finding 4: the Partnerships team is not Support/Admin, and this write
+	// path had no lockdown gate at all - refused like any other moderator write while
+	// "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
@@ -894,8 +937,15 @@ func CreatePayment(c *fiber.Ctx) error {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/partnership/{id}/payment/{paymentid} [patch]
 func UpdatePayment(c *fiber.Ctx) error {
-	if _, err := requireUser(c); err != nil {
+	myid, err := requireUser(c)
+	if err != nil {
 		return err
+	}
+	// Review finding 4: the Partnerships team is not Support/Admin, and this write
+	// path had no lockdown gate at all - refused like any other moderator write while
+	// "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
@@ -947,8 +997,15 @@ func UpdatePayment(c *fiber.Ctx) error {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/partnership/{id}/payment/{paymentid} [delete]
 func DeletePayment(c *fiber.Ctx) error {
-	if _, err := requireUser(c); err != nil {
+	myid, err := requireUser(c)
+	if err != nil {
 		return err
+	}
+	// Review finding 4: the Partnerships team is not Support/Admin, and this write
+	// path had no lockdown gate at all - refused like any other moderator write while
+	// "mods" is held.
+	if lockdown.GateMod(c, myid) {
+		return nil
 	}
 
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
@@ -1079,12 +1136,13 @@ func Summary(c *fiber.Ctx) error {
 }
 
 // detectGroups brings partnerships_groups into line with the authority boundary: a new
-// community inside it is covered, a Boundary community no longer inside it is dropped, and
+// community that overlaps it significantly is covered (one that only grazes the edge is not),
+// a Boundary community that no longer does is dropped, and
 // every row's overlap is refreshed. Communities added or left out by hand stay as they are,
 // so re-checking never undoes a decision someone made.
 func detectGroups(db *gorm.DB, partnershipid uint64, authorityid uint64) {
 	inside := map[uint64]float64{}
-	for _, g := range authority.GroupsForAuthority(authorityid) {
+	for _, g := range authority.SignificantGroupsForAuthority(authorityid) {
 		inside[g.ID] = g.Overlap
 	}
 

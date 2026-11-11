@@ -6,7 +6,9 @@ use App\Services\PurgeService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'purge:all')]
 class PurgeAllCommand extends Command
 {
     use GracefulShutdown;

@@ -186,7 +186,7 @@ func ReplySourceInnerFrom(srcGroup string) string {
 	              AND NOT EXISTS(SELECT 1 FROM messages_groups mgo
 	                   INNER JOIN memberships memo ON memo.groupid = mgo.groupid
 	                     AND memo.userid = rra.userid AND memo.collection = 'Approved'
-	                     AND memo.added < mgo.arrival AND memo.rippled = 0
+	                     AND memo.added < mgo.arrival AND memo.rippled = 0 AND memo.implicit = 0
 	                   WHERE mgo.msgid = rra.msgid AND mgo.rippled_in = 0 AND mgo.deleted = 0))`
 	derive := `CASE
 	       WHEN rra.was_home_member = 1 AND NOT ` + rippleJoinOnly + ` THEN 'home'

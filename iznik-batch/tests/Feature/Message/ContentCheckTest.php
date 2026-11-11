@@ -651,8 +651,9 @@ class ContentCheckTest extends TestCase
             'match_mode' => 'fuzzy',
         ]);
 
-        // one substitution → levenshtein distance 1 ≤ 1
-        $typo = $this->service->checkConcernKeywords('OFFER: testfuzzy2_cd items', '', $group->id);
+        // one dropped letter → levenshtein distance 1 ≤ 1. A one-letter substitution
+        // is a different word, not a typo: see ContentCheckServiceTest.
+        $typo = $this->service->checkConcernKeywords('OFFER: testfuzy2_cc items', '', $group->id);
         $this->assertNotNull($typo, 'single-char typo must match via fuzzy');
     }
 
@@ -1949,8 +1950,9 @@ class ContentCheckTest extends TestCase
             'settings' => ['spammers' => ['worrywords' => 'badtestword_cc']],
         ]);
 
-        // One character off — levenshtein distance 1.
-        $result = $this->service->checkPerGroupWorryWords('OFFER: badtestword_cd item', 'Some body', $group->id);
+        // One letter dropped: levenshtein distance 1. A one-letter substitution is
+        // a different word, not a typo, so it is not used here.
+        $result = $this->service->checkPerGroupWorryWords('OFFER: badtestwor_cc item', 'Some body', $group->id);
 
         $this->assertNotNull($result);
         $this->assertEquals('PerGroupWorryWord', $result['check']);
@@ -3110,6 +3112,49 @@ class ContentCheckTest extends TestCase
             'An old approved post (outside the recent-arrival window) must not be rescanned');
     }
 
+    public function test_freebiealerts_task_queued_for_an_automatically_split_post(): void
+    {
+        // An ordinary member's post that the auto-splitter turned into an item list has bulk
+        // items like a clearance, but it is an ordinary Offer and goes to freebiealerts.app.
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Sofa and two chairs (EC1A)',
+            'textbody' => 'A sofa and two kitchen chairs.',
+            'message'  => 'A sofa and two kitchen chairs.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $msgid, 'position' => 0, 'name' => 'Sofa', 'quantity' => 1, 'condition' => 'Unknown'],
+            ['msgid' => $msgid, 'position' => 1, 'name' => 'Chairs', 'quantity' => 2, 'condition' => 'Unknown'],
+        ]);
+        DB::table('messages_autosplit')->insert(['msgid' => $msgid, 'state' => 'Split', 'kind' => 'several_items']);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals(0, $stats['errors'], 'processUnprocessed had errors');
+        $this->assertEquals(1, $stats['approved']);
+        $this->assertEquals(1, DB::table('background_tasks')
+            ->where('task_type', 'freebie_alerts_add')
+            ->whereRaw("JSON_EXTRACT(data, '$.msgid') = ?", [$msgid])
+            ->count(), 'an automatically split post is an ordinary Offer for freebiealerts.app');
+    }
+
     public function test_freebiealerts_task_not_queued_for_bulk_offer(): void
     {
         // A clearance (bulk-offer) Offer must not receive a freebie_alerts_add task even
@@ -3356,5 +3401,145 @@ class ContentCheckTest extends TestCase
             'nothing is holding this post, so it should go live');
         $this->assertNull($row->contentcheck_reasons,
             'an approved post carries no hold reasons');
+    }
+
+    // -------------------------------------------------------------------------
+    // Place names near the post are not concerns
+    // -------------------------------------------------------------------------
+
+    private function placeNameMessage(string $subject, string $body, float $lat, float $lng): array
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => $body,
+            'message'  => $body,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+            'lat'      => $lat,
+            'lng'      => $lng,
+        ]);
+
+        return [$msgid, $group->id];
+    }
+
+    private function addPlace(string $name, string $type, int $osmPlace, float $lat, float $lng, array $extra = []): void
+    {
+        DB::table('locations')->insert(array_merge([
+            'name' => $name, 'type' => $type, 'osm_place' => $osmPlace, 'lat' => $lat, 'lng' => $lng,
+        ], $extra));
+    }
+
+    private function addReviewKeyword(string $keyword): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword' => $keyword, 'category' => 'review', 'action' => 'flag', 'match_mode' => 'fuzzy',
+        ]);
+    }
+
+    private function concernReasons(int $msgid, int $groupid): array
+    {
+        return array_values(array_filter(
+            $this->service->checkMessage($msgid, $groupid),
+            fn($r) => $r['check'] === ContentCheckService::CHECK_CONCERN_KEYWORD
+        ));
+    }
+
+    public function test_concern_word_inside_nearby_place_name_is_let_through(): void
+    {
+        $this->addReviewKeyword('cock');
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        [$msgid, $gid] = $this->placeNameMessage('OFFER: Shelves (Cock Clarks CM3)', 'Oak shelves.', 51.6950, 0.6240);
+
+        $this->assertSame([], $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_hyphenated_place_name_matches_a_spaced_or_hyphenated_post(): void
+    {
+        $this->addReviewKeyword('cum');
+        $this->addPlace('Salcott-cum-Virley', 'Polygon', 1, 51.7908, 0.8166);
+        [$m1, $g1] = $this->placeNameMessage('OFFER: Pots (Salcott-cum-Virley CO5)', 'Pots.', 51.7900, 0.8170);
+        [$m2, $g2] = $this->placeNameMessage('OFFER: Pots (Salcott cum Virley CO5)', 'Pots.', 51.7900, 0.8170);
+
+        $this->assertSame([], $this->concernReasons($m1, $g1));
+        $this->assertSame([], $this->concernReasons($m2, $g2));
+    }
+
+    public function test_same_place_name_far_from_the_post_still_flags(): void
+    {
+        $this->addReviewKeyword('cock');
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        // About 60km away.
+        [$msgid, $gid] = $this->placeNameMessage('OFFER: Shelves (Cock Clarks CM3)', 'Oak shelves.', 52.2, 0.1);
+
+        $reasons = $this->concernReasons($msgid, $gid);
+        $this->assertCount(1, $reasons);
+        $this->assertStringContainsString('cock', strtolower($reasons[0]['detail']));
+    }
+
+    public function test_real_concern_word_beside_a_place_name_still_flags(): void
+    {
+        $this->addReviewKeyword('cock');
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        [$msgid, $gid] = $this->placeNameMessage(
+            'OFFER: Cockerel (Cock Clarks CM3)',
+            'Also a big cock for sale. Collect from Cock Clarks.',
+            51.6950,
+            0.6240
+        );
+
+        $this->assertCount(1, $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_shop_or_amenity_with_a_concern_word_does_not_excuse_it(): void
+    {
+        $this->addReviewKeyword('dog');
+        $this->addPlace('The Dog', 'Point', 0, 51.5, -0.1, ['osm_amenity' => 1]);
+        [$msgid, $gid] = $this->placeNameMessage('OFFER: Spare the dog bed', 'A bed for the dog.', 51.5, -0.1);
+
+        $this->assertCount(1, $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_street_name_near_the_post_is_let_through(): void
+    {
+        $this->addReviewKeyword('butt');
+        $this->addPlace('Butt Lane', 'Line', 0, 53.08, -2.25);
+        [$msgid, $gid] = $this->placeNameMessage('WANTED: Carpet (Butt Lane ST7)', 'Any carpet.', 53.081, -2.251);
+
+        $this->assertSame([], $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_block_keyword_is_not_excused_by_a_place_name(): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'cock', 'category' => 'scam', 'action' => 'block', 'match_mode' => 'literal',
+        ]);
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        [$msgid, $gid] = $this->placeNameMessage('OFFER: Shelves (Cock Clarks CM3)', 'Oak shelves.', 51.6950, 0.6240);
+
+        $this->assertCount(1, $this->concernReasons($msgid, $gid));
+    }
+
+    public function test_place_name_is_judged_from_the_poster_location_when_the_post_has_none(): void
+    {
+        $this->addReviewKeyword('cock');
+        $this->addPlace('Cock Clarks', 'Point', 1, 51.6947, 0.6222);
+        $group = $this->createTestGroup();
+        $locid = DB::table('locations')->insertGetId([
+            'name' => 'CM3 5XX', 'type' => 'Postcode', 'osm_place' => 0, 'lat' => 51.6950, 'lng' => 0.6230,
+        ]);
+        $user  = $this->createTestUser();
+        DB::table('users')->where('id', $user->id)->update(['lastlocation' => $locid]);
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id, 'type' => 'Offer', 'subject' => 'OFFER: Shelves (Cock Clarks CM3)',
+            'textbody' => 'Oak shelves.', 'message' => 'Oak shelves.', 'arrival' => now(), 'date' => now(),
+            'source' => 'Platform', 'lat' => null, 'lng' => null,
+        ]);
+
+        $this->assertSame([], $this->concernReasons($msgid, $group->id));
     }
 }

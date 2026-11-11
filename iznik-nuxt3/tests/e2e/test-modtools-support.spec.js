@@ -149,6 +149,26 @@ test.describe('ModTools Support Tools', () => {
 
     await searchInput.first().fill(testEnv.user.email)
 
+    // Expanding the record fetches the support extras, each from its own
+    // endpoint. Listen before clicking so none is missed.
+    const extras = [
+      'chatrooms',
+      'emailhistory',
+      'bans',
+      'newsfeed',
+      'applied',
+      'membershiphistory',
+      'logins',
+    ]
+    const extraResponses = extras.map((name) =>
+      page.waitForResponse(
+        (r) =>
+          new RegExp(`/user/\\d+/${name}(\\?|$)`).test(r.url()) &&
+          r.request().method() === 'GET',
+        { timeout: timeouts.navigation.slowPage }
+      )
+    )
+
     // Click Find user
     const findButton = page.locator('button:has-text("Find user")')
     await findButton.click()
@@ -168,6 +188,76 @@ test.describe('ModTools Support Tools', () => {
       timeout: timeouts.navigation.slowPage,
     })
 
+    // Every extra must load. Without this the test ended as soon as the
+    // memberships showed, and whether the chats, logins and history had
+    // arrived (and so were exercised at all) depended on timing.
+    for (const [i, response] of (await Promise.all(extraResponses)).entries()) {
+      expect(response.status(), `GET /user/:id/${extras[i]}`).toBe(200)
+    }
+    // Let Vue render what arrived before the test ends.
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+    )
+
     await assertNoErrors(page)
+  })
+
+  test('AI Support Helper starts the member snapshot when a member is picked', async ({
+    page,
+    testEnv,
+  }) => {
+    await loginViaModTools(page, testEnv.mod.email)
+
+    // The helper is not part of the test stack, so its two calls are answered
+    // here. The test is about what ModTools asks it for.
+    const prefetched = []
+    await page.route('**/api/prefetch-dump', async (route) => {
+      prefetched.push(JSON.parse(route.request().postData() || '{}'))
+      await route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({ started: true }),
+      })
+    })
+    await page.route('**/api/device-summary**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ devices: [] }),
+      })
+    )
+
+    await page.goto(`${MODTOOLS_URL}/support`, {
+      timeout: timeouts.navigation.initial,
+    })
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+    await dismissAllModals(page)
+
+    await page.getByRole('tab', { name: 'AI Support Helper' }).click()
+    const search = page.getByPlaceholder('Search by email, name, or user ID')
+    await search.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await search.fill(testEnv.user.email)
+    await search.press('Enter')
+
+    // One match is picked straight away; several are listed to choose from.
+    const results = page.locator('.user-result-item')
+    await expect
+      .poll(async () => prefetched.length + (await results.count()), {
+        timeout: timeouts.api.default,
+      })
+      .toBeGreaterThan(0)
+    if (prefetched.length === 0) {
+      await results.filter({ hasText: testEnv.user.email }).first().click()
+    }
+
+    await expect
+      .poll(() => prefetched.length, { timeout: timeouts.api.default })
+      .toBe(1)
+    expect(Number(prefetched[0].userId)).toBeGreaterThan(0)
+    if (testEnv.user.id) {
+      expect(Number(prefetched[0].userId)).toBe(Number(testEnv.user.id))
+    }
   })
 })

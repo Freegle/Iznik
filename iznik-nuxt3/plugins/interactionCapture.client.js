@@ -5,7 +5,60 @@
  * with full context including Vue component names and human-readable labels.
  */
 import { useLoggingContextStore } from '~/stores/loggingContext'
-import { action } from '~/composables/useClientLog'
+import {
+  action,
+  apiRequestStartedBetween,
+  noteClickComponent,
+  sessionSampled,
+  SAMPLE_RATE,
+} from '~/composables/useClientLog'
+
+// Rage: this many clicks on one element inside this window.
+const RAGE_CLICKS = 3
+const RAGE_WINDOW_MS = 1000
+// Repeat with no API request: the same labelled element clicked again within this band.
+// Only a request started this soon after the click can be its result: chat and notification
+// polling runs all the time.
+const API_RESPONSE_WINDOW_MS = 1500
+const REPEAT_MIN_MS = 2000
+const REPEAT_MAX_MS = 30000
+
+// Per element: recent click times, and when it was last clicked with the API request count then.
+const recentClicks = new WeakMap()
+// Elements whose previous click was already part of a rage burst.
+const inRageBurst = new WeakSet()
+const lastLabelledClick = new WeakMap()
+
+function clickSignals(el, label) {
+  const now = Date.now()
+  const times = (recentClicks.get(el) || []).filter(
+    (t) => now - t <= RAGE_WINDOW_MS
+  )
+  times.push(now)
+  recentClicks.set(el, times)
+
+  let repeatNoApi = false
+  if (label) {
+    const last = lastLabelledClick.get(el)
+    if (last) {
+      const age = now - last.time
+      repeatNoApi =
+        age >= REPEAT_MIN_MS &&
+        age <= REPEAT_MAX_MS &&
+        !apiRequestStartedBetween(last.time, last.time + API_RESPONSE_WINDOW_MS)
+    }
+    lastLabelledClick.set(el, { time: now })
+  }
+
+  // One burst is one rage click: only the click that brings the burst to the threshold is flagged,
+  // however long the hammering goes on.
+  const burst = times.length >= RAGE_CLICKS
+  const rage = burst && !inRageBurst.has(el)
+  if (burst) inRageBurst.add(el)
+  else inRageBurst.delete(el)
+
+  return { rage, repeat_no_api: repeatNoApi }
+}
 
 export default defineNuxtPlugin(() => {
   if (import.meta.server) return
@@ -93,7 +146,9 @@ export default defineNuxtPlugin(() => {
   let scrollTimeout
   document.addEventListener(
     'scroll',
-    () => {
+    (e) => {
+      if (isUxIgnored(e.target)) return
+
       if (!scrollTimeout) {
         scrollTimeout = setTimeout(() => {
           const scrollY = window.scrollY
@@ -126,12 +181,17 @@ export default defineNuxtPlugin(() => {
   function captureInteraction(type, event) {
     const target = event.target
     if (!target || target === document.body) return
+    if (isUxIgnored(target)) return
 
     // Scroll events use document.scrollingElement as target, which is
     // document.documentElement — extractElementInfo rejects that as
     // "non-meaningful". Log scroll events directly with page context.
     if (type === 'scroll') {
+      // Scrolling is high volume, so only a sample of sessions send it.
+      if (!sessionSampled()) return
+
       logInteraction({
+        sampleRate: SAMPLE_RATE,
         type,
         scrollY: event.scrollY,
         scrollPercent: event.scrollPercent,
@@ -142,9 +202,12 @@ export default defineNuxtPlugin(() => {
     const info = extractElementInfo(target)
     if (!info) return // Ignore non-meaningful elements.
 
+    if (type === 'click') noteClickComponent(info.component)
+
     logInteraction({
       type,
       ...info,
+      ...(type === 'click' && clickSignals(info.el, info.label)),
       ...(event.direction && { direction: event.direction }),
       ...(event.distance && { distance: event.distance }),
     })
@@ -171,6 +234,11 @@ export default defineNuxtPlugin(() => {
       classes: entry.classes,
       href: entry.href,
       input_type: entry.inputType,
+      interactive: entry.interactive,
+      label: entry.label,
+      rage: entry.rage,
+      repeat_no_api: entry.repeat_no_api,
+      sample_rate: entry.sampleRate,
       direction: entry.direction,
       distance: entry.distance,
       scroll_y: entry.scrollY,
@@ -181,6 +249,13 @@ export default defineNuxtPlugin(() => {
 })
 
 // Helper functions.
+
+// The UX tab of ModTools marks itself data-ux-ignore, so looking at the figures does not become
+// figures.
+function isUxIgnored(el) {
+  const element = el instanceof Element ? el : el?.parentElement
+  return !!element?.closest?.('[data-ux-ignore]')
+}
 
 function getModalName(el) {
   // Try to get a meaningful name from the modal element.
@@ -206,11 +281,12 @@ export function extractElementInfo(el) {
   if (typeof el.closest !== 'function') return null
 
   // Find meaningful interactive element.
-  const interactive = el.closest(
-    'button, a, [role="button"], input, select, textarea, ' +
-      '[onclick], [tabindex]:not([tabindex="-1"]), label, ' +
-      '.btn, [data-bs-toggle]'
-  )
+  const interactive =
+    el.closest(
+      'button, a, [role="button"], input, select, textarea, ' +
+        '[onclick], [tabindex]:not([tabindex="-1"]), label, ' +
+        '.btn, [data-bs-toggle]'
+    ) || pointerTarget(el)
 
   const target = interactive || el
 
@@ -220,6 +296,7 @@ export function extractElementInfo(el) {
   }
 
   return {
+    el: target,
     component: getVueComponentName(target),
     label: getLabel(target),
     tag: target.tagName.toLowerCase(),
@@ -227,11 +304,56 @@ export function extractElementInfo(el) {
     classes: getCleanClasses(target),
     href: target.href ? stripQueryParams(target.href) : null,
     inputType: target.type || null,
+    // Anything the closest() above matched is a control, whatever its tag.
+    interactive: !!interactive,
   }
 }
 
+// Up to this many ancestors are checked for a pointer cursor.
+const POINTER_DEPTH = 12
+
+function hasPointerCursor(node) {
+  try {
+    return window.getComputedStyle(node).cursor === 'pointer'
+  } catch {
+    return false
+  }
+}
+
+// A Vue @click on a div leaves nothing in the DOM for the selector above to find, so a list row
+// or a post card that works perfectly read as a dead click on every click. Such elements are
+// styled cursor: pointer, which is what tells the member they can be clicked, so that is the
+// signal used here: the outermost element of the run of pointer-cursor ancestors is the control.
+function pointerTarget(el) {
+  let node = el
+  for (let depth = 0; node && depth < POINTER_DEPTH; depth++) {
+    if (node === document.body || node === document.documentElement) {
+      return null
+    }
+    if (hasPointerCursor(node)) {
+      // The cursor is inherited, so climb to the element that set it.
+      let top = node
+      while (
+        top.parentElement &&
+        top.parentElement !== document.body &&
+        hasPointerCursor(top.parentElement)
+      ) {
+        top = top.parentElement
+      }
+      return top
+    }
+    node = node.parentElement
+  }
+  return null
+}
+
 function getVueComponentName(el) {
-  // Vue 3: walk up to find component.
+  // Production builds stamp each component's root element with data-component (see
+  // build/componentNameTransform.js).
+  const stamped = el.closest?.('[data-component]')?.dataset?.component
+  if (stamped) return stamped
+
+  // Dev builds: Vue 3 keeps the component on the element, so walk up to find it.
   let current = el
   while (current && current !== document.body) {
     // Vue 3 attaches component to __vueParentComponent.
@@ -257,11 +379,28 @@ function getLabel(el) {
     el.getAttribute('title') ||
     el.getAttribute('data-label') ||
     getVisibleText(el) ||
+    getAssociatedLabelText(el) ||
     el.getAttribute('alt') ||
     el.getAttribute('placeholder') ||
     el.getAttribute('name') ||
     null
   )
+}
+
+// Form controls are usually labelled by a separate <label for="id"> or by a wrapping <label>,
+// not by their own text.
+function getAssociatedLabelText(el) {
+  let label = null
+
+  if (el.id) {
+    label = [...el.ownerDocument.getElementsByTagName('label')].find(
+      (l) => l.htmlFor === el.id
+    )
+  }
+
+  label = label || el.closest?.('label')
+
+  return label && label !== el ? getVisibleText(label) : null
 }
 
 function getVisibleText(el) {

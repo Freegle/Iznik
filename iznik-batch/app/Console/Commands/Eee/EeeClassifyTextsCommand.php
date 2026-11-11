@@ -4,6 +4,7 @@ namespace App\Console\Commands\Eee;
 
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Classify listings from their text alone into the UK WEEE collection streams.
@@ -22,6 +23,7 @@ use Illuminate\Console\Command;
  *   php artisan eee:classify-texts in.tsv out.tsv --batch=50 --concurrency=8
  *   php artisan eee:classify-texts in.tsv out.tsv --google-batch
  */
+#[AsCommand(name: 'eee:classify-texts')]
 class EeeClassifyTextsCommand extends Command
 {
     protected $signature = 'eee:classify-texts

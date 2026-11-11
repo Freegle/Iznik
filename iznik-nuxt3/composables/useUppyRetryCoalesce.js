@@ -39,3 +39,25 @@ export function createRetryCoalescer(getUppy) {
     })
   }
 }
+
+// Takes the photos that have finished out of Uppy once a batch completes, and
+// says whether anything is left. Use this instead of uppy.clear().
+//
+// clear() empties Uppy's file list without stopping uploads that are still
+// running. When one photo in a batch fails, `complete` fires and the retry
+// above has already restarted it, so clear() pulled the file out from under
+// its own upload: @uppy/tus then crashed reading `progress` of the missing
+// file ("Cannot read properties of undefined (reading 'progress')"), and the
+// photo was lost. Leaving unfinished files where they are lets the retry finish
+// and report back through the next `complete`.
+export function removeFinishedFiles(uppy, result) {
+  if (!uppy) return true
+
+  const finished = (result?.successful || [])
+    .map((file) => file?.id)
+    .filter((id) => id && uppy.getFile(id))
+
+  if (finished.length) uppy.removeFiles(finished)
+
+  return uppy.getFiles().length === 0
+}

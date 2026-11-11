@@ -18,7 +18,6 @@ const mockHold = vi.fn()
 const mockRelease = vi.fn()
 const mockFetchMT = vi.fn()
 const mockInbounds = vi.fn()
-const mockSimilar = vi.fn()
 const mockMatches = vi.fn()
 const mockMygroups = vi.fn()
 const mockBulkInterest = vi.fn()
@@ -55,7 +54,6 @@ vi.mock('~/api', () => ({
       release: mockRelease,
       fetchMT: mockFetchMT,
       inbounds: mockInbounds,
-      similar: mockSimilar,
       matches: mockMatches,
       mygroups: mockMygroups,
       bulkInterest: mockBulkInterest,
@@ -427,16 +425,6 @@ describe('message store - simple passthrough actions', () => {
     expect(store.list[1]).toBeUndefined()
     expect(mockSearch).toHaveBeenCalledWith({ term: 'sofa' })
     expect(ret).toEqual(['result'])
-  })
-
-  it('similar() forwards id and limit', async () => {
-    const store = freshStore()
-    mockSimilar.mockResolvedValue([{ id: 5 }])
-
-    const ret = await store.similar(1, 3)
-
-    expect(mockSimilar).toHaveBeenCalledWith(1, 3)
-    expect(ret).toEqual([{ id: 5 }])
   })
 
   it('matches() forwards query, lat, lng and limit', async () => {

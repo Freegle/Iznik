@@ -6,7 +6,9 @@ use App\Services\GroupCustomisationService;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'groups:remind-customisation')]
 class RemindCustomisationCommand extends Command
 {
     use LogsBatchJob;

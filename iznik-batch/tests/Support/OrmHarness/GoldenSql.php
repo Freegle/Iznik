@@ -99,6 +99,76 @@ final class GoldenSql
     }
 
     /**
+     * Layer 1 for an INSERT IGNORE site, i.e. one converted with
+     * ->insertOrIgnore(). Same contract as assertInsert(): $build returns
+     * [query, row].
+     *
+     * Separate from assertInsert because the modifier is not cosmetic - it is
+     * the difference between skipping a unique-key collision and aborting the
+     * statement - so it must be rendered and compared, not assumed.
+     *
+     * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array}  $build
+     */
+    public static function assertInsertOrIgnore(string $siteId, callable $build): void
+    {
+        [$built, $values] = $build();
+        $query = self::normaliseBuiltQuery($siteId, $built);
+        $grammar = $query->getGrammar();
+
+        $sql = $grammar->compileInsertOrIgnore($query, [$values]);
+        $bindings = $query->cleanBindings(array_values($values));
+
+        self::compareAndAssert($siteId, $sql, $bindings);
+    }
+
+    /**
+     * Layer 1 for an upsert site, i.e. one converted with ->upsert().
+     * $build returns [query, rows, uniqueBy, update].
+     *
+     * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array,2:array,3:array}  $build
+     */
+    public static function assertUpsert(string $siteId, callable $build): void
+    {
+        [$built, $rows, $uniqueBy, $update] = $build();
+        $query = self::normaliseBuiltQuery($siteId, $built);
+        $grammar = $query->getGrammar();
+
+        $sql = $grammar->compileUpsert($query, $rows, $uniqueBy, $update);
+
+        // compileUpsert emits the VALUES binds followed by the update binds, in
+        // that order - mirroring what Builder::upsert() passes to the
+        // connection. Building them here rather than reading getBindings()
+        // because the query itself carries none: everything is in $rows.
+        $bindings = [];
+        foreach ($rows as $row) {
+            foreach ($row as $v) {
+                $bindings[] = $v;
+            }
+        }
+        foreach ($update as $k => $v) {
+            if (! is_int($k)) {
+                $bindings[] = $v;
+            }
+        }
+
+        self::compareAndAssert($siteId, $sql, $query->cleanBindings($bindings));
+    }
+
+    /**
+     * Layer 1 for a site converted to ->exists(). $build returns the query
+     * carrying table and WHERE, un-executed.
+     *
+     * @param  callable(): QueryBuilder|EloquentBuilder  $build
+     */
+    public static function assertExists(string $siteId, callable $build): void
+    {
+        $query = self::normaliseBuiltQuery($siteId, $build());
+        $sql = $query->getGrammar()->compileExists($query);
+
+        self::compareAndAssert($siteId, $sql, $query->getBindings());
+    }
+
+    /**
      * Layer 1 for an UPDATE-shaped site. $build returns [query, values]:
      * the query builder carrying the table and WHERE (built but, same
      * discipline as assert(), never executed - do not call ->update() on
@@ -136,6 +206,41 @@ final class GoldenSql
         // expression as a bind argument with no "?" for it, tripping the
         // placeholder-count guard on a case that is not actually wrong.
         $bindings = $query->cleanBindings($grammar->prepareBindingsForUpdate($query->getRawBindings(), $values));
+
+        self::compareAndAssert($siteId, $sql, $bindings);
+    }
+
+    /**
+     * Layer 1 for an INSERT-shaped site. $build returns [query, values]: the
+     * query builder carrying the table (built but never executed - do not call
+     * ->insert() on it), and the row ->insert() would have been given.
+     *
+     *   GoldenSql::assertInsert($siteId, fn () => [
+     *       DB::table('memberships_history'),
+     *       ['userid' => 1, 'groupid' => 2, 'collection' => 'Approved'],
+     *   ]);
+     *
+     * Column ORDER matters and is not normalised away: compileInsert emits the
+     * columns in the order the array gives them, and an INSERT whose columns
+     * and values disagree writes the wrong data while still being valid SQL.
+     * That is precisely the kind of mistake a golden comparison should catch,
+     * so the array must be written in the raw statement's column order.
+     *
+     * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array}  $build
+     */
+    public static function assertInsert(string $siteId, callable $build): void
+    {
+        [$built, $values] = $build();
+        $query = self::normaliseBuiltQuery($siteId, $built);
+        $grammar = $query->getGrammar();
+
+        $sql = $grammar->compileInsert($query, [$values]);
+        // compileInsert takes a LIST of rows; a single row is wrapped above so
+        // the emitted statement has one VALUES tuple, matching the raw form.
+        // cleanBindings() for the same reason assertUpdate needs it: a DB::raw
+        // value is inlined into the SQL by parameter(), so it is not a bind and
+        // counting it would trip the placeholder guard on a correct statement.
+        $bindings = $query->cleanBindings(array_values($values));
 
         self::compareAndAssert($siteId, $sql, $bindings);
     }
@@ -208,6 +313,48 @@ final class GoldenSql
         $grammar = DB::connection()->getQueryGrammar();
         $renderedRaw = $grammar->substituteBindingsIntoRawSql($sql, $bindings);
 
+        // The approvedDiff is checked HERE, before the golden placeholder-count
+        // guard below, and the ordering is load-bearing.
+        //
+        // By far the commonest real divergence is that the raw statement INLINED
+        // a constant and the builder BINDS it - `SET replyexpected = 0` becomes
+        // `set replyexpected = ?`, `role IN ('Owner','Moderator')` becomes
+        // `role in (?, ?)`. That is exactly a change in the number of bind
+        // arguments, so the guard below fires on it and, when the check sat
+        // after that guard, killed the test before the approved diff could be
+        // consulted at all: a diff recorded for precisely this case could never
+        // be honoured. Found the first time a real conversion needed one - Phase
+        // B could not have caught it, because every site ProvenSitesTest proves
+        // matches its golden exactly.
+        //
+        // Comparing here is sound: the approvedDiff IS the emitted statement, so
+        // its placeholders and the bindings are 1:1 by construction, and the
+        // golden's own count is irrelevant when we are deliberately not
+        // comparing against the golden.
+        $approvedDiff = $site['approvedDiff'] ?? '';
+        if ($approvedDiff !== '') {
+            $approvedPlaceholders = Canonical::countPlaceholders($approvedDiff);
+            if ($approvedPlaceholders !== count($bindings)) {
+                Assert::fail(sprintf(
+                    "ormharness: site \"%s\": the recorded approvedDiff has %d placeholder(s) but the replacement ".
+                    "bound %d argument(s). An approvedDiff must be the statement the builder actually emits, so its ".
+                    "placeholders and the bindings have to line up 1:1.\n".
+                    "  approvedDiff: %s\n".
+                    "  rendered:     %s",
+                    $siteId,
+                    $approvedPlaceholders,
+                    count($bindings),
+                    $approvedDiff,
+                    $sql
+                ));
+            }
+            $approvedRaw = $grammar->substituteBindingsIntoRawSql($approvedDiff, $bindings);
+            if (Canonical::normalise($approvedRaw) === Canonical::normalise($renderedRaw)) {
+                Assert::assertTrue(true); // a reviewer already recorded and justified exactly this divergence
+                return;
+            }
+        }
+
         $goldenPlaceholders = Canonical::countPlaceholders($goldenSql);
         if ($goldenPlaceholders !== count($bindings)) {
             Assert::fail(sprintf(
@@ -215,8 +362,11 @@ final class GoldenSql
                 "argument(s), so they cannot be substituted 1:1 to compare literal-for-literal.\n".
                 "  golden:   %s\n".
                 "  rendered: %s\n".
-                'This usually means the representative bind values chosen for this test do not match the shape '.
-                'of the original call site (extra/missing WHERE conditions, a different number of columns, etc).',
+                'Usually the representative bind values chosen for this test do not match the shape of the '.
+                "original call site (extra/missing WHERE conditions, a different number of columns, etc).\n".
+                'If instead the split genuinely changed - the raw statement inlined a constant and the builder '.
+                'binds it, which is the commonest case - that is what an approvedDiff is for: record the emitted '.
+                'statement in services/laravel/approved-diffs.json with a reason.',
                 $siteId,
                 $goldenPlaceholders,
                 count($bindings),
@@ -232,15 +382,6 @@ final class GoldenSql
         if ($wantCanon === $gotCanon) {
             Assert::assertSame($wantCanon, $gotCanon); // real assertion, so PHPUnit does not flag the test as risky
             return;
-        }
-
-        $approvedDiff = $site['approvedDiff'] ?? '';
-        if ($approvedDiff !== '') {
-            $approvedRaw = $grammar->substituteBindingsIntoRawSql($approvedDiff, $bindings);
-            if (Canonical::normalise($approvedRaw) === $gotCanon) {
-                Assert::assertTrue(true); // a reviewer already recorded and justified exactly this divergence
-                return;
-            }
         }
 
         $verdict = $approvedDiff === ''

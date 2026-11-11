@@ -60,9 +60,11 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useNuxtApp } from '#app'
 import { useMe } from '~/composables/useMe'
+import { useLockdownStore } from '~/stores/lockdown'
 
 const { $api } = useNuxtApp()
 const { supportOrAdmin } = useMe()
+const lockdownStore = useLockdownStore()
 
 const status = ref(null)
 const updated = ref(null)
@@ -75,7 +77,13 @@ const outOfDate = computed(() => {
   return !updated.value || Date.now() - updated.value >= 1000 * 600
 })
 
-const error = computed(() => (status.value ? status.value.error : false))
+// plans/active/2026-09-27-lockdown-switch.md 10.4: "the platform traffic
+// light in ModStatus.vue turns red" during a lockdown. Every mod needs this,
+// not just support/admin (unlike the warning dot below), because it is the
+// same signal that explains why some Approve buttons have gone missing.
+const error = computed(() =>
+  lockdownStore.active ? true : status.value ? status.value.error : false
+)
 
 const warning = computed(() => {
   return outOfDate.value || (status.value && status.value.warning)

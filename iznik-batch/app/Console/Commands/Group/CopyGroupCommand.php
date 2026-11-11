@@ -5,7 +5,9 @@ namespace App\Console\Commands\Group;
 use App\Models\Group;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'group:copy')]
 class CopyGroupCommand extends Command
 {
     protected $signature = 'group:copy

@@ -4,6 +4,7 @@ namespace App\Console\Commands\Mail;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Turn "the member opened/clicked a digest" into a per-(member, post) "seen" signal.
@@ -19,7 +20,13 @@ use Illuminate\Support\Facades\DB;
  * We deliberately key off open/click, not send: sending a digest doesn't mean it was
  * read, and we must never sink a post for someone who never had a chance to see it.
  * insertOrIgnore makes re-processing the overlapping look-back window harmless.
+ *
+ * Opens seen as image loads or pixel hits reach opened_at only when mail:tracking:fold applies the
+ * tracking journal overnight, with the true (hours old) open time. This hourly run therefore sees
+ * clicks and AMP opens promptly but image opens late; the fold command calls this one over a
+ * look-back long enough to cover every open it applied.
  */
+#[AsCommand(name: 'mail:digest:mark-seen')]
 class MarkDigestSeenCommand extends Command
 {
     protected $signature = 'mail:digest:mark-seen

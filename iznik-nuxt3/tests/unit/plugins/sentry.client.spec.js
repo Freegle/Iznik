@@ -31,12 +31,27 @@ vi.mock('~/composables/useTrace', () => ({
   getTraceId: vi.fn(() => 'trace'),
   getSessionId: vi.fn(() => 'session'),
 }))
+const clientLogMock = vi.hoisted(() => ({
+  pageView: vi.fn(),
+  setRouteNameProvider: vi.fn(),
+  setLoggingContextProvider: vi.fn(),
+}))
+const loggingCtx = vi.hoisted(() => ({
+  startPage: vi.fn(),
+  init: vi.fn(),
+  getContext: vi.fn(() => ({ page_id: 'page_1' })),
+}))
 vi.mock('~/composables/useClientLog', () => ({
   useClientLog: vi.fn(() => ({
     setAuthStore: vi.fn(),
     sessionStart: vi.fn(),
-    pageView: vi.fn(),
+    pageView: clientLogMock.pageView,
   })),
+  setRouteNameProvider: clientLogMock.setRouteNameProvider,
+  setLoggingContextProvider: clientLogMock.setLoggingContextProvider,
+}))
+vi.mock('~/stores/loggingContext', () => ({
+  useLoggingContextStore: () => loggingCtx,
 }))
 
 describe('plugins/sentry.client', () => {
@@ -53,11 +68,18 @@ describe('plugins/sentry.client', () => {
       push: vi.fn(),
       currentRoute: { value: { path: '/' } },
     })
+    // happy-dom reports itself as automated, and beforeSend sends nothing from
+    // an automated browser. Every test is a person's browser unless it says not.
+    Object.defineProperty(window.navigator, 'webdriver', {
+      value: false,
+      configurable: true,
+    })
   })
 
   afterEach(() => {
     delete globalThis.__testRuntimeConfig
     delete globalThis.__testUseRouter
+    delete window.navigator.webdriver
   })
 
   async function runPlugin() {
@@ -82,6 +104,39 @@ describe('plugins/sentry.client', () => {
     expect(options).not.toHaveProperty('trackComponents')
     expect(options).not.toHaveProperty('hooks')
     expect(options.attachProps).toBe(true)
+  })
+
+  it('starts a logging-context page before logging the page view', async () => {
+    let afterEach
+    globalThis.__testUseRouter = () => ({
+      afterEach: (cb) => {
+        afterEach = cb
+      },
+      push: vi.fn(),
+      currentRoute: { value: { path: '/', name: 'give' } },
+    })
+    await runPlugin()
+
+    const order = []
+    loggingCtx.startPage.mockImplementation(() => order.push('start'))
+    clientLogMock.pageView.mockImplementation(() => order.push('view'))
+    afterEach({ path: '/give', name: 'give', query: {} })
+
+    expect(order).toEqual(['start', 'view'])
+  })
+
+  it('gives the client log the route name and logging context providers', async () => {
+    globalThis.__testUseRouter = () => ({
+      afterEach: vi.fn(),
+      push: vi.fn(),
+      currentRoute: { value: { path: '/', name: 'give-mobile-photos' } },
+    })
+    await runPlugin()
+
+    const routeFn = clientLogMock.setRouteNameProvider.mock.calls[0][0]
+    expect(routeFn()).toBe('give-mobile-photos')
+    const ctxFn = clientLogMock.setLoggingContextProvider.mock.calls[0][0]
+    expect(ctxFn()).toEqual({ page_id: 'page_1' })
   })
 
   it('passes the router into browserTracingIntegration', async () => {
@@ -132,6 +187,64 @@ describe('plugins/sentry.client', () => {
         originalException: errorWithStack(stack),
       })
       expect(result).toBe(event)
+    })
+  })
+
+  // Sentry MODTOOLS "Error: pa": 1,689 events in a week from CI's
+  // modtools-prod-local, tagged production, because Playwright's 'Desktop
+  // Chrome' profile reports Windows Chrome and the HeadlessChrome check missed it.
+  describe('beforeSend under automation', () => {
+    const playwrightUserAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.34 Safari/537.36'
+
+    function setBrowser(userAgent, webdriver) {
+      for (const [key, value] of Object.entries({ userAgent, webdriver })) {
+        Object.defineProperty(window.navigator, key, {
+          value,
+          configurable: true,
+        })
+      }
+    }
+
+    afterEach(() => {
+      // The own properties shadow happy-dom's; removing them brings its values back.
+      delete window.navigator.userAgent
+      delete window.navigator.webdriver
+      vi.restoreAllMocks()
+    })
+
+    it('logs the exception to the console but does not send it', async () => {
+      setBrowser(playwrightUserAgent, true)
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      await runPlugin()
+      const options = mockInit.mock.calls[0][0]
+
+      const result = options.beforeSend(
+        { extra: {}, exception: {} },
+        { originalException: new Error('pa') }
+      )
+
+      expect(result).toBeNull()
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Exception for Sentry]: (Error: pa)',
+        expect.anything()
+      )
+    })
+
+    it('still sends from the same browser when a person is using it', async () => {
+      setBrowser(playwrightUserAgent, false)
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      await runPlugin()
+      const options = mockInit.mock.calls[0][0]
+      const event = { extra: {}, exception: {} }
+
+      expect(
+        options.beforeSend(event, { originalException: new Error('pa') })
+      ).toBe(event)
     })
   })
 })

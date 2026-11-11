@@ -3,6 +3,7 @@
 namespace Tests\Unit\Listeners;
 
 use App\Listeners\CronJobStatusListener;
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\Event;
@@ -118,6 +119,53 @@ class CronJobStatusListenerTest extends TestCase
             ->first();
         $this->assertNotNull($row->last_finished_at);
         $this->assertEquals(0, $row->last_exit_code);
+    }
+
+    // A background task's ScheduledTaskFinished fires as soon as it has been
+    // launched, with no exit code. Its outcome arrives later, from
+    // schedule:finish, as ScheduledBackgroundTaskFinished.
+    public function test_background_task_records_exit_code_from_background_finish(): void
+    {
+        $event = $this->createMockEvent("'/usr/bin/php' 'artisan' test:background-command");
+        $event->runInBackground();
+
+        $listener = new CronJobStatusListener();
+        $listener->handleStarting(new ScheduledTaskStarting($event));
+        $listener->handleFinished(new ScheduledTaskFinished($event, 0.01));
+
+        $row = DB::table('cron_job_status')->where('command', 'test:background-command')->first();
+        $this->assertNull($row->last_finished_at, 'launching is not finishing');
+        $this->assertNull($row->last_exit_code);
+
+        $event->exitCode = 3;
+        $listener->handleBackgroundFinished(new ScheduledBackgroundTaskFinished($event));
+
+        $row = DB::table('cron_job_status')->where('command', 'test:background-command')->first();
+        $this->assertNotNull($row->last_finished_at);
+        $this->assertEquals(3, $row->last_exit_code);
+    }
+
+    public function test_launching_a_background_task_keeps_its_last_outcome(): void
+    {
+        DB::table('cron_job_status')->insert([
+            'command' => 'test:background-failed',
+            'last_run_at' => now()->subMinutes(10),
+            'last_finished_at' => now()->subMinutes(9),
+            'last_exit_code' => 1,
+        ]);
+
+        $event = $this->createMockEvent("'/usr/bin/php' 'artisan' test:background-failed");
+        $event->runInBackground();
+
+        $listener = new CronJobStatusListener();
+        $listener->handleFinished(new ScheduledTaskFinished($event, 0.01));
+
+        $this->assertEquals(1, DB::table('cron_job_status')->where('command', 'test:background-failed')->value('last_exit_code'));
+    }
+
+    public function test_listener_is_registered_for_background_finish(): void
+    {
+        $this->assertTrue(\Illuminate\Support\Facades\Event::hasListeners(ScheduledBackgroundTaskFinished::class));
     }
 
     private function createMockEvent(string $command): Event

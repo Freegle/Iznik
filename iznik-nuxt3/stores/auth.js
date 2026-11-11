@@ -2,12 +2,19 @@ import { defineStore } from 'pinia'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { LoginError, SignUpError } from '~/api/APIErrors'
 import { isBannedFailure } from '~/api/bannedFailure'
+import { asLockdownError, runLockdownAware } from '~/api/lockdownConflict'
 import {
   abortAllPendingRequests,
   enterLogoutMode,
   exitLogoutMode,
 } from '~/api/BaseAPI'
 import { action as clientAction } from '~/composables/useClientLog'
+import { FlowName, useFlowTelemetry } from '~/composables/useFlowTelemetry'
+import {
+  beginSettingsSave,
+  changedFields,
+  noteSettingsSave,
+} from '~/composables/useSettingsTelemetry'
 import { useComposeStore } from '~/stores/compose'
 import { useGroupStore } from '~/stores/group'
 import api from '~/api'
@@ -20,6 +27,10 @@ import {
   restoreSessionFromDevice,
   saveSessionForRestore,
 } from '~/composables/useSessionRestore'
+
+// Why a member joins a group, as PUT /memberships accepts it from the member themselves
+// (addedorigin.fromClient in iznik-server-go).
+export const JOIN_ORIGINS = ['manual', 'posted', 'replied', 'signup']
 
 // How many 100ms retries we give the Google script before accepting that it is
 // not coming. Five seconds is well past a normal load, and stopping matters:
@@ -171,6 +182,18 @@ export const useAuthStore = defineStore('auth', {
           // We have logged in.
           this.forceLogin = false
         }
+
+        // Resume a compose submit that was deferred until login (e.g. the
+        // poster's email was already registered so we forced a login). This is
+        // gated on being logged in, NOT on forceLogin — forceLogin is not
+        // persisted, so after a page refresh mid-login only the persisted
+        // pendingSubmit (and draft) survive, and we still resume from here.
+        const composeStore = useComposeStore()
+        if (composeStore.pendingSubmit) {
+          composeStore
+            .resumePendingSubmit()
+            .catch((e) => console.log('Resume deferred submit failed', e))
+        }
       } else {
         this.user = null
       }
@@ -311,6 +334,11 @@ export const useAuthStore = defineStore('auth', {
       this.config = config
       this.loggedInEver = loggedInEver
       this.$api = api
+
+      // Drop any login-gated compose submit: it belongs to the user who just logged
+      // out, and the compose store is persisted separately, so it would otherwise
+      // survive and auto-fire on the NEXT person's login on this device.
+      useComposeStore().clearPendingSubmit()
 
       // Restore normal request handling now that logout is complete.
       exitLogoutMode()
@@ -504,8 +532,11 @@ export const useAuthStore = defineStore('auth', {
           // 401/404 means our JWT is genuinely invalid — BaseAPI already clears
           // auth for 401.  Any other error (500, network timeout) is a server
           // problem — the JWT may still be valid so we must not wipe it.
+          // A network failure has no status at all ("Too many retries, give
+          // up" when the app resumes before its connection is back), and must
+          // count as a server problem too, or a phone waking up logs out.
           const status = e?.response?.status
-          if (status && status !== 401 && status !== 404) {
+          if (status !== 401 && status !== 404) {
             serverError = true
           }
           console.log('Exception fetching user, status', status)
@@ -536,34 +567,21 @@ export const useAuthStore = defineStore('auth', {
         }
 
         if (import.meta.client) {
-          // Sync marketing consent from local storage to user profile if needed
+          // The server holds marketing consent. The login box can only give it, and only when the
+          // member ticked it; withdrawing is done in Settings.
           const miscStore = useMiscStore()
 
-          if (miscStore.marketingConsent !== undefined) {
-            const localConsent = !!miscStore.marketingConsent
-            console.log(
-              'Local marketing consent',
-              localConsent,
-              'User marketing consent',
-              me.marketingconsent
-            )
-
-            if (me.marketingconsent !== localConsent) {
-              try {
-                await this.$api.session.save({
-                  marketingconsent: localConsent,
-                })
-
-                me.marketingconsent = localConsent
-                console.log("Sync'd marketing consent")
-              } catch (e) {
-                console.log('Failed to sync marketing consent', e)
+          if (miscStore.marketingConsentTicked) {
+            try {
+              if (!me.marketingconsent) {
+                await this.$api.session.save({ marketingconsent: true })
+                me.marketingconsent = true
               }
-            } else {
-              console.log("Marketing consent already sync'd")
+
+              miscStore.setMarketingConsentTicked(false)
+            } catch (e) {
+              console.log('Failed to save marketing consent', e)
             }
-          } else {
-            console.log('No local marketing consent to sync')
           }
         }
       } else if (!serverError) {
@@ -604,12 +622,40 @@ export const useAuthStore = defineStore('auth', {
       await this.$api.user.unbounce(id)
     },
     async saveAndGet(params) {
-      console.log('Save and get', params)
-      await this.$api.session.save(params)
-      console.log('Saved')
-      const user = await this.fetchUser()
-      console.log('Fetched user', JSON.stringify(user))
-      return user
+      // plans/active/2026-09-27-lockdown-switch.md section 10.5: display
+      // name, about me and avatar changes are refused with a short message
+      // while the "profile" surface is held. This is the single choke point
+      // both go through, so it's the one place that needs to know about
+      // that 409 - runLockdownAware turns it into a tagged, readable error
+      // (api/lockdownConflict.js) instead of the raw response, and any
+      // other failure propagates untouched.
+      return await runLockdownAware(async () => {
+        console.log('Save and get', params)
+
+        // Flow telemetry (only has an effect while the settings page is open): which fields this
+        // save changes, by name, and whether it worked.
+        beginSettingsSave()
+        const flow = useFlowTelemetry(FlowName.SETTINGS)
+        const changed = changedFields(this.user, params)
+        flow.submit()
+
+        try {
+          await this.$api.session.save(params)
+          console.log('Saved')
+          const user = await this.fetchUser()
+          console.log('Fetched user', JSON.stringify(user))
+          flow.submitResult(true, 200, null)
+          noteSettingsSave(changed)
+          return user
+        } catch (e) {
+          flow.submitResult(
+            false,
+            e?.response?.status ?? null,
+            asLockdownError(e) ? 'lockdown' : 'error'
+          )
+          throw e
+        }
+      })
     },
     async setGroup(params, nofetch) {
       await this.$api.memberships.update(params)
@@ -626,12 +672,23 @@ export const useAuthStore = defineStore('auth', {
       await this.fetchUser()
       return this.user
     },
-    async joinGroup(userid, groupid, manual) {
+    // origin says why they are joining: one of JOIN_ORIGINS, the values the server accepts
+    // from a member. Anything else is a caller's mistake, refused here rather than stored as a
+    // wrong reason. manual is still sent for an API from before origin, which reads true as
+    // manual and false as replied.
+    async joinGroup(userid, groupid, origin) {
+      if (!JOIN_ORIGINS.includes(origin)) {
+        throw new Error(
+          `joinGroup: origin must be one of ${JOIN_ORIGINS.join(', ')}, not ${origin}`
+        )
+      }
+
       try {
         await this.$api.memberships.joinGroup({
           userid,
           groupid,
-          manual,
+          origin,
+          manual: origin === 'manual',
         })
       } catch (e) {
         // A banned member's own join is refused server-side (403 "Failed - banned").

@@ -2,6 +2,7 @@
 
 namespace App\Services\TrashNothing\Sync;
 
+use App\Models\User;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\UserEmail;
@@ -322,8 +323,8 @@ class EmailReplaySyncer
     }
 
     /**
-     * Test-harness-only stub user (+ Approved membership) creation, mirroring
-     * GroupPostIngestionService::findOrCreateUser() for the API path.
+     * Test-harness-only stub user (+ Approved membership) creation, standing in for
+     * what TnUserProvisioner does for the API path.
      * IncomingMailService itself never does this — production email ingestion
      * relies on TN's separate partner membership-add webhook to create the
      * user ahead of any post email, so a real `users_emails` row always
@@ -334,10 +335,10 @@ class EmailReplaySyncer
      * creates a stub if no matching `users_emails` row exists; never touches
      * an existing user.
      *
-     * Unlike the API path (which resolves TN's user id through users.tnuserid
-     * and creates nothing), this has no id to key on — the partner CSV only
-     * carries an email address — so it always gets a fresh auto-increment
-     * id. That means an overlapping
+     * Unlike the API path (which resolves TN's user id through users.tnuserid,
+     * or creates the user from TN's users endpoint), this has no id to key on —
+     * the partner CSV only carries an email address — so it always gets a fresh
+     * auto-increment id. That means an overlapping
      * post's `fromuser` can legitimately differ between the two paths when
      * both had to stub-create the poster; see the `fromuser` exclusion note
      * in ParityComparer::diffMessageFields().
@@ -361,7 +362,7 @@ class EmailReplaySyncer
 
         $userId = DB::table('users')->insertGetId([
             'fullname'   => $fullname,
-            'systemrole' => 'User',
+            'systemrole' => User::SYSTEMROLE_USER,
             'added'      => now(),
             'lastaccess' => now(),
         ]);
@@ -396,6 +397,10 @@ class EmailReplaySyncer
             'collection'       => Membership::COLLECTION_APPROVED,
             'emailfrequency'   => Membership::EMAIL_FREQUENCY_IMMEDIATE,
             'ourPostingStatus' => 'DEFAULT',
+            // Stands in for TN's partner add.
+            'added_origin'     => Membership::addedOriginForInsert(
+                Membership::ADDED_ORIGIN_PARTNER, 'EmailReplaySyncer', (int) $userId, (int) $group->id,
+            ),
             'added'            => now(),
         ]);
     }

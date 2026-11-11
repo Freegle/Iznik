@@ -16,6 +16,8 @@ const {
   buildReferralMjml,
   buildReferralText,
   referralSubject,
+  referralThreadHeaders,
+  screenshotCid,
   formatReferralRef,
 } = require('./referral-mjml')
 
@@ -94,6 +96,7 @@ async function sendReferral(referral, opts = {}) {
   const replyTo = SUPPORT_ADDR
   const { subject, html, text } = renderReferralEmail({ ...referral, replyTo })
 
+  const thread = referralThreadHeaders(referral)
   const info = await transport().sendMail({
     from: REFERRAL_FROM,
     to,
@@ -101,6 +104,18 @@ async function sendReferral(referral, opts = {}) {
     subject,
     html,
     text,
+    messageId: `<${thread.messageId}>`,
+    inReplyTo: `<${thread.inReplyTo}>`,
+    references: thread.references.map((r) => `<${r}>`),
+    // Each screenshot is shown in the body (by content id) and is also a real attachment, so it can be
+    // saved or opened full size from any mail client.
+    attachments: (referral.screenshots || []).map((img, i) => ({
+      filename: img.name,
+      content: Buffer.from(img.data, 'base64'),
+      contentType: img.mime,
+      cid: screenshotCid(i),
+      contentDisposition: 'inline',
+    })),
     // Also as a header, so a mail rule or a script can match on the reference
     // without parsing the subject line.
     headers: referral.ref ? { 'X-Freegle-Support-Referral': referral.ref } : undefined,

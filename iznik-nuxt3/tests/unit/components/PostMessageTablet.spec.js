@@ -77,14 +77,64 @@ describe('PostMessageTablet', () => {
           },
           'b-form-textarea': {
             template:
-              '<textarea class="b-form-textarea" :value="modelValue" :placeholder="placeholder" @input="$emit(\'update:modelValue\', $event.target.value)" />',
-            props: ['id', 'modelValue', 'placeholder', 'rows'],
+              '<textarea class="b-form-textarea" :value="modelValue" :placeholder="placeholder" :data-state="String(state)" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+            props: ['id', 'modelValue', 'placeholder', 'rows', 'state'],
             emits: ['update:modelValue'],
+          },
+          NoticeMessage: {
+            template: '<div class="notice-message"><slot /></div>',
+            props: ['variant'],
           },
         },
       },
     })
   }
+
+  describe('a description that is only numbers or symbols', () => {
+    // The store does not count such a description, so without a word here the Next button just
+    // stays away and the member is not told why. The mobile details step already says so.
+    it.each(['24', '£5', '12.50'])(
+      'says why "%s" is not enough, as the mobile flow does',
+      (description) => {
+        mockComposeStore.message.mockReturnValue({
+          description,
+          availablenow: 1,
+        })
+        const wrapper = createWrapper({ type: 'Offer' })
+        expect(wrapper.find('.notice-message').text()).toContain(
+          "Please describe what you're giving away"
+        )
+        expect(wrapper.find('.b-form-textarea').attributes('data-state')).toBe(
+          'false'
+        )
+      }
+    )
+
+    it('uses the wording for a request on a Wanted post', () => {
+      mockComposeStore.message.mockReturnValue({
+        description: '42',
+        availablenow: 1,
+      })
+      const wrapper = createWrapper({ type: 'Wanted' })
+      expect(wrapper.find('.notice-message').text()).toContain(
+        "Please explain what you're looking for"
+      )
+    })
+
+    it('says nothing about a real description or an empty one', () => {
+      for (const description of ['Blue chair, a bit scuffed', '', null]) {
+        mockComposeStore.message.mockReturnValue({
+          description,
+          availablenow: 1,
+        })
+        const wrapper = createWrapper({ type: 'Offer' })
+        expect(wrapper.find('.notice-message').exists()).toBe(false)
+        expect(wrapper.find('.b-form-textarea').attributes('data-state')).toBe(
+          'null'
+        )
+      }
+    })
+  })
 
   describe('rendering', () => {
     it('renders post-tablet container', () => {

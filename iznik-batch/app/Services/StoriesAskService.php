@@ -83,6 +83,8 @@ class StoriesAskService
                 ->where(function ($q) {
                     // stories defaults to 1 when not set; only disabled if explicitly 0.
                     // Compare as integers (not strings) to avoid JSON_UNQUOTE type-coercion issues.
+                    // keep-raw: COALESCE(JSON_EXTRACT(...), 1) has no builder equivalent - the JSON
+                    // where()/whereJsonContains() helpers don't support a default-value fallback.
                     $q->whereNull('groups.settings')
                         ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.stories'), 1) != 0");
                 })

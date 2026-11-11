@@ -30,7 +30,7 @@
         <ModComments :userid="member.userid" />
         <ModSpammer v-if="member.spammer" :userid="member.userid" />
         <NoticeMessage
-          v-if="user && user.systemrole && user.systemrole !== 'User'"
+          v-if="user && user.systemrole && user.systemrole !== SYSTEMROLE_USER"
           variant="info"
         >
           This freegler has role: {{ user.systemrole }}.
@@ -172,6 +172,7 @@ import { useMemberStore } from '~/stores/member'
 import { useModGroupStore } from '~/stores/modgroup'
 import { useModMe } from '~/composables/useModMe'
 import { usePreferredEmail } from '~/modtools/composables/usePreferredEmail'
+import { SYSTEMROLE_USER } from '~/constants'
 
 const MEMBERSHIPS_SHOW = 3
 
@@ -315,8 +316,10 @@ const user = computed(() => {
 const email = usePreferredEmail(user)
 
 onMounted(() => {
+  // Forced: the tab may hold a copy of this member from before a note was added,
+  // and the card must show the note the review is about.
   if (member.value) {
-    userStore.fetch(member.value.userid)
+    userStore.fetch(member.value.userid, true)
   }
 })
 

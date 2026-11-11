@@ -512,6 +512,59 @@ class DailyPostsPushTest extends TestCase
             ->assertExitCode(0);
     }
 
+    /**
+     * The scheduler runs the push as parallel shards. Each member must fall in exactly one:
+     * in none and they never get the push, in two and the shards race for the same cursor.
+     * Dry-run, so the once-per-day guard cannot hide a member who is in two shards.
+     */
+    public function test_shards_partition_members_disjointly_and_completely(): void
+    {
+        Config::set('freegle.posts_push_allowlist', '*');
+
+        $group = $this->createTestGroup();
+        $this->createApprovedMessage($this->createTestUser(), $group, 'OFFER: Shard item (London)');
+
+        $ours = [];
+        foreach (range(1, 8) as $i) {
+            $user = $this->createTestUser();
+            $this->createMembership($user, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+            $this->createUserPushToken($user->id);
+            $ours[] = $user->id;
+        }
+
+        $shards = 4;
+        $seen = [];
+        $mockPush = $this->createMock(PushNotificationService::class);
+        $mockPush->expects($this->never())->method('notifyDailyNewPosts');
+        $mockPush->method('buildDailyNewPostsPayload')
+            ->willReturnCallback(function (int $userId) use (&$seen) {
+                $seen[] = $userId;
+                return ['title' => 't', 'count' => '1'];
+            });
+        $this->app->instance(PushNotificationService::class, $mockPush);
+
+        foreach (range(0, $shards - 1) as $shard) {
+            $this->artisan('push:daily-posts', [
+                '--shard'   => $shard,
+                '--shards'  => $shards,
+                '--dry-run' => TRUE,
+            ])->assertExitCode(0);
+        }
+
+        $counts = array_count_values(array_filter($seen, fn ($id) => in_array($id, $ours, TRUE)));
+        foreach ($ours as $id) {
+            $this->assertSame(1, $counts[$id] ?? 0, "member {$id} must be in exactly one shard");
+        }
+    }
+
+    public function test_command_rejects_a_shard_outside_the_range(): void
+    {
+        Config::set('freegle.posts_push_allowlist', '*');
+
+        $this->artisan('push:daily-posts', ['--shard' => 4, '--shards' => 4])
+            ->assertExitCode(1);
+    }
+
     public function test_command_dry_run_does_not_advance_cursor(): void
     {
         Config::set('freegle.posts_push_allowlist', '*');

@@ -106,6 +106,29 @@ async function dismissLoginModalIfPresent(page) {
  * @param {number} messageId - ID of the message to find
  * @param {string} groupName - Optional group name to browse (if not specified, uses /browse)
  */
+/**
+ * Wait for the card of the test's own post. Reloads once if it has not
+ * arrived, and throws if it is still missing, so a test never replies to
+ * somebody else's post by mistake.
+ */
+async function waitForCard(page, messageCard, itemText, tag) {
+  try {
+    await messageCard.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+  } catch (e) {
+    console.log(`${tag} "${itemText}" not listed yet, reloading once`)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await dismissLoginModalIfPresent(page)
+    await messageCard.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
+  }
+  console.log(`${tag} Found the post "${itemText}"`)
+}
+
 async function navigateToMessageViaBrowse(
   page,
   messageId,
@@ -140,16 +163,11 @@ async function navigateToMessageViaBrowse(
       )
       .first()
 
-    // Check if found
-    const count = await messageCard.count()
-    if (count === 0) {
-      console.log(
-        `[Browse] Message with "${itemText}" not found, using first card`
-      )
-      messageCard = page
-        .locator('.message-summary-mobile, .messagecard')
-        .first()
-    }
+    // The post can take a moment to reach the list after it is made. Wait for
+    // it, reloading once, and fail if it never shows: falling back to the
+    // first card replied to another test's post, and the poster then saw no
+    // reply, which looked like a flaky reply flow rather than the wrong post.
+    await waitForCard(page, messageCard, itemText, '[Browse]')
   } else {
     messageCard = page.locator('.message-summary-mobile, .messagecard').first()
   }
@@ -204,16 +222,8 @@ async function navigateToMessageViaExplore(page, groupName, itemText = null) {
       )
       .first()
 
-    // Check if found
-    const count = await messageCard.count()
-    if (count === 0) {
-      console.warn(
-        `[Explore] WARNING: Message with "${itemText}" not found, using first card (may cause parallel test collision)`
-      )
-      messageCard = page
-        .locator('.message-summary-mobile, .messagecard')
-        .first()
-    }
+    // Wait for the post itself; see navigateToMessageViaBrowse.
+    await waitForCard(page, messageCard, itemText, '[Explore]')
   } else {
     console.warn(
       '[Explore] WARNING: No itemText provided, clicking first message (may cause parallel test collision)'

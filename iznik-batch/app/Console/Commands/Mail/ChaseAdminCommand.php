@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Mail;
 
+use App\Models\Membership;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\ChaseAdminMail;
 use App\Models\Group;
@@ -11,7 +12,9 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'mail:admin:chase')]
 class ChaseAdminCommand extends Command
 {
     use GracefulShutdown;
@@ -278,7 +281,7 @@ class ChaseAdminCommand extends Command
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->where('memberships.groupid', $groupId)
             ->where('memberships.collection', 'Approved')
-            ->whereIn('memberships.role', ['Moderator', 'Owner'])
+            ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->whereNull('users.deleted')
             ->get();
     }

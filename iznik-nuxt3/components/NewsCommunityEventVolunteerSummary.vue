@@ -24,12 +24,12 @@
       </NuxtLink>
     </div>
     <div v-if="volunteerOpportunities.length > 0" class="summary-row">
-      <NuxtLink to="/volunteering" class="summary-title">
+      <NuxtLink to="/volunteerings" class="summary-title">
         {{ volopTitle }}
       </NuxtLink>
       <NuxtLink
         v-if="volunteerOpportunities.length > 1"
-        to="/volunteering"
+        to="/volunteerings"
         class="summary-count"
       >
         +{{ volunteerOpportunities.length - 1 }} more

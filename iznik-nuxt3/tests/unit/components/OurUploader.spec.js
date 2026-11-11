@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense, ref } from 'vue'
 import OurUploader from '~/components/OurUploader.vue'
+import {
+  READ_RETRY_DELAY_MS,
+  UNREADABLE_PHOTO_MESSAGE,
+} from '~/composables/useUppyInMemory'
 
 // Mock polyfill check functions
 vi.mock('@formatjs/intl-locale/should-polyfill.js', () => ({
@@ -55,6 +59,10 @@ const mockUppy = {
   getPlugin: vi.fn(),
   retryAll: vi.fn(),
   clear: vi.fn(),
+  getFile: vi.fn((id) => ({ id })),
+  getFiles: vi.fn(() => []),
+  removeFiles: vi.fn(),
+  removeFile: vi.fn(),
 }
 
 vi.mock('@uppy/core', () => ({
@@ -305,9 +313,11 @@ describe('OurUploader', () => {
       expect(wrapper.findComponent(OurUploader).props('label')).toBe(null)
     })
 
-    // NOTE: The component has a bug where label computed returns itself instead
-    // of props.label when props.label is set, causing render errors.
-    // This test verifies the prop is defined on the component.
+    it('shows a label passed in', async () => {
+      const wrapper = await createWrapper({ label: 'Upload logo' })
+      expect(wrapper.text()).toContain('Upload logo')
+    })
+
     it('has label prop defined', () => {
       const labelProp = OurUploader.props.label
       expect(labelProp.type).toBe(String)
@@ -474,8 +484,49 @@ describe('OurUploader', () => {
     it('registers the HEIC pre-processor', async () => {
       mockIsApp.value = false
       await createWrapper()
-      expect(mockUppy.addPreProcessor).toHaveBeenCalledTimes(1)
+      // HEIC first, then the in-memory copy (see useUppyInMemory).
+      expect(mockUppy.addPreProcessor).toHaveBeenCalledTimes(2)
       expect(mockUppy.addPreProcessor.mock.calls[0][0]).toBeInstanceOf(Function)
+    })
+
+    it('copies photos into memory after the Compressor plugin', async () => {
+      // So the upload sends what Compressor produced, read once up front,
+      // rather than going back to the phone's photo picker mid-request.
+      mockIsApp.value = false
+      await createWrapper()
+      const compressorRegistered = mockUppy.use.mock.invocationCallOrder.at(-1)
+      const copyRegistered =
+        mockUppy.addPreProcessor.mock.invocationCallOrder[1]
+      expect(copyRegistered).toBeGreaterThan(compressorRegistered)
+    })
+
+    it('tells the member when a photo cannot be opened', async () => {
+      mockIsApp.value = false
+      const wrapper = await createWrapper()
+      const copyIntoMemory = mockUppy.addPreProcessor.mock.calls[1][0]
+      const unreadable = () =>
+        Promise.reject(
+          Object.assign(new Error('could not be read'), {
+            name: 'NotReadableError',
+          })
+        )
+      mockUppy.getFile.mockReturnValueOnce({
+        id: 'f1',
+        data: { size: 1, type: 'image/jpeg', arrayBuffer: unreadable },
+      })
+
+      vi.useFakeTimers()
+      try {
+        const done = copyIntoMemory(['f1'])
+        await vi.advanceTimersByTimeAsync(READ_RETRY_DELAY_MS)
+        await done
+      } finally {
+        vi.useRealTimers()
+      }
+      await flushPromises()
+
+      expect(mockUppy.removeFile).toHaveBeenCalledWith('f1')
+      expect(wrapper.find('.alert').text()).toBe(UNREADABLE_PHOTO_MESSAGE)
     })
 
     it('registers the HEIC pre-processor before the Compressor plugin', async () => {
@@ -549,25 +600,19 @@ describe('OurUploader', () => {
       expect(wrapper.find('.uppy-dashboard-modal').exists()).toBe(false)
     })
 
-    it('renders Choose photo button in app mode', async () => {
-      const wrapper = await createWrapper({ multiple: false })
-      expect(wrapper.text()).toContain('Choose photo')
-    })
-
-    it('renders Choose photos button when multiple in app mode', async () => {
-      const wrapper = await createWrapper({
-        multiple: true,
-        modelValue: [],
-      })
-      expect(wrapper.text()).toContain('Choose photos')
-    })
-
-    it('renders Choose more photos when multiple and has photos', async () => {
-      const wrapper = await createWrapper({
-        multiple: true,
-        modelValue: [{ id: 1 }],
-      })
-      expect(wrapper.text()).toContain('Choose more photos')
+    it('says which button takes a photo and which uses the gallery', async () => {
+      for (const props of [
+        { multiple: false },
+        { multiple: true, modelValue: [] },
+        { multiple: true, modelValue: [{ id: 1 }] },
+      ]) {
+        const wrapper = await createWrapper(props)
+        const buttons = wrapper.findAll('.b-button')
+        expect(buttons[0].text()).toBe('Take photo')
+        expect(buttons[1].text()).toBe('Choose from gallery')
+        expect(wrapper.text()).not.toContain('Choose more photos')
+        expect(wrapper.text()).not.toContain('Add photos')
+      }
     })
   })
 
@@ -684,7 +729,7 @@ describe('OurUploader', () => {
       ])
     })
 
-    it('clears Uppy after successful upload', async () => {
+    it('takes the finished photos out of Uppy without clearing it', async () => {
       mockIsApp.value = false
       const wrapper = await createWrapper()
       const uploaderComp = wrapper.findComponent(OurUploader)
@@ -692,6 +737,7 @@ describe('OurUploader', () => {
       const result = {
         successful: [
           {
+            id: 'uppy-file-1',
             tus: {
               uploadUrl: 'https://tus.example.com/files/abc123',
             },
@@ -702,7 +748,9 @@ describe('OurUploader', () => {
       await uploaderComp.vm.uploadSuccess(result)
       await flushPromises()
 
-      expect(mockUppy.clear).toHaveBeenCalled()
+      // clear() would also drop a photo whose retry is still running.
+      expect(mockUppy.removeFiles).toHaveBeenCalledWith(['uppy-file-1'])
+      expect(mockUppy.clear).not.toHaveBeenCalled()
     })
   })
 

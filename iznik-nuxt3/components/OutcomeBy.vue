@@ -1,9 +1,9 @@
 <template>
   <div>
     <div v-if="!several">
-      <label :class="'strong ' + (chooseError ? 'text-danger' : '')">
+      <div :class="'strong ' + (chooseError ? 'text-danger' : '')">
         Please tell us who took this item:
-      </label>
+      </div>
     </div>
     <div
       v-for="user in currentlySelectedUsers"
@@ -28,10 +28,7 @@
           <UserRatings v-if="user.userid > 0" :id="user.userid" size="md" />
         </div>
       </div>
-      <div
-        v-if="isBulk"
-        :class="'took ' + (availablenow <= 1 ? 'd-none' : '')"
-      >
+      <div v-if="isBulk" :class="'took ' + (availablenow <= 1 ? 'd-none' : '')">
         <NumberIncrementDecrement
           v-model="user.count"
           label="Number taken"
@@ -84,18 +81,18 @@
     </div>
     <p class="mt-2 text-muted small">
       This helps us identify reliable freeglers.
-      <span v-if="several"
-        >You can save and come back later if you like.</span
-      >
+      <span v-if="several">You can save and come back later if you like.</span>
     </p>
   </div>
 </template>
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import UserRatings from './UserRatings'
 import NumberIncrementDecrement from './NumberIncrementDecrement'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
+import { isClearance } from '~/composables/useAutoSplit'
 
 const props = defineProps({
   type: {
@@ -147,7 +144,7 @@ const message = computed(() =>
 // Bulk clearance offers keep the per-person counts: those posters are working
 // through a catalogue and the arithmetic is the point. On an ordinary post we
 // only ask who took some, never how many each of them took.
-const isBulk = computed(() => (message.value?.bulkcount ?? 0) > 0)
+const isBulk = computed(() => isClearance(message.value))
 
 // Was this post offering more than one thing? For a bulk offer that is a live
 // count, so availablenow is right. For an ordinary post the pool size is what
@@ -239,6 +236,63 @@ const moreUsersToSelect = computed(() => {
   )
 })
 
+// Experiment outcome-taker-preselect: when the member's own actions already answer "who took it" (they
+// promised it to one person, or only one person replied), start with that person chosen. They show as
+// a normal row with the x, so the member can see them and remove them. Control starts empty, as ever.
+// The arm is read after mount, never in setup, so server render and hydration match (control). It is
+// read only when there is someone to preselect, because reading it counts the member as having seen it.
+function singleLikelyTaker() {
+  if (props.type !== 'Taken' || isBulk.value) return null
+
+  // More than one promise: no safe guess.
+  const promised = [
+    ...new Set(
+      (message.value?.promises || [])
+        .filter((u) => u.userid > 0)
+        .map((u) => u.userid)
+    ),
+  ]
+  if (promised.length > 1) return null
+
+  const replied = repliers.value.filter((u) =>
+    (message.value?.replies || []).some((r) => r.userid === u.userid)
+  )
+
+  let candidate = null
+
+  if (promised.length === 1) {
+    candidate = repliers.value.find((u) => u.userid === promised[0])
+  } else if (replied.length === 1) {
+    candidate = replied[0]
+  }
+
+  if (!candidate?.userid) return null
+
+  // Never show a made-up name: a promisee whose profile has not loaded is left for the member to pick.
+  if (
+    candidate.displayname === 'Freegler' &&
+    !userStore.byId(candidate.userid)?.displayname &&
+    !(message.value?.replies || []).some((r) => r.userid === candidate.userid)
+  ) {
+    return null
+  }
+
+  return { userid: candidate.userid, displayname: candidate.displayname }
+}
+
+onMounted(() => {
+  if (currentlySelectedUsers.value.length) return
+
+  const candidate = singleLikelyTaker()
+
+  if (
+    candidate &&
+    flowArm(FlowName.CHAT_OUTCOME, 'outcome-taker-preselect') === 'b'
+  ) {
+    currentlySelectedUsers.value = [candidate]
+  }
+})
+
 function removeTaker(user) {
   // Reassign rather than splice so the watcher below sees the change and
   // re-emits: without a count there is no other way to undo a mis-pick.
@@ -274,8 +328,7 @@ function userOptions(small) {
   if (!currentlySelectedUsers.value.find((u) => u.userid === null)) {
     options.push({
       value: 0,
-      html:
-        several.value ? '<em>Other people</em>' : '<em>Someone else</em>',
+      html: several.value ? '<em>Other people</em>' : '<em>Someone else</em>',
     })
   }
 
@@ -399,7 +452,6 @@ select {
     // this element: those are !important and silently beat the auto margin.
     margin-left: auto;
   }
-
 
   .remove-taker {
     // The right-edge element on an ordinary post, where a bulk post has the

@@ -9,6 +9,7 @@
           rel="noopener"
           href="/shortlink/krystalaffiliate"
           class="sponsor-link test-sponsor-krystal"
+          aria-label="Krystal"
         >
           <ProxyImage
             src="/krystal.png"
@@ -25,6 +26,7 @@
           rel="noopener"
           href="https://www.mythic-beasts.com"
           class="sponsor-link test-sponsor-mythic"
+          aria-label="Mythic Beasts"
         >
           <ProxyImage
             src="/mythic-beasts.png"

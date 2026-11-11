@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/group"
 	"github.com/stretchr/testify/assert"
+	"github.com/freegle/iznik-server-go/utils"
 )
 
 func TestGetGroupWork_Unauthenticated(t *testing.T) {
@@ -18,7 +19,7 @@ func TestGetGroupWork_Unauthenticated(t *testing.T) {
 
 func TestGetGroupWork_NoGroups(t *testing.T) {
 	prefix := uniquePrefix("gwnogrp")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
@@ -34,14 +35,14 @@ func TestGetGroupWork_ActiveMod(t *testing.T) {
 	prefix := uniquePrefix("gwactive")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create active mod membership (default settings = active).
-	CreateTestMembership(t, userID, groupID, "Moderator")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, userID)
 
 	// Insert a pending message.
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test pending', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
@@ -84,15 +85,15 @@ func TestGetGroupWork_BackupMod(t *testing.T) {
 	prefix := uniquePrefix("gwbackup")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create backup mod membership (active=0 in settings).
-	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, 'Moderator', ?)",
-		userID, groupID, `{"active":0}`)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, ?, ?)",
+		userID, groupID, utils.ROLE_MODERATOR, `{"active":0}`)
 	_, token := CreateTestSession(t, userID)
 
 	// Insert a pending message.
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test backup pending', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
@@ -128,15 +129,15 @@ func TestGetGroupWork_HeldPending(t *testing.T) {
 	prefix := uniquePrefix("gwheld")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	holderID := CreateTestUser(t, prefix+"_holder", utils.SYSTEMROLE_USER)
 
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Insert a held pending message — held is tracked per-group on
 	// messages_groups.heldby (not the global messages.heldby).
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test held', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
@@ -174,16 +175,16 @@ func TestGetGroupWork_HeldPerGroup(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	holderID := CreateTestUser(t, prefix+"_holder", utils.SYSTEMROLE_USER)
 
 	// Active mod on both groups.
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// One message pending on both groups, held on group A only.
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test held per group', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
@@ -226,15 +227,15 @@ func TestGetGroupWork_SpamMembers(t *testing.T) {
 	prefix := uniquePrefix("gwspam")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Insert a spam member (reviewrequestedat set, reviewedat NULL).
-	spamUserID := CreateTestUser(t, prefix+"_spam", "User")
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection, reviewrequestedat) VALUES (?, ?, 'Member', 'Approved', NOW())",
-		spamUserID, groupID)
+	spamUserID := CreateTestUser(t, prefix+"_spam", utils.SYSTEMROLE_USER)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection, reviewrequestedat) VALUES (?, ?, ?, 'Approved', NOW())",
+		spamUserID, groupID, utils.ROLE_MEMBER)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -262,19 +263,19 @@ func TestGetGroupWork_SpamMembersReFlaggedAfterRecentReview(t *testing.T) {
 	prefix := uniquePrefix("gwreflg")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a member who was reviewed recently (within 31 days) but then
 	// re-flagged AFTER that review. The old 31-day window would not count
 	// this member; the correct reviewrequestedat > reviewedat condition does.
-	spamUserID := CreateTestUser(t, prefix+"_spam", "User")
+	spamUserID := CreateTestUser(t, prefix+"_spam", utils.SYSTEMROLE_USER)
 	db.Exec(`INSERT INTO memberships (userid, groupid, role, collection, reviewedat, reviewrequestedat)
-		VALUES (?, ?, 'Member', 'Approved',
+		VALUES (?, ?, ?, 'Approved',
 		DATE_SUB(NOW(), INTERVAL 5 DAY),
 		NOW())`,
-		spamUserID, groupID)
+		spamUserID, groupID, utils.ROLE_MEMBER)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -300,16 +301,16 @@ func TestGetGroupWork_MultipleGroups(t *testing.T) {
 
 	groupID1 := CreateTestGroup(t, prefix + "_g1")
 	groupID2 := CreateTestGroup(t, prefix + "_g2")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	// Active on group 1, backup on group 2.
-	CreateTestMembership(t, modID, groupID1, "Moderator")
-	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, 'Moderator', ?)",
-		modID, groupID2, `{"active":0}`)
+	CreateTestMembership(t, modID, groupID1, utils.ROLE_MODERATOR)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, ?, ?)",
+		modID, groupID2, utils.ROLE_MODERATOR, `{"active":0}`)
 	_, token := CreateTestSession(t, modID)
 
 	// Pending message in each group.
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	var msgID1, msgID2 uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test multi 1', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID1)
@@ -360,8 +361,8 @@ func TestGetGroupWork_AllFieldsPresent(t *testing.T) {
 	// Verify the JSON response includes all expected fields.
 	prefix := uniquePrefix("gwfields")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
@@ -400,14 +401,14 @@ func TestGetGroupWork_PendingMembers(t *testing.T) {
 	prefix := uniquePrefix("gwpendmem")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a pending member.
-	pendingUserID := CreateTestUser(t, prefix+"_pending", "User")
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Pending')",
-		pendingUserID, groupID)
+	pendingUserID := CreateTestUser(t, prefix+"_pending", utils.SYSTEMROLE_USER)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Pending')",
+		pendingUserID, groupID, utils.ROLE_MEMBER)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -431,12 +432,12 @@ func TestGetGroupWork_EditReview(t *testing.T) {
 	prefix := uniquePrefix("gwedit")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a message with an edit needing review.
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test edit review', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
@@ -476,14 +477,14 @@ func TestGetGroupWork_EditReviewExcludesRippledIn(t *testing.T) {
 
 	originGroup := CreateTestGroup(t, prefix+"_orig")
 	rippledGroup := CreateTestGroup(t, prefix+"_rip")
-	originMod := CreateTestUser(t, prefix+"_omod", "User")
-	rippledMod := CreateTestUser(t, prefix+"_rmod", "User")
-	CreateTestMembership(t, originMod, originGroup, "Moderator")
-	CreateTestMembership(t, rippledMod, rippledGroup, "Moderator")
+	originMod := CreateTestUser(t, prefix+"_omod", utils.SYSTEMROLE_USER)
+	rippledMod := CreateTestUser(t, prefix+"_rmod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, originMod, originGroup, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, rippledMod, rippledGroup, utils.ROLE_MODERATOR)
 	_, originToken := CreateTestSession(t, originMod)
 	_, rippledToken := CreateTestSession(t, rippledMod)
 
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Rippled edit count', 'b', 'b')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
@@ -521,8 +522,8 @@ func TestGetGroupWork_OwnerRole(t *testing.T) {
 	// Owners should also see work counts.
 	prefix := uniquePrefix("gwowner")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Owner")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_OWNER)
 	_, token := CreateTestSession(t, ownerID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
@@ -546,8 +547,8 @@ func TestGetGroupWork_RegularMemberNoResults(t *testing.T) {
 	// Regular members (not mod/owner) should not see work counts for that group.
 	prefix := uniquePrefix("gwmember")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
@@ -567,8 +568,8 @@ func TestGetGroupWork_PendingAdmins(t *testing.T) {
 	prefix := uniquePrefix("gwadmin")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a pending admin.
@@ -603,11 +604,11 @@ func TestGetGroupWork_PendingAdmins_BackupGroupIgnored(t *testing.T) {
 	prefix := uniquePrefix("gwadmbk")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 
 	// Backup mod.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, 'Moderator', ?)",
-		modID, groupID, `{"active":0}`)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, ?, ?)",
+		modID, groupID, utils.ROLE_MODERATOR, `{"active":0}`)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a pending admin.
@@ -643,11 +644,11 @@ func TestGetGroupWork_DeletedMessageNotCounted(t *testing.T) {
 	prefix := uniquePrefix("gwdelmsg")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, deleted) VALUES (?, 'Offer', 'Test deleted pending', 'Test body', 'Test body', NOW())", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
@@ -682,11 +683,11 @@ func TestGetGroupWork_DeletedUserNotCounted(t *testing.T) {
 	prefix := uniquePrefix("gwdelusr")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, senderID, groupID, "OFFER: Limbo pending", 55.9533, -3.1883)
 	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", msgID)
 
@@ -721,9 +722,9 @@ func TestGetGroupWork_SortedByGroupid(t *testing.T) {
 		gids[i] = CreateTestGroup(t, fmt.Sprintf("%s_%d", prefix, i))
 	}
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	for _, gid := range gids {
-		CreateTestMembership(t, modID, gid, "Moderator")
+		CreateTestMembership(t, modID, gid, utils.ROLE_MODERATOR)
 	}
 	_, token := CreateTestSession(t, modID)
 
@@ -744,11 +745,11 @@ func TestGetGroupWork_HappinessExcludesEmptyComments(t *testing.T) {
 	prefix := uniquePrefix("gwhapempty")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
 
 	// Insert outcome with empty-string comment (simulating a rating-only click).
@@ -802,12 +803,12 @@ func TestGetGroupWork_HappinessExcludesRippledIn(t *testing.T) {
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
 
 	// One moderator of BOTH groups, so /api/group/work returns both counts.
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, originGroup, "Moderator")
-	CreateTestMembership(t, modID, rippledGroup, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, originGroup, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, rippledGroup, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, originGroup, prefix+" offer item", 52.5, -1.8)
 	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments, reviewed) VALUES (?, 'Taken', 'Happy', 'Great!', 0)", msgID)
 	// Ripple the same post into rippledGroup (Approved copy, rippled_in = 1).
@@ -847,12 +848,12 @@ func TestGroupWorkPendingContentCheckFilter(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	holderID := CreateTestUser(t, prefix+"_holder", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	holderID := CreateTestUser(t, prefix+"_holder", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
-	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
 	mk := func(subject string) uint64 {
 		var id uint64
 		db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', ?, 'Test body', 'Test body')", senderID, subject)
@@ -888,4 +889,70 @@ func TestGroupWorkPendingContentCheckFilter(t *testing.T) {
 		"an unheld post with no content check yet must not be counted")
 	assert.Equal(t, int64(1), g.Pendingother,
 		"a held post counts even before the content check has run")
+}
+
+// A post pending on several of a moderator's communities is one piece of work: one Approve
+// in ModTools deals with every copy. The per-community breakdown still lists it under each
+// community, but the moderator's own totals (the ModTools badge, read from the session)
+// count it once.
+func TestPendingCountsAPostOncePerModerator(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("gwdistinct")
+
+	g1 := CreateTestGroup(t, prefix+"_g1")
+	g2 := CreateTestGroup(t, prefix+"_g2")
+	g3 := CreateTestGroup(t, prefix+"_g3")
+	backup := CreateTestGroup(t, prefix+"_backup")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	holderID := CreateTestUser(t, prefix+"_holder", utils.SYSTEMROLE_USER)
+	for _, gid := range []uint64{g1, g2, g3} {
+		CreateTestMembership(t, modID, gid, utils.ROLE_MODERATOR)
+	}
+	db.Exec("INSERT INTO memberships (userid, groupid, role, settings) VALUES (?, ?, ?, ?)",
+		modID, backup, utils.ROLE_MODERATOR, `{"active":0}`)
+	_, token := CreateTestSession(t, modID)
+
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+
+	// One post waiting on all three active communities.
+	var spread uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Pending on three', 'Test body', 'Test body')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&spread)
+	for _, gid := range []uint64{g1, g2, g3} {
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", spread, gid)
+	}
+
+	// One post held by another moderator on an active community and pending on the backup
+	// one: both are blue work, and it is still one post.
+	var held uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Held and backup', 'Test body', 'Test body')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&held)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, ?, NOW())", held, g1, holderID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", held, backup)
+
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", spread, held)
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", spread, held)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []group.GroupWork
+	json2.Unmarshal(rsp(resp), &result)
+
+	byGroup := map[uint64]group.GroupWork{}
+	for _, w := range result {
+		byGroup[w.Groupid] = w
+	}
+
+	for _, gid := range []uint64{g1, g2, g3} {
+		assert.Equal(t, int64(1), byGroup[gid].Pending, "the post still shows under each community it is pending on")
+	}
+	assert.Equal(t, int64(1), byGroup[g1].Pendingother, "the held copy shows under its community")
+	assert.Equal(t, int64(1), byGroup[backup].Pendingother, "and the backup copy under its own")
+
+	work := getSessionWork(t, token)
+	assert.Equal(t, float64(1), work["pending"].(float64),
+		"one post pending on three communities is one piece of work for the moderator")
+	assert.Equal(t, float64(1), work["pendingother"].(float64),
+		"a post that is held on one community and pending on a backup one is counted once")
 }

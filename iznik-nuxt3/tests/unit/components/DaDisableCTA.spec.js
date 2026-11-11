@@ -4,9 +4,18 @@ import { defineComponent, Suspense, h } from 'vue'
 import DaDisableCTA from '~/components/DaDisableCTA.vue'
 
 // Use vi.hoisted for mock setup
-const { mockFetchConfig, mockAdsEnabled } = vi.hoisted(() => ({
-  mockFetchConfig: vi.fn(),
-  mockAdsEnabled: { value: true },
+const { mockFetchConfig, mockAdsEnabled, mockAskForDonations } = vi.hoisted(
+  () => ({
+    mockFetchConfig: vi.fn(),
+    mockAdsEnabled: { value: true },
+    mockAskForDonations: require('vue').ref(true),
+  })
+)
+
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({
+    askForDonations: mockAskForDonations,
+  }),
 }))
 
 // Mock config store
@@ -20,6 +29,7 @@ describe('DaDisableCTA', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockAdsEnabled.value = true
+    mockAskForDonations.value = true
     mockFetchConfig.mockResolvedValue([{ value: '1' }])
   })
 
@@ -83,6 +93,14 @@ describe('DaDisableCTA', () => {
       const link = wrapper.find('.cta-link')
       expect(link.exists()).toBe(true)
       expect(link.text()).toBe('Learn more')
+    })
+  })
+
+  describe('when the member asked not to be asked to donate', () => {
+    it('hides the CTA', async () => {
+      mockAskForDonations.value = false
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.da-disable-cta').exists()).toBe(false)
     })
   })
 

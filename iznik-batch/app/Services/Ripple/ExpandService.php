@@ -2,6 +2,30 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\AnyValue;
+use App\Database\Expressions\Arithmetic;
+use App\Database\Expressions\CaseWhen;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\CountDistinct;
+use App\Database\Expressions\In;
+use App\Database\Expressions\Min;
+use App\Database\Expressions\NullIf;
+use App\Database\Expressions\StArea;
+use App\Database\Expressions\StAsText;
+use App\Database\Expressions\StBuffer;
+use App\Database\Expressions\StContains;
+use App\Database\Expressions\StGeometryType;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\StIntersection;
+use App\Database\Expressions\StIntersects;
+use App\Database\Expressions\StUnion;
+use App\Database\Expressions\StX;
+use App\Database\Expressions\StY;
+use App\Database\Expressions\Value;
+use App\Models\Membership;
+use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
@@ -395,8 +419,11 @@ class ExpandService
                 continue;
             }
 
-            // `updated_at = updated_at` preserves the timestamp (suppresses the ON
-            // UPDATE auto-bump) so the reach mailer never reconsiders this row.
+            // updated_at omitted - the raw form's self-assignment suppressed an ON
+            // UPDATE auto-bump that rippling_reach.updated_at does not actually have
+            // (verified: empty `extra` in information_schema - see
+            // ReachBoundsService::nullInner()'s docblock for the same finding), so the
+            // reach mailer still never reconsiders this row either way.
             // Polygon + derived bounds in ONE statement; envelope retry on throw.
             [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
             // recomputeReach genuinely RE-DERIVES the schedule, so the overflow rings change
@@ -520,21 +547,19 @@ class ExpandService
         if ($wkt === '') {
             return 0;
         }
-        // keep-raw: ST_Intersects/ST_GeometryType against a WKT literal - spatial predicates the builder cannot render
-        $row = DB::selectOne(
-            "SELECT COUNT(*) AS c
-             FROM `groups` g
-             WHERE g.publish = 1
-               AND g.type = 'Freegle'
-               AND g.onhere = 1
-               AND g.nameshort NOT LIKE '%playground%'
-               AND g.polyindex IS NOT NULL
-               AND ST_GeometryType(g.polyindex) <> 'POINT'
-               AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))"
-            . $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN),
-            [$wkt]
-        );
-        return (int) ($row->c ?? 0);
+
+        $excluded = $this->optOut->excludedGroupIds(GroupRippleOptOut::DIRECTION_IN);
+
+        return DB::table('groups as g')
+            ->where('g.publish', 1)
+            ->where('g.type', 'Freegle')
+            ->where('g.onhere', 1)
+            ->where('g.nameshort', 'NOT LIKE', '%playground%')
+            ->whereNotNull('g.polyindex')
+            ->where(new Comparison(new StGeometryType('g.polyindex'), '<>', Value::of('POINT')))
+            ->where(new StIntersects('g.polyindex', new StGeomFromText(Value::of($wkt), self::SRID)))
+            ->when(!empty($excluded), fn ($q) => $q->whereNotIn('g.id', $excluded))
+            ->count();
     }
 
     /**
@@ -668,10 +693,11 @@ class ExpandService
      * replies still held against the reach we are dropping.
      *
      * Skips 'held' rows for the same reason the other retraction paths do: their copies are
-     * deliberately Pending for per-group moderation. Freezing is one-way: nothing clears
-     * 'held' (FreezeReachIfOriginPending in iznik-server-go's microvolunteering package is
-     * the only writer, and freezes precisely so that re-approving a copy cannot re-reach and
-     * re-notify), so a frozen post stays outside this pass for the rest of its life.
+     * deliberately Pending for per-group moderation. A freeze lasts until a moderator approves
+     * the post's home copy (ResumeReachIfHeld in iznik-server-go's microvolunteering package, the
+     * counterpart of FreezeReachIfOriginPending), which makes the same row 'expanding' again so
+     * that re-approving cannot re-reach and re-notify, or for good when the home community sent
+     * the post back (rippling_blocked). While it lasts a frozen post stays outside this pass.
      *
      * Scope: only --msgid restricts it, matching removeStaleAndRetract - retracting a committed
      * copy must complete regardless of the current area scope.
@@ -744,38 +770,40 @@ class ExpandService
      * group re-ripples it afresh. Best-effort: never breaks the run.
      *
      * A frozen ('held') reach is retracted too, once the home post is deleted or rejected: Back to
-     * pending freezes the reach and nothing clears it, so skipping 'held' meant a later delete at
-     * home never cascaded (122141630). While the home copy still exists and is Pending, a held
-     * reach keeps its copies for per-group moderation.
+     * pending freezes the reach until a moderator approves the home copy again, so skipping 'held'
+     * meant a later delete at home never cascaded (122141630). While the home copy still exists
+     * and is Pending, a held reach keeps its copies for per-group moderation.
      */
     private function retractCopiesOrphanedByOriginRemoval(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
     {
         try {
-            $scopeSql = '';
-            $params = ['Approved'];
-            if ($onlyMsgid !== null) {
-                $scopeSql = ' AND mr.msgid = ?';
-                $params[] = $onlyMsgid;
-            }
-
-            $orphaned = DB::select(
-                'SELECT DISTINCT mr.msgid AS msgid
-                   FROM rippling_reach mr
-                   JOIN messages_groups mg
-                     ON mg.msgid = mr.msgid AND mg.rippled_in = 1 AND mg.deleted = 0
-                  WHERE NOT EXISTS (
-                          SELECT 1 FROM messages_groups o
-                           WHERE o.msgid = mr.msgid AND o.rippled_in = 0
-                             AND o.deleted = 0
-                             AND (o.collection = ?
-                                  OR (mr.status = \'held\' AND o.collection = \'Pending\'))
-                        )' . $scopeSql,
-                $params
-            );
-            if (empty($orphaned)) {
+            $orphaned = DB::table('rippling_reach as mr')
+                ->select('mr.msgid as msgid')
+                ->distinct()
+                ->join('messages_groups as mg', function ($j) {
+                    $j->on('mg.msgid', '=', 'mr.msgid')
+                      ->where('mg.rippled_in', 1)
+                      ->where('mg.deleted', 0);
+                })
+                ->whereNotExists(function ($q) {
+                    $q->from('messages_groups as o')
+                      ->whereColumn('o.msgid', 'mr.msgid')
+                      ->where('o.rippled_in', 0)
+                      ->where('o.deleted', 0)
+                      ->where(function ($c) {
+                          $c->where('o.collection', 'Approved')
+                            ->orWhere(function ($h) {
+                                $h->where('mr.status', 'held')
+                                  ->where('o.collection', 'Pending');
+                            });
+                      });
+                })
+                ->when($onlyMsgid !== null, fn ($q) => $q->where('mr.msgid', $onlyMsgid))
+                ->get();
+            if ($orphaned->isEmpty()) {
                 return;
             }
-            $msgids = array_map(static fn ($r) => (int) $r->msgid, $orphaned);
+            $msgids = $orphaned->map(static fn ($r) => (int) $r->msgid)->all();
 
             if ($dryRun) {
                 $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
@@ -988,11 +1016,12 @@ class ExpandService
      */
     private function retractRippledCopyInGroup(int $msgid, int $groupid, $posterId, string $reason, string $statKey, array &$stats): void
     {
-        $n = DB::affectingStatement(
-            'UPDATE messages_groups SET deleted = 1
-             WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
-            [$msgid, $groupid]
-        );
+        $n = DB::table('messages_groups')
+            ->where('msgid', $msgid)
+            ->where('groupid', $groupid)
+            ->where('rippled_in', 1)
+            ->where('deleted', 0)
+            ->update(['deleted' => 1]);
         if ($n < 1) {
             return;
         }
@@ -1192,40 +1221,60 @@ class ExpandService
         // cutoff ever start rippling, so flipping RIPPLE_ENABLED on does not make the
         // entire historical pending backlog eligible at once. Empty config = no cutoff.
         $enabledAt = config('freegle.ripple.enabled_at');
-        $cutoffSql = '';
-        $satSql = '';
-        $params = [];
-        $scopeSql = '';
+
+        // Candidate source: live posts with NO reach row yet (anti-join).
+        $q = DB::table('messages_spatial as ms')
+            ->select([
+                'ms.msgid as msgid',
+                new Alias(new AnyValue(new StY('ms.point')), 'lat'),
+                new Alias(new AnyValue(new StX('ms.point')), 'lng'),
+                new Alias(new Min('ms.arrival'), 'arrival'),
+            ])
+            ->leftJoin('rippling_reach as mr', 'mr.msgid', '=', 'ms.msgid')
+            ->whereNull('mr.msgid')
+            ->whereExists(function ($sub) {
+                $sub->from('messages_groups as o')
+                    ->whereColumn('o.msgid', 'ms.msgid')
+                    ->where('o.rippled_in', 0)
+                    ->where('o.deleted', 0)
+                    ->where('o.collection', 'Approved');
+            })
+            // A post its home community has sent back to pending never ripples again
+            // (rippling_blocked, written by the API's Back to pending): not on re-approval, and
+            // not after a repost or an expiry has removed its reach row (Discourse 9808/849).
+            ->whereNotExists(function ($sub) {
+                $sub->from('rippling_blocked as rb')->whereColumn('rb.msgid', 'ms.msgid');
+            });
+
         if ($onlyMsgid !== null) {
             // A single chosen post (controlled test) targets its msgid directly and bypasses the
             // arrival cutoff AND the reply-saturation stop — the chosen post may predate go-live or
             // already be saturated, and selecting nothing would be a surprising no-op for an
             // explicit one-post request.
-            $scopeSql = ' AND ms.msgid = ?';
-            $params[] = $onlyMsgid;
+            $q->where('ms.msgid', $onlyMsgid);
         } else {
             // An area scope is an ADDITIONAL filter on top of normal behaviour: the go-live arrival
             // cutoff still applies, so an area run ripples only the recent (post-cutoff) posts inside
             // the polygon rather than the whole historical backlog there.
             if ($withinPolyWkt !== null) {
-                $scopeSql = ' AND ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ms.point)';
-                $params[] = $withinPolyWkt;
+                $q->where(new StContains(new StGeomFromText(Value::of($withinPolyWkt), self::SRID), 'ms.point'));
             }
             if (!empty($enabledAt)) {
-                $cutoffSql = ' AND ms.arrival >= ?';
-                $params[] = $enabledAt;
+                $q->where('ms.arrival', '>=', $enabledAt);
             }
             // Reply-saturation stop (extent-governor T1.1): a post that already has >= threshold
             // distinct repliers never starts rippling - it has enough interest without reach.
             // 0 disables. Applies to normal and scoped (experiment) runs alike.
             $satStop = (int) config('freegle.ripple.reply_saturation_stop', 5);
             if ($satStop > 0) {
-                $satSql = " AND (SELECT COUNT(DISTINCT cm.userid) FROM chat_messages cm
-                                  WHERE cm.refmsgid = ms.msgid AND cm.type = 'Interested') < ?";
-                $params[] = $satStop;
+                $q->where(function ($sub) {
+                    $sub->from('chat_messages as cm')
+                        ->whereColumn('cm.refmsgid', 'ms.msgid')
+                        ->where('cm.type', 'Interested')
+                        ->select(new CountDistinct('cm.userid'));
+                }, '<', $satStop);
             }
         }
-        $params[] = $limit;
 
         // Ripple-OUT opt-out (groups.settings.rippling.out): a post on a community that has
         // switched rippling off never gets a reach row, so it is never crossposted and never
@@ -1239,29 +1288,13 @@ class ExpandService
         // NULL arm matters: groupid is nullable and `NULL NOT IN (...)` is NULL, which would
         // silently drop every group-less row from the candidate set.
         $outOptOut = $this->optOut->excludedGroupIds(GroupRippleOptOut::DIRECTION_OUT);
-        $optOutSql = empty($outOptOut)
-            ? ''
-            : ' AND (ms.groupid IS NULL OR ms.groupid NOT IN (' . implode(',', $outOptOut) . '))';
+        if (!empty($outOptOut)) {
+            $q->where(function ($sub) use ($outOptOut) {
+                $sub->whereNull('ms.groupid')->orWhereNotIn('ms.groupid', $outOptOut);
+            });
+        }
 
-        // Candidate source: live posts with NO reach row yet (anti-join).
-        // keep-raw: ANY_VALUE + the ST_X/ST_Y spatial accessors on a GROUP BY the builder cannot render
-        $rows = DB::select(
-            'SELECT ms.msgid AS msgid,
-                    ANY_VALUE(ST_Y(ms.point)) AS lat,
-                    ANY_VALUE(ST_X(ms.point)) AS lng,
-                    MIN(ms.arrival) AS arrival
-             FROM messages_spatial ms
-             LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL
-               AND EXISTS (
-                   SELECT 1 FROM messages_groups o
-                    WHERE o.msgid = ms.msgid AND o.rippled_in = 0
-                      AND o.deleted = 0 AND o.collection = \'Approved\'
-               )' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
-             GROUP BY ms.msgid
-             LIMIT ?',
-            $params
-        );
+        $rows = $q->groupBy('ms.msgid')->limit($limit)->get()->all();
 
         // A member's own repost is re-approved as if new, so without this its reach would start
         // again at tick 1 and hide it from people it had already reached.
@@ -2059,6 +2092,11 @@ class ExpandService
             // reachable-group set, restrict targets to groups containing a road node
             // reachable from the origin - so a reach polygon that overshoots water can't
             // ripple across an uncrossable barrier. The polygon ST_Intersects stays as the
+            // Ripple-IN opt-out (groups.settings.rippling.in): never crosspost into a community
+            // that has switched rippling off. The `%playground%` name test below predates this
+            // and stays as belt-and-braces for a playground community created before anyone gives
+            // it the setting; the setting is the deliberate, per-community mechanism (set by
+            // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
             // cheap spatial-index prefilter; this is an AND gate on top. IDs are
             // server-sourced int64s, cast via (int) so they can't inject. Empty set or gate
             // off => clause omitted => unchanged behaviour (fall back to polygon only).
@@ -2066,11 +2104,8 @@ class ExpandService
                 ? ' AND g.id IN (' . implode(',', array_map('intval', $reachableGroupIds)) . ')'
                 : '';
 
-            // Ripple-IN opt-out (groups.settings.rippling.in): never crosspost into a community
-            // that has switched rippling off. The `%playground%` name test below predates this
-            // and stays as belt-and-braces for a playground community created before anyone gives
-            // it the setting; the setting is the deliberate, per-community mechanism (set by
-            // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
+            // This statement stays raw (the spatial predicates and the correlated NOT EXISTS
+            // arms), so the opt-out is the SQL fragment, not the id list the builder form uses.
             $inOptOut = $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN);
 
             // Groups this poster has already opted out of by leaving a ripple-join, worked out
@@ -2112,6 +2147,26 @@ class ExpandService
                    )
                    {$leftAfterRippleSql}
                    AND NOT EXISTS (
+                       -- A repost of an item the community already carries is a duplicate:
+                       -- same poster, type and subject as an earlier post still live there.
+                       -- Approving the repost on its home group must not ripple it back into
+                       -- the communities that hold the original, or each shows the item twice.
+                       SELECT 1
+                       FROM messages_groups dmg
+                       JOIN messages dm ON dm.id = dmg.msgid
+                       JOIN messages cur ON cur.id = ?
+                       WHERE dmg.groupid = g.id
+                         AND dmg.collection = 'Approved'
+                         AND dmg.deleted = 0
+                         AND dm.id <> cur.id
+                         AND dm.deleted IS NULL
+                         AND dm.fromuser = cur.fromuser
+                         AND dm.type = cur.type
+                         AND dm.subject = cur.subject
+                         AND (dm.arrival < cur.arrival OR (dm.arrival = cur.arrival AND dm.id < cur.id))
+                         AND NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = dm.id)
+                   )
+                   AND NOT EXISTS (
                        -- A ban is an explicit mod ejection: it withdraws the poster's live posts
                        -- and (modern ban) deletes their membership while recording a users_banned
                        -- row. Never ripple a poster's post into a group they are banned from - that
@@ -2136,11 +2191,12 @@ class ExpandService
                          AND UPPER(mp.ourPostingStatus) = 'PROHIBITED'
                    )",
                 // One binding per placeholder, in query order: the reach shape, the
-                // msgid twice (already on the group; turned away by the group), then the
+                // msgid twice (already on the group; turned away by the group), the msgid again
+                // (duplicate of an earlier live post), then the
                 // poster three times (users_banned, Banned membership, PROHIBITED posting
                 // status). The ripple opt-out is spliced in as a group-id list above, so it
                 // has no placeholder.
-                [$reachWkt, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
+                [$reachWkt, $msgid, $msgid, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
             );
 
             // A stored MODERATED posting status on the receiving group does NOT hold the copy.
@@ -2177,7 +2233,7 @@ class ExpandService
                 // keywords, so stamping it would permanently exclude the row from processUnprocessed()'s
                 // periodic full checkMessage() pipeline - silently skipping money/phone/PII/URL/spam
                 // checks for every rippled-in post held this way (Discourse 10063/4).
-                $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id);
+                $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id, (int) $msgid);
 
                 if (!empty($breaches)) {
                     $inserted = DB::affectingStatement(
@@ -2228,7 +2284,7 @@ class ExpandService
      */
     /**
      * Add the poster as a member of every group their post has rippled into (role Member,
-     * collection Approved), marked rippled=1. Email settings come from the poster's home/origin
+     * collection Approved), marked rippled=1 and implicit=1. Email settings come from the poster's home/origin
      * group membership, except immediate (-1) is downgraded to daily (24) so an unrequested
      * membership never starts a flood of immediate mail (a no-email 0 or daily 24 home setting is
      * preserved). A poster who has left every group on the post falls back to any membership they
@@ -2248,6 +2304,14 @@ class ExpandService
             $msg = DB::table('messages')->where('id', $msgid)->first(['fromuser']);
             $posterId = $msg->fromuser ?? null;
             if (!$posterId) {
+                return;
+            }
+
+            // A TN post placed on a community its poster never chose comes from someone who
+            // has not opted in to hearing from Freegle communities. The post still ripples, but
+            // the poster is not joined anywhere it reaches: a membership is what Freegle's mail
+            // goes by, and this one would also send the intro mail below.
+            if (MessageGroup::postIsUnaddressed($msgid)) {
                 return;
             }
 
@@ -2303,6 +2367,9 @@ class ExpandService
             // last joined manually/ordinarily and then left must NOT block rippling. (The post
             // itself is also pulled from such groups by pullRippledPostsFromLeftGroups; here we only
             // gate the membership.)
+            // Only a copy that is still live counts: a withdrawn one (deleted = 1) took the poster's
+            // ripple-join with it, and every later tick of the reach would otherwise join them again
+            // to a community the post is no longer on.
             // The left-group gate is computed in PHP from ONE indexed pass over the
             // poster's Group Joined/Left logs. Its previous form - correlated NOT
             // EXISTS with two nested logs probes per candidate group - resolved every
@@ -2318,7 +2385,7 @@ class ExpandService
             $targets = DB::select(
                 "SELECT mg.groupid
                  FROM messages_groups mg
-                 WHERE mg.msgid = ? AND mg.rippled_in = 1
+                 WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0
                    {$notBlockedSql}
                    AND NOT EXISTS (
                        SELECT 1 FROM memberships m WHERE m.userid = ? AND m.groupid = mg.groupid
@@ -2336,12 +2403,23 @@ class ExpandService
 
             $addedThisCall = 0;
             foreach ($targets as $t) {
-                $added = DB::affectingStatement(
-                    "INSERT IGNORE INTO memberships
-                        (userid, groupid, role, collection, emailfrequency, eventsallowed, volunteeringallowed, rippled, added)
-                     VALUES (?, ?, 'Member', 'Approved', ?, ?, ?, 1, NOW())",
-                    [$posterId, $t->groupid, $emailfrequency, $eventsallowed, $volunteeringallowed]
+                $origin = Membership::addedOriginForInsert(
+                    Membership::ADDED_ORIGIN_RIPPLED, 'ExpandService::addPosterMembershipToRippledGroups',
+                    (int) $posterId, (int) $t->groupid,
                 );
+                $added = DB::table('memberships')->insertOrIgnore([[
+                    'userid' => $posterId,
+                    'groupid' => $t->groupid,
+                    'role' => Membership::ROLE_MEMBER,
+                    'collection' => 'Approved',
+                    'emailfrequency' => $emailfrequency,
+                    'eventsallowed' => $eventsallowed,
+                    'volunteeringallowed' => $volunteeringallowed,
+                    'rippled' => 1,
+                    'implicit' => 1,
+                    'added_origin' => $origin,
+                    'added' => now(),
+                ]]);
                 if ($added > 0) {
                     $addedThisCall++;
                     $stats['memberships_added'] = ($stats['memberships_added'] ?? 0) + 1;
@@ -2351,11 +2429,14 @@ class ExpandService
                     // memberships_history with rippled=1: abuse detection still runs (processingrequired=1),
                     // but MembershipsProcessingService reads rippled to SUPPRESS the per-group welcome -
                     // a single bundled intro email (RippleIntroMail) is sent below instead.
-                    DB::statement(
-                        "INSERT INTO memberships_history (userid, groupid, collection, processingrequired, rippled)
-                         VALUES (?, ?, 'Approved', 1, 1)",
-                        [$posterId, $t->groupid]
-                    );
+                    DB::table('memberships_history')->insert([
+                        'userid' => $posterId,
+                        'groupid' => $t->groupid,
+                        'collection' => 'Approved',
+                        'processingrequired' => 1,
+                        'rippled' => 1,
+                        'added_origin' => $origin,
+                    ]);
                     // Log the join with a rippling-specific reason. V1 addMembership logs a
                     // Group/Joined entry whose text is 'Manual' (clicked join) or 'Auto'; we use
                     // 'Rippled' so the modlog - and MembershipsProcessingService, which reads
@@ -2395,10 +2476,10 @@ class ExpandService
     {
         // Atomic claim: only the run that flips 0 -> 1 gets to send. No row (e.g. backfill path)
         // => nothing to claim here => no send (the backfill command sends those).
-        $claimed = DB::affectingStatement(
-            'UPDATE rippling_reach SET ripple_intro_sent = 1 WHERE msgid = ? AND ripple_intro_sent = 0',
-            [$msgid]
-        );
+        $claimed = DB::table('rippling_reach')
+            ->where('msgid', $msgid)
+            ->where('ripple_intro_sent', 0)
+            ->update(['ripple_intro_sent' => 1]);
         if ($claimed < 1) {
             return;
         }
@@ -2415,19 +2496,25 @@ class ExpandService
             // per-group welcome email (which MembershipsProcessingService suppresses for rippled
             // joins). Limited to the rippled groups the poster is now a member of that have a
             // welcome configured and are live here.
-            $welcomeGroups = array_map(
-                static fn ($r) => ['name' => $r->name, 'welcome' => $r->welcome],
-                DB::select(
-                    "SELECT COALESCE(g.namefull, g.nameshort) AS name, g.welcomemail AS welcome
-                     FROM messages_groups mg
-                     JOIN `groups` g ON g.id = mg.groupid
-                     JOIN memberships m ON m.groupid = g.id AND m.userid = ?
-                     WHERE mg.msgid = ? AND mg.rippled_in = 1 AND m.rippled = 1
-                       AND g.onhere = 1 AND g.welcomemail IS NOT NULL AND g.welcomemail <> ''
-                     ORDER BY mg.arrival ASC",
-                    [$posterId, $msgid]
-                )
-            );
+            $welcomeGroups = DB::table('messages_groups as mg')
+                ->select([
+                    new Alias(new Coalesce('g.namefull', 'g.nameshort'), 'name'),
+                    'g.welcomemail as welcome',
+                ])
+                ->join('groups as g', 'g.id', '=', 'mg.groupid')
+                ->join('memberships as m', function ($j) use ($posterId) {
+                    $j->on('m.groupid', '=', 'g.id')->where('m.userid', $posterId);
+                })
+                ->where('mg.msgid', $msgid)
+                ->where('mg.rippled_in', 1)
+                ->where('m.rippled', 1)
+                ->where('g.onhere', 1)
+                ->whereNotNull('g.welcomemail')
+                ->where('g.welcomemail', '<>', '')
+                ->orderBy('mg.arrival')
+                ->get()
+                ->map(static fn ($r) => ['name' => $r->name, 'welcome' => $r->welcome])
+                ->all();
 
             app(\App\Services\EmailSpoolerService::class)
                 ->spool(new \App\Mail\Ripple\RippleIntroMail($user, $message, $welcomeGroups));
@@ -2525,16 +2612,17 @@ class ExpandService
             }
 
             if ($dryRun) {
-                $stats['pulled_on_leave'] += count($rows);
+                $stats['pulled_on_leave'] += $rows->count();
                 return;
             }
 
             foreach ($rows as $r) {
-                $n = DB::affectingStatement(
-                    'UPDATE messages_groups SET deleted = 1
-                     WHERE msgid = ? AND groupid = ? AND rippled_in = 1 AND deleted = 0',
-                    [$r->msgid, $r->groupid]
-                );
+                $n = DB::table('messages_groups')
+                    ->where('msgid', $r->msgid)
+                    ->where('groupid', $r->groupid)
+                    ->where('rippled_in', 1)
+                    ->where('deleted', 0)
+                    ->update(['deleted' => 1]);
                 if ($n > 0) {
                     DB::table('logs')->insert([
                         'timestamp' => now(),
@@ -2590,40 +2678,21 @@ class ExpandService
     private function unionWithOriginGroupArea(int $msgid, string $wkt): string
     {
         try {
-            $groupRow = DB::selectOne(
-                'SELECT ST_AsText(g.polyindex) AS group_wkt
-                 FROM messages_groups mg
-                 JOIN `groups` g ON g.id = mg.groupid
-                 WHERE mg.msgid = ? AND mg.deleted = 0
-                   AND g.polyindex IS NOT NULL
-                   AND ST_GeometryType(g.polyindex) <> \'POINT\'
-                 ORDER BY mg.arrival ASC
-                 LIMIT 1',
-                [$msgid]
-            );
-
-            if ($groupRow === null || empty($groupRow->group_wkt)) {
+            $groupWkt = $this->originGroupWkt($msgid);
+            if ($groupWkt === null) {
                 return $wkt;
             }
 
-            $groupWkt = $groupRow->group_wkt;
-
             // ST_Intersection of two polygons that touch along a line or at a
             // point yields a GEOMETRYCOLLECTION, and ST_Area on that throws
-            // error 3516. CASE evaluates lazily, so guarding on the geometry
+            // error 3516. CaseWhen evaluates lazily, so guarding on the geometry
             // type means ST_Area only ever sees polygonal input; a NULL frac
             // simply fails the >= 0.90 test below and the WKT passes through
             // unchanged - the same outcome the exception path produced, minus
             // the exception.
-            $result = DB::selectOne(
-                'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
-                             THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
-                        END AS frac,
-                        ST_AsText(ST_Union(iso, grp)) AS u
-                 FROM (SELECT ST_Intersection(iso, grp) AS inter, iso, grp
-                       FROM (SELECT ST_GeomFromText(?, ' . self::SRID . ') AS iso,
-                                    ST_GeomFromText(?, ' . self::SRID . ') AS grp) s) t',
-                [$wkt, $groupWkt]
+            $result = $this->intersectionFraction(
+                new StGeomFromText(Value::of($wkt), self::SRID),
+                new StGeomFromText(Value::of($groupWkt), self::SRID)
             );
 
             if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
@@ -2634,33 +2703,14 @@ class ExpandService
         } catch (\Throwable $e) {
             // Retry once with ST_Buffer(geom, 0) geometry repair to handle invalid polygons.
             try {
-                $groupRow = DB::selectOne(
-                    'SELECT ST_AsText(g.polyindex) AS group_wkt
-                     FROM messages_groups mg
-                     JOIN `groups` g ON g.id = mg.groupid
-                     WHERE mg.msgid = ? AND mg.deleted = 0
-                       AND g.polyindex IS NOT NULL
-                       AND ST_GeometryType(g.polyindex) <> \'POINT\'
-                     ORDER BY mg.arrival ASC
-                     LIMIT 1',
-                    [$msgid]
-                );
-
-                if ($groupRow === null || empty($groupRow->group_wkt)) {
+                $groupWkt = $this->originGroupWkt($msgid);
+                if ($groupWkt === null) {
                     return $wkt;
                 }
 
-                $groupWkt = $groupRow->group_wkt;
-
-                $result = DB::selectOne(
-                    'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
-                                 THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
-                            END AS frac,
-                            ST_AsText(ST_Union(iso, grp)) AS u
-                     FROM (SELECT ST_Intersection(iso, grp) AS inter, iso, grp
-                           FROM (SELECT ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS iso,
-                                        ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS grp) s) t',
-                    [$wkt, $groupWkt]
+                $result = $this->intersectionFraction(
+                    new StBuffer(new StGeomFromText(Value::of($wkt), self::SRID), 0),
+                    new StBuffer(new StGeomFromText(Value::of($groupWkt), self::SRID), 0)
                 );
 
                 if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
@@ -2674,6 +2724,51 @@ class ExpandService
         }
     }
 
+    /**
+     * The origin group's own polygon WKT for a post: the earliest-arrival group on
+     * this message with a real (non-degenerate, non-POINT) polyindex - the group the
+     * post was originally submitted to. Null if none qualifies.
+     */
+    private function originGroupWkt(int $msgid): ?string
+    {
+        $groupRow = DB::table('messages_groups as mg')
+            ->select(new Alias(new StAsText('g.polyindex'), 'group_wkt'))
+            ->join('groups as g', 'g.id', '=', 'mg.groupid')
+            ->where('mg.msgid', $msgid)
+            ->where('mg.deleted', 0)
+            ->whereNotNull('g.polyindex')
+            ->where(new Comparison(new StGeometryType('g.polyindex'), '<>', Value::of('POINT')))
+            ->orderBy('mg.arrival')
+            ->limit(1)
+            ->first();
+
+        return ($groupRow !== null && !empty($groupRow->group_wkt)) ? $groupRow->group_wkt : null;
+    }
+
+    /**
+     * The overlap fraction (intersection area / $grp area) and the WKT union of two
+     * geometries, via a two-level from-less derived table: the innermost SELECT just
+     * carries $iso/$grp as named columns so ST_Intersection only has to be computed
+     * once and is reused by both the CASE/ST_Area fraction and the ST_Union.
+     */
+    private function intersectionFraction(mixed $iso, mixed $grp): ?object
+    {
+        $inner = DB::query()->select([new Alias($iso, 'iso'), new Alias($grp, 'grp')]);
+        $mid = DB::query()->fromSub($inner, 's')
+            ->select([new Alias(new StIntersection('iso', 'grp'), 'inter'), 'iso', 'grp']);
+
+        return DB::query()->fromSub($mid, 't')
+            ->select([
+                new Alias(
+                    (new CaseWhen())
+                        ->when(new In(new StGeometryType('inter'), [Value::of('POLYGON'), Value::of('MULTIPOLYGON')]))
+                        ->then(new Arithmetic(new StArea('inter'), '/', new NullIf(new StArea('grp'), 0))),
+                    'frac'
+                ),
+                new Alias(new StAsText(new StUnion('iso', 'grp')), 'u'),
+            ])
+            ->first();
+    }
 
 
 
@@ -2730,7 +2825,7 @@ class ExpandService
             ->whereIn('status', ['expanding', 'stopped', 'done']) // held = frozen for moderation
             ->when(!$all, fn ($q) => $q->whereNull('reachable_group_ids'))
             ->when($shardCount !== null && $shardCount > 1,
-                fn ($q) => $q->whereRaw('msgid % ? = ?', [$shardCount, (int) $shardIndex]))
+                fn ($q) => $q->where(new Arithmetic('msgid', '%', $shardCount), '=', (int) $shardIndex))
             ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
             ->orderBy('msgid')
             ->limit($limit)
@@ -2759,13 +2854,12 @@ class ExpandService
                     // Preview the retraction the new ids would drive (ids-based only;
                     // the tighter polygon can retract further copies on the live run).
                     if (!empty($ids)) {
-                        $ph = implode(',', array_fill(0, count($ids), '?'));
-                        $stats['would_retract_groups'] += (int) DB::selectOne(
-                            "SELECT COUNT(*) AS n FROM messages_groups
-                              WHERE msgid = ? AND rippled_in = 1 AND deleted = 0
-                                AND groupid NOT IN ({$ph})",
-                            array_merge([$row->msgid], $ids)
-                        )->n;
+                        $stats['would_retract_groups'] += DB::table('messages_groups')
+                            ->where('msgid', $row->msgid)
+                            ->where('rippled_in', 1)
+                            ->where('deleted', 0)
+                            ->whereNotIn('groupid', $ids)
+                            ->count();
                     }
                     $stats['updated']++;
                     continue;
@@ -2800,6 +2894,7 @@ class ExpandService
                     $schedule['max_drive_min'],
                     $row->msgid,
                 ];
+                [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
                 try {
                     // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
                     DB::statement($backfillSql($boundsSet), array_merge($lead, $boundsParams, $backfillTail));
@@ -3145,10 +3240,11 @@ class ExpandService
      */
     private function distinctReplierCount(int $msgid): int
     {
-        return (int) (DB::selectOne(
-            "SELECT COUNT(DISTINCT userid) AS n FROM chat_messages WHERE refmsgid = ? AND type = 'Interested'",
-            [$msgid]
-        )->n ?? 0);
+        return (int) DB::table('chat_messages')
+            ->where('refmsgid', $msgid)
+            ->where('type', 'Interested')
+            ->distinct()
+            ->count('userid');
     }
 
     /**
@@ -3174,15 +3270,18 @@ class ExpandService
      */
     private function hasTerminalOutcome(int $msgid): bool
     {
-        return DB::selectOne(
-            'SELECT 1 AS x FROM messages_outcomes WHERE msgid = ? AND outcome IN (?, ?, ?) LIMIT 1',
-            [
-                $msgid,
+        // ->exists() rather than selecting a literal and testing for null:
+        // the raw form's "SELECT 1 ... LIMIT 1" is the hand-rolled version of
+        // exactly this question, and a literal in a select list can only be
+        // expressed through DB::raw, which is a raw site itself.
+        return DB::table('messages_outcomes')
+            ->where('msgid', $msgid)
+            ->whereIn('outcome', [
                 \App\Models\MessageOutcome::OUTCOME_TAKEN,
                 \App\Models\MessageOutcome::OUTCOME_RECEIVED,
                 \App\Models\MessageOutcome::OUTCOME_WITHDRAWN,
-            ]
-        ) !== null;
+            ])
+            ->exists();
     }
 
     private function logEvent(int|string $msgid, string $kind, int $tick, array $entry): void

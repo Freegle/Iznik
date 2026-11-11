@@ -16,6 +16,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailtracking"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -423,7 +424,7 @@ func TestEmailTrackingStatsUnauthorized(t *testing.T) {
 func TestEmailTrackingStatsWithAuth(t *testing.T) {
 	// Create a support user with token using existing test utilities
 	prefix := uniquePrefix("emailstats")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Request with authentication
@@ -453,7 +454,7 @@ func TestEmailTrackingUserEmailsUnauthorized(t *testing.T) {
 func TestEmailTrackingUserEmailsWithAuth(t *testing.T) {
 	// Create a support user with token using existing test utilities
 	prefix := uniquePrefix("emailuser")
-	userID := CreateTestUser(t, prefix, "Support")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a test tracking record for the support user
@@ -632,14 +633,14 @@ func TestEmailTrackingImageCompactScrollDepth(t *testing.T) {
 // The lookup carried "AND backwards IS NULL", which made it miss almost every real
 // address: on production only 140,057 of 4,476,456 rows have a null there, and
 // 136,047 of those are Freegle's own proxy addresses. A member looked up by the
-// address they actually use fell through to the users.email fallback instead, which
+// address they actually use was searched for by recipient address instead, which
 // is why it went unnoticed. V1 has no such condition anywhere.
 func TestEmailTrackingFindsUserByTheirOwnAddress(t *testing.T) {
 	prefix := uniquePrefix("emailbyaddr")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	memberEmail := prefix + "_member@test.com"
 
 	// A row with canon and backwards filled, which is the ordinary case and exactly
@@ -677,4 +678,34 @@ func reverseForTest(s string) string {
 		r[i], r[j] = r[j], r[i]
 	}
 	return string(r)
+}
+
+// An address that belongs to no member is searched for in email_tracking itself.
+// users has no email column, so the lookup must not query one: that fails with
+// Error 1054 on every such request.
+func TestEmailTrackingAddressOfNoMemberSearchesRecipient(t *testing.T) {
+	prefix := uniquePrefix("emailnomember")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+	_, token := CreateTestSession(t, supportID)
+
+	address := prefix + "_nobody@test.com"
+	db := database.DBConn
+	tracking := &emailtracking.EmailTracking{
+		TrackingID:     "nomember-" + randomString(16),
+		EmailType:      "Test",
+		RecipientEmail: address,
+	}
+	db.Create(tracking)
+	defer db.Where("tracking_id = ?", tracking.TrackingID).Delete(&emailtracking.EmailTracking{})
+
+	req := httptest.NewRequest("GET",
+		"/api/modtools/email/user/0?email="+address+"&jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	emails, _ := result["emails"].([]interface{})
+	assert.Len(t, emails, 1, "the tracking row for an address of no member must be found")
 }

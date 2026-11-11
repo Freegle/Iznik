@@ -411,6 +411,12 @@ func TestActivityWindows_MergesPadsAndGoesNewestFirst(t *testing.T) {
 	// Clamped to the searchable range, and nothing when there is no activity.
 	assert.Equal(t, []nsRange{{start: base, end: base + 2*min}}, activityWindows([]int64{base}, base, end))
 	assert.Empty(t, activityWindows(nil, start, end))
+
+	// The end of the range is clamped too: a window padded past it stops at it, and a window that
+	// begins after it is dropped. This must not depend on when the tests run, so use fixed times.
+	late := base + 90*int64(time.Second)
+	assert.Equal(t, []nsRange{{start: base - min, end: late}}, activityWindows([]int64{base}, start, late))
+	assert.Empty(t, activityWindows([]int64{base + 3*min}, start, late))
 }
 
 // api_headers has no member label, so it is searched only in the minutes the

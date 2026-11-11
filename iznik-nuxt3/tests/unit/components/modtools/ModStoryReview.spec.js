@@ -7,6 +7,7 @@ const mockStoriesApi = {
   useForNewsletter: vi.fn().mockResolvedValue({}),
   useForPublicity: vi.fn().mockResolvedValue({}),
   dontUseForPublicity: vi.fn().mockResolvedValue({}),
+  dontUseForNewsletter: vi.fn().mockResolvedValue({}),
 }
 
 /* Make useNuxtApp available globally (it's auto-imported by Nuxt) */
@@ -317,7 +318,7 @@ describe('ModStoryReview', () => {
   })
 
   describe('methods', () => {
-    describe('dontUseForPublicity', () => {
+    describe('hide', () => {
       it('calls api.stories.dontUseForPublicity with story id', async () => {
         const wrapper = mountComponent({
           story: createStory({ id: 555 }),
@@ -328,6 +329,21 @@ describe('ModStoryReview', () => {
         await hideButton.trigger('click')
         await flushPromises()
         expect(mockStoriesApi.dontUseForPublicity).toHaveBeenCalledWith(555)
+        expect(mockStoriesApi.dontUseForNewsletter).not.toHaveBeenCalled()
+      })
+
+      it('only removes from newsletter when Hide is clicked in newsletter mode', async () => {
+        const wrapper = mountComponent({
+          story: createStory({ id: 556, public: true }),
+          newsletter: true,
+        })
+        const hideButton = wrapper
+          .findAll('button')
+          .find((b) => b.text().includes('Hide'))
+        await hideButton.trigger('click')
+        await flushPromises()
+        expect(mockStoriesApi.dontUseForNewsletter).toHaveBeenCalledWith(556)
+        expect(mockStoriesApi.dontUseForPublicity).not.toHaveBeenCalled()
       })
 
       it('hides the component after clicking Hide', async () => {

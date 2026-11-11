@@ -16,13 +16,13 @@ import (
 
 // unsubscribeFixture creates a member of one group with a known Link key.
 func unsubscribeFixture(t *testing.T, prefix string) (uint64, string) {
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 	groupID := CreateTestGroup(t, prefix)
 	db := database.DBConn
 
 	db.Exec("UPDATE users SET relevantallowed = 1, newslettersallowed = 1 WHERE id = ?", userID)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, collection, emailfrequency, eventsallowed, volunteeringallowed) "+
-		"VALUES (?, ?, 'Member', 'Approved', 24, 1, 1)", userID, groupID)
+		"VALUES (?, ?, ?, 'Approved', 24, 1, 1)", userID, groupID, utils.ROLE_MEMBER)
 
 	key := fmt.Sprintf("unsubkey%v", userID)
 	db.Exec("INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, ?, ?, ?)",

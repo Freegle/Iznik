@@ -279,9 +279,13 @@ const takenBy = computed(() => {
   let ret = null
 
   if (otheruser.value) {
-    ret = otheruser.value
-    ret.userid = otheruser.value.id
-    ret.count = 1
+    // A copy, so the user held in the store is not given a count. On a post offering several
+    // things the person is taken to have the lot that is left; the poster can change it.
+    ret = {
+      ...otheruser.value,
+      userid: otheruser.value.id,
+      count: Math.max(Number(refmsg.value?.availablenow) || 1, 1),
+    }
   }
 
   return ret

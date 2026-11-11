@@ -5,6 +5,7 @@ namespace App\Console\Commands\Partnerships;
 use App\Services\AuthorityStatsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Brings council sponsorships set up before the Partnerships page existed onto it, so the
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\DB;
  *   php artisan partnerships:import-sponsorships --dry-run
  *   php artisan partnerships:import-sponsorships --map="Norfolk Recycles=12345"
  */
+#[AsCommand(name: 'partnerships:import-sponsorships')]
 class ImportSponsorshipsCommand extends Command
 {
     protected $signature = 'partnerships:import-sponsorships
@@ -117,10 +119,10 @@ class ImportSponsorshipsCommand extends Command
                 ]);
             }
 
-            // A community inside the council boundary becomes a boundary one, so it is
-            // weighted by its overlap like any other; one outside it was sponsored anyway.
+            // A community significantly inside the council boundary becomes a boundary one, so
+            // it is weighted by its overlap like any other; one that is not was sponsored anyway.
             $inside = [];
-            foreach ($authorityStats->getAuthority($authorityId)['groups'] ?? [] as $group) {
+            foreach ($authorityStats->getSignificantGroups($authorityId)['groups'] ?? [] as $group) {
                 $inside[$group['id']] = $group['overlap'];
             }
 

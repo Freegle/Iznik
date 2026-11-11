@@ -46,6 +46,22 @@ class LocationTest extends TestCase
         $this->seedSpatialPoint('postcodes', $id, $lat, $lng);
     }
 
+    public function test_subject_area_is_the_area_name_and_outward_code(): void
+    {
+        $areaId = (int) DB::table('locations')->insertGetId(['name' => 'Stoneygate', 'type' => 'Polygon']);
+        $pcId   = (int) DB::table('locations')->insertGetId(['name' => 'LE2 3HE', 'type' => 'Postcode', 'areaid' => $areaId]);
+        $bareId = (int) DB::table('locations')->insertGetId(['name' => 'ZZ9 9ZY', 'type' => 'Postcode']);
+        $townId = (int) DB::table('locations')->insertGetId(['name' => 'Grantown on Spey', 'type' => 'Place']);
+        try {
+            $this->assertSame('Stoneygate LE2', Location::subjectArea($pcId));
+            $this->assertSame('ZZ9', Location::subjectArea($bareId), 'A postcode with no area gives the outward half alone');
+            $this->assertSame('Grantown on Spey', Location::subjectArea($townId), 'Not a postcode: the name as it is');
+            $this->assertNull(Location::subjectArea(-1));
+        } finally {
+            DB::table('locations')->whereIn('id', [$areaId, $pcId, $bareId, $townId])->delete();
+        }
+    }
+
     public function test_closest_postcode_returns_result_for_known_coords(): void
     {
         $this->seedPostcode(self::TEST_PC_ID, 'EH1 1AA', 56.700, 3.000);

@@ -83,8 +83,12 @@ export const useModGroupStore = defineStore('modgroups', {
 
           // Drop any cached group we're no longer in - otherwise a group's
           // last-fetched role (e.g. Moderator) never gets updated once cached.
+          // Only groups that came from our memberships carry a role. A group
+          // fetched to look at, as Support Tools does for any community, has
+          // none and is kept: dropping it made the community on screen vanish
+          // at the next refresh, every 30 seconds.
           for (const id of Object.keys(this.list)) {
-            if (!currentIds.has(parseInt(id))) {
+            if (!currentIds.has(parseInt(id)) && this.list[id]?.role) {
               delete this.list[id]
             }
           }

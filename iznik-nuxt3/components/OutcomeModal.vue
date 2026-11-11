@@ -58,38 +58,50 @@
           @took-users="took"
         />
         <div v-if="showSplitChoice" class="mt-3">
-          <label class="strong">Is that everything?</label>
-          <b-button-group class="d-block mt-1">
+          <div class="strong">Is that everything?</div>
+          <!-- Two clear choices, the chosen one ticked. The old pair differed
+               only in shade, so a member tapped the one already chosen, saw
+               nothing change, then tapped the other and left the post up
+               without knowing (Discourse 10284). -->
+          <div class="split-choice mt-1" role="radiogroup">
             <b-button
-              :variant="allGone ? 'primary' : 'secondary'"
+              :variant="allGone ? 'primary' : 'outline-secondary'"
               :pressed="allGone"
+              role="radio"
+              :aria-checked="allGone"
               class="all-gone"
               @click="allGone = true"
             >
-              That's everything gone
+              <v-icon :icon="allGone ? 'check-circle' : 'circle'" />
+              Yes, it's all gone
             </b-button>
             <b-button
-              :variant="allGone ? 'secondary' : 'primary'"
+              :variant="allGone ? 'outline-secondary' : 'primary'"
               :pressed="!allGone"
+              role="radio"
+              :aria-checked="!allGone"
               class="some-left"
               @click="allGone = false"
             >
-              There's still some left
+              <v-icon :icon="allGone ? 'circle' : 'check-circle'" />
+              No, some are left
             </b-button>
-          </b-button-group>
-          <p v-if="!allGone" class="text-muted small mt-2">
-            We'll leave your post up, and show it as part gone.
-          </p>
+          </div>
+          <NoticeMessage v-if="!allGone" variant="warning" class="mt-2">
+            Your post will stay up so people can ask for the rest. When it's all
+            gone, mark it TAKEN again and choose "Yes, it's all gone".
+          </NoticeMessage>
         </div>
       </div>
       <div v-if="showCompletion">
         <div
           v-if="type === 'Taken' && tookUsers?.length && otherRepliers?.length"
         >
-          <label class="strong">
+          <label :for="`${formId}-message-for-other-people`" class="strong">
             Message for other people who replied (optional):
           </label>
           <b-form-textarea
+            :id="`${formId}-message-for-other-people`"
             v-model="completionMessage"
             :rows="3"
             :max-rows="6"
@@ -103,9 +115,9 @@
         </div>
         <hr class="mb-0" />
         <div>
-          <label class="mt-3 strong">
+          <div class="mt-3 strong">
             How do you feel about freegling just now?
-          </label>
+          </div>
           <b-button-group class="d-none d-md-block mt-1">
             <b-button
               :pressed="happiness === 'Happy'"
@@ -173,8 +185,14 @@
           with other freeglers.
         </NoticeMessage>
         <div>
-          <label class="mt-4 strong"> It went well/badly because: </label>
+          <label
+            :for="`${formId}-it-went-well-badly-becau`"
+            class="mt-4 strong"
+          >
+            It went well/badly because:
+          </label>
           <b-form-textarea
+            :id="`${formId}-it-went-well-badly-becau`"
             v-model="comments"
             rows="3"
             max-rows="6"
@@ -222,7 +240,7 @@
   </b-modal>
 </template>
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, useId } from 'vue'
 import OutcomeBy from './OutcomeBy'
 import MessageAvailability from './MessageAvailability'
 import SpinButton from './SpinButton'
@@ -230,6 +248,11 @@ import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import NoticeMessage from '~/components/NoticeMessage'
 import { useOurModal } from '~/composables/useOurModal'
+import { FlowName, useFlowTelemetry } from '~/composables/useFlowTelemetry'
+import { isAutoSplit, isClearance } from '~/composables/useAutoSplit'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const props = defineProps({
   id: {
@@ -254,6 +277,11 @@ const messageStore = useMessageStore()
 const authStore = useAuthStore()
 const { modal, hide } = useOurModal()
 
+// Flow telemetry: the modal opens as soon as it mounts, so that is where the flow starts.
+const flow = useFlowTelemetry(FlowName.CHAT_OUTCOME)
+flow.start(props.type || 'unknown')
+flow.enterStep('choose')
+
 const { $bus } = useNuxtApp()
 
 const happiness = ref(null)
@@ -274,12 +302,15 @@ const message = computed(() => {
 // Bulk clearance offers still count items out one by one. Ordinary posts do
 // not: we ask who took some and whether any are left, and never make the
 // member reconcile numbers.
-const isBulk = computed(() => (message.value?.bulkcount ?? 0) > 0)
+const isBulk = computed(() => isClearance(message.value))
 
+// An automatically split post is marked taken like an ordinary one, but is not asked
+// whether any are left: its items are marked TAKEN one by one in My Posts.
 const showSplitChoice = computed(
   () =>
     props.type === 'Taken' &&
     !isBulk.value &&
+    !isAutoSplit(message.value) &&
     message.value.availableinitially > 1
 )
 
@@ -368,6 +399,10 @@ const buttonLabel = computed(() => {
     return 'Submit'
   } else if (props.type === 'Withdrawn') {
     return 'Withdraw'
+  } else if (showSplitChoice.value && !allGone.value) {
+    // Saving with some left does not mark the post TAKEN, so the button must
+    // not say it does.
+    return 'Save, keep my post up'
   } else {
     return 'Mark as ' + props.type.toUpperCase()
   }
@@ -379,6 +414,7 @@ function took(users) {
 
 async function submit(callback) {
   if (props.type === 'Taken' && !tookUsers.value.length) {
+    flow.validationFailed('taker', 'missing')
     chooseError.value = true
     submittedWithNoSelectedUser.value = true
     callback()
@@ -391,56 +427,73 @@ async function submit(callback) {
   let complete = false
 
   if (submitDisabled.value) {
+    flow.validationFailed('form', 'incomplete')
     chooseError.value = true
     callback()
   } else {
-    if (props.type === 'Withdrawn' || props.type === 'Received') {
-      complete = true
-    } else {
-      complete = isBulk.value ? left.value === 0 : allGone.value
+    flow.submit()
 
-      for (const u of tookUsers.value) {
-        const userid = u.userid > 0 ? u.userid : null
+    try {
+      if (props.type === 'Withdrawn' || props.type === 'Received') {
+        complete = true
+      } else {
+        complete = isBulk.value ? left.value === 0 : allGone.value
 
-        if (!isBulk.value) {
-          // No count: the server records one against the taker, which is all
-          // the "part gone" badge needs to know.
-          await messageStore.addBy(message.value.id, userid)
-        } else if (u.count > 0) {
-          await messageStore.addBy(message.value.id, userid, u.count)
-        } else {
-          await messageStore.removeBy(message.value.id, userid)
+        for (const u of tookUsers.value) {
+          const userid = u.userid > 0 ? u.userid : null
+
+          if (!isBulk.value) {
+            // No count: the server records one against the taker, which is all
+            // the "part gone" badge needs to know.
+            await messageStore.addBy(message.value.id, userid)
+          } else if (u.count > 0) {
+            await messageStore.addBy(message.value.id, userid, u.count)
+          } else {
+            await messageStore.removeBy(message.value.id, userid)
+          }
         }
       }
-    }
 
-    if (complete) {
-      // The post is being taken/received.
-      await messageStore.update({
-        action: 'Outcome',
-        id: props.id,
-        outcome: props.type,
-        happiness: happiness.value,
-        comment: comments.value,
-        message: completionMessage.value,
-      })
+      if (complete) {
+        // The post is being taken/received.
+        await messageStore.update({
+          action: 'Outcome',
+          id: props.id,
+          outcome: props.type,
+          happiness: happiness.value,
+          comment: comments.value,
+          message: completionMessage.value,
+        })
 
-      // Refetch the message to ensure the outcome is reflected in the store
-      // For withdrawn messages that were pending, the fetch may fail as they get deleted
-      try {
-        await messageStore.fetch(props.id)
-      } catch (error) {
-        if (props.type === 'Withdrawn') {
-          // Suppress fetch errors for withdrawn messages as they may have been deleted
-          console.log(
-            'Suppressed fetch error for withdrawn message:',
-            error.message
-          )
-        } else {
-          throw error
+        // Refetch the message to ensure the outcome is reflected in the store
+        // For withdrawn messages that were pending, the fetch may fail as they get deleted
+        try {
+          await messageStore.fetch(props.id)
+        } catch (error) {
+          if (props.type === 'Withdrawn') {
+            // Suppress fetch errors for withdrawn messages as they may have been deleted
+            console.log(
+              'Suppressed fetch error for withdrawn message:',
+              error.message
+            )
+          } else {
+            throw error
+          }
         }
+      } else {
+        // Some are left, so the post stays up. Fetch it again so the card
+        // shows "Part gone" at once: without that nothing on the page changed,
+        // and the member could not tell the save had done anything.
+        await messageStore.fetch(props.id, true)
       }
+    } catch (e) {
+      flow.submitResult(false, e?.response?.status ?? null, 'error')
+      throw e
     }
+
+    flow.submitResult(true, 200, null)
+    flow.completeStep()
+    flow.complete()
 
     callback()
     hide()
@@ -448,6 +501,8 @@ async function submit(callback) {
 }
 
 function onHide() {
+  flow.abandon('closed')
+
   // We're having trouble capturing events from this modal, so use root as a bus.
   $bus.$emit('outcome', {
     groupid: groupid.value,
@@ -480,5 +535,16 @@ function cancel() {
 
 :deep(.btn-group .btn) {
   border: 1px solid black;
+}
+
+.split-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+
+  .btn {
+    flex: 1 1 12rem;
+    text-align: start;
+  }
 }
 </style>

@@ -6,137 +6,90 @@
     <div v-else-if="fetched && groups && groups.length" class="mt-2">
       <p>
         Here you can see info about all Freegle groups. Click on the column
-        headings to sort. Click on the dropdown arrow to filter.
+        headings to sort. Use the filters to narrow the list.
       </p>
       <p>Groups with the ID in light blue are caretaker groups.</p>
-      <hot-table
-        ref="hot"
-        width="100%"
-        :height="height + 'px'"
-        :data="groups"
-        license-key="non-commercial-and-evaluation"
-        column-sorting="true"
-        class="bg-white"
-        :dropdown-menu="true"
-        :filters="true"
-        :cells="cells"
-        :manual-column-freeze="true"
-        :after-render="afterRender"
-      >
-        <hot-column title="ID" data="id" :renderer="idRenderer"> </hot-column>
-        <hot-column title="Short Name" data="nameshort"> </hot-column>
-        <hot-column title="Display Name" data="namedisplay"> </hot-column>
-        <hot-column
-          title="Last Auto-Approve"
-          data="lastautoapprove"
-          :renderer="dateRenderer"
+      <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+        <b-form-input
+          v-model="search"
+          class="search-box"
+          type="search"
+          placeholder="Filter by ID, name or region"
+        />
+        <label
+          v-for="f in flagFilters"
+          :key="f.key"
+          :for="'flag-filter-' + f.key"
+          class="d-flex align-items-center gap-1 mb-0"
         >
-        </hot-column>
-        <hot-column
-          title="Auto-Approve %"
-          data="recentautoapprovespercent"
-          :renderer="autoApprovesRenderer"
-        >
-        </hot-column>
-        <hot-column
-          title="Auto-Approves"
-          data="recentautoapproves"
-          :renderer="centreRenderer"
-        >
-        </hot-column>
-        <hot-column
-          title="Moderated (30d)"
-          data="recentmoderated"
-          :renderer="centreRenderer"
-        >
-        </hot-column>
-        <hot-column
-          title="% Moderated (30d)"
-          data="recentmoderatedpercent"
-          :renderer="moderatedPctRenderer"
-        >
-        </hot-column>
-        <hot-column
-          title="Active-owner"
-          data="activeownercount"
-          :renderer="centreRenderer"
-        >
-        </hot-column>
-        <hot-column
-          title="Active Mods"
-          data="activemodcount"
-          :renderer="centreRenderer"
-        >
-        </hot-column>
-        <hot-column
-          title="Last Moderated"
-          data="lastmoderated"
-          :renderer="dateRenderer"
-        >
-        </hot-column>
-        <hot-column title="Publish?" data="publish" :renderer="boolRenderer">
-        </hot-column>
-        <hot-column title="FD?" data="onhere" :renderer="boolRenderer">
-        </hot-column>
-        <hot-column title="TN?" data="ontn" :renderer="boolRenderer">
-        </hot-column>
-        <hot-column title="LJ?" data="onlovejunk" :renderer="boolRenderer">
-        </hot-column>
-        <hot-column title="Region" data="region"> </hot-column>
-        <hot-column title="Lat" data="lat" :renderer="latlngRenderer">
-        </hot-column>
-        <hot-column title="Lng" data="lng" :renderer="latlngRenderer">
-        </hot-column>
-        <hot-column title="Founded" data="founded"> </hot-column>
-        <hot-column
-          title="Affiliation Confirmed"
-          data="affiliationconfirmed"
-          :renderer="dateRenderer"
-        >
-        </hot-column>
-        <hot-column
-          title="Backup Owners Active"
-          data="backupownersactive"
-          :renderer="centreRenderer"
-        >
-        </hot-column>
-        <hot-column
-          title="Backup Mods Active"
-          data="backupmodsactive"
-          :renderer="centreRenderer"
-        >
-        </hot-column>
-        <hot-column
-          title="Caretaker?"
-          data="mentored"
-          :renderer="caretakerRenderer"
-        >
-        </hot-column>
-      </hot-table>
+          {{ f.label }}
+          <b-form-select
+            :id="'flag-filter-' + f.key"
+            v-model="flags[f.key]"
+            :options="flagOptions"
+            size="sm"
+            class="flag-filter"
+          />
+        </label>
+        <span class="text-muted small">
+          {{ filteredGroups.length }} of {{ groups.length }} groups
+        </span>
+      </div>
+      <b-table
+        :items="filteredGroups"
+        :fields="fields"
+        :per-page="perPage"
+        :current-page="currentPage"
+        :sort-by="[{ key: 'nameshort', order: 'asc' }]"
+        sticky-header="70vh"
+        striped
+        small
+        responsive
+        class="bg-white support-groups-table"
+      />
+      <b-pagination
+        v-if="filteredGroups.length > perPage"
+        v-model="currentPage"
+        :total-rows="filteredGroups.length"
+        :per-page="perPage"
+        class="mt-2"
+      />
     </div>
   </div>
 </template>
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch } from 'vue'
 import dayjs from 'dayjs'
-import { HotTable, HotColumn } from '@handsontable/vue3'
-import { registerAllModules } from 'handsontable/registry'
 import { useModGroupStore } from '@/stores/modgroup'
-// Handsontable 15+ split the old dist/handsontable.full.css into a base
-// stylesheet plus themes; classic reproduces the pre-15 appearance.
-import 'handsontable/styles/handsontable.min.css'
-import 'handsontable/styles/ht-theme-classic.min.css'
-
-registerAllModules()
-// https://handsontable.com/docs/javascript-data-grid/vue3-custom-renderer-example/
 
 const modGroupStore = useModGroupStore()
 
-const hot = ref(null)
 const busy = ref(false)
 const fetched = ref(false)
-const height = ref(600)
-let heightTimer = null
+const search = ref('')
+const currentPage = ref(1)
+// Around 450 communities: paging keeps the table responsive.
+const perPage = 100
+
+const flagFilters = [
+  { key: 'publish', label: 'Publish?' },
+  { key: 'onhere', label: 'FD?' },
+  { key: 'ontn', label: 'TN?' },
+  { key: 'onlovejunk', label: 'LJ?' },
+  { key: 'mentored', label: 'Caretaker?' },
+]
+const flagOptions = [
+  { value: '', text: 'Any' },
+  { value: 'Y', text: 'Y' },
+  { value: 'N', text: 'N' },
+]
+const flags = ref({
+  publish: '',
+  onhere: '',
+  ontn: '',
+  onlovejunk: '',
+  mentored: '',
+})
 
 const groups = computed(() => {
   const ret = Object.values(modGroupStore.allGroups)
@@ -146,85 +99,213 @@ const groups = computed(() => {
   return ret
 })
 
-onMounted(() => {
-  checkHeight()
-})
-
-onBeforeUnmount(() => {
-  if (heightTimer) {
-    clearTimeout(heightTimer)
-  }
-})
-
-function idRenderer(_instance, td, _row, _col, _prop, value) {
-  const group = groups.value[_row]
-  if (group && group.mentored) {
-    td.style.backgroundColor = 'lightblue'
-  }
-  td.innerHTML = value
+function isYes(key, value) {
+  return key === 'mentored' ? !!value : Number(value) === 1
 }
 
-function dateRenderer(_instance, td, _row, _col, _prop, value) {
-  let val = '-'
-  td.style.textAlign = 'center'
+const filteredGroups = computed(() => {
+  const term = search.value.trim().toLowerCase()
 
-  if (value) {
-    val = dayjs(value).format('YYYY-MM-DD')
-  }
-  td.innerHTML = val
-}
+  return groups.value.filter((g) => {
+    if (term) {
+      const hay = [g.id, g.nameshort, g.namedisplay, g.region]
+        .map((v) => String(v ?? '').toLowerCase())
+        .join(' ')
 
-function autoApprovesRenderer(_instance, td, _row, _col, _prop, value) {
-  const group = groups.value[_row]
-  let auto = parseInt(value)
-  if (group && group.publish) {
-    if (auto >= 50) {
-      td.style.backgroundColor = 'orange'
+      if (!hay.includes(term)) {
+        return false
+      }
     }
-  } else {
-    td.innerHTML = auto
-  }
-  td.style.textAlign = 'center'
-  auto = Math.abs(auto)
-  td.innerHTML = auto + '%'
+
+    return flagFilters.every((f) => {
+      const want = flags.value[f.key]
+      return !want || isYes(f.key, g[f.key]) === (want === 'Y')
+    })
+  })
+})
+
+// A new filter can leave the current page past the end.
+watch(
+  [search, flags],
+  () => {
+    currentPage.value = 1
+  },
+  { deep: true }
+)
+
+function dateFormatter(value) {
+  return value ? dayjs(value).format('YYYY-MM-DD') : '-'
 }
 
-function moderatedPctRenderer(_instance, td, _row, _col, _prop, value) {
+function autoApprovesFormatter(value) {
+  const auto = parseInt(value)
+  return isNaN(auto) ? '-' : Math.abs(auto) + '%'
+}
+
+function moderatedPctFormatter(value) {
+  return Math.round(parseFloat(value) || 0) + '%'
+}
+
+function latlngFormatter(value) {
+  return Math.round(parseFloat(value) * 100) / 100
+}
+
+function boolFormatter(value) {
+  return Number(value) === 1 ? 'Y' : 'N'
+}
+
+function caretakerFormatter(value) {
+  return value ? 'Y' : 'N'
+}
+
+function idCellClass(_value, _key, item) {
+  return item && item.mentored ? 'text-center bg-info-subtle' : 'text-center'
+}
+
+function autoApprovesCellClass(value, _key, item) {
+  return item && item.publish && parseInt(value) >= 50
+    ? 'text-center bg-warning'
+    : 'text-center'
+}
+
+// Under 10% moderated may mean auto-approve fully covers the community, or that
+// moderation is very low; 80% or more is heavily moderated.
+function moderatedPctCellClass(value) {
   const pct = Math.round(parseFloat(value) || 0)
-  td.style.textAlign = 'center'
-  // Highlight groups where < 10% of arriving messages were moderated (may indicate
-  // auto-approve is fully covering this community, or that moderation is very low).
+
   if (pct < 10) {
-    td.style.backgroundColor = '#d4edda'
+    return 'text-center bg-success-subtle'
   } else if (pct >= 80) {
-    td.style.backgroundColor = '#fff3cd'
-  } else {
-    td.style.backgroundColor = ''
+    return 'text-center bg-warning-subtle'
   }
-  td.innerHTML = pct + '%'
+
+  return 'text-center'
 }
 
-function centreRenderer(_instance, td, _row, _col, _prop, value) {
-  td.style.textAlign = 'center'
-  td.innerHTML = value
-}
+const centre = { class: 'text-center', thClass: 'text-center' }
 
-function latlngRenderer(_instance, td, _row, _col, _prop, value) {
-  td.style.textAlign = 'center'
-  let val = parseFloat(value)
-  val = Math.round(val * 100) / 100
-  td.innerHTML = val
-}
-
-function boolRenderer(_instance, td, _row, _col, _prop, value) {
-  td.style.textAlign = 'center'
-  td.innerHTML = value === 1 ? 'Y' : 'N'
-}
-
-function caretakerRenderer(_instance, td, _row, _col, _prop, value) {
-  td.style.textAlign = 'center'
-  td.innerHTML = value ? 'Y' : 'N'
-}
+const fields = [
+  { key: 'id', label: 'ID', sortable: true, tdClass: idCellClass },
+  { key: 'nameshort', label: 'Short Name', sortable: true, stickyColumn: true },
+  { key: 'namedisplay', label: 'Display Name', sortable: true },
+  {
+    key: 'lastautoapprove',
+    label: 'Last Auto-Approve',
+    sortable: true,
+    formatter: dateFormatter,
+    ...centre,
+  },
+  {
+    key: 'recentautoapprovespercent',
+    label: 'Auto-Approve %',
+    sortable: true,
+    formatter: autoApprovesFormatter,
+    tdClass: autoApprovesCellClass,
+  },
+  {
+    key: 'recentautoapproves',
+    label: 'Auto-Approves',
+    sortable: true,
+    ...centre,
+  },
+  {
+    key: 'recentmoderated',
+    label: 'Moderated (30d)',
+    sortable: true,
+    ...centre,
+  },
+  {
+    key: 'recentmoderatedpercent',
+    label: '% Moderated (30d)',
+    sortable: true,
+    formatter: moderatedPctFormatter,
+    tdClass: moderatedPctCellClass,
+  },
+  {
+    key: 'activeownercount',
+    label: 'Active-owner',
+    sortable: true,
+    ...centre,
+  },
+  { key: 'activemodcount', label: 'Active Mods', sortable: true, ...centre },
+  {
+    key: 'lastmoderated',
+    label: 'Last Moderated',
+    sortable: true,
+    formatter: dateFormatter,
+    ...centre,
+  },
+  {
+    key: 'publish',
+    label: 'Publish?',
+    sortable: true,
+    formatter: boolFormatter,
+    ...centre,
+  },
+  {
+    key: 'onhere',
+    label: 'FD?',
+    sortable: true,
+    formatter: boolFormatter,
+    ...centre,
+  },
+  {
+    key: 'ontn',
+    label: 'TN?',
+    sortable: true,
+    formatter: boolFormatter,
+    ...centre,
+  },
+  {
+    key: 'onlovejunk',
+    label: 'LJ?',
+    sortable: true,
+    formatter: boolFormatter,
+    ...centre,
+  },
+  { key: 'region', label: 'Region', sortable: true },
+  {
+    key: 'lat',
+    label: 'Lat',
+    sortable: true,
+    formatter: latlngFormatter,
+    ...centre,
+  },
+  {
+    key: 'lng',
+    label: 'Lng',
+    sortable: true,
+    formatter: latlngFormatter,
+    ...centre,
+  },
+  { key: 'founded', label: 'Founded', sortable: true },
+  {
+    key: 'affiliationconfirmed',
+    label: 'Affiliation Confirmed',
+    sortable: true,
+    formatter: dateFormatter,
+    ...centre,
+  },
+  {
+    key: 'backupownersactive',
+    label: 'Backup Owners Active',
+    sortable: true,
+    ...centre,
+  },
+  {
+    key: 'backupmodsactive',
+    label: 'Backup Mods Active',
+    sortable: true,
+    ...centre,
+  },
+  {
+    key: 'mentored',
+    label: 'Caretaker?',
+    sortable: true,
+    formatter: caretakerFormatter,
+    ...centre,
+  },
+]
 
 async function fetchCommunities(callback) {
   if (fetched.value) {
@@ -244,43 +325,19 @@ async function fetchCommunities(callback) {
   if (callback) callback()
 }
 
-function cells() {
-  return {
-    editor: false,
-  }
-}
-
-function afterRender() {
-  const inst = hot.value.hotInstance
-
-  // Freeze the name
-  const plugin = inst.getPlugin('ManualColumnFreeze')
-  plugin.freezeColumn(1)
-}
-
-function checkHeight() {
-  if (import.meta.client) {
-    const windowHeight = Math.floor(window.innerHeight)
-
-    if (hot.value) {
-      const rect = hot.value.$el.getBoundingClientRect()
-
-      height.value = windowHeight - rect.top - 50
-    }
-
-    heightTimer = setTimeout(checkHeight, 100)
-  }
-}
-
 defineExpose({ fetchCommunities })
 </script>
 <style scoped>
-input {
+.search-box {
   max-width: 300px;
 }
 
-::v-deep .handsontable table thead th,
-::v-deep .handsontable table tbody td {
+.flag-filter {
+  width: 5.5rem;
+}
+
+.support-groups-table :deep(th),
+.support-groups-table :deep(td) {
   white-space: pre-line;
   max-width: 150px;
 }

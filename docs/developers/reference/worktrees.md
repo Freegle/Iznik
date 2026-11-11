@@ -80,6 +80,25 @@ Idle is measured against the remote branch, so commits you have made locally but
 not pushed do not count as activity. A worktree with containers still running is
 skipped, so an instance someone is using is left alone.
 
+### 6. Worktrees made by another tool
+
+A tool that creates the git worktree itself, such as Orca, can hand the rest to
+the CLI:
+
+```bash
+./freegle worktree setup [dir]      # .env, free ports, Loki volume, map data, containers
+./freegle worktree teardown [dir]   # stop the stack, drop its volumes, fix file ownership
+```
+
+Both default to the current directory and refuse the main checkout. `setup` names
+the compose project `freegle-<directory name>` and leaves alone a worktree that
+already has its own project, so running it twice is harmless. `teardown` leaves
+the directory for the tool to delete, and hands back the root-owned files the
+containers wrote so that it can. In Orca, set them as the repository's setup and
+archive hooks (Settings, Repository): `./freegle worktree setup` and
+`./freegle worktree teardown`. `./freegle worktree prune` sees these worktrees
+like any other.
+
 ## CRITICAL: Worktree Isolation is Absolute
 
 **A worktree is a fully isolated environment. You MUST NOT cross these boundaries under any circumstances:**

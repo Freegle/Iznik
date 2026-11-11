@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import api from '~/api'
 import { APIError } from '~/api/APIErrors'
+import { isOutcomeAlreadyRecorded } from '~/api/outcomeConflict'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
 import { useNearbyStore } from '~/stores/nearby'
@@ -11,6 +12,7 @@ import {
   prewarmRoadDistances,
   roadAnswersVersion,
 } from '~/composables/useDriveDistance'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
@@ -18,10 +20,21 @@ const BATCH_DELAY = 50
 // Refetch a cached message after this long, in case its state has changed.
 const CACHE_TTL_SECONDS = 600
 
+// The extra argument the message API takes to act on several communities at once, or none,
+// so a single-community action is called exactly as it always has been.
+function severalCommunities(groupids) {
+  return groupids ? [groupids] : []
+}
+
 export const useMessageStore = defineStore('message', {
   state: () => ({
     list: {},
     byUserList: {},
+
+    // Ids whose last fetch failed for a reason other than "not found" (an API error or
+    // timeout). A batch fetch resolves with nothing either way, so this is how a caller
+    // tells "this post does not exist" from "we could not reach the API just now".
+    fetchFailed: {},
 
     // Count of unseen items
     count: 0,
@@ -55,11 +68,19 @@ export const useMessageStore = defineStore('message', {
       // ModTools context
       this.context = null
     },
-    async fetchCount(browseView, maxDistance, log = true) {
+    async fetchCount(
+      browseView,
+      maxDistance,
+      log = true,
+      browseType,
+      browseGroup
+    ) {
       const ret = await api(this.config).message.count(
         browseView,
         maxDistance,
-        log
+        log,
+        browseType,
+        browseGroup
       )
       this.count = ret?.count || 0
       return this.count
@@ -213,6 +234,10 @@ export const useMessageStore = defineStore('message', {
           try {
             const msgs = await batchPromise
 
+            chunk.forEach((id) => {
+              delete this.fetchFailed[id]
+            })
+
             if (msgs && msgs.forEach) {
               msgs.forEach((msg) => {
                 this.list[msg.id] = msg
@@ -241,7 +266,13 @@ export const useMessageStore = defineStore('message', {
             console.log('Failed to fetch messages', e)
             if (e instanceof APIError && e.response.status === 404) {
               console.log('Ignore 404 error')
+              chunk.forEach((id) => {
+                delete this.fetchFailed[id]
+              })
             } else {
+              chunk.forEach((id) => {
+                this.fetchFailed[id] = true
+              })
               throw e
             }
           } finally {
@@ -320,12 +351,6 @@ export const useMessageStore = defineStore('message', {
       await this.clear()
       const ret = await api(this.config).message.search(params)
       return ret
-    },
-    // Semantically similar posts for the "more like this" recommendation strip.
-    // Returns [{id, groupid, score, lat, lng}] (or [] when the feature is off or
-    // there's nothing to compare).
-    async similar(id, limit) {
-      return await api(this.config).message.similar(id, limit)
     },
     // Existing offers near a location matching a free-text query, for the
     // wanted→offer "people are offering these near you" panel.
@@ -407,6 +432,22 @@ export const useMessageStore = defineStore('message', {
       this.list[id] = message
       return data
     },
+    // Owner/mod: mark one item TAKEN or undo that, then refetch.
+    async bulkItemAvailable(id, bulkitemid, available) {
+      const data = await api(this.config).message.bulkItemAvailable(
+        id,
+        bulkitemid,
+        available
+      )
+      this.list[id] = await this.fetch(id, true)
+      return data
+    },
+    // Owner/mod: undo an automatic split, then refetch.
+    async autoSplitUndo(id) {
+      const data = await api(this.config).message.autoSplitUndo(id)
+      this.list[id] = await this.fetch(id, true)
+      return data
+    },
     // Offerer/mod: change the state of one interest row, then refetch.
     async bulkInterestState(id, bulkitemid, userid, state) {
       const data = await api(this.config).message.bulkInterestState(
@@ -453,7 +494,19 @@ export const useMessageStore = defineStore('message', {
     async update(params) {
       const authStore = useAuthStore()
       const userUid = authStore.user?.id
-      const data = await api(this.config).message.update(params)
+      let data
+
+      try {
+        data = await api(this.config).message.update(params)
+      } catch (e) {
+        if (params.action !== 'Outcome' || !isOutcomeAlreadyRecorded(e)) {
+          throw e
+        }
+
+        // The post already has an outcome, so what the member asked for is done. Fall through
+        // to the refetch so our stale copy shows it and the post moves to their old posts.
+        data = {}
+      }
 
       if (data.deleted) {
         // This can happen if we withdraw a post while it is pending.
@@ -625,7 +678,13 @@ export const useMessageStore = defineStore('message', {
       // the badge repaint with a different view's number right after marking seen, i.e. it
       // didn't drop to zero. Mirror nearbyStore.fetchMessages and read the settings here.
       const settings = useAuthStore().user?.settings
-      await this.fetchCount(settings?.browseView, settings?.browseMaxDistance)
+      await this.fetchCount(
+        settings?.browseView,
+        settings?.browseMaxDistance,
+        true,
+        settings?.browseType,
+        settings?.browseGroup
+      )
     },
     // Mark the hidden crosspost/repost copies of an already-shown post as seen. The browse
     // feed collapses a poster's duplicate copies to one card (useMessageDedup), but the server
@@ -763,11 +822,20 @@ export const useMessageStore = defineStore('message', {
           params.groupid,
           params.subject,
           params.stdmsgid,
-          params.body
+          params.body,
+          ...severalCommunities(params.groupids)
         )
       )
 
-      delete this.list[params.id]
+      if (params.groupids) {
+        // Deleted from several communities at once: any copy left (held by somebody
+        // else, or locked by the home community) is theirs to deal with.
+        await this.refreshOrRemoveFromMTList(params.id, {
+          severalCommunities: true,
+        })
+      } else {
+        delete this.list[params.id]
+      }
     },
     async approveedits(params) {
       await api(this.config).message.approveEdits(params.id)
@@ -792,15 +860,41 @@ export const useMessageStore = defineStore('message', {
     // the review queue - so the next group's copy is immediately actionable without reloading the
     // pending page (Discourse 9862). Only drop it once nothing's left. The review-queue states
     // match ModMessage's own predicate; mirrors hold()/release()'s re-fetch, but conditional.
-    async refreshOrRemoveFromMTList(id) {
+    //
+    // After an action on several communities at once (severalCommunities), the copies it
+    // left alone - held by another moderator, or locked by the home community - do not keep
+    // the card: they were named on it and are not this moderator's to act on, so keeping it
+    // would show the post again as if nothing had happened.
+    async refreshOrRemoveFromMTList(id, { severalCommunities = false } = {}) {
       let message
       try {
         message = await this.fetchMT({ id }, false)
       } catch (e) {
         message = null
       }
-      const stillInReviewQueue = !!message?.groups?.some((g) =>
-        ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
+      // Only copies on groups this moderator moderates. A rippled post's other copies are
+      // mostly pending on communities they do not run, and keeping the post for those left
+      // its card showing the copy just approved in "All my communities".
+      const authStore = useAuthStore()
+      const moderates = (g) =>
+        typeof authStore?.member !== 'function' ||
+        [ROLE_MODERATOR, ROLE_OWNER].includes(authStore.member(g.groupid))
+      const myid = parseInt(authStore?.user?.id)
+      const leftAlone = (g) => {
+        if (!severalCommunities) return false
+        const holder = parseInt(
+          g.heldby && typeof g.heldby === 'object' ? g.heldby.id : g.heldby
+        )
+        return (
+          (Boolean(holder) && holder !== myid) ||
+          parseInt(g.locked_by_home) === 1
+        )
+      }
+      const stillInReviewQueue = !!message?.groups?.some(
+        (g) =>
+          ['Pending', 'PendingOther', 'Spam'].includes(g.collection) &&
+          moderates(g) &&
+          !leftAlone(g)
       )
       if (stillInReviewQueue) {
         this.list[message.id] = message
@@ -834,14 +928,25 @@ export const useMessageStore = defineStore('message', {
         throw held
       }
     },
-    async approve(id, groupid, subject, stdmsgid, body) {
+    // groupids, when given, approves (or below, rejects) on every one of those communities
+    // at once; see the Go API's resolveActionGroups.
+    async approve(id, groupid, subject, stdmsgid, body, groupids) {
       const msg = this.byId(id)
       const fromuser = msg?.fromuser
 
       await this.runHoldAware(id, () =>
-        api(this.config).message.approve(id, groupid, subject, stdmsgid, body)
+        api(this.config).message.approve(
+          id,
+          groupid,
+          subject,
+          stdmsgid,
+          body,
+          ...severalCommunities(groupids)
+        )
       )
-      await this.refreshOrRemoveFromMTList(id)
+      await this.refreshOrRemoveFromMTList(id, {
+        severalCommunities: Boolean(groupids),
+      })
 
       // Re-fetch the sender so posting status changes from stdmsg take effect.
       if (fromuser) {
@@ -851,14 +956,23 @@ export const useMessageStore = defineStore('message', {
         }
       }
     },
-    async reject(id, groupid, subject, stdmsgid, body) {
+    async reject(id, groupid, subject, stdmsgid, body, groupids) {
       const msg = this.byId(id)
       const fromuser = msg?.fromuser
 
       await this.runHoldAware(id, () =>
-        api(this.config).message.reject(id, groupid, subject, stdmsgid, body)
+        api(this.config).message.reject(
+          id,
+          groupid,
+          subject,
+          stdmsgid,
+          body,
+          ...severalCommunities(groupids)
+        )
       )
-      await this.refreshOrRemoveFromMTList(id)
+      await this.refreshOrRemoveFromMTList(id, {
+        severalCommunities: Boolean(groupids),
+      })
 
       if (fromuser) {
         const uid = typeof fromuser === 'number' ? fromuser : fromuser.id

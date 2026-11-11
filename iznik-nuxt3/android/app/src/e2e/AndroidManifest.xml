@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Merged only into the e2e build type (the emulator gate, FreegleDocker scripts/app-e2e).
+  The gate's app talks to the local Docker stack, whose API is served over plain http, and
+  Android 9+ refuses cleartext unless the application opts in. The release build keeps the
+  platform default (cleartext refused).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:usesCleartextTraffic="true" />
+</manifest>

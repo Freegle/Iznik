@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import MyPostsPostsList from '~/components/MyPostsPostsList.vue'
 
 const mockMessageStore = {
@@ -130,6 +130,25 @@ describe('MyPostsPostsList', () => {
         posts: [{ id: 1, hasoutcome: false, arrival: '2024-01-01' }],
       })
       expect(wrapper.text()).toContain('1 active post')
+    })
+  })
+
+  describe('posts with an item list', () => {
+    it('leaves clearances to their own card but keeps a post split automatically', () => {
+      const full = {
+        1: { id: 1, bulkcount: 2, bulkitems: [{}, {}] },
+        2: { id: 2, bulkcount: 2, bulkitems: [{}, {}], autosplit: true },
+        3: { id: 3 },
+      }
+      mockMessageStore.byId.mockImplementation((id) => full[id] || null)
+      const wrapper = createWrapper({
+        posts: [
+          { id: 1, hasoutcome: false, arrival: '2024-01-01' },
+          { id: 2, hasoutcome: false, arrival: '2024-01-02' },
+          { id: 3, hasoutcome: false, arrival: '2024-01-03' },
+        ],
+      })
+      expect(wrapper.vm.visiblePosts.map((p) => p.id).sort()).toEqual([2, 3])
     })
   })
 
@@ -328,6 +347,67 @@ describe('MyPostsPostsList', () => {
         ],
       })
       expect(wrapper.exists()).toBe(true)
+    })
+  })
+
+  describe('partly promised posts', () => {
+    // An offer of several items is only "promised" once every item is spoken
+    // for (#1444), but one promise is already a collection to show.
+    it('fetches a partly promised post so its collections show', async () => {
+      // The fetch is driven by a watch on the posts, which fire as they load.
+      mockMessageStore.byId.mockReturnValue(null)
+      const wrapper = createWrapper({ loading: false, posts: [] })
+      await wrapper.setProps({
+        posts: [
+          {
+            id: 7,
+            type: 'Offer',
+            hasoutcome: false,
+            arrival: '2024-01-01',
+            promised: false,
+            promisecount: 1,
+          },
+        ],
+      })
+      await flushPromises()
+      expect(mockMessageStore.fetch).toHaveBeenCalledWith(7)
+    })
+
+    it('does not fetch an open post nobody is promised', async () => {
+      mockMessageStore.byId.mockReturnValue(null)
+      const wrapper = createWrapper({ loading: false, posts: [] })
+      await wrapper.setProps({
+        posts: [
+          {
+            id: 8,
+            type: 'Offer',
+            hasoutcome: false,
+            arrival: '2024-01-01',
+            promised: false,
+            promisecount: 0,
+          },
+        ],
+      })
+      await flushPromises()
+      expect(mockMessageStore.fetch).not.toHaveBeenCalledWith(8)
+    })
+
+    it('sorts partly promised items with the promised ones', () => {
+      const wrapper = createWrapper({
+        loading: false,
+        posts: [
+          { id: 1, hasoutcome: false, promised: false, arrival: '2024-01-02' },
+          {
+            id: 2,
+            hasoutcome: false,
+            promised: false,
+            promisecount: 1,
+            arrival: '2024-01-01',
+          },
+        ],
+      })
+      const messages = wrapper.findAll('.my-message')
+      expect(messages[0].attributes('data-id')).toBe('2')
     })
   })
 

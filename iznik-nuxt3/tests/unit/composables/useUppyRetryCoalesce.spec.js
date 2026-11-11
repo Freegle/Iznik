@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
+import Uppy from '@uppy/core'
+import {
+  createRetryCoalescer,
+  removeFinishedFiles,
+} from '~/composables/useUppyRetryCoalesce'
 
 describe('createRetryCoalescer', () => {
   let microtasks
@@ -219,5 +223,52 @@ describe('createRetryCoalescer', () => {
       expect(retryAll1).toHaveBeenCalledTimes(1)
       expect(retryAll2).toHaveBeenCalledTimes(1)
     })
+  })
+})
+
+describe('removeFinishedFiles', () => {
+  function uppyWith(names) {
+    const uppy = new Uppy()
+    const ids = names.map((name) =>
+      uppy.addFile({ name, type: 'image/jpeg', data: new Blob([name]) })
+    )
+    return { uppy, ids }
+  }
+
+  it('keeps a photo whose retry is still running when its batch completes', () => {
+    const { uppy, ids } = uppyWith(['done.jpg', 'retrying.jpg'])
+
+    const empty = removeFinishedFiles(uppy, {
+      successful: [uppy.getFile(ids[0])],
+      failed: [uppy.getFile(ids[1])],
+    })
+
+    expect(empty).toBe(false)
+    expect(uppy.getFile(ids[0])).toBeUndefined()
+    // @uppy/tus reads this file's progress on every chunk of the retry.
+    expect(uppy.getFile(ids[1]).progress).toBeDefined()
+  })
+
+  it('reports empty once every photo has finished', () => {
+    const { uppy, ids } = uppyWith(['a.jpg', 'b.jpg'])
+
+    expect(
+      removeFinishedFiles(uppy, {
+        successful: ids.map((id) => uppy.getFile(id)),
+        failed: [],
+      })
+    ).toBe(true)
+    expect(uppy.getFiles()).toHaveLength(0)
+  })
+
+  it('ignores photos already gone and a result with nothing in it', () => {
+    const { uppy, ids } = uppyWith(['a.jpg'])
+
+    expect(
+      removeFinishedFiles(uppy, { successful: [{ id: 'gone' }, null] })
+    ).toBe(false)
+    expect(removeFinishedFiles(uppy, {})).toBe(false)
+    expect(uppy.getFile(ids[0])).toBeDefined()
+    expect(removeFinishedFiles(null, {})).toBe(true)
   })
 })

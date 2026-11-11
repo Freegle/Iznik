@@ -2,10 +2,13 @@
 
 namespace App\Console\Commands\User;
 
+use App\Models\Membership;
 use Illuminate\Console\Command;
 use App\Services\Ripple\ReachMemberQueueService;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'user:add-membership')]
 class AddMembershipCommand extends Command
 {
     protected $signature = 'user:add-membership
@@ -54,6 +57,10 @@ class AddMembershipCommand extends Command
             'role' => $role,
             'collection' => 'Approved',
             'emailfrequency' => 24,
+            // Run by hand by support, which counts as a moderator add.
+            'added_origin' => Membership::addedOriginForInsert(
+                Membership::ADDED_ORIGIN_MODERATOR, 'AddMembershipCommand', (int) $emailRow->userid, (int) $group->id,
+            ),
             'added' => now(),
         ]);
 

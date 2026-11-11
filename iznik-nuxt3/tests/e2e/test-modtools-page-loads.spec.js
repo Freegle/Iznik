@@ -82,6 +82,30 @@ test.describe('ModTools Page Loads', () => {
     expect(errors).toHaveLength(0)
   })
 
+  test('Logs page loads without errors', async ({ page, testEnv }) => {
+    // The member-logs spec used to reach this page by accident: its selector
+    // matched the sidebar's Logs link. Now that it opens a member's logs as
+    // intended, this visits the Logs page on purpose.
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/logs`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await expect(
+      page.getByRole('heading', { name: 'Messages' }).first()
+    ).toBeVisible({ timeout: timeouts.navigation.slowPage })
+
+    await dismissAllModals(page)
+    await assertNoErrors(page)
+    expect(errors).toHaveLength(0)
+  })
+
   test('Chat Review page loads without "something went wrong"', async ({
     page,
     testEnv,

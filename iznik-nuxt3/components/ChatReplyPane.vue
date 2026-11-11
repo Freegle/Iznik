@@ -189,6 +189,37 @@
           </div>
 
           <VeeForm ref="form" class="composer-form">
+            <!-- A post the server split into items: say which ones you'd like. The
+                 choice is written as the first line of the reply, where it can be
+                 seen and changed. -->
+            <div
+              v-if="splitItems.length"
+              class="composer-field"
+              data-testid="reply-item-choice"
+            >
+              <span class="composer-label">Which would you like?</span>
+              <div
+                class="collect-chips"
+                role="group"
+                aria-label="Which would you like?"
+              >
+                <button
+                  v-for="item in splitItems"
+                  :key="item.id"
+                  type="button"
+                  class="collect-chip"
+                  :class="{
+                    'collect-chip--on': chosenItems.includes(item.name),
+                  }"
+                  :aria-pressed="chosenItems.includes(item.name)"
+                  :data-testid="'reply-item-' + item.id"
+                  @click="toggleItem(item)"
+                >
+                  {{ item.name }}
+                </button>
+              </div>
+            </div>
+
             <!-- Reply text -->
             <div class="composer-field">
               <label
@@ -241,9 +272,64 @@
                 class="composer-input"
                 placeholder="e.g. weekday evenings or this weekend"
               />
+              <div
+                v-if="collectChips"
+                class="collect-chips"
+                role="group"
+                aria-label="Quick answers"
+              >
+                <button
+                  v-for="chip in COLLECT_CHIPS"
+                  :key="chip"
+                  type="button"
+                  class="collect-chip"
+                  :class="{
+                    'collect-chip--on': stateMachine.collectText.value === chip,
+                  }"
+                  :aria-pressed="stateMachine.collectText.value === chip"
+                  @click="pickCollectChip(chip)"
+                >
+                  {{ chip }}
+                </button>
+              </div>
               <ErrorMessage name="collect" class="composer-error" />
             </div>
           </VeeForm>
+
+          <!-- Optional photo, sent as a second message after the reply text. -->
+          <div class="composer-field composer-field--photo">
+            <div v-if="stateMachine.replyImage.value" class="composer-photo">
+              <img
+                :src="stateMachine.replyImage.value.paththumb"
+                alt="Your photo"
+                class="composer-photo__img"
+              />
+              <b-button
+                variant="link"
+                size="sm"
+                class="p-0"
+                @click="removePhoto"
+              >
+                Remove photo
+              </b-button>
+            </div>
+            <OurUploader
+              v-else-if="addingPhoto"
+              v-model="photoAtts"
+              type="ChatMessage"
+              start-open
+            />
+            <b-button
+              v-else
+              variant="link"
+              size="sm"
+              class="composer-photo-add p-0"
+              @click="addingPhoto = true"
+            >
+              <v-icon icon="camera" class="composer-label-icon" />
+              Add a photo
+            </b-button>
+          </div>
 
           <p v-if="me && !alreadyAMember" class="composer-hint">
             You're not yet a member of this community; we'll join you. Change
@@ -334,6 +420,7 @@ import {
 } from 'vue'
 import dayjs from 'dayjs'
 import { useMessageStore } from '~/stores/message'
+import { isAutoSplit, withItemChoice } from '~/composables/useAutoSplit'
 import { useUserStore } from '~/stores/user'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
@@ -346,6 +433,7 @@ import {
 } from '~/composables/useReplyStateMachine'
 import { useRoute } from '#imports'
 import { action } from '~/composables/useClientLog'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 import { replySurfaceForRoute } from '~/composables/useReplySurface'
 import EmailValidator from '~/components/EmailValidator'
 import NewUserInfo from '~/components/NewUserInfo'
@@ -372,6 +460,9 @@ const NewFreegler = defineAsyncComponent(
 )
 const MessagePhotosModal = defineAsyncComponent(
   () => import('~/components/MessagePhotosModal')
+)
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 
 const props = defineProps({
@@ -423,6 +514,24 @@ try {
   await messageStore.fetch(props.messageId)
 } catch (e) {
   action('chatreplypane_fetch_failed', { message_id: props.messageId })
+}
+
+// The items of an automatically split post that are still on offer, for the "Which would
+// you like?" choice. A clearance has its own reply ("Register interest"), so never here.
+const splitItems = computed(() =>
+  isAutoSplit(message.value)
+    ? message.value.bulkitems.filter((i) => i.available !== false)
+    : []
+)
+const chosenItems = ref([])
+function toggleItem(item) {
+  chosenItems.value = chosenItems.value.includes(item.name)
+    ? chosenItems.value.filter((n) => n !== item.name)
+    : [...chosenItems.value, item.name]
+  stateMachine.replyText.value = withItemChoice(
+    stateMachine.replyText.value,
+    chosenItems.value
+  )
 }
 
 const message = computed(() => {
@@ -656,6 +765,52 @@ watch(
     }
   }
 )
+
+// Optional photo. The uploader hands back a list; we keep one photo.
+const addingPhoto = ref(false)
+const photoAtts = ref([])
+
+watch(
+  photoAtts,
+  (atts) => {
+    const att = atts?.[atts.length - 1]
+    if (att) {
+      stateMachine.replyImage.value = { id: att.id, paththumb: att.paththumb }
+      stateMachine.startTyping()
+      addingPhoto.value = false
+      photoAtts.value = []
+    }
+  },
+  { deep: true }
+)
+
+function removePhoto() {
+  stateMachine.replyImage.value = null
+}
+
+// Experiment reply-collect-chips: under the collection box, three buttons that fill it. Read once, and
+// only for an Offer, the only post with the box. Control (and the app, which is always control) is unchanged.
+const COLLECT_CHIPS = ['This weekend', 'Weekday evenings', 'Any time']
+const collectArm = ref(null)
+let collectArmRead = false
+watch(
+  () => message.value?.type,
+  (type) => {
+    if (type === 'Offer' && !collectArmRead) {
+      collectArmRead = true
+      collectArm.value = flowArm(FlowName.REPLY, 'reply-collect-chips')
+    }
+  },
+  { immediate: true }
+)
+const collectChips = computed(() => collectArm.value === 'b')
+
+function pickCollectChip(chip) {
+  stateMachine.collectText.value = chip
+  // Filled by a button, not typed: clear any "please suggest" error that is showing.
+  form.value?.setFieldValue?.('collect', chip)
+  form.value?.setFieldError?.('collect', undefined)
+}
 
 function validateCollect(value) {
   if (value && value.trim()) {
@@ -979,12 +1134,65 @@ $reply-border: #cdcdcd;
   }
 }
 
+.collect-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.collect-chip {
+  border: 1px solid $reply-border;
+  border-radius: 999px;
+  background: $color-white;
+  color: $color-gray--dark;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-height: 36px;
+  // Buttons are nowrap site-wide; let a chip wrap rather than run off a narrow screen.
+  white-space: normal !important;
+
+  &:hover {
+    border-color: $reply-header-green;
+  }
+
+  &--on {
+    background: $reply-header-green;
+    border-color: $reply-header-green;
+    color: $color-white;
+  }
+}
+
 .composer-error {
   display: block;
   margin-top: 4px;
   color: $color-red;
   font-weight: 700;
   font-size: 0.85rem;
+}
+
+.composer-photo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.composer-photo__img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid $reply-border;
+}
+
+.composer-photo-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-decoration: none;
 }
 
 .composer-hint {

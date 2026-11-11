@@ -10,6 +10,7 @@
       'mobile-landscape': isMobileLandscape,
     }"
     @click="expand"
+    @auxclick="openOnMiddleClick"
   >
     <!-- Status overlay images - outside photo-area to avoid fade filter -->
     <b-img
@@ -195,11 +196,11 @@ const bulkAvailable = computed(() => {
   const m = message.value
   if (!m?.bulkitems?.length) return 0
   // Prefer availablenow (sum of quantities across items still available); fall
-  // back to summing the catalogue quantities if the list payload omits it.
-  return (
-    m.availablenow ||
-    m.bulkitems.reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
-  )
+  // back to summing the catalogue quantities only if the list payload omits it.
+  // 0 is an answer - every item has gone - not a missing value.
+  return typeof m.availablenow === 'number'
+    ? m.availablenow
+    : m.bulkitems.reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
 })
 
 const miscStore = useMiscStore()
@@ -270,6 +271,10 @@ function expand(e) {
     viewport_height: window.innerHeight,
   })
 
+  if (openInNewTab(e)) {
+    return
+  }
+
   if (!message.value?.successful) {
     emit('expand')
 
@@ -277,6 +282,29 @@ function expand(e) {
       e.preventDefault()
       e.stopPropagation()
     }
+  }
+}
+
+// Ctrl, Cmd or Shift-click, or a middle click, opens the post on its own page in a new
+// tab, as it would for a link (issue #115). A click on a real link inside the card is
+// left to the link.
+function openInNewTab(e) {
+  if (!e || !(e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1)) {
+    return false
+  }
+  if (e.target?.closest?.('a[href]')) {
+    return false
+  }
+
+  window.open('/message/' + props.id, '_blank', 'noopener')
+  e.preventDefault()
+  e.stopPropagation()
+  return true
+}
+
+function openOnMiddleClick(e) {
+  if (e?.button === 1) {
+    openInNewTab(e)
   }
 }
 </script>

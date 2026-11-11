@@ -297,5 +297,20 @@ describe('ScrollGrid', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.singlecolumn').exists()).toBe(true)
     })
+
+    it('puts every item on its own row on a phone when singleColumn is set', () => {
+      // The VisibleWhen stub renders both the phone and the desktop blocks, so each of the
+      // three items appears once in each, and neither block pairs items up.
+      const wrapper = createWrapper({ singleColumn: true })
+      expect(wrapper.find('.twocolumn').exists()).toBe(false)
+      expect(wrapper.find('.onecolumn').exists()).toBe(false)
+      expect(wrapper.findAll('.singlecolumn')).toHaveLength(6)
+    })
+
+    it('still pairs items on a phone when singleColumn is not set', () => {
+      const wrapper = createWrapper({ singleColumn: false })
+      expect(wrapper.findAll('.twocolumn')).toHaveLength(2)
+      expect(wrapper.findAll('.singlecolumn')).toHaveLength(3)
+    })
   })
 })

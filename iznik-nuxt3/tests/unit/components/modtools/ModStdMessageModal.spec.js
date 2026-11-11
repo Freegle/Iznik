@@ -7,9 +7,10 @@ import {
   afterAll,
   beforeAll,
 } from 'vitest'
-import { shallowMount } from '@vue/test-utils'
+import { shallowMount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import ModStdMessageModal from '~/modtools/components/ModStdMessageModal.vue'
+import ModStdMessageSegments from '~/modtools/components/ModStdMessageSegments.vue'
 
 // Store original console.warn to restore after each test
 // The global setup throws on Vue warnings, but this component uses template refs on stubs
@@ -58,6 +59,7 @@ const mockMemberStore = {
   reply: vi.fn(),
   delete: vi.fn(),
   get: vi.fn(),
+  updateMembership: vi.fn(),
 }
 
 const mockUserStore = {
@@ -283,10 +285,17 @@ describe('ModStdMessageModal', () => {
               '<textarea :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
             props: ['modelValue', 'rows', 'maxRows', 'placeholder'],
           },
+          // The real editor, so the tests see the boxes and buttons a moderator does.
+          ModStdMessageSegments,
         },
       },
     })
   }
+
+  // The laid-out editor for the post text (or the message, for actions other
+  // than Edit and Message).
+  const postEditor = (wrapper) =>
+    wrapper.findAllComponents(ModStdMessageSegments)[0]
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -311,6 +320,7 @@ describe('ModStdMessageModal', () => {
     mockMessageStore.patch.mockResolvedValue({})
     mockMemberStore.reply.mockResolvedValue({})
     mockMemberStore.delete.mockResolvedValue({})
+    mockMemberStore.updateMembership.mockResolvedValue({})
     mockUserStore.edit.mockResolvedValue({})
   })
 
@@ -340,6 +350,7 @@ describe('ModStdMessageModal', () => {
       ['Leave', 'Send and Leave'],
       ['Delete', 'Send and Delete'],
       ['Edit', 'Save Edit'],
+      ['Edit and Message', 'Save Edit and Send'],
       ['Hold Message', 'Send and Hold'],
       ['Unknown', 'Send'],
     ])('returns correct label for %s action', (action, expected) => {
@@ -543,6 +554,95 @@ describe('ModStdMessageModal', () => {
     })
   })
 
+  // Discourse 10321: the poster left the community a minute after posting, and
+  // "Approve and unmod" failed on the membership change, which stopped the approve.
+  describe('a poster who is not a member of the community', () => {
+    const unmodApprove = () =>
+      createStdmsg({
+        action: 'Approve',
+        body: 'Thanks for your post, it has been approved and will go out shortly.',
+        newmodstatus: 'DEFAULT',
+        newdelstatus: 'DIGEST',
+      })
+
+    const posterWith = (memberships) =>
+      createMessage({ fromuser: { ...createMessage().fromuser, memberships } })
+
+    it('approves without trying to change a membership they do not have', async () => {
+      const wrapper = mountComponent(
+        {},
+        { message: posterWith(null), stdmsgData: unmodApprove() }
+      )
+      await wrapper.vm.fillin()
+      await wrapper.vm.process()
+
+      expect(mockMemberStore.updateMembership).not.toHaveBeenCalled()
+      expect(mockMessageStore.approve).toHaveBeenCalledTimes(1)
+      expect(mockHide).toHaveBeenCalled()
+    })
+
+    it('says there is no membership to change', async () => {
+      const wrapper = mountComponent(
+        {},
+        { message: posterWith([{ groupid: 999 }]), stdmsgData: unmodApprove() }
+      )
+      await wrapper.vm.fillin()
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('is not a member of this community')
+      expect(wrapper.text()).not.toContain('Change moderation status to')
+      expect(wrapper.text()).not.toContain('Change email frequency to')
+    })
+
+    it('still changes the settings of a poster who is a member', async () => {
+      const wrapper = mountComponent(
+        {},
+        { message: posterWith([{ groupid: 123 }]), stdmsgData: unmodApprove() }
+      )
+      await wrapper.vm.fillin()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('is not a member of this community')
+
+      await wrapper.vm.process()
+
+      expect(mockMemberStore.updateMembership).toHaveBeenCalledWith({
+        userid: 456,
+        groupid: 123,
+        ourPostingStatus: 'DEFAULT',
+      })
+      expect(mockMemberStore.updateMembership).toHaveBeenCalledWith({
+        userid: 456,
+        groupid: 123,
+        emailfrequency: 24,
+      })
+      expect(mockMessageStore.approve).toHaveBeenCalledTimes(1)
+    })
+
+    it('approves when the server says they are not a member', async () => {
+      // Their memberships are not loaded here, so only the server knows.
+      mockMemberStore.updateMembership.mockRejectedValue({
+        response: { status: 404 },
+      })
+      const wrapper = mountComponent({}, { stdmsgData: unmodApprove() })
+      await wrapper.vm.fillin()
+      await wrapper.vm.process()
+
+      expect(mockMemberStore.updateMembership).toHaveBeenCalled()
+      expect(mockMessageStore.approve).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not approve when the change fails for another reason', async () => {
+      mockMemberStore.updateMembership.mockRejectedValue({
+        response: { status: 500 },
+      })
+      const wrapper = mountComponent({}, { stdmsgData: unmodApprove() })
+      await wrapper.vm.fillin()
+
+      await expect(wrapper.vm.process()).rejects.toBeTruthy()
+      expect(mockMessageStore.approve).not.toHaveBeenCalled()
+    })
+  })
+
   describe('props', () => {
     it('accepts stdmsgid prop and resolves from store', () => {
       const stdmsgData = createStdmsg({ action: 'Reject' })
@@ -629,6 +729,25 @@ describe('ModStdMessageModal', () => {
       expect(wrapper.find('textarea.seg-text').exists()).toBe(true)
     })
 
+    // Discourse 10102/14: without a community the server applied a Support user's hold to
+    // every copy of the post, so another community saw it "Held by" someone not its moderator.
+    it('holds only the copy for the community it was sent from', async () => {
+      const wrapper = mountComponent(
+        {},
+        { stdmsgData: createStdmsg({ action: 'Hold Message' }) }
+      )
+      await wrapper.vm.fillin()
+      // Long enough to get past the "reply too short" check.
+      wrapper.vm.body +=
+        ' We are holding this post while we check a couple of details with you.'
+      await wrapper.vm.process()
+
+      expect(mockMessageStore.hold).toHaveBeenCalled()
+      const arg = mockMessageStore.hold.mock.calls[0][0]
+      expect(arg.groupid).toBeDefined()
+      expect(arg.groupid).not.toBeNull()
+    })
+
     it('includes edits to the fixed prose in the message that is sent', async () => {
       const wrapper = mountComponent({}, { stdmsgData: directiveStdmsg() })
       await wrapper.vm.fillin()
@@ -705,11 +824,11 @@ describe('ModStdMessageModal', () => {
       expect(wrapper.vm.blockedSegments).toHaveLength(3)
 
       const [first, second] = optionalIndexes(wrapper)
-      wrapper.vm.decideOptional(first, false)
+      postEditor(wrapper).vm.decideOptional(first, false)
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.blockedSegments).toHaveLength(2)
 
-      wrapper.vm.decideOptional(second, true)
+      postEditor(wrapper).vm.decideOptional(second, true)
       await wrapper.vm.$nextTick()
       // The wording keeps up, rather than still asking for the optionals once
       // they have both been decided.
@@ -734,8 +853,8 @@ describe('ModStdMessageModal', () => {
         'Please could you add the size to your post.'
 
       const [first, second] = optionalIndexes(wrapper)
-      wrapper.vm.decideOptional(first, false)
-      wrapper.vm.decideOptional(second, false)
+      postEditor(wrapper).vm.decideOptional(first, false)
+      postEditor(wrapper).vm.decideOptional(second, false)
       await wrapper.vm.$nextTick()
 
       // Kept wording is still an editable box, not fixed text.
@@ -744,7 +863,7 @@ describe('ModStdMessageModal', () => {
       wrapper.vm.segments[first].content =
         'You can edit your post on your My Posts page.'
       // Keep used to be final - you could only undo a Remove.
-      wrapper.vm.decideOptional(second, true)
+      postEditor(wrapper).vm.decideOptional(second, true)
 
       await wrapper.vm.process()
 
@@ -774,19 +893,21 @@ describe('ModStdMessageModal', () => {
       wrapper.vm.segments.find((s) => s.type === 'editthis').value =
         'Please could you add the size to your post.'
       optionalIndexes(wrapper).forEach((i) =>
-        wrapper.vm.decideOptional(i, false)
+        postEditor(wrapper).vm.decideOptional(i, false)
       )
 
       const gaps = wrapper.vm.segments
-        .map((seg, i) => (wrapper.vm.isGap(seg) ? i : -1))
+        .map((seg, i) => (postEditor(wrapper).vm.isGap(seg) ? i : -1))
         .filter((i) => i >= 0)
       expect(gaps.length).toBeGreaterThan(0)
-      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gaps[0]])).toBe(
-        false
-      )
+      expect(
+        postEditor(wrapper).vm.isParagraphGap(wrapper.vm.segments[gaps[0]])
+      ).toBe(false)
 
-      gaps.forEach((i) => wrapper.vm.toggleGap(i))
-      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gaps[0]])).toBe(true)
+      gaps.forEach((i) => postEditor(wrapper).vm.toggleGap(i))
+      expect(
+        postEditor(wrapper).vm.isParagraphGap(wrapper.vm.segments[gaps[0]])
+      ).toBe(true)
 
       await wrapper.vm.process()
 
@@ -808,7 +929,9 @@ describe('ModStdMessageModal', () => {
 
       // The single space between the two optionals is wording, not paragraph
       // spacing, so it must not become a blank-line control.
-      expect(wrapper.vm.segments.some((s) => wrapper.vm.isGap(s))).toBe(false)
+      expect(
+        wrapper.vm.segments.some((s) => postEditor(wrapper).vm.isGap(s))
+      ).toBe(false)
       expect(wrapper.find('.seg-gap-toggle').exists()).toBe(false)
     })
 
@@ -816,11 +939,17 @@ describe('ModStdMessageModal', () => {
       const wrapper = mountComponent({}, { stdmsgData: optionalsStdmsg() })
       await wrapper.vm.fillin()
 
-      const gap = wrapper.vm.segments.findIndex((seg) => wrapper.vm.isGap(seg))
-      wrapper.vm.toggleGap(gap)
-      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gap])).toBe(true)
-      wrapper.vm.toggleGap(gap)
-      expect(wrapper.vm.isParagraphGap(wrapper.vm.segments[gap])).toBe(false)
+      const gap = wrapper.vm.segments.findIndex((seg) =>
+        postEditor(wrapper).vm.isGap(seg)
+      )
+      postEditor(wrapper).vm.toggleGap(gap)
+      expect(
+        postEditor(wrapper).vm.isParagraphGap(wrapper.vm.segments[gap])
+      ).toBe(true)
+      postEditor(wrapper).vm.toggleGap(gap)
+      expect(
+        postEditor(wrapper).vm.isParagraphGap(wrapper.vm.segments[gap])
+      ).toBe(false)
     })
   })
 
@@ -866,6 +995,365 @@ describe('ModStdMessageModal', () => {
       const wrapper = mountComponent()
       const out = await wrapper.vm.substitutionStrings('Edit here: $editlink')
       expect(out).toBe('Edit here: https://www.ilovefreegle.org/myposts')
+    })
+  })
+  // A post pending on several of a moderator's communities: the card hands the modal every
+  // community to act on, and an Approve, Reject or Delete acts on all of them while the
+  // member is written to once.
+  describe('acting on several communities', () => {
+    const LONG =
+      ' Thanks - this has been checked and everything is in order now.'
+
+    async function send(wrapper) {
+      await wrapper.vm.fillin()
+      wrapper.vm.body += LONG
+      await wrapper.vm.process()
+    }
+
+    it('approves on every community and says so', async () => {
+      const wrapper = mountComponent({ groupid: 123, groupids: [123, 124] })
+      expect(
+        wrapper.find('[data-test="stdmsg-several-communities"]').text()
+      ).toContain('2 of your communities')
+
+      await send(wrapper)
+
+      const args = mockMessageStore.approve.mock.calls[0]
+      expect(args[0]).toBe(101)
+      expect(args[1]).toBe(123)
+      expect(args[5]).toEqual([123, 124])
+    })
+
+    it('rejects on every community', async () => {
+      const wrapper = mountComponent(
+        { groupid: 123, groupids: [123, 124] },
+        { stdmsgData: createStdmsg({ action: 'Reject' }) }
+      )
+      await send(wrapper)
+
+      expect(mockMessageStore.reject.mock.calls[0][5]).toEqual([123, 124])
+    })
+
+    it('deletes from every community', async () => {
+      const wrapper = mountComponent(
+        { groupid: 123, groupids: [123, 124] },
+        { stdmsgData: createStdmsg({ action: 'Delete' }) }
+      )
+      await send(wrapper)
+
+      expect(mockMessageStore.delete.mock.calls[0][0].groupids).toEqual([
+        123, 124,
+      ])
+    })
+
+    it('calls the store exactly as before for one community', async () => {
+      const wrapper = mountComponent({ groupid: 123 })
+      expect(
+        wrapper.find('[data-test="stdmsg-several-communities"]').exists()
+      ).toBe(false)
+
+      await send(wrapper)
+
+      expect(mockMessageStore.approve.mock.calls[0]).toHaveLength(5)
+    })
+
+    it('leaves a reply to the member on its own community', async () => {
+      const wrapper = mountComponent(
+        { groupid: 123, groupids: [123, 124] },
+        { stdmsgData: createStdmsg({ action: 'Leave' }) }
+      )
+      expect(
+        wrapper.find('[data-test="stdmsg-several-communities"]').exists()
+      ).toBe(false)
+
+      await send(wrapper)
+
+      expect(mockMessageStore.reply.mock.calls[0][0].groupid).toBe(123)
+    })
+  })
+
+  // A moderator removing themselves through Delete Member is refused by the server with a
+  // 403 and a message saying how to leave. It used to vanish, so nothing at all seemed to
+  // happen (Discourse 10242).
+  describe('removing yourself is refused', () => {
+    const MSG =
+      'You are a moderator of this community, so leaving would drop that role. To leave, change your own role to Member first, or ask another owner to.'
+
+    async function sendRefused(error) {
+      mockMemberStore.delete.mockRejectedValue(error)
+      const member = createMember()
+      const wrapper = mountComponent(
+        { messageid: null, groupid: 123 },
+        {
+          message: null,
+          member,
+          stdmsgData: createStdmsg({ action: 'Delete Approved Member' }),
+        }
+      )
+      await wrapper.vm.fillin()
+      wrapper.vm.body += ' Thanks - this has been checked and all is in order.'
+      const callback = vi.fn()
+      await wrapper
+        .findComponent({ name: 'SpinButton' })
+        .vm.$emit('handle', callback)
+      await flushPromises()
+      return { wrapper, callback }
+    }
+
+    it('shows the server message and stops the spinner', async () => {
+      const e = new Error('API Error POST /memberships -> status: 403')
+      e.response = { status: 403, data: { error: 403, message: MSG } }
+      const { wrapper, callback } = await sendRefused(e)
+
+      expect(wrapper.find('.notice').text()).toContain(
+        'change your own role to Member first'
+      )
+      expect(callback).toHaveBeenCalled()
+    })
+  })
+
+  describe('Edit and Message', () => {
+    const knivesStdmsg = (overrides = {}) =>
+      createStdmsg({
+        id: 7,
+        action: 'Edit and Message',
+        title: 'Knives',
+        body: 'You must be 18 or over to collect.',
+        insert: 'Bottom',
+        subjpref: 'Re:',
+        replybody: 'Hello $membername, we have added a note to your post.',
+        ...overrides,
+      })
+
+    it('shows the post fields and the message to the poster', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: knivesStdmsg() })
+      await wrapper.vm.fillin()
+      await flushPromises()
+
+      expect(wrapper.find('.postcode').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Post will read')
+      expect(
+        wrapper.find('[data-test="stdmsg-reply-section"]').text()
+      ).toContain('Message to Test User')
+    })
+
+    it('adds the configured text to the post and fills in the message', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: knivesStdmsg() })
+      await wrapper.vm.fillin()
+
+      expect(wrapper.vm.body).toBe(
+        'This is the message body.\n\nYou must be 18 or over to collect.'
+      )
+      expect(wrapper.vm.subject).toBe('Offer: Test item (Location)')
+      expect(wrapper.vm.replySubject).toBe('Re: Offer: Test item (Location)')
+      expect(wrapper.vm.replyBody).toBe(
+        'Hello Test User, we have added a note to your post.'
+      )
+    })
+
+    it('sends one patch with the edit and the message, as edited', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: knivesStdmsg() })
+      await wrapper.vm.fillin()
+      wrapper.vm.replyBody = 'Short note.'
+
+      await wrapper.vm.process()
+
+      expect(mockMessageStore.reply).not.toHaveBeenCalled()
+      expect(mockMessageStore.patch).toHaveBeenCalledTimes(1)
+      expect(mockMessageStore.patch).toHaveBeenCalledWith({
+        id: 101,
+        groupid: 123,
+        msgtype: 'Offer',
+        item: 'Test item',
+        location: 'Location',
+        textbody:
+          'This is the message body.\n\nYou must be 18 or over to collect.',
+        replysubject: 'Re: Offer: Test item (Location)',
+        replybody: 'Short note.',
+        stdmsgid: 7,
+      })
+      expect(wrapper.vm.replyTooShort).toBe(false)
+      expect(mockHide).toHaveBeenCalled()
+    })
+
+    it('refuses an empty message without saving the edit', async () => {
+      const wrapper = mountComponent({}, { stdmsgData: knivesStdmsg() })
+      await wrapper.vm.fillin()
+      wrapper.vm.replyBody = '   '
+
+      const callback = vi.fn()
+      await wrapper.vm.process(callback)
+
+      expect(mockMessageStore.patch).not.toHaveBeenCalled()
+      expect(wrapper.vm.directiveWarning).toContain('empty')
+      expect(callback).toHaveBeenCalled()
+    })
+
+    it('refuses an un-personalised "edit this" in the message', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          stdmsgData: knivesStdmsg({
+            replybody: 'We added a note. <editthis>Say why</editthis>',
+          }),
+        }
+      )
+      await wrapper.vm.fillin()
+
+      await wrapper.vm.process(vi.fn())
+
+      expect(mockMessageStore.patch).not.toHaveBeenCalled()
+      expect(wrapper.vm.directiveWarning).toContain('message to the poster')
+    })
+
+    // Reported 2026-11-09: an <optional> bit worked in the post text but not in the
+    // message to the poster, which showed the raw tags in a plain box.
+    describe('optional and fill-in bits in the message to the poster', () => {
+      const optionalReply = () =>
+        knivesStdmsg({
+          replybody:
+            'Hello $membername, we have added a note to your post.\n\n' +
+            '<optional>Firewood must be dry and untreated.</optional>\n\n' +
+            'Thanks.',
+        })
+
+      const replySection = (wrapper) =>
+        wrapper.find('[data-test="stdmsg-reply-section"]')
+
+      const clickInReply = async (wrapper, label) => {
+        const button = replySection(wrapper)
+          .findAll('button')
+          .find((b) => b.text() === label)
+        expect(button).toBeDefined()
+        await button.trigger('click')
+      }
+
+      it('offers Keep and Remove rather than showing the tags', async () => {
+        const wrapper = mountComponent({}, { stdmsgData: optionalReply() })
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        const section = replySection(wrapper)
+        expect(section.find('.seg-optional-undecided').exists()).toBe(true)
+        expect(section.find('[data-test="stdmsg-reply-body"]').exists()).toBe(
+          false
+        )
+        expect(section.html()).not.toContain('&lt;optional&gt;')
+      })
+
+      it('refuses to send until the optional bit is kept or removed', async () => {
+        const wrapper = mountComponent({}, { stdmsgData: optionalReply() })
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        const callback = vi.fn()
+        await wrapper.vm.process(callback)
+        await flushPromises()
+
+        expect(mockMessageStore.patch).not.toHaveBeenCalled()
+        expect(wrapper.vm.directiveWarning).toContain('Nothing has been saved')
+        expect(wrapper.vm.directiveWarning).toContain('Keep or Remove')
+        expect(wrapper.vm.directiveWarning).toContain('message to the poster')
+        expect(replySection(wrapper).find('.seg-blocked').exists()).toBe(true)
+        expect(callback).toHaveBeenCalled()
+      })
+
+      it('sends kept wording without its tags', async () => {
+        const wrapper = mountComponent({}, { stdmsgData: optionalReply() })
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        await clickInReply(wrapper, 'Keep')
+        await wrapper.vm.process()
+
+        expect(mockMessageStore.patch).toHaveBeenCalledTimes(1)
+        expect(mockMessageStore.patch.mock.calls[0][0].replybody).toBe(
+          'Hello Test User, we have added a note to your post.\n\n' +
+            'Firewood must be dry and untreated.\n\n' +
+            'Thanks.'
+        )
+      })
+
+      it('leaves out a removed optional bit', async () => {
+        const wrapper = mountComponent({}, { stdmsgData: optionalReply() })
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        await clickInReply(wrapper, 'Remove')
+        await wrapper.vm.process()
+
+        expect(mockMessageStore.patch.mock.calls[0][0].replybody).toBe(
+          'Hello Test User, we have added a note to your post.\n\nThanks.'
+        )
+      })
+
+      it('sends a filled-in box in place of its placeholder', async () => {
+        const wrapper = mountComponent(
+          {},
+          {
+            stdmsgData: knivesStdmsg({
+              replybody: 'We added a note. <editthis>Say why</editthis>',
+            }),
+          }
+        )
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        const box = replySection(wrapper).find('textarea.seg-editthis')
+        expect(box.exists()).toBe(true)
+        await box.setValue('Knives must be handed over in person.')
+        await wrapper.vm.process()
+
+        expect(mockMessageStore.patch.mock.calls[0][0].replybody).toBe(
+          'We added a note. Knives must be handed over in person.'
+        )
+      })
+
+      it('handles optional bits in the post and the message separately', async () => {
+        const wrapper = mountComponent(
+          {},
+          {
+            stdmsgData: knivesStdmsg({
+              body: '<optional>Collection in person only.</optional>',
+              replybody: optionalReply().replybody,
+            }),
+          }
+        )
+        await wrapper.vm.fillin()
+        await flushPromises()
+
+        // Deciding the message's optional leaves the post's one outstanding.
+        await clickInReply(wrapper, 'Keep')
+        await wrapper.vm.process(vi.fn())
+        await flushPromises()
+
+        expect(mockMessageStore.patch).not.toHaveBeenCalled()
+        expect(wrapper.vm.directiveWarning).not.toContain(
+          'message to the poster'
+        )
+        expect(replySection(wrapper).find('.seg-blocked').exists()).toBe(false)
+        expect(wrapper.find('.seg-blocked').exists()).toBe(true)
+      })
+    })
+
+    it('shows the server refusal and keeps the modal open', async () => {
+      mockMessageStore.patch.mockRejectedValueOnce({
+        response: {
+          data: {
+            message:
+              'Only the community this was posted on can message the freegler about it',
+          },
+        },
+      })
+      const wrapper = mountComponent({}, { stdmsgData: knivesStdmsg() })
+      await wrapper.vm.fillin()
+
+      const callback = vi.fn()
+      await wrapper.vm.process(callback)
+
+      expect(wrapper.vm.sendError).toContain('Only the community')
+      expect(mockHide).not.toHaveBeenCalled()
+      expect(callback).toHaveBeenCalled()
     })
   })
 })

@@ -8,7 +8,9 @@ use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'groups:alert-no-messages')]
 class AlertNoMessagesCommand extends Command
 {
     use LogsBatchJob;
@@ -41,19 +43,20 @@ class AlertNoMessagesCommand extends Command
                 ->where('publish', 1)
                 ->where('nameshort', 'NOT LIKE', '%playground%')
                 ->where('nameshort', 'NOT LIKE', '%fresher%')
-                ->orderByRaw('LOWER(nameshort)')
+                ->orderBy('nameshort') // LOWER() is redundant: nameshort is utf8mb4_unicode_ci
                 ->select(['id', 'nameshort'])
                 ->get();
 
             $stale = [];
 
             foreach ($groups as $group) {
-                $row = DB::table('messages_groups')
+                $maxArrival = DB::table('messages_groups')
                     ->where('groupid', $group->id)
-                    ->selectRaw('DATEDIFF(NOW(), MAX(arrival)) AS latest')
-                    ->first();
+                    ->max('arrival');
 
-                $daysSince = $row->latest ?? null;
+                $daysSince = $maxArrival === null
+                    ? null
+                    : (int) today()->diffInDays(\Illuminate\Support\Carbon::parse($maxArrival)->startOfDay(), true);
 
                 if ($daysSince === null || $daysSince > $days) {
                     $stale[] = "{$group->nameshort} — last message "

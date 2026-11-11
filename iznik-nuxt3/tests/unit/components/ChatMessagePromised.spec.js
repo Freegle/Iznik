@@ -556,6 +556,21 @@ describe('ChatMessagePromised', () => {
       })
     })
 
+    it('takenBy counts what is left of the post, not a fixed 1', async () => {
+      mockRefmsg.value = { ...mockRefmsg.value, availablenow: 5 }
+      const wrapper = await createWrapper()
+      const comp = wrapper.findComponent(ChatMessagePromised)
+      expect(comp.vm.takenBy.count).toBe(5)
+    })
+
+    it('takenBy does not modify the user held in the store', async () => {
+      const wrapper = await createWrapper()
+      const comp = wrapper.findComponent(ChatMessagePromised)
+      expect(comp.vm.takenBy.count).toBe(1)
+      expect(mockOtheruser.value.count).toBeUndefined()
+      expect(mockOtheruser.value.userid).toBeUndefined()
+    })
+
     it('returns object for takenBy with userid null when otheruser has no id', async () => {
       // Note: Component doesn't handle truly null otheruser well in template
       // Testing with otheruser that has null id instead

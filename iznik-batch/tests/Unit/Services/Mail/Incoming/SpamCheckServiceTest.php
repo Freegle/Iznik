@@ -4,6 +4,7 @@ namespace Tests\Unit\Services\Mail\Incoming;
 
 use App\Services\Mail\Incoming\ParsedEmail;
 use App\Services\Mail\Incoming\SpamCheckService;
+use App\Services\Mail\Incoming\SpamhausDblLookup;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\EmailFixtures;
 use Tests\TestCase;
@@ -350,6 +351,31 @@ class SpamCheckServiceTest extends TestCase
 
         $this->assertNotNull($result);
         $this->assertEquals(SpamCheckService::REASON_USED_OUR_DOMAIN, $result[1]);
+    }
+
+    public function test_url_on_spamhaus_dbl_is_spam(): void
+    {
+        $this->app->instance(SpamhausDblLookup::class, new SpamhausDblLookup(listed: ['bad.example.com']));
+
+        $result = $this->service->checkSpamKeywords(
+            'Visit https://www.bad.example.com/offer now',
+            [SpamCheckService::ACTION_SPAM]
+        );
+
+        $this->assertNotNull($result);
+        $this->assertEquals(SpamCheckService::REASON_DBL, $result[1]);
+        $this->assertStringContainsString('www.bad.example.com', $result[2]);
+    }
+
+    public function test_url_not_on_spamhaus_dbl_is_not_spam(): void
+    {
+        $this->app->instance(SpamhausDblLookup::class, new SpamhausDblLookup(listed: ['bad.example.com']));
+
+        $this->assertNull($this->service->checkSpamKeywords(
+            'Visit https://www.good.example.com/offer now',
+            [SpamCheckService::ACTION_SPAM]
+        ));
+        $this->assertFalse($this->service->checkSpamhausDbl('not a url'));
     }
 
     // ========================================

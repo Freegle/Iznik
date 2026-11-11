@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-15
+last_reviewed: 2026-10-10
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Mail/Deferrals/*.php
@@ -170,6 +170,10 @@ figure or against other domains, because open rates differ hugely and legitimate
 providers - `icloud.com` opens at 56% where `gmail.com` opens at 23% on the same mail - so any
 absolute threshold would either miss real outages at the top or cry wolf at the bottom.
 Domains that never report opens drop out by themselves, because their baseline is already zero.
+
+Opens reach `email_tracking.opened_at` via the overnight [tracking journal fold](./email-tracking-journal.md),
+so the window ends at the oldest unfolded journal event when that is earlier than six hours ago.
+Mail sent after it has had no chance to show an open yet and would otherwise read as a collapse.
 
 The two are reported as separate alerts on purpose. "A provider has stopped taking our mail"
 and "we are short of capacity" are different problems for different people. When the scan
@@ -374,7 +378,7 @@ per type of mail held and a join would multiply member rows; each is keyed on
 pointers in Go so a query branch that does not select them reads as *unknown*
 rather than as a confident "not delayed".
 
-**Support view**: sysadmin > Mail > Delayed
+**Delayed view** (Admin only): sysadmin > Mail > Delayed
 (`GET /modtools/email/deferrals`) answers the question people actually arrive
 with - is mail to this member late? - which has the two different causes above.
 
@@ -457,6 +461,28 @@ whose oldest waiting message is older than `maildeferral.pacedMinAge` qualify -
 a paced address always has something queued, so a shorter threshold would put a
 permanent banner in front of every member at a paced provider, which is the
 same as having no banner at all.
+
+## Lockdown
+
+A lockdown holds member mail through the same gate a suppression uses:
+`MailSuppressionService::isSuppressed()` also checks lockdown state before the
+render, for the same reason, so the expensive digest and immediate-mail work
+is not done while a security incident is in progress. Because the check sits
+before the cursor is read, nothing moves while email is held: the daily
+digest cursor, the immediate-mail cursor and the chat notification tracker
+only advance once a mail is actually generated, so lifting the lockdown
+catches everyone up from where they stopped, the same as a provider
+suppression.
+
+Only account-critical mail keeps going to the spool during a lockdown:
+sign-in, password reset, email verification, unsubscribe and account
+deletion. Everything else waits.
+
+When email is resumed, the send queue is filtered against whatever was
+marked as spam and removed while it was held, before anything goes out, so
+nobody receives mail about a post or message that has since been taken down.
+See the [lockdown runbook](../../ops/runbooks/lockdown.md) for the full
+lift sequence.
 
 ## Configuration
 

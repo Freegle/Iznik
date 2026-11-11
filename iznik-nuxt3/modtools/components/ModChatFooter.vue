@@ -69,6 +69,13 @@
             multiple
           />
         </div>
+        <NoticeMessage
+          v-if="sendError"
+          variant="warning"
+          data-test="send-failed"
+        >
+          {{ sendError }}
+        </NoticeMessage>
         <label for="chatmessage" class="visually-hidden">Chat message</label>
         <b-form-textarea
           v-if="enterNewLine && !otheruser?.spammer"
@@ -79,6 +86,7 @@
           placeholder="Type here..."
           enterkeyhint="enter"
           @keydown="typing"
+          @keydown.enter="sendOnShortcut"
           @focus="markRead"
         />
         <b-form-textarea
@@ -91,6 +99,7 @@
           enterkeyhint="send"
           autocapitalize="none"
           @keydown="typing"
+          @keydown.enter="sendOnShortcut"
           @keydown.enter.exact.prevent
           @keyup.enter.exact="sendOnEnter"
           @keydown.enter.shift.exact.prevent="newline"
@@ -399,8 +408,15 @@
       class="mt-1"
       data-test="refer-sent"
     >
-      Referred to Support. They will look at the chat and get back to you by
-      email.
+      Referred to Support. They will look at the chat and get back to you here
+      and by email.
+      <nuxt-link
+        v-if="referCaseId"
+        :to="'/support/cases/' + referCaseId"
+        data-test="refer-case-link"
+      >
+        See the case
+      </nuxt-link>
     </NoticeMessage>
     <NoticeMessage
       v-else-if="referResult === 'failed'"
@@ -414,10 +430,24 @@
     <ConfirmModal
       v-if="showConfirmModal"
       title="Refer this chat to Support?"
-      message="The Support volunteers will have a look at the chat and get back to you by email."
       @confirm="referToSupport"
       @hidden="showConfirmModal = false"
-    />
+    >
+      <p>
+        The Support volunteers will have a look at the chat and get back to you.
+      </p>
+      <label for="refer-reason" class="form-label">
+        What do you need help with? (optional)
+      </label>
+      <b-form-textarea
+        id="refer-reason"
+        v-model="referReason"
+        rows="3"
+        maxlength="2000"
+        autocapitalize="none"
+        data-test="refer-reason"
+      />
+    </ConfirmModal>
     <ModSpammerReport
       v-if="showSpamModal && chat.user1"
       :userid="chat.user1"
@@ -456,6 +486,8 @@ import { untwem } from '~/composables/useTwem'
 import 'floating-vue/dist/style.css'
 import Api from '~/api'
 import { useMe } from '~/composables/useMe'
+import { isSendShortcut } from '~/composables/chatSendShortcut'
+import { createAttachmentSender } from '~/composables/chatAttachmentSender'
 import { useUserStore } from '~/stores/user'
 import { useNuxtApp } from '#app'
 const { $api } = useNuxtApp()
@@ -534,6 +566,7 @@ const { lastTyping } = storeToRefs(miscStore)
 
 // Refs (former data properties)
 const sending = ref(false)
+const sendError = ref(null)
 const uploading = ref(false)
 const showMicrovolunteering = ref(false)
 const showNotices = ref(true)
@@ -716,6 +749,10 @@ const applySuggestedAddress = async () => {
     suggestedAddress.value.address.singleline +
     ' '
   hideSuggestedAddress.value = true
+  api.bandit.chosen({
+    uid: 'SuggestedAddress',
+    variant: 'chosen',
+  })
   await nextTick()
   const el = chatarea.value?.$el
 
@@ -827,6 +864,13 @@ const sendOnEnter = () => {
   send()
 }
 
+const sendOnShortcut = (e) => {
+  if (isSendShortcut(e)) {
+    e.preventDefault()
+    send()
+  }
+}
+
 const send = async (callback) => {
   if (!sending.value) {
     let msg = sendmessage.value
@@ -847,8 +891,27 @@ const send = async (callback) => {
       // Encode up any emojis.
       msg = untwem(msg)
 
-      // Send it
-      await chatStore.send(props.id, msg)
+      // Send it. As in ChatFooter: a failed send must not throw to the global
+      // error.vue page and must not leave the SpinButton hanging — catch it,
+      // keep the typed text so they don't lose it, and explain inline instead.
+      try {
+        sendError.value = null
+        await chatStore.send(props.id, msg)
+      } catch (e) {
+        sending.value = false
+        const status = e?.response?.status
+        if (status === 404) {
+          sendError.value =
+            "Sorry, this chat is no longer available, so your message couldn't be sent."
+        } else {
+          sendError.value =
+            "Sorry, your message couldn't be sent just now. Please try again."
+        }
+        if (typeof callback === 'function') {
+          callback()
+        }
+        return
+      }
 
       // Clear the message now it's sent - and drop the saved draft so it can't be restored.
       sendmessage.value = ''
@@ -902,10 +965,18 @@ const spamReport = () => {
 // 'sent' or 'failed' after a referral, so the moderator knows whether Support will see it.
 // Nothing was shown before, and a refused request looked exactly like a sent one.
 const referResult = ref(null)
+const referReason = ref('')
+const referCaseId = ref(null)
 const referToSupport = async () => {
   referResult.value = null
+  referCaseId.value = null
   try {
-    await $api.chat.referToSupport(props.id)
+    const ret = await $api.chat.referToSupport(
+      props.id,
+      referReason.value.trim().slice(0, 2000)
+    )
+    referCaseId.value = ret?.caseid || null
+    referReason.value = ''
     referResult.value = 'sent'
   } catch (e) {
     referResult.value = 'failed'
@@ -1000,22 +1071,22 @@ watch(showSuggested, (newVal) => {
   }
 })
 
+// Each uploaded image is sent once, however many times the list changes while the
+// uploader is adding to it (see composables/chatAttachmentSender.js).
+const sendNewAttachments = createAttachmentSender((imageid) =>
+  chatStore.send(props.id, null, null, imageid)
+)
+
 watch(
   currentAtts,
   async (newVal) => {
-    if (newVal?.length) {
+    const sends = sendNewAttachments(newVal)
+    if (sends.length) {
       sending.value = true
 
       console.log('Upload photos', JSON.stringify(newVal))
 
-      const promises = []
-
-      newVal.forEach((att) => {
-        console.log('Send', att.id, props.id)
-        promises.push(chatStore.send(props.id, null, null, att.id))
-      })
-
-      await Promise.all(promises)
+      await Promise.all(sends)
 
       await _updateAfterSend()
       sending.value = false

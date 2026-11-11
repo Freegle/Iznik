@@ -301,6 +301,29 @@ describe('ChatMessageInterested', () => {
     })
   })
 
+  describe('replies to posts with an item list', () => {
+    it('treats a reply to a clearance as an interest in its items', () => {
+      mockMessageStore.byId.mockReturnValue({
+        id: 50,
+        type: 'Offer',
+        bulkcount: 2,
+        bulkitems: [{}, {}],
+      })
+      expect(createWrapper().vm.isBulk).toBe(true)
+    })
+
+    it('shows a reply to an automatically split post as written', () => {
+      mockMessageStore.byId.mockReturnValue({
+        id: 50,
+        type: 'Offer',
+        bulkcount: 2,
+        bulkitems: [{}, {}],
+        autosplit: true,
+      })
+      expect(createWrapper().vm.isBulk).toBe(false)
+    })
+  })
+
   describe('promise/outcome buttons for offers', () => {
     beforeEach(() => {
       mockChatmessage.value.userid = 2
@@ -329,13 +352,45 @@ describe('ChatMessageInterested', () => {
       expect(wrapper.text()).toContain('Withdraw')
     })
 
-    it('hides Promise button when promisecount > 0', () => {
+    it('hides Promise button once every item is promised', () => {
       mockMessageStore.byId.mockReturnValue({
         id: 50,
         fromuser: 1,
         type: 'Offer',
         outcomes: [],
         promisecount: 1,
+        promised: true,
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.v-icon[data-icon="handshake"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('keeps the Promise button while items remain on a multi-item post', () => {
+      // Three on offer, one promised: the giver can still promise this replier.
+      mockMessageStore.byId.mockReturnValue({
+        id: 50,
+        fromuser: 1,
+        type: 'Offer',
+        outcomes: [],
+        promisecount: 1,
+        promised: false,
+        promises: [{ userid: 9 }],
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.find('.v-icon[data-icon="handshake"]').exists()).toBe(true)
+    })
+
+    it('hides the Promise button for a replier already promised', () => {
+      mockMessageStore.byId.mockReturnValue({
+        id: 50,
+        fromuser: 1,
+        type: 'Offer',
+        outcomes: [],
+        promisecount: 1,
+        promised: false,
+        promises: [{ userid: 2 }],
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.v-icon[data-icon="handshake"]').exists()).toBe(

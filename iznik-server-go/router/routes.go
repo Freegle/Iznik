@@ -47,12 +47,14 @@ import (
 	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/export"
 	"github.com/freegle/iznik-server-go/group"
+	"github.com/freegle/iznik-server-go/hostingad"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
 	"github.com/freegle/iznik-server-go/isochrone"
 	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
+	"github.com/freegle/iznik-server-go/lockdown"
 	"github.com/freegle/iznik-server-go/logs"
 	"github.com/freegle/iznik-server-go/membership"
 	"github.com/freegle/iznik-server-go/merge"
@@ -62,10 +64,9 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/newsfeed"
-	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/paf"
 	"github.com/freegle/iznik-server-go/partnerships"
-	"github.com/freegle/iznik-server-go/recommendations"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/freegle/iznik-server-go/shortlink"
@@ -75,12 +76,15 @@ import (
 	"github.com/freegle/iznik-server-go/status"
 	"github.com/freegle/iznik-server-go/stdmsg"
 	"github.com/freegle/iznik-server-go/story"
+	"github.com/freegle/iznik-server-go/supportai"
+	"github.com/freegle/iznik-server-go/supportcase"
 	"github.com/freegle/iznik-server-go/systemlogs"
 	"github.com/freegle/iznik-server-go/team"
 	"github.com/freegle/iznik-server-go/town"
 	"github.com/freegle/iznik-server-go/tryst"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/userdump"
+	"github.com/freegle/iznik-server-go/ux"
 	"github.com/freegle/iznik-server-go/visualise"
 	"github.com/freegle/iznik-server-go/volunteering"
 	"github.com/gofiber/fiber/v2"
@@ -186,6 +190,10 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Param id path integer true "Alert ID"
 		// @Success 200 {object} map[string]interface{}
+		rg.Get("/modtools/alert/pending", alert.GetPending)
+		rg.Post("/modtools/alert/:id/reply", alert.ReplyToAlert)
+		rg.Post("/modtools/alert/:id/snooze", alert.SnoozeAlert)
+		rg.Post("/modtools/alert/:id/cancel", alert.CancelAlert)
 		rg.Get("/modtools/alert/:id", alert.GetAlert)
 
 		// @Router /alert [put]
@@ -682,51 +690,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		rg.Patch("/group", group.PatchGroup)
 
-		// Noticeboard GET (list)
-		// @Router /noticeboard [get]
-		// @Summary List noticeboards
-		// @Description Returns active noticeboards, optionally filtered by authority
-		// @Tags noticeboard
-		// @Produce json
-		rg.Get("/noticeboard", noticeboard.GetNoticeboard)
-
-		// Noticeboard GET (single)
-		// @Router /noticeboard/:id [get]
-		// @Summary Get noticeboard by ID
-		// @Description Returns noticeboard details with checks and photo
-		// @Tags noticeboard
-		// @Produce json
-		rg.Get("/noticeboard/:id", noticeboard.GetNoticeboard)
-
-		// Noticeboard POST (create + action)
-		// @Router /noticeboard [post]
-		// @Summary Create noticeboard or perform action
-		// @Description Create a new noticeboard (requires lat/lng) or perform an action on existing one
-		// @Tags noticeboard
-		// @Accept json
-		// @Produce json
-		rg.Post("/noticeboard", noticeboard.PostNoticeboard)
-
-		// Noticeboard PATCH
-		// @Router /noticeboard [patch]
-		// @Summary Update noticeboard
-		// @Description Update noticeboard fields and optionally link photo
-		// @Tags noticeboard
-		// @Accept json
-		// @Produce json
-		rg.Patch("/noticeboard", noticeboard.PatchNoticeboard)
-
-		// Noticeboard DELETE
-		// @Router /noticeboard/{id} [delete]
-		// @Summary Delete noticeboard
-		// @Description Deletes a noticeboard by ID. Requires mod/admin role.
-		// @Tags noticeboard
-		// @Produce json
-		// @Param id path integer true "Noticeboard ID"
-		// @Security BearerAuth
-		// @Success 200 {object} fiber.Map
-		rg.Delete("/noticeboard/:id", noticeboard.DeleteNoticeboard)
-
 		// Isochrone Messages
 		// @Router /isochrone/message [get]
 		// @Summary Get messages for isochrone
@@ -940,15 +903,36 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Moderator of the post's group required"
 		rg.Get("/message/:id/reach", message.Reach)
 
-		// Similar posts for the "more like this nearby" recommendation strip.
-		// @Router /message/{id}/similar [get]
-		// @Summary Posts similar to a given post (recommendations)
+		// The member's "I'm interested" marks. Registered before /message/:ids so
+		// "interested" is not treated as a message id.
+		// @Router /message/interested [get]
+		// @Summary The member's "I'm interested" marks from the last 30 days
+		// @Tags message
+		// @Produce json
+		// @Success 200 {array} message.InterestedMark
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		rg.Get("/message/interested", message.ListInterested)
+
+		// @Router /message/{id}/interested [get]
+		// @Summary Whether to offer "I'm interested" on a post, and whether it is marked
 		// @Tags message
 		// @Produce json
 		// @Param id path int true "Message ID"
-		// @Param limit query int false "Max results (default 8, max 20)"
-		// @Success 200 {array} message.SimilarResult
-		rg.Get("/message/:id/similar", message.Similar)
+		// @Success 200 {object} message.InterestedState
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		rg.Get("/message/:id/interested", message.GetInterested)
+
+		// @Router /message/{id}/interested [post]
+		// @Summary Mark a post as "I'm interested", or remove the mark
+		// @Tags message
+		// @Accept json
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param body body message.InterestedRequest true "interested true to mark, false to remove"
+		// @Success 200 {object} map[string]bool
+		// @Failure 400 {object} fiber.Error "Invalid request, or the post cannot be marked"
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		rg.Post("/message/:id/interested", message.SetInterested)
 
 		// Offers matching a wanted being composed. Registered before /message/:ids
 		// so "matches" is not treated as a message id.
@@ -1041,6 +1025,11 @@ func SetupRoutes(app *fiber.App) {
 		rg.Put("/message", message.PutMessage)
 		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
 
+		// Single-call compose: create + attach (inline) + join + post in one request.
+		// Additive — the multi-step PUT/POST(JoinAndPost)/POST(image) flow above is
+		// kept for edit/repost and backwards compatibility.
+		rg.Put("/message/submit", message.SubmitMessage)
+
 		// Bulk-offer ("clearance") logged-out update page: an external item-owner
 		// toggles item available/taken and edits counts via an unguessable secret
 		// token in the URL. No JWT - the token is the sole credential and grants
@@ -1096,6 +1085,33 @@ func SetupRoutes(app *fiber.App) {
 		// @Router /user/unsubscribe [post]
 		rg.Get("/user/unsubscribe", user.Unsubscribe)
 		rg.Post("/user/unsubscribe", user.Unsubscribe)
+		// @Summary People the member has not rated
+		// @Description Lists the freeglers the logged-in member handed an item over with in the last 14 days (either direction) and has not rated, newest first, one entry per person, at most five. Used by the rate-on-return experiment to ask on the next visit. Registered before /user/:id? so "unrated" is not treated as a user id.
+		// @Tags users
+		// @Produce json
+		// @Success 200 {array} user.Unrated
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		// @Router /user/unrated [get]
+		rg.Get("/user/unrated", user.GetUnrated)
+		// @Summary Whether to show the Krystal hosting ad
+		// @Description Decides once, for the logged-in member, whether the Krystal hosting ad modal is shown: their email domain must host a WordPress site not on Krystal (domain_hosting), and the server experiment krystal-hosting-ad gives the arm. Both arms are recorded as an exposure. Registered before /user/:id? so "hostingad" is not treated as a user id.
+		// @Tags users
+		// @Produce json
+		// @Success 200 {object} hostingad.Response
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		// @Router /user/hostingad [get]
+		rg.Get("/user/hostingad", hostingad.Get)
+		// @Summary Record what the member did with the hosting ad
+		// @Description Writes the time of the member's first click through to Krystal ("click") or first dismissal ("dismiss") on their krystal-hosting-ad exposure row.
+		// @Tags users
+		// @Accept json
+		// @Produce json
+		// @Param body body hostingad.EventRequest true "event: click or dismiss"
+		// @Success 200 {object} hostingad.EventResponse
+		// @Failure 400 {object} fiber.Error "Unknown event"
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		// @Router /user/hostingad [post]
+		rg.Post("/user/hostingad", hostingad.Post)
 		rg.Get("/user/:id?", user.GetUser)
 
 		// User Actions (POST)
@@ -1396,6 +1412,14 @@ func SetupRoutes(app *fiber.App) {
 		rg.Patch("/modtools/stdmsg", stdmsg.PatchStdMsg)
 		rg.Delete("/modtools/stdmsg", stdmsg.DeleteStdMsg)
 
+		// Lockdown switch (manual, reversible, site-wide hold)
+		rg.Get("/lockdown", lockdown.GetLockdown)
+		rg.Patch("/lockdown", config.RequireSupportOrAdminMiddleware(), lockdown.PatchLockdown)
+		rg.Get("/modtools/lockdown", lockdown.GetModtoolsLockdown)
+		rg.Get("/modtools/lockdown/stats", config.RequireSupportOrAdminMiddleware(), lockdown.GetModtoolsLockdownStats)
+		rg.Get("/modtools/lockdown/history", config.RequireSupportOrAdminMiddleware(), lockdown.GetModtoolsLockdownHistory)
+		rg.Get("/modtools/lockdown/held", config.RequireSupportOrAdminMiddleware(), lockdown.GetModtoolsLockdownHeld)
+
 		// Trysts (handover arrangements)
 		rg.Get("/tryst", tryst.GetTryst)
 		rg.Put("/tryst", tryst.CreateTryst)
@@ -1556,13 +1580,250 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		rg.Get("/modtools/scroll/depth", browse.ScrollDepthCurve)
 
-		// Recommendation funnel (impressions/clicks/replies + holdout) for the
-		// sysadmin "Recommendations" tab (Support/Admin).
-		// @Router /modtools/recommendations/stats [get]
-		// @Summary Recommendation funnel stats
-		// @Tags recommendations
+		// UX telemetry rollups for the SysAdmin "UX" tab (Support/Admin). See docs/developers/reference/ux-telemetry.md.
+		// @Router /modtools/ux/funnels [get]
+		// @Summary UX funnels by flow and step
+		// @Description Per flow and step: entered, completed, backed, abandoned, revisits, validation failures, help sought and dwell, split by device, login state and variant, with the previous equal-length period
+		// @Tags ux
 		// @Produce json
-		rg.Get("/modtools/recommendations/stats", recommendations.Stats)
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
+		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param flow query string false "Restrict to one flow"
+		// @Param device query string false "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Cut the step figures by sign-in. 1 for signed in, 0 for not signed in"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/funnels", ux.Funnels)
+
+		// @Router /modtools/ux/outcomes [get]
+		// @Summary UX flow outcomes
+		// @Description Per flow: started, submitted, submit ok/failed, completed, abandoned, resumed, with the previous period
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
+		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param flow query string false "Restrict to one flow"
+		// @Param device query string false "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/outcomes", ux.Outcomes)
+
+		// @Router /modtools/ux/fields [get]
+		// @Summary UX field friction
+		// @Description Per form field: revisits, validation failures and choice switches, with the previous period
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
+		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param flow query string false "Restrict to one flow"
+		// @Param device query string false "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/fields", ux.Fields)
+
+		// @Router /modtools/ux/friction [get]
+		// @Summary UX component friction
+		// @Description The 20 components whose rage clicks, dead clicks and repeated intent grew most against the previous period
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
+		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Cut by device. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/friction", ux.Friction)
+
+		// @Router /modtools/ux/adoption [get]
+		// @Summary UX feature adoption
+		// @Description Per feature: using users over active users, with the previous period
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
+		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/adoption", ux.Adoption)
+
+		// @Router /modtools/ux/regret [get]
+		// @Summary UX regret signals
+		// @Description Per regret signal per day, with the previous period total
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
+		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/regret", ux.Regret)
+
+		// @Router /modtools/ux/search [get]
+		// @Summary UX search and browse
+		// @Description Per day: searches, zero results, re-searches within 60s, browse sessions and scroll-outs
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
+		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/search", ux.Search)
+
+		// @Router /modtools/ux/health [get]
+		// @Summary UX telemetry health
+		// @Description Per metric per day: observed against expected, ok when within 0.7 to 1.3
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD), default 7 days ending yesterday"
+		// @Param end query string false "End date (YYYY-MM-DD), default yesterday"
+		// @Param device query string false "Not applied here, so the answer lists it in ignored. One of web, app, mobile, tablet, desktop, app-ios or app-android"
+		// @Param signed_in query string false "Not applied here, so the answer lists it in ignored. 1 or 0"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/health", ux.Health)
+
+		// @Router /modtools/ux/problem-groups [get]
+		// @Summary What members say, by group
+		// @Description The headings member problems are filed under, each with how many problems and mentions it holds and its biggest problem, the largest first and Other last, with the answers that fitted no problem
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param flow query string false "A funnel key, or none for problems tied to no funnel; omitted means all"
+		// @Param q query string false "Text to find in a title or description, at most 60 characters"
+		// @Param min query int false "The least number of mentions"
+		// @Success 200 {object} ux.ProblemGroupsResponse
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/problem-groups", ux.ProblemGroups)
+
+		// @Router /modtools/ux/problems [get]
+		// @Summary Member problems
+		// @Description The problems members raised, most mentioned first, each with its group, the checked quotes, the fixes suggested and how the follow-up ranked it; total counts every match before the limit
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param group query string false "A group name"
+		// @Param flow query string false "A funnel key, or none for problems tied to no funnel; omitted means all"
+		// @Param q query string false "Text to find in a title or description, at most 60 characters"
+		// @Param min query int false "The least number of mentions"
+		// @Param limit query int false "How many to return, 30 by default and at most 100"
+		// @Success 200 {object} ux.ProblemsResponse
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/problems", ux.Problems)
+
+		// @Router /modtools/ux/values [get]
+		// @Summary What members value
+		// @Description What members said they value about Freegle, most mentioned first, at most 20, each with its checked quotes
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} ux.ValuesResponse
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/values", ux.Values)
+
+		// @Router /modtools/ux/questions [get]
+		// @Summary Member questions
+		// @Description The survey, awareness and open questions with what members chose per option, the ways out, skips and comments, and the share of right answers; the decoy figures show how readily members say yes
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param kind query string false "One of survey, awareness or open"
+		// @Param status query string false "One of open or closed"
+		// @Success 200 {object} ux.QuestionsResponse
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/questions", ux.Questions)
+
+		// @Router /modtools/ux/samples [get]
+		// @Summary UX sampled sessions
+		// @Description The sampled abandoned sessions for a flow step on a date, with each client timeline from Loki
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param date query string true "Date (YYYY-MM-DD)"
+		// @Param flow query string true "Flow"
+		// @Param step query string true "Step"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 400 {object} fiber.Error "Bad parameters"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/samples", ux.Samples)
+
+		// @Router /modtools/ux/experiments [get]
+		// @Summary UX experiments per funnel
+		// @Description Per funnel: running and past experiments with their latest plain-English read
+		// @Tags ux
+		// @Produce json
+		// @Security BearerAuth
+		// @Param flow query string false "Restrict to one flow"
+		// @Success 200 {object} ux.ExperimentsResponse
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/ux/experiments", ux.Experiments)
+
+		// @Router /modtools/ux/experiments [post]
+		// @Summary Create a UX experiment
+		// @Description Adds a draft experiment for a funnel; the batch starts it on request
+		// @Tags ux
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Param body body ux.CreateExperimentRequest true "The experiment"
+		// @Success 200 {object} fiber.Map
+		// @Failure 400 {object} fiber.Error "Invalid"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Post("/modtools/ux/experiments", ux.CreateExperiment)
+
+		// @Router /modtools/ux/experiments/{id} [patch]
+		// @Summary Start, stop or close a UX experiment
+		// @Description Queues the action for the batch, which applies the cap and the 24-hour end
+		// @Tags ux
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Param id path int true "Experiment id"
+		// @Param body body ux.ExperimentActionRequest true "start, stop or close"
+		// @Success 200 {object} fiber.Map
+		// @Failure 400 {object} fiber.Error "Invalid"
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Patch("/modtools/ux/experiments/:id", ux.ExperimentAction)
 
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]
@@ -1632,7 +1893,7 @@ func SetupRoutes(app *fiber.App) {
 		// Gift Aid
 		// @Router /giftaid [get]
 		// @Summary Get Gift Aid declaration
-		// @Description Returns user's Gift Aid declaration. With all=true returns admin review list. With search=xxx searches records.
+		// @Description Returns user's Gift Aid declaration. With all=true returns admin review list. With search=xxx searches records. With noresponse=true lists donors asked who have not answered.
 		// @Tags donations
 		// @Produce json
 		// @Security BearerAuth
@@ -1668,6 +1929,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} map[string]interface{}
 		rg.Delete("/giftaid", donations.DeleteGiftAid)
 
+		// @Router /giftaid/record [post]
+		// @Summary Record a donor's Gift Aid answer (admin)
+		// @Description A Gift Aid volunteer records, for the donor, that they declined (outcome Declined) or that we asked again and heard nothing (outcome NoResponse)
+		// @Tags donations
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/giftaid/record", donations.RecordGiftAid)
+
 		// Housekeeper — receives task results from Chrome extension
 		// @Router /housekeeper/notify [post]
 		// @Summary Receive housekeeping task result
@@ -1680,6 +1951,80 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/housekeeper/tasks", housekeeper.ListTasks)
 		rg.Post("/housekeeper/tasks/:key/complete", housekeeper.CompleteTask)
 		rg.Get("/housekeeper/cronjobs", housekeeper.ListCronJobs)
+
+		// Royal Mail address data (PAF) imports for the PAF update on SysAdmin Housekeeping (Admin only)
+		// @Router /sysadmin/paf [get]
+		// @Summary List PAF address data imports
+		// @Tags sysadmin
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {array} paf.Import
+		rg.Get("/sysadmin/paf", paf.ListImports)
+
+		// @Router /sysadmin/paf [post]
+		// @Summary Start a PAF address data import
+		// @Tags sysadmin
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} paf.Import
+		rg.Post("/sysadmin/paf", paf.StartImport)
+
+		// @Router /sysadmin/paf/latest [get]
+		// @Summary The latest PAF release on the AFD site
+		// @Tags sysadmin
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} paf.Latest
+		rg.Get("/sysadmin/paf/latest", paf.GetLatest)
+
+		// AI Support Helper runs and their thumbs up/down (Support/Admin only)
+		// @Router /supportai/runs [get]
+		// @Summary List AI Support Helper runs, most recent first
+		// @Tags supportai
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {array} supportai.ListedRun
+		rg.Get("/supportai/runs", supportai.List)
+		rg.Post("/supportai/runs", supportai.Record)
+		rg.Patch("/supportai/runs", supportai.Rate)
+		rg.Get("/supportai/runs/:id", supportai.Get)
+
+		// Support cases: chats moderators have referred to Support (list and full view Support/Admin
+		// only; the referring moderator sees their own case without the first pass)
+		// @Router /supportcases [get]
+		// @Summary List support cases, newest first
+		// @Tags supportcase
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {array} supportcase.Row
+		rg.Get("/supportcases", supportcase.List)
+
+		// @Router /supportcases [patch]
+		// @Summary Mark a support case Handled or Open
+		// @Tags supportcase
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Patch("/supportcases", supportcase.Patch)
+
+		// @Router /supportcases/{id} [get]
+		// @Summary Get a support case
+		// @Tags supportcase
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} supportcase.SupportView
+		rg.Get("/supportcases/:id", supportcase.Get)
+
+		// @Router /supportcases/{id}/messages [post]
+		// @Summary Reply on a support case
+		// @Tags supportcase
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/supportcases/:id/messages", supportcase.PostMessage)
 
 		// GDPR Data Export
 		rg.Post("/export", export.PostExport)
@@ -1901,6 +2246,16 @@ func SetupRoutes(app *fiber.App) {
 		rg.Put("/merge", merge.CreateMerge)
 		rg.Post("/merge", merge.PostMerge)
 		rg.Delete("/merge", merge.DeleteMerge)
+
+		// @Router /discourse/relink [post]
+		// @Summary Re-link a moderator's Discourse account after an account merge
+		// @Description Support or Admin. Moves the Discourse account linked to an account merged into userid onto userid, then updates its email and name. Merges and Discourse sign-in do this by themselves; this is for merges from before they did.
+		// @Tags discourse
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} fiber.Map
+		rg.Post("/discourse/relink", sso.RelinkHandler)
 
 		// Domains
 		rg.Get("/domains", domain.GetDomain)

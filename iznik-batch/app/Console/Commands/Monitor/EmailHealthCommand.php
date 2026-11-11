@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Monitors incoming and outgoing email health.
@@ -29,6 +30,7 @@ use Illuminate\Support\Facades\Log;
  * a Log::warning. Thresholds are configurable via .env. Failures also show as
  * red badges in the cron jobs sysadmin tab.
  */
+#[AsCommand(name: 'monitor:email-health')]
 class EmailHealthCommand extends Command
 {
     protected $signature = 'monitor:email-health';

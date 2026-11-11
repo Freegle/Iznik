@@ -2,8 +2,12 @@ package chat
 
 import (
 	"encoding/json"
+	"errors"
+	stdlog "log"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
@@ -12,6 +16,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// errPromptAlreadyAnswered is returned from the transaction that answers a reply confirmation when another answer got there first.
+var errPromptAlreadyAnswered = errors.New("prompt already answered")
 
 // Prompts: questions Freegle asks a member inside an ordinary chat, with a small
 // set of tappable answers.
@@ -62,6 +69,11 @@ type ChatPrompt struct {
 	// Expired prompts still render (the conversation should not develop holes)
 	// but stop offering their buttons.
 	Expired bool `json:"expired"`
+	// Userid and Askedname are set when the prompt was asked of one member in a
+	// chat between two, so the other member reads "@name said" rather than
+	// "You said" once it is answered.
+	Userid    *uint64 `json:"userid,omitempty"`
+	Askedname string  `json:"askedname,omitempty"`
 }
 
 type promptRow struct {
@@ -73,6 +85,40 @@ type promptRow struct {
 	Answer     *string
 	AnsweredAt *time.Time `gorm:"column:answered_at"`
 	ExpiresAt  *time.Time `gorm:"column:expires_at"`
+	Userid     *uint64
+	Askedname  *string
+}
+
+// memberNameSQL is the name Freegle addresses a member by, for the users row aliased u.
+const memberNameSQL = "COALESCE(NULLIF(u.fullname, ''), " +
+	"NULLIF(TRIM(CONCAT(COALESCE(u.firstname, ''), ' ', COALESCE(u.lastname, ''))), ''), 'A freegler')"
+
+// promptName is a member's name as a card shows it. users.fullname is whatever the member typed, up to 255
+// characters on any number of lines. A card is written by the Freegle account, is drawn under its logo and is not
+// content checked, so the name on it is the one the API shows everywhere else: control characters and line breaks
+// become spaces, utils.TidyName cuts it at an at sign and at 32 characters, and then comes the filter for names that
+// pass for Freegle or an authority.
+func promptName(raw string) string {
+	plain := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) {
+			return ' '
+		}
+
+		return r
+	}, raw)
+
+	// TidyName cuts at a byte, so it can leave half of a character at the end.
+	tidy := strings.ToValidUTF8(utils.TidyName(strings.Join(strings.Fields(plain), " ")), "")
+
+	return user.SanitizeDisplayName(tidy, false)
+}
+
+// memberName is how Freegle addresses a member in a chat: their name, as other members see it.
+func memberName(db *gorm.DB, id uint64) string {
+	var name string
+	db.Table("users u").Select(memberNameSQL).Where("u.id = ?", id).Scan(&name)
+
+	return promptName(name)
 }
 
 // posts returns the set the prompt covers, falling back to the single msgid for
@@ -100,14 +146,21 @@ func (r promptRow) toPrompt() *ChatPrompt {
 		_ = json.Unmarshal(r.Options, &options)
 	}
 
-	return &ChatPrompt{
+	p := &ChatPrompt{
 		Kind:     r.Kind,
 		Msgids:   r.posts(),
 		Options:  options,
 		Answer:   r.Answer,
 		Answered: r.AnsweredAt != nil,
 		Expired:  r.ExpiresAt != nil && r.ExpiresAt.Before(time.Now()),
+		Userid:   r.Userid,
 	}
+
+	if r.Userid != nil && r.Askedname != nil {
+		p.Askedname = promptName(*r.Askedname)
+	}
+
+	return p
 }
 
 // attachPrompts fills in the Prompt field on any message that has one. Batched,
@@ -130,8 +183,11 @@ func attachPrompts(db *gorm.DB, messages []ChatMessageQuery) {
 
 	var rows []promptRow
 	db.Table("chat_prompts").
-		Select("chatmsgid, msgid, msgids, kind, options, answer, answered_at, expires_at").
-		Where("chatmsgid IN ?", ids).
+		Select("chat_prompts.chatmsgid, chat_prompts.msgid, chat_prompts.msgids, chat_prompts.kind, "+
+			"chat_prompts.options, chat_prompts.answer, chat_prompts.answered_at, chat_prompts.expires_at, "+
+			"chat_prompts.userid, CASE WHEN u.id IS NULL THEN NULL ELSE "+memberNameSQL+" END AS askedname").
+		Joins("LEFT JOIN users u ON u.id = chat_prompts.userid").
+		Where("chat_prompts.chatmsgid IN ?", ids).
 		Scan(&rows)
 
 	for _, r := range rows {
@@ -191,11 +247,14 @@ func AnswerChatPrompt(c *fiber.Ctx) error {
 		ExpiresAt  *time.Time `gorm:"column:expires_at"`
 		User1      uint64
 		User2      uint64
+		// Set when the prompt was asked of one member in a chat between two.
+		Userid        *uint64
+		Heldchatmsgid *uint64
 	}
 
 	db.Table("chat_prompts cp").
 		Select("cp.chatmsgid, cp.msgid, cp.msgids, cp.kind, cp.options, cp.answer, "+
-			"cp.answered_at, cp.expires_at, cr.user1, cr.user2").
+			"cp.answered_at, cp.expires_at, cr.user1, cr.user2, cp.userid, cp.heldchatmsgid").
 		Joins("INNER JOIN chat_messages cm ON cm.id = cp.chatmsgid").
 		Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").
 		Where("cp.chatmsgid = ? AND cm.chatid = ?", chatmsgid, chatid).
@@ -205,7 +264,7 @@ func AnswerChatPrompt(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "Prompt not found")
 	}
 
-	if row.User1 != myid && row.User2 != myid {
+	if (row.User1 != myid && row.User2 != myid) || (row.Userid != nil && *row.Userid != myid) {
 		return fiber.NewError(fiber.StatusForbidden, "Not your prompt")
 	}
 
@@ -232,29 +291,72 @@ func AnswerChatPrompt(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Not one of the offered answers")
 	}
 
-	applied := applyPromptAnswer(db, row.Kind, payload.Answer, asRow.posts(), myid)
-
-	// Record last. An answer that changed the post but was not recorded would be
-	// re-askable; one recorded but not applied would silently lose the member's
-	// input. Applying first and recording second means the worst case is a
-	// repeated question, not a lost answer.
-	res := db.Table("chat_prompts").
-		Where("chatmsgid = ? AND answered_at IS NULL", chatmsgid).
-		Updates(map[string]interface{}{
-			"answer":      payload.Answer,
-			"answered_at": gorm.Expr("NOW()"),
-		})
-	if res.Error != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Could not record answer")
+	answered := map[string]interface{}{
+		"answer":      payload.Answer,
+		"answered_at": gorm.Expr("NOW()"),
+	}
+	if row.Kind == utils.PROMPT_KIND_CONFIRM_REPLY {
+		// Only this kind has the column's migration behind it; the others never set it.
+		answered["answered_via"] = "button"
 	}
 
-	db.Table("firstreply_event_metrics").Clauses(clause.OnConflict{
-		DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
-	}).Create(map[string]interface{}{
-		"day":   gorm.Expr("CURDATE()"),
-		"event": gorm.Expr("'prompt_answered'"),
-		"count": gorm.Expr("1"),
-	})
+	var applied bool
+	if row.Kind == utils.PROMPT_KIND_CONFIRM_REPLY && row.Heldchatmsgid != nil {
+		// The answer and what it does to the reply are one transaction. The answer is claimed first, by the update that
+		// only an unanswered question matches, so two taps cannot both win; the reply is withdrawn in the same
+		// transaction, so a no that cannot be applied is not recorded and a no that is recorded has been applied. Recorded
+		// without being applied, a no would release the reply: chats:process-incoming holds a reply only while its
+		// question is unanswered. A failure leaves the question open, and the member can tap again.
+		applyErr := db.Transaction(func(tx *gorm.DB) error {
+			res := tx.Table("chat_prompts").
+				Where("chatmsgid = ? AND answered_at IS NULL", chatmsgid).
+				Updates(answered)
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return errPromptAlreadyAnswered
+			}
+
+			var err error
+			applied, err = applyReplyConfirmAnswer(tx, payload.Answer, *row.Heldchatmsgid, chatid, myid)
+
+			return err
+		})
+		if errors.Is(applyErr, errPromptAlreadyAnswered) {
+			return fiber.NewError(fiber.StatusConflict, "Already answered")
+		}
+		if applyErr != nil {
+			stdlog.Printf("Could not record answer %q of member %d to reply %d: %v", payload.Answer, myid, *row.Heldchatmsgid, applyErr)
+
+			return fiber.NewError(fiber.StatusInternalServerError, "Could not record answer")
+		}
+	} else {
+		applied = applyPromptAnswer(db, row.Kind, payload.Answer, asRow.posts(), myid)
+
+		// Record last. An answer that changed the post but was not recorded would be
+		// re-askable; one recorded but not applied would silently lose the member's
+		// input. Applying first and recording second means the worst case is a
+		// repeated question, not a lost answer.
+		res := db.Table("chat_prompts").
+			Where("chatmsgid = ? AND answered_at IS NULL", chatmsgid).
+			Updates(answered)
+		if res.Error != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Could not record answer")
+		}
+	}
+
+	// The Freegle chat's measure is a poster answering Freegle's question in their own chat. A reply
+	// confirmation is asked of a replier in a chat between two members and is not part of it.
+	if row.Kind != utils.PROMPT_KIND_CONFIRM_REPLY {
+		db.Table("firstreply_event_metrics").Clauses(clause.OnConflict{
+			DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+		}).Create(map[string]interface{}{
+			"day":   gorm.Expr("CURDATE()"),
+			"event": gorm.Expr("'prompt_answered'"),
+			"count": gorm.Expr("1"),
+		})
+	}
 
 	return c.JSON(fiber.Map{
 		"kind":    row.Kind,

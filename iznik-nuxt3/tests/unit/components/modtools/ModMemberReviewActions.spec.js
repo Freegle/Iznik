@@ -1,7 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { ref } from 'vue'
 import dayjs from 'dayjs'
 import ModMemberReviewActions from '~/modtools/components/ModMemberReviewActions.vue'
+
+// plans/active/2026-09-27-lockdown-switch.md section 11.3: while the mods surface is
+// held, the Go API allows Approve (the "Ignore" button here) but refuses
+// Delete Approved Member/Hold/Release. useLockdown() already folds in the
+// Support/Admin exemption (tested in useLockdown.spec.js), so this component only
+// has to ask it one question.
+const mockModsHeld = ref(false)
+
+vi.mock('~/modtools/composables/useLockdown', () => ({
+  useLockdown: () => ({ modsHeld: mockModsHeld, held: () => false }),
+}))
 
 // Mock member store with reactive list
 const mockMemberStoreList = {}
@@ -162,6 +174,7 @@ describe('ModMemberReviewActions', () => {
     vi.useFakeTimers()
     mockMemberStore.remove.mockResolvedValue()
     mockMemberStore.spamignore.mockResolvedValue()
+    mockModsHeld.value = false
   })
 
   afterEach(() => {
@@ -492,6 +505,47 @@ describe('ModMemberReviewActions', () => {
         userid: 456,
         groupid: 789,
       })
+    })
+  })
+
+  // plans/active/2026-09-27-lockdown-switch.md section 11.3: "memberships: Approve
+  // allowed, moderator Reject/Delete Approved Member/Ban/Unban/Hold/Release/... refused."
+  // Ignore is this component's Approve-equivalent for a flagged member, so it stays;
+  // Remove (Delete Approved Member) and the Hold/Release button go.
+  describe('when mods is held (lockdown)', () => {
+    beforeEach(() => {
+      mockModsHeld.value = true
+    })
+
+    it('keeps Ignore visible', () => {
+      const wrapper = mountComponent({ heldby: null, reviewedat: null })
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Ignore')
+      ).toBeDefined()
+    })
+
+    it('hides Remove', () => {
+      const wrapper = mountComponent({ heldby: null, reviewedat: null })
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Remove')
+      ).toBeUndefined()
+    })
+
+    it('hides the Hold/Release button', () => {
+      const wrapper = mountComponent({ heldby: null, reviewedat: null })
+      expect(wrapper.find('.mod-member-button').exists()).toBe(false)
+    })
+
+    it('shows everything again once mods is no longer held', () => {
+      mockModsHeld.value = false
+      const wrapper = mountComponent({ heldby: null, reviewedat: null })
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Remove')
+      ).toBeDefined()
+      expect(wrapper.find('.mod-member-button').exists()).toBe(true)
     })
   })
 })

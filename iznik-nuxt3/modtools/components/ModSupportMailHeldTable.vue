@@ -50,13 +50,25 @@ import { dateshort } from '~/composables/useTimeFormat'
 function why(m) {
   const reason = m.reason || ''
 
-  if (/4[.]2[.]2|out of storage|mailbox (is )?full|over[- ]?quota|quota exceeded/i.test(reason)) {
+  if (
+    /4[.]2[.]2|out of storage|mailbox (is )?full|over[- ]?quota|quota exceeded/i.test(
+      reason
+    )
+  ) {
     return 'Their inbox is full'
   }
-  if (/mailbox is disabled|mailbox not found|no such user|user unknown/i.test(reason)) {
+  if (
+    /mailbox is disabled|mailbox not found|no such user|user unknown/i.test(
+      reason
+    )
+  ) {
     return 'That mailbox no longer exists'
   }
-  if (/connection (refused|timed out)|connect to|host or domain name not found|name service error/i.test(reason)) {
+  if (
+    /connection (refused|timed out)|connect to|host or domain name not found|name service error/i.test(
+      reason
+    )
+  ) {
     return "We can't reach their mail server"
   }
   if (reason) {

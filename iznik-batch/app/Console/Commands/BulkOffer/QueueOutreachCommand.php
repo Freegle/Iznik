@@ -5,6 +5,7 @@ namespace App\Console\Commands\BulkOffer;
 use App\Models\MessagesBulkOutreach;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Promote reviewed outreach rows from Imported to Queued for a bulk offer. This is
@@ -12,6 +13,7 @@ use Illuminate\Support\Facades\DB;
  * auto-sent); a human reviews the list, then runs this to mark which are approved
  * to email; bulkoffer:send-outreach only ever touches Queued rows.
  */
+#[AsCommand(name: 'bulkoffer:queue-outreach')]
 class QueueOutreachCommand extends Command
 {
     protected $signature = 'bulkoffer:queue-outreach

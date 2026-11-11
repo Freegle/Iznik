@@ -16,9 +16,6 @@
 const { readdirSync, writeFileSync } = require('fs')
 const { basename, join } = require('path')
 const prettier = require('prettier')
-const prettierConfig = prettier.resolveConfig.sync(
-  prettier.resolveConfigFile.sync()
-)
 
 const INDEX_FILENAME = join(__dirname, 'index.js')
 const TYPING_FILENAME = join(__dirname, 'index.d.ts')
@@ -39,7 +36,10 @@ const source = []
 
 const filenames = readdirSync(__dirname)
 
-function format(input) {
+// Prettier 3 dropped the resolveConfig.sync/format.sync APIs, so this (and
+// its callers) is async now - the generated output is unchanged.
+async function format(input) {
+  const prettierConfig = (await prettier.resolveConfig(INDEX_FILENAME)) || {}
   return prettier.format(input, {
     parser: 'babel',
     ...prettierConfig,
@@ -63,7 +63,7 @@ function generateImports(entries) {
     .join('\n')
 }
 
-function generateIndex(entries) {
+async function generateIndex(entries) {
   source.push(
     DO_NOT_EDIT_WARNING,
     '',
@@ -110,5 +110,9 @@ function generateTyping(entries) {
   return source.join('\n')
 }
 
-writeFileSync(INDEX_FILENAME, generateIndex(entries))
-writeFileSync(TYPING_FILENAME, generateTyping(entries))
+async function main() {
+  writeFileSync(INDEX_FILENAME, await generateIndex(entries))
+  writeFileSync(TYPING_FILENAME, generateTyping(entries))
+}
+
+main()

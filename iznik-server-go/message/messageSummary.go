@@ -3,15 +3,20 @@ package message
 import "time"
 
 type MessageSummary struct {
-	ID         uint64    `json:"id" gorm:"primary_key"`
-	Hasoutcome bool      `json:"hasoutcome"`
-	Successful bool      `json:"successful"`
-	Promised   bool      `json:"promised"`
-	Groupid    uint64    `json:"groupid"`
-	Collection string    `json:"collection"`
-	SpatialID  *uint64   `json:"spatialid,omitempty" gorm:"column:spatialid"`
-	Type       string    `json:"type"`
-	Arrival    time.Time `json:"arrival"`
+	ID         uint64 `json:"id" gorm:"primary_key"`
+	Hasoutcome bool   `json:"hasoutcome"`
+	Successful bool   `json:"successful"`
+	Promised   bool   `json:"promised"`
+	// Promisecount is how many people the post is promised to. Promised above is
+	// true only once that reaches availablenow (#1444), so My Posts needs the
+	// count as well: a partly promised offer still has collections to show.
+	// Populated on My Posts; zero elsewhere.
+	Promisecount int       `json:"promisecount,omitempty" gorm:"column:promisecount"`
+	Groupid      uint64    `json:"groupid"`
+	Collection   string    `json:"collection"`
+	SpatialID    *uint64   `json:"spatialid,omitempty" gorm:"column:spatialid"`
+	Type         string    `json:"type"`
+	Arrival      time.Time `json:"arrival"`
 	// Posted is the ORIGINAL post arrival (messages.arrival), stable across
 	// rippling. On the nearby/reach feed the client's "Newest posted" sort orders
 	// by this so a post that merely rippled again does not jump to the top with a

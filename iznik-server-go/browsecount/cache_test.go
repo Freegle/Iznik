@@ -16,8 +16,8 @@ func reset() {
 func TestGetReturnsWhatWasPut(t *testing.T) {
 	reset()
 
-	Put(42, "nearby", 10, 0, 7)
-	got, ok := Get(42, "nearby", 10, 0)
+	Put(42, "nearby", 10, 0, Filter{}, 7)
+	got, ok := Get(42, "nearby", 10, 0, Filter{})
 
 	assert.True(t, ok)
 	assert.Equal(t, uint64(7), got)
@@ -29,21 +29,21 @@ func TestGetReturnsWhatWasPut(t *testing.T) {
 func TestInvalidateForgetsTheViewerImmediately(t *testing.T) {
 	reset()
 
-	Put(42, "nearby", 10, 0, 7)
+	Put(42, "nearby", 10, 0, Filter{}, 7)
 	Invalidate(42)
 
-	_, ok := Get(42, "nearby", 10, 0)
+	_, ok := Get(42, "nearby", 10, 0, Filter{})
 	assert.False(t, ok, "a count must not survive the viewer marking posts seen")
 }
 
 func TestInvalidateLeavesOtherViewersAlone(t *testing.T) {
 	reset()
 
-	Put(42, "nearby", 10, 0, 7)
-	Put(43, "nearby", 10, 0, 9)
+	Put(42, "nearby", 10, 0, Filter{}, 7)
+	Put(43, "nearby", 10, 0, Filter{}, 9)
 	Invalidate(42)
 
-	got, ok := Get(43, "nearby", 10, 0)
+	got, ok := Get(43, "nearby", 10, 0, Filter{})
 	assert.True(t, ok, "one member marking seen must not cost everyone else their count")
 	assert.Equal(t, uint64(9), got)
 }
@@ -53,15 +53,15 @@ func TestInvalidateLeavesOtherViewersAlone(t *testing.T) {
 func TestADifferentQuestionIsAMiss(t *testing.T) {
 	reset()
 
-	Put(42, "nearby", 10, 0, 7)
+	Put(42, "nearby", 10, 0, Filter{}, 7)
 
-	_, ok := Get(42, "mygroups", 10, 0)
+	_, ok := Get(42, "mygroups", 10, 0, Filter{})
 	assert.False(t, ok, "switching view must not reuse the other view's count")
 
-	_, ok = Get(42, "nearby", 25, 0)
+	_, ok = Get(42, "nearby", 25, 0, Filter{})
 	assert.False(t, ok, "moving the distance slider must not reuse the old distance's count")
 
-	_, ok = Get(42, "nearby", 10, 25)
+	_, ok = Get(42, "nearby", 10, 25, Filter{})
 	assert.False(t, ok, "changing the drive-minutes budget must not reuse the old budget's count")
 }
 
@@ -72,7 +72,7 @@ func TestAnExpiredCountIsNotReused(t *testing.T) {
 	cache[42] = entry{browseView: "nearby", maxDistance: 10, count: 7, expires: time.Now().Add(-time.Second)}
 	mu.Unlock()
 
-	_, ok := Get(42, "nearby", 10, 0)
+	_, ok := Get(42, "nearby", 10, 0, Filter{})
 	assert.False(t, ok)
 }
 
@@ -80,8 +80,8 @@ func TestAnExpiredCountIsNotReused(t *testing.T) {
 func TestTheAnonymousViewerIsNeverCached(t *testing.T) {
 	reset()
 
-	Put(0, "nearby", 10, 0, 7)
-	_, ok := Get(0, "nearby", 10, 0)
+	Put(0, "nearby", 10, 0, Filter{}, 7)
+	_, ok := Get(0, "nearby", 10, 0, Filter{})
 
 	assert.False(t, ok, "counts must never be shared between logged-out requests")
 }
@@ -92,11 +92,11 @@ func TestAFullMapOfLiveEntriesIsNotThrownAway(t *testing.T) {
 	reset()
 
 	for i := 1; i <= maxEntries; i++ {
-		Put(uint64(i), "nearby", 10, 0, uint64(i))
+		Put(uint64(i), "nearby", 10, 0, Filter{}, uint64(i))
 	}
-	Put(uint64(maxEntries+1), "nearby", 10, 0, 1)
+	Put(uint64(maxEntries+1), "nearby", 10, 0, Filter{}, 1)
 
-	got, ok := Get(1, "nearby", 10, 0)
+	got, ok := Get(1, "nearby", 10, 0, Filter{})
 	assert.True(t, ok, "an existing live count was discarded to make room")
 	assert.Equal(t, uint64(1), got)
 }
@@ -111,9 +111,9 @@ func TestExpiredEntriesAreReclaimedWhenFull(t *testing.T) {
 	}
 	mu.Unlock()
 
-	Put(uint64(maxEntries+1), "nearby", 10, 0, 5)
+	Put(uint64(maxEntries+1), "nearby", 10, 0, Filter{}, 5)
 
-	got, ok := Get(uint64(maxEntries+1), "nearby", 10, 0)
+	got, ok := Get(uint64(maxEntries+1), "nearby", 10, 0, Filter{})
 	assert.True(t, ok, "a new count must be stored once expired ones have been cleared out")
 	assert.Equal(t, uint64(5), got)
 }
@@ -124,11 +124,43 @@ func TestAViewerCanAlwaysReplaceTheirOwnCount(t *testing.T) {
 	reset()
 
 	for i := 1; i <= maxEntries; i++ {
-		Put(uint64(i), "nearby", 10, 0, 1)
+		Put(uint64(i), "nearby", 10, 0, Filter{}, 1)
 	}
-	Put(1, "nearby", 10, 0, 99)
+	Put(1, "nearby", 10, 0, Filter{}, 99)
 
-	got, ok := Get(1, "nearby", 10, 0)
+	got, ok := Get(1, "nearby", 10, 0, Filter{})
 	assert.True(t, ok)
 	assert.Equal(t, uint64(99), got, "a viewer's own refreshed count must replace the old one")
+}
+
+func TestDifferentTypeIsADifferentQuestion(t *testing.T) {
+	Invalidate(42)
+	Put(42, "nearby", 10, 0, Filter{Type: "Offer"}, 7)
+
+	_, ok := Get(42, "nearby", 10, 0, Filter{Type: "Wanted"})
+	if ok {
+		t.Fatal("a count for Offers must not answer a Wanted question")
+	}
+	got, ok := Get(42, "nearby", 10, 0, Filter{Type: "Offer"})
+	if !ok || got != 7 {
+		t.Fatalf("same question should be answered, got %d %v", got, ok)
+	}
+}
+
+func TestDifferentCommunityIsADifferentQuestion(t *testing.T) {
+	Invalidate(42)
+	Put(42, "nearby", 10, 0, Filter{Group: 5}, 7)
+
+	_, ok := Get(42, "nearby", 10, 0, Filter{Group: 6})
+	if ok {
+		t.Fatal("a count for one community must not answer for another")
+	}
+	_, ok = Get(42, "nearby", 10, 0, Filter{})
+	if ok {
+		t.Fatal("a count for one community must not answer for all of them")
+	}
+	got, ok := Get(42, "nearby", 10, 0, Filter{Group: 5})
+	if !ok || got != 7 {
+		t.Fatalf("same question should be answered, got %d %v", got, ok)
+	}
 }

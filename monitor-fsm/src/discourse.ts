@@ -24,7 +24,7 @@ export const PROFILE_PATH =
  *
  * This is the SINGLE source of truth for reply formatting. Both posting paths
  * use it so they can't diverge again:
- *   - human-approved drafts (dashboard /api/drafts/:id/send), and
+ *   - drafts sent from the dashboard (/api/drafts/:id/send), and
  *   - auto-posted verified-live "fix applied, please retest" replies
  *     (queue_deployed_reply_drafts), which previously posted the bare body with
  *     NO quote block — the bug this fixes.

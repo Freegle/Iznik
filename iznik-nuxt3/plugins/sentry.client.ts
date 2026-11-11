@@ -9,7 +9,12 @@ import {
   suppressSentryEvent,
 } from '~/composables/useSuppressException'
 import { onTraceChange, getTraceId, getSessionId } from '~/composables/useTrace'
-import { useClientLog } from '~/composables/useClientLog'
+import {
+  useClientLog,
+  setRouteNameProvider,
+  setLoggingContextProvider,
+} from '~/composables/useClientLog'
+import { useLoggingContextStore } from '~/stores/loggingContext'
 
 export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig()
@@ -36,9 +41,17 @@ export default defineNuxtPlugin((nuxtApp) => {
   // known to exist.
   clientLog.sessionStart()
 
+  // Every client log line carries the route name and a page view carries the logging context.
+  const loggingCtx = useLoggingContextStore()
+  loggingCtx.init(config)
+  setRouteNameProvider(() => router.currentRoute.value?.name)
+  setLoggingContextProvider(() => loggingCtx.getContext())
+
   // Log page views on route changes.
   // This creates "user" parent nodes for subsequent API calls.
   router.afterEach((to) => {
+    // A new page id, so the page view and the events and API calls after it can be joined.
+    loggingCtx.startPage(to)
     clientLog.pageView(to.path, {
       route_name: to.name?.toString() || null,
       query_params: Object.keys(to.query).length > 0 ? to.query : null,
@@ -380,6 +393,14 @@ export default defineNuxtPlugin((nuxtApp) => {
               // Webkit issue - see https://github.com/getsentry/sentry-javascript/discussions/5875
               return null
             }
+          }
+
+          // A browser driven by automation is our own test suite, not a member. Playwright's
+          // 'Desktop Chrome' profile reports Windows Chrome rather than HeadlessChrome, so the
+          // check above misses it, and CI runs sent Google sign-in errors to the live project
+          // as 'production'. The console line above stays: the e2e fixtures read it.
+          if (window.navigator.webdriver) {
+            return null
           }
 
           // Log to Loki for correlation with Sentry.

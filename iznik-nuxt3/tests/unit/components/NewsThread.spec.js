@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import NewsThread from '~/components/NewsThread.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 const {
   mockNewsfeed,
@@ -10,6 +16,7 @@ const {
   mockBreakpoint,
   mockChitChatMod,
   mockSupportOrAdmin,
+  mockModsHeld,
   mockFetch,
   mockSend,
   mockDelete,
@@ -21,7 +28,8 @@ const {
   mockTeamFetch,
   mockMuteOnChitChat,
   mockUnMuteOnChitChat,
-} = vi.hoisted(() => {
+} = await vi.hoisted(async () => {
+  const { SYSTEMROLE_USER } = await import('~/constants')
   const { ref } = require('vue')
   return {
     mockNewsfeed: ref({
@@ -45,13 +53,14 @@ const {
     mockMe: ref({
       id: 1,
       displayname: 'Current User',
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
       profile: { path: '/me.jpg' },
       settings: { enterNewLine: false },
     }),
     mockBreakpoint: ref('md'),
     mockChitChatMod: ref(false),
     mockSupportOrAdmin: ref(false),
+    mockModsHeld: ref(false),
     mockFetch: vi.fn(),
     mockSend: vi.fn(),
     mockDelete: vi.fn(),
@@ -144,6 +153,16 @@ vi.mock('~/composables/useMe', () => {
       // Use actual computed refs that reactively track the mock values
       chitChatMod: computed(() => mockChitChatMod.value),
       supportOrAdmin: computed(() => mockSupportOrAdmin.value),
+    }),
+  }
+})
+
+vi.mock('~/modtools/composables/useLockdown', () => {
+  const { computed } = require('vue')
+  return {
+    useLockdown: () => ({
+      modsHeld: computed(() => mockModsHeld.value),
+      held: () => false,
     }),
   }
 })
@@ -321,13 +340,14 @@ describe('NewsThread', () => {
     mockMe.value = {
       id: 1,
       displayname: 'Current User',
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
       profile: { path: '/me.jpg' },
       settings: { enterNewLine: false },
     }
     mockBreakpoint.value = 'md'
     mockChitChatMod.value = false
     mockSupportOrAdmin.value = false
+    mockModsHeld.value = false
     mockNewsfeedStore.byId.mockImplementation((id) =>
       id === 1 ? mockNewsfeed.value : null
     )
@@ -500,7 +520,7 @@ describe('NewsThread', () => {
   describe('hidden thread display', () => {
     beforeEach(() => {
       mockNewsfeed.value.hidden = true
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
     })
 
     it('shows hidden notice for moderators', async () => {
@@ -521,8 +541,26 @@ describe('NewsThread', () => {
       expect(wrapper.text()).toContain('the system')
     })
 
+    // Plan 10.6/10.12: ChitChat posts held by the lockdown switch are labelled so a
+    // volunteer can tell them apart from an ordinary system hide. Confirmed live via
+    // GET /newsfeed/:id -> .lockdownheld (unconditional, no mod-only gating).
+    it('shows "by lockdown" when lockdownheld is true and hiddenby is not set', async () => {
+      mockNewsfeed.value.hiddenby = null
+      mockNewsfeed.value.lockdownheld = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('by lockdown')
+      expect(wrapper.text()).not.toContain('the system')
+    })
+
+    it('prefers "by" and UserName over lockdownheld when hiddenby is set', async () => {
+      mockNewsfeed.value.hiddenby = 50
+      mockNewsfeed.value.lockdownheld = true
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.user-name').exists()).toBe(true)
+    })
+
     it('does not show hidden notice for regular users', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('This has been hidden')
     })
@@ -579,7 +617,7 @@ describe('NewsThread', () => {
     it('shows Edit option for moderator', async () => {
       mockNewsfeed.value.userid = 100
       mockMe.value.id = 1
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Edit')
     })
@@ -587,7 +625,7 @@ describe('NewsThread', () => {
     it('hides Edit option for non-owner non-moderator', async () => {
       mockNewsfeed.value.userid = 100
       mockMe.value.id = 1
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       const wrapper = await createWrapper()
       const editItems = wrapper
         .findAll('.dropdown-item')
@@ -605,7 +643,7 @@ describe('NewsThread', () => {
 
   describe('refer options', () => {
     beforeEach(() => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       mockNewsfeed.value.type = 'Message'
     })
 
@@ -622,7 +660,7 @@ describe('NewsThread', () => {
       // But the canRefer computed won't be directly accessible from vm
       // because script setup exposes computed refs differently
       // Instead we verify by checking that the dropdown items appear
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       mockSupportOrAdmin.value = true
       const wrapper = await createWrapper()
       // When supportOrAdmin is true, the refer options should be visible
@@ -637,7 +675,7 @@ describe('NewsThread', () => {
     })
 
     it('hides refer options for regular users', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       mockSupportOrAdmin.value = false
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('Refer to OFFER')
@@ -646,7 +684,7 @@ describe('NewsThread', () => {
 
   describe('story conversion', () => {
     beforeEach(() => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
     })
 
     it('shows "Turn into Story" for moderators when type is not Story', async () => {
@@ -662,7 +700,7 @@ describe('NewsThread', () => {
     })
 
     it('hides "Turn into Story" for regular users', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('Turn this into a Story')
     })
@@ -702,6 +740,73 @@ describe('NewsThread', () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain('Hide this thread')
       expect(wrapper.text()).not.toContain('Mute user on ChitChat')
+    })
+  })
+
+  describe('lockdown (mods held)', () => {
+    beforeEach(() => {
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
+      mockChitChatMod.value = true
+      mockNewsfeed.value.type = 'Message'
+      mockNewsfeed.value.hidden = false
+      mockModsHeld.value = true
+    })
+
+    it('hides "Post this as an OFFER/WANTED for them" when mods held', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain(
+        'Post this as an OFFER/WANTED for them'
+      )
+    })
+
+    it('hides all four refer options when mods held', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Refer to OFFER')
+      expect(wrapper.text()).not.toContain('Refer to WANTED')
+      expect(wrapper.text()).not.toContain('Refer to TAKEN')
+      expect(wrapper.text()).not.toContain('Refer to RECEIVED')
+    })
+
+    it('hides "Turn this into a Story" when mods held', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Turn this into a Story')
+    })
+
+    it('hides "Hide this thread" when mods held', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Hide this thread')
+    })
+
+    it('keeps "Unhide this thread" visible when mods held', async () => {
+      mockNewsfeed.value.hidden = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Unhide this thread')
+    })
+
+    it('leaves Edit, Delete and Mute/Unmute untouched when mods held', async () => {
+      mockNewsfeed.value.hidden = false
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Edit')
+      expect(wrapper.text()).toContain('Delete this thread')
+      expect(wrapper.text()).toContain('Mute user on ChitChat')
+    })
+
+    it('shows the refer/story/hide options again once mods is released', async () => {
+      mockModsHeld.value = false
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Refer to OFFER')
+      expect(wrapper.text()).toContain('Turn this into a Story')
+      expect(wrapper.text()).toContain('Hide this thread')
+    })
+
+    it('reads modsHeld from useLockdown rather than re-adding its own support/admin bypass', async () => {
+      // useLockdown already bakes the supportOrAdmin exemption into modsHeld,
+      // so NewsThread shouldn't need its own "|| supportOrAdmin" on top of
+      // the gate. Prove that by setting supportOrAdmin true while the mocked
+      // modsHeld (unaffected by that mock) stays held - refer should stay hidden.
+      mockSupportOrAdmin.value = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Refer to OFFER')
     })
   })
 
@@ -896,7 +1001,7 @@ describe('NewsThread', () => {
     })
 
     it('calls referTo when Refer to OFFER clicked', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = await createWrapper()
       const referBtn = wrapper
         .findAll('.dropdown-item')
@@ -906,7 +1011,7 @@ describe('NewsThread', () => {
     })
 
     it('calls referTo when Refer to WANTED clicked', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = await createWrapper()
       const referBtn = wrapper
         .findAll('.dropdown-item')
@@ -916,7 +1021,7 @@ describe('NewsThread', () => {
     })
 
     it('calls convertToStory when Turn into Story clicked', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       mockNewsfeed.value.type = 'Message'
       const wrapper = await createWrapper()
       const storyBtn = wrapper
@@ -1289,28 +1394,28 @@ describe('NewsThread', () => {
     })
 
     it('computes mod as true for Moderator systemrole', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
       expect(comp.vm.mod).toBe(true)
     })
 
     it('computes mod as true for Admin systemrole', async () => {
-      mockMe.value.systemrole = 'Admin'
+      mockMe.value.systemrole = SYSTEMROLE_ADMIN
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
       expect(comp.vm.mod).toBe(true)
     })
 
     it('computes mod as true for Support systemrole', async () => {
-      mockMe.value.systemrole = 'Support'
+      mockMe.value.systemrole = SYSTEMROLE_SUPPORT
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
       expect(comp.vm.mod).toBe(true)
     })
 
     it('computes mod as false for User systemrole', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
       expect(comp.vm.mod).toBeFalsy()
@@ -1337,7 +1442,7 @@ describe('NewsThread', () => {
     })
 
     it('computes canRefer based on mod and type', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       mockNewsfeed.value.type = 'Message'
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
@@ -1345,7 +1450,7 @@ describe('NewsThread', () => {
     })
 
     it('computes canStory based on mod and type', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       mockNewsfeed.value.type = 'Message'
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(NewsThread)
@@ -1370,25 +1475,25 @@ describe('NewsThread', () => {
 
   describe('team store fetch', () => {
     it('fetches ChitChat Moderation team for moderators', async () => {
-      mockMe.value.systemrole = 'Moderator'
+      mockMe.value.systemrole = SYSTEMROLE_MODERATOR
       await createWrapper()
       expect(mockTeamFetch).toHaveBeenCalledWith('ChitChat Moderation')
     })
 
     it('fetches ChitChat Moderation team for support', async () => {
-      mockMe.value.systemrole = 'Support'
+      mockMe.value.systemrole = SYSTEMROLE_SUPPORT
       await createWrapper()
       expect(mockTeamFetch).toHaveBeenCalledWith('ChitChat Moderation')
     })
 
     it('fetches ChitChat Moderation team for admin', async () => {
-      mockMe.value.systemrole = 'Admin'
+      mockMe.value.systemrole = SYSTEMROLE_ADMIN
       await createWrapper()
       expect(mockTeamFetch).toHaveBeenCalledWith('ChitChat Moderation')
     })
 
     it('does not fetch ChitChat Moderation team for regular users', async () => {
-      mockMe.value.systemrole = 'User'
+      mockMe.value.systemrole = SYSTEMROLE_USER
       await createWrapper()
       expect(mockTeamFetch).not.toHaveBeenCalled()
     })

@@ -5,11 +5,13 @@ namespace App\Console\Commands\CookieYes;
 use App\Services\CookieYes\CookieYesException;
 use App\Services\CookieYes\CookieYesMcpClient;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Call one CookieYes MCP tool and print exactly what came back. For diagnosing
  * the watchdog and for recording test fixtures.
  */
+#[AsCommand(name: 'cookieyes:call')]
 class CallCommand extends Command
 {
     protected $signature = 'cookieyes:call

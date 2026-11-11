@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-18
+last_reviewed: 2026-10-10
 covers:
   - iznik-batch/app/Services/Desirability/TitleCanonicalService.php
   - iznik-batch/app/Services/Desirability/DesirabilityService.php

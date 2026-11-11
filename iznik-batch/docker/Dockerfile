@@ -36,9 +36,13 @@ RUN n=0; until curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp
     rm -f /tmp/rustup-init.sh
 ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /build
+# The upstream Cargo.lock stays in place. On 16 Oct 2026 the zip crate yanked every release
+# from 5.0 to 9.0.2, and every ext-php-rs release needs one of them as a build dependency, so
+# a fresh resolve has nothing to pick. Cargo still accepts a yanked version that is already
+# locked, and the mrml bump re-resolves only mrml's own subtree (ext-php-rs 0.15.7, mrml 6.0.1,
+# css-inline 0.20.2, zip 8.4.0; checked with cargo tree).
 RUN git clone --depth 1 --branch v1.2.1 https://github.com/alekitto/mjml-php.git . \
     && sed -i 's/^mrml = "5"/mrml = { version = "6", features = ["css-inline"] }/' Cargo.toml \
-    && rm -f Cargo.lock \
     && grep -q 'css-inline' Cargo.toml
 # Fix an upstream bug: RENDER_EXCEPTION is declared but never assigned, so every
 # render ERROR path calls .expect("did not set exception ce") → a Rust panic that
@@ -85,6 +89,12 @@ RUN apt-get update \
     && npm install -g @anthropic-ai/claude-code \
     && claude --version \
     && rm -rf /var/lib/apt/lists/*
+
+# Opcache for the CLI (the base image enables it for web SAPIs only). Every
+# artisan run and every PHPUnit test boot otherwise re-parses bootstrap/app.php,
+# the config files and the route files. See the ini for the settings and why.
+COPY docker/php-cli-opcache.ini /usr/local/etc/php/conf.d/zz-php-cli-opcache.ini
+RUN mkdir -p /tmp/opcache-file-cache && chmod 1777 /tmp/opcache-file-cache
 
 WORKDIR /var/www/html
 

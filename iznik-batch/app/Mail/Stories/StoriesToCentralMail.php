@@ -2,11 +2,12 @@
 
 namespace App\Mail\Stories;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class StoriesToCentralMail extends MjmlMailable
+class StoriesToCentralMail extends MjmlMailable implements DescribesMemberContent
 {
     /**
      * Transactional - an internal report to volunteers - so it carries no List-Unsubscribe.
@@ -40,6 +41,29 @@ class StoriesToCentralMail extends MjmlMailable
             to: [new Address(config('freegle.mail.central_mail_to', 'central@ilovefreegle.org'))],
             subject: $this->getSubject(),
         );
+    }
+
+    /**
+     * Each candidate story names its author's userid (since the additive fix alongside
+     * this); an entry built without one simply contributes nothing to users. As with
+     * StoriesNewsletterMail, there is no bucket for the story itself, only for the
+     * people it names (plan section 11.8).
+     */
+    public function about(): array
+    {
+        $users = [];
+        foreach ($this->stories as $story) {
+            if (isset($story['userid'])) {
+                $users[] = (int) $story['userid'];
+            }
+        }
+
+        return [
+            'chatmessages' => [],
+            'messages' => [],
+            'newsfeed' => [],
+            'users' => array_values(array_unique($users)),
+        ];
     }
 
     public function build(): static

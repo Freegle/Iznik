@@ -72,7 +72,7 @@ class VolunteeringMaintenanceServiceTest extends TestCase
 
         $this->assertSame(1, $count);
         Mail::assertSent(VolunteeringRenewMail::class, fn (VolunteeringRenewMail $m) =>
-            $m->recipientEmail === $owner->email_preferred && $m->title === 'Dateless Opportunity');
+            $m->recipientEmail === $owner->email_preferred && $m->opportunities[0]['title'] === 'Dateless Opportunity');
         // Intentional improvement over V1: askedtorenew is stamped after asking.
         $this->assertNotNull(DB::table('volunteering')->where('id', $id)->value('askedtorenew'));
     }
@@ -187,7 +187,79 @@ class VolunteeringMaintenanceServiceTest extends TestCase
         $this->service()->askRenew();
 
         Mail::assertSent(VolunteeringRenewMail::class, fn (VolunteeringRenewMail $m) =>
-            $m->groupName === $group->namefull);
+            $m->opportunities[0]['groupName'] === $group->namefull);
+    }
+
+    public function test_owner_with_several_due_opportunities_gets_one_email_listing_all(): void
+    {
+        Mail::fake();
+        $owner = $this->createTestUser();
+        $other = $this->createTestUser();
+        $a = $this->makeOpportunity(['userid' => $owner->id, 'title' => 'Opp A']);
+        $b = $this->makeOpportunity(['userid' => $owner->id, 'title' => 'Opp B']);
+        $c = $this->makeOpportunity(['userid' => $owner->id, 'title' => 'Opp C']);
+        $d = $this->makeOpportunity(['userid' => $other->id, 'title' => 'Opp D']);
+
+        $count = $this->service()->askRenew();
+
+        $this->assertSame(4, $count, 'Count is opportunities asked about');
+        Mail::assertSent(VolunteeringRenewMail::class, 2);
+        Mail::assertSent(VolunteeringRenewMail::class, function (VolunteeringRenewMail $m) use ($owner, $a, $b, $c) {
+            return $m->recipientEmail === $owner->email_preferred
+                && array_column($m->opportunities, 'id') === [$a, $b, $c]
+                && str_contains($m->opportunities[1]['renewUrl'], '/volunteering/' . $b);
+        });
+        foreach ([$a, $b, $c, $d] as $id) {
+            $this->assertNotNull(DB::table('volunteering')->where('id', $id)->value('askedtorenew'));
+        }
+    }
+
+    public function test_only_due_opportunities_are_listed(): void
+    {
+        Mail::fake();
+        $owner = $this->createTestUser();
+        $due = $this->makeOpportunity(['userid' => $owner->id, 'title' => 'Due']);
+        $recent = $this->makeOpportunity(['userid' => $owner->id, 'title' => 'Recent', 'added' => now()->subDays(5)]);
+
+        $this->assertSame(1, $this->service()->askRenew());
+
+        Mail::assertSent(VolunteeringRenewMail::class, fn (VolunteeringRenewMail $m) =>
+            array_column($m->opportunities, 'id') === [$due]);
+        $this->assertNull(DB::table('volunteering')->where('id', $recent)->value('askedtorenew'));
+    }
+
+    public function test_nothing_stamped_when_spool_throws(): void
+    {
+        $owner = $this->createTestUser();
+        $a = $this->makeOpportunity(['userid' => $owner->id]);
+        $b = $this->makeOpportunity(['userid' => $owner->id]);
+
+        $this->mock(\App\Services\EmailSpoolerService::class, function ($mock) {
+            $mock->shouldReceive('spool')->andThrow(new \RuntimeException('render failed'));
+        });
+
+        $this->assertSame(0, $this->service()->askRenew());
+
+        foreach ([$a, $b] as $id) {
+            $this->assertNull(DB::table('volunteering')->where('id', $id)->value('askedtorenew'));
+        }
+    }
+
+    public function test_renewal_send_writes_one_email_tracking_row(): void
+    {
+        $owner = $this->createTestUser();
+        $a = $this->makeOpportunity(['userid' => $owner->id]);
+        $b = $this->makeOpportunity(['userid' => $owner->id]);
+        $before = DB::table('email_tracking')->where('email_type', 'VolunteeringRenew')->count();
+
+        $this->service()->askRenew();
+
+        $rows = DB::table('email_tracking')->where('email_type', 'VolunteeringRenew')
+            ->where('userid', $owner->id)->get();
+        $this->assertSame($before + 1, DB::table('email_tracking')->where('email_type', 'VolunteeringRenew')->count());
+        $this->assertCount(1, $rows);
+        $this->assertStringContainsString((string) $a, (string) $rows[0]->metadata);
+        $this->assertStringContainsString((string) $b, (string) $rows[0]->metadata);
     }
 
     // ---- expire() ---------------------------------------------------------

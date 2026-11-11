@@ -7,6 +7,7 @@ use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Re-embed every live message from scratch. Used after the embedding text
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Log;
  * Lives alongside embeddings:generate — the nightly command which only
  * embeds rows that don't yet have one. This command rewrites existing rows.
  */
+#[AsCommand(name: 'embeddings:regenerate')]
 class RegenerateEmbeddingsCommand extends Command
 {
     use GracefulShutdown;
@@ -49,6 +51,9 @@ class RegenerateEmbeddingsCommand extends Command
 
             $batchLimit = min($remaining, $chunkSize);
 
+            // keep-raw: LEFT() has no builder method; the rest of this query
+            // (join, order, limit) would gain nothing from being rebuilt
+            // around a lone selectRaw() for that one column.
             $messages = DB::select('
                 SELECT ms.msgid, m.subject, LEFT(m.textbody, 500) as body
                 FROM messages_spatial ms

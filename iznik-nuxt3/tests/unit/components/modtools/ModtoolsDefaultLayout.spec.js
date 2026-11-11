@@ -4,33 +4,42 @@ import { defineComponent, h, Suspense, computed, nextTick } from 'vue'
 
 // Import layout after mocks
 import DefaultLayout from '~/modtools/layouts/default.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Stub Nuxt auto-imported globals not available in vitest
 vi.stubGlobal('useHead', vi.fn())
 vi.stubGlobal('useRuntimeConfig', vi.fn().mockReturnValue({ public: {} }))
 
 // Use vi.hoisted so these refs are available inside vi.mock factories (which are hoisted)
-const { mockAuthStore, mockCheckWork, mockResetCheckWork } = vi.hoisted(() => {
-  const { reactive } = require('vue')
-  const mockAuthStore = reactive({
-    user: null,
-    auth: { jwt: null, persistent: null },
-    loginStateKnown: false,
-    forceLogin: false,
-    discourse: null,
-    work: null,
-    fetchUser: () => Promise.resolve(null),
-    logout: () => Promise.resolve(undefined),
-    // The layout adopts a session transferred from a previous device before it
-    // looks at jwt/persistent.
-    adoptRestoredSession: () => Promise.resolve(false),
+const { mockAuthStore, mockCheckWork, mockResetCheckWork, mockMe } =
+  await vi.hoisted(async () => {
+    const { SYSTEMROLE_USER } = await import('~/constants')
+    const { reactive } = require('vue')
+    const mockAuthStore = reactive({
+      user: null,
+      auth: { jwt: null, persistent: null },
+      loginStateKnown: false,
+      forceLogin: false,
+      discourse: null,
+      work: null,
+      fetchUser: () => Promise.resolve(null),
+      logout: () => Promise.resolve(undefined),
+      // The layout adopts a session transferred from a previous device before it
+      // looks at jwt/persistent.
+      adoptRestoredSession: () => Promise.resolve(false),
+    })
+    return {
+      mockAuthStore,
+      mockCheckWork: vi.fn(),
+      mockResetCheckWork: vi.fn(),
+      // The signed-in system role, read by the useMe mock when the layout mounts.
+      mockMe: { role: SYSTEMROLE_USER },
+    }
   })
-  return {
-    mockAuthStore,
-    mockCheckWork: vi.fn(),
-    mockResetCheckWork: vi.fn(),
-  }
-})
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
@@ -83,7 +92,10 @@ vi.mock('@/stores/mobile', () => ({
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    supportOrAdmin: computed(() => false),
+    supportOrAdmin: computed(() =>
+      [SYSTEMROLE_SUPPORT, SYSTEMROLE_ADMIN].includes(mockMe.role)
+    ),
+    admin: computed(() => mockMe.role === SYSTEMROLE_ADMIN),
   }),
 }))
 
@@ -146,7 +158,9 @@ function mountLayout(stubs = {}) {
         ModMenuItemLeft: { template: '<div />' },
         ModMissingRules: { template: '<div />' },
         ModMissingProfile: { template: '<div />' },
+        ModLockdownBanner: { template: '<div class="lockdown-banner-stub" />' },
         SomethingWentWrong: { template: '<div />' },
+        ModAlertReplyGate: { template: '<div />' },
         ExternalLink: { template: '<a><slot /></a>' },
         'b-navbar': { template: '<nav><slot /></nav>' },
         'b-navbar-brand': { template: '<div><slot /></div>' },
@@ -273,6 +287,7 @@ describe('modtools default layout — pending badge includes spam', () => {
           link: props.link,
           name: props.name,
           count: props.count ? [...props.count] : null,
+          othercount: props.othercount ? [...props.othercount] : null,
         })
       },
     }
@@ -289,6 +304,85 @@ describe('modtools default layout — pending badge includes spam', () => {
     // Fails on buggy code (count=['pending'], spam not present).
     // Passes after fix (count=['pending','spam']).
     expect(pendingItem.count).toContain('spam')
+  })
+
+  async function captureMenu() {
+    const capturedItems = []
+    const Capturing = {
+      template: '<div />',
+      props: ['link', 'name', 'count', 'othercount', 'indent', 'countVariant'],
+      setup(props) {
+        capturedItems.push({
+          link: props.link,
+          count: props.count ? [...props.count] : null,
+          othercount: props.othercount ? [...props.othercount] : null,
+        })
+      },
+    }
+    mountLayout({ ModMenuItemLeft: Capturing })
+    await flushPromises()
+    await nextTick()
+    return capturedItems
+  }
+
+  it('Member Review shows spammembers red and held spammembersother blue', async () => {
+    // Held or inactive-community members are counted in spammembersother, so a
+    // moderator who has dealt with everything sees blue, not red.
+    const items = await captureMenu()
+    const item = items.find((i) => i.link === '/members/review')
+    expect(item, 'Member Review menu item must be rendered').toBeDefined()
+    expect(item.count).toEqual(['spammembers'])
+    expect(item.othercount).toEqual(['spammembersother'])
+  })
+
+  it('Volunteering shows held opportunities as the blue other count', async () => {
+    const items = await captureMenu()
+    const item = items.find((i) => i.link === '/volunteering')
+    expect(item, 'Volunteering menu item must be rendered').toBeDefined()
+    expect(item.count).toEqual(['pendingvolunteering'])
+    expect(item.othercount).toEqual(['pendingvolunteeringother'])
+  })
+
+  describe('SysAdmin is for Admin only', () => {
+    afterEach(() => {
+      mockMe.role = SYSTEMROLE_USER
+    })
+
+    it.each([SYSTEMROLE_USER, SYSTEMROLE_SUPPORT])(
+      'has no SysAdmin item for %s',
+      async (role) => {
+        mockMe.role = role
+        const links = (await captureMenu()).map((i) => i.link)
+        expect(links).not.toContain('/sysadmin')
+      }
+    )
+
+    it('leaves Support with Support and Images', async () => {
+      mockMe.role = SYSTEMROLE_SUPPORT
+      const links = (await captureMenu()).map((i) => i.link)
+      expect(links).toContain('/support')
+      expect(links).toContain('/images')
+    })
+
+    it('puts the cases waiting for Support on the Support item', async () => {
+      mockMe.role = SYSTEMROLE_SUPPORT
+      const item = (await captureMenu()).find((i) => i.link === '/support')
+      expect(item.count).toEqual(['supportcases'])
+    })
+
+    it('gives Admin the SysAdmin item with every SysAdmin count', async () => {
+      mockMe.role = SYSTEMROLE_ADMIN
+      const item = (await captureMenu()).find((i) => i.link === '/sysadmin')
+      expect(item, 'SysAdmin menu item must be rendered').toBeDefined()
+      expect(item.count).toEqual([
+        'housekeeping',
+        'cronjobs',
+        'emailin',
+        'emailout',
+        'maildeferrals',
+        'uxexperiments',
+      ])
+    })
   })
 })
 
@@ -336,5 +430,38 @@ describe('modtools default layout — re-login group refresh', () => {
     // Without the fix (no loggedIn watcher), checkWork is never called here —
     // groups stay empty for up to 30s until the polling timer fires.
     expect(mockCheckWork).toHaveBeenCalledWith(true)
+  })
+})
+
+describe('modtools default layout: lockdown banner', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockCheckWork.mockReset()
+    mockResetCheckWork.mockReset()
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+  })
+
+  afterEach(() => {
+    mockAuthStore.user = null
+    mockAuthStore.loginStateKnown = false
+  })
+
+  // plans/active/2026-09-27-lockdown-switch.md section 10.8: "Members: nothing,
+  // by default. Moderators: always the banner." The layout must render
+  // ModLockdownBanner unconditionally (it decides its own visibility from the
+  // lockdown store), not gate it behind login state or any other layout flag.
+  it('always renders ModLockdownBanner, whether or not a moderator is logged in', async () => {
+    const wrapper = mountLayout()
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('.lockdown-banner-stub').exists()).toBe(true)
+
+    mockAuthStore.user = { id: 1, displayname: 'Test Mod' }
+    mockAuthStore.loginStateKnown = true
+    await nextTick()
+
+    expect(wrapper.find('.lockdown-banner-stub').exists()).toBe(true)
   })
 })

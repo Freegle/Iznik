@@ -91,7 +91,7 @@ const triggeredByContext = ref(null)
 
 /* Default pool: ranked API order, exclude already-visible jobs, cap at 8. */
 const modalJobs = computed(() => {
-  return jobStore.list
+  return jobStore.available
     .filter((j) => !props.excludeIds.includes(j.id))
     .slice(0, 8)
 })
@@ -104,7 +104,7 @@ const visibleJobs = computed(() => {
     return modalJobs.value
   }
 
-  return jobStore.list
+  return jobStore.available
     .filter((j) => {
       if (props.excludeIds.includes(j.id)) {
         return false

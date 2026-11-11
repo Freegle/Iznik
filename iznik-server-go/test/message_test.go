@@ -27,8 +27,8 @@ func TestMessages(t *testing.T) {
 	// Create test group with messages
 	prefix := uniquePrefix("msg")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Create two messages for the test
 	mid := CreateTestMessage(t, userID, groupID, "Test Offer Item 1", 55.9533, -3.1883)
@@ -95,8 +95,8 @@ func TestBounds(t *testing.T) {
 	// Create a message in specific bounds for this test
 	prefix := uniquePrefix("bounds")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	CreateTestMessage(t, userID, groupID, "Test Bounds Item", 55.9533, -3.1883)
 
 	// Get within the bounds
@@ -130,8 +130,8 @@ func TestBoundsDedupsMultiGroup(t *testing.T) {
 	prefix := uniquePrefix("bounds_dedup")
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupA, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupA, utils.ROLE_MEMBER)
 
 	lat, lng := 55.9533, -3.1883
 	msgID := CreateTestMessage(t, userID, groupA, "Test MultiGroup Bounds Item", lat, lng)
@@ -169,7 +169,7 @@ func TestMyGroups(t *testing.T) {
 
 	// Create a group the user is in with a message
 	groupID := CreateTestGroup(t, prefix+"_grp")
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	CreateTestMessage(t, userID, groupID, "Test MyGroups Item", 55.9533, -3.1883)
 
 	// Should be able to fetch messages in our groups
@@ -189,14 +189,14 @@ func TestMyGroupsDedupsMultiGroup(t *testing.T) {
 
 	prefix := uniquePrefix("mygroups_dedup")
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	CreateTestMembership(t, viewerID, groupA, "Member")
-	CreateTestMembership(t, viewerID, groupB, "Member")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, viewerID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, viewerID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
 
 	// Message posted on group A (CreateTestMessage adds the messages_groups +
 	// messages_spatial rows for A), then cross-posted to group B.
@@ -235,15 +235,15 @@ func TestCrossPost_FullReadSurface(t *testing.T) {
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	viewerID, viewerToken := CreateFullTestUser(t, prefix+"_viewer")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, viewerID, groupA, "Member")
-	CreateTestMembership(t, viewerID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, viewerID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, viewerID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Rare, short (<=10 char) coined word so the search index hit is deterministic and
@@ -359,11 +359,11 @@ func TestCrossPost_SingleGroupBrowse(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
 	viewerID, viewerToken := CreateFullTestUser(t, prefix+"_viewer")
-	CreateTestMembership(t, viewerID, groupB, "Member")
+	CreateTestMembership(t, viewerID, groupB, utils.ROLE_MEMBER)
 
 	lat, lng := 55.9533, -3.1883
 	// Approved on A (helper writes the single messages_spatial row, groupid=A); cross-posted
@@ -401,12 +401,12 @@ func TestCrossPost_HeldOnOneGroupReadSurface(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Pending cross-post on both groups.
@@ -498,13 +498,13 @@ func TestMessagePayloadCarriesHoldPerGroupNotMessageWide(t *testing.T) {
 
 	groupHeld := CreateTestGroup(t, prefix+"_held")
 	groupUnheld := CreateTestGroup(t, prefix+"_unheld")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupHeld, "Member")
-	CreateTestMembership(t, posterID, groupUnheld, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupHeld, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupUnheld, utils.ROLE_MEMBER)
 	// The mod moderates BOTH groups — the multi-group mod this bug is about.
-	CreateTestMembership(t, modID, groupHeld, "Moderator")
-	CreateTestMembership(t, modID, groupUnheld, "Moderator")
+	CreateTestMembership(t, modID, groupHeld, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupUnheld, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupHeld, prefix)
@@ -563,10 +563,10 @@ func TestMessagePayloadKeepsMessageLevelHeldbyForBundledApps(t *testing.T) {
 	prefix := uniquePrefix("heldcompat")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -619,8 +619,8 @@ func TestMessagesByUser(t *testing.T) {
 	// Create a user with a message
 	prefix := uniquePrefix("usermsg")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	CreateTestMessage(t, userID, groupID, "Test User Message", 55.9533, -3.1883)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message", nil))
@@ -650,8 +650,8 @@ func TestMyPostsRippledMessageAppearsOnce(t *testing.T) {
 	originGroup := CreateTestGroup(t, prefix+"orig")
 	rippledGroupA := CreateTestGroup(t, prefix+"ripA")
 	rippledGroupB := CreateTestGroup(t, prefix+"ripB")
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, originGroup, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, originGroup, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, originGroup, "OFFER: Rippled Downlighter", 51.5, -0.1)
 
 	// Simulate ExpandService::rippleIntoNewGroups: the post gains a messages_groups row
@@ -682,8 +682,8 @@ func TestMyPostsRippledMessageAppearsOnce(t *testing.T) {
 func TestActiveQueryExcludesExpiredMessages(t *testing.T) {
 	prefix := uniquePrefix("expire")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Recent message (1 day old) — should appear in active.
@@ -738,8 +738,8 @@ func TestOldRejectedMessageClassifiedAsOld(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("oldrej")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	var locationID uint64
@@ -805,9 +805,9 @@ func TestExpiredPromisedMessageExcludedFromActive(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("exprms")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	promiserID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	promiserID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Old message (200 days) with a promise — should be excluded from active
@@ -839,9 +839,9 @@ func TestExpiredMessageWithRecentChatKeptActive(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("exprchat")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	otherID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Old message (200 days) — would normally expire.
@@ -887,9 +887,9 @@ func TestExpiredMessageHeldActiveByUnrelatedRoomChatAgedOut(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("roomchat")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	otherID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Old message (200 days) — past expiry.
@@ -930,8 +930,8 @@ func TestNonSpatialMessageMarkedOldInInactiveQuery(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("nonspatial")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message and remove its spatial entry to simulate a post that
@@ -968,8 +968,8 @@ func TestRejectedMessageInActiveQuery(t *testing.T) {
 	// so users can see them on My Posts and edit/resend them.
 	prefix := uniquePrefix("rjctmsg")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -1006,8 +1006,8 @@ func TestRejectedMessageInActiveQuery(t *testing.T) {
 func TestRejectedMessageWithoutLocationidReturnsItemAndLocation(t *testing.T) {
 	prefix := uniquePrefix("rjctnoloc")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	db := database.DBConn
@@ -1071,12 +1071,12 @@ func TestMessageUnseenStatus(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create message owner
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	// Create a viewer who will mark the message as seen
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, viewerID, groupID, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, viewerID, groupID, utils.ROLE_MEMBER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	// Create a message
@@ -1134,8 +1134,8 @@ func TestGroupMessages_WithAuth(t *testing.T) {
 	// Test that authenticated user sees their own pending messages in group
 	prefix := uniquePrefix("grpmsgauth")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a message (will be approved in test setup)
@@ -1188,7 +1188,7 @@ func TestMessageWithoutGroupNotAccessible(t *testing.T) {
 	prefix := uniquePrefix("nogroup")
 
 	// Create a user
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 
 	// Create a message WITHOUT a messages_groups entry
 	msgID := CreateTestMessageWithoutGroup(t, userID, "Private Chat Message")
@@ -1204,10 +1204,10 @@ func TestMessageModOnlyFields(t *testing.T) {
 
 	// Create group, regular user, and mod user.
 	groupID := CreateTestGroup(t, prefix)
-	regularUserID := CreateTestUser(t, prefix+"_reg", "User")
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, regularUserID, groupID, "Member")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	regularUserID := CreateTestUser(t, prefix+"_reg", utils.SYSTEMROLE_USER)
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, regularUserID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	_, regularToken := CreateTestSession(t, regularUserID)
 	_, modToken := CreateTestSession(t, modUserID)
 
@@ -1259,10 +1259,10 @@ func TestMessageContentCheckReasonsAreModOnly(t *testing.T) {
 	prefix := uniquePrefix("msg_ccreasons")
 
 	groupID := CreateTestGroup(t, prefix)
-	regularUserID := CreateTestUser(t, prefix+"_reg", "User")
-	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, regularUserID, groupID, "Member")
-	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	regularUserID := CreateTestUser(t, prefix+"_reg", utils.SYSTEMROLE_USER)
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, regularUserID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
 	_, regularToken := CreateTestSession(t, regularUserID)
 	_, modToken := CreateTestSession(t, modUserID)
 
@@ -1343,10 +1343,10 @@ func TestPostMessageApprove(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1400,10 +1400,10 @@ func TestApproveAddsApprovedMessageToSpatial(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// A location with non-zero lat/lng for the spatial point.
@@ -1452,10 +1452,10 @@ func TestPostMessageApproveWithStdMsg(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1493,10 +1493,10 @@ func TestPostMessageRejectCreatesLog(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1539,10 +1539,10 @@ func TestPostMessageReplyCreatesLogSynchronously(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1584,10 +1584,10 @@ func TestPostMessageRejectNonPendingDoesNotEmailOrLog(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1632,10 +1632,10 @@ func TestPostMessageRejectNoSubjectOnApprovedCopyIsRefused(t *testing.T) {
 
 	groupID := CreateTestGroup(t, prefix)
 	otherGroup := CreateTestGroup(t, prefix+"_other")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1678,10 +1678,10 @@ func TestPostMessageRejectNoSubjectDeletes(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1711,10 +1711,10 @@ func TestPostMessageApproveMarksHam(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1747,10 +1747,10 @@ func TestPostMessageApproveNoSpamham(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1778,10 +1778,10 @@ func TestPostMessageApproveNotMod(t *testing.T) {
 	prefix := uniquePrefix("msgmod_appr_nm")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	regularID := CreateTestUser(t, prefix+"_regular", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, regularID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	regularID := CreateTestUser(t, prefix+"_regular", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, regularID, groupID, utils.ROLE_MEMBER)
 	_, regularToken := CreateTestSession(t, regularID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1806,10 +1806,10 @@ func TestPostMessageReject(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -1847,10 +1847,10 @@ func TestPostMessageRejectAfterMemberDeletes(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a pending message
@@ -1886,10 +1886,10 @@ func TestPostMessageRejectAfterMemberWithdrawsPending(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, posterToken := CreateTestSession(t, posterID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -1952,10 +1952,10 @@ func TestPostMessageDelete(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -2006,10 +2006,10 @@ func TestPostMessageDeleteNoDuplicateLog(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -2043,10 +2043,10 @@ func TestPostMessageSpam(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -2081,10 +2081,10 @@ func TestPostMessageHold(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -2120,10 +2120,10 @@ func TestPostMessageRelease(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -2161,10 +2161,10 @@ func TestPostMessageApproveEdits(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -2219,10 +2219,10 @@ func TestPostMessageRevertEdits(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -2279,10 +2279,10 @@ func TestPostMessagePartnerConsent(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -2319,10 +2319,10 @@ func TestPostMessageReply(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -2359,7 +2359,7 @@ func TestPostMessageJoinAndPost(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// User is NOT a member yet.
@@ -2425,7 +2425,7 @@ func TestPutMessageBackfillsLocationFromUserWhenNoLocationid(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Give the user a last known location (a real postcode with lat/lng).
@@ -2471,8 +2471,8 @@ func TestPatchMessageLocationOnlyEditDenormalisesLatLng(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("patch_locdenorm")
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	token := getToken(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" chair", 55.95, -3.18)
@@ -2510,7 +2510,7 @@ func TestJoinAndPostSavesDeadline(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a draft message.
@@ -2551,7 +2551,7 @@ func TestJoinAndPostSavesDeadlineISODatetime(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a draft message.
@@ -2648,11 +2648,11 @@ func TestJoinAndPostModeratedUserGoesToPending(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Pre-create membership with MODERATED posting status.
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'MODERATED' WHERE userid = ? AND groupid = ?", userID, groupID)
 
 	// Create a draft message.
@@ -2691,7 +2691,7 @@ func TestJoinAndPostBannedUserReturns403(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Real ban state: no memberships row, row in users_banned.
@@ -2732,11 +2732,11 @@ func TestJoinAndPostProhibitedUserReturns403(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create membership with PROHIBITED posting status.
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'PROHIBITED' WHERE userid = ? AND groupid = ?", userID, groupID)
 
 	// Create a draft message.
@@ -2766,7 +2766,7 @@ func TestJoinAndPostGroupDefaultModerated(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Set the group's default posting status to MODERATED.
@@ -2810,11 +2810,11 @@ func TestJoinAndPostForcePendingOverridesApproved(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// User has unmoderated posting status — all messages start Pending regardless.
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Create a draft message.
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Forced pending sofa', 'A sofa', 'A sofa', NOW(), NOW(), 'Platform')", userID)
@@ -2852,11 +2852,11 @@ func TestJoinAndPostForcePendingFalseDoesNotOverride(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// User is explicitly MODERATED.
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'MODERATED' WHERE userid = ? AND groupid = ?", userID, groupID)
 
 	// Create a draft message.
@@ -2897,8 +2897,8 @@ func TestJoinAndPostRejectsEmptyDraft(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Simulate a stale pre-validation draft: empty subject, empty textbody,
@@ -2933,8 +2933,8 @@ func TestPatchMessage(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := createPendingMessage(t, ownerID, groupID, prefix)
@@ -2970,10 +2970,10 @@ func TestPatchMessageAsMod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -3005,16 +3005,16 @@ func TestGetMessageReturnsEditsForMod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Non-mod user (systemrole User, group role Member)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" item", 52.5, -1.8)
@@ -3061,11 +3061,11 @@ func TestGetMessageReturnsLocationForMod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" item", 52.5, -1.8)
@@ -3095,8 +3095,8 @@ func TestGetMessageReturnsLocationForMod(t *testing.T) {
 	assert.InDelta(t, -1.8, locMap["lng"].(float64), 0.01, "Location lng should match")
 
 	// Fetch as non-mod — should NOT see precise location (privacy).
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	resp2, _ := getApp().Test(httptest.NewRequest("GET",
@@ -3115,8 +3115,8 @@ func TestPatchMessageRejectedToPending(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Create a message in Rejected collection (simulates a mod-rejected message).
@@ -3154,8 +3154,8 @@ func TestPatchMessageLogEntry(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := createPendingMessage(t, ownerID, groupID, prefix)
@@ -3197,9 +3197,9 @@ func TestPatchMessageSubjectUsesContextualGroupKeyword(t *testing.T) {
 	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('keywords', JSON_OBJECT('OFFER', 'GIVING')) WHERE id = ?", groupA)
 	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('keywords', JSON_OBJECT('OFFER', 'FREEBIE')) WHERE id = ?", groupB)
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupA, "Member")
-	CreateTestMembership(t, ownerID, groupB, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, ownerID, groupB, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupA, prefix+" Test Item", 53.0, -1.0)
@@ -3243,12 +3243,12 @@ func TestPatchMessageLocationName(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" Test Item", 53.0, -1.0)
 
 	// Find a location name to use.
@@ -3295,10 +3295,10 @@ func TestPatchMessageEditKeepsPendingVisibleAndQueuesRecheck(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, ownerID, groupID, prefix)
@@ -3348,8 +3348,8 @@ func TestPatchMessageExtendDeadlineClearsExpiredOutcome(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Test Item", 53.0, -1.0)
@@ -3393,8 +3393,8 @@ func TestDeleteMessageOwner(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := createPendingMessage(t, ownerID, groupID, prefix)
@@ -3415,10 +3415,10 @@ func TestDeleteMessageMod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -3442,10 +3442,10 @@ func TestDeleteMessageModCreatesAuditLog(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -3467,9 +3467,9 @@ func TestDeleteMessageNotOwnerNotMod(t *testing.T) {
 	prefix := uniquePrefix("msgmod_delfail")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -3487,8 +3487,8 @@ func TestPutMessage(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{
@@ -3522,8 +3522,8 @@ func TestPutMessageRecordsFromIP(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{
@@ -3561,8 +3561,8 @@ func TestPutMessageGeneratesSyntheticMessageID(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{
@@ -3593,6 +3593,53 @@ func TestPutMessageGeneratesSyntheticMessageID(t *testing.T) {
 	assert.Contains(t, *messageid, fmt.Sprintf("-%d", groupID), "messageid must have -{groupid} suffix")
 }
 
+// TestPutMessageUnmoderatedMemberGoesDirectToApproved verifies that a trusted
+// (unmoderated, DEFAULT ourPostingStatus) member's direct PUT /message submission
+// on a non-moderated, non-closed group goes straight to Approved, not Pending.
+// This pins down a real bug found while testing the lockdown switch: the
+// ourPostingStatus lookup used to Scan into a throwaway one-field struct whose
+// field name ("OurPostingStatus" -> GORM's default "our_posting_status") never
+// matched the raw "ourPostingStatus" column actually selected, so the value was
+// silently always nil and every direct-submit member was forced through Pending
+// regardless of their real posting status - with no error surfaced beyond a
+// TRACE-level GORM scan warning. Fixed by scanning directly into *string, the
+// same pattern already used by every other ourPostingStatus read in this file.
+func TestPutMessageUnmoderatedMemberGoesDirectToApproved(t *testing.T) {
+	prefix := uniquePrefix("msgput_directapprove")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	_, token := CreateTestSession(t, userID)
+
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.moderated', 0, '$.closed', 0) WHERE id = ?", groupID)
+
+	body := map[string]interface{}{
+		"groupid":    groupID,
+		"type":       "Offer",
+		"subject":    prefix + " Test Offer",
+		"textbody":   "A test offer message",
+		"item":       "Test Item",
+		"collection": "Pending",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	newID := uint64(result["id"].(float64))
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", newID, groupID).Scan(&collection)
+	assert.Equal(t, "Approved", collection, "a trusted (unmoderated) member's direct post must go straight to Approved")
+}
+
 // TestPutMessageAvailableNowSetsInitially verifies: sending only
 // availablenow sets both availableinitially and availablenow to that value.
 func TestPutMessageAvailableNowSetsInitially(t *testing.T) {
@@ -3600,8 +3647,8 @@ func TestPutMessageAvailableNowSetsInitially(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{
@@ -3634,8 +3681,8 @@ func TestPutMessageSetsLatLngFromLocation(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Find a location with non-zero lat/lng.
@@ -3709,7 +3756,7 @@ func TestPutMessageNotMemberDraft(t *testing.T) {
 	prefix := uniquePrefix("msgmod_putnm")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	// NOT a member of the group — but drafts don't require membership.
 	_, token := CreateTestSession(t, userID)
 
@@ -3732,7 +3779,7 @@ func TestPutMessageNotMemberNonDraft(t *testing.T) {
 	prefix := uniquePrefix("msgmod_putnmd")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	// NOT a member — non-Draft collection should be rejected.
 	_, token := CreateTestSession(t, userID)
 
@@ -3756,8 +3803,8 @@ func TestPutMessageInvalidType(t *testing.T) {
 	prefix := uniquePrefix("msgmod_putbad")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{
@@ -3780,8 +3827,8 @@ func TestPutMessageEmptyItemRejected(t *testing.T) {
 	prefix := uniquePrefix("msgmod_noitem")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{
@@ -3805,9 +3852,9 @@ func TestPostMessageApproveAsAdmin(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	// Admin does NOT need to be a member of the group.
 	_, adminToken := CreateTestSession(t, adminID)
 
@@ -3906,10 +3953,10 @@ func TestPostMessageBackToPending(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create and approve a message first.
@@ -3970,10 +4017,10 @@ func TestPostMessageBackToPendingNotMod(t *testing.T) {
 	prefix := uniquePrefix("msgmod_btp_nm")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	regularID := CreateTestUser(t, prefix+"_regular", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, regularID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	regularID := CreateTestUser(t, prefix+"_regular", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, regularID, groupID, utils.ROLE_MEMBER)
 	_, regularToken := CreateTestSession(t, regularID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -4006,12 +4053,12 @@ func TestApproveCrossPostOnlyAffectsOneGroup(t *testing.T) {
 
 	group1ID := CreateTestGroup(t, prefix+"_g1")
 	group2ID := CreateTestGroup(t, prefix+"_g2")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, group1ID, "Member")
-	CreateTestMembership(t, posterID, group2ID, "Member")
-	CreateTestMembership(t, modID, group1ID, "Moderator")
-	CreateTestMembership(t, modID, group2ID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, group1ID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, group2ID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, group1ID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, group2ID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create message pending on both groups (cross-post).
@@ -4055,7 +4102,7 @@ func TestPostMessageNotLoggedIn(t *testing.T) {
 
 func TestPostMessageNoID(t *testing.T) {
 	prefix := uniquePrefix("msgw_noid")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{"action": "Promise"}
@@ -4070,7 +4117,7 @@ func TestPostMessageNoID(t *testing.T) {
 
 func TestPostMessageUnknownAction(t *testing.T) {
 	prefix := uniquePrefix("msgw_unk")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{"id": 1, "action": "Bogus"}
@@ -4087,9 +4134,9 @@ func TestPostMessagePromise(t *testing.T) {
 	prefix := uniquePrefix("msgw_promise")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -4128,8 +4175,8 @@ func TestPostMessagePromise(t *testing.T) {
 func TestPostMessagePromiseNotYourMessage(t *testing.T) {
 	prefix := uniquePrefix("msgw_prm_notmine")
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4151,7 +4198,7 @@ func TestPostMessagePromiseNotYourMessage(t *testing.T) {
 func TestPostMessagePromiseMessageNotFound(t *testing.T) {
 	prefix := uniquePrefix("msgw_prm_nf")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{
@@ -4171,9 +4218,9 @@ func TestPostMessageRenege(t *testing.T) {
 	prefix := uniquePrefix("msgw_renege")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -4215,7 +4262,7 @@ func TestPostMessageOutcomeIntended(t *testing.T) {
 	prefix := uniquePrefix("msgw_intended")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4246,7 +4293,7 @@ func TestPostMessageOutcomeIntendedRepost(t *testing.T) {
 	prefix := uniquePrefix("msgw_int_rep")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4273,7 +4320,7 @@ func TestPostMessageOutcomeIntendedRepost(t *testing.T) {
 func TestPostMessageOutcomeIntendedInvalid(t *testing.T) {
 	prefix := uniquePrefix("msgw_int_inv")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4296,7 +4343,7 @@ func TestPostMessageOutcome(t *testing.T) {
 	prefix := uniquePrefix("msgw_outcome")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4332,7 +4379,7 @@ func TestPostMessageOutcomeDuplicate(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_dup")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4363,7 +4410,7 @@ func TestPostMessageOutcomeAllowsTakenOverExpiredPlusAutoWithdrawn(t *testing.T)
 	prefix := uniquePrefix("msgw_out_dup_expauto")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4403,7 +4450,7 @@ func TestPostMessageOutcomeAllowsTakenOverAutoExpiredWithdrawn(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_autoexp")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4437,7 +4484,7 @@ func TestPostMessageOutcomeRejectsTakenOverRealWithdrawn(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_dup_realw")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4461,7 +4508,7 @@ func TestPostMessageOutcomeRejectsTakenOverRealWithdrawn(t *testing.T) {
 func TestPostMessageOutcomeMessageNotFound(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_nf")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := map[string]interface{}{
@@ -4482,9 +4529,9 @@ func TestPostMessageAddBy(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -4524,9 +4571,9 @@ func TestPostMessageAddByWithoutCountLeavesTheNumberAlone(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_nocount")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -4559,9 +4606,9 @@ func TestPostMessageAddByWithoutCountKeepsAnEarlierCount(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_keep")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -4593,9 +4640,9 @@ func TestPostMessageAddByUpdate(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_upd")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -4633,9 +4680,9 @@ func TestPostMessageRemoveBy(t *testing.T) {
 	prefix := uniquePrefix("msgw_rmby")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -4671,7 +4718,7 @@ func TestPostMessageOutcomeTakenOnWanted(t *testing.T) {
 	prefix := uniquePrefix("msgw_tak_wnt")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" wanted item", 52.5, -1.8)
@@ -4696,7 +4743,7 @@ func TestPostMessageOutcomeTakenOnWanted(t *testing.T) {
 func TestPostMessageOutcomeReceivedOnOffer(t *testing.T) {
 	prefix := uniquePrefix("msgw_rcv_ofr")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4720,8 +4767,8 @@ func TestPostMessageAddByNotYourMessage(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_ny")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4747,8 +4794,8 @@ func TestPostMessageRemoveByNotYourMessage(t *testing.T) {
 	prefix := uniquePrefix("msgw_rmby_ny")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	_, otherToken := CreateTestSession(t, otherID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4770,46 +4817,105 @@ func TestPostMessageRemoveByNotYourMessage(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode, "Non-owner should not be able to RemoveBy")
 }
 
-func TestPostMessagePromiseCreatesChat(t *testing.T) {
-	// H1: Promise should create a chat room if none exists between the users.
-	prefix := uniquePrefix("msgw_prm_cc")
+func TestPostMessagePromiseRefusedWithoutChat(t *testing.T) {
+	// Promising needs an existing chat between the poster and the person: nothing is recorded
+	// and no chat is created for a stranger.
+	prefix := uniquePrefix("msgw_prm_nochat")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
-	// Verify no chat room exists between these users.
-	var chatCount int64
-	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-		ownerID, otherID, otherID, ownerID).Scan(&chatCount)
-	assert.Equal(t, int64(0), chatCount)
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Promise", "userid": otherID})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode)
 
-	// Promise the item - should create a chat room.
-	body := map[string]interface{}{
-		"id":     msgID,
-		"action": "Promise",
-		"userid": otherID,
-	}
-	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?jwt=%s", ownerToken)
-	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	var promises, chats int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&promises)
+	assert.Equal(t, int64(0), promises)
+	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
+		ownerID, otherID, otherID, ownerID).Scan(&chats)
+	assert.Equal(t, int64(0), chats)
+}
+
+func TestPostMessagePromiseWithChatPostsPromisedMessage(t *testing.T) {
+	// A chat about some other post is enough: the promise goes into that chat.
+	prefix := uniquePrefix("msgw_prm_chat")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	_, ownerToken := CreateTestSession(t, ownerID)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	chatID := CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Promise", "userid": otherID})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Verify chat room was created.
-	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-		ownerID, otherID, otherID, ownerID).Scan(&chatCount)
-	assert.Equal(t, int64(1), chatCount)
-
-	// Verify chat message was created.
 	var chatMsgCount int64
-	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND type = 'Promised'", msgID).Scan(&chatMsgCount)
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND refmsgid = ? AND type = 'Promised'", chatID, msgID).Scan(&chatMsgCount)
 	assert.Equal(t, int64(1), chatMsgCount)
+}
+
+func promiseNoticeTasks(msgID uint64) (count int64, promisee int64) {
+	db := database.DBConn
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'message_promised' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID).Scan(&count)
+	db.Raw("SELECT COALESCE(MAX(JSON_EXTRACT(data, '$.userid')), -1) FROM background_tasks WHERE task_type = 'message_promised' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID).Scan(&promisee)
+	return
+}
+
+func postPromiseAction(t *testing.T, token string, body map[string]interface{}) {
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestPostMessagePromiseQueuesNoticeForOtherRepliers(t *testing.T) {
+	prefix := uniquePrefix("msgw_prm_notice")
+
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	_, ownerToken := CreateTestSession(t, ownerID)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
+
+	postPromiseAction(t, ownerToken, map[string]interface{}{"id": msgID, "action": "Promise", "userid": otherID})
+
+	count, promisee := promiseNoticeTasks(msgID)
+	assert.Equal(t, int64(1), count, "a promise queues one task to tell the other repliers")
+	assert.Equal(t, int64(otherID), promisee, "the task names the promisee so they are not told")
+}
+
+func TestPostMessageRenegeQueuesNoPromiseNotice(t *testing.T) {
+	prefix := uniquePrefix("msgw_prm_cancel")
+
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	_, ownerToken := CreateTestSession(t, ownerID)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
+
+	postPromiseAction(t, ownerToken, map[string]interface{}{"id": msgID, "action": "Promise", "userid": otherID})
+	postPromiseAction(t, ownerToken, map[string]interface{}{"id": msgID, "action": "Renege", "userid": otherID})
+
+	count, _ := promiseNoticeTasks(msgID)
+	assert.Equal(t, int64(1), count, "cancelling the promise queues nothing further")
 }
 
 func TestPostMessageOutcomeTakenWithUserRecordsBy(t *testing.T) {
@@ -4817,9 +4923,9 @@ func TestPostMessageOutcomeTakenWithUserRecordsBy(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_by")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -4855,7 +4961,7 @@ func TestPostMessageOutcomeMarksSpatialSuccessful(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_sp")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4893,7 +4999,7 @@ func TestPostMessageOutcomeReceivedMarksSpatialSuccessful(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_sp_r")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 
@@ -4936,7 +5042,7 @@ func TestPostMessageOutcomeWithdrawnDoesNotMarkSpatialSuccessful(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_sp_w")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -4971,7 +5077,7 @@ func TestPostMessageWithdrawnPending(t *testing.T) {
 	prefix := uniquePrefix("msgw_wdr_pnd")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5018,7 +5124,7 @@ func TestPostMessageWithdrawnPendingLogsDeleted(t *testing.T) {
 	prefix := uniquePrefix("msgw_wdr_log")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5070,7 +5176,7 @@ func TestPostMessageWithdrawnWithRippledCopyPendingRecordsOutcome(t *testing.T) 
 	prefix := uniquePrefix("msgw_wdr_rip")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	homeGroup := CreateTestGroup(t, prefix+"_home")
 	nearbyGroup := CreateTestGroup(t, prefix+"_near")
@@ -5121,7 +5227,7 @@ func TestPostMessageWithdrawnIgnoresDeletedPendingRows(t *testing.T) {
 	prefix := uniquePrefix("msgw_wdr_del")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	homeGroup := CreateTestGroup(t, prefix+"_home")
 	otherGroup := CreateTestGroup(t, prefix+"_other")
@@ -5157,18 +5263,18 @@ func TestPostMessageOutcomeRefusedForRippledInModerator(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_rip")
 	db := database.DBConn
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	homeGroup := CreateTestGroup(t, prefix+"_home")
 	nearbyGroup := CreateTestGroup(t, prefix+"_near")
 	msgID := CreateTestMessage(t, posterID, homeGroup, prefix+" offer item", 52.5, -1.8)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, msgtype, rippled_in) VALUES (?, ?, 'Approved', NOW(), 'Offer', 1)", msgID, nearbyGroup)
 
-	nearbyModID := CreateTestUser(t, prefix+"_nearmod", "User")
-	CreateTestMembership(t, nearbyModID, nearbyGroup, "Moderator")
+	nearbyModID := CreateTestUser(t, prefix+"_nearmod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, nearbyModID, nearbyGroup, utils.ROLE_MODERATOR)
 	_, nearbyToken := CreateTestSession(t, nearbyModID)
 
-	homeModID := CreateTestUser(t, prefix+"_homemod", "User")
-	CreateTestMembership(t, homeModID, homeGroup, "Moderator")
+	homeModID := CreateTestUser(t, prefix+"_homemod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, homeModID, homeGroup, utils.ROLE_MODERATOR)
 	_, homeToken := CreateTestSession(t, homeModID)
 
 	post := func(token string) int {
@@ -5194,7 +5300,7 @@ func TestPostMessageWithdrawnApproved(t *testing.T) {
 	prefix := uniquePrefix("msgw_wdr_app")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5229,7 +5335,7 @@ func TestPostMessageOutcomeQueuesFreebieAlertsRemove(t *testing.T) {
 	prefix := uniquePrefix("msgw_fa_rem")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5261,7 +5367,7 @@ func TestPostMessageOutcomeWithdrawnQueuesFreebieAlertsRemove(t *testing.T) {
 	prefix := uniquePrefix("msgw_fa_rem_w")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5291,13 +5397,13 @@ func TestApproveMessageQueuesFreebieAlertsAdd(t *testing.T) {
 	prefix := uniquePrefix("msgw_fa_add")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	// Add mod as moderator of the group.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Moderator', 'Approved')", modID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", modID, groupID, utils.ROLE_MODERATOR)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
 
 	// Create a pending Offer message.
@@ -5329,13 +5435,13 @@ func TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd(t *testing.T) {
 	prefix := uniquePrefix("msgw_fa_clr")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 
 	// Add mod as moderator of the group.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Moderator', 'Approved')", modID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", modID, groupID, utils.ROLE_MODERATOR)
 	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
 
 	// Create a pending Offer and mark it as a clearance via messages_bulk_items.
@@ -5369,7 +5475,7 @@ func TestDeleteMessageQueuesFreebieAlertsRemove(t *testing.T) {
 	prefix := uniquePrefix("msgw_fa_del")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5391,7 +5497,7 @@ func TestPostMessageView(t *testing.T) {
 	prefix := uniquePrefix("msgw_view")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5418,7 +5524,7 @@ func TestPostMessageViewDedup(t *testing.T) {
 	prefix := uniquePrefix("msgw_view_dup")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5481,10 +5587,10 @@ func TestMessagePageviewSemantics(t *testing.T) {
 	setup := func(label string) (msgID uint64, token string, viewerID uint64) {
 		prefix := uniquePrefix(label)
 		groupID := CreateTestGroup(t, prefix)
-		ownerID := CreateTestUser(t, prefix+"_owner", "User")
-		CreateTestMembership(t, ownerID, groupID, "Member")
-		viewerID = CreateTestUser(t, prefix+"_viewer", "User")
-		CreateTestMembership(t, viewerID, groupID, "Member")
+		ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+		CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+		viewerID = CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+		CreateTestMembership(t, viewerID, groupID, utils.ROLE_MEMBER)
 		_, token = CreateTestSession(t, viewerID)
 		msgID = CreateTestMessage(t, ownerID, groupID, prefix+" item", 55.9533, -3.1883)
 		return
@@ -5546,7 +5652,7 @@ func TestMessagePageviewSource(t *testing.T) {
 	// notification-tagged open records the source; a later organic open does not clear it
 	{
 		prefix := uniquePrefix("pv_src_notify")
-		userID := CreateTestUser(t, prefix+"_user", "User")
+		userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
 		groupID := CreateTestGroup(t, prefix)
 		msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
@@ -5560,7 +5666,7 @@ func TestMessagePageviewSource(t *testing.T) {
 	// organic-only open leaves source unset (NULL)
 	{
 		prefix := uniquePrefix("pv_src_organic")
-		userID := CreateTestUser(t, prefix+"_user", "User")
+		userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 		_, token := CreateTestSession(t, userID)
 		groupID := CreateTestGroup(t, prefix)
 		msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
@@ -5571,7 +5677,7 @@ func TestMessagePageviewSource(t *testing.T) {
 }
 
 // TestMarkSeenSource verifies a source-tagged impression (MarkSeen with a source,
-// e.g. from the similar-posts widget) records pageview=0 + the source on the
+// e.g. from a recommendation widget) records pageview=0 + the source on the
 // fresh row, that a later genuine open upgrades pageview to 1 while PRESERVING
 // the source, and that a subsequent differently-tagged impression does not
 // overwrite the first-touch source.
@@ -5606,30 +5712,30 @@ func TestMarkSeenSource(t *testing.T) {
 	}
 
 	prefix := uniquePrefix("markseen_src")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, viewerID, groupID, "Member")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, viewerID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, viewerID)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" item", 55.9533, -3.1883)
 
 	// Source-tagged impression: pageview=0 + source recorded.
-	doMarkSeen(token, msgID, "similar_posts")
+	doMarkSeen(token, msgID, "first_widget")
 	pv, src := get(msgID, viewerID)
 	assert.Equal(t, 0, pv, "impression => pageview=0")
-	assert.Equal(t, "similar_posts", src, "impression records its source")
+	assert.Equal(t, "first_widget", src, "impression records its source")
 
 	// Genuine open (untagged): pageview upgraded to 1, source preserved.
 	doView(token, msgID)
 	pv, src = get(msgID, viewerID)
 	assert.Equal(t, 1, pv, "open after impression => pageview upgraded to 1")
-	assert.Equal(t, "similar_posts", src, "genuine open must not clear the impression source")
+	assert.Equal(t, "first_widget", src, "genuine open must not clear the impression source")
 
 	// A later differently-tagged impression must not overwrite first-touch source.
 	doMarkSeen(token, msgID, "wanted_match")
 	_, src = get(msgID, viewerID)
-	assert.Equal(t, "similar_posts", src, "first-touch source wins; later impressions do not overwrite")
+	assert.Equal(t, "first_widget", src, "first-touch source wins; later impressions do not overwrite")
 }
 
 // --- Adversarial tests ---
@@ -5639,9 +5745,9 @@ func TestPostMessageAddByNegativeCount(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_neg")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -5672,9 +5778,9 @@ func TestPostMessageAddByHugeCount(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_huge")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	takerID := CreateTestUser(t, prefix+"_taker", "User")
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -5705,7 +5811,7 @@ func TestPostMessageAddBySomeoneElse(t *testing.T) {
 	prefix := uniquePrefix("msgw_addby_else")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5742,7 +5848,7 @@ func TestPostMessagePromiseToSelfNoUserid(t *testing.T) {
 	prefix := uniquePrefix("msgw_prm_self")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5775,11 +5881,12 @@ func TestPostMessageDoublePromise(t *testing.T) {
 	prefix := uniquePrefix("msgw_prm_dbl")
 	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
 
 	body := map[string]interface{}{
 		"id":     msgID,
@@ -5811,12 +5918,14 @@ func TestPostMessageDoublePromise(t *testing.T) {
 }
 
 func TestPostMessageRenegeWithoutPromise(t *testing.T) {
-	// Renege when no promise exists should succeed without error.
+	// Renege when no promise exists succeeds but changes nothing: no reliability record against
+	// the user and no chat message to them.
 	prefix := uniquePrefix("msgw_rng_nop")
+	db := database.DBConn
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	_, ownerToken := CreateTestSession(t, ownerID)
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 
@@ -5832,6 +5941,40 @@ func TestPostMessageRenegeWithoutPromise(t *testing.T) {
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode, "Renege without existing promise should succeed gracefully")
+
+	var renegeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_reneged WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&renegeCount)
+	assert.Equal(t, int64(0), renegeCount, "No renege record without a promise")
+
+	var chatMsgCount int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND type = 'Reneged'", msgID).Scan(&chatMsgCount)
+	assert.Equal(t, int64(0), chatMsgCount, "No Reneged chat message without a promise")
+}
+
+func TestPostMessageRenegeTwiceRecordsOnce(t *testing.T) {
+	prefix := uniquePrefix("msgw_rng_twice")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	_, ownerToken := CreateTestSession(t, ownerID)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
+	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgID, otherID)
+
+	for i := 0; i < 2; i++ {
+		bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Renege", "userid": otherID})
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	var renegeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_reneged WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&renegeCount)
+	assert.Equal(t, int64(1), renegeCount)
 }
 
 func TestPostMessageOutcomeNoHappiness(t *testing.T) {
@@ -5839,7 +5982,7 @@ func TestPostMessageOutcomeNoHappiness(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_noh")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5869,7 +6012,7 @@ func TestPostMessageOutcomeHappyNoComment(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_nocomm")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
@@ -5896,7 +6039,7 @@ func TestPostMessageOutcomeHappyNoComment(t *testing.T) {
 
 func TestPostMessageEmptyBody(t *testing.T) {
 	prefix := uniquePrefix("msgw_empty")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Empty JSON body - should return 400 (missing id).
@@ -5910,7 +6053,7 @@ func TestPostMessageEmptyBody(t *testing.T) {
 
 func TestPostMessageInvalidJSON(t *testing.T) {
 	prefix := uniquePrefix("msgw_badjson")
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	url := fmt.Sprintf("/api/message?jwt=%s", token)
@@ -5933,10 +6076,10 @@ func TestListMessagesMT_DeletedMessageNotReturned(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a message that is marked deleted but still has a Pending entry in messages_groups.
@@ -5974,10 +6117,10 @@ func TestListMessagesMT_LimboUserMessageNotReturned(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a pending message from the poster.
@@ -6024,8 +6167,8 @@ func TestGetMessageWithoutHistory(t *testing.T) {
 	prefix := uniquePrefix("msgnohist")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" Normal Message", 55.9533, -3.1883)
 
@@ -6044,8 +6187,8 @@ func TestGetMultipleMessagesStillWorks(t *testing.T) {
 	prefix := uniquePrefix("msgmulti")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 
 	mid1 := CreateTestMessage(t, posterID, groupID, prefix+" Multi 1", 55.9533, -3.1883)
 	mid2 := CreateTestMessage(t, posterID, groupID, prefix+" Multi 2", 55.9533, -3.1883)
@@ -6073,11 +6216,11 @@ func TestMessagesMarkSeen(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 
 	// Create message owner and viewer
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, viewerID, groupID, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, viewerID, groupID, utils.ROLE_MEMBER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	// Create messages
@@ -6125,7 +6268,7 @@ func TestMessagesMarkSeenUnauthorized(t *testing.T) {
 
 func TestMessagesMarkSeenEmptyIds(t *testing.T) {
 	prefix := uniquePrefix("markseen_empty")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Test with empty IDs array
@@ -6138,7 +6281,7 @@ func TestMessagesMarkSeenEmptyIds(t *testing.T) {
 
 func TestMessagesMarkSeenInvalidBody(t *testing.T) {
 	prefix := uniquePrefix("markseen_invalid")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Test with missing IDs field
@@ -6151,7 +6294,7 @@ func TestMessagesMarkSeenInvalidBody(t *testing.T) {
 
 func TestMessagesMarkSeenInvalidJSON(t *testing.T) {
 	prefix := uniquePrefix("markseen_json")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+token, bytes.NewBufferString("not json"))
@@ -6164,7 +6307,7 @@ func TestMessagesMarkSeenNonExistentIDs(t *testing.T) {
 	// Marking non-existent message IDs should succeed (inserts orphaned View records
 	// but doesn't crash). This matches PHP behaviour.
 	prefix := uniquePrefix("markseen_ghost")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"ids": [999999998, 999999999]}`
@@ -6179,11 +6322,11 @@ func TestMessagesMarkSeenIdempotent(t *testing.T) {
 	prefix := uniquePrefix("markseen_idem")
 	groupID := CreateTestGroup(t, prefix)
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, viewerID, groupID, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, viewerID, groupID, utils.ROLE_MEMBER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, "Test Idempotent", 55.9533, -3.1883)
@@ -6213,10 +6356,10 @@ func TestMessagesMarkSeenBatchPreservesSemantics(t *testing.T) {
 	prefix := uniquePrefix("markseen_batch")
 	groupID := CreateTestGroup(t, prefix)
 
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
-	CreateTestMembership(t, viewerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, viewerID, groupID, utils.ROLE_MEMBER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	// A batch of messages (enough to exercise the multi-row INSERT).
@@ -6286,10 +6429,10 @@ func TestPatchMessageReconstructsSubjectFromItemLocation(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a message.
@@ -6351,10 +6494,10 @@ func TestPatchMessageItemCaseCorrection(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create an area and postcode location.
@@ -6411,8 +6554,8 @@ func TestPatchMessageTypeChangeCreatesEditRecord(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Create a message via createPendingMessage (handles required DB columns).
@@ -6476,10 +6619,10 @@ func TestPatchMessageTypeChangeModCreatesEditRecord(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -6509,10 +6652,10 @@ func TestPatchMessageSubjectChangeModCreatesEditRecordWithAttribution(t *testing
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
@@ -6557,8 +6700,8 @@ func TestRejectToDraftOwner(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create an approved message.
@@ -6608,9 +6751,9 @@ func TestRejectToDraftPerGroup(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupA, "Member")
-	CreateTestMembership(t, userID, groupB, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userID, groupB, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Message on both groups (groupA via CreateTestMessage, groupB added).
@@ -6683,9 +6826,9 @@ func TestRejectToDraftOwnerWithdrawsAllGroups(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupA, "Member")
-	CreateTestMembership(t, userID, groupB, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userID, groupB, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, groupA, prefix+" item", 52.5, -1.8)
@@ -6728,8 +6871,8 @@ func TestRejectToDraftClearsExpiredDeadline(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
@@ -6759,8 +6902,8 @@ func TestRejectToDraftKeepsFutureDeadline(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
@@ -6790,11 +6933,11 @@ func TestRejectToDraftForbiddenForOtherUser(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" item", 52.5, -1.8)
@@ -6821,8 +6964,8 @@ func TestBackToDraftAlias(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
@@ -6854,8 +6997,8 @@ func TestRejectToDraftFullRepostFlow(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create an approved message with an old arrival.
@@ -6927,10 +7070,10 @@ func TestRejectToDraftPreservesModHold(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, posterToken := CreateTestSession(t, posterID)
 	_, modToken := CreateTestSession(t, modID)
 
@@ -7000,8 +7143,8 @@ func TestRejectToDraftClearsOutcome(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
@@ -7041,10 +7184,10 @@ func TestRejectToDraftResetsAvailablenow(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
@@ -7082,8 +7225,8 @@ func TestJoinAndPostClearsOutcomeAndRecordsPosting(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
@@ -7125,7 +7268,7 @@ func TestJoinAndPostSetsFromaddr(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Give the user a @users.ilovefreegle.org email (simulating V1's inventEmail).
@@ -7175,7 +7318,7 @@ func TestJoinAndPostInventsEmailWhenMissing(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Ensure the user has NO @users.ilovefreegle.org email — only a regular one.
@@ -7219,10 +7362,10 @@ func TestGetMessageItemLocationForMod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, userID, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a message from the user with a location and item
@@ -7277,15 +7420,15 @@ func TestGetMessageWorryWords(t *testing.T) {
 
 	// Create group and users.
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, otherID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
 	_, otherToken := CreateTestSession(t, otherID)
 
 	// Insert a global worry word (use a simple word without special chars,
@@ -7417,13 +7560,52 @@ func TestGetMessageWorryWords(t *testing.T) {
 	assert.True(t, hasWorry6, "Case-insensitive match should trigger worry")
 }
 
+// A whitelist phrase is stored as a LITERAL allowed row (place names like a district), not a
+// fuzzy one. The display check used to load only fuzzy rows, so such a phrase did nothing and
+// the flag word inside it kept flagging the post.
+func TestGetMessageWorryWordsLiteralAllowedPhrase(t *testing.T) {
+	prefix := uniquePrefix("msg_worry_lit")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	flagWord := "zorbtest" + suffix
+	phrase := flagWord + " Quarter"
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'review', 'fuzzy', 'global', 'flag')", flagWord)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'allowed', 'literal', 'global', 'flag')", phrase)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword IN (?, ?)", flagWord, phrase)
+
+	worryFor := func(subject string) []interface{} {
+		msgID := CreateTestMessage(t, posterID, groupID, subject, 52.5, -1.8)
+		resp, _ := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var msg map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&msg)
+		if w, ok := msg["worry"]; ok {
+			return w.([]interface{})
+		}
+		return nil
+	}
+
+	assert.Empty(t, worryFor("OFFER: Lamp ("+phrase+" B4)"), "A literal allowed phrase must silence the flag word inside it")
+	assert.NotEmpty(t, worryFor("OFFER: Lamp ("+flagWord+" B4)"), "The flag word on its own must still flag")
+}
+
 func TestPatchMessageDeadline(t *testing.T) {
 	prefix := uniquePrefix("msgmod_deadline")
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := createPendingMessage(t, ownerID, groupID, prefix)
@@ -7472,12 +7654,12 @@ func TestGetMessageWorryWordsGroupMod(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 
 	// Create a group-level mod: systemrole='User' but membership role='Moderator'.
-	groupModID := CreateTestUser(t, prefix+"_grpmod", "User")
-	CreateTestMembership(t, groupModID, groupID, "Moderator")
+	groupModID := CreateTestUser(t, prefix+"_grpmod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, groupModID, groupID, utils.ROLE_MODERATOR)
 	_, groupModToken := CreateTestSession(t, groupModID)
 
 	// Insert a unique worry word.
@@ -7515,7 +7697,7 @@ func TestMessagePostWritesHistory(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create a draft message.
@@ -7561,7 +7743,7 @@ func TestJoinAndPostLogsReceived(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create draft with a messageid so we can assert text==messageid.
@@ -7605,8 +7787,8 @@ func TestMessageEditRecordsAllColumns(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Create a message with an item and a known locationid.
@@ -7683,8 +7865,8 @@ func TestMessageAiDeclinedWritesTable(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" AI declined item", 55.9533, -3.1883)
 
 	// Directly insert into messages_ai_declined to verify the table is writable.
@@ -7707,13 +7889,13 @@ func TestGetMessagePostings(t *testing.T) {
 	prefix := uniquePrefix("MsgPostings")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	_, modToken := CreateTestSession(t, modID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, userID, groupID, "OFFER: Test Postings Item", 55.9533, -3.1883)
 
@@ -7748,8 +7930,8 @@ func TestPatchMessageEditReviewRequiredModeratedMember(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Set member to moderated posting status.
@@ -7786,8 +7968,8 @@ func TestPatchMessageEditNoReviewUnmoderatedMember(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Set member to DEFAULT posting status (unmoderated).
@@ -7827,8 +8009,8 @@ func TestPatchMessageEditNoReviewPendingMessage(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Set member to moderated posting status.
@@ -7864,8 +8046,8 @@ func TestPatchMessageEditReviewRequiredGroupModerated(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Member has DEFAULT posting status (normally unmoderated).
@@ -7917,8 +8099,8 @@ func TestPatchMessageTextEditResetsContentCheck(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := createPendingMessage(t, ownerID, groupID, prefix)
@@ -7958,8 +8140,8 @@ func TestPatchMessageSubjectEditResetsContentCheck(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := createPendingMessage(t, ownerID, groupID, prefix)
@@ -7992,8 +8174,8 @@ func TestPatchMessageNonContentEditKeepsContentCheck(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	msgID := createPendingMessage(t, ownerID, groupID, prefix)
@@ -8023,10 +8205,10 @@ func TestGetMessageTnpostid(t *testing.T) {
 	prefix := uniquePrefix("msg_tnpostid")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
 
 	// Set tnpostid.
@@ -8046,10 +8228,10 @@ func TestGetMessageTnpostid(t *testing.T) {
 func TestGetMessageTnpostidNull(t *testing.T) {
 	prefix := uniquePrefix("msg_tnpostidnull")
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
 
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
@@ -8067,10 +8249,10 @@ func TestGetMessageExpiresat(t *testing.T) {
 	prefix := uniquePrefix("msg_expiresat")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
 
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
@@ -8102,10 +8284,10 @@ func TestExpiresatRespectsRepostsOfferKey(t *testing.T) {
 	prefix := uniquePrefix("msg_expiresat_offer")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// maxagetoshow explicitly 0 means reposts alone govern expiry.
 	// Offer: 4 * (5+1) = 24 days.
@@ -8141,10 +8323,10 @@ func TestExpiresatRespectsRepostsWantedKey(t *testing.T) {
 	prefix := uniquePrefix("msg_expiresat_wanted")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
 		"'$.maxagetoshow', 0, '$.reposts', JSON_OBJECT('offer', 4, 'wanted', 7, 'max', 5)) "+
@@ -8179,10 +8361,10 @@ func TestExpiresatMaxagetoshowWins(t *testing.T) {
 	prefix := uniquePrefix("msg_expiresat_maxage")
 	db := database.DBConn
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// maxagetoshow=60 beats repost lifetime of 3*(5+1)=18 for Offer.
 	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
@@ -8230,8 +8412,8 @@ func TestPatchMessagePartnerAuth(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 44444, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -8265,8 +8447,8 @@ func TestPatchMessagePartnerWrongDomain(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 55555, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -8289,8 +8471,8 @@ func TestPatchMessagePartnerInvalidKey(t *testing.T) {
 	prefix := uniquePrefix("msg_partpatchbad")
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
 
@@ -8311,9 +8493,9 @@ func TestPatchMessagePartnerNotOwner(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66666, otherID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -8338,8 +8520,8 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	// tnuserid is UNIQUE in production. 77710 is not used by any other test -
 	// 77701-77704, 77801-77804 and 77901-77903 all are. Release it from any user
 	// left by an earlier run before claiming it.
@@ -8385,12 +8567,12 @@ func TestPostMessageHoldPerGroup(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a message and add it to both groups.
@@ -8429,12 +8611,12 @@ func TestPostMessageReleasePerGroup(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create message on both groups, held on both.
@@ -8479,10 +8661,10 @@ func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
 	db := database.DBConn
 
 	groupA := CreateTestGroup(t, prefix+"_a")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -8520,11 +8702,11 @@ func TestPostMessageReleaseIgnoresDeletedGroupHold(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a") // live group the mod moderates
 	groupB := CreateTestGroup(t, prefix+"_b") // withdrawn crosspost copy, still held
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	otherModID := CreateTestUser(t, prefix+"_othermod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	otherModID := CreateTestUser(t, prefix+"_othermod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -8560,12 +8742,12 @@ func TestPostMessageDeletePerGroup(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -8606,10 +8788,10 @@ func TestPostMessageDeletePerGroupLastGroupSoftDeletes(t *testing.T) {
 	db := database.DBConn
 
 	groupA := CreateTestGroup(t, prefix+"_a")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -8640,12 +8822,12 @@ func TestPostMessageSpamPerGroup(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -8687,12 +8869,12 @@ func TestPostMessageBackToPendingPullsAllGroups(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create message approved on both groups.
@@ -8776,12 +8958,12 @@ func TestPostMessageHoldPerGroupLogsCorrectGroup(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a message on both groups (groupA is primary since it's first).
@@ -8815,12 +8997,12 @@ func TestPostMessageApproveAllGroupsReleasesAllHolds(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create message on both groups, held on both.
@@ -8857,12 +9039,12 @@ func TestPostMessageDeleteAfterSpamExcludesSoftDeleted(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -8928,9 +9110,9 @@ func TestMessageRepostPerGroupArrival(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, posterID)
 
 	// Give both groups a real reposts config (offer interval 3 days).
@@ -8989,8 +9171,8 @@ func TestMessageRepostNotBlockedByLaterRippledGroup(t *testing.T) {
 
 	homeGroup := CreateTestGroup(t, prefix+"_home")
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, homeGroup, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, homeGroup, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, posterID)
 
 	// Both groups use a 4-day offer interval, as the London groups do.
@@ -9025,8 +9207,8 @@ func TestMessageRepostDisabledOnOneGroupDoesNotBlockOthers(t *testing.T) {
 
 	openGroup := CreateTestGroup(t, prefix+"_open")
 	disabledGroup := CreateTestGroup(t, prefix+"_disabled")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, openGroup, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, openGroup, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, posterID)
 
 	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5, 'chaseups', 5)) WHERE id = ?", openGroup)
@@ -9056,8 +9238,8 @@ func TestMessageRepostDefaultsWhenGroupHasNoRepostSettings(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix+"_nosettings")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, posterID)
 
 	// No reposts key at all.
@@ -9096,10 +9278,10 @@ func TestPostMessageSpamLastGroupSoftDeletesMessage(t *testing.T) {
 	db := database.DBConn
 
 	groupA := CreateTestGroup(t, prefix+"_a")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -9135,12 +9317,12 @@ func TestPostMessageApprovePerGroupSpamtype(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a message on both groups flagged as spam via per-group spamtype.
@@ -9174,12 +9356,12 @@ func TestListMessagesMTMultiGroupNoDuplicates(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a message on both groups as Pending.
@@ -9219,12 +9401,12 @@ func TestListMessagesMT_MultiGroupGlobalArrivalOrder(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Interleave arrival ages across the two groups so any per-group
@@ -9300,12 +9482,12 @@ func TestListMessagesMT_PaginationCursorUsesMaxArrival(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modID, groupA, "Moderator")
-	CreateTestMembership(t, modID, groupB, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupA, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupB, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Two single-group messages (newest), then a cross-posted message whose two
@@ -9361,11 +9543,11 @@ func TestPostMessageApproveCrossGroupAttack403(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modAID := CreateTestUser(t, prefix+"_moda", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modAID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modAID := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modAID, groupA, utils.ROLE_MODERATOR)
 	// modAID is NOT a mod of groupB.
 	_, modAToken := CreateTestSession(t, modAID)
 
@@ -9401,11 +9583,11 @@ func TestPostMessageGlobalApproveNarrowsToAuthorizedGroups(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modAID := CreateTestUser(t, prefix+"_moda", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modAID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modAID := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modAID, groupA, utils.ROLE_MODERATOR)
 	_, modAToken := CreateTestSession(t, modAID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -9437,11 +9619,11 @@ func TestPostMessageRejectCrossGroupAttack403(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modAID := CreateTestUser(t, prefix+"_moda", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modAID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modAID := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modAID, groupA, utils.ROLE_MODERATOR)
 	_, modAToken := CreateTestSession(t, modAID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -9467,11 +9649,11 @@ func TestPostMessageHoldCrossGroupAttack403(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modAID := CreateTestUser(t, prefix+"_moda", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modAID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modAID := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modAID, groupA, utils.ROLE_MODERATOR)
 	_, modAToken := CreateTestSession(t, modAID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -9501,11 +9683,11 @@ func TestPostMessageSpamCrossGroupAttack403(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modAID := CreateTestUser(t, prefix+"_moda", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modAID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modAID := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modAID, groupA, utils.ROLE_MODERATOR)
 	_, modAToken := CreateTestSession(t, modAID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -9535,11 +9717,11 @@ func TestPostMessageDeleteCrossGroupAttack403(t *testing.T) {
 
 	groupA := CreateTestGroup(t, prefix+"_a")
 	groupB := CreateTestGroup(t, prefix+"_b")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modAID := CreateTestUser(t, prefix+"_moda", "User")
-	CreateTestMembership(t, posterID, groupA, "Member")
-	CreateTestMembership(t, posterID, groupB, "Member")
-	CreateTestMembership(t, modAID, groupA, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modAID := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modAID, groupA, utils.ROLE_MODERATOR)
 	_, modAToken := CreateTestSession(t, modAID)
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
@@ -9571,10 +9753,10 @@ func TestMessagePostingsVisibleToRegularUser(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("msgpostings")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	viewerID := CreateTestUser(t, prefix+"_viewer", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	_, viewerToken := CreateTestSession(t, viewerID)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 55.9533, -3.1883)
@@ -9602,9 +9784,9 @@ func TestMessagePostingsVisibleUnauthenticated(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("msgpostingsanon")
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 55.9533, -3.1883)
 
@@ -9637,8 +9819,8 @@ func TestPatchMessageGroupidUpdatesDraft(t *testing.T) {
 
 	group1ID := CreateTestGroup(t, prefix+"_g1")
 	group2ID := CreateTestGroup(t, prefix+"_g2")
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, group1ID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, group1ID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	// Create message on group1, then move to draft (simulating user pressing "Repost").
@@ -9701,8 +9883,8 @@ func TestPostMessagePartnerAuthPromise(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	// tnuserid is UNIQUE in production, so release it from any user left by an
 	// earlier run before claiming it.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77701)
@@ -9730,8 +9912,8 @@ func TestPostMessagePartnerAuthByTnPostid(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	// tnuserid is UNIQUE in production, so release it from any user left by an
 	// earlier run before claiming it.
 	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77702)
@@ -9762,8 +9944,8 @@ func TestPostMessagePartnerInvalidKey(t *testing.T) {
 	prefix := uniquePrefix("msg_postpartbad")
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
 
 	body := map[string]interface{}{
@@ -9785,8 +9967,8 @@ func TestPatchMessageByTnPostid(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77703, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -9817,8 +9999,8 @@ func TestPatchMessageByTnPostidNotFound(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77704, ownerID)
 
 	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
@@ -9848,8 +10030,8 @@ func TestPatchMessageByTnPostidUpdatesLocationFromCoordinates(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77705, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 52.006292, -4.939858)
@@ -9900,9 +10082,9 @@ func TestPatchMessageByTnPostidUpdatesAllMessages(t *testing.T) {
 
 	group1ID := CreateTestGroup(t, prefix+"_g1")
 	group2ID := CreateTestGroup(t, prefix+"_g2")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, group1ID, "Member")
-	CreateTestMembership(t, ownerID, group2ID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, group1ID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, ownerID, group2ID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88801, ownerID)
 
 	tnpostid := fmt.Sprintf("tn-multi-%s", prefix)
@@ -9940,9 +10122,9 @@ func TestPatchMessageByTnPostidScrapesPhotosForAllMessages(t *testing.T) {
 
 	group1ID := CreateTestGroup(t, prefix+"_g1")
 	group2ID := CreateTestGroup(t, prefix+"_g2")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, group1ID, "Member")
-	CreateTestMembership(t, ownerID, group2ID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, group1ID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, ownerID, group2ID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88811, ownerID)
 
 	tnpostid := fmt.Sprintf("tn-multiscrape-%s", prefix)
@@ -10005,9 +10187,9 @@ func TestPostMessageByTnPostidUpdatesAllMessages(t *testing.T) {
 
 	group1ID := CreateTestGroup(t, prefix+"_g1")
 	group2ID := CreateTestGroup(t, prefix+"_g2")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, group1ID, "Member")
-	CreateTestMembership(t, ownerID, group2ID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, group1ID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, ownerID, group2ID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88802, ownerID)
 
 	tnpostid := fmt.Sprintf("tn-post-multi-%s", prefix)
@@ -10048,9 +10230,9 @@ func TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection(t *testing.T
 
 	group1ID := CreateTestGroup(t, prefix+"_g1")
 	group2ID := CreateTestGroup(t, prefix+"_g2")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, group1ID, "Member")
-	CreateTestMembership(t, ownerID, group2ID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, group1ID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, ownerID, group2ID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88803, ownerID)
 
 	tnpostid := fmt.Sprintf("tn-ai-multi-%s", prefix)
@@ -10100,8 +10282,8 @@ func TestMessageAttachmentHasAIField(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" AI Field Test", 55.0, -3.0)
@@ -10138,7 +10320,7 @@ func TestMessagePartnerKeyBypassesBodyMasking(t *testing.T) {
 	prefix := uniquePrefix("msg_partner_mask")
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" Mask Test", 55.0, -3.0)
 
 	// Set a body that exercises both masking rules — a phone-like 11-digit
@@ -10200,11 +10382,11 @@ func TestJoinAndPostUnmoderatedUserStartsPending(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix+"_user", "User")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	// Explicitly non-moderated posting status — previously this caused Approved.
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
 
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Unmod chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
@@ -10240,12 +10422,12 @@ func TestContentcheckUnprocessedHiddenFromPendingQueue(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	// Create a Pending message with contentcheck_checked_at IS NULL (unprocessed).
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Hidden chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
@@ -10275,12 +10457,12 @@ func TestContentcheckProcessedVisibleInPendingQueue(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Visible chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
@@ -10313,12 +10495,12 @@ func TestContentcheckFallbackVisibleAfter30Minutes(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
-	userID := CreateTestUser(t, prefix+"_user", "User")
-	CreateTestMembership(t, userID, groupID, "Member")
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Old unprocessed chair', 'A chair', 'A chair', NOW() - INTERVAL 35 MINUTE, NOW() - INTERVAL 35 MINUTE, 'Platform')", userID)
 	var msgID uint64
@@ -10353,8 +10535,8 @@ func TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks(t *tes
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77801, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -10406,8 +10588,8 @@ func TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent(t *t
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77802, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -10508,8 +10690,8 @@ func TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped(t *testing.T)
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77804, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -10601,8 +10783,8 @@ func TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77803, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -10649,8 +10831,8 @@ func TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77901, ownerID)
 
 	// Create a message that already has an item and location so reconstruction is possible.
@@ -10700,8 +10882,8 @@ func TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77902, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -10748,8 +10930,8 @@ func TestPatchMessageByTN_NewPicLinkReplacesOldAttachments(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77903, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -10830,10 +11012,10 @@ func TestListMessagesMT_SpamInPendingList(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a message in the Spam collection (as the spam handler would do).
@@ -10872,10 +11054,10 @@ func TestListMessagesMT_OldSpamExcludedFromPendingList(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Recent spam (within 30 days) — should appear in the queue.
@@ -10919,10 +11101,11 @@ func TestPostMessagePromisePartner(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
 	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
 
 	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
@@ -10956,9 +11139,9 @@ func TestPostMessageRenegePartner(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
 	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgID, otherID)
@@ -10995,10 +11178,11 @@ func TestPostMessagePromiseRenegePromisePartner(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	CreateTestChatRoom(t, ownerID, &otherID, nil, "User2User")
 	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
 
 	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
@@ -11034,9 +11218,9 @@ func TestPostMessagePromisePartnerWrongDomain(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
-	CreateTestMembership(t, ownerID, groupID, "Member")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
 	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@other-domain.com", msgID)
 
@@ -11065,12 +11249,12 @@ func TestPostMessagePromisePartnerWrongDomain(t *testing.T) {
 func heldByOtherSetup(t *testing.T, prefix string) (uint64, uint64, uint64, string, string) {
 	db := database.DBConn
 	group := CreateTestGroup(t, prefix+"_g")
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modA := CreateTestUser(t, prefix+"_moda", "User")
-	modB := CreateTestUser(t, prefix+"_modb", "User")
-	CreateTestMembership(t, posterID, group, "Member")
-	CreateTestMembership(t, modA, group, "Moderator")
-	CreateTestMembership(t, modB, group, "Moderator")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, group, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modA, group, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modB, group, utils.ROLE_MODERATOR)
 	_, tokenA := CreateTestSession(t, modA)
 	_, tokenB := CreateTestSession(t, modB)
 
@@ -11165,4 +11349,74 @@ func TestModerationAllowedWhenHeldBySelf(t *testing.T) {
 	var collection string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&collection)
 	assert.Equal(t, utils.COLLECTION_REJECTED, collection)
+}
+
+// A Hold that lands on a copy already Approved (auto-approval or another mod got
+// there first, or an admin/support hold fans out over every group on the post) must
+// not leave the live post showing "Held by" someone, and must not hold a copy on a
+// group where the holder is not a moderator (Discourse 10102/14).
+func TestPostMessageHoldIgnoresApprovedCopy(t *testing.T) {
+	prefix := uniquePrefix("hold_appr")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	_, supportToken := CreateTestSession(t, supportID)
+
+	// Pending on A, already Approved on B.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold"})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", supportToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var heldA, heldB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldA)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldB)
+	assert.NotNil(t, heldA, "the pending copy is held")
+	assert.Nil(t, heldB, "the approved copy must not be held")
+}
+
+// Discourse 10102/14: a Support user who moderates some of the communities a post rippled
+// into pressed Hold to stop it there. With no community in the request, Support access made
+// the hold land on every copy of the post, so another community saw it "Held by" someone who
+// does not moderate it. A Hold with no community holds only the copies on communities the
+// holder moderates; Support's every-copy reach is a fallback for when they moderate none.
+func TestPostMessageHoldWithoutGroupStaysOnHoldersOwnGroups(t *testing.T) {
+	prefix := uniquePrefix("hold_own")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+	CreateTestMembership(t, posterID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, posterID, groupB, utils.ROLE_MEMBER)
+	CreateTestMembership(t, supportID, groupA, utils.ROLE_MODERATOR)
+	_, supportToken := CreateTestSession(t, supportID)
+
+	// Pending on both; the holder moderates A only.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold"})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", supportToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var heldA, heldB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldA)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldB)
+	assert.NotNil(t, heldA, "the copy on the holder's own community is held")
+	assert.Nil(t, heldB, "the copy on a community the holder does not moderate is not held")
 }

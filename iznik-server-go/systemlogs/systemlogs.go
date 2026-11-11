@@ -4,8 +4,8 @@ package systemlogs
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,8 +16,9 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -64,9 +65,9 @@ type TraceSummary struct {
 type SummaryResponse struct {
 	Summaries []TraceSummary `json:"summaries"`
 	Stats     struct {
-		TotalTraces   int   `json:"total_traces"`
-		TotalLogs     int   `json:"total_logs"`
-		QueryTimeMs   int64 `json:"query_time_ms"`
+		TotalTraces int   `json:"total_traces"`
+		TotalLogs   int   `json:"total_logs"`
+		QueryTimeMs int64 `json:"query_time_ms"`
 	} `json:"stats"`
 }
 
@@ -591,45 +592,15 @@ func parseTimeRange(start, end string) (int64, int64) {
 
 // queryLoki queries the Loki API and returns parsed log entries.
 func queryLoki(lokiURL, query string, startNs, endNs int64, limit int, direction string) ([]LogEntry, error) {
-	// Build query URL.
-	queryURL := fmt.Sprintf("%s/loki/api/v1/query_range", lokiURL)
-
-	params := url.Values{}
-	params.Set("query", query)
-	params.Set("start", strconv.FormatInt(startNs, 10))
-	params.Set("end", strconv.FormatInt(endNs, 10))
-	params.Set("limit", strconv.Itoa(limit))
-	params.Set("direction", direction)
-
-	fullURL := queryURL + "?" + params.Encode()
-
-	// Make HTTP request.
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(fullURL)
+	streams, err := misc.LokiQueryRange(lokiURL, query, startNs, endNs, limit, direction, 30*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Loki returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response.
-	var lokiResp LokiQueryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&lokiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse Loki response: %w", err)
-	}
-
-	if lokiResp.Status != "success" {
-		return nil, fmt.Errorf("Loki query failed with status: %s", lokiResp.Status)
+		return nil, err
 	}
 
 	// Convert to LogEntry slice.
 	var logs []LogEntry
 	entryIndex := 0
-	for _, stream := range lokiResp.Data.Result {
+	for _, stream := range streams {
 		for _, value := range stream.Values {
 			if len(value) < 2 {
 				continue

@@ -86,7 +86,10 @@ test.describe('ProxyImage and SupportLink branch coverage', () => {
     )
     await expect(supportLink).toBeVisible({ timeout: timeouts.ui.appearance })
     const loggedOutHref = await supportLink.getAttribute('href')
-    expect(loggedOutHref).toContain('not logged in when contacting Support')
+    // The National Reuse Day link names its page in the note at the foot of the mail.
+    expect(decodeURIComponent(loggedOutHref)).toContain(
+      'Note to Freegle: this was sent from the National Reuse Day page. This freegler was not logged in.'
+    )
   })
 
   test('Mobile app page: logged-in support link href includes the user id note', async ({

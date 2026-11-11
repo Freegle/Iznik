@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // backfill-quote-replies.mjs — one-off operational fix.
 //
-// The auto-posted verified-live "AI Edward: possible fix applied, please retest"
+// The auto-posted verified-live "AIdward: possible fix applied, please retest"
 // replies were posted with the BARE body and NO [quote] block (the bug fixed in
 // queue_deployed_reply_drafts). The human-approved draft path always quoted, so
 // only these auto-posts are affected. This script finds each one live on
@@ -117,7 +117,7 @@ async function main() {
       `SELECT id, topic, post, username, quote, body
          FROM discourse_draft
         WHERE posted_at IS NOT NULL AND rejected_at IS NULL
-          AND body LIKE 'AI Edward: possible fix applied%'
+          AND (body LIKE 'AIdward: possible fix applied%' OR body LIKE 'AI Edward: possible fix applied%')
         ORDER BY topic, post`,
     )
     .all()

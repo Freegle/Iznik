@@ -41,11 +41,11 @@ func reachStatusOf(msgid uint64) string {
 // and freezes the reach.
 func TestReportVerdictMemberQuorumPendsAllGroupsAndFreezes(t *testing.T) {
 	db := database.DBConn
-	poster := CreateTestUser(t, "rvposter", "User")
+	poster := CreateTestUser(t, "rvposter", utils.SYSTEMROLE_USER)
 	origin := CreateTestGroup(t, "rvorigin")
 	rippled := CreateTestGroup(t, "rvrippled")
-	m1 := CreateTestUser(t, "rvmem1", "User")
-	m2 := CreateTestUser(t, "rvmem2", "User")
+	m1 := CreateTestUser(t, "rvmem1", utils.SYSTEMROLE_USER)
+	m2 := CreateTestUser(t, "rvmem2", utils.SYSTEMROLE_USER)
 	msgid := CreateTestMessage(t, poster, origin, "OFFER: rvquorum", 51.5, -0.1)
 	addRippledCopy(msgid, rippled)
 	addReachRow(msgid, "expanding")
@@ -89,11 +89,11 @@ func TestReportVerdictMemberQuorumPendsAllGroupsAndFreezes(t *testing.T) {
 // kept appearing in browse and the daily digest.
 func TestReportVerdictModReportIsQuorum(t *testing.T) {
 	db := database.DBConn
-	poster := CreateTestUser(t, "rvmodposter", "User")
+	poster := CreateTestUser(t, "rvmodposter", utils.SYSTEMROLE_USER)
 	origin := CreateTestGroup(t, "rvmodorigin")
 	rippled := CreateTestGroup(t, "rvmodrippled")
-	mod := CreateTestUser(t, "rvmodreporter", "User")
-	CreateTestMembership(t, mod, rippled, "Moderator") // moderator of the rippled group only
+	mod := CreateTestUser(t, "rvmodreporter", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, mod, rippled, utils.ROLE_MODERATOR) // moderator of the rippled group only
 	msgid := CreateTestMessage(t, poster, origin, "OFFER: rvmodscope", 51.5, -0.1)
 	addRippledCopy(msgid, rippled)
 	addReachRow(msgid, "expanding")
@@ -115,10 +115,10 @@ func TestReportVerdictModReportIsQuorum(t *testing.T) {
 // member report alone must not pend anything anywhere.
 func TestReportVerdictMemberBelowQuorumScopedNothing(t *testing.T) {
 	db := database.DBConn
-	poster := CreateTestUser(t, "rvbmposter", "User")
+	poster := CreateTestUser(t, "rvbmposter", utils.SYSTEMROLE_USER)
 	origin := CreateTestGroup(t, "rvbmorigin")
-	member := CreateTestUser(t, "rvbmmember", "User")
-	CreateTestMembership(t, member, origin, "Member")
+	member := CreateTestUser(t, "rvbmmember", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, member, origin, utils.ROLE_MEMBER)
 	msgid := CreateTestMessage(t, poster, origin, "OFFER: rvbelowquorum", 51.5, -0.1)
 	addReachRow(msgid, "expanding")
 
@@ -135,7 +135,7 @@ func TestReportVerdictMemberBelowQuorumScopedNothing(t *testing.T) {
 // Reporting your own post does not count toward the quorum.
 func TestReportVerdictOwnPostIgnored(t *testing.T) {
 	db := database.DBConn
-	poster := CreateTestUser(t, "rvownposter", "User")
+	poster := CreateTestUser(t, "rvownposter", utils.SYSTEMROLE_USER)
 	origin := CreateTestGroup(t, "rvownorigin")
 	msgid := CreateTestMessage(t, poster, origin, "OFFER: rvownpost", 51.5, -0.1)
 

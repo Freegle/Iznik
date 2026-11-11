@@ -349,6 +349,19 @@ export const useMobileStore = defineStore('mobile', {
       if (import.meta.client) {
         App.addListener('resume', (event) => {
           try {
+            // Re-trigger push registration on resume so that a missed/failed
+            // initial registration or a rotated FCM/APNs token recovers. The
+            // existing 'registration' listener re-fires with the current token
+            // and savePushId() is a no-op unless something actually changed.
+            this.reRegisterPush()
+
+            // The counts and chats are the member's own: with nobody signed
+            // in the API answers 401, which the client reports to Sentry as an
+            // error on every return to a signed-out app.
+            if (!useAuthStore().user) {
+              return
+            }
+
             const notificationStore = useNotificationStore()
             notificationStore.fetchCount()
 
@@ -361,12 +374,6 @@ export const useMobileStore = defineStore('mobile', {
             import('~/composables/useNavbar')
               .then((m) => m.refreshNavbarCounts())
               .catch((e) => console.log('Failed to refresh navbar counts', e))
-
-            // Re-trigger push registration on resume so that a missed/failed
-            // initial registration or a rotated FCM/APNs token recovers. The
-            // existing 'registration' listener re-fires with the current token
-            // and savePushId() is a no-op unless something actually changed.
-            this.reRegisterPush()
           } catch (e) {}
         })
       }
@@ -891,7 +898,14 @@ export const useMobileStore = defineStore('mobile', {
         // chat store would be pointless noise.  We just let the badge update (done
         // above) take effect and let the user tap to browse — no further action needed
         // in the foreground.
-        if (foreground && data.channel_id !== 'new_posts') {
+        // The chats are the member's own: a push that reaches a signed-out app (a
+        // token not yet released after logout) must not fetch them, as the API
+        // answers 401 and the client reports that to Sentry.
+        if (
+          foreground &&
+          data.channel_id !== 'new_posts' &&
+          useAuthStore().user
+        ) {
           console.log('Foreground push received - refreshing chats')
           dbg()?.info('Foreground push - triggering chat refresh')
           const chatStore = useChatStore()

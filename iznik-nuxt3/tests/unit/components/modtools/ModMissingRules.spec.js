@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref, computed } from 'vue'
 import ModMissingRules from '~/modtools/components/ModMissingRules.vue'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Mock useMe composable - myGroups must be a computed
 const mockMyGroups = ref([])
@@ -77,7 +78,7 @@ describe('ModMissingRules', () => {
     })
 
     it('includes Freegle Owner groups without rules', () => {
-      mockMyGroups.value = [{ id: 1, role: 'Owner' }]
+      mockMyGroups.value = [{ id: 1, role: ROLE_OWNER }]
       mockModGroupStore.list = {
         1: {
           id: 1,
@@ -93,7 +94,7 @@ describe('ModMissingRules', () => {
     })
 
     it('excludes groups where user is not Owner', () => {
-      mockMyGroups.value = [{ id: 1, role: 'Moderator' }]
+      mockMyGroups.value = [{ id: 1, role: ROLE_MODERATOR }]
       mockModGroupStore.list = {
         1: {
           id: 1,
@@ -108,7 +109,7 @@ describe('ModMissingRules', () => {
     })
 
     it('excludes non-Freegle groups', () => {
-      mockMyGroups.value = [{ id: 1, role: 'Owner' }]
+      mockMyGroups.value = [{ id: 1, role: ROLE_OWNER }]
       mockModGroupStore.list = {
         1: {
           id: 1,
@@ -123,7 +124,7 @@ describe('ModMissingRules', () => {
     })
 
     it('excludes unpublished groups', () => {
-      mockMyGroups.value = [{ id: 1, role: 'Owner' }]
+      mockMyGroups.value = [{ id: 1, role: ROLE_OWNER }]
       mockModGroupStore.list = {
         1: {
           id: 1,
@@ -138,7 +139,7 @@ describe('ModMissingRules', () => {
     })
 
     it('excludes groups with rules', () => {
-      mockMyGroups.value = [{ id: 1, role: 'Owner' }]
+      mockMyGroups.value = [{ id: 1, role: ROLE_OWNER }]
       mockModGroupStore.list = {
         1: {
           id: 1,
@@ -170,7 +171,7 @@ describe('ModMissingRules', () => {
     })
 
     it('includes Owner groups missing new rule fields', () => {
-      mockMyGroups.value = [{ id: 1, role: 'Owner' }]
+      mockMyGroups.value = [{ id: 1, role: ROLE_OWNER }]
       mockModGroupStore.list = {
         1: {
           id: 1,
@@ -186,7 +187,7 @@ describe('ModMissingRules', () => {
     })
 
     it('excludes groups with all new rules filled in', () => {
-      mockMyGroups.value = [{ id: 1, role: 'Owner' }]
+      mockMyGroups.value = [{ id: 1, role: ROLE_OWNER }]
       mockModGroupStore.list = {
         1: {
           id: 1,
@@ -210,7 +211,7 @@ describe('ModMissingRules', () => {
     })
 
     it('detects rules with non-boolean values as missing', () => {
-      mockMyGroups.value = [{ id: 1, role: 'Owner' }]
+      mockMyGroups.value = [{ id: 1, role: ROLE_OWNER }]
       mockModGroupStore.list = {
         1: {
           id: 1,
@@ -235,7 +236,7 @@ describe('ModMissingRules', () => {
     })
 
     it('limits missing rules display to 3 with ellipsis', () => {
-      mockMyGroups.value = [{ id: 1, role: 'Owner' }]
+      mockMyGroups.value = [{ id: 1, role: ROLE_OWNER }]
       mockModGroupStore.list = {
         1: {
           id: 1,

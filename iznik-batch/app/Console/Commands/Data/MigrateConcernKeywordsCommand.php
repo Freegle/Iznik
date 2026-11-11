@@ -4,7 +4,9 @@ namespace App\Console\Commands\Data;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'data:migrate-concern-keywords')]
 class MigrateConcernKeywordsCommand extends Command
 {
     protected $signature = 'data:migrate-concern-keywords

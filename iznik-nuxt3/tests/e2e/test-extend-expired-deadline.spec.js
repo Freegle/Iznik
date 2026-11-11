@@ -93,7 +93,9 @@ test.describe('Extend expired deadline', () => {
     console.log('Post visible in old posts section ✓')
 
     // Click Edit to open the edit modal.
-    const editBtn = postCard.locator('button:has-text("Edit")').first()
+    const editBtn = postCard
+      .locator('button:not(.title-toggle):has-text("Edit")')
+      .first()
     await expect(editBtn).toBeVisible({ timeout: timeouts.ui.appearance })
     await editBtn.click()
 

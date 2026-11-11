@@ -6,7 +6,9 @@ use App\Services\CommonDomainsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'domains:update-common')]
 class UpdateCommonDomainsCommand extends Command
 {
     protected $signature = 'domains:update-common

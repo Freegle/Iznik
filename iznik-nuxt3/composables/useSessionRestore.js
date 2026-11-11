@@ -63,7 +63,10 @@ export async function restoreSessionFromDevice() {
       // not reach them) - the R8-runtime question from the mod logout wave (#10072) is
       // whether release builds break this plugin surface, and only field data answers it.
       console.log('Block Store unavailable', ret.error)
-      clientAction('blockstore_restore', { outcome: 'unavailable', why: ret.error })
+      clientAction('blockstore_restore', {
+        outcome: 'unavailable',
+        why: ret.error,
+      })
     }
 
     if (!ret?.value) {

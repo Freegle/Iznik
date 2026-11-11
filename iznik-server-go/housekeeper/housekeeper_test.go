@@ -86,25 +86,29 @@ func TestCronJobCommandsUnique(t *testing.T) {
 	}
 }
 
-func TestCronJobKnownInactiveJobs(t *testing.T) {
-	// deploy:watch is intentionally disabled: it detects code updates via
-	// version.txt, which isn't how the Docker environment deploys.
-	// users:cleanup was re-enabled once the V1 cutover left it unscheduled.
-	knownInactive := []string{"deploy:watch"}
-	for _, cmd := range knownInactive {
-		found := false
-		for _, j := range cronJobs {
-			if j.Command == cmd {
-				found = true
-				if j.Active {
-					t.Errorf("cronJobs command %q should be inactive", cmd)
-				}
-				break
+func TestCronJobCodeDeployedRow(t *testing.T) {
+	// deploy:watch (version.txt change detection) is gone. Its row is replaced by Code Deployed,
+	// which deploy:check-lag keeps at the time the oldest undeployed green commit passed CI, so
+	// a 7-day interval makes it overdue a week after that.
+	for _, j := range cronJobs {
+		if j.Command == "deploy:watch" {
+			t.Errorf("deploy:watch should no longer be in the registry")
+		}
+	}
+	found := false
+	for _, j := range cronJobs {
+		if j.Command == "deploy:green-master" {
+			found = true
+			if !j.Active {
+				t.Errorf("Code Deployed should be active")
+			}
+			if j.IntervalMinutes != 10080 {
+				t.Errorf("Code Deployed IntervalMinutes = %d, want 10080 (7 days)", j.IntervalMinutes)
 			}
 		}
-		if !found {
-			t.Errorf("expected to find cronJobs entry for %q", cmd)
-		}
+	}
+	if !found {
+		t.Errorf("expected a cronJobs entry for deploy:green-master")
 	}
 }
 
@@ -261,4 +265,119 @@ func TestPickCronJobStatusPrefersTheLatestStart(t *testing.T) {
 	if s := pickCronJobStatus("tn:sync", only); s == nil || s.Command != "tn:sync" {
 		t.Errorf("a never-started row is still returned when it is the only match, got %v", s)
 	}
+}
+
+func TestCronJobGraceMinutes(t *testing.T) {
+	cases := map[int]int{1: 2, 2: 2, 10: 10, 60: 60, 1440: 60, 10080: 60}
+	for interval, want := range cases {
+		if got := cronJobGraceMinutes(interval); got != want {
+			t.Errorf("cronJobGraceMinutes(%d) = %d, want %d", interval, got, want)
+		}
+	}
+}
+
+func TestCronJobNeedsAttention(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	ago := func(d time.Duration) *time.Time { ts := now.Add(-d); return &ts }
+	code := func(c int) *int { return &c }
+	weekly := CronJob{Command: "w", IntervalMinutes: 10080, Active: true}
+	minutely := CronJob{Command: "m", IntervalMinutes: 1, Active: true}
+
+	cases := []struct {
+		name string
+		job  CronJob
+		s    *cronJobStatus
+		want bool
+	}{
+		{"no status row means never run", weekly, nil, true},
+		{"row without a start means never run", weekly, &cronJobStatus{}, true},
+		{"fresh success", weekly, &cronJobStatus{LastRunAt: ago(time.Hour), LastExitCode: code(0)}, false},
+		{"fresh failure", weekly, &cronJobStatus{LastRunAt: ago(time.Hour), LastExitCode: code(1)}, true},
+		{"within the week plus grace", weekly, &cronJobStatus{LastRunAt: ago(7*24*time.Hour + 59*time.Minute), LastExitCode: code(0)}, false},
+		{"past the week plus grace", weekly, &cronJobStatus{LastRunAt: ago(7*24*time.Hour + 61*time.Minute), LastExitCode: code(0)}, true},
+		{"per-minute job within jitter", minutely, &cronJobStatus{LastRunAt: ago(3 * time.Minute), LastExitCode: code(0)}, false},
+		{"per-minute job missed a cycle", minutely, &cronJobStatus{LastRunAt: ago(4 * time.Minute), LastExitCode: code(0)}, true},
+		{"no exit code yet but on time", weekly, &cronJobStatus{LastRunAt: ago(time.Hour)}, false},
+		{"inactive job never counts", CronJob{Command: "i", IntervalMinutes: 1}, nil, false},
+	}
+	for _, c := range cases {
+		if got := CronJobNeedsAttention(c.job, c.s, now); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestCountCronJobsNeedingAttentionWalksTheRegistry(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	zero := 0
+	fresh := now.Add(-time.Minute)
+
+	// Nothing recorded: every active entry has never run.
+	if got, want := countCronJobsNeedingAttention(nil, now), int64(ActiveCronJobCount()); got != want {
+		t.Errorf("empty table: got %d, want %d (every active entry never run)", got, want)
+	}
+
+	// Every active entry fresh and successful: nothing needs attention, even with
+	// a stray row for a command that is not in the registry.
+	var statuses []cronJobStatus
+	for _, j := range cronJobs {
+		statuses = append(statuses, cronJobStatus{Command: j.Command, LastRunAt: &fresh, LastExitCode: &zero})
+	}
+	statuses = append(statuses, cronJobStatus{Command: "retired:job", LastRunAt: &fresh, LastExitCode: &zero})
+	if got := countCronJobsNeedingAttention(statuses, now); got != 0 {
+		t.Errorf("all healthy: got %d, want 0", got)
+	}
+
+	// A failed row for a command outside the registry does not count.
+	one := 1
+	withStray := append(append([]cronJobStatus{}, statuses...), cronJobStatus{Command: "retired:job2", LastRunAt: &fresh, LastExitCode: &one})
+	if got := countCronJobsNeedingAttention(withStray, now); got != 0 {
+		t.Errorf("stray failed row: got %d, want 0", got)
+	}
+
+	// Failed, overdue and never run are each counted once.
+	old := now.Add(-100 * 24 * time.Hour)
+	var active []int
+	for i, j := range cronJobs {
+		if j.Active {
+			active = append(active, i)
+		}
+	}
+	statuses[active[0]].LastExitCode = &one
+	statuses[active[1]].LastRunAt = &old
+	statuses[active[2]].LastRunAt = nil
+	if got := countCronJobsNeedingAttention(statuses, now); got != 3 {
+		t.Errorf("failed+overdue+never: got %d, want 3", got)
+	}
+}
+
+func TestCronJobsIncludeHostPatchFreshness(t *testing.T) {
+	for _, host := range []string{"db1", "db2", "db3", "bulk2", "ha", "docker"} {
+		found := false
+		for _, j := range cronJobs {
+			if j.Command == "host-patch "+host {
+				found = true
+				if j.Category != "Host Maintenance" || !j.Active {
+					t.Errorf("host-patch %s: category %q active %v", host, j.Category, j.Active)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("host-patch %s missing from the cron registry", host)
+		}
+	}
+}
+
+// A stale WhatJobs feed turns the Cron Jobs tab red: the check fails, and the tab counts a
+// failed last run of any active entry.
+func TestCronJobsIncludeWhatJobsFeedFreshness(t *testing.T) {
+	for _, j := range cronJobs {
+		if j.Command == "integrations:check-whatjobs-freshness" {
+			if !j.Active || j.IntervalMinutes != 60 {
+				t.Errorf("WhatJobs freshness: active %v interval %d", j.Active, j.IntervalMinutes)
+			}
+			return
+		}
+	}
+	t.Error("integrations:check-whatjobs-freshness missing from the cron registry")
 }

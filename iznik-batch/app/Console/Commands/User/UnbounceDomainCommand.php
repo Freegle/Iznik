@@ -4,7 +4,9 @@ namespace App\Console\Commands\User;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'users:unbounce-domain')]
 class UnbounceDomainCommand extends Command
 {
     protected $signature = 'users:unbounce-domain

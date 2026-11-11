@@ -461,6 +461,35 @@ describe('ModMessageButton', () => {
     })
   })
 
+  // Discourse 10239: once the poster is an ordinary member of the community the post
+  // rippled into, its moderators may write to them, so a Reject there composes a message
+  // like the home community's.
+  describe('rippled-in copy where the poster can be written to', () => {
+    it('opens the compose modal for a Reject standard message', async () => {
+      const wrapper = mountComponent({
+        stdmsgid: 42,
+        isHomeGroup: false,
+        canMessagePoster: true,
+      })
+      await wrapper.vm.click()
+      await flushPromises()
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+    })
+
+    it('still removes silently when the poster cannot be written to', async () => {
+      const wrapper = mountComponent({
+        stdmsgid: 42,
+        isHomeGroup: false,
+        canMessagePoster: false,
+      })
+      await wrapper.vm.click()
+      await flushPromises()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+  })
+
   describe('callback handling', () => {
     it('calls callback when provided', async () => {
       const callback = vi.fn()
@@ -472,6 +501,39 @@ describe('ModMessageButton', () => {
     it('does not error when callback is not provided', async () => {
       const wrapper = mountComponent({ approve: true })
       await expect(wrapper.vm.click()).resolves.not.toThrow()
+    })
+
+    it('calls callback when the store action fails', async () => {
+      // A failed action must still stop the SpinButton, or it spins for the full
+      // 20 seconds and reports a forgotten callback (frontend-traps rule:
+      // callback on every exit path, as in ModMemberButton).
+      mockMessageStore.approve.mockRejectedValueOnce(new Error('boom'))
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const callback = vi.fn()
+      const wrapper = mountComponent({ approve: true })
+      await wrapper.vm.click(callback)
+      expect(callback).toHaveBeenCalledTimes(1)
+      consoleSpy.mockRestore()
+    })
+
+    it('re-throws a held-by-another-mod error so guardHold shows the notice', async () => {
+      // Swallowing this one would silence the "X is holding this post" warning
+      // that guardHold renders (stores/message.js runHoldAware tags the 409).
+      const held = new Error('held by another mod')
+      held.heldByOtherMod = true
+      mockMessageStore.approve.mockRejectedValueOnce(held)
+      const callback = vi.fn()
+      const wrapper = mountComponent({ approve: true })
+      await expect(wrapper.vm.click(callback)).rejects.toBe(held)
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it('calls callback when the no-message reject confirmation opens', async () => {
+      const callback = vi.fn()
+      const wrapper = mountComponent({ reject: true, noMemberMessage: true })
+      await wrapper.vm.click(callback)
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(callback).toHaveBeenCalledTimes(1)
     })
   })
 

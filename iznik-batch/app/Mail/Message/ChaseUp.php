@@ -2,6 +2,7 @@
 
 namespace App\Mail\Message;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
@@ -9,7 +10,7 @@ use App\Models\Message;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class ChaseUp extends MjmlMailable
+class ChaseUp extends MjmlMailable implements DescribesMemberContent
 {
     use TrackableEmail;
     use LoggableEmail;
@@ -44,7 +45,8 @@ class ChaseUp extends MjmlMailable
     public function build(): static
     {
         $userSite = config('freegle.sites.user');
-        $outcomeType = $this->messageType === Message::TYPE_OFFER
+        $isOffer = $this->messageType === Message::TYPE_OFFER;
+        $outcomeType = $isOffer
             ? Message::OUTCOME_TAKEN
             : Message::OUTCOME_RECEIVED;
 
@@ -54,6 +56,12 @@ class ChaseUp extends MjmlMailable
                 'userName' => $this->userName,
                 'messageSubject' => $this->messageSubject,
                 'outcomeType' => $outcomeType,
+                'isOffer' => $isOffer,
+                'promiseUrl' => $this->trackedUrl(
+                    "{$userSite}/mypost/{$this->messageId}/promise",
+                    'promise_button',
+                    'promise'
+                ),
                 'repostUrl' => $this->trackedUrl(
                     "{$userSite}/mypost/{$this->messageId}/repost",
                     'repost_button',
@@ -116,5 +124,20 @@ class ChaseUp extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->userId;
+    }
+
+    /**
+     * Names the post it chases up and the poster it is addressed to (plan section 11.8);
+     * filter-spool removes this mail once that post is no longer Approved or the poster is
+     * now a spammer.
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [$this->messageId],
+            'newsfeed' => [],
+            'users' => [$this->userId],
+        ];
     }
 }

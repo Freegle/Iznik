@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/group"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -20,8 +21,8 @@ func TestMemberReviewOrphanCountVsListing(t *testing.T) {
 	prefix := uniquePrefix("mrorph")
 
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	// Create a user, flag their membership for review, then hard-delete the
@@ -29,9 +30,9 @@ func TestMemberReviewOrphanCountVsListing(t *testing.T) {
 	// In production this can occur when a user is deleted from the users table
 	// without cascading (e.g. before FK CASCADE was in place) while a
 	// reviewrequestedat flag remains on their membership row.
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO memberships (userid, groupid, role, collection, reviewrequestedat) "+
-		"VALUES (?, ?, 'Member', 'Approved', NOW())", targetID, groupID)
+		"VALUES (?, ?, ?, 'Approved', NOW())", targetID, groupID, utils.ROLE_MEMBER)
 
 	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
 	db.Exec("DELETE FROM users_emails WHERE userid = ?", targetID)

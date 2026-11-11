@@ -381,14 +381,6 @@ export const SETTINGS_INDEX = [
       "Normally you'd set this yes, except for a few hidden test groups.",
   },
   {
-    id: 'ontn',
-    tab: 'community',
-    section: 'accordion-stats',
-    sectionLabel: 'Status',
-    label: 'On TrashNothing?',
-    description: 'On trashnothing.com too?',
-  },
-  {
     id: 'onlovejunk',
     tab: 'community',
     section: 'accordion-stats',

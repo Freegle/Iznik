@@ -36,6 +36,23 @@
         >
           This member is set not to be able to post OFFERs/WANTEDs.
         </NoticeMessage>
+        <NoticeMessage
+          v-if="volunteering.heldby"
+          variant="warning"
+          class="mb-2"
+        >
+          <p v-if="heldByMe">
+            You held this. Other people will see a warning to check with you
+            before releasing it. If you release it, it will stay in Pending.
+          </p>
+          <p v-else>
+            Held by <strong>{{ heldbyName }}</strong
+            >. Please check with them before releasing it.
+          </p>
+          <b-button variant="warning" @click="release">
+            <v-icon icon="play" /> Release
+          </b-button>
+        </NoticeMessage>
         <VolunteerOpportunity
           :id="volunteering.id"
           :item="volunteering"
@@ -43,15 +60,29 @@
         />
       </b-card-body>
       <b-card-footer>
-        <b-button variant="primary" class="me-1" @click="approve">
-          <v-icon icon="check" /> Approve
-        </b-button>
-        <b-button variant="white" class="me-1" @click="edit">
-          <v-icon icon="pen" /> Edit
-        </b-button>
-        <b-button variant="danger" class="me-1" @click="confirmDelete">
-          <v-icon icon="trash-alt" /> Delete
-        </b-button>
+        <div v-if="heldByOther">
+          This is held by someone else. The buttons are hidden so you don't
+          click them by accident. Please check with them before releasing it.
+        </div>
+        <template v-else>
+          <b-button variant="primary" class="me-1" @click="approve">
+            <v-icon icon="check" /> Approve
+          </b-button>
+          <b-button variant="white" class="me-1" @click="edit">
+            <v-icon icon="pen" /> Edit
+          </b-button>
+          <b-button variant="danger" class="me-1" @click="confirmDelete">
+            <v-icon icon="trash-alt" /> Delete
+          </b-button>
+          <b-button
+            v-if="!volunteering.heldby"
+            variant="white"
+            class="me-1"
+            @click="hold"
+          >
+            <v-icon icon="pause" /> Hold
+          </b-button>
+        </template>
         <ChatButton
           v-if="
             volunteering.groups &&
@@ -88,6 +119,8 @@ import { ref, computed, watch } from 'vue'
 import { useVolunteeringStore } from '@/stores/volunteering'
 import { useHeldNotice } from '~/composables/useHeldNotice'
 import { useGroupStore } from '~/stores/group'
+import { useMe } from '~/composables/useMe'
+import { useModMe } from '~/composables/useModMe'
 import { useUserStore } from '~/stores/user'
 
 const props = defineProps({
@@ -100,6 +133,8 @@ const props = defineProps({
 const volunteeringStore = useVolunteeringStore()
 const { heldError, guardHold } = useHeldNotice()
 const groupStore = useGroupStore()
+const { myid } = useMe()
+const { checkWork } = useModMe()
 const userStore = useUserStore()
 
 const volunteering = computed(() =>
@@ -109,16 +144,33 @@ const volunteering = computed(() =>
 const modalShown = ref(false)
 const showDeleteConfirm = ref(false)
 
-// Fetch user details for display
+// Fetch user details for display, and whoever is holding it so we can name them.
 watch(
-  () => volunteering.value?.userid,
-  (userid) => {
+  () => [volunteering.value?.userid, volunteering.value?.heldby],
+  ([userid, heldby]) => {
     if (userid) {
       userStore.fetch(userid)
+    }
+
+    if (heldby) {
+      userStore.fetch(heldby)
     }
   },
   { immediate: true }
 )
+
+const heldByMe = computed(
+  () => !!volunteering.value?.heldby && volunteering.value.heldby === myid.value
+)
+
+const heldByOther = computed(
+  () => !!volunteering.value?.heldby && !heldByMe.value
+)
+
+const heldbyName = computed(() => {
+  const heldby = volunteering.value?.heldby
+  return heldby ? userStore.byId(heldby)?.displayname || '' : ''
+})
 
 const volUser = computed(() => {
   return volunteering.value?.userid
@@ -148,6 +200,16 @@ function confirmDelete() {
 async function deleteme() {
   await volunteeringStore.delete(volunteering.value.id)
   showDeleteConfirm.value = false
+}
+
+async function hold() {
+  await guardHold(() => volunteeringStore.hold(volunteering.value.id))
+  checkWork(true)
+}
+
+async function release() {
+  await volunteeringStore.release(volunteering.value.id)
+  checkWork(true)
 }
 
 async function approve() {

@@ -46,33 +46,30 @@
     <mj-section background-color="#F7F6EC" padding="0 0 20px">
       <mj-column>
         <mj-button
-          mj-class="btn-warning"
+          mj-class="btn-warning btn-group"
           href="{{ $userSite }}/engage?engageid={{ $engageId }}&action=ask"
           border-radius="3px"
           font-size="14px"
-          width="180px"
         >
           Ask for something
         </mj-button>
       </mj-column>
       <mj-column>
         <mj-button
-          mj-class="btn-secondary"
+          mj-class="btn-secondary btn-group"
           href="{{ $userSite }}/engage?engageid={{ $engageId }}&action=browse"
           border-radius="3px"
           font-size="14px"
-          width="160px"
         >
           Browse Freegle
         </mj-button>
       </mj-column>
       <mj-column>
         <mj-button
-          mj-class="btn-success"
+          mj-class="btn-success btn-group"
           href="{{ $userSite }}/engage?engageid={{ $engageId }}&action=give"
           border-radius="3px"
           font-size="14px"
-          width="180px"
         >
           Give something
         </mj-button>

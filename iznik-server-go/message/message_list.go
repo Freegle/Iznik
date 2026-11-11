@@ -226,6 +226,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		listErr = db.Table("messages_edits me").
 			Select("DISTINCT me.msgid").
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0").
+			Joins("INNER JOIN messages m ON m.id = me.msgid AND m.deleted IS NULL").
 			Where("mg.groupid IN (?) AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)",
 				groupIDs).
 			Order("me.timestamp DESC").

@@ -247,9 +247,15 @@ func (d *JobsDataset) jobsMaxSeen(db *sql.DB) (string, error) {
 
 // liveCount returns the number of rows the server would serve (the loadJobs
 // set). Compared against the index row count to detect orphan drift.
+//
+// The count leaves out jobsLiveFilter's `geometry IS NOT NULL`. jobs.geometry is NOT NULL (it
+// carries the SPATIAL index), so the test never excludes a row, but MySQL still has to read the row
+// to evaluate it, which stops the visible_cpc (visible, cpc) index covering the count. With it the
+// count scanned the whole 0.5 GB table (3.9 s, 1.5 M rows examined per call); without it the
+// count is answered from the index alone.
 func (d *JobsDataset) liveCount(db *sql.DB) (int64, error) {
 	var n int64
-	err := db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE ` + jobsLiveFilter).Scan(&n)
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM jobs WHERE visible = 1 AND cpc >= %.2f`, minJobsCPC)).Scan(&n)
 	return n, err
 }
 

@@ -1,5 +1,5 @@
 <template>
-  <nuxt-link to="/post" class="fab-link">
+  <nuxt-link to="/post" class="fab-link" aria-label="Post">
     <span class="fab-button">
       <svg viewBox="0 0 24 24" class="fab-icon">
         <path d="M12 4v16M4 12h16" />

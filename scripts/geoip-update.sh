@@ -1,25 +1,38 @@
 #!/bin/bash
 #
-# geoip-update.sh — refresh the GeoLite2-Country database from MaxMind.
+# geoip-update.sh — refresh a GeoLite2 database from MaxMind: Country (the default) or ASN.
 #
 # Freegle geolocates the sender IP of every post to a country (messages.fromcountry)
 # so ModTools can flag posts from outside the UK. apiv2 embeds a copy of the
 # database in its binary and iznik-batch bundles one in resources/geoip, so the
-# lookup always works out of the box - but those copies only refresh on rebuild.
+# lookup always works out of the box - but those copies are only as new as the
+# files committed to the repo, and rebuilding does not change that.
 # This script keeps a system copy current so GEOIP_MMDB_PATH can point at fresh
 # data with no rebuild. Run weekly from cron (MaxMind updates GeoLite2 weekly).
+#
+# apiv2 also embeds GeoLite2-ASN, which names the network an address belongs to
+# (the email job page uses it with the country). GEOIP_EDITION=GeoLite2-ASN
+# refreshes that one, and GEOIP_ASN_MMDB_PATH points apiv2 at the copy.
 #
 # Credentials live in /etc/GeoIP.conf (the standard geoipupdate config, root-only,
 # NOT committed to git). Only the LicenseKey is needed for the direct download.
 #
-# Usage:  geoip-update.sh [DEST_MMDB_PATH]
-#   DEST defaults to /usr/share/GeoIP/GeoLite2-Country.mmdb
+# Usage:  [GEOIP_EDITION=GeoLite2-Country|GeoLite2-ASN] geoip-update.sh [DEST_MMDB_PATH]
+#   DEST defaults to /usr/share/GeoIP/<edition>.mmdb
 #
 set -euo pipefail
 
 CONF="${GEOIP_CONF:-/etc/GeoIP.conf}"
-DEST="${1:-/usr/share/GeoIP/GeoLite2-Country.mmdb}"
-EDITION="GeoLite2-Country"
+EDITION="${GEOIP_EDITION:-GeoLite2-Country}"
+DEST="${1:-/usr/share/GeoIP/${EDITION}.mmdb}"
+
+case "$EDITION" in
+  GeoLite2-Country|GeoLite2-ASN) ;;
+  *)
+    echo "geoip-update: GEOIP_EDITION must be GeoLite2-Country or GeoLite2-ASN, not $EDITION" >&2
+    exit 1
+    ;;
+esac
 
 if [ ! -r "$CONF" ]; then
   echo "geoip-update: $CONF not readable" >&2

@@ -44,7 +44,7 @@ V1: `User::getActiveSince()` + `Notifications::haveSent()` + `Notifications::add
 
 | # | V1 operation | Status | Notes |
 |---|--------------|--------|-------|
-| 1 | `getActiveSince`: `SELECT id FROM users WHERE lastaccess >= ? AND added <= ?` | Match | `activeSince` / `joinedBefore` parsed with `strtotime`, defaults `5 minutes ago` / `1 week ago`. |
+| 1 | `getActiveSince`: `SELECT id FROM users WHERE lastaccess >= ? AND added <= ?` | Match | `activeSince` / `joinedBefore` parsed with `strtotime`, defaults `6 minutes ago` / `1 week ago`. V1 ran every minute over 5 minutes; this runs every five minutes over 6 (the extra minute is overlap, absorbed by the 90-day cooldown), because each run scans all of `users`. |
 | 2 | Exclude users already sent Exhort in 90 days (`haveSent`) | Match | `users_notifications WHERE touser=? AND type='Exhort' AND timestamp >= now-90d`. |
 | 3 | INSERT `users_notifications` (fromuser NULL, type Exhort, url/title/text) | Match | |
 | 4 | `from == to` guard | N/A | `fromuser` is always NULL here; guard can't trigger. |

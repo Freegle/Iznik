@@ -1,0 +1,94 @@
+{
+  "_comment": "Licences a dependency may carry, and the packages allowed anyway. Freegle's code is AGPL-3.0-or-later (see NOTICE), so a shipped dependency must be compatible with that. Read by scripts/check-dependency-licences.mjs. Development-only packages (npm dev, Composer packages-dev) are not checked: they are never combined with the code we convey.",
+
+  "allowed": [
+    "0BSD",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "Apache-2.0",
+    "Artistic-2.0",
+    "BlueOak-1.0.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSD-3-Clause-Clear",
+    "BSD-4-Clause",
+    "CC-BY-3.0",
+    "CC-BY-4.0",
+    "CC0-1.0",
+    "EDL-1.0",
+    "GPL-2.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "ISC",
+    "LGPL-2.0-only",
+    "LGPL-2.0-or-later",
+    "LGPL-2.1-only",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Python-2.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Unlicense",
+    "W3C",
+    "WTFPL",
+    "X11",
+    "Zlib",
+    "Public-Domain"
+  ],
+
+  "_why_not": {
+    "GPL-2.0-only": "Cannot be combined with GPL version 3 or the AGPL.",
+    "EPL-1.0, EPL-2.0": "The FSF lists the Eclipse Public License as incompatible with the GPL.",
+    "Elastic-2.0, BUSL-1.1, SSPL-1.0, FSL-1.1, Commons Clause": "Source-available, not free software: they restrict use.",
+    "CC-BY-NC, CC-BY-ND, proprietary, no licence": "Not free software."
+  },
+
+  "exceptions": {
+    "npm:add-to-calendar-button": {
+      "licence": "Elastic-2.0",
+      "reason": "Kept because it works across the app, the web and different handsets. NOTICE grants an AGPL section 7 permission to combine with it."
+    },
+    "npm:handsontable": {
+      "licence": "proprietary",
+      "reason": "ModTools support groups list. Being removed in PR #1823; delete this entry when it merges."
+    },
+    "npm:@handsontable/vue3": {
+      "licence": "proprietary",
+      "reason": "As npm:handsontable."
+    },
+    "npm:@sentry/cli": {
+      "licence": "FSL-1.1-MIT",
+      "reason": "Build tool that uploads source maps. It is run, never shipped or combined with our code."
+    },
+    "npm:@anthropic-ai/claude-agent-sdk": {
+      "licence": "proprietary",
+      "reason": "Used by monitor-fsm, which runs on our own machines. It is installed by whoever runs it, not shipped with the code."
+    },
+    "npm:combine-errors": {
+      "licence": "MIT",
+      "reason": "Declares no licence in package.json; its repository is MIT. Pulled in by tus-js-client."
+    },
+    "npm:simple-mime": {
+      "licence": "MIT",
+      "reason": "Declares no licence in package.json; its LICENSE file is MIT."
+    },
+    "composer:simple-as-fuck/laravel-lock": {
+      "licence": "Unlicense",
+      "reason": "Declares no licence in composer.json; its GitHub repository is Unlicense."
+    },
+    "composer:simple-as-fuck/php-validator": {
+      "licence": "Unlicense",
+      "reason": "As composer:simple-as-fuck/laravel-lock."
+    }
+  },
+
+  "_exception_prefixes": "A package whose key starts with one of these prefixes takes the named exception, such as the per-platform builds of a package.",
+  "exception_prefixes": {
+    "npm:@sentry/cli-": "npm:@sentry/cli",
+    "npm:@anthropic-ai/claude-agent-sdk-": "npm:@anthropic-ai/claude-agent-sdk"
+  }
+}

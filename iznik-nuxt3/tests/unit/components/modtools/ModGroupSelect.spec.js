@@ -1,23 +1,38 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ModGroupSelect from '~/modtools/components/ModGroupSelect.vue'
+import {
+  ROLE_MEMBER,
+  ROLE_MODERATOR,
+  ROLE_OWNER,
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+} from '~/constants'
 
 // Hoisted mocks - these must be defined before vi.mock calls
-const { mockMiscStore, mockModGroupStore, mockMe } = vi.hoisted(() => {
-  return {
-    mockMiscStore: {
-      vals: {},
-      set: vi.fn(),
-      get: vi.fn().mockReturnValue(undefined),
-    },
-    mockModGroupStore: {
-      list: {},
-      allGroups: {},
-      received: true,
-    },
-    mockMe: { id: 123, displayname: 'Test User', systemrole: 'Moderator' },
-  }
-})
+const { mockMiscStore, mockModGroupStore, mockMe, mockMyGroups } =
+  await vi.hoisted(async () => {
+    const { SYSTEMROLE_MODERATOR } = await import('~/constants')
+    return {
+      mockMyGroups: { value: [] },
+      mockMiscStore: {
+        vals: {},
+        set: vi.fn(),
+        get: vi.fn().mockReturnValue(undefined),
+      },
+      mockModGroupStore: {
+        list: {},
+        allGroups: {},
+        received: true,
+      },
+      mockMe: {
+        id: 123,
+        displayname: 'Test User',
+        systemrole: SYSTEMROLE_MODERATOR,
+      },
+    }
+  })
 
 // Mock stores
 vi.mock('~/stores/misc', () => ({
@@ -32,6 +47,7 @@ vi.mock('@/stores/modgroup', () => ({
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: { value: mockMe },
+    myGroups: mockMyGroups,
   }),
 }))
 
@@ -41,28 +57,28 @@ describe('ModGroupSelect', () => {
     1: {
       id: 1,
       namedisplay: 'Alpha Group',
-      role: 'Moderator',
+      role: ROLE_MODERATOR,
       mysettings: { active: 1 },
       work: { pending: 5, spam: 2 },
     },
     2: {
       id: 2,
       namedisplay: 'Beta Group',
-      role: 'Owner',
+      role: ROLE_OWNER,
       mysettings: { active: 1 },
       work: { pending: 3 },
     },
     3: {
       id: 3,
       namedisplay: 'Gamma Group',
-      role: 'Member',
+      role: ROLE_MEMBER,
       mysettings: { active: 0 },
       work: {},
     },
     4: {
       id: 4,
       namedisplay: 'Delta Group',
-      role: 'Moderator',
+      role: ROLE_MODERATOR,
       mysettings: { active: 1 },
     },
   }
@@ -114,7 +130,8 @@ describe('ModGroupSelect', () => {
     mockMiscStore.vals = {}
     mockMiscStore.get.mockReturnValue(undefined)
     // Reset me to default moderator role
-    mockMe.systemrole = 'Moderator'
+    mockMe.systemrole = SYSTEMROLE_MODERATOR
+    mockMyGroups.value = []
   })
 
   describe('Rendering', () => {
@@ -179,9 +196,19 @@ describe('ModGroupSelect', () => {
 
     it('sorts case-insensitively', () => {
       mockModGroupStore.list = {
-        1: { id: 1, namedisplay: 'alpha', role: 'Moderator', mysettings: {} },
-        2: { id: 2, namedisplay: 'BETA', role: 'Moderator', mysettings: {} },
-        3: { id: 3, namedisplay: 'Gamma', role: 'Moderator', mysettings: {} },
+        1: {
+          id: 1,
+          namedisplay: 'alpha',
+          role: ROLE_MODERATOR,
+          mysettings: {},
+        },
+        2: { id: 2, namedisplay: 'BETA', role: ROLE_MODERATOR, mysettings: {} },
+        3: {
+          id: 3,
+          namedisplay: 'Gamma',
+          role: ROLE_MODERATOR,
+          mysettings: {},
+        },
       }
       const wrapper = mountComponent()
       const sorted = wrapper.vm.sortedGroups
@@ -220,7 +247,7 @@ describe('ModGroupSelect', () => {
     })
 
     it('includes Systemwide option for Admin users when systemwide is true', () => {
-      mockMe.systemrole = 'Admin'
+      mockMe.systemrole = SYSTEMROLE_ADMIN
       const wrapper = mountComponent({ systemwide: true })
       const options = wrapper.vm.groupOptions
       const systemwideOption = options.find((o) => o.value === -2)
@@ -229,7 +256,7 @@ describe('ModGroupSelect', () => {
     })
 
     it('includes Systemwide option for Support users when systemwide is true', () => {
-      mockMe.systemrole = 'Support'
+      mockMe.systemrole = SYSTEMROLE_SUPPORT
       const wrapper = mountComponent({ systemwide: true })
       const options = wrapper.vm.groupOptions
       const systemwideOption = options.find((o) => o.value === -2)
@@ -237,7 +264,7 @@ describe('ModGroupSelect', () => {
     })
 
     it('does not include Systemwide option for Moderator users when systemwide is true', () => {
-      mockMe.systemrole = 'Moderator'
+      mockMe.systemrole = SYSTEMROLE_MODERATOR
       const wrapper = mountComponent({ systemwide: true })
       const options = wrapper.vm.groupOptions
       const systemwideOption = options.find((o) => o.value === -2)
@@ -245,7 +272,7 @@ describe('ModGroupSelect', () => {
     })
 
     it('does not include Systemwide option when systemwide is false', () => {
-      mockMe.systemrole = 'Admin'
+      mockMe.systemrole = SYSTEMROLE_ADMIN
       const wrapper = mountComponent({ systemwide: false })
       const options = wrapper.vm.groupOptions
       const systemwideOption = options.find((o) => o.value === -2)
@@ -271,6 +298,25 @@ describe('ModGroupSelect', () => {
       expect(groupNames).toContain('Beta Group')
       expect(groupNames).toContain('Delta Group')
       expect(groupNames).not.toContain('Gamma Group') // Member role
+    })
+
+    it('lists a group cached with no role when our memberships say we moderate it', () => {
+      // Opened by link while logged out, the group was cached before the
+      // memberships arrived, so it has no role of its own.
+      mockModGroupStore.list = {
+        6: { id: 6, namedisplay: 'Linked Group' },
+        7: { id: 7, namedisplay: 'Someone Else Group' },
+      }
+      mockMyGroups.value = [
+        { id: 6, role: ROLE_MODERATOR },
+        { id: 7, role: ROLE_MEMBER },
+      ]
+      const wrapper = mountComponent({ modonly: true, modelValue: 6 })
+      const groupNames = wrapper.vm.groupOptions.map((o) => o.text)
+
+      expect(groupNames).toContain('Linked Group')
+      expect(groupNames).not.toContain('Someone Else Group')
+      expect(wrapper.find('select').element.value).toBe('6')
     })
 
     it('includes all roles when modonly is false', () => {
@@ -532,7 +578,7 @@ describe('ModGroupSelect', () => {
         1: {
           id: 1,
           namedisplay: 'No Work Group',
-          role: 'Moderator',
+          role: ROLE_MODERATOR,
           mysettings: {},
         },
       }
@@ -545,7 +591,7 @@ describe('ModGroupSelect', () => {
 
     it('handles groups without mysettings property', () => {
       mockModGroupStore.list = {
-        1: { id: 1, namedisplay: 'No Settings Group', role: 'Moderator' },
+        1: { id: 1, namedisplay: 'No Settings Group', role: ROLE_MODERATOR },
       }
       const wrapper = mountComponent()
       const options = wrapper.vm.groupOptions

@@ -3,7 +3,7 @@
     v-if="job"
     ref="jobElement"
     class="job-item"
-    @click="clicked"
+    @click.capture="clicked"
     @mouseenter="handleMouseEnter"
   >
     <ExternalLink :href="job.url" class="job-link">
@@ -75,6 +75,8 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from '#imports'
 import { useJobStore } from '~/stores/job'
 import { action } from '~/composables/useClientLog'
+import { experimentVariant } from '~/composables/useExperiment'
+import { filterNonsense, jobLocation } from '~/composables/useJobText'
 import ExternalLink from '~/components/ExternalLink'
 import { JOB_ICON_COLOURS } from '~/constants'
 
@@ -153,17 +155,7 @@ const imageUrl = computed(() => {
   return job.value?.image || null
 })
 
-const location = computed(() => {
-  if (
-    job.value &&
-    job.value.location &&
-    job.value.location.indexOf(', ') === 0
-  ) {
-    return job.value.location.substring(2)
-  } else {
-    return job.value.location
-  }
-})
+const location = computed(() => jobLocation(job.value?.location))
 
 const iconStyle = computed(() => {
   const bg = JOB_ICON_COLOURS[props.bgColour] || JOB_ICON_COLOURS['dark green']
@@ -279,7 +271,17 @@ function handleMouseEnter() {
   }
 }
 
-function clicked() {
+function clicked(event) {
+  // Captured before the link sees it, so a tap we drop opens nothing. WhatJobs does not pay
+  // for a repeat click on the same advert, and counts it against the first one, so a second
+  // tap a moment after opening an advert (a double-tap, or a tap on the slot as it swaps)
+  // and a tap on an advert already opened today go nowhere.
+  if (jobStore.isDoubleTap() || jobStore.openedRecently(job.value.id)) {
+    event?.preventDefault()
+    event?.stopPropagation()
+    return
+  }
+
   // page = the route NAME we're on at click time (jobs, browse-term, message-id, ...),
   // derived from the router that's already in scope. It's orthogonal to placement: the same
   // slot appears on every page, so this is what tells us which page earns the most. Route
@@ -309,20 +311,16 @@ function clicked() {
     context: props.context,
     source: 'website',
     page,
+    // The member's experiment arms, so an experiment judged on job advert clicks can count them by
+    // arm (design.primary_event in the batch).
+    variant: experimentVariant(),
   })
+
+  // Swap this advert out of the ad slots once the browser has followed the link.
+  jobStore.recordOpened(job.value.id)
 
   // Notify parent so it can show the follow-up modal with more jobs.
   emit('clicked', job.value.id)
-}
-
-function filterNonsense(val) {
-  return val
-    .replace(/\\n/g, '\n')
-    .replace(/<br>/g, '\n')
-    .replace(/Â£/g, '£')
-    .trim()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036F]/g, '')
 }
 </script>
 <style scoped lang="scss">

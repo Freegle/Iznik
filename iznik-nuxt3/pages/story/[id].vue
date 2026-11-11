@@ -13,10 +13,14 @@
         <b-col cols="12" lg="6" class="p-0">
           <div class="bg-white p-4">
             <p>
-              We love to hear why you freegle and what your experiences have
-              been - and it helps show new freeglers what it's all about.
+              We love to hear why you freegle and the difference it has made -
+              and it helps show new freeglers what it's all about.
             </p>
-            <p>So please tell us your story!</p>
+            <p>
+              So please tell us your story, with a photo if you can: stories
+              with a photo are the ones we can share to get more people
+              freegling.
+            </p>
             <b-button variant="primary" @click="showAddModal">
               <v-icon icon="book-open" /> Tell us your story!
             </b-button>

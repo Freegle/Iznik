@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-02
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
@@ -37,6 +37,12 @@ operational facts (from their component READMEs and
 - They rebuild that graph on start, which takes several minutes, so a restart is not
   instant.
 - Rippling, the daily digest and browse depend on them being up.
+- On the database nodes monit starts the routing server as its own systemd unit with 4 GB of
+  memory the kernel may not reclaim or swap, and `system.slice` carries the same 4 GB
+  reservation (`systemctl set-property system.slice MemoryMin=4G`), without which the unit's
+  reservation has no effect. The standby node's router is idle until a failover; unprotected, its
+  graph went to swap within hours, and the first requests after a failover were then slow enough
+  to stop reach checks altogether.
 
 Plan restarts of these services with that warm-up time in mind.
 
@@ -74,7 +80,9 @@ time plus an application-layer content check running in parallel, with mail then
 the batch processor. The layers, the thresholds and where to tune them are in
 [./reference/spam-and-abuse.md](./reference/spam-and-abuse.md), along with the
 application-layer content checks, what a block keyword does to chat and posts (including
-the backfill that runs when one is created) and the reasons there is no AI moderator.
+the backfill that runs when one is created) and the reasons there is no AI moderator. When
+a wave outruns those layers, that page also covers the [lockdown](runbooks/lockdown.md)
+switch, which holds member content back from everyone until a person lifts it.
 
 ## Backups
 
@@ -115,3 +123,7 @@ Operational runbooks are indexed in [runbooks/](runbooks/README.md). They descri
 non-sensitive level, what to do for recurring operational events such as a background-host
 reboot or an edge-tier change. The detailed, host-specific steps are maintained in the ops
 team's operational notes rather than reproduced here.
+
+Routine OS patching and the reboots it needs are automated, one machine per night on a
+weekly rotation, with the graceful drain around every reboot: see
+[automated host maintenance](runbooks/automated-host-maintenance.md).

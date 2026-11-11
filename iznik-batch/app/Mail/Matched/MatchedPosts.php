@@ -2,6 +2,7 @@
 
 namespace App\Mail\Matched;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\Digest\DigestStyle;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AvatarResolver;
@@ -25,7 +26,7 @@ use App\Services\UnsubscribeService;
  * Each item is ['message' => Message (the matched post to show), 'reason' =>
  * Message (the recipient's own post it matched), 'score' => float].
  */
-class MatchedPosts extends MjmlMailable
+class MatchedPosts extends MjmlMailable implements DescribesMemberContent
 {
     use AvatarResolver, RoadDistances, TrackableEmail;
 
@@ -140,6 +141,30 @@ class MatchedPosts extends MjmlMailable
             'userSite' => $userSite,
             'email' => $this->recipientEmail,
         ]);
+    }
+
+    /**
+     * Every item shows two posts (the match and the recipient's own post it matched) and
+     * their authors; filter-spool removes this mail once none of those posts is still
+     * Approved, or every author it names is now a spammer.
+     */
+    public function about(): array
+    {
+        $messages = [];
+        $users = [];
+        foreach ($this->items as $item) {
+            $messages[] = $item['message']->id;
+            $messages[] = $item['reason']->id;
+            $users[] = $item['message']->fromuser;
+            $users[] = $item['reason']->fromuser;
+        }
+
+        return [
+            'chatmessages' => [],
+            'messages' => array_values(array_unique($messages)),
+            'newsfeed' => [],
+            'users' => array_values(array_unique($users)),
+        ];
     }
 
     /**

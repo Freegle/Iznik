@@ -2,9 +2,12 @@
 
 namespace App\Mail\Message;
 
+use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
+use App\Models\User;
+use App\Support\TrashNothingSignOff;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -15,7 +18,7 @@ use Illuminate\Mail\Mailables\Envelope;
  * V1 parity: sent from {groupnameshort}-volunteers@groups.ilovefreegle.org
  * (or the group's contactmail if set), with the mod's display name.
  */
-class ModStdMessageMail extends MjmlMailable
+class ModStdMessageMail extends MjmlMailable implements DescribesMemberContent
 {
     use TrackableEmail;
     use LoggableEmail;
@@ -48,11 +51,24 @@ class ModStdMessageMail extends MjmlMailable
         $this->mjmlData = array_merge([
             'modName' => $this->modName,
             'groupName' => $this->groupName,
-            'body' => $this->stdBody,
+            'body' => $this->bodyFor($this->recipientUserId),
             'messageSubject' => $this->messageSubject,
             'userSite' => config('freegle.sites.user'),
             'email' => $this->recipientEmail,
         ], $this->getTrackingData());
+    }
+
+    /**
+     * The standard message, signed for a TrashNothing member: TrashNothing shows this mail as
+     * coming from a Freegle user, so the moderator's sender name is lost.
+     */
+    private function bodyFor(int $recipientUserId): string
+    {
+        $recipient = $recipientUserId > 0 ? User::find($recipientUserId) : null;
+
+        return $recipient?->isTrashNothingAccount()
+            ? TrashNothingSignOff::append($this->stdBody, $this->groupName)
+            : $this->stdBody;
     }
 
     public function envelope(): Envelope
@@ -83,5 +99,20 @@ class ModStdMessageMail extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->recipientUserId;
+    }
+
+    /**
+     * Names the post the standard message replies about and the poster it is addressed to
+     * (plan section 11.8); filter-spool removes this mail once that post is no longer
+     * Approved or the poster is now a spammer.
+     */
+    public function about(): array
+    {
+        return [
+            'chatmessages' => [],
+            'messages' => [$this->msgId],
+            'newsfeed' => [],
+            'users' => [$this->recipientUserId],
+        ];
     }
 }

@@ -4,6 +4,8 @@ namespace App\Console\Commands\User;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Dump a user's data to a JSON file for later restoration.
@@ -14,6 +16,7 @@ use Illuminate\Support\Facades\DB;
  * Usage: php artisan user:dump --email=user@example.com --output=/tmp/user-dump.json
  *        php artisan user:dump --id=12345 --output=/tmp/user-dump.json
  */
+#[AsCommand(name: 'user:dump')]
 class DumpUserCommand extends Command
 {
     protected $signature = 'user:dump
@@ -35,6 +38,7 @@ class DumpUserCommand extends Command
         'users_donations'          => ['userid'],
         'giftaid'                  => ['userid'],
         'microactions'             => ['userid'],
+        'ux_prompt_responses'      => ['userid'],
         'ratings'                  => ['rater', 'ratee'],
         'users_logins'             => ['userid'],
         'users_emails'             => ['userid'],
@@ -51,6 +55,7 @@ class DumpUserCommand extends Command
         'sessions'                 => ['userid'],
         'messages'                 => ['fromuser'],
         'messages_promises'        => ['userid'],
+        'messages_interested'      => ['userid'],
         'messages_reneged'         => ['userid'],
         'messages_by'              => ['userid'],
         'chat_rooms'               => ['user1', 'user2'],
@@ -64,6 +69,7 @@ class DumpUserCommand extends Command
         'locations_excluded'       => ['userid'],
         'logs'                     => ['user'],
         'logs_sql'                 => ['userid'],
+        'ux_experiment_exposures'  => ['userid'],
     ];
 
     public function handle(): int
@@ -140,6 +146,13 @@ class DumpUserCommand extends Command
 
         // Dump each table.
         foreach ($this->tables as $table => $userIdColumns) {
+            // A table that does not exist yet (its SQL has not been run) is skipped, not fatal.
+            if (! Schema::hasTable($table)) {
+                $this->warn("  $table: no such table, skipped");
+
+                continue;
+            }
+
             $rows = [];
             $query = DB::table($table);
 

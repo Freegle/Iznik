@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/router"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
@@ -43,6 +44,13 @@ func init() {
 	// tests must not depend on that, nor on the production default. Pin an
 	// obviously-fake test host and assert image URLs against it (uploads.test).
 	os.Setenv("UPLOADS", "https://uploads.test/")
+	// No test may reach the real Mapbox API. The apiv2 container carries a real key,
+	// and the routing server answers drive isochrones only, so every walk or cycle
+	// isochrone a test asked for went to Mapbox, locally and in CI, spending the
+	// production key. Without a key they fall back to the location's own shape.
+	// TestEnsureIsochroneExistsFallsBackToMapbox sets a key of its own and answers
+	// api.mapbox.com itself.
+	os.Unsetenv("MAPBOX_KEY")
 
 	app = &TestApp{fiber.New()}
 	app.Use(user.NewAuthMiddleware(user.Config{}))
@@ -234,7 +242,11 @@ func verifyRequiredTables() {
 }
 
 func TestMain(m *testing.M) {
+	// The delivery tests assert on the tracking row straight after a request, so run the handlers
+	// in direct-write mode. emailtracking_journal_test.go turns the journal on for its own cases.
+	emailtracking.SetJournalEnabled(false)
 	dropLegacyReachGeometry()
+	purgeStaleLockdownState()
 
 	code := m.Run()
 
@@ -268,6 +280,32 @@ func dropLegacyReachGeometry() {
 
 	if err := db.Exec("ALTER TABLE rippling_reach DROP COLUMN polygon").Error; err != nil {
 		fmt.Printf("WARNING: could not drop legacy rippling_reach.polygon: %v\n", err)
+	}
+}
+
+// lockdown_handlers_test.go is the one file in this package that writes real "lockdowns"
+// rows through the real HTTP endpoint (every other lockdown_gates_*_test.go uses
+// lockdown.SetTestState instead, so nothing else in this binary touches the table for
+// real). Each of its tests cleans up its own incident before returning, but that cleanup
+// is scoped to the incident id the test itself created, so it cannot remove a row left
+// behind by something outside a normal run of this file - a crashed previous run that
+// never reached its cleanup, or a one-off manual press against this same test database.
+// Any such row is "active" from a press nobody ever closed, and since press() refuses to
+// run again while one is active, it silently turns every press test in the file into a
+// 409 for the rest of the suite, cascading into every gate elsewhere that holds the
+// surface it locked.
+//
+// Called once, here, before m.Run() starts - nothing in this binary has written a real
+// lockdowns row yet at this point, so there is nothing legitimate to lose.
+func purgeStaleLockdownState() {
+	db := database.DBConn
+	for _, table := range []string{"lockdowns", "lockdown_holds", "lockdown_counters", "lockdown_acks"} {
+		result := db.Exec("DELETE FROM " + table)
+		if result.Error != nil {
+			fmt.Printf("WARNING: could not purge stale %s: %v\n", table, result.Error)
+		} else if result.RowsAffected > 0 {
+			fmt.Printf("Purged %d stale row(s) from %s left over from outside this test run\n", result.RowsAffected, table)
+		}
 	}
 }
 

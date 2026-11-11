@@ -16,10 +16,9 @@
       This came from Trash Nothing and is live on
       <strong>{{ groupName || 'this community' }}</strong
       >. The person who posted it didn't choose this community - we matched it
-      here from where they are. You can
-      <strong>delete</strong> it if it shouldn't be here, but you can't edit it
-      or message them. If members report it, it comes off Freegle automatically
-      rather than back to you.
+      here from where they are. You can <strong>delete</strong> it if it
+      shouldn't be here, but you can't edit it or message them. If members
+      report it, it comes off Freegle automatically rather than back to you.
     </span>
   </NoticeMessage>
 </template>

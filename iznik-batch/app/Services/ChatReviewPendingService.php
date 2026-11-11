@@ -73,6 +73,9 @@ class ChatReviewPendingService
     {
         $cutoff = now()->subHours(self::NOTIFY_HOURS)->toDateTimeString();
 
+        // keep-raw: COUNT(DISTINCT ...) is an aliased aggregate alongside a
+        // grouped column (no builder form), and the JOIN condition needs a
+        // CASE WHEN to pick "the other party" - neither has a builder method.
         $groups = DB::select(
             "SELECT memberships.groupid, COUNT(DISTINCT chat_messages.id) AS cnt
              FROM chat_messages

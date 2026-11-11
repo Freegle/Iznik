@@ -204,7 +204,8 @@ class ReengageContentService
     /**
      * Find a real local volunteer to sign the tip off:
      *   - only communities the member GENUINELY joined (collection Approved,
-     *     rippled = 0 - never a Rippling-Out auto-join);
+     *     rippled = 0 and implicit = 0 - never a Rippling-Out auto-join, nor a
+     *     TrashNothing poster placed on a group they did not pick);
      *   - the member's HOME group first: the community whose catchment actually
      *     contains where they live (see below);
      *   - the volunteer must be an active (accessed within a year), publicly
@@ -239,6 +240,7 @@ class ReengageContentService
             ->where('memberships.userid', $user->id)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->where('memberships.rippled', 0)
+            ->where('memberships.implicit', 0)
             ->where('groups.type', Group::TYPE_FREEGLE)
             ->select('groups.id', 'groups.nameshort', 'groups.namefull');
 
@@ -252,17 +254,24 @@ class ReengageContentService
 
             // Recorded so the sysadmin dashboard can show how often the home
             // group was genuinely known rather than guessed at by distance.
+            // keep-raw: ST_GeometryType/ST_Contains/ST_SRID/POINT are spatial
+            // functions the builder has no fluent equivalent for.
             $groupsQuery->selectRaw($containsSql . ' AS is_home', [$lng, $lat]);
 
             $groupsQuery
                 // 1. Catchment containment wins outright.
+                // keep-raw: same ST_Contains expression as above, ordered by it.
                 ->orderByRaw($containsSql . ' DESC', [$lng, $lat])
                 // 2. Overlapping catchments: the smallest (most local) one.
+                // keep-raw: CASE WHEN wraps the ST_Contains expression, and
+                // ST_Area() has no builder method either.
                 ->orderByRaw(
                     'CASE WHEN ' . $containsSql . ' THEN ST_Area(groups.polyindex) ELSE 0 END ASC',
                     [$lng, $lat]
                 )
                 // 3. No containing catchment: fall back to nearest centre.
+                // keep-raw: haversine() is a custom SQL function with no builder
+                // equivalent.
                 ->orderByRaw(
                     'groups.lat IS NULL, haversine(?, ?, groups.lat, groups.lng) ASC',
                     [$lat, $lng]
@@ -277,10 +286,13 @@ class ReengageContentService
                 ->join('users', 'users.id', '=', 'memberships.userid')
                 ->where('memberships.groupid', $group->id)
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-                ->whereIn('memberships.role', ['Moderator', 'Owner'])
+                ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
                 ->whereNull('users.deleted')
                 ->where('users.lastaccess', '>=', $oneYearAgo)
-                ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
+                ->where(function ($q) {
+                    $q->whereJsonDoesntContainKey('users.settings->showmod')
+                        ->orWhere('users.settings->showmod', true);
+                })
                 ->inRandomOrder()
                 ->select('users.fullname', 'users.firstname')
                 ->first();

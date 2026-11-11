@@ -49,7 +49,7 @@
           @rendered="fallbackJobsRendered"
         />
         <nuxt-link
-          v-if="!fallbackJobsShowing"
+          v-if="!fallbackJobsShowing && askForDonations"
           to="/adsoff"
           style="display: block; max-width: 100%"
         >
@@ -134,7 +134,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useMe } from '~/composables/useMe'
 
 const miscStore = useMiscStore()
-const { me, recentDonor } = useMe()
+const { me, recentDonor, askForDonations } = useMe()
 
 const props = defineProps({
   adUnitPath: {

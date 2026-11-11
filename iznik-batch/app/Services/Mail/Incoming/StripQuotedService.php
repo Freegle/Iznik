@@ -66,6 +66,13 @@ class StripQuotedService
             $textbody = substr($textbody, 0, $p);
         }
 
+        // Our own email quoted as flattened text, stylesheet first. Some clients (BlueMail) put
+        // the "On ... wrote:" header only in the HTML part, so the plain part has nothing else to
+        // cut at. MJML's head CSS starts with this rule and nobody types it.
+        if (preg_match('/^\s*#outlook a\s*\{/m', $textbody, $m, PREG_OFFSET_CAPTURE)) {
+            $textbody = substr($textbody, 0, $m[0][1]);
+        }
+
         // Gmail-style "On ... wrote:" pattern (assumes top-posting).
         if (preg_match('/(.*)^\s*On.*?wrote\:(\s*)/ms', $textbody, $matches)) {
             $textbody = $matches[1];

@@ -27,6 +27,7 @@ type Entry struct {
 	Subject    string
 	Arrival    time.Time
 	SubjectVec [EmbeddingDim]float32
+	ItemKey    string                 // messages_cleaned_items.itemkey: the item the post is about, "" until worked out
 	BodyVec    *[EmbeddingDim]float32 // nil when no body embedding stored
 }
 
@@ -118,11 +119,55 @@ func fetchEntries(extraWhere string, args ...interface{}) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	itemKeys, err := fetchItemKeys(msgids)
+	if err != nil {
+		return nil, err
+	}
 	for i := range entries {
 		entries[i].GroupIDs = groupIDs[entries[i].Msgid]
+		entries[i].ItemKey = itemKeys[entries[i].Msgid]
 	}
 
 	return entries, nil
+}
+
+// ItemKeysFor reads the item keys the store would load for these posts.
+func (s *Store) ItemKeysFor(msgids []uint64) map[uint64]string {
+	keys, _ := fetchItemKeys(msgids)
+	return keys
+}
+
+// fetchItemKeys maps each msgid to the key of the item the post is about (messages_cleaned_items,
+// written by the batch's messages:clean-items). A post without one yet is absent. Like the
+// groups, a post's item can arrive after the post is in the store, so Refresh re-reads it for
+// every open post. docs/developers/reference/message-items.md.
+func fetchItemKeys(msgids []uint64) (map[uint64]string, error) {
+	keys := make(map[uint64]string, len(msgids))
+	if len(msgids) == 0 {
+		return keys, nil
+	}
+
+	db := database.DBConn
+	if db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	type itemRow struct {
+		Msgid   uint64 `gorm:"column:msgid"`
+		Itemkey string `gorm:"column:itemkey"`
+	}
+	var rows []itemRow
+	if err := db.Table("messages_cleaned_items").
+		Select("msgid, itemkey").
+		Where("msgid IN (?) AND itemkey IS NOT NULL", msgids).
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("item keys query: %w", err)
+	}
+	for _, r := range rows {
+		keys[r.Msgid] = r.Itemkey
+	}
+
+	return keys, nil
 }
 
 // fetchGroupIDs maps each msgid to every group the message is Approved on.
@@ -255,6 +300,10 @@ func (s *Store) Refresh() error {
 	if err != nil {
 		return fmt.Errorf("refresh groups: %w", err)
 	}
+	itemKeys, err := fetchItemKeys(openIds)
+	if err != nil {
+		return fmt.Errorf("refresh item keys: %w", err)
+	}
 
 	s.mu.Lock()
 	kept := make([]Entry, 0, len(s.entries)+len(newEntries))
@@ -266,6 +315,7 @@ func (s *Store) Refresh() error {
 	s.entries = append(kept, newEntries...)
 	for i := range s.entries {
 		s.entries[i].GroupIDs = groupIDs[s.entries[i].Msgid]
+		s.entries[i].ItemKey = itemKeys[s.entries[i].Msgid]
 	}
 	s.mu.Unlock()
 
@@ -372,6 +422,7 @@ type VectorSearchResult struct {
 	HasBody    bool      `json:"hasBody"`
 	Subject    string    `json:"-"` // Used for hybrid keyword scoring, not serialized
 	Arrival    time.Time `json:"-"`
+	ItemKey    string    `json:"-"` // The post's item key, for item matching; "" when unknown
 }
 
 // entryInAnyGroup reports whether e is Approved on any of the requested groups.
@@ -504,6 +555,7 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 			HasBody:    r.hasBody,
 			Subject:    e.Subject,
 			Arrival:    e.Arrival,
+			ItemKey:    e.ItemKey,
 		}
 	}
 
@@ -543,6 +595,43 @@ func (s *Store) LexicalMatch(words []string, msgtype string, groupids []uint64,
 		return nil
 	}
 
+	return s.scanInScope(msgtype, groupids, allowedIDs, swlat, swlng, nelat, nelng, func(e *Entry) bool {
+		// Whole-word match (matching the retired keyword index's semantics, not a
+		// substring — so "cat" doesn't match "category"). Tokenise the subject the
+		// same way the query words were tokenised: lower-case, split on any
+		// non-alphanumeric rune.
+		subjectWords := tokenizeWords(e.Subject)
+		for _, w := range words {
+			if !subjectWords[w] {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// ItemMatch returns every open entry about the given item (messages_cleaned_items.itemkey), subject
+// to the same filters as LexicalMatch. Search uses it to find a post about exactly what was
+// searched for whatever its wording, which the embedding can miss ("Aluminium walking frame"
+// for "walking frame" scores low on cosine and has no "walking frame" phrase to match).
+func (s *Store) ItemMatch(itemKey string, msgtype string, groupids []uint64,
+	allowedIDs map[uint64]bool, swlat, swlng, nelat, nelng float32) []VectorSearchResult {
+
+	if itemKey == "" {
+		return nil
+	}
+
+	return s.scanInScope(msgtype, groupids, allowedIDs, swlat, swlng, nelat, nelng, func(e *Entry) bool {
+		return e.ItemKey == itemKey
+	})
+}
+
+// scanInScope returns the entries that pass Search's type, group, allowedIDs and box filters
+// and the given test. Shared so the lexical and item guarantees can never reach a post the
+// cosine path would have excluded.
+func (s *Store) scanInScope(msgtype string, groupids []uint64, allowedIDs map[uint64]bool,
+	swlat, swlng, nelat, nelng float32, match func(e *Entry) bool) []VectorSearchResult {
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -576,20 +665,7 @@ func (s *Store) LexicalMatch(words []string, msgtype string, groupids []uint64,
 				continue
 			}
 		}
-
-		// Whole-word match (matching the retired keyword index's semantics, not a
-		// substring — so "cat" doesn't match "category"). Tokenise the subject the
-		// same way the query words were tokenised: lower-case, split on any
-		// non-alphanumeric rune.
-		subjectWords := tokenizeWords(e.Subject)
-		all := true
-		for _, w := range words {
-			if !subjectWords[w] {
-				all = false
-				break
-			}
-		}
-		if !all {
+		if !match(e) {
 			continue
 		}
 
@@ -601,6 +677,7 @@ func (s *Store) LexicalMatch(words []string, msgtype string, groupids []uint64,
 			Lng:     e.Lng,
 			Subject: e.Subject,
 			Arrival: e.Arrival,
+			ItemKey: e.ItemKey,
 		})
 	}
 	return out

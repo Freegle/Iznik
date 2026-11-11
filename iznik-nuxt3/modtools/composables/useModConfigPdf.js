@@ -20,13 +20,26 @@ export const MESSAGE_SECTIONS = [
     heading: 'Pending Messages',
     cc: 'ccrejectto',
     addr: 'ccrejectaddr',
-    actions: ['Approve', 'Reject', 'Leave', 'Delete', 'Edit', 'Hold Message'],
+    actions: [
+      'Approve',
+      'Reject',
+      'Leave',
+      'Delete',
+      'Edit',
+      'Edit and Message',
+      'Hold Message',
+    ],
   },
   {
     heading: 'Approved Messages',
     cc: 'ccfollowupto',
     addr: 'ccfollowupaddr',
-    actions: ['Leave Approved Message', 'Delete Approved Message', 'Edit'],
+    actions: [
+      'Leave Approved Message',
+      'Delete Approved Message',
+      'Edit',
+      'Edit and Message',
+    ],
   },
   {
     heading: 'Approved Members',
@@ -206,6 +219,7 @@ export function buildModConfigDocument(config, opts = {}) {
         rows: messageRows(s),
         editText: s.edittext || '',
         body: s.body || '',
+        replyBody: s.replybody || '',
       }))
 
     sections.push({
@@ -446,7 +460,7 @@ export function renderModConfigPdf(pdf, doc) {
       }
 
       if (message.body) {
-        paragraph('Message body', {
+        paragraph(message.replyBody ? 'Added to post' : 'Message body', {
           size: 9,
           style: 'bold',
           indent: 12,
@@ -461,6 +475,22 @@ export function renderModConfigPdf(pdf, doc) {
         })
       } else {
         y += 6
+      }
+
+      if (message.replyBody) {
+        paragraph('Message to poster', {
+          size: 9,
+          style: 'bold',
+          indent: 12,
+          colour: 110,
+          gap: 2,
+        })
+        paragraph(message.replyBody, {
+          size: 9,
+          style: 'normal',
+          indent: 12,
+          gap: 8,
+        })
       }
     })
 

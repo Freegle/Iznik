@@ -21,7 +21,7 @@
             />
           </div>
           <div class="form-field">
-            <label class="form-label">Location</label>
+            <div class="form-label">Location</div>
             <PostCode
               :find="false"
               :value="postcode?.name"
@@ -33,13 +33,13 @@
 
         <!-- What is it? -->
         <div class="form-card">
-          <label class="form-label">
+          <div class="form-label">
             {{
               type === 'Offer'
                 ? 'What is it?'
                 : "Tell other freeglers what you'd like"
             }}
-          </label>
+          </div>
           <PostItem
             :id="id"
             ref="item"
@@ -74,7 +74,7 @@
         <!-- Quantity and Deadline row -->
         <div class="form-card form-card-row-spaced">
           <div v-if="message.type === 'Offer'" class="form-field">
-            <label class="form-label">How many?</label>
+            <div class="form-label">How many?</div>
             <NumberIncrementDecrement
               v-model="availablenow"
               :min="1"
@@ -97,7 +97,7 @@
 
         <!-- Photo section - at the bottom, compact -->
         <div class="form-card photo-card">
-          <label class="form-label">Photos</label>
+          <div class="form-label">Photos</div>
           <draggable
             v-model="attachments"
             class="photo-grid"
@@ -142,8 +142,8 @@
 
       <!-- Fallback for messages without location -->
       <div v-else class="form-card">
-        <label class="form-label">Subject</label>
-        <b-form-input v-model="message.subject" />
+        <label :for="`${formId}-subject`" class="form-label">Subject</label>
+        <b-form-input :id="`${formId}-subject`" v-model="message.subject" />
       </div>
     </template>
     <template #footer>
@@ -162,7 +162,7 @@
 </template>
 
 <script setup>
-import { ref, computed, defineAsyncComponent, toRaw } from 'vue'
+import { ref, computed, defineAsyncComponent, toRaw, useId } from 'vue'
 import draggable from 'vuedraggable'
 import NumberIncrementDecrement from './NumberIncrementDecrement'
 import PostPhoto from './PostPhoto.vue'
@@ -178,6 +178,9 @@ import {
   isNumericOnlyBody,
   invalidBodyMessage,
 } from '~/composables/useItemValidation'
+
+// Unique per instance so label/for pairs never clash when the component renders twice.
+const formId = useId()
 
 const OurUploader = defineAsyncComponent(
   () => import('~/components/OurUploader')

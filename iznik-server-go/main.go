@@ -9,6 +9,7 @@ import (
 	fiberadapter "github.com/awslabs/aws-lambda-go-api-proxy/fiber"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/router"
 	"github.com/freegle/iznik-server-go/user"
@@ -109,11 +110,10 @@ func main() {
 	app.Use(user.NewAuthMiddleware(user.Config{}))
 
 	// Add Loki logging middleware (async, doesn't block responses).
-	// Skip health check and swagger endpoints.
+	// Skip health check, swagger and /clientlog (which logs its own entries).
 	app.Use(misc.NewLokiMiddleware(misc.LokiMiddlewareConfig{
 		Skip: func(c *fiber.Ctx) bool {
-			path := c.Path()
-			return path == "/api/online" || strings.HasPrefix(path, "/swagger")
+			return misc.SkipRequestLog(c.Path())
 		},
 		GetUserId: func(c *fiber.Ctx) *uint64 {
 			userIdInJWT, _, _ := user.GetJWTFromRequest(c)
@@ -161,6 +161,8 @@ func main() {
 			_ = <-c
 			fmt.Println("Gracefully shutting down...")
 			_ = app.Shutdown()
+			// Write out any tracking events still buffered for the journal.
+			emailtracking.StopJournal()
 			serverShutdown <- struct{}{}
 		}()
 

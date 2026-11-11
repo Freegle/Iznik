@@ -18,6 +18,10 @@ const mockJobStore = {
   get list() {
     return mockJobList
   },
+  // The ad slots read the list without the adverts this device opened recently.
+  get available() {
+    return mockJobList
+  },
   fetch: vi.fn().mockResolvedValue(undefined),
 }
 
@@ -271,6 +275,26 @@ describe('JobsDaSlot', () => {
 
       const component = wrapper.findComponent(JobsDaSlot)
       expect(component.emitted('borednow')).toBeTruthy()
+    })
+  })
+
+  describe('order', () => {
+    it('weights the random order by pay, so the ranking survives', async () => {
+      mockJobList.length = 0
+      mockJobList.push(
+        { id: 1, job_reference: 'ref-1', cpc: 0.08 },
+        { id: 2, job_reference: 'ref-2', cpc: 0.36 },
+        { id: 3, job_reference: 'ref-3', cpc: 0.15 }
+      )
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+
+      const wrapper = await createWrapper()
+      const ids = wrapper
+        .findAll('.job-one')
+        .map((t) => Number(t.attributes('data-id')))
+
+      expect(ids).toEqual([2, 3, 1])
+      random.mockRestore()
     })
   })
 

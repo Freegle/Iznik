@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -31,26 +32,16 @@ class CPIService
     const CONFIG_KEY = 'cpi_annual_data';
 
     /**
-     * Hardcoded fallback CPI data.
-     * Used when config table is empty or API fetch fails.
-     * Last updated: January 2025
+     * Hardcoded fallback CPI data, used when the config table is empty or the
+     * API fetch fails. One table, kept in ReuseBenefit.
      */
-    const FALLBACK_CPI_DATA = [
-        2011 => 93.4,
-        2012 => 96.1,
-        2013 => 98.5,
-        2014 => 100.0,
-        2015 => 100.0,
-        2016 => 100.7,
-        2017 => 103.4,
-        2018 => 105.9,
-        2019 => 107.8,
-        2020 => 108.7,
-        2021 => 111.6,
-        2022 => 121.7,
-        2023 => 130.5,
-        2024 => 133.9,
-    ];
+    const FALLBACK_CPI_DATA = ReuseBenefit::FALLBACK_CPI_DATA;
+
+    /**
+     * The first year kept from ONS. The fly-tipping clearance costs are in
+     * 2003-06 prices, so the series has to reach back that far.
+     */
+    const FIRST_YEAR = 2003;
 
     /**
      * GeekAlerts email address for failure notifications.
@@ -144,9 +135,9 @@ class CPIService
             $year = (int) $entry['year'];
             $value = (float) $entry['value'];
 
-            // Only include years from 2011 onwards (when WRAP report was published).
-            // Also exclude invalid or placeholder values.
-            if ($year >= 2011 && $value > 0) {
+            // Only include years from FIRST_YEAR onwards, and exclude invalid or
+            // placeholder values.
+            if ($year >= self::FIRST_YEAR && $value > 0) {
                 $cpiData[$year] = $value;
             }
         }
@@ -203,10 +194,11 @@ class CPIService
             'source' => 'ONS D7BT series',
         ]);
 
-        DB::statement(
-            "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
-            [self::CONFIG_KEY, $json, $json]
-        );
+        DB::table('config')->upsert(
+                [['key' => self::CONFIG_KEY, 'value' => $json]],
+                ['key'],
+                ['value']
+            );
     }
 
     /**

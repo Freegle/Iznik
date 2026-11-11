@@ -1,10 +1,13 @@
 ---
-last_reviewed: 2026-09-28
+last_reviewed: 2026-11-09
 owner: Freegle dev team
 covers:
   - .env.example
   - iznik-batch/config/freegle.php
   - iznik-nuxt3/nuxt.config.ts
+  - iznik-server-go/utils/geoip.go
+  - iznik-server-go/utils/geoip_asn.go
+  - scripts/geoip-update.sh
 ---
 
 # External services
@@ -48,12 +51,13 @@ Visible, annoying, not fatal.
 | **Google Maps / Places** | Address and place lookup in parts of the frontend |
 | **Google Cloud Vision** | Checks uploaded photos for unsuitable images |
 | **Google Perspective** | Scores text for abuse, feeding moderation |
-| **Google Gemini** | The AI features (support helper, classification experiments) |
+| **Google Gemini** | The AI features (support helper, classification experiments), and the cleaned item of each post that AI item pictures, matched posts and search use (`message-items.md`), and splitting posts of several items into item lists, photos included (`auto-split.md`) |
 | **Firebase Cloud Messaging** | Push notifications to the apps (`GOOGLE_PUSH_KEY`) |
-| **MaxMind** | Turns an IP address into a rough location, used in anti-abuse |
+| **MaxMind** | Two free GeoLite2 databases, read from files so a lookup never calls out. **GeoLite2-Country** turns an IP address into a country, used in anti-abuse and by the email job page (the Go API embeds a copy, and iznik-batch carries its own). **GeoLite2-ASN** names the network an address belongs to, and the Go API embeds it too: with the country it decides whether the email job page opens the advert at once ([ads.md](ads.md)). An embedded copy is only as new as the committed file (Country built 13 Oct 2026, ASN 15 Oct 2026), and rebuilding does not refresh it. `scripts/geoip-update.sh` refreshes a system copy (`GEOIP_EDITION=GeoLite2-ASN` for the network database), and `GEOIP_MMDB_PATH` and `GEOIP_ASN_MMDB_PATH` point the Go API at it without a rebuild. This product includes GeoLite Data created by MaxMind, available from https://www.maxmind.com. |
 | **Playwire** | Advert delivery ([ads.md](ads.md)) |
 | **WhatJobs** | The job listings that fill some advert slots ([ads.md](ads.md)) |
 | **CookieYes** | The cookie consent banner, checked weekly by `cookieyes:check` ([cookieyes-watchdog.md](cookieyes-watchdog.md)) |
+| **Google Search Console and Ads** | Checked weekly by `google:search-console-check` and `google:ads-check` ([google-housekeeping.md](google-housekeeping.md)) |
 | **Google Tag Manager** | Analytics tags, only when `GTM_ID` is set |
 | **Trustpilot** | Review link |
 
@@ -66,7 +70,7 @@ These look like external services on other sites. We run them.
 | **Place search** | A paid geocoding API | Part of the spatial service. An index of named UK places built from OpenStreetMap data, held in memory and reloaded without a restart |
 | **OSM tile server** | A paid map tile service | Edge tier (`tile-server` container) |
 | **tusd** | An upload service | Edge tier. Uploads are resumable; identifiers look like `freegletusd-*`. tusd writes to a local spool; the batch scheduler moves completed uploads to the object store below |
-| **Object store** (Katapult / any S3-compatible bucket) | S3 | Where finished uploads live, read anonymously by the edge nginx (`IMAGE_STORE_PUBLIC_URL`) and written by batch (`IMAGE_STORE_*` in the batch secrets). The dev `edge` stack uses RustFS as a stand-in. Legacy uploads are still on an NFS share while they are copied - [runbook](../../ops/runbooks/images-to-object-storage.md) |
+| **Object store** (Katapult / any S3-compatible bucket) | S3 | Where finished uploads live, read anonymously by the edge nginx (`IMAGE_STORE_PUBLIC_URL`) and written by batch (`IMAGE_STORE_*` in the batch secrets). The dev `edge` stack uses RustFS as a stand-in - [runbook](../../ops/runbooks/images-to-object-storage.md) |
 | **weserv** | Cloudinary or similar | Image resizing and delivery (`IMAGE_DELIVERY`) |
 | **Loki + Grafana** | A hosted log service | [../../ops/monitoring-and-logging.md](../../ops/monitoring-and-logging.md) |
 | **Discourse** | A hosted forum | `discourse.ilovefreegle.org`, the volunteers' forum |

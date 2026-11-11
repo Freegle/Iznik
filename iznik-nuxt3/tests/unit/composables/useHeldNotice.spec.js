@@ -127,10 +127,78 @@ describe('useHeldNotice', () => {
   })
 })
 
+describe('useHeldNotice - server refusals', () => {
+  function refusal(
+    status = 403,
+    message = 'You are a moderator of this community, so leaving would drop that role.'
+  ) {
+    const e = new Error('API Error')
+    e.response = { status, data: { error: status, message } }
+    return e
+  }
+
+  it('shows a 403 refusal message instead of throwing', async () => {
+    const notice = useHeldNotice()
+    await notice.guardHold(() => Promise.reject(refusal()))
+    expect(notice.heldError.value).toMatch(/so leaving would drop that role/)
+  })
+
+  it('rethrows a 403 that has no message', async () => {
+    const notice = useHeldNotice()
+    const e = new Error('API Error')
+    e.response = { status: 403, data: {} }
+    await expect(notice.guardHold(() => Promise.reject(e))).rejects.toThrow(
+      'API Error'
+    )
+  })
+
+  it('rethrows a non-403 failure even with a message', async () => {
+    const notice = useHeldNotice()
+    await expect(
+      notice.guardHold(() => Promise.reject(refusal(500, 'boom')))
+    ).rejects.toThrow('API Error')
+    expect(notice.heldError.value).toBeNull()
+  })
+})
+
 describe('notAHeldConflict', () => {
   it('keeps hold refusals out of Sentry but logs real faults', () => {
     expect(notAHeldConflict({ heldby: 123 })).toBe(false)
     expect(notAHeldConflict({})).toBe(true)
     expect(notAHeldConflict(null)).toBe(true)
+  })
+})
+
+describe('useHeldNotice - server refusals', () => {
+  function refusal(
+    status = 403,
+    message = 'You are a moderator of this community, so leaving would drop that role.'
+  ) {
+    const e = new Error('API Error')
+    e.response = { status, data: { error: status, message } }
+    return e
+  }
+
+  it('shows a 403 refusal message instead of throwing', async () => {
+    const notice = useHeldNotice()
+    await notice.guardHold(() => Promise.reject(refusal()))
+    expect(notice.heldError.value).toMatch(/so leaving would drop that role/)
+  })
+
+  it('rethrows a 403 that has no message', async () => {
+    const notice = useHeldNotice()
+    const e = new Error('API Error')
+    e.response = { status: 403, data: {} }
+    await expect(notice.guardHold(() => Promise.reject(e))).rejects.toThrow(
+      'API Error'
+    )
+  })
+
+  it('rethrows a non-403 failure even with a message', async () => {
+    const notice = useHeldNotice()
+    await expect(
+      notice.guardHold(() => Promise.reject(refusal(500, 'boom')))
+    ).rejects.toThrow('API Error')
+    expect(notice.heldError.value).toBeNull()
   })
 })

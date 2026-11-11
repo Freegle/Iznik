@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-29
+last_reviewed: 2026-10-23
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/server/utils/sitemap.ts
@@ -8,6 +8,9 @@ covers:
   - iznik-nuxt3/composables/useBuildHead.js
   - iznik-nuxt3/composables/useMessageJsonLd.js
   - iznik-nuxt3/pages/message/[id].vue
+  - iznik-nuxt3/pages/explore/[[id]].vue
+  - iznik-nuxt3/pages/explore/[groupid]/[[msgid]].vue
+  - iznik-nuxt3/composables/exploreTitle.js
   - iznik-nuxt3/public/robots.txt
   - iznik-server-go/message/sitemap.go
   - iznik-batch/app/Services/MessageSpatialService.php
@@ -53,6 +56,13 @@ baked at deploy time. That is harmless for a list of static pages and useless fo
 a list of posts, which turn over hourly: within minutes it would be advertising
 posts that had already been taken. It is served on demand with a short ISR window
 instead (`nuxt.config.ts` `routeRules`).
+
+**Prerendered pages are written as `about.html`, not `about/index.html`**
+(`nitro.prerender.autoSubfolderIndex: false` in `nuxt.config.ts`). Netlify answers
+a folder index with a 301 to the trailing-slash URL, so with the default layout
+`/about` redirected to `/about/` while its canonical tag and the sitemap both said
+`/about`. Search Console then left those pages out as "Page with redirect". Every
+URL we publish has no trailing slash; keep the files matching.
 
 The post sitemap routes have no `.xml` extension because a Nitro route parameter
 has to be a whole path segment. `/sitemap-posts-:chunk.xml` does not match
@@ -113,6 +123,14 @@ is **gone**. `pages/message/[id].vue` computes this once (`gone`) and:
 410 rather than 404 because these are posts that genuinely existed and are
 deliberately, permanently finished.
 
+A post we could not fetch is not gone. If the API errors, times out or cannot be
+reached, the message store marks the id in `fetchFailed`, and the page answers
+**503** with `Retry-After: 300` and `no-store` on both `Cache-Control` and
+`Netlify-CDN-Cache-Control`, so the answer stays out of the ten-minute ISR cache.
+It adds no `noindex`. A crawler retries a 503 and keeps the page; a 410 would tell
+it to drop a live post. Only a real 404 from the API counts as gone. The client
+fetches again on mount, so a member still sees the post.
+
 Why this matters: there are roughly **8.3 million** such URLs against **~42,000**
 live ones. They used to answer HTTP 200 with the item's subject as the `<title>`
 and an identical body, which reads to a crawler as millions of near-identical
@@ -137,6 +155,9 @@ subject for up to 200 recent live posts.
 That endpoint is deliberately **anonymous** — unlike `GET /group/:id/message` it
 never folds in the caller's own pending posts, because its output is rendered into
 a page that gets cached and served to everyone.
+
+Community page titles are worded as the search people make: `Free stuff in Birmingham | Freegle`,
+built by `composables/exploreTitle.js` from the community name with its trailing "Freegle" removed.
 
 `/explore/**` is on a 600s ISR window, down from 3600s: a community page is the
 crawl path into that community's new posts, so an hour of cache meant a new post

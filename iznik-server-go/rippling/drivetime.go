@@ -58,14 +58,21 @@ const driveTimeCacheSweepAt = 20000
 var driveTimeFailStreak atomic.Int32
 var driveTimeBreakerUntil atomic.Int64 // unix nanos; 0 = closed
 
+// driveTimeNow is the breaker's clock. It is a variable so that the test can move
+// time past the cooloff instead of shortening the cooloff and sleeping through it.
+// With the real clock and a cooloff of a few milliseconds, the test's "still open"
+// call had to reach the breaker within that cooloff of the third failure, and one
+// scheduler preemption under -race on a loaded runner is longer than that.
+var driveTimeNow = time.Now
+
 func driveTimeBreakerOpen() bool {
 	until := driveTimeBreakerUntil.Load()
-	return until != 0 && time.Now().UnixNano() < until
+	return until != 0 && driveTimeNow().UnixNano() < until
 }
 
 func driveTimeRecordFailure() {
 	if driveTimeFailStreak.Add(1) >= driveTimeBreakerAfter {
-		driveTimeBreakerUntil.Store(time.Now().Add(driveTimeBreakerCooloff).UnixNano())
+		driveTimeBreakerUntil.Store(driveTimeNow().Add(driveTimeBreakerCooloff).UnixNano())
 	}
 }
 

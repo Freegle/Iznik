@@ -10,7 +10,7 @@
     size="lg"
   >
     <template #default>
-      <div v-if="stdmsg?.action !== 'Edit'" class="d-flex">
+      <div v-if="!isEditAction" class="d-flex">
         <div>
           From:&nbsp;
           <br />
@@ -24,16 +24,16 @@
         </div>
       </div>
       <div
-        v-if="
-          message &&
-          stdmsg?.action === 'Edit' &&
-          message.item &&
-          message.location
-        "
+        v-if="message && isEditAction && message.item && message.location"
         class="d-flex justify-content-start"
       >
         <!-- eslint-disable-next-line -->
-        <b-form-select v-model="message.type" :options="typeOptions" class="type me-1" size="lg" />
+        <b-form-select
+          v-model="message.type"
+          :options="typeOptions"
+          class="type me-1"
+          size="lg"
+        />
         <!-- eslint-disable-next-line -->
         <b-form-input v-model="message.item.name" size="lg" class="me-1" />
         <b-input-group>
@@ -49,12 +49,23 @@
           <b-form-input v-model="subject" class="mt-2" />
         </b-input-group>
       </div>
+      <NoticeMessage
+        v-if="severalCommunitiesVerb"
+        variant="info"
+        class="mt-2 mb-1"
+        data-test="stdmsg-several-communities"
+      >
+        This will {{ severalCommunitiesVerb }} the post on
+        {{ groupids.length }} of your communities. The member gets this message
+        once, not once for each community.
+      </NoticeMessage>
       <NoticeMessage v-if="warning" variant="warning" class="mt-1 mb-1">
         <p>Please check your message in case it needs updating:</p>
         <p>
           <strong>{{ warning }}</strong>
         </p>
       </NoticeMessage>
+      <p v-if="isEditAndMessage" class="fw-bold mt-2 mb-0">Post will read</p>
       <!-- Plain textarea for messages with no directives. -->
       <AutoHeightTextarea
         v-if="!useSegmentedEditor"
@@ -63,137 +74,90 @@
         max-rows="40"
         class="mt-2"
       />
-      <!-- Segmented inline editor: the message in flow, with a box per <editthis>
-           and a keep/remove control per <optional>, filled in order so you never
-           have to look back at the template. -->
-      <div v-else class="mt-2 segmented-editor border rounded p-3">
-        <!-- Red rather than muted: this way of editing is unfamiliar and
-             moderators were reading straight past a grey instruction. -->
-        <p class="text-danger small mb-2">
-          Fill in the highlighted boxes and choose Keep or Remove for any
-          optional parts. You can edit any of the rest of the wording too. This
-          is the message the member will receive.
+      <!-- With directives, the wording is laid out in order with a box per
+           <editthis> and a keep/remove control per <optional>. -->
+      <ModStdMessageSegments
+        v-else
+        ref="postEditor"
+        v-model="segments"
+        :blocked="blockedSegments"
+        :description="
+          isEditAction
+            ? 'This is what the post will say.'
+            : 'This is the message the member will receive.'
+        "
+        class="mt-2"
+      />
+      <div
+        v-if="isEditAndMessage"
+        class="mt-3"
+        data-test="stdmsg-reply-section"
+      >
+        <p class="fw-bold mb-1">
+          Message to {{ user ? user.displayname : 'the poster' }}
         </p>
-        <div class="segmented-body">
-          <template v-for="(seg, i) in segments" :key="'seg' + i">
-            <!-- A text segment which is nothing but the line break(s) between two
-                 blocks: shown as a paragraph-spacing toggle rather than an empty
-                 box, so the spacing is visible and fixable. -->
-            <div
-              v-if="seg.type === 'text' && isGap(seg)"
-              :data-seg="i"
-              class="seg-gap"
-            >
-              <b-button
-                size="sm"
-                variant="link"
-                class="p-0 seg-gap-toggle"
-                @click="toggleGap(i)"
-              >
-                <v-icon :icon="isParagraphGap(seg) ? 'minus' : 'plus'" />
-                {{
-                  isParagraphGap(seg)
-                    ? 'Blank line between these paragraphs (click to remove it)'
-                    : 'No blank line between these paragraphs (click to add one)'
-                }}
-              </b-button>
-            </div>
-            <AutoHeightTextarea
-              v-else-if="seg.type === 'text'"
-              v-model="seg.content"
-              :data-seg="i"
-              class="seg-text"
-              rows="3"
-              max-rows="30"
-            />
-            <AutoHeightTextarea
-              v-else-if="seg.type === 'editthis'"
-              v-model="seg.value"
-              :data-seg="i"
-              :class="[
-                'seg-editthis',
-                { 'seg-todo': !segEdited(seg), 'seg-blocked': isBlocked(i) },
-              ]"
-              rows="3"
-              max-rows="12"
-              :placeholder="seg.content"
-            />
-            <span v-else-if="seg.type === 'optional'" class="seg-optional">
-              <!-- Undecided: the wording is editable while you decide, and you
-                   must pick one before the message can go. -->
-              <span
-                v-if="seg.removed === undefined"
-                :data-seg="i"
-                :class="[
-                  'seg-optional-undecided',
-                  { 'seg-blocked': isBlocked(i) },
-                ]"
-              >
-                <AutoHeightTextarea
-                  v-model="seg.content"
-                  class="seg-text seg-optional-text"
-                  rows="2"
-                  max-rows="20"
-                />
-                <span class="seg-optional-buttons">
-                  <b-button
-                    size="sm"
-                    variant="outline-success"
-                    @click="decideOptional(i, false)"
-                  >
-                    Keep
-                  </b-button>
-                  <b-button
-                    size="sm"
-                    variant="outline-danger"
-                    class="ms-1"
-                    @click="decideOptional(i, true)"
-                  >
-                    Remove
-                  </b-button>
-                </span>
-              </span>
-              <!-- Kept: still editable, and you can change your mind. -->
-              <span v-else-if="seg.removed === false" class="seg-optional-kept">
-                <AutoHeightTextarea
-                  v-model="seg.content"
-                  :data-seg="i"
-                  class="seg-text"
-                  rows="2"
-                  max-rows="20"
-                />
-                <b-button
-                  size="sm"
-                  variant="link"
-                  class="p-0 seg-optional-change"
-                  @click="decideOptional(i, true)"
-                >
-                  remove this bit after all
-                </b-button>
-              </span>
-              <span v-else :data-seg="i" class="seg-optional-removed">
-                <s class="text-muted">{{ seg.content }}</s>
-                <b-button
-                  size="sm"
-                  variant="link"
-                  class="p-0 ms-1"
-                  @click="decideOptional(i, false)"
-                >
-                  undo
-                </b-button>
-              </span>
-            </span>
-          </template>
+        <div class="d-flex">
+          <div>
+            From:&nbsp;
+            <br />
+            To:&nbsp;
+          </div>
+          <div>
+            {{ fromName }}
+            <br />
+            {{ user ? user.displayname : '' }}
+            <span v-if="toEmail"> &lt;{{ toEmail }}&gt; </span>
+          </div>
         </div>
+        <b-form-input
+          v-model="replySubject"
+          class="mt-2"
+          data-test="stdmsg-reply-subject"
+        />
+        <AutoHeightTextarea
+          v-if="!useReplySegmentedEditor"
+          v-model="replyBody"
+          rows="6"
+          max-rows="30"
+          class="mt-2"
+          data-test="stdmsg-reply-body"
+        />
+        <!-- Laid out like the post text, so <optional> gets Keep and Remove here
+             too rather than showing its tags. -->
+        <ModStdMessageSegments
+          v-else
+          ref="replyEditor"
+          v-model="replySegments"
+          :blocked="replyBlockedSegments"
+          description="This is the message the member will receive."
+          class="mt-2"
+          data-test="stdmsg-reply-segments"
+        />
       </div>
+      <NoticeMessage v-if="sendError" variant="danger" class="mt-1 mb-1">
+        {{ sendError }}
+      </NoticeMessage>
       <NoticeMessage v-if="heldError" variant="warning" class="mt-1 mb-1">
         {{ heldError }}
       </NoticeMessage>
       <NoticeMessage v-if="directiveWarning" variant="danger" class="mt-1 mb-1">
         {{ directiveWarning }}
       </NoticeMessage>
+      <NoticeMessage
+        v-if="posterNotMember && changesMembership"
+        variant="info"
+        class="mt-1 mb-1"
+        data-test="stdmsg-not-member"
+      >
+        {{ user.displayname }} is not a member of this community, so there is no
+        membership to change. Everything else still goes ahead.
+      </NoticeMessage>
       <div
-        v-if="stdmsg?.newdelstatus && stdmsg.newdelstatus !== 'UNCHANGED'"
+        v-if="
+          stdmsg?.newdelstatus &&
+          stdmsg.newdelstatus !== 'UNCHANGED' &&
+          !posterNotMember
+        "
         class="mt-1"
       >
         <v-icon
@@ -210,7 +174,11 @@
         Change email frequency to <em>{{ emailfrequency }}</em>
       </div>
       <div
-        v-if="stdmsg?.newmodstatus && stdmsg.newmodstatus !== 'UNCHANGED'"
+        v-if="
+          stdmsg?.newmodstatus &&
+          stdmsg.newmodstatus !== 'UNCHANGED' &&
+          !posterNotMember
+        "
         class="mt-1"
       >
         <v-icon
@@ -268,7 +236,7 @@
             :flex="false"
             icon-class="pe-1"
             class="m-1 d-inline-block"
-            @handle="(callback) => guardHold(() => process(callback))"
+            @handle="send"
           />
           <b-button variant="white" @click="hide"> Cancel </b-button>
         </div>
@@ -339,6 +307,13 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Every community an Approve, Reject or Delete is to act on at once, groupid first; null
+  // for groupid alone. The member gets this message once, not once per community.
+  groupids: {
+    type: Array,
+    required: false,
+    default: null,
+  },
 })
 
 const { modal, show, hide } = useOurModal()
@@ -363,8 +338,22 @@ const stdmsg = computed(() => {
   return null
 })
 
+// "Edit and Message" changes the post and messages the poster in one go. Both edit
+// actions show the post's own fields and text rather than a quoted reply.
+const isEditAndMessage = computed(
+  () => stdmsg.value?.action === 'Edit and Message'
+)
+const isEditAction = computed(
+  () => stdmsg.value?.action === 'Edit' || isEditAndMessage.value
+)
+
 const subject = ref(null)
 const body = ref(null)
+// The message to the poster, for Edit and Message.
+const replySubject = ref(null)
+const replyBody = ref(null)
+const originalReplyEditThis = ref([])
+const sendError = ref(null)
 const bodyInitialLength = ref(0)
 const replyTooShort = ref(false)
 // Directive tags (<editthis>/<optional>) in the template, processed below.
@@ -374,100 +363,89 @@ const directiveWarning = ref(null)
 // ── Segmented inline editor ──────────────────────────────────────────────────
 // When a standard message uses directives we don't edit the raw template in one
 // textarea (you hunt through the tags and lose your place with several blocks).
-// Instead we render the message in flow as an ordered list of segments: fixed
-// prose, an inline box per <editthis>, and a keep/remove control per <optional>.
-// The mod fills each box in order; the final message is reassembled from them.
+// ModStdMessageSegments lays it out in flow instead: fixed prose, an inline box
+// per <editthis>, and a keep/remove control per <optional>. The mod fills each box
+// in order; the final text is reassembled from them on send. The post text gets
+// one, and so does the message to the poster for Edit and Message.
 const useSegmentedEditor = ref(false)
 const segments = ref([])
+const useReplySegmentedEditor = ref(false)
+const replySegments = ref([])
+const postEditor = ref(null)
+const replyEditor = ref(null)
 
-// An <editthis> box counts as done once its text differs from the placeholder.
-function segEdited(seg) {
-  const v = (seg.value ?? '').trim()
-  return !!v && v !== (seg.content ?? '').trim()
-}
-function decideOptional(index, removed) {
-  const seg = segments.value[index]
-  if (seg && seg.type === 'optional') seg.removed = removed
-}
-
-// A text segment which is nothing but the line break(s) separating two blocks.
-// Rendered as an empty box it looked like a field you'd forgotten to fill in,
-// and gave no clue that it held the paragraph spacing - so a template written
-// with single line breaks produced a message with its paragraphs run together
-// and no obvious way to fix it. Shown as a toggle instead.
-// Needs a line break in it: a separator of only spaces is genuinely inline
-// wording, not paragraph spacing, and turning it into a paragraph control would
-// be wrong.
-function isGap(seg) {
-  return (
-    seg.type === 'text' &&
-    !!seg.content &&
-    /^\s*$/.test(seg.content) &&
-    seg.content.includes('\n')
-  )
-}
-function isParagraphGap(seg) {
-  return (seg.content?.match(/\n/g) || []).length > 1
-}
-function toggleGap(index) {
-  const seg = segments.value[index]
-  if (seg && isGap(seg)) seg.content = isParagraphGap(seg) ? '\n' : '\n\n'
-}
-
-// Which segments are holding the send up. Set when a send is refused so the
-// message points at the actual boxes rather than just complaining, and kept in
-// step as they're dealt with.
+// Which segments are holding the send up, in each editor. Set when a send is
+// refused so the message points at the actual boxes rather than just
+// complaining, and kept in step as they're dealt with.
 const blockedSegments = ref([])
-function isBlocked(index) {
-  return blockedSegments.value.includes(index)
-}
+const replyBlockedSegments = ref([])
 watch(
-  segments,
+  [segments, replySegments],
   () => {
-    if (blockedSegments.value.length) {
-      const sb = segmentsSendBlockers(segments.value)
-      blockedSegments.value = [...sb.unedited, ...sb.undecided]
+    if (blockedSegments.value.length || replyBlockedSegments.value.length) {
       // Keep the wording honest as they work through it, rather than leaving it
       // asking for things they have already done.
-      directiveWarning.value = sb.ok ? null : blockerMessage(sb)
+      markBlocked()
     }
   },
   { deep: true }
 )
 
-// Live gate for the segmented editor: outstanding editthis boxes + undecided
-// optionals. Mirrors sendBlockers() for the textarea path.
+// Live gate for each segmented editor: outstanding editthis boxes + undecided
+// optionals. Mirrors sendBlockers() for the textarea path. An editor not in use
+// has no segments, so it never blocks.
 const segmentBlockers = computed(() => segmentsSendBlockers(segments.value))
+const replySegmentBlockers = computed(() =>
+  segmentsSendBlockers(replySegments.value)
+)
+
+function markBlocked() {
+  const post = segmentBlockers.value
+  const reply = replySegmentBlockers.value
+  blockedSegments.value = [...post.unedited, ...post.undecided]
+  replyBlockedSegments.value = [...reply.unedited, ...reply.undecided]
+  directiveWarning.value =
+    post.ok && reply.ok ? null : blockerMessage(post, reply)
+}
 
 // Say what's outstanding, and that nothing has gone out - mods hit Send, saw the
 // button spin and had no idea a decision was missing.
-function blockerMessage(sb) {
+function blockerMessage(post, reply) {
+  const unedited = post.unedited.length + reply.unedited.length
+  const undecided = post.undecided.length + reply.undecided.length
   const bits = []
-  if (sb.unedited.length) {
+  if (unedited) {
     bits.push(
-      sb.unedited.length === 1
+      unedited === 1
         ? 'fill in the highlighted box'
-        : `fill in the ${sb.unedited.length} highlighted boxes`
+        : `fill in the ${unedited} highlighted boxes`
     )
   }
-  if (sb.undecided.length) {
+  if (undecided) {
     bits.push(
-      sb.undecided.length === 1
+      undecided === 1
         ? 'choose Keep or Remove for the highlighted optional wording'
-        : `choose Keep or Remove for the ${sb.undecided.length} highlighted optional sections`
+        : `choose Keep or Remove for the ${undecided} highlighted optional sections`
     )
   }
-  return `Nothing has been sent yet - please ${bits.join(' and ')}.`
+  const nothingYet = isEditAndMessage.value
+    ? 'Nothing has been saved or sent yet'
+    : 'Nothing has been sent yet'
+  // The message to the poster sits below the post, so say when that is where
+  // everything outstanding is.
+  const where = post.ok ? ' in the message to the poster' : ''
+  return `${nothingYet} - please ${bits.join(' and ')}${where}.`
 }
 
-// Point the moderator at the first thing that needs doing.
-async function showBlocked(indices) {
-  blockedSegments.value = indices
+// Mark everything outstanding and bring the first of it into view.
+async function showBlocked() {
+  markBlocked()
   await nextTick()
-  const el = window.document?.querySelector?.(
-    `#stdmsgmodal [data-seg="${indices[0]}"]`
-  )
-  el?.scrollIntoView?.({ block: 'center' })
+  if (blockedSegments.value.length) {
+    await postEditor.value?.scrollToSegment(blockedSegments.value[0])
+  } else if (replyBlockedSegments.value.length) {
+    await replyEditor.value?.scrollToSegment(replyBlockedSegments.value[0])
+  }
 }
 
 const keywordList = ['Offer', 'Taken', 'Wanted', 'Received', 'Other']
@@ -535,6 +513,30 @@ const userid = computed(() => {
   return user.value?.id || null
 })
 
+// The poster is not a member of the community the post is being moderated on:
+// they can leave after posting (Discourse 10321). Known once their memberships
+// have been fetched; until then the server says so when a change is tried.
+const posterNotMember = computed(() => {
+  if (!message.value || membership.value || !groupid.value) {
+    return false
+  }
+
+  if (!user.value || !('memberships' in user.value)) {
+    return false
+  }
+
+  return !(user.value.memberships || []).some(
+    (m) => m.groupid === groupid.value
+  )
+})
+
+// The standard message changes the member's email frequency or moderation status.
+const changesMembership = computed(
+  () =>
+    (stdmsg.value?.newdelstatus && stdmsg.value.newdelstatus !== 'UNCHANGED') ||
+    (stdmsg.value?.newmodstatus && stdmsg.value.newmodstatus !== 'UNCHANGED')
+)
+
 const fromName = computed(() => {
   return me.value.displayname
 })
@@ -576,6 +578,25 @@ const editLink = computed(() =>
     : 'https://www.ilovefreegle.org/myposts'
 )
 
+// The actions that act on every community in groupids, and the notice saying so.
+const SEVERAL_COMMUNITY_ACTIONS = {
+  Approve: 'approve',
+  Reject: 'reject',
+  Delete: 'delete',
+  'Delete Approved Message': 'delete',
+}
+
+const severalCommunitiesVerb = computed(() => {
+  if (!(props.groupids?.length > 1)) return null
+  return SEVERAL_COMMUNITY_ACTIONS[stdmsg.value?.action] || null
+})
+
+// The extra argument the message store takes to act on several communities, or none, so a
+// single-community action is called exactly as it always has been.
+function severalCommunitiesArgs() {
+  return severalCommunitiesVerb.value ? [props.groupids] : []
+}
+
 const processLabel = computed(() => {
   switch (stdmsg.value?.action) {
     case 'Approve':
@@ -595,6 +616,8 @@ const processLabel = computed(() => {
       return 'Send and Delete'
     case 'Edit':
       return 'Save Edit'
+    case 'Edit and Message':
+      return 'Save Edit and Send'
     case 'Hold Message':
       return 'Send and Hold'
     default:
@@ -696,12 +719,26 @@ watch(body, () => {
 
 async function fillin() {
   // Calculate initial subject.  Everything apart from Edits adds a Re:.
-  const defpref = stdmsg.value.action === 'Edit' ? '' : 'Re:'
+  const defpref = isEditAction.value ? '' : 'Re:'
 
   if (membership.value) {
     subject.value =
       (stdmsg.value.subjpref ? stdmsg.value.subjpref : defpref) +
       (stdmsg.value.subjsuff ? stdmsg.value.subjsuff : '')
+  } else if (isEditAndMessage.value) {
+    // The post keeps its own subject; the prefix and suffix belong to the message.
+    subject.value = message.value.subject
+
+    if (replySubject.value === null) {
+      // Trailing colons dropped so a prefix of "Re:" doesn't give "Re:: ".
+      const pref = (stdmsg.value.subjpref || 'Re').replace(/:\s*$/, '')
+      replySubject.value = await substitutionStrings(
+        pref +
+          ': ' +
+          message.value.subject +
+          (stdmsg.value.subjsuff ? stdmsg.value.subjsuff : '')
+      )
+    }
   } else {
     subject.value =
       (stdmsg.value.subjpref ? stdmsg.value.subjpref : defpref) +
@@ -713,8 +750,7 @@ async function fillin() {
   subject.value = await substitutionStrings(subject.value)
 
   // For Edit actions, do not overwrite body if it's already been set by the user
-  const isEdit = stdmsg.value && stdmsg.value.action === 'Edit'
-  if (isEdit && body.value !== null && body.value !== undefined) {
+  if (isEditAction.value && body.value !== null && body.value !== undefined) {
     return
   }
 
@@ -725,8 +761,7 @@ async function fillin() {
   if (msg || membership.value) {
     if (msg) {
       // We have an existing body to include.  Quote it, unless it's an edit.
-      const edit = stdmsg.value && stdmsg.value.action === 'Edit'
-      if (!edit && msg) {
+      if (!isEditAction.value && msg) {
         msg = '> ' + (msg + '').replace(/((\r\n)|\r|\n)/gm, '\n> ')
       }
 
@@ -741,7 +776,7 @@ async function fillin() {
         } else {
           msg = msg + '\n\n' + stdmsg.value.body.trim()
         }
-      } else if (stdmsg.value.action !== 'Edit' && msg) {
+      } else if (!isEditAction.value && msg) {
         // No text to insert - add a couple of blank lines at the top for typing.
         msg = '\n\n' + msg
       }
@@ -818,6 +853,17 @@ async function fillin() {
   // textarea path (body) is kept for messages with no directives.
   useSegmentedEditor.value = hasDirectives(body.value)
   segments.value = useSegmentedEditor.value ? parseSegments(body.value) : []
+
+  if (isEditAndMessage.value) {
+    replyBody.value = (
+      await substitutionStrings(stdmsg.value.replybody || '')
+    ).trim()
+    originalReplyEditThis.value = parseEditThis(replyBody.value)
+    useReplySegmentedEditor.value = hasDirectives(replyBody.value)
+    replySegments.value = useReplySegmentedEditor.value
+      ? parseSegments(replyBody.value)
+      : []
+  }
 
   if (props.autosend && !warning.value) {
     // Start doing stuff.
@@ -969,26 +1015,35 @@ async function substitutionStrings(text) {
   return text
 }
 
+// A refused send never reaches the end of process(), so stop the spinner here.
+async function send(callback) {
+  await guardHold(() => process(callback))
+  if (heldError.value && callback) callback()
+}
+
 async function process(callback) {
   replyTooShort.value = false
+  sendError.value = null
 
   // Enforce the directive tags: don't let a templated <editthis> go out
   // un-personalised, and don't send an <optional> section without a Keep/Remove
   // decision. Block here (like the too-short check) rather than send.
   directiveWarning.value = null
   blockedSegments.value = []
+  replyBlockedSegments.value = []
+
+  // Segmented editors: anything outstanding in the post text or the message to
+  // the poster stops the send, and all of it is marked at once.
+  if (!segmentBlockers.value.ok || !replySegmentBlockers.value.ok) {
+    await showBlocked()
+    // Stop the Send button spinning. Without this it span until SpinButton's
+    // 20s "callback forgotten" timeout, which reads as the send having hung.
+    if (callback) callback()
+    return
+  }
+
   if (useSegmentedEditor.value) {
-    // Segmented editor: gate on outstanding editthis boxes / undecided optionals,
-    // and assemble the body the recipient sees from the segments before sending.
-    const sb = segmentBlockers.value
-    if (!sb.ok) {
-      directiveWarning.value = blockerMessage(sb)
-      await showBlocked([...sb.unedited, ...sb.undecided])
-      // Stop the Send button spinning. Without this it span until SpinButton's
-      // 20s "callback forgotten" timeout, which reads as the send having hung.
-      if (callback) callback()
-      return
-    }
+    // The body the recipient sees is assembled from the segments.
     body.value = assembleSegments(segments.value)
   } else {
     const blockers = sendBlockers(body.value || '', originalEditThis.value)
@@ -1001,9 +1056,33 @@ async function process(callback) {
     }
   }
 
+  if (isEditAndMessage.value) {
+    if (useReplySegmentedEditor.value) {
+      replyBody.value = assembleSegments(replySegments.value)
+    } else {
+      const replyBlockers = sendBlockers(
+        replyBody.value || '',
+        originalReplyEditThis.value
+      )
+      if (!replyBlockers.ok) {
+        directiveWarning.value = replyBlockers.editThis.length
+          ? 'Nothing has been saved or sent yet - please personalise the “edit this” wording in the message to the poster.'
+          : 'Nothing has been saved or sent yet - please remove the optional markers from the message to the poster, keeping the wording you want.'
+        if (callback) callback()
+        return
+      }
+    }
+    if (!stripDirectiveTags(replyBody.value || '').trim()) {
+      directiveWarning.value =
+        'Nothing has been saved or sent yet - the message to the poster is empty.'
+      if (callback) callback()
+      return
+    }
+  }
+
   const msglen = body.value.length - bodyInitialLength.value
 
-  if (stdmsg.value.action !== 'Edit' && msglen >= 0 && msglen < 30) {
+  if (!isEditAction.value && msglen >= 0 && msglen < 30) {
     replyTooShort.value = true
   } else {
     if (
@@ -1011,13 +1090,12 @@ async function process(callback) {
       stdmsg.value.newdelstatus !== 'UNCHANGED'
     ) {
       changingNewDelStatus.value = true
-      await memberStore.updateMembership({
+      changedNewDelStatus.value = await updateMemberSettings({
         userid: userid.value,
         groupid: groupid.value,
         emailfrequency: emailfrequency.value,
       })
       changingNewDelStatus.value = false
-      changedNewDelStatus.value = true
     }
 
     if (
@@ -1025,13 +1103,12 @@ async function process(callback) {
       stdmsg.value.newmodstatus !== 'UNCHANGED'
     ) {
       changingNewModStatus.value = true
-      await memberStore.updateMembership({
+      changedNewModStatus.value = await updateMemberSettings({
         userid: userid.value,
         groupid: groupid.value,
         ourPostingStatus: stdmsg.value.newmodstatus,
       })
       changingNewModStatus.value = false
-      changedNewModStatus.value = true
     }
 
     const subj = subject.value.trim()
@@ -1046,7 +1123,8 @@ async function process(callback) {
           groupid.value,
           subj,
           stdmsg.value.id,
-          bodyText
+          bodyText,
+          ...severalCommunitiesArgs()
         )
         break
       case 'Leave':
@@ -1062,8 +1140,11 @@ async function process(callback) {
       case 'Hold Message':
         changingHold.value = true
 
+        // The community matters: without it the server holds every copy of a
+        // rippled post (Discourse 10102/14).
         await messageStore.hold({
           id: message.value.id,
+          groupid: groupid.value,
         })
 
         changingHold.value = false
@@ -1111,19 +1192,25 @@ async function process(callback) {
           groupid.value,
           subj,
           stdmsg.value.id,
-          bodyText
+          bodyText,
+          ...severalCommunitiesArgs()
         )
         break
       case 'Delete':
-      case 'Delete Approved Message':
-        await messageStore.delete({
+      case 'Delete Approved Message': {
+        const params = {
           id: message.value.id,
           groupid: groupid.value,
           subject: subj,
           body: bodyText,
           stdmsgid: stdmsg.value.id,
-        })
+        }
+        if (severalCommunitiesVerb.value) {
+          params.groupids = props.groupids
+        }
+        await messageStore.delete(params)
         break
+      }
       case 'Delete Member':
       case 'Delete Approved Member':
         await memberStore.delete({
@@ -1136,25 +1223,26 @@ async function process(callback) {
         break
       case 'Edit':
         if (message.value) {
-          if (message.value.item && message.value.location) {
-            // Well-structured message. Pass the contextual group so the rebuilt
-            // subject uses that group's keyword.
-            await messageStore.patch({
-              id: message.value.id,
-              groupid: groupid.value,
-              msgtype: message.value.type,
-              item: message.value.item.name,
-              location: message.value.location.name,
-              textbody: bodyText,
-            })
-          } else {
-            // Not
-            await messageStore.patch({
-              id: message.value.id,
-              subject: subj,
-              textbody: bodyText,
-            })
-          }
+          await messageStore.patch(editParams(subj, bodyText))
+        }
+        break
+      case 'Edit and Message':
+        // One call: the server checks the poster can be messaged before it changes
+        // the post, so a refusal leaves both untouched.
+        try {
+          await messageStore.patch({
+            ...editParams(subj, bodyText),
+            groupid: groupid.value,
+            replysubject: replySubject.value.trim(),
+            replybody: stripDirectiveTags(replyBody.value).trim(),
+            stdmsgid: stdmsg.value.id,
+          })
+        } catch (e) {
+          sendError.value =
+            e?.response?.data?.message ||
+            'Nothing was saved or sent - please try again.'
+          if (callback) callback()
+          return
         }
         break
       default:
@@ -1170,6 +1258,50 @@ async function process(callback) {
     hide()
   }
   if (callback) callback()
+}
+
+// Change the member's email frequency or moderation status on this community.
+// Someone who is not a member has nothing to change, and that must not stop the
+// approve, reply or delete that follows. Returns whether anything changed.
+async function updateMemberSettings(params) {
+  if (posterNotMember.value) {
+    return false
+  }
+
+  try {
+    await memberStore.updateMembership(params)
+    return true
+  } catch (e) {
+    // What the server answers when they are not a member: they left after their
+    // memberships were fetched.
+    if (e?.response?.status === 404) {
+      return false
+    }
+
+    throw e
+  }
+}
+
+// The fields an edit sends for the post itself.
+function editParams(subj, bodyText) {
+  if (message.value.item && message.value.location) {
+    // Well-structured message. Pass the contextual group so the rebuilt
+    // subject uses that group's keyword.
+    return {
+      id: message.value.id,
+      groupid: groupid.value,
+      msgtype: message.value.type,
+      item: message.value.item.name,
+      location: message.value.location.name,
+      textbody: bodyText,
+    }
+  }
+
+  return {
+    id: message.value.id,
+    subject: subj,
+    textbody: bodyText,
+  }
 }
 
 function postcodeSelect(newpc) {
@@ -1200,109 +1332,3 @@ function moveDown() {
 
 defineExpose({ fillin, show, modal })
 </script>
-
-<style scoped>
-/* Segmented inline editor: read the message in flow, fixed prose plus inline
-   boxes. Plain CSS (no SCSS vars) so a missing variable can't break page load. */
-.segmented-editor {
-  background-color: #fff;
-}
-.segmented-body {
-  white-space: pre-wrap;
-  line-height: 1.7;
-  font-size: 1rem;
-}
-/* Fixed prose is editable too (mods often tweak the wording), so render it as an
-   auto-sizing textarea rather than a static span. Styled to read as part of the
-   message — a light border that strengthens on hover/focus signals it's editable,
-   while staying visually quieter than the amber "must fill in" editthis boxes. */
-.seg-text {
-  display: block;
-  width: 100%;
-  margin: 4px 0;
-  padding: 4px 8px;
-  border: 1px solid #dee2e6;
-  border-radius: 6px;
-  background-color: #fff;
-  font: inherit;
-  line-height: 1.4;
-}
-.seg-text:hover {
-  border-color: #adb5bd;
-}
-.seg-text:focus,
-.seg-text:focus-visible {
-  outline: none;
-  border-color: #0d6efd;
-  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-}
-/* editthis boxes sit on their own full-width line so each editable bit reads as
-   a clear fillable field. A placeholder box is highlighted (amber) so outstanding
-   ones stand out, fading to plain once filled — so with several of them the
-   differences "disappear" as you go. */
-.seg-editthis {
-  display: block;
-  width: 100%;
-  margin: 4px 0;
-  padding: 4px 8px;
-  /* A clear, consistent box outline so each editable bit reads as a fillable
-     field rather than plain prose. Subtle once filled (so it blends back into
-     the message), prominent while still a placeholder. */
-  border: 1px solid #adb5bd;
-  border-radius: 6px;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
-  font: inherit;
-  line-height: 1.4;
-}
-.seg-editthis:hover {
-  border-color: #6c757d;
-}
-.seg-editthis:focus,
-.seg-editthis:focus-visible {
-  outline: none;
-  border-color: #0d6efd;
-  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-}
-.seg-editthis.seg-todo {
-  background-color: #fff3cd; /* amber: still needs personalising */
-  /* dashed amber outline = "fill me in"; becomes a plain solid box once edited */
-  border: 1px dashed #e0a800;
-}
-/* An optional section: its wording is editable while you decide (and after you
-   keep it), because mods want to reword these as well as take them or leave
-   them. Removing is reversible in both directions - Keep used to be final. */
-.seg-optional-undecided {
-  display: block;
-  background-color: #e2e3e5;
-  border-radius: 4px;
-  padding: 4px;
-  margin: 4px 0;
-}
-.seg-optional-text {
-  font-style: italic;
-}
-.seg-optional-kept {
-  display: block;
-}
-.seg-optional-change,
-.seg-gap-toggle {
-  font-size: 0.8125rem;
-}
-.seg-optional-removed {
-  white-space: normal;
-}
-/* Paragraph spacing between two blocks, shown as a toggle rather than an empty
-   textarea nobody could interpret. */
-.seg-gap {
-  margin: 2px 0;
-}
-/* What's stopping the send. Set only when a send is refused, cleared as each one
-   is dealt with. Wins over the focus styling above, or clicking into the box
-   would hide the very thing we're pointing at. */
-.seg-blocked,
-.seg-blocked:focus,
-.seg-blocked:focus-visible {
-  border: 1px solid #dc3545;
-  box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.4);
-}
-</style>

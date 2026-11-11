@@ -4,6 +4,7 @@ namespace App\Console\Commands\Stats;
 
 use App\Services\StatsGenerationService;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Fast Weight-only stats regeneration over a date range. Used after the
@@ -16,6 +17,7 @@ use Illuminate\Console\Command;
  * (date, groupid, type) is the natural key and the service uses REPLACE
  * semantics, so two workers covering the same date would be idempotent.
  */
+#[AsCommand(name: 'stats:regenerate-weights')]
 class RegenerateWeightsCommand extends Command
 {
     protected $signature = 'stats:regenerate-weights

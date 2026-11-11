@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-01
+last_reviewed: 2026-11-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/partnerships.vue
@@ -8,6 +8,8 @@ covers:
   - iznik-nuxt3/modtools/stores/partnerships.js
   - iznik-nuxt3/api/PartnershipsAPI.js
   - iznik-server-go/partnerships/**
+  - iznik-server-go/authority/authority.go
+  - iznik-server-go/group/groupSponsor.go
   - iznik-batch/app/Console/Commands/Partnerships/**
   - iznik-batch/app/Services/PartnershipGroupsService.php
   - iznik-batch/app/Services/AuthorityStatsService.php
@@ -71,14 +73,24 @@ named.
 
 ## Which communities a deal covers
 
-A deal covers every community that overlaps the council boundary, **including any set up
-later** - a daily check picks those up, so nobody has to add them. These are the same
-communities the authority stats page on the member site uses.
+A deal covers every community that overlaps the council boundary **significantly**, including
+any set up later - a daily check picks those up, so nobody has to add them.
+
+"Significantly" means at least 5% of the community lies inside the boundary, or the community
+covers at least 5% of the council's area. So a small community wholly inside a big county
+counts, and so does a big community that holds a small council, but a community that only
+grazes the edge, such as Southend against Essex County at about 1%, is not listed. The daily
+check also drops a community it listed earlier that turns out to graze the edge. Both percentages are measured from the community and council boundary shapes in the database.
+
+Communities you added or left out by hand are never changed by the check. A community you add
+from outside the boundary counts in full.
+
+The authority stats page on the member site is different: it counts every community that
+touches the council, each weighted by its share, so a grazing community adds a matching
+sliver. That page is deliberately left that way.
 
 Each community shows the share of it that lies inside the boundary, and the statistics count
-only that share of its figures, as the authority stats page does. A community that only
-touches the edge, such as Southend against Essex County at about 1%, adds very little; leave it
-out if the council should not be shown as sponsoring it.
+only that share of its figures.
 
 When you create a deal, the communities are listed as soon as you pick the council, largest
 share first, and you can untick any to leave them out. Under **Details** you can also:
@@ -92,6 +104,10 @@ Community names link to their Explore page.
 
 Each covered community gets a sponsor entry, which is what members see. Editing the tagline,
 description, link or logo on the partnership changes all of them at once.
+
+Members only see a sponsor between its start and end dates. Old entries set up by hand before
+this page stay in the table after they end, but no longer show, so this page is what members
+see.
 
 ## The money
 
@@ -141,6 +157,10 @@ The bottom of the page generates the quarterly spreadsheet councils receive - me
 weight reused, CO2 and financial benefit, gifts made, a per-community breakdown, shortlink
 clicks, member stories and a postcode breakdown.
 
+The financial benefit is the same figure the council pages show. It includes the cost of
+fly-tipping the council avoids, and a note under the summary table says how much of it that
+is. See [impact figures](../developers/reference/impact-figures.md) for how it is worked out.
+
 For a council we have a deal with, the per-community breakdown is exactly the communities the
 deal covers, as listed on this page. For any other council they are worked out from the
 boundary, and communities with almost no activity are dropped.
@@ -153,6 +173,14 @@ Building one takes a few minutes, so it runs in the background:
 
 You do not have to keep the page open. If one council fails the others still come through,
 and the reason is shown against the job.
+
+## During a lockdown
+
+While Freegle is in a [lockdown](../ops/runbooks/lockdown.md), writes to a partnership
+(creating or editing a deal, recording an invoice, generating statistics) are refused for
+the Partnerships team. Support and Admin are exempt, so the team can still be helped
+with something urgent, but ordinary Partnerships access is read-only until the lockdown
+is lifted.
 
 ## Under the covers
 

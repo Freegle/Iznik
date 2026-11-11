@@ -17,6 +17,10 @@ $app = Application::configure(basePath: dirname(__DIR__))
         \Sentry\Laravel\Integration::handles($exceptions);
     })->create();
 
+// Our console kernel discovers the commands under app/Console/Commands once per
+// process rather than on every boot. See App\Console\Kernel.
+$app->singleton(\Illuminate\Contracts\Console\Kernel::class, \App\Console\Kernel::class);
+
 // ParaTest support: use per-worker bootstrap cache to prevent race conditions.
 // Without this, parallel workers corrupt shared services.php/packages.php files.
 $bootstrapCachePath = getenv('PARATEST_BOOTSTRAP_CACHE');

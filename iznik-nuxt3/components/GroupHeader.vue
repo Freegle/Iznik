@@ -13,7 +13,7 @@
     <span class="group-compact__name">
       {{ group.namedisplay }}
       <v-icon
-        v-if="amAMember === 'Owner' || amAMember === 'Moderator'"
+        v-if="amAMember === ROLE_OWNER || amAMember === ROLE_MODERATOR"
         icon="crown"
         class="text-success"
       />
@@ -42,7 +42,7 @@
             <h1 class="mobile-hero__title">
               {{ group.namedisplay }}
               <v-icon
-                v-if="amAMember === 'Owner' || amAMember === 'Moderator'"
+                v-if="amAMember === ROLE_OWNER || amAMember === ROLE_MODERATOR"
                 icon="crown"
                 class="text-success"
               />
@@ -78,7 +78,7 @@
             @handle="join"
           />
           <SpinButton
-            v-if="amAMember === 'Member'"
+            v-if="amAMember === ROLE_MEMBER"
             icon-name="trash-alt"
             variant="white"
             label="Leave"
@@ -108,7 +108,7 @@
         @handle="join"
       />
       <SpinButton
-        v-if="amAMember === 'Member'"
+        v-if="amAMember === ROLE_MEMBER"
         icon-name="trash-alt"
         variant="white"
         class="mobile-actions__leave"
@@ -255,7 +255,7 @@
         <b-card-title>
           {{ group.namedisplay }}
           <v-icon
-            v-if="amAMember === 'Owner' || amAMember === 'Moderator'"
+            v-if="amAMember === ROLE_OWNER || amAMember === ROLE_MODERATOR"
             icon="crown"
             class="text-success"
             :title="'You have role ' + amAMember"
@@ -297,7 +297,7 @@
             @handle="join"
           />
           <SpinButton
-            v-if="amAMember === 'Member'"
+            v-if="amAMember === ROLE_MEMBER"
             icon-name="trash-alt"
             variant="white"
             class="mb-1 ms-1"
@@ -422,6 +422,7 @@ import SpinButton from './SpinButton'
 import { useRouter } from '#imports'
 import ChatButton from '~/components/ChatButton'
 import { useAuthStore } from '~/stores/auth'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
   group: {
@@ -497,7 +498,7 @@ async function join(callback) {
     callback()
     router.push('/explore/join/' + props.group.id)
   } else {
-    await authStore.joinGroup(myid.value, props.group.id, true)
+    await authStore.joinGroup(myid.value, props.group.id, 'manual')
     callback()
   }
 }

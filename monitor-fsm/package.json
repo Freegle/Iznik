@@ -1,5 +1,6 @@
 {
   "name": "monitor-fsm",
+  "license": "AGPL-3.0-or-later",
   "version": "0.1.0",
   "description": "FSM-driven freegle-monitor — ai-flower engine enforces workflow invariants that the LLM cannot bypass",
   "private": true,

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createMockMemberStore, createMockUserStore } from '../../mocks/stores'
 import ModSupportMembership from '~/modtools/components/ModSupportMembership.vue'
+import { ROLE_MEMBER, ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Create mock store instances
 const mockMemberStore = createMockMemberStore()
@@ -30,7 +31,7 @@ describe('ModSupportMembership', () => {
     membershipid: 200,
     nameshort: 'TestGroup',
     added: '2024-01-15T10:00:00Z',
-    role: 'Member',
+    role: ROLE_MEMBER,
     emailfrequency: -1,
     ourpostingstatus: 'DEFAULT',
     eventsallowed: 1,
@@ -144,21 +145,21 @@ describe('ModSupportMembership', () => {
 
   describe('role icons', () => {
     it('shows crown icon with warning color for Owner role', () => {
-      const wrapper = mountComponent({}, { role: 'Owner' })
+      const wrapper = mountComponent({}, { role: ROLE_OWNER })
       const icon = wrapper.find('.icon-crown.text-warning')
       expect(icon.exists()).toBe(true)
       expect(icon.attributes('title')).toBe('Owner')
     })
 
     it('shows crown icon with info color for Moderator role', () => {
-      const wrapper = mountComponent({}, { role: 'Moderator' })
+      const wrapper = mountComponent({}, { role: ROLE_MODERATOR })
       const icon = wrapper.find('.icon-crown.text-info')
       expect(icon.exists()).toBe(true)
       expect(icon.attributes('title')).toBe('Moderator')
     })
 
     it('shows user icon with success color for Member role', () => {
-      const wrapper = mountComponent({}, { role: 'Member' })
+      const wrapper = mountComponent({}, { role: ROLE_MEMBER })
       const icon = wrapper.find('.icon-user.text-success')
       expect(icon.exists()).toBe(true)
       expect(icon.attributes('title')).toBe('Member')
@@ -169,12 +170,12 @@ describe('ModSupportMembership', () => {
     it('passes correct props to ModRole', () => {
       const wrapper = mountComponent(
         { userid: 123, membershipid: 200 },
-        { id: 789, groupid: 789, membershipid: 200, role: 'Moderator' }
+        { id: 789, groupid: 789, membershipid: 200, role: ROLE_MODERATOR }
       )
       const modRole = wrapper.find('.mod-role')
       expect(modRole.attributes('data-userid')).toBe('123')
       expect(modRole.attributes('data-groupid')).toBe('789')
-      expect(modRole.attributes('data-role')).toBe('Moderator')
+      expect(modRole.attributes('data-role')).toBe(ROLE_MODERATOR)
     })
   })
 

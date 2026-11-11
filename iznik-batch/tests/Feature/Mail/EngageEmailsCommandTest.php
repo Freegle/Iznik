@@ -6,6 +6,7 @@ use App\Mail\Engage\EngageMail;
 use App\Services\EmailSpoolerService;
 use App\Models\Group;
 use App\Models\Membership;
+use App\Models\User;
 use App\Services\EngageEmailService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -127,6 +128,33 @@ class EngageEmailsCommandTest extends TestCase
         $result = (new EngageEmailService())->processEngageEmails(false);
 
         $this->assertSame(1, $result['at_risk_sent']);
+    }
+
+    /**
+     * Not for TrashNothing members, even the at-risk mail that is otherwise forced:
+     * stamped with a tnuserid, or with a TrashNothing address as their preferred email.
+     */
+    public function test_skips_trash_nothing_members(): void
+    {
+        $stamped = $this->createUserWithGroupMembership();
+        DB::table('users')->where('id', $stamped->id)->update(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->setLastAccess($stamped->id, $this->atRiskDate());
+
+        $tnEmail = $this->createUserWithGroupMembership([
+            'email_preferred' => 'tn' . uniqid() . '-g1' . User::TN_EMAIL_SUFFIX,
+        ]);
+        DB::table('users')->where('id', $tnEmail->id)->update([
+            'relevantallowed' => 1,
+            'engagement' => EngageEmailService::ENGAGEMENT_INACTIVE,
+        ]);
+
+        $this->createEngageMail(EngageEmailService::ENGAGEMENT_AT_RISK, 'inactive');
+        $this->createEngageMail(EngageEmailService::ENGAGEMENT_INACTIVE, 'missing');
+
+        $result = (new EngageEmailService())->processEngageEmails(false);
+
+        $this->assertSame(0, $result['at_risk_sent']);
+        $this->assertSame(0, $result['inactive_sent']);
     }
 
     public function test_does_not_send_at_risk_for_wrong_date(): void

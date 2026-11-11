@@ -59,10 +59,13 @@ vi.mock('~/stores/user', () => ({
   }),
 }))
 
+const mockMessageById = vi.fn()
+
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
     fetchByUser: mockFetchByUser,
     fetch: mockMessageFetch,
+    byId: mockMessageById,
   }),
 }))
 
@@ -83,11 +86,19 @@ vi.mock('~/components/UserRatings', () => ({
   },
 }))
 
+const { mockOpenChat } = vi.hoisted(() => ({ mockOpenChat: vi.fn() }))
+
+// The real ChatButton renders our own button through its slot and exposes
+// openChat, which the profile calls once it knows what the message is about.
 vi.mock('~/components/ChatButton', () => ({
   default: {
     name: 'ChatButton',
-    template: '<button class="chat-button">Message</button>',
+    template: '<div class="chat-button"><slot /></div>',
     props: ['userid', 'size', 'title', 'variant'],
+    setup(_, { expose }) {
+      expose({ openChat: mockOpenChat })
+      return {}
+    },
   },
 }))
 
@@ -126,16 +137,32 @@ describe('ProfileInfo', () => {
     },
   }
 
+  // As fetchByUser returns them: no subject, that comes with the full record.
   const mockMessages = [
     { id: 1, type: 'Offer', successful: false },
     { id: 2, type: 'Wanted', successful: false },
     { id: 3, type: 'Offer', successful: true }, // Should be excluded
   ]
+  const mockSubjects = {
+    1: 'OFFER: Chairs (BA1)',
+    2: 'WANTED: Pump (BA2)',
+    3: 'OFFER: Gone (BA1)',
+  }
 
-  function createWrapper(props = {}, userData = mockUser) {
+  function createWrapper(
+    props = {},
+    userData = mockUser,
+    messages = mockMessages
+  ) {
     mockUserById.mockReturnValue(userData)
     mockPublicLocationById.mockReturnValue({ location: 'Test Town' })
-    mockFetchByUser.mockResolvedValue(mockMessages)
+    mockFetchByUser.mockResolvedValue(messages)
+    // The full records, as the store holds them once fetched: the list from
+    // fetchByUser has no subject.
+    mockMessageById.mockImplementation((id) => {
+      const m = messages.find((msg) => msg.id === id)
+      return m ? { ...m, subject: mockSubjects[id] } : null
+    })
     mockFetchPublicLocation.mockResolvedValue()
 
     const TestWrapper = defineComponent({
@@ -170,6 +197,18 @@ describe('ProfileInfo', () => {
           MessageList: {
             template: '<div class="message-list"></div>',
             props: ['messagesForList', 'selectedType', 'jobs'],
+          },
+          PostSelectionModal: {
+            name: 'PostSelectionModal',
+            template: '<div class="post-selection-modal" />',
+            props: ['posts', 'name', 'sending', 'error'],
+            emits: ['select', 'other', 'hidden'],
+          },
+          'b-button': {
+            template:
+              '<button class="b-button" @click="$emit(\'click\', $event)"><slot /></button>',
+            props: ['variant', 'size'],
+            emits: ['click'],
           },
         },
       },
@@ -425,6 +464,146 @@ describe('ProfileInfo', () => {
       const wrapper = createWrapper()
       await flushPromises()
       expect(wrapper.find('.chat-button').exists()).toBe(false)
+    })
+
+    // Most messages sent from a profile are about one of the person's posts
+    // (#11), so the button asks which one before the chat opens.
+    describe('what the message is about', () => {
+      it('asks which post it is about when they have posts up', async () => {
+        const wrapper = createWrapper()
+        await flushPromises()
+
+        await wrapper.find('.message-btn').trigger('click')
+        await flushPromises()
+
+        const modal = wrapper.findComponent({ name: 'PostSelectionModal' })
+        expect(modal.exists()).toBe(true)
+        // Only the posts still open, offers and wanteds together, with the
+        // subjects the store holds.
+        expect(modal.props('posts')).toEqual([
+          { id: 1, type: 'Offer', subject: 'OFFER: Chairs (BA1)' },
+          { id: 2, type: 'Wanted', subject: 'WANTED: Pump (BA2)' },
+        ])
+        expect(modal.props('name')).toBe('Test User')
+        expect(mockOpenChat).not.toHaveBeenCalled()
+      })
+
+      it('opens the chat straight away when they have nothing up', async () => {
+        const wrapper = createWrapper({}, mockUser, [])
+        await flushPromises()
+
+        await wrapper.find('.message-btn').trigger('click')
+        await flushPromises()
+
+        expect(
+          wrapper.findComponent({ name: 'PostSelectionModal' }).exists()
+        ).toBe(false)
+        expect(mockOpenChat).toHaveBeenCalledWith(null, null, null, false)
+      })
+
+      it('sends the message about the chosen post', async () => {
+        const wrapper = createWrapper()
+        await flushPromises()
+        await wrapper.find('.message-btn').trigger('click')
+        await flushPromises()
+
+        wrapper
+          .findComponent({ name: 'PostSelectionModal' })
+          .vm.$emit('select', { id: 2, text: 'I have a pump you can have.' })
+        await flushPromises()
+
+        expect(mockOpenChat).toHaveBeenCalledWith(
+          null,
+          'I have a pump you can have.',
+          2,
+          false,
+          false,
+          'profile'
+        )
+      })
+
+      it('opens a plain chat for something else', async () => {
+        const wrapper = createWrapper()
+        await flushPromises()
+        await wrapper.find('.message-btn').trigger('click')
+        await flushPromises()
+
+        wrapper.findComponent({ name: 'PostSelectionModal' }).vm.$emit('other')
+        await flushPromises()
+
+        expect(mockOpenChat).toHaveBeenCalledWith(
+          null,
+          null,
+          null,
+          false,
+          false,
+          'profile'
+        )
+      })
+
+      it('leaves out posts they could not reply to from the post itself', async () => {
+        // Promised to somebody else, finished, or past its deadline: the post's
+        // own page would not offer a reply, so neither does this route.
+        const messages = [
+          { id: 1, type: 'Offer', successful: false },
+          { id: 4, type: 'Offer', successful: false },
+          { id: 5, type: 'Offer', successful: false },
+          { id: 6, type: 'Wanted', successful: false, hasoutcome: true },
+          { id: 7, type: 'Offer', successful: false },
+        ]
+        const full = {
+          1: { subject: 'OFFER: Chairs (BA1)' },
+          4: { subject: 'OFFER: Promised (BA1)', promised: true },
+          5: {
+            subject: 'OFFER: Late (BA1)',
+            deadline: '2000-01-01T00:00:00Z',
+          },
+          6: { subject: 'WANTED: Done (BA1)' },
+          7: {
+            subject: 'OFFER: Mine (BA1)',
+            promised: true,
+            promisedtoyou: true,
+          },
+        }
+        const wrapper = createWrapper({}, mockUser, messages)
+        mockMessageById.mockImplementation((id) => full[id] || null)
+        await flushPromises()
+
+        await wrapper.find('.message-btn').trigger('click')
+        await flushPromises()
+
+        const modal = wrapper.findComponent({ name: 'PostSelectionModal' })
+        expect(modal.props('posts').map((p) => p.id)).toEqual([1, 7])
+      })
+
+      it('keeps the question open and says so when the send fails', async () => {
+        mockOpenChat.mockRejectedValueOnce(new Error('network'))
+        const wrapper = createWrapper()
+        await flushPromises()
+        await wrapper.find('.message-btn').trigger('click')
+        await flushPromises()
+
+        const modal = wrapper.findComponent({ name: 'PostSelectionModal' })
+        modal.vm.$emit('select', { id: 2, text: 'Still there?' })
+        await flushPromises()
+
+        expect(modal.exists()).toBe(true)
+        expect(modal.props('sending')).toBe(false)
+        expect(modal.props('error')).toContain("didn't send")
+      })
+
+      it('a ctrl-click still opens the chat in a new tab without asking', async () => {
+        const wrapper = createWrapper()
+        await flushPromises()
+
+        await wrapper.find('.message-btn').trigger('click', { ctrlKey: true })
+        await flushPromises()
+
+        expect(
+          wrapper.findComponent({ name: 'PostSelectionModal' }).exists()
+        ).toBe(false)
+        expect(mockOpenChat).toHaveBeenCalledWith(null, null, null, true)
+      })
     })
 
     it('hides chat button when not logged in', async () => {

@@ -7,6 +7,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Throwable;
+use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
  * Renders the authority statistics spreadsheets that the ModTools Partnerships page asks for.
@@ -21,6 +22,7 @@ use Throwable;
  *
  *   php artisan partnerships:stats:run
  */
+#[AsCommand(name: 'partnerships:stats:run')]
 class StatsJobRunnerCommand extends Command
 {
     protected $signature = 'partnerships:stats:run

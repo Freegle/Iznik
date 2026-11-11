@@ -8,7 +8,7 @@
     size="lg"
     no-stacking
     @shown="onShow"
-    @hidden="emit('hidden')"
+    @hidden="onHidden"
   >
     <template #default>
       <div class="promise-content">
@@ -148,6 +148,7 @@
   </b-modal>
 </template>
 <script setup>
+import { FlowName, useFlowTelemetry } from '~/composables/useFlowTelemetry'
 import dayjs from 'dayjs'
 import { ref, computed, watch, nextTick, defineAsyncComponent } from 'vue'
 import SpinButton from './SpinButton'
@@ -188,6 +189,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['hide', 'hidden'])
+
+const flow = useFlowTelemetry(FlowName.CHAT_PROMISE)
 
 const trystStore = useTrystStore()
 const messageStore = useMessageStore()
@@ -346,48 +349,70 @@ watch(
 
 async function promise(callback) {
   if (currentlySelected.value > 0 || currentlySelected.value === -1) {
-    // -1 means "Someone else" — pass null userid so the API records it as promised-to-unknown.
-    const userid =
-      currentlySelected.value === -1 ? null : currentlySelected.value
-    await messageStore.promise(message.value, userid)
+    flow.submit()
 
-    console.log('Date arranged for', time.value, date.value)
+    try {
+      // -1 means "Someone else" — pass null userid so the API records it as promised-to-unknown.
+      const userid =
+        currentlySelected.value === -1 ? null : currentlySelected.value
+      await messageStore.promise(message.value, userid)
 
-    if (time.value && !time.value.includes(':')) {
-      // We've seen in Sentry that this can happen - looks like if someone types into the hours but not the minutes.
-      time.value = time.value + ':00'
-    }
+      console.log('Date arranged for', time.value, date.value)
 
-    const arrangedfor =
-      time.value && date.value
-        ? dayjs(date.value + ' ' + time.value).toISOString()
-        : null
-
-    if (arrangedfor) {
-      if (!tryst.value) {
-        // No arrangement yet.
-        await trystStore.add(myid, currentlySelected.value, arrangedfor)
-      } else {
-        // Update
-        await trystStore.edit(tryst.value.id, arrangedfor)
+      if (time.value && !time.value.includes(':')) {
+        // We've seen in Sentry that this can happen - looks like if someone types into the hours but not the minutes.
+        time.value = time.value + ':00'
       }
+
+      const arrangedfor =
+        time.value && date.value
+          ? dayjs(date.value + ' ' + time.value).toISOString()
+          : null
+
+      if (arrangedfor) {
+        if (!tryst.value) {
+          // No arrangement yet.
+          await trystStore.add(myid, currentlySelected.value, arrangedfor)
+        } else {
+          // Update
+          await trystStore.edit(tryst.value.id, arrangedfor)
+        }
+      }
+
+      if (props.maybe) {
+        await api.bandit.chosen({
+          uid: 'promise',
+          variant: 'AfterAddress',
+        })
+      }
+    } catch (e) {
+      flow.submitResult(false, e?.response?.status ?? null, 'error')
+      throw e
     }
 
-    if (props.maybe) {
-      await api.bandit.chosen({
-        uid: 'promise',
-        variant: 'AfterAddress',
-      })
-    }
+    flow.submitResult(true, 200, null)
+    flow.completeStep()
+    flow.complete()
 
     emit('hide')
     hide()
+  } else {
+    flow.validationFailed('recipient', 'missing')
   }
 
   callback()
 }
 
+// The modal closing without a promise having been made is an abandon.
+function onHidden() {
+  flow.abandon('closed')
+  emit('hidden')
+}
+
 async function onShow(showDate) {
+  flow.start(props.maybe ? 'maybe' : 'chat')
+  flow.enterStep('choose')
+
   message.value = props.selectedMessage
 
   currentlySelected.value = 0

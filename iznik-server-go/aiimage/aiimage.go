@@ -334,7 +334,7 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 	prompt := buildImagePrompt(name)
 
 	// Flux Schnell's input schema is closed (additionalProperties: false) and accepts only
-	// prompt, steps (max 8) and seed. Sending width/height/num_steps — which older Workers AI
+	// prompt and steps (max 8). Sending seed, width/height or num_steps — which older Workers AI
 	// image models took — gets the whole request rejected with a 400 "Additional or unevaluated
 	// properties not allowed". The model always returns 1024x1024; there is no size parameter.
 	reqBody, _ := json.Marshal(map[string]interface{}{

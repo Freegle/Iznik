@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-16
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -28,12 +28,29 @@ flowchart LR
 
 
 1. **Push to `master`.** CircleCI runs the full test suite (Go, PHPUnit, Laravel, Vitest,
-   Playwright) via a shared reusable orb. Two container-free suites run first because they
-   are cheap and fail fast: `claude-agent-sdk` (node:test) and `monitor-fsm` (vitest, which
-   also needs python3 for the specs that execute the Python the FSM shells out to).
-   New raw SQL is kept out at authoring time by the `.claude/check-raw-sql.sh` hook rather
-   than by a CI gate - the ORM migration inventory ratchet that used to run here was retired
-   once the Go migration reached zero raw sites.
+   Playwright) via a shared reusable orb. The `claude-agent-sdk` suite (node:test) runs first,
+   container-free and in a second.
+   New raw SQL is kept out by the `.claude/check-raw-sql.sh` hook while editing and by the
+   `check-raw-sql` CircleCI job, which runs the same script in `--diff origin/master` mode
+   over the branch. A line marked `// keep-raw: <reason>` is allowed.
+   A role (User, Moderator, Support, Admin, Member, Owner) written as a string is refused by
+   `.claude/check-role-literals.sh`, as an editor hook and as the `check-role-literals` job,
+   which runs it in `--all` mode over the whole tree, so a role literal anywhere fails it, not only
+   one the branch adds. A line marked `role-literal-ok: <reason>`
+   is allowed.
+   The `check-ux-cleanups` job fails a UX cleanup note (`iznik-batch/config/ux_cleanups.php`) that is
+   malformed or names an experiment switch that still exists.
+   Four checks run as **background steps** so they overlap the container build and the
+   parallel suites instead of sitting on the critical path: `monitor-fsm` (vitest, which also
+   needs python3 and make, started before the build), `eslint .` over `iznik-nuxt3` (in the
+   ModTools dev container, started once the containers are up), and the `spatial-go` and
+   `routing-go` suites (through the status container, started just before the parallel
+   block). A background step cannot fail the job, so each writes `pass` or `fail` to
+   `~/test-output/<name>.result`; the parallel block stops the suites as soon as one says
+   `fail`, and `Collect background checks` is the gate that fails the job and prints the
+   output. eslint errors fail the build; warnings are hidden. Fix them with
+   `npx eslint --fix .` in `iznik-nuxt3`. The Go coverage upload is a background step too,
+   joined by `Wait for Go coverage upload` before the Coveralls webhook.
 2. **On green, `master` auto-merges to `production`.** This is automatic only when all
    tests pass.
 3. **`production` deploys the frontends.** Two Netlify sites build from the same
@@ -42,6 +59,10 @@ flowchart LR
    - **ModTools** (modtools.org) with `cd modtools && npm run build`.
 4. **Backend services** (the Go and PHP APIs and the Laravel batch app) deploy through
    their own path, separate from the Netlify frontend flow.
+
+A pull request from a fork gets no CI on its own: CircleCI will not run fork code on our
+self-hosted runner. A maintainer who has read it applies the **Run CI** label to run it;
+see [Pull requests from forks](reference/circleci.md#pull-requests-from-forks).
 
 ### Backend first
 
@@ -53,7 +74,17 @@ so the frontend never calls an endpoint that is not there yet. This ordering rul
 
 Android (and iOS) builds run from the `production` branch. The Android flow builds the app
 and uploads it to Google Play's internal track via Fastlane, with a weekly manual
-promotion from internal to beta to production. Detail is in
+promotion from internal to beta to production. The promote workflow first runs the app
+on an Android emulator against the local stack (`freegle/app-emulator-tests`, on
+CircleCI's Android machine image, the one executor with `/dev/kvm`; the ephemeral
+runners are cloud VMs without nested virtualisation). The tests are split across four
+parallel machines, each with its own stack, to fit CircleCI's one-hour job limit. The
+Freegle app is not promoted or submitted if they fail; the ModTools iOS submission does
+not wait for them, because they do not exercise ModTools. The same job runs alone, on
+any branch, with the `run_app_emulator_test` pipeline parameter. A daily schedule runs
+`check-apple-agreements` with the `run_apple_agreement_check` parameter: it fails when Apple
+is waiting for the Account Holder to accept an agreement, which otherwise stops the iOS
+build. Detail is in
 [./reference/circleci.md](./reference/circleci.md) and [../developers/reference/mobile-app.md](../developers/reference/mobile-app.md).
 
 ## CI runner
@@ -87,6 +118,10 @@ Operational notes worth knowing:
   public, so this is about rate limiting rather than access: an anonymous fetch that
   github.com throttles reaches git as a credentials prompt and a protocol error, not
   as a clear refusal.
+- **Every image CI starts is built in the orb's build step, dev images included.** CI
+  turns file sync off, so an image that step leaves out is whatever copy the runner VM
+  already has. Vitest and eslint run in the ModTools dev container, so a stale image there
+  means they test an older frontend while the build reports green.
 - A pin published from a branch carries that branch's orb changes. Master must not
   adopt it until the branch merges, or master's jobs run steps for code it does not
   have.

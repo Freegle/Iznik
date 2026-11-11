@@ -7,6 +7,9 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
 use App\Services\ContentCheckService;
+use App\Services\Lockdown\LockdownService;
+use App\Services\Lockdown\LockdownHoldsService;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -58,37 +61,109 @@ class ChatProcessService
         return self::CHECK_TO_REPORTREASON[$check] ?? self::REVIEW_SPAM;
     }
 
+    /** kind value lockdown_holds uses for chat rows. */
+    private const HOLD_KIND = LockdownHoldsService::KIND_CHAT;
+
     private ContentCheckService $contentCheck;
+
+    private LockdownService $lockdown;
 
     /** Messages dropped by a block keyword during the current processIncoming(). */
     private int $dropped = 0;
 
-    public function __construct(?ContentCheckService $contentCheck = null)
-    {
+    public function __construct(
+        ?ContentCheckService $contentCheck = null,
+        ?LockdownService $lockdown = null
+    ) {
         // Resolve from the container when not injected (keeps `new ChatProcessService()` working).
         $this->contentCheck = $contentCheck ?? app(ContentCheckService::class);
+        $this->lockdown = $lockdown ?? app(LockdownService::class);
     }
 
     /**
-     * Process all pending chat messages (processingrequired = 1).
+     * Process all pending chat messages (processingrequired = 1), oldest first.
+     *
+     * While a lockdown holds chat, member-to-member messages wait here unprocessed; chat
+     * with the volunteers keeps flowing. Once chat is lifted they are simply pending again,
+     * so this processes everything the lockdown held, straight away, through the same
+     * checks as any other message: a sender Support has since marked as a spammer is
+     * dropped by the spammer check. Work goes in batches only to keep each query small.
      *
      * @return int Number of messages processed.
      */
     public function processIncoming(): int
     {
-        $messages = DB::table('chat_messages')
-            ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
-            ->where('chat_messages.processingrequired', 1)
-            ->orderBy('chat_messages.id', 'asc')
-            ->select('chat_messages.*', 'chat_rooms.chattype', 'chat_rooms.user1', 'chat_rooms.user2')
-            ->get();
+        // Ticks over even on a quiet run with no messages, so the presser sees this loop
+        // still running (section 11.6 point 3).
+        $this->lockdown->ack('chat-process');
 
         $count = 0;
         $this->dropped = 0;
+        $lastId = 0;
 
-        foreach ($messages as $message) {
-            if ($this->processMessage($message)) {
-                $count++;
+        while (true) {
+            $chatHeld = $this->lockdown->held('chat');
+            $messages = DB::table('chat_messages')
+                ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
+                ->where('chat_messages.processingrequired', 1)
+                ->where('chat_messages.id', '>', $lastId)
+                ->when($chatHeld, fn ($query) => $query->where('chat_rooms.chattype', '!=', ChatRoom::TYPE_USER2USER))
+                ->orderBy('chat_messages.id', 'asc')
+                ->limit(LockdownHoldsService::releaseBatchSize())
+                ->select('chat_messages.*', 'chat_rooms.chattype', 'chat_rooms.user1', 'chat_rooms.user2')
+                ->get();
+            if ($messages->isEmpty()) {
+                break;
+            }
+            $lastId = (int) $messages->last()->id;
+
+            // Which of this batch the lockdown held, so their holds can be closed once they
+            // go through. One query per batch; nothing at all if there has never been a lockdown.
+            $held = $this->lockdown->incidentId() === null ? [] : DB::table('lockdown_holds')
+                ->where('kind', self::HOLD_KIND)
+                ->whereNull('outcome')
+                ->whereIn('refid', $messages->pluck('id'))
+                ->pluck('refid')
+                ->flip()
+                ->all();
+
+            $awaiting = $this->awaitingConfirmation($messages);
+            $confirmed = $this->confirmedQuestions($messages->pluck('id')->all());
+
+            foreach ($messages as $message) {
+                // Re-read per message (section 11.6 point 2): a press landing between two
+                // messages of this run stops the next member-to-member one at once. held()
+                // is a memory read within the five-second cache, so this costs nothing.
+                if ($message->chattype === ChatRoom::TYPE_USER2USER && $this->lockdown->held('chat')) {
+                    continue;
+                }
+
+                if (array_key_exists($message->id, $awaiting)) {
+                    $this->holdForConfirmation((int) $message->id, $awaiting[$message->id]);
+                    continue;
+                }
+
+                // A reply the replier has said yes to is not delivered after the item has gone: the outcome task
+                // drops it too, but this run may land first.
+                if (array_key_exists($message->id, $confirmed) && $message->refmsgid
+                    && DB::table('messages_outcomes')->where('msgid', $message->refmsgid)->exists()) {
+                    $this->processFailed((int) $message->id, ChatMessage::PROCESSFAIL_POST_GONE);
+                    continue;
+                }
+                $this->lockdown->ack('chat-process');
+
+                if ($this->processMessage($message)) {
+                    $count++;
+                    if (array_key_exists($message->id, $held)) {
+                        // The ordinary checks may have refused it (a sender marked as a
+                        // spammer, a blocked phrase), which leaves it unsuccessful.
+                        $delivered = (int) DB::table('chat_messages')->where('id', $message->id)->value('processingsuccessful') === 1;
+                        $this->recordHoldOutcome((int) $message->id, $delivered ? 'released' : 'rejected');
+                    }
+                    if (array_key_exists($message->id, $confirmed)) {
+                        $this->showQuestionWithReply((int) $message->id, (int) $confirmed[$message->id]);
+                    }
+                }
             }
         }
 
@@ -105,6 +180,122 @@ class ChatProcessService
     public function droppedCount(): int
     {
         return $this->dropped;
+    }
+
+    /**
+     * Which of these messages are waiting for their sender to answer a question, keyed by message id, with when the
+     * question expires.
+     *
+     * The Go API asks someone replying to an offer that looks damaged, or too big to carry, whether they still want
+     * it (chat/replyconfirm.go), and names the reply in the prompt's heldchatmsgid. Until they answer, the reply is
+     * left unprocessed, which keeps it from the poster: an unprocessed message is only ever shown to its sender.
+     *
+     * Whatever else the sender writes in that chat while the question is open waits behind it, in order, and goes
+     * the same way as the reply: delivered after a yes, withdrawn after a no, dropped when the question expires.
+     * Only the buttons answer the question. A message written after the question expired is not held.
+     *
+     * @param  Collection<int, object>  $messages  The batch: chat_messages rows.
+     * @return array<int, ?string>
+     */
+    private function awaitingConfirmation(Collection $messages): array
+    {
+        $ids = $messages->pluck('id')->all();
+        if (empty($ids)) {
+            return [];
+        }
+
+        $awaiting = DB::table('chat_prompts')
+            ->whereIn('heldchatmsgid', $ids)
+            ->whereNull('answered_at')
+            ->pluck('expires_at', 'heldchatmsgid')
+            ->all();
+
+        $open = DB::table('chat_prompts as cp')
+            ->join('chat_messages as held', 'held.id', '=', 'cp.heldchatmsgid')
+            ->where('cp.kind', 'confirm_reply')
+            ->whereNull('cp.answered_at')
+            ->whereIn('cp.userid', $messages->pluck('userid')->unique()->all())
+            ->get(['cp.userid', 'cp.heldchatmsgid', 'cp.expires_at', 'held.chatid']);
+
+        foreach ($messages as $message) {
+            if (array_key_exists($message->id, $awaiting)) {
+                continue;
+            }
+
+            foreach ($open as $question) {
+                $writtenWhileOpen = $question->expires_at === null
+                    || strtotime((string) $message->date) <= strtotime((string) $question->expires_at);
+
+                if ((int) $question->userid === (int) $message->userid
+                    && (int) $question->chatid === (int) $message->chatid
+                    && (int) $question->heldchatmsgid < (int) $message->id
+                    && $writtenWhileOpen) {
+                    $awaiting[$message->id] = $question->expires_at;
+                    break;
+                }
+            }
+        }
+
+        return $awaiting;
+    }
+
+    /**
+     * The answered questions that held these replies, keyed by reply id, with the question's
+     * own chat message id.
+     *
+     * @param  array<int>  $ids
+     * @return array<int, int>
+     */
+    private function confirmedQuestions(array $ids): array
+    {
+        if (empty($ids)) {
+            return [];
+        }
+
+        return DB::table('chat_prompts')
+            ->whereIn('heldchatmsgid', $ids)
+            ->whereNotNull('answered_at')
+            ->pluck('chatmsgid', 'heldchatmsgid')
+            ->all();
+    }
+
+    /**
+     * Once a confirmed reply is delivered, let the poster see the question and the answer too,
+     * in the same step, so they arrive together rather than the question first. If the ordinary
+     * checks refused the reply, the question stays the replier's alone.
+     *
+     * Delivered is what the poster's chat fetch needs to show the reply: processed and successful,
+     * and neither held for review (a Fully moderated sender, a Moderated sender whose text trips a
+     * check, a message after a held one) nor dropped by a block keyword. A held or dropped reply is
+     * processed and successful too, and the poster is shown nothing of it, so its question stays
+     * hidden as well, and is not emailed. If a moderator approves the reply, the Go API shows the
+     * question with it (chat/replyconfirm.go, revealQuestionOfApprovedReply).
+     */
+    private function showQuestionWithReply(int $replyId, int $questionId): void
+    {
+        $delivered = ChatMessage::query()->visible()->whereKey($replyId)->exists();
+
+        if ($delivered) {
+            DB::table('chat_messages')->where('id', $questionId)->update(['processingsuccessful' => 1]);
+        }
+    }
+
+    /**
+     * Leave a reply that is waiting for its sender's answer, or drop it once the question has
+     * expired unanswered: the replier never said they still wanted the item, so the poster is
+     * not sent the reply.
+     */
+    private function holdForConfirmation(int $id, ?string $expiresAt): void
+    {
+        if ($expiresAt === null || now()->lessThan($expiresAt)) {
+            return;
+        }
+
+        DB::table('chat_messages')->where('id', $id)->where('processingrequired', 1)->update([
+            'processingrequired' => 0,
+            'processingsuccessful' => 0,
+            'processingfailreason' => ChatMessage::PROCESSFAIL_NOT_CONFIRMED,
+        ]);
     }
 
     /**
@@ -225,10 +416,22 @@ class ChatProcessService
             // breaks — subsequent messages from a member already under review get
             // delivered (Discourse #9656). Looking strictly backwards at the
             // immediately preceding (already-processed) message restores the chain.
+            //
+            // The question Freegle asks about a reply (chat_prompts kind confirm_reply) is written
+            // straight after the reply, so it sits between a held reply and the member's next
+            // message. It is never held, so it would stand in for the message before it and let the
+            // next message through ahead of the held reply, in the arm that is asked only. It is
+            // skipped here.
             if (!$review) {
                 $lastReview = DB::table('chat_messages')
                     ->where('chatid', $chatid)
                     ->where('id', '<', $id)
+                    ->whereNotExists(function ($question) {
+                        $question->select('chat_prompts.chatmsgid')
+                            ->from('chat_prompts')
+                            ->whereColumn('chat_prompts.chatmsgid', 'chat_messages.id')
+                            ->where('chat_prompts.kind', 'confirm_reply');
+                    })
                     ->orderByDesc('id')
                     ->value('reviewrequired');
 
@@ -281,6 +484,11 @@ class ChatProcessService
             // fetch use (not held for review, not spam), so list visibility tracks delivery.
             // GREATEST guards against moving latestmessage backwards when a burst is processed
             // out of natural order; the hourly recompute remains as a backfill.
+            // keep-raw: GREATEST(COALESCE(latestmessage, ?), ?) - both GREATEST() and
+            // COALESCE() are SQL functions composed over the latestmessage column as the
+            // UPDATE SET value; the query builder has no method for either, and wrapping
+            // them in DB::raw() as the update() value would only relocate the raw SQL
+            // into the array, not convert it.
             DB::update(
                 'UPDATE chat_rooms SET latestmessage = GREATEST(COALESCE(latestmessage, ?), ?) WHERE id = ?',
                 [$message->date, $message->date, $chatid]
@@ -363,6 +571,20 @@ class ChatProcessService
             'userid' => $message->userid,
             'keyword' => $hit['keyword'] ?? null,
         ]);
+    }
+
+    /**
+     * Set a chat lockdown_holds row's outcome, and stamp releasedat so
+     * ChatNotificationService can re-admit a message whose chat_messages.date has since
+     * aged out of its look-back window by the time this fires - the same problem, and the
+     * same fix, as rippling_held_replies.releasedat (ChatNotificationService::getUnmailedMessages).
+     */
+    private function recordHoldOutcome(int $refId, string $outcome): void
+    {
+        DB::table('lockdown_holds')
+            ->where('kind', self::HOLD_KIND)
+            ->where('refid', $refId)
+            ->update(['outcome' => $outcome, 'releasedat' => now()]);
     }
 
     /**

@@ -69,11 +69,18 @@ import ResizeObserver from 'resize-observer-polyfill'
 import hasOwn from 'object.hasown'
 import * as Sentry from '@sentry/browser'
 import { uid } from '~/composables/useId'
-import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
+import {
+  createRetryCoalescer,
+  removeFinishedFiles,
+} from '~/composables/useUppyRetryCoalesce'
 import {
   createHeicPreProcessor,
   createHeicSafeCompressor,
 } from '~/composables/useUppyHeic'
+import {
+  createInMemoryPreProcessor,
+  UNREADABLE_PHOTO_MESSAGE,
+} from '~/composables/useUppyInMemory'
 import { useMobileStore } from '@/stores/mobile' // APP...
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
@@ -264,13 +271,36 @@ const loading = ref('')
 // permission prompt was declined) - see useCameraErrorMessage for what does
 // and doesn't count as an error worth telling the user about.
 const photoError = ref(null)
-const emit = defineEmits(['update:modelValue', 'closed', 'photoProcessed'])
+const emit = defineEmits([
+  'update:modelValue',
+  'closed',
+  'photoProcessed',
+  'uploading',
+  'uploadFailed',
+])
 const uploadedPhotos = ref([])
 const busy = ref(false)
 
+// Tell the parent whether a photo is still on its way, or has failed, so a form
+// can refuse to submit rather than saving without the photo.
+const uploadInProgress = ref(false)
+const uploadFailed = ref(false)
+watch(
+  () => busy.value || uploadInProgress.value,
+  (val) => emit('uploading', val)
+)
+watch(uploadFailed, (val) => emit('uploadFailed', val))
+
+const isApp = ref(mobileStore.isApp) // APP
+
+// In the app the first button opens the camera and the second the photo gallery, so say so,
+// matching the source choice in PhotoUploader. On the web the one button opens a picker that
+// offers both.
 const label = computed(() => {
   if (props.label) {
-    return label
+    return props.label
+  } else if (isApp.value) {
+    return 'Take photo'
   } else if (props.multiple) {
     return 'Add photos'
   } else {
@@ -278,17 +308,7 @@ const label = computed(() => {
   }
 })
 
-const isApp = ref(mobileStore.isApp) // APP
-
-const chooselabel = computed(() => {
-  if (props.label) {
-    return label
-  } else if (props.multiple) {
-    return props.modelValue.length > 0 ? 'Choose more photos' : 'Choose photos'
-  } else {
-    return 'Choose photo'
-  }
-})
+const chooselabel = 'Choose from gallery'
 
 let uppy = null
 
@@ -471,8 +491,22 @@ onMounted(() => {
     createHeicPreProcessor({ getUppy: () => uppy, uploader: 'our' })
   )
   uppy.use(createHeicSafeCompressor(Compressor))
+  // After Compressor, so it copies what we will actually upload. See
+  // useUppyInMemory.
+  uppy.addPreProcessor(
+    createInMemoryPreProcessor({
+      getUppy: () => uppy,
+      uploader: 'our',
+      onUnreadable: () => {
+        photoError.value = UNREADABLE_PHOTO_MESSAGE
+      },
+    })
+  )
   uppy.on('file-added', (file) => {
     console.log('Added file', file)
+    // A new photo starts afresh; an earlier one that could not be opened
+    // should not leave its message showing.
+    photoError.value = null
     // Ships to Loki (event_type=action) so we can distinguish "opened the picker but
     // never selected a photo" from "selected a photo, upload then failed/stalled".
     action('upload_file_selected', {
@@ -562,13 +596,18 @@ onMounted(() => {
   uppy.on('upload', (uploadID, files) => {
     console.log('Upload started', uploadID, files)
     action('upload_started', { uploader: 'our', file_count: files?.length })
+    uploadInProgress.value = true
+    uploadFailed.value = false
   })
   uppy.on('complete', (result) => {
+    uploadFailed.value = Boolean(result?.failed?.length)
     if (uppyTimer) {
       clearTimeout(uppyTimer)
       uppyTimer = null
     }
     uploadSuccess(result)
+    // uploadSuccess has already set busy, so the parent never sees a gap.
+    uploadInProgress.value = false
   })
   uppy.on('dashboard:modal-open', () => {
     console.log('Uploader modal is open')
@@ -596,6 +635,7 @@ onMounted(() => {
   // Per-FILE upload failure carries the file + server response, so this is where
   // we log the diagnosable detail (HTTP status, network-vs-server, cause, size).
   uppy.on('upload-error', (file, error, response) => {
+    uploadFailed.value = true
     console.error('Upload error', file?.id, error, response)
     action('upload_failed', {
       uploader: 'our',
@@ -667,6 +707,14 @@ async function uploadSuccess(result) {
   console.log('Upload success', result)
   busy.value = true
 
+  try {
+    await processSuccessful(result)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function processSuccessful(result) {
   if (result.successful) {
     // Iterate result.successful array
     const promises = []
@@ -729,9 +777,9 @@ async function uploadSuccess(result) {
     // Reset the uploader so that if we go back in we won't see photos which have already been uploaded.  This is
     // because control of the photos is handed over to our code, rather than the uploader.
     console.log('Reset uploader')
-    closeModal()
-    uppy.clear()
-    busy.value = false
+    // Only the finished photos: one still being retried stays, and the modal
+    // with it. See removeFinishedFiles.
+    if (removeFinishedFiles(uppy, result)) closeModal()
   }
 }
 </script>

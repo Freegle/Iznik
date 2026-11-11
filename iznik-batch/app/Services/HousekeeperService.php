@@ -48,13 +48,18 @@ class HousekeeperService
      * Record a run in housekeeper_tasks, which drives the ModTools housekeeping
      * badge. $fields sets registry columns (name, description, interval_hours,
      * enabled, placeholder) for tasks that run server-side rather than in the
-     * extension.
+     * extension. A new row is named after its key until a name is given; an
+     * existing row keeps its name, which the extension's registry may have set.
      */
     public function recordRun(string $taskKey, string $status, string $summary, ?string $log = null, array $fields = []): void
     {
+        if (! array_key_exists('name', $fields) && ! DB::table('housekeeper_tasks')->where('task_key', $taskKey)->exists()) {
+            $fields['name'] = $taskKey;
+        }
+
         DB::table('housekeeper_tasks')->updateOrInsert(
             ['task_key' => $taskKey],
-            array_merge(['name' => $taskKey], $fields, [
+            array_merge($fields, [
                 'last_run_at' => now(),
                 'last_status' => $status,
                 'last_summary' => $summary,

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,9 +28,9 @@ func createTestAdmin(t *testing.T, createdby uint64, groupid uint64, subject str
 
 func TestListAdmins(t *testing.T) {
 	prefix := uniquePrefix("adm_list")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, groupID, "Test Admin "+prefix)
@@ -59,9 +60,9 @@ func TestListAdmins(t *testing.T) {
 
 func TestListAdminsNotMod(t *testing.T) {
 	prefix := uniquePrefix("adm_listnm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, userID)
 
 	createTestAdmin(t, userID, groupID, "Admin "+prefix)
@@ -83,13 +84,13 @@ func TestListAdminsNotMod(t *testing.T) {
 func TestListAdminsSystemAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_sysadm")
 	// System Admin user with no group membership.
-	adminUserID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminUserID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, adminToken := CreateTestSession(t, adminUserID)
 
 	// Create a group and admin that the system admin is NOT a member of.
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	adminID := createTestAdmin(t, modID, groupID, "SysAdmin Test "+prefix)
 
 	// Discourse 9816: with NO group requested, even a system admin must NOT see other
@@ -138,9 +139,9 @@ func TestListAdminsIncludesCompleted(t *testing.T) {
 	// admin and leaving only stale, approved-but-never-sent ones (Derek saw a 3-year-old
 	// Christmas admin as the newest). The listing must include completed admins.
 	prefix := uniquePrefix("adm_done")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// A sent (completed) admin.
@@ -170,9 +171,9 @@ func TestListAdminsIncludesCompleted(t *testing.T) {
 
 func TestCreateAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_create")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"groupid":%d,"subject":"Test Subject %s","text":"Test text"}`, groupID, prefix)
@@ -200,9 +201,9 @@ func TestCreateAdminUnauthorized(t *testing.T) {
 
 func TestGetAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_get")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, groupID, "Get Test "+prefix)
@@ -223,9 +224,9 @@ func TestGetAdmin(t *testing.T) {
 
 func TestUpdateAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_upd")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, groupID, "Update Test "+prefix)
@@ -262,9 +263,9 @@ func TestUpdateAdmin(t *testing.T) {
 
 func TestDeleteAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_del")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, groupID, "Delete Test "+prefix)
@@ -288,9 +289,9 @@ func TestDeleteAdmin(t *testing.T) {
 
 func TestHoldAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_hold")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, groupID, "Hold Test "+prefix)
@@ -314,9 +315,9 @@ func TestHoldAdmin(t *testing.T) {
 
 func TestReleaseAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_rel")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, groupID, "Release Test "+prefix)
@@ -350,9 +351,9 @@ func TestAdminsOnlyForActiveModGroups(t *testing.T) {
 	activeGroupID := CreateTestGroup(t, prefix+"_active")
 	inactiveGroupID := CreateTestGroup(t, prefix+"_inactive")
 
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
-	CreateTestMembership(t, modID, activeGroupID, "Moderator")
-	CreateTestMembership(t, modID, inactiveGroupID, "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, activeGroupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modID, inactiveGroupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Mark the mod as inactive on one group.
@@ -406,9 +407,9 @@ func TestPostAdminCreateWithSendAfter(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("admin_sendafter")
 
-	modID := CreateTestUser(t, prefix, "User")
+	modID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	// Send a future sendafter datetime.
@@ -455,7 +456,7 @@ func adminGuidanceRow(t *testing.T, id uint64) (string, string, *string) {
 
 func TestCreateSystemWideAdminStoresGuidanceSeparately(t *testing.T) {
 	prefix := uniquePrefix("adm_guid_new")
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, supportID)
 
 	guidance := "GUIDANCE-" + prefix + " add your own sign-off"
@@ -483,9 +484,9 @@ func TestCreateSystemWideAdminStoresGuidanceSeparately(t *testing.T) {
 
 func TestCreateGroupAdminIgnoresGuidance(t *testing.T) {
 	prefix := uniquePrefix("adm_guid_grp")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"groupid":%d,"subject":"Grp %s","text":"Body","modguidance":"nobody reads this"}`, groupID, prefix)
@@ -506,9 +507,9 @@ func TestCreateGroupAdminIgnoresGuidance(t *testing.T) {
 
 func TestModeratorSeesGuidanceOnTheirCopy(t *testing.T) {
 	prefix := uniquePrefix("adm_guid_get")
-	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, groupID, "Copy "+prefix)
@@ -544,14 +545,14 @@ func TestModeratorSeesGuidanceOnTheirCopy(t *testing.T) {
 
 func TestNonModeratorNeverGetsGuidance(t *testing.T) {
 	prefix := uniquePrefix("adm_guid_nomod")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	adminID := createTestAdmin(t, modID, groupID, "Hidden "+prefix)
 	database.DBConn.Exec("UPDATE admins SET modguidance = ? WHERE id = ?", "GUIDANCE-"+prefix, adminID)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, memberToken := CreateTestSession(t, memberID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin/%d?jwt=%s", adminID, memberToken), nil)
@@ -568,9 +569,9 @@ func TestNonModeratorNeverGetsGuidance(t *testing.T) {
 
 func TestEditingCopyLeavesGuidanceAlone(t *testing.T) {
 	prefix := uniquePrefix("adm_guid_edit")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	adminID := createTestAdmin(t, modID, groupID, "Edit "+prefix)
@@ -601,9 +602,9 @@ func TestEditingCopyLeavesGuidanceAlone(t *testing.T) {
 
 func TestAdminReturnsV1Fields(t *testing.T) {
 	prefix := uniquePrefix("adm_v1")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 
 	parentID := createTestAdmin(t, modID, groupID, "Parent "+prefix)
@@ -647,9 +648,9 @@ func TestAdminReturnsV1Fields(t *testing.T) {
 
 func TestHoldAdminRecordsWhen(t *testing.T) {
 	prefix := uniquePrefix("adm_holdat")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, modToken := CreateTestSession(t, modID)
 	adminID := createTestAdmin(t, modID, groupID, "Hold "+prefix)
 
@@ -668,15 +669,15 @@ func TestHoldAdminRecordsWhen(t *testing.T) {
 
 func TestAnyGroupModeratorCanGetAnAdmin(t *testing.T) {
 	prefix := uniquePrefix("adm_anymod")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MODERATOR)
 	adminID := createTestAdmin(t, ownerID, groupID, "Anymod "+prefix)
 
 	// A moderator of a different group, with no system role, may read it.
 	otherGroup := CreateTestGroup(t, prefix+"_other")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, modID, otherGroup, "Owner")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, otherGroup, utils.ROLE_OWNER)
 	_, modToken := CreateTestSession(t, modID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin/%d?jwt=%s", adminID, modToken), nil)
@@ -684,8 +685,8 @@ func TestAnyGroupModeratorCanGetAnAdmin(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 
 	// A plain member of a group still may not.
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, memberToken := CreateTestSession(t, memberID)
 	req = httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/admin/%d?jwt=%s", adminID, memberToken), nil)
 	resp, _ = getApp().Test(req)
@@ -703,9 +704,9 @@ func patchAdmin(t *testing.T, token string, body string) int {
 
 func TestPatchAdminSetsAndClearsSendAfter(t *testing.T) {
 	prefix := uniquePrefix("adm_sendafter")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 	adminID := createTestAdmin(t, modID, groupID, "Sendafter "+prefix)
 	db := database.DBConn
@@ -740,9 +741,9 @@ func TestPatchAdminSetsAndClearsSendAfter(t *testing.T) {
 
 func TestCreateAdminSendAfterAcceptsDatetimeLocal(t *testing.T) {
 	prefix := uniquePrefix("adm_sa_new")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	_, token := CreateTestSession(t, modID)
 
 	body := fmt.Sprintf(`{"groupid":%d,"subject":"SA %s","text":"x","sendafter":"2031-01-02T03:04"}`, groupID, prefix)
@@ -775,22 +776,22 @@ func adminExists(id uint64) bool {
 
 func TestDeleteAdminPermissions(t *testing.T) {
 	prefix := uniquePrefix("adm_delperm")
-	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, ownerID, groupID, "Moderator")
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MODERATOR)
 
-	memberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, memberID, groupID, "Member")
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 	_, memberToken := CreateTestSession(t, memberID)
 
 	otherGroup := CreateTestGroup(t, prefix+"_other")
-	otherModID := CreateTestUser(t, prefix+"_othermod", "User")
-	CreateTestMembership(t, otherModID, otherGroup, "Moderator")
+	otherModID := CreateTestUser(t, prefix+"_othermod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherModID, otherGroup, utils.ROLE_MODERATOR)
 	_, otherModToken := CreateTestSession(t, otherModID)
 
-	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
 	_, supportToken := CreateTestSession(t, supportID)
-	adminUserID := CreateTestUser(t, prefix+"_sysadmin", "Admin")
+	adminUserID := CreateTestUser(t, prefix+"_sysadmin", utils.SYSTEMROLE_ADMIN)
 	_, sysadminToken := CreateTestSession(t, adminUserID)
 
 	// A plain member and a moderator of another group cannot delete it.
@@ -821,4 +822,48 @@ func TestDeleteAdminPermissions(t *testing.T) {
 	id = createTestAdmin(t, ownerID, groupID, "Del perm own "+prefix)
 	assert.Equal(t, 200, deleteAdminStatus(t, ownerToken, id))
 	assert.False(t, adminExists(id))
+}
+
+// The Previous tab loads the history a page at a time: limit caps the page and before continues
+// from the last ADMIN of the previous page, newest first.
+func TestListAdminsPages(t *testing.T) {
+	prefix := uniquePrefix("adm_page")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+	db := database.DBConn
+
+	ids := []uint64{}
+	for i := 0; i < 5; i++ {
+		id := createTestAdmin(t, modID, groupID, fmt.Sprintf("Paged %s %d", prefix, i))
+		db.Exec("UPDATE admins SET pending = 0, created = DATE_SUB(NOW(), INTERVAL ? HOUR) WHERE id = ?", 5-i, id)
+		ids = append(ids, id)
+	}
+	defer db.Exec("DELETE FROM admins WHERE groupid = ?", groupID)
+
+	page := func(url string) []uint64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", url+"&jwt="+modToken, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result []map[string]interface{}
+		json2.Unmarshal(rsp(resp), &result)
+		got := []uint64{}
+		for _, a := range result {
+			got = append(got, uint64(a["id"].(float64)))
+		}
+		return got
+	}
+
+	base := fmt.Sprintf("/api/modtools/admin?groupid=%d&pending=false", groupID)
+
+	first := page(base + "&limit=2")
+	assert.Equal(t, []uint64{ids[4], ids[3]}, first, "newest two")
+
+	second := page(fmt.Sprintf("%s&limit=2&before=%d", base, first[len(first)-1]))
+	assert.Equal(t, []uint64{ids[2], ids[1]}, second, "next two")
+
+	third := page(fmt.Sprintf("%s&limit=2&before=%d", base, second[len(second)-1]))
+	assert.Equal(t, []uint64{ids[0]}, third, "the last one")
+
+	assert.Len(t, page(base), 5, "no limit still returns everything")
 }
