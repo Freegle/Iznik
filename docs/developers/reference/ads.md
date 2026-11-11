@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-21
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/ExternalDa.vue
@@ -84,7 +84,8 @@ Things to know before touching it:
   failure once emptied the live table. If jobs go stale, look for that refusal in the logs
   before assuming the feed is fine.
 - **A gate skips the rebuild when the feed has not changed**, but never for more than
-  twenty hours, so the freshness check that watches the `jobs` table still fires if the
+  twelve hours (the syncs run at 04:40 and then every three hours from 09:00 to 21:00 UTC,
+  so a longer limit leaves a day between forced rebuilds), so the freshness check that watches the `jobs` table still fires if the
   gate itself breaks.
 - Jobs are geocoded on ingest and the `jobs` table is also the geocode cache, so a wrong
   placement does not heal by itself.
