@@ -44,6 +44,24 @@ func TestListMembersSearchFindsByNameAndEmail(t *testing.T) {
 	assert.NotContains(t, searchMembersAs(t, modToken, prefix+"_nobody"), memberID)
 }
 
+// A search by the end of an address (a domain) finds the member through the reversed column,
+// and a % or _ typed in the term is a literal character, not a wildcard.
+func TestListMembersSearchFindsByDomainAndEscapesWildcards(t *testing.T) {
+	prefix := uniquePrefix("memdomain")
+	db := database.DBConn
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+
+	domain := prefix + "-domain.example"
+	email := "someone@" + domain
+	db.Exec("INSERT INTO users_emails (userid, email, backwards) VALUES (?, ?, REVERSE(LOWER(?)))", memberID, email, email)
+
+	assert.Contains(t, searchMembersAs(t, modToken, domain), memberID, "found by the domain at the end of the address")
+	assert.NotContains(t, searchMembersAs(t, modToken, prefix+"%25"), memberID, "a percent sign is not a wildcard")
+	assert.NotContains(t, searchMembersAs(t, modToken, "%25"+prefix+"-domain.exampl_"), memberID, "an underscore is not a wildcard")
+}
+
 func banMemberStatus(t *testing.T, token string, userID uint64) int {
 	request := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/members/%d/ban?jwt=%s", userID, token), nil)
 	resp, err := getApp().Test(request)

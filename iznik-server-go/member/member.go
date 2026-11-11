@@ -2,6 +2,7 @@ package member
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/auth"
@@ -37,6 +38,9 @@ type RelatedPair struct {
 // SQL expression, matching the precedent used repeatedly in dashboard.go
 // and team.go. It deliberately doesn't use user.GetUserById's heavier,
 // side-effecting logic (InventName etc) which is unsuitable for list rows.
+// likeEscaper makes a search term safe to put inside a LIKE pattern.
+var likeEscaper = strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_")
+
 const displaynameExpr = "COALESCE(fullname, firstname, lastname, 'Unknown')"
 
 // ListMembers handles GET /modtools/members - national member lists for
@@ -93,11 +97,16 @@ func ListMembers(c *fiber.Ctx) error {
 		if term == "" {
 			return fiber.NewError(fiber.StatusBadRequest, "q is required for filter=search")
 		}
-		like := "%" + term + "%"
-		// The address lives in users_emails. It is matched from the start, so it can use the
+		// % and _ in the term are literal characters, not wildcards.
+		escaped := likeEscaper.Replace(term)
+		like := "%" + escaped + "%"
+		// The address lives in users_emails. It is matched from the start of the address, or
+		// from the end through the reversed column that exists for domain search, so both use an
 		// index; the name is matched anywhere.
+		reversed := likeEscaper.Replace(user.ReverseString(strings.ToLower(term)))
 		q = q.Where("deleted IS NULL AND (fullname LIKE ? OR firstname LIKE ? OR lastname LIKE ? "+
-			"OR id IN (SELECT userid FROM users_emails WHERE email LIKE ?))", like, like, like, term+"%").
+			"OR id IN (SELECT userid FROM users_emails WHERE email LIKE ? OR backwards LIKE ?))",
+			like, like, like, escaped+"%", reversed+"%").
 			Order("added DESC")
 	default:
 		filter = "new"
