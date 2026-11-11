@@ -537,16 +537,6 @@ export const useChatStore = defineStore('chat', {
             if (data && data.ret === 4) {
               // Don't log errors for banned users.
               logIt = false
-            } else if (
-              data &&
-              data.error === 403 &&
-              params?.chattype === 'User2Mod' &&
-              params?.userid
-            ) {
-              // Moderators may not start a chat with this member (a TrashNothing member
-              // who didn't choose the community). Expected, so not an error; the caller
-              // gets no id and says so.
-              logIt = false
             } else {
               logIt = true
             }

@@ -514,7 +514,6 @@ describe('ModLogMessage', () => {
         log: { id: 1, msgid: 2100, message: null },
       })
       expect(wrapper.find('.stub-stdmsg').exists()).toBe(true)
-      expect(wrapper.find('.stub-group').exists()).toBe(true)
     })
   })
 

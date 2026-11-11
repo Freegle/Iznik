@@ -129,6 +129,7 @@ What the code does now, where the review found it did not:
 - A moderator can read a taken-down post (collection Rejected) by id, with `deleted` and without its raw source, so the Taken down section and Restore work. A post that was withdrawn, deleted by its poster, or removed by a ban or erasure is not readable.
 - `GET /modtools/members` has a `related` filter. Member search reads the address from `users_emails`, from its start or by its domain, and treats % and _ as literal.
 - Digest, events and volunteering mail are off for a member with no membership when the group model is removed, and any one community that turned events or volunteering off turns them off.
+- Not carried from master: the block-keyword drop of a held confirm-reply question (no keyword lists, see above), and the store's handling of a refused moderator chat to a member (the Go API has no per-community contact refusal on this branch). Their tests are removed with them.
 
 Open questions for Edward:
 

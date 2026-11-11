@@ -289,7 +289,7 @@ describe('support/[[id]].vue page', () => {
       mockRouteQuery.value = { tab: 'cases' }
       const wrapper = mountComponent()
       await flushPromises()
-      expect(wrapper.vm.activeTab).toBe(6)
+      expect(wrapper.vm.activeTab).toBe(5)
     })
 
     // The auth store is the shared test mock, which reads globalThis.__mockAuthStore.
@@ -321,7 +321,7 @@ describe('support/[[id]].vue page', () => {
 
     it('opens on the Cases tab while cases are waiting for Support', () => {
       const wrapper = mountComponent(withWaiting(2))
-      expect(wrapper.vm.activeTab).toBe(6)
+      expect(wrapper.vm.activeTab).toBe(5)
     })
 
     it('still opens on User for a link to a member, even with cases waiting', () => {
@@ -337,7 +337,7 @@ describe('support/[[id]].vue page', () => {
       expect(wrapper.vm.activeTab).toBe(0)
       store.work = { supportcases: 2 }
       await nextTick()
-      expect(wrapper.vm.activeTab).toBe(6)
+      expect(wrapper.vm.activeTab).toBe(5)
     })
 
     it('stays on the tab the visitor picked when the count arrives later', async () => {
@@ -355,7 +355,7 @@ describe('support/[[id]].vue page', () => {
       const pinia = withWaiting(2)
       useLockdownStore().active = true
       const wrapper = mountComponent(pinia)
-      expect(wrapper.vm.activeTab).toBe(5)
+      expect(wrapper.vm.activeTab).toBe(4)
     })
   })
 
