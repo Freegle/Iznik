@@ -1,113 +1,125 @@
 <template>
-  <client-only v-if="me">
-    <b-container fluid class="p-0 p-xl-2">
-      <h1 class="visually-hidden">Browse items</h1>
-      <b-row class="m-0">
-        <b-col cols="0" lg="3" class="p-0 pe-1">
-          <VisibleWhen :at="['lg', 'xl', 'xxl']">
-            <SidebarLeft
-              ad-unit-path="/22794232631/freegle_home_left"
-              ad-div-id="div-gpt-ad-1693235056629-0"
-            />
-          </VisibleWhen>
-        </b-col>
-        <b-col cols="12" md="10" offset-md="1" lg="6" offset-lg="0" class="p-0">
-          <AppUpdateAvailable v-if="mobileStore.isApp" />
-          <MicroVolunteering />
-          <div>
-            <GlobalMessage />
-            <ExpectedRepliesWarning
-              v-if="me && me.expectedreplies"
-              :count="me.expectedreplies"
-              :chats="me.expectedchats"
-            />
-          </div>
-          <div v-if="initialBounds">
-            <NoticeMessage
-              v-if="noMessagesNoLocation"
-              variant="warning"
-              class="mb-2"
-            >
-              There are no posts in this area at the moment. You can check back
-              later, or use the controls below.
-            </NoticeMessage>
-            <NoticeMessage v-else-if="messagesOnMapCount === 0" class="mb-2">
-              <div v-if="searchTerm">
-                We couldn't find any posts matching your search. You can check
-                back later, or use the controls below or adjust your filters to
-                show posts from further away.
-              </div>
-              <div v-else>
-                We couldn't find any posts to show. You can check back later, or
-                use the controls below or adjust your filters to show posts from
-                further away.
-              </div>
-            </NoticeMessage>
-            <NoticeMessage v-if="placeSuggestion" variant="info" class="mb-2">
-              <p class="mb-2">
-                <strong>{{ searchTerm }}</strong> looks like a place. Would you
-                like to see items being given away near
-                {{ placeSuggestion.name }}?
-              </p>
-              <b-button variant="primary" @click="searchNearPlace">
-                Show items near {{ placeSuggestion.name }}
-              </b-button>
-            </NoticeMessage>
-            <NoticeMessage v-if="!hasLocation" variant="warning">
-              <p class="fw-bold">
-                What's your postcode? We'll show you posts nearby.
-              </p>
-              <PostCode @selected="savePostcode" />
-            </NoticeMessage>
-            <PostFilters
-              v-model:force-show-filters="forceShowFilters"
-              v-model:selected-type="selectedType"
-              v-model:selected-sort="selectedSort"
-              v-model:selected-max-distance="selectedMaxDistance"
-              v-model:search="searchTerm"
-              class="mt-2 mt-md-0"
-            />
-            <PostMapAndList
-              :key="'map-' + bump"
-              v-model:messages-on-map-count="messagesOnMapCount"
-              v-model:search="searchTerm"
-              v-model:selected-type="selectedType"
-              v-model:selected-sort="selectedSort"
-              :selected-max-distance="selectedMaxDistance"
-              :initial-bounds="initialBounds"
-              force-messages
-              :show-many="false"
-              can-hide
-              browse-search
-            />
-          </div>
-          <about-me-modal
-            v-if="showAboutMeModal"
-            :review="reviewAboutMe"
-            @hidden="showAboutMeModal = false"
-          />
-        </b-col>
-        <b-col cols="0" md="2" lg="3" class="p-0 ps-1">
-          <div class="d-flex justify-content-end">
-            <VisibleWhen
-              :not="['xs', 'sm', 'md', 'lg']"
-              class="position-fixed"
-              style="right: 5px"
-            >
-              <ExternalDa
-                ad-unit-path="/22794232631/freegle_home"
-                max-height="600px"
-                max-width="300px"
-                div-id="div-gpt-ad-1691925450433-0"
-                class="mt-2"
-                :jobs="false"
+  <div>
+    <!-- One stable root element: a root that flips between a comment (no member yet) and a
+         fragment gives the page transition a stale anchor when sign-in lands mid-navigation,
+         which throws insertBefore errors and shows the client error page. -->
+    <client-only v-if="me">
+      <b-container fluid class="p-0 p-xl-2">
+        <h1 class="visually-hidden">Browse items</h1>
+        <b-row class="m-0">
+          <b-col cols="0" lg="3" class="p-0 pe-1">
+            <VisibleWhen :at="['lg', 'xl', 'xxl']">
+              <SidebarLeft
+                ad-unit-path="/22794232631/freegle_home_left"
+                ad-div-id="div-gpt-ad-1693235056629-0"
               />
             </VisibleWhen>
-          </div>
-        </b-col>
-      </b-row>
-    </b-container>
-  </client-only>
+          </b-col>
+          <b-col
+            cols="12"
+            md="10"
+            offset-md="1"
+            lg="6"
+            offset-lg="0"
+            class="p-0"
+          >
+            <AppUpdateAvailable v-if="mobileStore.isApp" />
+            <MicroVolunteering />
+            <div>
+              <GlobalMessage />
+              <ExpectedRepliesWarning
+                v-if="me && me.expectedreplies"
+                :count="me.expectedreplies"
+                :chats="me.expectedchats"
+              />
+            </div>
+            <div v-if="initialBounds">
+              <NoticeMessage
+                v-if="noMessagesNoLocation"
+                variant="warning"
+                class="mb-2"
+              >
+                There are no posts in this area at the moment. You can check
+                back later, or use the controls below.
+              </NoticeMessage>
+              <NoticeMessage v-else-if="messagesOnMapCount === 0" class="mb-2">
+                <div v-if="searchTerm">
+                  We couldn't find any posts matching your search. You can check
+                  back later, or use the controls below or adjust your filters
+                  to show posts from further away.
+                </div>
+                <div v-else>
+                  We couldn't find any posts to show. You can check back later,
+                  or use the controls below or adjust your filters to show posts
+                  from further away.
+                </div>
+              </NoticeMessage>
+              <NoticeMessage v-if="placeSuggestion" variant="info" class="mb-2">
+                <p class="mb-2">
+                  <strong>{{ searchTerm }}</strong> looks like a place. Would
+                  you like to see items being given away near
+                  {{ placeSuggestion.name }}?
+                </p>
+                <b-button variant="primary" @click="searchNearPlace">
+                  Show items near {{ placeSuggestion.name }}
+                </b-button>
+              </NoticeMessage>
+              <NoticeMessage v-if="!hasLocation" variant="warning">
+                <p class="fw-bold">
+                  What's your postcode? We'll show you posts nearby.
+                </p>
+                <PostCode @selected="savePostcode" />
+              </NoticeMessage>
+              <PostFilters
+                v-model:force-show-filters="forceShowFilters"
+                v-model:selected-type="selectedType"
+                v-model:selected-sort="selectedSort"
+                v-model:selected-max-distance="selectedMaxDistance"
+                v-model:search="searchTerm"
+                class="mt-2 mt-md-0"
+              />
+              <PostMapAndList
+                :key="'map-' + bump"
+                v-model:messages-on-map-count="messagesOnMapCount"
+                v-model:search="searchTerm"
+                v-model:selected-type="selectedType"
+                v-model:selected-sort="selectedSort"
+                :selected-max-distance="selectedMaxDistance"
+                :initial-bounds="initialBounds"
+                force-messages
+                :show-many="false"
+                can-hide
+                browse-search
+              />
+            </div>
+            <about-me-modal
+              v-if="showAboutMeModal"
+              :review="reviewAboutMe"
+              @hidden="showAboutMeModal = false"
+            />
+          </b-col>
+          <b-col cols="0" md="2" lg="3" class="p-0 ps-1">
+            <div class="d-flex justify-content-end">
+              <VisibleWhen
+                :not="['xs', 'sm', 'md', 'lg']"
+                class="position-fixed"
+                style="right: 5px"
+              >
+                <ExternalDa
+                  ad-unit-path="/22794232631/freegle_home"
+                  max-height="600px"
+                  max-width="300px"
+                  div-id="div-gpt-ad-1691925450433-0"
+                  class="mt-2"
+                  :jobs="false"
+                />
+              </VisibleWhen>
+            </div>
+          </b-col>
+        </b-row>
+      </b-container>
+    </client-only>
+  </div>
 </template>
 <script setup>
 import dayjs from 'dayjs'
