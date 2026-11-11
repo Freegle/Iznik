@@ -8,8 +8,8 @@
     </div>
     <div v-else-if="noLongerNeeded">
       <NoticeMessage variant="info" class="no-longer-needed">
-        Thanks for looking. This post doesn't need checking any more. It has been
-        sorted, or it is no longer available to check.
+        Thanks for looking. This post doesn't need checking any more. It has
+        been sorted, or it is no longer available to check.
       </NoticeMessage>
     </div>
     <div v-else>

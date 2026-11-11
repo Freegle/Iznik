@@ -86,14 +86,10 @@ describe('ModComments', () => {
   })
 
   describe('sortedComments computed', () => {
-    it('sorts comments with user groups first', () => {
+    it('keeps the comments in the order the server gave them', () => {
       const wrapper = createWrapper()
-      // groupid 1 and 2 are in oneOfMyGroups, groupid 3 is not
-      // So comments with groupid 1 and 2 should come before groupid 3
       const sorted = wrapper.vm.sortedComments
-      expect(sorted[0].groupid).toBe(1)
-      expect(sorted[1].groupid).toBe(2)
-      expect(sorted[2].groupid).toBe(3)
+      expect(sorted.map((c) => c.id)).toEqual([1, 2, 3])
     })
 
     it('returns empty array when userid is null', () => {

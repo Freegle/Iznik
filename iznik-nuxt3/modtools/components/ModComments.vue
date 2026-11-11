@@ -1,3 +1,5 @@
+// Notes are national, so they show in the order the server gives them. const
+sortedComments = computed(() => (user.value ? user.value.comments : []) || [])
 <template>
   <div v-if="user">
     <ModComment
@@ -22,7 +24,6 @@
 <script setup>
 import { ref, computed } from 'vue'
 import pluralize from 'pluralize'
-import { useMe } from '~/composables/useMe'
 import { useUserStore } from '~/stores/user'
 
 const props = defineProps({
@@ -39,7 +40,6 @@ const props = defineProps({
 
 const emit = defineEmits(['updateComments', 'editing'])
 
-const { oneOfMyGroups } = useMe()
 const userStore = useUserStore()
 
 const user = computed(() => {

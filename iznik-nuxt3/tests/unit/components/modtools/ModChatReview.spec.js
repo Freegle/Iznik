@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import dayjs from 'dayjs'
 import ModChatReview from '~/modtools/components/ModChatReview.vue'
-import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
+import { ROLE_MODERATOR } from '~/constants'
 
 // plans/active/2026-09-27-lockdown-switch.md section 11.3: while the mods
 // surface is held, the Go API allows only a bare Approve on a chat review
@@ -465,70 +465,22 @@ describe('ModChatReview', () => {
     })
   })
 
-  describe('isActiveMod — backup mod buttons', () => {
-    it('shows all action buttons for backup mod (active=0, role=Moderator)', () => {
-      globalThis.__mockAuthStore = {
-        groups: [{ groupid: 789, role: ROLE_MODERATOR, active: 0 }],
+  describe('mod buttons', () => {
+    it('shows every action button to a moderator whatever group the message names', () => {
+      for (const group of [null, { id: 999 }]) {
+        const wrapper = mountComponent({
+          group,
+          widerchatreview: false,
+          held: null,
+        })
+        const buttons = wrapper.findAll('.spin-button')
+        for (const label of ['Approve - Not Spam', 'Hold', 'Delete', 'Spam']) {
+          expect(
+            buttons.find((b) => b.attributes('data-label') === label)
+          ).toBeDefined()
+        }
+        expect(wrapper.find('.chat-view-button').exists()).toBe(true)
       }
-      const wrapper = mountComponent({ widerchatreview: false, held: null })
-      const buttons = wrapper.findAll('.spin-button')
-      const expectedLabels = [
-        'Approve - Not Spam',
-        'Approve and whitelist',
-        'Hold',
-        'Delete',
-        'Spam',
-      ]
-      expectedLabels.forEach((label) => {
-        expect(
-          buttons.find((b) => b.attributes('data-label') === label)
-        ).toBeDefined()
-      })
-      expect(wrapper.find('.chat-view-button').exists()).toBe(true)
-    })
-
-    it('shows all action buttons for backup owner (active=0, role=Owner)', () => {
-      globalThis.__mockAuthStore = {
-        groups: [{ groupid: 789, role: ROLE_OWNER, active: 0 }],
-      }
-      const wrapper = mountComponent({ widerchatreview: false, held: null })
-      const buttons = wrapper.findAll('.spin-button')
-      expect(
-        buttons.find((b) => b.attributes('data-label') === 'Hold')
-      ).toBeDefined()
-      expect(
-        buttons.find((b) => b.attributes('data-label') === 'Delete')
-      ).toBeDefined()
-    })
-
-    it('hides mod buttons when user is not a member of the group', () => {
-      globalThis.__mockAuthStore = {
-        groups: [{ groupid: 999, role: ROLE_MODERATOR, active: 1 }],
-      }
-      const wrapper = mountComponent({ widerchatreview: false, held: null })
-      const buttons = wrapper.findAll('.spin-button')
-      expect(
-        buttons.find((b) => b.attributes('data-label') === 'Hold')
-      ).toBeUndefined()
-      expect(
-        buttons.find((b) => b.attributes('data-label') === 'Delete')
-      ).toBeUndefined()
-      // Approve should still show (not gated by isActiveMod)
-      expect(
-        buttons.find((b) => b.attributes('data-label') === 'Approve - Not Spam')
-      ).toBeDefined()
-    })
-
-    it('shows mod buttons when message has no group (isActiveMod defaults true)', () => {
-      const wrapper = mountComponent({
-        group: null,
-        widerchatreview: false,
-        held: null,
-      })
-      const buttons = wrapper.findAll('.spin-button')
-      expect(
-        buttons.find((b) => b.attributes('data-label') === 'Hold')
-      ).toBeDefined()
     })
   })
 

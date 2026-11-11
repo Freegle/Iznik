@@ -11,7 +11,6 @@
       with <em>{{ log.text }} </em></span
     >
     <ModLogStdMsg v-if="!nostdmsg" :logid="logid" />
-    <ModLogGroup :logid="logid" :tag="tag" />
   </span>
 </template>
 <script setup>

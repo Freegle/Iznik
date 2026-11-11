@@ -83,41 +83,10 @@
           @mobilehidemenu="mobilehidemenu"
         />
         <hr />
-        <div class="ps-1">Messages</div>
-        <ModMenuItemLeft
-          link="/messages/pending"
-          name="Pending"
-          :count="['pending', 'spam']"
-          :othercount="['pendingother']"
-          indent
-          @mobilehidemenu="mobilehidemenu"
-        />
-        <ModMenuItemLeft
-          link="/messages/approved"
-          name="Approved"
-          indent
-          @mobilehidemenu="mobilehidemenu"
-        />
-        <ModMenuItemLeft
-          link="/messages/edits"
-          name="Edits"
-          :count="['editreview']"
-          indent
-          @mobilehidemenu="mobilehidemenu"
-        />
-        <hr />
         <div class="ps-1">Members</div>
         <ModMenuItemLeft
           link="/members/approved"
           name="Approved"
-          indent
-          @mobilehidemenu="mobilehidemenu"
-        />
-        <ModMenuItemLeft
-          link="/members/review"
-          name="Member Review"
-          :count="['spammembers']"
-          :othercount="['spammembersother']"
           indent
           @mobilehidemenu="mobilehidemenu"
         />

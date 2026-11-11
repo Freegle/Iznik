@@ -225,7 +225,7 @@
           :userid="message.fromuser?.id"
         />
         <div class="d-flex justify-content-around">
-          <div v-if="isActiveMod && message.fromuser">
+          <div v-if="message.fromuser">
             <span>
               <!-- eslint-disable-next-line -->
               <v-icon icon="info-circle" /> {{ message.fromuser?.displayname }} is
@@ -255,7 +255,7 @@
       </b-card-body>
       <b-card-footer>
         <div class="d-flex flex-wrap justify-content-start">
-          <template v-if="!message.widerchatreview && isActiveMod && !modsHeld">
+          <template v-if="!message.widerchatreview && !modsHeld">
             <ModChatViewButton :id="message.chatid" :pov="chatPov" />
             <b-button
               v-if="message.held && me.id === message.held.id"
@@ -291,7 +291,7 @@
             class="me-2 mb-1"
             @handle="approve"
           />
-          <template v-if="!message.widerchatreview && isActiveMod && !modsHeld">
+          <template v-if="!message.widerchatreview && !modsHeld">
             <SpinButton
               v-if="!message.held"
               icon-name="check"
@@ -350,13 +350,11 @@ import { ref, computed } from 'vue'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/modtools/composables/useModMe'
 import { useChatStore } from '~/stores/chat'
-import { useAuthStore } from '~/stores/auth'
 import { useLockdown } from '~/modtools/composables/useLockdown'
 // Imported rather than relying on the Nuxt auto-import: the component unit tests mount without
 // the auto-import layer (they inject timeago as a mock), and a hold duration is worth asserting
 // against the real formatter rather than a stub.
 import { durationMinutes } from '~/composables/useTimeFormat'
-import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 const props = defineProps({
   id: {
@@ -370,7 +368,6 @@ const props = defineProps({
 })
 
 const chatStore = useChatStore()
-const authStore = useAuthStore()
 const { modsHeld } = useLockdown()
 
 const message = computed(() => chatStore.messageById(props.messageid))
@@ -416,17 +413,6 @@ const ripplingHoldState = computed(() => {
 const ripplingHeldFor = computed(() =>
   durationMinutes(message.value?.ripplinghold?.heldminutes)
 )
-
-const isActiveMod = computed(() => {
-  const groupid = message.value?.group?.id
-  if (!groupid) return true
-  const membership = authStore.groups?.find((g) => g.groupid === groupid)
-  // If we have any mod-level role on the group (Moderator/Owner), we can act on
-  // chat reviews — even if active=0 (backup mod).  The API already decided to
-  // show us this review; we should be able to take action on it.
-  if (!membership) return false
-  return membership.role === ROLE_MODERATOR || membership.role === ROLE_OWNER
-})
 
 const emit = defineEmits(['reload'])
 

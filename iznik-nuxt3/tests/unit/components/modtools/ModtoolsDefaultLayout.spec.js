@@ -262,47 +262,6 @@ describe('modtools default layout — pending badge includes spam', () => {
     mockAuthStore.work = null
   })
 
-  it('Pending menu badge includes spam so work.total matches visible badge sum (Discourse #9654)', async () => {
-    // spam messages appear in the Pending review list (PR #638),
-    // so the Pending nav badge must count ['pending', 'spam'] — not just ['pending'].
-    // Otherwise a mod with 1 spam message sees total=1 in the hamburger but 0 in the
-    // Pending item, giving a spurious "+1 persisting all day" (Discourse #9654).
-    const capturedItems = []
-    const CapturingModMenuItemLeft = {
-      template: '<div />',
-      props: [
-        'link',
-        'name',
-        'count',
-        'othercount',
-        'indent',
-        'countVariant',
-        'directcount',
-      ],
-      setup(props) {
-        capturedItems.push({
-          link: props.link,
-          name: props.name,
-          count: props.count ? [...props.count] : null,
-          othercount: props.othercount ? [...props.othercount] : null,
-        })
-      },
-    }
-
-    mountLayout({ ModMenuItemLeft: CapturingModMenuItemLeft })
-    await flushPromises()
-    await nextTick()
-
-    const pendingItem = capturedItems.find(
-      (item) => item.link === '/messages/pending'
-    )
-    expect(pendingItem, 'Pending menu item must be rendered').toBeDefined()
-
-    // Fails on buggy code (count=['pending'], spam not present).
-    // Passes after fix (count=['pending','spam']).
-    expect(pendingItem.count).toContain('spam')
-  })
-
   async function captureMenu() {
     const capturedItems = []
     const Capturing = {
@@ -322,14 +281,16 @@ describe('modtools default layout — pending badge includes spam', () => {
     return capturedItems
   }
 
-  it('Member Review shows spammembers red and held spammembersother blue', async () => {
-    // Held or inactive-community members are counted in spammembersother, so a
-    // moderator who has dealt with everything sees blue, not red.
-    const items = await captureMenu()
-    const item = items.find((i) => i.link === '/members/review')
-    expect(item, 'Member Review menu item must be rendered').toBeDefined()
-    expect(item.count).toEqual(['spammembers'])
-    expect(item.othercount).toEqual(['spammembersother'])
+  it('has no menu item for a page that does not exist', async () => {
+    const links = (await captureMenu()).map((i) => i.link)
+    for (const gone of [
+      '/messages/pending',
+      '/messages/approved',
+      '/messages/edits',
+      '/members/review',
+    ]) {
+      expect(links).not.toContain(gone)
+    }
   })
 
   it('Volunteering shows held opportunities as the blue other count', async () => {

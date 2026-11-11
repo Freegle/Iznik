@@ -52,11 +52,6 @@ describe('ModLogMessage', () => {
             template: '<span class="stub-stdmsg"></span>',
             props: ['logid'],
           },
-          ModLogGroup: {
-            name: 'ModLogGroup',
-            template: '<span class="stub-group"></span>',
-            props: ['logid', 'tag'],
-          },
           'v-icon': {
             name: 'v-icon',
             template: '<span class="stub-icon"></span>',
@@ -80,7 +75,6 @@ describe('ModLogMessage', () => {
         global: {
           stubs: {
             ModLogStdMsg: true,
-            ModLogGroup: true,
             'v-icon': true,
           },
         },
@@ -165,17 +159,6 @@ describe('ModLogMessage', () => {
         },
       })
       expect(wrapper.find('.stub-stdmsg').exists()).toBe(true)
-    })
-
-    it('renders ModLogGroup child component', () => {
-      const wrapper = createWrapper({
-        log: {
-          id: 1,
-          msgid: 300,
-          message: { subject: 'Test' },
-        },
-      })
-      expect(wrapper.find('.stub-group').exists()).toBe(true)
     })
   })
 
@@ -410,7 +393,6 @@ describe('ModLogMessage', () => {
         global: {
           stubs: {
             ModLogStdMsg: true,
-            ModLogGroup: true,
             'v-icon': true,
           },
         },
@@ -443,22 +425,6 @@ describe('ModLogMessage', () => {
       const wrapper = createWrapper({ log })
       const stdMsgStub = wrapper.findComponent({ name: 'ModLogStdMsg' })
       expect(stdMsgStub.props('logid')).toBe(1)
-    })
-
-    it('passes logid to ModLogGroup', () => {
-      const log = { id: 1, msgid: 1200, message: { subject: 'Test' } }
-      const wrapper = createWrapper({ log })
-      const groupStub = wrapper.findComponent({ name: 'ModLogGroup' })
-      expect(groupStub.props('logid')).toBe(1)
-    })
-
-    it('passes tag to ModLogGroup', () => {
-      const wrapper = createWrapper({
-        log: { id: 1, msgid: 1300, message: { subject: 'Test' } },
-        tag: 'for',
-      })
-      const groupStub = wrapper.findComponent({ name: 'ModLogGroup' })
-      expect(groupStub.props('tag')).toBe('for')
     })
   })
 

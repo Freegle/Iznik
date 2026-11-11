@@ -56,10 +56,6 @@ describe('ModLog', () => {
               '<span class="mod-log-user" :data-id="userid">{{ userid }}</span>',
             props: ['userid'],
           },
-          ModLogGroup: {
-            template: '<span class="mod-log-group">Group</span>',
-            props: ['logid', 'tag'],
-          },
           ModLogMessage: {
             template: '<span class="mod-log-message">Message</span>',
             props: ['logid', 'notext', 'tag'],
@@ -108,7 +104,6 @@ describe('ModLog', () => {
               props: ['cols', 'lg'],
             },
             ModLogUser: { template: '<span />', props: ['userid'] },
-            ModLogGroup: { template: '<span />', props: ['logid', 'tag'] },
             ModLogMessage: {
               template: '<span />',
               props: ['logid', 'notext', 'tag'],

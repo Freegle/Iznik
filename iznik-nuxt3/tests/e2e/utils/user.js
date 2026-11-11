@@ -254,7 +254,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     //                        itself never returned on a mobile viewport
     //   .test-signinbutton   either navbar, signed out
     //   #loginModal          ModTools, signed out
-    //   a[href="/messages/pending"]  ModTools, signed in (its sidebar; the
+    //   a[href="/members/approved"]  ModTools, signed in (its sidebar; the
     //                        ModTools logout is not a control this helper
     //                        clicks, it clears the session instead)
     //   .nav-back-btn        a chat page on a mobile viewport, which has
@@ -265,7 +265,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     if (couldBeSignedIn) {
       await page
         .locator(
-          '#menu-option-logout, .userOptions, .test-signinbutton, #loginModal, a[href="/messages/pending"], .nav-back-btn'
+          '#menu-option-logout, .userOptions, .test-signinbutton, #loginModal, a[href="/members/approved"], .nav-back-btn'
         )
         .filter({ visible: true })
         .first()
@@ -1863,7 +1863,7 @@ async function loginViaModTools(page, email, password = 'freegle') {
   // Wait for the authenticated layout to render — the sidebar nav confirms login.
   // No full page reload happens (reloadNuxtApp was removed from app.vue);
   // the layout re-renders via loginStateKnown watcher + bump.
-  await page.locator('a[href="/messages/pending"]').waitFor({
+  await page.locator('a[href="/members/approved"]').waitFor({
     state: 'visible',
     timeout: timeouts.navigation.slowPage,
   })

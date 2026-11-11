@@ -27,7 +27,6 @@
         <span v-if="log.type === 'Group'">
           <span v-if="log.subtype === 'Joined'">
             Joined
-            <ModLogGroup :logid="logid" />
             <span v-if="logUser && logByuser && logByuser.id !== logUser.id">
               (added by <ModLogUser :userid="logByuser.id" />)
             </span>
@@ -49,25 +48,21 @@
               <span v-else> Joined automatically when posting/replying </span>
             </span>
           </span>
-          <span v-else-if="log.subtype === 'Applied'">
-            Applied to <ModLogGroup :logid="logid" />
-          </span>
+          <span v-else-if="log.subtype === 'Applied'"> Applied </span>
           <span v-else-if="log.subtype === 'Left'">
             <span v-if="logUser && logByuser && logByuser.id !== logUser.id">
               Removed member <ModLogUser :userid="logUser.id" /> from
-              <ModLogGroup :logid="logid" />
               <span v-if="log.text">
                 {{ log.text }}
               </span>
             </span>
-            <span v-else> Left <ModLogGroup :logid="logid" /> </span>
+            <span v-else> Left </span>
           </span>
           <span v-else-if="log.subtype === 'Edit'">
-            Edited group settings <ModLogGroup :logid="logid" tag="for" />
+            Edited group settings
           </span>
           <span v-else-if="log.subtype === 'Autoapproved'">
             Auto-approved <ModLogMessage :logid="logid" />
-            <ModLogGroup :logid="logid" tag="on" />
           </span>
           <span v-else>
             <span class="text-muted"
@@ -218,13 +213,11 @@
           <span v-if="log.subtype === 'OurPostingStatus'">
             <span v-if="log.groupid">
               Set Posting Status to {{ postingStatus }}
-              <ModLogGroup :logid="logid" tag="on" />
             </span>
             <span v-else />
           </span>
           <span v-else-if="log.subtype === 'OurEmailFrequency'">
             Set Email Frequency to {{ log.text }}
-            <ModLogGroup :logid="logid" tag="on" />
           </span>
           <span v-else-if="log.subtype === 'Login'">
             Logged in <em class="text-muted small">{{ log.text }}</em>
@@ -234,7 +227,7 @@
           </span>
           <span v-else-if="log.subtype === 'Created'"> User Created </span>
           <span v-else-if="log.subtype === 'RoleChange'">
-            Role <ModLogGroup :logid="logid" tag="on" /> changed to
+            Role changed to
             {{ log.text }}
           </span>
           <span v-else-if="log.subtype === 'Merged'">
@@ -243,13 +236,11 @@
           <span v-else-if="log.subtype === 'Approved'">
             Approved member
             <ModLogUser :userid="logUser.id" />
-            <ModLogGroup :logid="logid" tag="on" />
             <ModLogStdMsg :logid="logid" />
           </span>
           <span v-else-if="log.subtype === 'Rejected'">
             Rejected member
             <ModLogUser :userid="logUser.id" />
-            <ModLogGroup :logid="logid" tag="on" />
             <ModLogStdMsg :logid="logid" />
           </span>
           <span v-else-if="log.subtype === 'Deleted'">
@@ -258,7 +249,6 @@
             >
             <span v-else>User left platform ({{ log.text }})</span>
             <ModLogUser :userid="logUser.id" />
-            <ModLogGroup :logid="logid" tag="on" />
             <ModLogStdMsg :logid="logid" />
           </span>
           <span v-else-if="log.subtype === 'Restored'">
@@ -275,12 +265,10 @@
           <span v-else-if="log.subtype === 'Hold'">
             Held member
             <ModLogUser :userid="logUser.id" />
-            <ModLogGroup :logid="logid" tag="on" />
           </span>
           <span v-else-if="log.subtype === 'Release'">
             Released member
             <ModLogUser :userid="logUser.id" />
-            <ModLogGroup :logid="logid" tag="on" />
           </span>
           <span v-else-if="log.subtype === 'Suspect'">
             Flagged <ModLogUser :userid="logUser.id" />

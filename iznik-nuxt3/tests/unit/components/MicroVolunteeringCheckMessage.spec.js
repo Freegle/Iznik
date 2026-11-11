@@ -320,7 +320,9 @@ describe('MicroVolunteeringCheckMessage', () => {
         { ...mockMessage, outcomes: [{ outcome: 'Taken' }] }
       )
       await flushPromises()
-      expect(wrapper.findComponent(MicroVolunteeringCheckMessage).emitted('next')).toHaveLength(1)
+      expect(
+        wrapper.findComponent(MicroVolunteeringCheckMessage).emitted('next')
+      ).toHaveLength(1)
     })
 
     it('hands control back when the post cannot be found', async () => {
@@ -337,7 +339,9 @@ describe('MicroVolunteeringCheckMessage', () => {
         { ...mockMessage, outcomes: [{ outcome: 'Taken' }] }
       )
       await flushPromises()
-      expect(wrapper.findComponent(MicroVolunteeringCheckMessage).emitted('next')).toBeFalsy()
+      expect(
+        wrapper.findComponent(MicroVolunteeringCheckMessage).emitted('next')
+      ).toBeFalsy()
     })
   })
 
