@@ -505,4 +505,25 @@ class DeferralScanServiceTest extends TestCase
         $this->assertCount(1, $result['released']);
         $this->assertTrue($result['released'][0]['stale']);
     }
+
+    public function test_a_mailbox_that_left_the_queue_is_released_by_clear_scans_not_as_stale(): void
+    {
+        // A stuck address stops being refreshed when its backlog drops under the suppression
+        // threshold, so by the time the relay gives up on its mail last_seen is old. That is an
+        // ordinary exit, not a probe that went blind, so it takes the two-scan route and is not
+        // flagged stale (which is what raised a Sentry event for every address).
+        $this->scan->apply($this->snapshotWithFullMailbox());
+
+        DB::table('mail_suppressions')->update(['last_seen' => now()->subDays(3)]);
+
+        $empty = new RelayQueueSnapshot;
+        $empty->delivered['example.com'] = 500;
+
+        $this->assertSame([], $this->scan->apply($empty)['released'], 'one clear scan is not enough');
+
+        $result = $this->scan->apply($empty);
+        $this->assertCount(1, $result['released']);
+        $this->assertSame('full@example.com', $result['released'][0]['value']);
+        $this->assertFalse($result['released'][0]['stale']);
+    }
 }

@@ -348,7 +348,12 @@ class DeferralScanService
             // day would come back, see the provider still solidly blocked,
             // and release the suppression on the strength of the stale
             // last_seen it was about to overwrite.
-            $stale = $stats === null
+            // Not for a single address. The queue no longer holding it is exactly what "clear"
+            // means for one, so it is released by the ordinary two clear scans. A stuck address
+            // stops being refreshed once its backlog drops under the suppression threshold, and
+            // would otherwise be called stale when the relay finally gives up on its mail.
+            $stale = $scope !== MailSuppressionService::SCOPE_ADDRESS
+                && $stats === null
                 && $staleHours > 0
                 && $row->last_seen !== null
                 && Carbon::parse($row->last_seen)->lt(now()->subHours($staleHours));
