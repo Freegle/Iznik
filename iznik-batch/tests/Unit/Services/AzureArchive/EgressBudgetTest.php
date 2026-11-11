@@ -224,4 +224,38 @@ class EgressBudgetTest extends TestCase
     {
         $this->assertSame(80 * self::GB, (new EgressBudget(80 * self::GB, 1.25, 1, 180, true))->ceilingBytes());
     }
+
+    public function test_a_charge_in_the_last_billing_period_latches_too(): void
+    {
+        // Cost Management lags: a charge from the last days of a period shows after it closes.
+        $f = $this->figures();
+        $figures = new BudgetFigures($f->now, $f->azureEgress31d, $f->azureNewestPoint, 0, 0, 0, 0.0, 5.0, null, null, null, 0.3);
+
+        $decision = $this->budget()->decide($figures);
+
+        $this->assertFalse($decision->allowed());
+        $this->assertStringContainsString('last billing period', (string) $decision->latch);
+    }
+
+    public function test_an_unreadable_last_period_refuses_when_the_cost_check_is_required(): void
+    {
+        $f = $this->figures();
+        $figures = new BudgetFigures($f->now, $f->azureEgress31d, $f->azureNewestPoint, 0, 0, 0, 0.0, 5.0, null, null, null, null);
+
+        $this->assertFalse($this->budget()->decide($figures)->allowed());
+        $this->assertTrue($this->budget(costRequired: false)->decide($figures)->allowed());
+    }
+
+    public function test_trailing_zero_hours_are_not_taken_as_reported(): void
+    {
+        $newest = \App\Services\AzureArchive\FigureGatherer::newestReported([
+            '2026-11-11T08:00:00Z' => 5.0e6,
+            '2026-11-11T09:00:00Z' => 4.0e6,
+            '2026-11-11T10:00:00Z' => 0.0,
+            '2026-11-11T11:00:00Z' => 0.0,
+        ]);
+
+        $this->assertSame('2026-11-11T09:00:00+00:00', $newest?->toIso8601String());
+        $this->assertNull(\App\Services\AzureArchive\FigureGatherer::newestReported(['2026-11-11T08:00:00Z' => 0.0]));
+    }
 }

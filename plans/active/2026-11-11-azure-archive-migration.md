@@ -62,11 +62,11 @@ Started 2026-11-11 from `plans/token-burn/azure-archive-migration.md`. Worktree
 
 | # | Task | Status |
 |---|------|--------|
-| 1 | Ledger migration, config, Azure client (token, metrics, capacity, cost) | ⬜ |
-| 2 | Budget (pure): rolling-window allowance, site reserve, fail-closed reasons, latch | ⬜ |
-| 3 | Copier: walker, read-once fetch with MD5, lossless optimise with pixel check, put, ledger | ⬜ |
-| 4 | Commands: measure, status (`--report` to Sentry), copy (guarded, `--dry-run`), schedule off by default | ⬜ |
-| 5 | Serving: frontend-nginx `/archive/` chain; Go and batch URL builders, thumbnails via delivery | ⬜ |
-| 6 | End: sampled check through the public URL, delete-by-ledger command (needs a delete SAS), link_previews rewrite | ⬜ |
-| 7 | Runbook `docs/ops/runbooks/azure-archive-migration.md` with `covers:`, `.env.background.example` | ⬜ |
-| 8 | Tests pass locally (Laravel, Go), PRs opened | ⬜ |
+| 1 | Ledger migration, config, Azure client (token, metrics, capacity, cost) | ✅ |
+| 2 | Budget (pure): rolling-window allowance, site reserve, fail-closed reasons, latch | ✅ |
+| 3 | Copier: walker, read-once fetch with MD5, lossless optimise with pixel check, put, ledger | ✅ |
+| 4 | Commands: measure, status (`--report` to Sentry), copy (guarded, `--dry-run`), schedule off by default | ✅ |
+| 5 | Serving: frontend-nginx `/archive/` chain; Go and batch URL builders, thumbnails via delivery | ✅ |
+| 6 | End: sampled serving check (`check-serving`); deletion is the portal's, after the fallback is removed (no delete key needed); the one stored preview of ours refreshes itself | ✅ |
+| 7 | Runbook `docs/ops/runbooks/azure-archive-migration.md` with `covers:`, `.env.background.example` | ✅ |
+| 8 | Tests pass locally (Laravel, Go), one PR opened | 🔄 |

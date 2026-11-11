@@ -30,13 +30,25 @@ views of old photos come out of the same 100 GB. So the copy is paced by Azure's
 - **Azure is asked, not guessed.** Before every run the copier reads the storage account's egress
   from Azure Monitor and the billing period's charges from Cost Management, with a read-only app
   registration. A figure it cannot read stops the run. Neither query costs anything.
-- **Any bandwidth charge stops everything** and raises `AzureArchiveAlert` in Sentry. The stop is
-  latched: it holds until a person has looked at the bill and runs
-  `azure-archive:status --clear-stop`.
+- **Any bandwidth charge stops everything**, in this billing period or the last (Cost Management
+  lags, so a charge from the last days of a period shows after it has closed). It raises
+  `AzureArchiveAlert` in Sentry and is latched: it holds until a person has looked at the bill
+  and runs `azure-archive:status --clear-stop`. A charge from members' views before the copy
+  ever ran latches it too, on purpose.
+- **Azure's figures are checked, not just read.** Hours Azure has not recorded yet come back as
+  zero, so the newest hour that counts is the newest with traffic, and the copy's own bytes from
+  that hour on are added. If Azure shows less egress for the hours before than the copy alone
+  fetched, its figures are behind and nothing is fetched. Figures that cannot be read or trusted
+  raise an alert from the hourly status check, because they leave the bill unwatched.
+- **A wrong container stops the copy.** Only Azure's `BlobNotFound` marks a row Missing. Any
+  other 404 (the container gone or made private) stops the run with an alert, and so does a run
+  where most blobs come back missing.
 - **Each blob is read once.** The ledger row (`azure_archive_copies`) is written before the
-  fetch, so a run that dies half way still counts what it fetched. A crash or a corrupt read gets
-  one retry. The bytes are checked against the `Content-MD5` Azure stored with the blob. Nothing
-  lists the container.
+  fetch with the worst case counted, and settled to the real count after, so a run that dies half
+  way still counts. A crash or a corrupt read gets one retry. The bytes are checked against the
+  `Content-MD5` Azure stored with the blob, or, where a blob has none, against its length. Our
+  count adds 4% and 1 KB a request for framing, and one connection serves a whole run. Nothing
+  lists the container. A run stops after 40 minutes, inside its hour-long lock.
 
 The one charge that cannot be avoided is Azure's fee per read request, about £2 for the whole
 copy at Hot-tier list prices. `azure-archive:measure` works it out for the account's real tier.
@@ -52,8 +64,9 @@ served from our bucket from the moment it is copied, with no row changed. The re
 A bucket that answers 401, 403 or 5xx is **not** passed to Azure. That would send every copied
 photo back to Azure and spend the free allowance while nothing looked broken.
 
-Thumbnails of archived photos are made from the full photo by the delivery resizer. V1's own
-thumbnail blobs (`timg_` and friends) are not copied, and nothing links to them any more.
+Once the address is switched, thumbnails of archived photos are made from the full photo by the
+delivery resizer. V1's own thumbnail blobs (`timg_` and friends) are not copied, so nothing
+links to them from then on, and the chain refuses their names.
 
 What stored images are there is a cache, not a record: link previews of our own pages pick up the
 new address the next time they are refreshed. Old emails that linked straight to Azure will lose
@@ -62,24 +75,45 @@ redirect.
 
 ## Setting it up
 
-1. **The read-only Azure app.** An app registration (service principal) with three roles:
+The order is chosen so that members' own Azure traffic is known before anything changes it, and
+before the copy adds to it. Deploying the code changes nothing on its own: while the archive
+address is still Azure, the API keeps linking V1's own thumbnails, and every scheduled job is off.
+
+1. **Deploy the code** and create the `azure_archive_copies` table.
+2. **The read-only Azure app.** An app registration (service principal) with three roles:
    Monitoring Reader on the storage account, and Cost Management Reader and Billing Reader on the
    subscription. It can read figures and nothing else; it cannot read the blobs' keys or change
-   anything. Its tenant id, client id and secret, the subscription id and the storage account's
-   resource id go in `.env.background` on the batch host as the `AZURE_ARCHIVE_*` settings (see
-   `.env.background.example`). From that moment the hourly `azure-archive:status --report`
-   watches the bill, copy or no copy.
-2. **Measure.** `php artisan azure-archive:measure` counts the archived rows per table and reads
-   what Azure holds by tier, members' egress and the bill so far. Read the expected time and cost
-   before going on.
-3. **Switch the serving address.** Deploy frontend-nginx with the `/archive/` chain, check that
+   anything. With the Azure CLI, signed in as the account owner (in the portal's Cloud Shell,
+   choose "No storage account required", so nothing billable is created):
+
+   ```
+   ACCOUNT=$(az storage account show --name freegle --query id --output tsv)
+   SUB=$(az account show --query id --output tsv)
+   az ad sp create-for-rbac --name freegle-archive-reader --role "Monitoring Reader" --scopes "$ACCOUNT"
+   # note appId (AZURE_ARCHIVE_CLIENT_ID), password (AZURE_ARCHIVE_CLIENT_SECRET), tenant
+   az role assignment create --assignee <appId> --role "Cost Management Reader" --scope "/subscriptions/$SUB"
+   az role assignment create --assignee <appId> --role "Billing Reader" --scope "/subscriptions/$SUB"
+   echo "$ACCOUNT"   # AZURE_ARCHIVE_STORAGE_ACCOUNT_ID; $SUB is AZURE_ARCHIVE_SUBSCRIPTION_ID
+   ```
+
+   These go in `.env.background` on the batch host as the `AZURE_ARCHIVE_*` settings (see
+   `.env.background.example`). From then on the hourly `azure-archive:status --report` watches
+   the bill, copy or no copy. Run `php artisan azure-archive:status` once by hand: it shows this
+   and the last billing period by meter, which answers whether anything is being charged now.
+3. **Measure.** `php artisan azure-archive:measure` counts the archived rows per table and reads
+   what Azure holds by tier, the account type, members' egress and the bill. Then leave it a week,
+   so `azure-archive:status` shows members' own egress before anything changes.
+4. **Switch the serving address.** Check that
    `https://images.ilovefreegle.org/archive/img_<an archived id>.jpg` answers 200 with
    `X-Archive-Source: azure`, then set `IMAGE_ARCHIVED_DOMAIN=images.ilovefreegle.org/archive` on
    the API hosts and `FREEGLE_IMAGES_ARCHIVED_DOMAIN=https://images.ilovefreegle.org/archive` for
-   the batch. Nothing is copied yet; members' views now go through us to Azure.
-4. **Look before copying.** `php artisan azure-archive:copy --dry-run` shows the figures, the
+   the batch. Nothing is copied yet. Members' views now go through us to Azure, and archived
+   thumbnails come from the delivery resizer, which fetches the full photo once and caches the
+   result, instead of each browser fetching V1's thumbnail from Azure. Whether that is more or
+   less Azure egress is not known: compare a week of `azure-archive:status` with the week before.
+5. **Look before copying.** `php artisan azure-archive:copy --dry-run` shows the figures, the
    decision and the next blobs, and fetches nothing.
-5. **Turn it on.** `AZURE_ARCHIVE_ENABLED=true` and recreate `batch-prod`. The copy runs every
+6. **Turn it on.** `AZURE_ARCHIVE_ENABLED=true` and recreate `batch-prod`. The copy runs every
    15 minutes and `azure-archive:check-serving --report` once a day.
 
 ## Watching it
@@ -95,7 +129,8 @@ the current pace. Each run of the copy appends to `storage/logs/cron/azure-archi
 `Missing` rows are rows whose blob Azure does not have (about 7% of posts, 20% of chats in a
 2026 sample); they are finished, not failures. `Superseded` rows have an uploads id, which the API
 serves first, so their Azure copy is never used. `Failed` rows carry the reason; one without the
-`Retry:` prefix is not tried again and needs a person.
+`Retry:` prefix is not tried again and needs a person. Once the cause is dealt with,
+`php artisan azure-archive:status --requeue-failed` gives every such row one more fetch.
 
 ## If Azure charges for bandwidth
 

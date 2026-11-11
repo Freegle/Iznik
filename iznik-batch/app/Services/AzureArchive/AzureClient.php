@@ -179,9 +179,9 @@ class AzureClient
     public function costs(string $timeframe = 'BillingMonthToDate'): CostSummary
     {
         $path = '/subscriptions/' . $this->subscription() . '/providers/Microsoft.CostManagement/query';
+        // Cost Management accepts at most two groupings.
         $grouping = [
             ['type' => 'Dimension', 'name' => 'MeterCategory'],
-            ['type' => 'Dimension', 'name' => 'MeterSubCategory'],
             ['type' => 'Dimension', 'name' => 'Meter'],
         ];
 
@@ -383,7 +383,11 @@ class AzureClient
         $columns = null;
         $rows = [];
 
-        for ($page = 0; $url !== null && $page < 20; $page++) {
+        for ($page = 0; $url !== null; $page++) {
+            if ($page >= 20) {
+                throw new AzureUnavailable('Cost Management answered more than 20 pages; the figures would be incomplete');
+            }
+
             $target = $url;
             $response = $this->send(fn () => Http::withToken($token)->acceptJson()->timeout(60)->post($target, $body), $path);
             $properties = (array) $response->json('properties', []);

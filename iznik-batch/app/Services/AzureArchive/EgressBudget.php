@@ -28,25 +28,37 @@ final class EgressBudget
     /** A billed GB is read as the larger of the two meanings, so the check errs high. */
     private const BILLED_GB_BYTES = 1073741824;
 
+    /** The ceiling may not be set this close to the free 100 GB, or above it. */
+    public const MAX_CEILING_GB = 95;
+
     public function __construct(
         private readonly int $ceilingBytes,
         private readonly float $siteGrowth,
         private readonly int $runMaxBytes,
         private readonly int $metricsMaxAgeMinutes,
         private readonly bool $costCheckRequired,
+        private readonly ?string $configError = null,
     ) {
     }
 
     public static function fromConfig(): self
     {
         $c = (array) config('freegle.azure_archive', []);
+        $ceilingGb = (float) ($c['ceiling_gb'] ?? 80);
+        $error = null;
+
+        if (! ($ceilingGb > 0 && $ceilingGb <= self::MAX_CEILING_GB)) {
+            $error = "AZURE_ARCHIVE_CEILING_GB is {$ceilingGb}; it must be more than 0 and at most " . self::MAX_CEILING_GB . '.';
+            $ceilingGb = 0;
+        }
 
         return new self(
-            (int) round(((float) ($c['ceiling_gb'] ?? 80)) * 1e9),
+            (int) round($ceilingGb * 1e9),
             max(1.0, (float) ($c['site_growth'] ?? 1.25)),
             max(0, (int) ($c['run_max_mb'] ?? 1024)) * 1000 * 1000,
             max(1, (int) ($c['metrics_max_age_minutes'] ?? 180)),
             (bool) ($c['require_cost_check'] ?? true),
+            $error,
         );
     }
 
@@ -59,6 +71,10 @@ final class EgressBudget
     {
         $refusals = [];
         $latch = null;
+
+        if ($this->configError !== null) {
+            $refusals[] = $this->configError;
+        }
 
         if ($f->latchedStop !== null) {
             $refusals[] = "Stopped by an earlier run: {$f->latchedStop}. A person clears it with azure-archive:status --clear-stop.";
@@ -78,6 +94,15 @@ final class EgressBudget
             }
         } elseif ($f->bandwidthCost > 0) {
             $latch = sprintf('Azure has charged %.2f for bandwidth this billing period, so the free allowance is used up', $f->bandwidthCost);
+            $refusals[] = $latch . '.';
+        }
+
+        if ($f->previousBandwidthCost === null) {
+            if ($this->costCheckRequired) {
+                $refusals[] = 'Azure Cost Management could not be read for the last billing period.';
+            }
+        } elseif ($f->previousBandwidthCost > 0 && $latch === null) {
+            $latch = sprintf('Azure charged %.2f for bandwidth in the last billing period', $f->previousBandwidthCost);
             $refusals[] = $latch . '.';
         }
 

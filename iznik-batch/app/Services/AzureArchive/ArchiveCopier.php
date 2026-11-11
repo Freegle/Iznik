@@ -34,11 +34,28 @@ class ArchiveCopier
 
     private const MAX_TRANSIENT_IN_A_ROW = 3;
 
+    /**
+     * After this many fetches in a run, a share of missing blobs above MAX_MISSING_SHARE stops it.
+     * A 2026-11-11 sample found 7% of posts and 20% of chats missing; nearly all missing means
+     * something is wrong with the container, not with the photos.
+     */
+    private const MISSING_CHECK_AFTER = 200;
+
+    private const MAX_MISSING_SHARE = 0.6;
+
+    /** The allowance for this run is spent: a normal stop. */
     public const STOP_BUDGET = 'budget';
+
+    /** The run reached its time limit: a normal stop, so it never outlasts its lock. */
+    public const STOP_TIME = 'time';
 
     public const STOP_BUCKET = 'bucket';
 
+    /** Azure is not answering properly: probably passing. */
     public const STOP_AZURE = 'azure';
+
+    /** Azure's answers suggest the container itself is wrong: a person must look. */
+    public const STOP_SUSPECT = 'suspect';
 
     /** @var array<string, int> */
     private array $stats;
@@ -56,9 +73,13 @@ class ArchiveCopier
         private readonly ObjectStore $store,
         private readonly ?LosslessJpeg $jpeg,
         private readonly string $keyPrefix,
+        // Seconds a run may last; it must stay well inside the copy command's lock.
+        private readonly int $maxSeconds = 2400,
     ) {
         $this->resetStats();
     }
+
+    private float $deadline = 0;
 
     /**
      * @return array{stats: array<string, int>, stopped: array{kind: string, message: string}|null}
@@ -69,6 +90,7 @@ class ArchiveCopier
         $this->spent = 0;
         $this->transientInARow = 0;
         $this->stopped = null;
+        $this->deadline = microtime(true) + $this->maxSeconds;
 
         // The bucket is checked before anything is fetched: a fetch whose bytes cannot be stored
         // would have to be fetched again.
@@ -79,7 +101,7 @@ class ArchiveCopier
         }
 
         foreach ($this->ledger->retryable(CarbonImmutable::now('UTC')->subMinutes(self::DEAD_AFTER_MINUTES), 1000) as $row) {
-            if (! $this->copyOne($row->source, (int) $row->sourceid, $row->blobname, $allowanceBytes)) {
+            if (! $this->copyOne($row->source, (int) $row->sourceid, $row->blobname, $allowanceBytes, (int) $row->attempts)) {
                 break;
             }
         }
@@ -172,7 +194,7 @@ class ArchiveCopier
     }
 
     /** Copy one blob. False when the run must stop. */
-    private function copyOne(string $source, int $id, string $blob, int $allowanceBytes): bool
+    private function copyOne(string $source, int $id, string $blob, int $allowanceBytes, ?int $seenAttempts = null): bool
     {
         if ($this->spent + self::BLOB_RESERVE_BYTES > $allowanceBytes) {
             $this->stopped ??= ['kind' => self::STOP_BUDGET, 'message' => 'The egress allowance for this run is spent.'];
@@ -180,7 +202,19 @@ class ArchiveCopier
             return false;
         }
 
-        $attempt = $this->ledger->begin($source, $id, $blob);
+        if (microtime(true) >= $this->deadline) {
+            $this->stopped ??= ['kind' => self::STOP_TIME, 'message' => 'The run reached its time limit.'];
+
+            return false;
+        }
+
+        $attempt = $this->ledger->begin($source, $id, $blob, $seenAttempts);
+
+        if ($attempt === null) {
+            // Another run holds this row.
+            return true;
+        }
+
         $result = $this->fetcher->fetch($blob);
         $this->spent += $result->bytesCounted;
         $this->stats['fetched']++;
@@ -199,9 +233,24 @@ class ArchiveCopier
 
         $this->transientInARow = 0;
 
+        if ($result->status === 404 && $result->errorCode !== 'BlobNotFound') {
+            // ContainerNotFound or ResourceNotFound: the container is gone or no longer public,
+            // and every blob would answer the same. Recording them Missing would be final.
+            $this->fail($blob, $result->bytesCounted, $attempt, true, 'Azure answered 404 ' . ($result->errorCode ?? 'without a code'));
+            $this->stopped = ['kind' => self::STOP_SUSPECT, 'message' => 'Azure answered 404 ' . ($result->errorCode ?? 'without a code') . ', not BlobNotFound: the container is not there or not public.'];
+
+            return false;
+        }
+
         if ($result->status === 404) {
             $this->ledger->finish($blob, 'Missing', $result->bytesCounted, ['error' => null]);
             $this->stats['missing']++;
+
+            if ($this->stats['fetched'] >= self::MISSING_CHECK_AFTER && $this->stats['missing'] > self::MAX_MISSING_SHARE * $this->stats['fetched']) {
+                $this->stopped = ['kind' => self::STOP_SUSPECT, 'message' => "{$this->stats['missing']} of {$this->stats['fetched']} blobs fetched in this run are missing, far more than expected."];
+
+                return false;
+            }
 
             return true;
         }
@@ -230,14 +279,13 @@ class ArchiveCopier
             return true;
         }
 
-        $stored = $this->jpeg === null
-            ? ['bytes' => $result->body, 'optimised' => false, 'note' => null]
-            : $this->jpeg->optimise($result->body);
-
         $key = $this->keyPrefix . $blob;
-        $type = LosslessJpeg::isJpeg($stored['bytes']) ? 'image/jpeg' : ImageContentType::detect(substr($stored['bytes'], 0, 512), null);
 
         try {
+            $stored = $this->jpeg === null
+                ? ['bytes' => $result->body, 'optimised' => false, 'note' => null]
+                : $this->jpeg->optimise($result->body);
+            $type = LosslessJpeg::isJpeg($stored['bytes']) ? 'image/jpeg' : ImageContentType::detect(substr($stored['bytes'], 0, 512), null);
             $this->store->put($key, $stored['bytes'], $type);
             $size = $this->store->sizeOf($key);
         } catch (ObjectStoreUnavailable $e) {
@@ -245,6 +293,12 @@ class ArchiveCopier
             $this->stopped = ['kind' => self::STOP_BUCKET, 'message' => 'The bucket is unavailable: ' . $e->getMessage()];
 
             return false;
+        } catch (\Throwable $e) {
+            // Anything else between the fetch and the bucket: keep the row for one more try
+            // rather than leave it Fetching, where it would be stuck.
+            $this->fail($blob, $result->bytesCounted, $attempt, true, 'Could not store it: ' . get_class($e) . ': ' . $e->getMessage());
+
+            return true;
         }
 
         if ($size !== strlen($stored['bytes'])) {

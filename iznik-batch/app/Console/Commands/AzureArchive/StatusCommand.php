@@ -6,6 +6,7 @@ use App\Services\AzureArchive\ArchiveLedger;
 use App\Services\AzureArchive\AzureArchiveAlert;
 use App\Services\AzureArchive\AzureClient;
 use App\Services\AzureArchive\AzureUnavailable;
+use App\Services\AzureArchive\BudgetFigures;
 use App\Services\AzureArchive\Bytes;
 use App\Services\AzureArchive\EgressBudget;
 use App\Services\AzureArchive\FigureGatherer;
@@ -28,7 +29,8 @@ class StatusCommand extends Command
 {
     protected $signature = 'azure-archive:status
                             {--report : Raise an alert in Sentry when anything needs a person}
-                            {--clear-stop : Clear a latched stop, after a person has looked at the bill}';
+                            {--clear-stop : Clear a latched stop, after a person has looked at the bill}
+                            {--requeue-failed : Give failed rows one more fetch, after a person has looked at why}';
 
     protected $description = 'Progress of the Azure archive copy, its egress budget and the Azure bill';
 
@@ -40,6 +42,12 @@ class StatusCommand extends Command
             $was = $ledger->latchedStop();
             $ledger->clearStop();
             $this->info($was === null ? 'No stop was latched.' : "Cleared: {$was}");
+
+            return Command::SUCCESS;
+        }
+
+        if ($this->option('requeue-failed')) {
+            $this->info('Requeued ' . $ledger->requeue() . ' row(s) for one more fetch.');
 
             return Command::SUCCESS;
         }
@@ -73,11 +81,11 @@ class StatusCommand extends Command
             $this->warn($refusal);
         }
 
-        $this->bill($gatherer, $azure);
+        $this->bill($gatherer);
         $this->eta($ledger, (float) $f['daily_share']);
 
         if ($this->option('report')) {
-            $this->report($ledger, $figures->azureEgress31d, $f['ceiling_bytes'], $figures->bandwidthCost, $decision->latch);
+            $this->report($ledger, $figures, $f['ceiling_bytes'], $decision->latch);
         }
 
         return Command::SUCCESS;
@@ -100,7 +108,7 @@ class StatusCommand extends Command
         }
     }
 
-    private function bill(FigureGatherer $gatherer, AzureClient $azure): void
+    private function bill(FigureGatherer $gatherer): void
     {
         try {
             $month = $gatherer->costs();
@@ -115,7 +123,7 @@ class StatusCommand extends Command
                 ));
             }
 
-            $last = $azure->costs('TheLastBillingMonth');
+            $last = $gatherer->costs('TheLastBillingMonth');
             $this->line(sprintf('Last billing period: %.2f %s in total, %.2f for bandwidth (%.2f GB billed).', $last->total(), $last->currency, $last->bandwidthCost(), $last->bandwidthGb()));
         } catch (AzureUnavailable $e) {
             $this->warn('The bill could not be read: ' . $e->getMessage());
@@ -159,9 +167,20 @@ class StatusCommand extends Command
         ));
     }
 
-    private function report(ArchiveLedger $ledger, ?float $egress31d, int|float $ceiling, ?float $bandwidthCost, ?string $latch): void
+    private function report(ArchiveLedger $ledger, BudgetFigures $figures, int|float $ceiling, ?string $latch): void
     {
         $problems = [];
+        $egress31d = $figures->azureEgress31d;
+        $bandwidthCost = $figures->bandwidthCost;
+
+        // Unreadable figures stop the copy, which is safe, but they also leave the bill unwatched.
+        if ($figures->metricsError !== null) {
+            $problems[] = "Azure's egress figures cannot be read or trusted: {$figures->metricsError}";
+        }
+
+        if ($figures->costError !== null) {
+            $problems[] = "the Azure bill cannot be read: {$figures->costError}";
+        }
 
         if ($latch !== null) {
             $ledger->latchStop($latch);

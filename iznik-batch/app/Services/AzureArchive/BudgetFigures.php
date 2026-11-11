@@ -28,6 +28,9 @@ final class BudgetFigures
         public readonly ?string $metricsError = null,
         // A stop latched by an earlier run, which only a person clears.
         public readonly ?string $latchedStop = null,
+        // Bandwidth charged in the billing period before this one. Cost Management lags by a day
+        // or more, so a charge from the last days of a period first shows after it has closed.
+        public readonly ?float $previousBandwidthCost = 0.0,
     ) {
     }
 }

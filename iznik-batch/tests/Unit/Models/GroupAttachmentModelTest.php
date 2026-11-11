@@ -77,6 +77,16 @@ class GroupAttachmentModelTest extends TestCase
         );
     }
 
+    public function test_an_archived_thumbnail_still_on_azure_is_v1s_own(): void
+    {
+        $attachment = new GroupAttachment(['archived' => true]);
+        $attachment->id = 5;
+
+        config(['freegle.images.archived_domain' => 'https://freegle.blob.core.windows.net/images']);
+
+        $this->assertSame('https://freegle.blob.core.windows.net/images/tgimg_5.jpg', $attachment->getPath(true));
+    }
+
     public function test_get_path_uses_live_domain_when_not_archived(): void
     {
         $attachment = new GroupAttachment(['archived' => false]);

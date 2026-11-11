@@ -3,14 +3,17 @@
 namespace App\Services\AzureArchive;
 
 use Carbon\CarbonImmutable;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
 /**
  * The azure_archive_copies table, and the two config rows the copy keeps beside it: how far each
  * source table has been walked, and a latched stop.
  *
- * The ledger is also the egress budget's clock. A row is written before its fetch, so a fetch that
- * dies half way still counts: until the real byte count is known it is counted at the worst case.
+ * The ledger is also the egress budget's clock. Starting a fetch adds the worst case to the row
+ * (UNKNOWN_FETCH_BYTES) and finishing it swaps that for the real count, so a fetch the process
+ * died in stays counted at the worst case, for ever. Starting a fetch is also a claim: a second
+ * run that tries the same row at the same moment is turned away.
  */
 class ArchiveLedger
 {
@@ -61,6 +64,15 @@ class ArchiveLedger
     {
         return (int) DB::table(self::TABLE)
             ->where('fetchedat', '>=', $since)
+            ->sum(DB::raw('COALESCE(azurebytes, ' . self::UNKNOWN_FETCH_BYTES . ')'));
+    }
+
+    /** Bytes the copier fetched from $from up to (not including) $to. */
+    public function bytesBetween(CarbonImmutable $from, CarbonImmutable $to): int
+    {
+        return (int) DB::table(self::TABLE)
+            ->where('fetchedat', '>=', $from)
+            ->where('fetchedat', '<', $to)
             ->sum(DB::raw('COALESCE(azurebytes, ' . self::UNKNOWN_FETCH_BYTES . ')'));
     }
 
@@ -124,37 +136,58 @@ class ArchiveLedger
         DB::table('config')->where('key', self::STOP_KEY)->delete();
     }
 
-    /** Record that a fetch is starting, and return the attempt number it is. */
-    public function begin(string $source, int $sourceId, string $blobName): int
+    /**
+     * Claim the row and record that a fetch is starting: the worst case is added to its bytes
+     * until finish() settles them. Returns the attempt number, or null when another run holds the
+     * row, in which case nothing may be fetched. Only a retry may fetch a row the ledger already
+     * has, and it passes the attempts it saw when it chose the row, so a run that chose it at the
+     * same moment finds the count moved on and is refused.
+     */
+    public function begin(string $source, int $sourceId, string $blobName, ?int $seenAttempts = null): ?int
     {
         $now = CarbonImmutable::now('UTC');
         $existing = DB::table(self::TABLE)->where('blobname', $blobName)->first(['id', 'attempts']);
 
         if ($existing === null) {
-            DB::table(self::TABLE)->insert([
-                'source' => $source,
-                'sourceid' => $sourceId,
-                'blobname' => $blobName,
-                'status' => 'Fetching',
-                'attempts' => 1,
-                'fetchedat' => $now,
-            ]);
+            try {
+                DB::table(self::TABLE)->insert([
+                    'source' => $source,
+                    'sourceid' => $sourceId,
+                    'blobname' => $blobName,
+                    'status' => 'Fetching',
+                    'attempts' => 1,
+                    'azurebytes' => self::UNKNOWN_FETCH_BYTES,
+                    'fetchedat' => $now,
+                ]);
+            } catch (UniqueConstraintViolationException) {
+                return null;
+            }
 
             return 1;
         }
 
-        DB::table(self::TABLE)->where('id', $existing->id)->update([
-            'status' => 'Fetching',
-            'attempts' => $existing->attempts + 1,
-            'fetchedat' => $now,
-        ]);
+        $seen = $seenAttempts;
 
-        return $existing->attempts + 1;
+        if ($seen === null || $seen >= self::MAX_ATTEMPTS) {
+            return null;
+        }
+
+        $claimed = DB::table(self::TABLE)
+            ->where('id', $existing->id)
+            ->where('attempts', $seen)
+            ->update([
+                'status' => 'Fetching',
+                'attempts' => $existing->attempts + 1,
+                'azurebytes' => DB::raw('COALESCE(azurebytes, 0) + ' . self::UNKNOWN_FETCH_BYTES),
+                'fetchedat' => $now,
+            ]);
+
+        return $claimed === 1 ? $seen + 1 : null;
     }
 
     /**
-     * Record how a fetch ended. $bytes is what Azure sent this time; it is added to what earlier
-     * attempts sent, so the budget sees every byte.
+     * Record how a fetch ended: the worst case begin() added is swapped for $bytes, what Azure
+     * sent this time. Earlier attempts stay counted, so the budget sees every byte.
      *
      * @param  array<string, mixed>  $fields
      */
@@ -162,8 +195,26 @@ class ArchiveLedger
     {
         DB::table(self::TABLE)->where('blobname', $blobName)->update(array_merge($fields, [
             'status' => $status,
-            'azurebytes' => DB::raw('COALESCE(azurebytes, 0) + ' . max(0, $bytes)),
+            'azurebytes' => DB::raw('GREATEST(CAST(COALESCE(azurebytes, 0) AS SIGNED) - ' . self::UNKNOWN_FETCH_BYTES . ', 0) + ' . max(0, $bytes)),
         ]));
+    }
+
+    /**
+     * Give rows a person has looked at one more fetch: final failures, and fetches the process
+     * died in twice. Returns how many.
+     */
+    public function requeue(): int
+    {
+        return DB::table(self::TABLE)
+            ->where('attempts', '>=', self::MAX_ATTEMPTS)
+            ->where(fn ($q) => $q->where(fn ($q) => $q->where('status', 'Failed')->where(fn ($q) => $q->whereNull('error')->orWhere('error', 'not like', self::RETRY . '%')))
+                // A fetch that may still be running is left alone.
+                ->orWhere(fn ($q) => $q->where('status', 'Fetching')->where('fetchedat', '<', CarbonImmutable::now('UTC')->subHour())))
+            ->update([
+                'status' => 'Failed',
+                'attempts' => self::MAX_ATTEMPTS - 1,
+                'error' => DB::raw("LEFT(CONCAT('" . self::RETRY . "requeued by hand: ', COALESCE(error, 'died while fetching')), 255)"),
+            ]);
     }
 
     public function supersede(string $source, int $sourceId, string $blobName): void
@@ -182,7 +233,7 @@ class ArchiveLedger
      * Rows that may be fetched once more: a fetch that never recorded its end (the process died),
      * or a failure marked for one retry. Never a row already at the attempt limit.
      *
-     * @return list<object{source: string, sourceid: int, blobname: string}>
+     * @return list<object{source: string, sourceid: int, blobname: string, attempts: int}>
      */
     public function retryable(CarbonImmutable $deadBefore, int $limit): array
     {
@@ -194,7 +245,7 @@ class ArchiveLedger
             })
             ->orderBy('id')
             ->limit($limit)
-            ->get(['source', 'sourceid', 'blobname'])
+            ->get(['source', 'sourceid', 'blobname', 'attempts'])
             ->all();
     }
 

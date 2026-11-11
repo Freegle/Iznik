@@ -119,6 +119,7 @@ class CopyCommand extends Command
             new ObjectStore(),
             $jpeg,
             (string) config('freegle.azure_archive.key_prefix', 'archive/'),
+            max(60, (int) config('freegle.azure_archive.run_max_minutes', 40) * 60),
         );
 
         if ($dryRun) {
@@ -163,7 +164,11 @@ class CopyCommand extends Command
                 report(new ObjectStoreUnavailable('azure-archive:copy: ' . $stopped['message']));
             }
 
-            if ($stopped['kind'] !== ArchiveCopier::STOP_BUDGET) {
+            if ($stopped['kind'] === ArchiveCopier::STOP_SUSPECT) {
+                report(new AzureArchiveAlert('azure-archive:copy stopped: ' . $stopped['message']));
+            }
+
+            if (! in_array($stopped['kind'], [ArchiveCopier::STOP_BUDGET, ArchiveCopier::STOP_TIME], true)) {
                 return Command::FAILURE;
             }
         }

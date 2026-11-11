@@ -56,6 +56,10 @@ class ArchiveCopierTest extends TestCase
                     $headers['x-ms-error-code'] = 'BlobArchived';
                 }
 
+                if ($answer['status'] === 404 && empty($answer['noheader'])) {
+                    $headers['x-ms-error-code'] = $answer['code'] ?? 'BlobNotFound';
+                }
+
                 return Http::response($answer['body'], $answer['status'], $headers);
             },
         ]);
@@ -84,9 +88,9 @@ class ArchiveCopierTest extends TestCase
         return (int) DB::table('chat_images')->insertGetId(['contenttype' => 'image/jpeg', 'archived' => 1]);
     }
 
-    private function copier(?ObjectStore $store = null, ?LosslessJpeg $jpeg = null): ArchiveCopier
+    private function copier(?ObjectStore $store = null, ?LosslessJpeg $jpeg = null, int $maxSeconds = 2400): ArchiveCopier
     {
-        return new ArchiveCopier(new ArchiveLedger(), new BlobFetcher(self::SOURCE), $store ?? new ObjectStore(Storage::disk('images')), $jpeg, 'archive/');
+        return new ArchiveCopier(new ArchiveLedger(), new BlobFetcher(self::SOURCE), $store ?? new ObjectStore(Storage::disk('images')), $jpeg, 'archive/', $maxSeconds);
     }
 
     private function ledger(string $blob): ?object
@@ -111,7 +115,7 @@ class ArchiveCopierTest extends TestCase
         $this->assertSame($id, (int) $row->sourceid);
         $this->assertSame(1, (int) $row->attempts);
         $this->assertSame(511, (int) $row->storedbytes);
-        $this->assertSame(511 + BlobFetcher::REQUEST_OVERHEAD_BYTES, (int) $row->azurebytes);
+        $this->assertSame(BlobFetcher::counted(511), (int) $row->azurebytes);
         $this->assertSame(base64_encode(md5('jpeg bytes ' . str_repeat('x', 500), true)), $row->azuremd5);
         $this->assertNotNull($row->copiedat);
         $this->assertGreaterThanOrEqual(1, $result['stats']['copied']);
@@ -183,7 +187,7 @@ class ArchiveCopierTest extends TestCase
         $this->copier()->copy(self::PLENTY);
         $this->assertSame(2, $this->fetches[$name], 'read at most twice');
         // Both fetches count against the budget.
-        $this->assertSame(2 * (strlen('corrupted in transit') + BlobFetcher::REQUEST_OVERHEAD_BYTES), (int) $this->ledger($name)->azurebytes);
+        $this->assertSame(2 * BlobFetcher::counted(strlen('corrupted in transit')), (int) $this->ledger($name)->azurebytes);
         Storage::disk('images')->assertMissing("archive/{$name}");
     }
 
@@ -270,13 +274,14 @@ class ArchiveCopierTest extends TestCase
             $this->blob("img_{$ids[$i]}.jpg", str_repeat('a', 1000));
         }
 
-        // Each blob is counted as 2,024 bytes: room for two, and one byte short of a third.
-        $allowance = ArchiveCopier::BLOB_RESERVE_BYTES + 2 * 2024 - 1;
+        // Room for two blobs, and one byte short of a third.
+        $each = BlobFetcher::counted(1000);
+        $allowance = ArchiveCopier::BLOB_RESERVE_BYTES + 2 * $each - 1;
         $first = $this->copier()->copy($allowance);
 
         $this->assertSame(ArchiveCopier::STOP_BUDGET, $first['stopped']['kind']);
         $this->assertSame(2, $first['stats']['copied']);
-        $this->assertSame(2 * 2024, $first['stats']['bytes_fetched']);
+        $this->assertSame(2 * $each, $first['stats']['bytes_fetched']);
 
         $this->copier()->copy(self::PLENTY);
 
@@ -426,5 +431,124 @@ class ArchiveCopierTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
 
         \App\Services\AzureArchive\ArchiveSources::blobName('users', 1);
+    }
+
+    public function test_a_404_for_the_container_stops_the_run_and_marks_nothing_missing(): void
+    {
+        $a = $this->attachment();
+        $b = $this->attachment();
+        $this->azure["img_{$a}.jpg"] = ['status' => 404, 'body' => '', 'md5' => null, 'code' => 'ResourceNotFound'];
+
+        $result = $this->copier()->copy(self::PLENTY);
+
+        $this->assertSame(ArchiveCopier::STOP_SUSPECT, $result['stopped']['kind']);
+        $this->assertStringContainsString('ResourceNotFound', $result['stopped']['message']);
+        $this->assertSame('Failed', $this->ledger("img_{$a}.jpg")->status);
+        $this->assertStringStartsWith(ArchiveLedger::RETRY, $this->ledger("img_{$a}.jpg")->error);
+        $this->assertArrayNotHasKey("img_{$b}.jpg", $this->fetches);
+        $this->assertSame(0, DB::table(ArchiveLedger::TABLE)->where('status', 'Missing')->count());
+    }
+
+    public function test_the_error_code_is_read_from_the_body_when_the_header_is_absent(): void
+    {
+        $this->azure['img_1.jpg'] = ['status' => 404, 'body' => '<?xml version="1.0"?><Error><Code>ContainerNotFound</Code></Error>', 'md5' => null, 'noheader' => true];
+
+        $result = (new BlobFetcher(self::SOURCE))->fetch('img_1.jpg');
+
+        $this->assertSame('ContainerNotFound', $result->errorCode);
+    }
+
+    public function test_far_too_many_missing_blobs_stops_the_run(): void
+    {
+        for ($i = 0; $i < 210; $i++) {
+            $this->attachment();
+        }
+
+        $result = $this->copier()->copy(self::PLENTY);
+
+        $this->assertSame(ArchiveCopier::STOP_SUSPECT, $result['stopped']['kind']);
+        $this->assertSame(200, $result['stats']['fetched']);
+    }
+
+    public function test_a_row_another_run_holds_is_not_fetched(): void
+    {
+        $id = $this->attachment();
+        $name = "img_{$id}.jpg";
+        $ledger = new ArchiveLedger();
+
+        $this->assertSame(1, $ledger->begin('messages_attachments', $id, $name));
+        $this->assertNull($ledger->begin('messages_attachments', $id, $name), 'a walk never fetches a row the ledger already has');
+
+        // Two runs that both chose the row for its retry, having seen one attempt: only the first
+        // claim wins, and the row can never go past the attempt limit.
+        $ledger->finish($name, 'Failed', 10, ['error' => ArchiveLedger::RETRY . 'x']);
+        $this->assertSame(2, $ledger->begin('messages_attachments', $id, $name, 1));
+        $this->assertNull($ledger->begin('messages_attachments', $id, $name, 1));
+        $this->assertNull($ledger->begin('messages_attachments', $id, $name), 'at the limit, nothing more');
+        $this->assertSame(2, (int) $this->ledger($name)->attempts);
+    }
+
+    public function test_a_fetch_counts_the_worst_case_until_it_finishes_and_then_what_arrived(): void
+    {
+        $ledger = new ArchiveLedger();
+        $since = CarbonImmutable::now('UTC')->subMinute();
+
+        $ledger->begin('chat_images', 1, 'mimg_1.jpg');
+        $this->assertSame(ArchiveLedger::UNKNOWN_FETCH_BYTES, $ledger->bytesSince($since));
+
+        $ledger->finish('mimg_1.jpg', 'Missing', 700);
+        $this->assertSame(700, $ledger->bytesSince($since));
+
+        // A second fetch the process dies in leaves its worst case on top of the first.
+        DB::table(ArchiveLedger::TABLE)->where('blobname', 'mimg_1.jpg')->update(['status' => 'Fetching']);
+        $this->assertSame(2, $ledger->begin('chat_images', 1, 'mimg_1.jpg', 1));
+        $this->assertSame(700 + ArchiveLedger::UNKNOWN_FETCH_BYTES, $ledger->bytesSince($since));
+    }
+
+    public function test_anything_that_breaks_while_storing_keeps_the_row_for_one_more_try(): void
+    {
+        $a = $this->attachment();
+        $b = $this->attachment();
+        $this->blob("img_{$a}.jpg", 'first');
+        $this->blob("img_{$b}.jpg", 'second');
+        $store = $this->createMock(ObjectStore::class);
+        $store->method('sizeOf')->willReturn(null);
+        $store->method('put')->willThrowException(new \RuntimeException('Object store refused to write'));
+
+        $result = $this->copier($store)->copy(self::PLENTY);
+
+        $this->assertNull($result['stopped']);
+        foreach ([$a, $b] as $id) {
+            $this->assertSame('Failed', $this->ledger("img_{$id}.jpg")->status);
+            $this->assertStringStartsWith(ArchiveLedger::RETRY . 'Could not store it: RuntimeException', $this->ledger("img_{$id}.jpg")->error);
+        }
+    }
+
+    public function test_a_run_stops_at_its_time_limit(): void
+    {
+        $id = $this->attachment();
+        $this->blob("img_{$id}.jpg", 'x');
+
+        $result = $this->copier(maxSeconds: 0)->copy(self::PLENTY);
+
+        $this->assertSame(ArchiveCopier::STOP_TIME, $result['stopped']['kind']);
+        $this->assertSame([], $this->fetches);
+    }
+
+    public function test_a_final_failure_can_be_requeued_once_by_a_person(): void
+    {
+        $id = $this->attachment();
+        $name = "img_{$id}.jpg";
+        $this->blob($name, 'bad', base64_encode(md5('good', true)));
+        $this->copier()->copy(self::PLENTY);
+        $this->copier()->copy(self::PLENTY);
+        $this->assertSame(2, $this->fetches[$name]);
+
+        $this->assertSame(1, (new ArchiveLedger())->requeue());
+        $this->blob($name, 'good');
+        $this->copier()->copy(self::PLENTY);
+
+        $this->assertSame(3, $this->fetches[$name]);
+        $this->assertSame('Copied', $this->ledger($name)->status);
     }
 }

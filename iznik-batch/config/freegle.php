@@ -715,7 +715,8 @@ return [
     // (docs/ops/runbooks/azure-archive-migration.md). Nothing is fetched unless `enabled` is on AND
     // the read-only Azure app below can show Azure's own egress and cost figures.
     'azure_archive' => [
-        'enabled' => (bool) EnvSetting::env('AZURE_ARCHIVE_ENABLED', false),
+        // Only true or 1 turns it on.
+        'enabled' => EnvSetting::flag(EnvSetting::env('AZURE_ARCHIVE_ENABLED', false)),
         // Where the blobs are read from: the public container, no key needed.
         'source_url' => EnvSetting::env('AZURE_ARCHIVE_SOURCE_URL', 'https://freegle.blob.core.windows.net/images'),
         // Key prefix in the images bucket.
@@ -737,15 +738,19 @@ return [
         'site_growth' => (float) EnvSetting::env('AZURE_ARCHIVE_SITE_GROWTH', 1.25),
         // Most one run may fetch, so a run stays short and the figures are re-read often.
         'run_max_mb' => (int) EnvSetting::env('AZURE_ARCHIVE_RUN_MAX_MB', 1024),
+        // Longest one run may take, well inside the copy command's hour-long lock.
+        'run_max_minutes' => (int) EnvSetting::env('AZURE_ARCHIVE_RUN_MAX_MINUTES', 40),
         // Azure's metrics are refused as stale when their newest point is older than this.
         'metrics_max_age_minutes' => (int) EnvSetting::env('AZURE_ARCHIVE_METRICS_MAX_AGE_MINUTES', 180),
         // Our own fetches this recent are added on top of Azure's figure, which may not have them yet.
         'metrics_lag_minutes' => (int) EnvSetting::env('AZURE_ARCHIVE_METRICS_LAG_MINUTES', 120),
         // The cost check can only be skipped by setting this false on purpose: some offers do not
         // support Cost Management. Then the bill must be read in the portal instead.
-        'require_cost_check' => (bool) EnvSetting::env('AZURE_ARCHIVE_REQUIRE_COST_CHECK', true),
+        // Turning it off also turns off the stop on a bandwidth charge, because the charge cannot be
+        // seen. Only false or 0 turns it off.
+        'require_cost_check' => ! in_array(strtolower(trim((string) EnvSetting::env('AZURE_ARCHIVE_REQUIRE_COST_CHECK', 'true'))), ['false', '0'], true),
         // Store the lossless jpegtran optimisation when it is smaller and decodes to the same pixels.
-        'optimise' => (bool) EnvSetting::env('AZURE_ARCHIVE_OPTIMISE', true),
+        'optimise' => ! in_array(strtolower(trim((string) EnvSetting::env('AZURE_ARCHIVE_OPTIMISE', 'true'))), ['false', '0'], true),
         // The public address the archived images are served from (the frontend-nginx chain), used
         // by azure-archive:check-serving. Blank: the check is skipped.
         'serving_url' => EnvSetting::env('AZURE_ARCHIVE_SERVING_URL', 'https://images.ilovefreegle.org/archive'),

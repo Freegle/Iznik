@@ -73,6 +73,9 @@ class LosslessJpeg
             }
 
             return ['bytes' => $optimised, 'optimised' => true, 'note' => null];
+        } catch (\Throwable $e) {
+            // A timeout or a crash in the tools: the original is still good, so store that.
+            return ['bytes' => $bytes, 'optimised' => false, 'note' => 'optimisation failed: ' . $e->getMessage()];
         } finally {
             foreach (glob("{$dir}/*") ?: [] as $file) {
                 @unlink($file);

@@ -30,6 +30,20 @@ func TestBuildChatImageUrlArchivedDomain(t *testing.T) {
 	assert.Equal(t, "https://delivery.test?w=250&h=250&url=https%3A%2F%2Farchive.example.com%2Fmimg_99.jpg", thumb)
 }
 
+func TestArchivedImageUrlsStillOnAzureUseV1Thumbnails(t *testing.T) {
+	// Until the address is switched to our archive, nothing about members' Azure traffic changes.
+	t.Setenv("IMAGE_ARCHIVED_DOMAIN", "freegle.blob.core.windows.net/images")
+	t.Setenv("IMAGE_DELIVERY", "https://delivery.test")
+
+	full, thumb := ArchivedImageUrls("img", 7)
+	assert.Equal(t, "https://freegle.blob.core.windows.net/images/img_7.jpg", full)
+	assert.Equal(t, "https://freegle.blob.core.windows.net/images/timg_7.jpg", thumb)
+
+	full, thumb = BuildChatImageUrl(8, "", "", 1)
+	assert.Equal(t, "https://freegle.blob.core.windows.net/images/mimg_8.jpg", full)
+	assert.Equal(t, "https://freegle.blob.core.windows.net/images/tmimg_8.jpg", thumb)
+}
+
 func TestArchivedImageUrlsWithAPathInTheDomain(t *testing.T) {
 	// Production serves the archive from a path on an existing host.
 	t.Setenv("IMAGE_ARCHIVED_DOMAIN", "images.example.com/archive")

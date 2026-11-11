@@ -96,4 +96,45 @@ class LosslessJpegTest extends TestCase
 
         $this->assertSame($before, glob(sys_get_temp_dir() . '/azure-archive-*') ?: []);
     }
+
+    public function test_without_the_tools_it_says_so(): void
+    {
+        Process::fake(['*' => Process::result(exitCode: 1)]);
+
+        $this->assertFalse((new LosslessJpeg())->available());
+    }
+
+    public function test_a_tool_that_crashes_or_times_out_leaves_the_original(): void
+    {
+        Process::fake(fn () => throw new \RuntimeException('The process exceeded the timeout of 60 seconds.'));
+        $original = $this->gdJpeg();
+
+        $result = (new LosslessJpeg())->optimise($original);
+
+        $this->assertSame($original, $result['bytes']);
+        $this->assertFalse($result['optimised']);
+        $this->assertStringContainsString('timeout', (string) $result['note']);
+    }
+
+    public function test_an_output_that_does_not_decode_to_the_same_pixels_is_not_used(): void
+    {
+        // jpegtran "succeeds" with a smaller file, and djpeg cannot decode it.
+        Process::fake(function ($process) {
+            $command = $process->command;
+
+            if ($command[0] === 'jpegtran') {
+                file_put_contents($command[array_search('-outfile', $command, true) + 1], "\xFF\xD8\xFF tiny");
+
+                return Process::result();
+            }
+
+            return Process::result(exitCode: 2);
+        });
+        $original = $this->gdJpeg();
+
+        $result = (new LosslessJpeg())->optimise($original);
+
+        $this->assertSame($original, $result['bytes']);
+        $this->assertSame('pixels differ', $result['note']);
+    }
 }

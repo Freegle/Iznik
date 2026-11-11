@@ -162,7 +162,9 @@ class AzureClientTest extends TestCase
         $this->assertEqualsWithDelta(16.15, $costs->total(), 0.0001);
         Http::assertSent(fn (Request $r) => $r->method() === 'POST'
             && ($r->data()['timeframe'] ?? null) === 'BillingMonthToDate'
-            && ($r->data()['type'] ?? null) === 'ActualCost');
+            && ($r->data()['type'] ?? null) === 'ActualCost'
+            // Cost Management accepts at most two groupings.
+            && count($r->data()['dataset']['grouping']) === 2);
     }
 
     public function test_an_offer_that_names_the_cost_column_pretaxcost_is_asked_again(): void

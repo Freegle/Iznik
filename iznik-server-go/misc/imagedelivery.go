@@ -181,12 +181,26 @@ func GetExternalImageDeliveryUrl(externalurl string, mods string) string {
 const ArchivedThumbSize = 250
 
 // ArchivedImageUrls builds the full-size and thumbnail URLs for an image V1 archived
-// (archived > 0) under prefix: the full image from IMAGE_ARCHIVED_DOMAIN, and a thumbnail the
-// delivery resizer makes from it. V1 also wrote t-prefixed thumbnail blobs, but those are not
-// copied off Azure (docs/ops/runbooks/azure-archive-migration.md), so nothing may link to them.
+// (archived > 0) under prefix, from IMAGE_ARCHIVED_DOMAIN. V1 wrote a t-prefixed thumbnail blob
+// beside each image, but those are not copied off Azure (docs/ops/runbooks/azure-archive-migration.md),
+// so once the domain is our archive address the thumbnail is made from the full image by the
+// delivery resizer. While the domain is still Azure, V1's own thumbnail is used, so that members'
+// Azure egress does not change until the address is switched on purpose.
 func ArchivedImageUrls(prefix string, id uint64) (path string, paththumb string) {
-	return fmt.Sprintf("https://%s/%s_%d.jpg", os.Getenv("IMAGE_ARCHIVED_DOMAIN"), prefix, id),
-		GetArchivedImageDeliveryUrl(prefix, id, ArchivedThumbSize, ArchivedThumbSize)
+	domain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
+	path = fmt.Sprintf("https://%s/%s_%d.jpg", domain, prefix, id)
+
+	if ArchivedDomainIsAzure(domain) {
+		return path, fmt.Sprintf("https://%s/t%s_%d.jpg", domain, prefix, id)
+	}
+
+	return path, GetArchivedImageDeliveryUrl(prefix, id, ArchivedThumbSize, ArchivedThumbSize)
+}
+
+// ArchivedDomainIsAzure reports whether the archive is still served straight from V1's Azure
+// container, where V1's thumbnail blobs exist.
+func ArchivedDomainIsAzure(domain string) bool {
+	return strings.Contains(strings.ToLower(domain), ".blob.core.windows.net")
 }
 
 // GetArchivedImageDeliveryUrl builds the delivery URL for a legacy attachment

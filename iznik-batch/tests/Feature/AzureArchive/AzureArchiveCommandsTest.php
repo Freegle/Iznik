@@ -444,4 +444,84 @@ class AzureArchiveCommandsTest extends TestCase
             ->expectsOutputToContain('cimg_9.jpg: thumbnail: no answer: refused')
             ->assertFailed();
     }
+
+    /** @return array<string, array{0: mixed}> */
+    public static function badCeilings(): array
+    {
+        return ['zero' => [0], 'negative' => [-5], 'at the free allowance' => [100], 'a typo' => [800], 'not a number' => ['eighty']];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('badCeilings')]
+    public function test_a_ceiling_outside_1_to_95_gb_fetches_nothing(mixed $ceiling): void
+    {
+        config(['freegle.azure_archive.ceiling_gb' => $ceiling]);
+        $this->fakeAzure();
+        $this->archivedAttachment();
+
+        $this->artisan('azure-archive:copy')->expectsOutputToContain('AZURE_ARCHIVE_CEILING_GB')->assertFailed();
+
+        $this->assertSame(0, $this->blobFetches);
+    }
+
+    public function test_the_switch_is_on_only_for_true_or_1(): void
+    {
+        foreach (['no' => false, 'off' => false, 'false' => false, 'yes' => false, 'true' => true, '1' => true] as $value => $on) {
+            $this->assertSame($on, \App\Support\EnvSetting::flag($value), "AZURE_ARCHIVE_ENABLED={$value}");
+        }
+    }
+
+    public function test_status_alerts_when_azure_figures_cannot_be_read(): void
+    {
+        Exceptions::fake();
+        $this->fakeAzure(['management.azure.com/*/Microsoft.Insights/metrics*' => Http::response(['error' => ['message' => 'forbidden']], 403)]);
+
+        $this->artisan('azure-archive:status', ['--report' => true])->assertSuccessful();
+
+        Exceptions::assertReported(fn (AzureArchiveAlert $e) => str_contains($e->getMessage(), 'egress figures cannot be read'));
+    }
+
+    public function test_status_alerts_when_the_bill_cannot_be_read(): void
+    {
+        Exceptions::fake();
+        $this->fakeAzure(['management.azure.com/*/Microsoft.CostManagement/query*' => Http::response(['error' => ['message' => 'not supported for this offer']], 400)]);
+
+        $this->artisan('azure-archive:status', ['--report' => true])->assertSuccessful();
+
+        Exceptions::assertReported(fn (AzureArchiveAlert $e) => str_contains($e->getMessage(), 'bill cannot be read'));
+    }
+
+    public function test_requeue_gives_final_failures_one_more_fetch(): void
+    {
+        DB::table(ArchiveLedger::TABLE)->insert(['source' => 'chat_images', 'sourceid' => 3, 'blobname' => 'mimg_3.jpg', 'status' => 'Failed', 'attempts' => 2, 'error' => 'The bytes did not match']);
+
+        $this->artisan('azure-archive:status', ['--requeue-failed' => true])->expectsOutputToContain('Requeued 1 row')->assertSuccessful();
+
+        $row = DB::table(ArchiveLedger::TABLE)->where('blobname', 'mimg_3.jpg')->first();
+        $this->assertSame(1, (int) $row->attempts);
+        $this->assertStringStartsWith(ArchiveLedger::RETRY, $row->error);
+    }
+
+    public function test_a_container_that_is_not_there_stops_the_copy_and_alerts(): void
+    {
+        Exceptions::fake();
+        $this->fakeAzure(['freegle.blob.core.windows.net/*' => Http::response('', 404, ['x-ms-error-code' => 'ContainerNotFound'])]);
+        $this->archivedAttachment();
+
+        $this->artisan('azure-archive:copy')->expectsOutputToContain('ContainerNotFound')->assertFailed();
+
+        Exceptions::assertReported(fn (AzureArchiveAlert $e) => str_contains($e->getMessage(), 'not there or not public'));
+        $this->assertSame(0, DB::table(ArchiveLedger::TABLE)->where('status', 'Missing')->count());
+    }
+
+    public function test_egress_figures_azure_has_not_caught_up_with_fetch_nothing(): void
+    {
+        // The copy fetched 300 MB in the last hours, and Azure shows almost nothing for them.
+        DB::table(ArchiveLedger::TABLE)->insert(['source' => 'chat_images', 'sourceid' => 4, 'blobname' => 'mimg_4.jpg', 'status' => 'Copied', 'azurebytes' => 300000000, 'fetchedat' => CarbonImmutable::now('UTC')->subHours(3)]);
+        $this->fakeAzure();
+        $this->archivedAttachment();
+
+        $this->artisan('azure-archive:copy')->expectsOutputToContain('its figures are behind')->assertFailed();
+
+        $this->assertSame(0, $this->blobFetches);
+    }
 }
