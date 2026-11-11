@@ -498,7 +498,14 @@ function socialLoginFailed(provider, message, error, cancelled) {
   }
 
   if (outcome === 'device') {
-    // This phone cannot sign in with that provider. Count it in the logs; there is nothing to fix.
+    // This phone cannot sign in with that provider, or this build is misconfigured. Count it in the
+    // logs (a spike is the signal), and leave a breadcrumb so any event that follows has the context.
+    Sentry.addBreadcrumb({
+      category: 'social-login',
+      level: 'warning',
+      message: error?.message ?? message,
+      data: { provider, platform },
+    })
     action('social_login_device_unavailable', {
       provider,
       platform,

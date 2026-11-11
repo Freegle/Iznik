@@ -24,6 +24,8 @@ describe('socialLoginOutcome', () => {
 
   it.each([
     'plugin exploded',
+    'The request was cancelled',
+    'Network request cancelled',
     'Facebook app login failed',
     'The operation couldn’t be completed. (com.apple.AuthenticationServices.AuthorizationError error 1004.)',
     'Google login failed: Request failed with status 500',
