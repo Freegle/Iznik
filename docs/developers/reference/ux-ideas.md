@@ -252,16 +252,17 @@ against our own history:
    past commit. `<outdir>/code` holds the front-end source directories the live generator may read, as
    they were at that commit, with repository paths, so the generator reads whole files and follows
    imports as it does live. `brief.json` holds what the generator may see besides the code: its
-   `codeDir` and the area's commit subjects before the commit. `truth.json` holds what it must not
-   see: the commits after it, with diffs, for a fixed window (six months by default, recorded as
+   `codeDir` and the area's commit subjects before the commit. `<outdir>-truth/truth.json`, in a folder
+   beside it, holds what it must not see: the commits after it, with diffs, for a fixed window (six months by default, recorded as
    `until`, with a `count` of the commits) so a score does not depend on how old the snapshot is. The
    snapshot carries no member data and no figures, survey answers, reports or open issues, so the
    prompt prints those sections as `(none)` and the backtest tests the part of the generator that works
    from code and history.
 2. `.claude/workflows/ux-ideas-backtest.js` labels each later commit as a change a member would notice
-   or not, and checks it was given every commit in `truth.json`, asking again for any it left out and
-   reporting any still missing as `truthGaps`. It has the generator answer its own prompt over the
-   snapshot, and has a strict and a generous judge decide which changes an idea anticipates. A match
+   or not, and checks it was given every commit sha listed in `truth.json` (read from the file by a shell step,
+   not from the model's own count), asking again for any it left out and reporting any still missing
+   as `truthGaps`. It has the generator answer its own prompt over the
+   snapshot, returning as many ideas as that prompt asks for, and has a strict and a generous judge decide which changes an idea anticipates. A match
    only the generous judge accepts must survive a refuter.
 3. **Recall** is the share of member-visible later changes (not refactors, tests, lint, or bug fixes
    nobody asked for) that at least one idea anticipated. It answers: if this generator had existed

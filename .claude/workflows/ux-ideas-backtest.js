@@ -11,7 +11,8 @@ export const meta = {
   ],
 }
 
-// args: { snapshots: [{dir, flow, date}], heldOut?: [{dir, flow, date}], cli, builder, bar?, rounds?, ideas? }
+// args: { snapshots: [{dir, flow, date}], heldOut?: [{dir, flow, date}], cli, builder, bar?, rounds? }
+// The answers for a snapshot are in `${dir}-truth/truth.json`, beside the folder the generator is given.
 // snapshots are scored every round and shown to the improver. heldOut ones are scored once, at
 // the end, with the best prompt, and the improver never sees them: that figure is the headline.
 const snaps = args.snapshots
@@ -24,7 +25,6 @@ const builder = args.builder
 const TRUTH_SCHEMA = {
   type: 'object',
   properties: {
-    total: { type: 'number', description: 'the number of entries in the "later" array of truth.json, counted, not estimated' },
     items: {
       type: 'array',
       items: {
@@ -40,7 +40,7 @@ const TRUTH_SCHEMA = {
       },
     },
   },
-  required: ['total', 'items'],
+  required: ['items'],
 }
 
 const IDEAS_SCHEMA = {
@@ -135,9 +135,10 @@ async function sh(label, command) {
 // ---------------------------------------------------------------- truth, once per snapshot
 
 const everySnap = snaps.concat(heldOut)
+const truthFile = (s) => `${s.dir}-truth/truth.json`
 const truthPrompt = (s, only) =>
-  `Read ${s.dir}/truth.json: the commits made to the "${s.flow}" area of Freegle's member site AFTER ${s.date} (up to its "until" date), each with subject, body, stat and a diff excerpt. Read nothing else.
-${only ? `\nReturn ONLY the commits whose sha is NOT in this list: ${only.join(', ')}. total is still the number of entries in "later".\n` : ''}
+  `Read ${truthFile(s)}: the commits made to the "${s.flow}" area of Freegle's member site AFTER ${s.date} (up to its "until" date), each with subject, body, stat and a diff excerpt. Read nothing else.
+${only ? `\nReturn ONLY the commits whose sha is NOT in this list: ${only.join(', ')}. Do not return a sha that is not in "later".\n` : ''}
 For EVERY commit decide whether a member would notice it in the interface or its behaviour (visible: true), as opposed to a pure bug fix nobody asked for, a refactor, test, lint, telemetry, tooling or infrastructure change (visible: false). A fix that changes what a member sees on an unhappy path (an upload that no longer sticks, a form that no longer blanks) IS visible. Give each a kind. For every visible one write ONE sentence phrased as an idea a product team might have written beforehand: "Show X on the Y step so that Z", "Remove X because Y", "Call X 'Y' instead". Keep the sentence to what the diff shows; do not add intent that is not there.
 
 Return every commit in the order given, none left out. Use the sha exactly as written in the file.`
@@ -148,27 +149,48 @@ const truths = await parallel(
   )
 )
 
-// The truth agent must return every commit, or the denominator quietly shrinks. Ask for the ones
-// it left out, twice at most, and say so in the result when some are still missing.
+// The truth agent must return every commit, or the denominator quietly shrinks. The expected shas
+// come from the file itself (a shell step, not the agent's own count). Ask for the ones it left
+// out, twice at most, drop any sha that is not in the file, and say so in the result when some
+// are still missing.
+const expectedShas = {}
+for (const s of everySnap) {
+  const out = await sh(
+    `shas:${s.flow}@${s.date}`,
+    `node -e "const t=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.log(JSON.stringify({count:t.later.length,shas:t.later.map((x)=>x.sha)}))" ${truthFile(s)}`
+  )
+  const line = String(out).split('\n').map((l) => l.trim()).filter(Boolean).pop() || ''
+  let parsed
+  try { parsed = JSON.parse(line) } catch (e) { parsed = null }
+  if (!parsed || !Array.isArray(parsed.shas) || parsed.shas.length !== parsed.count) {
+    throw new Error(`could not list the commits in ${truthFile(s)}: ${String(out).slice(0, 200)}`)
+  }
+  expectedShas[s.dir] = parsed.shas
+}
+
 const truthBy = {}
 const truthGaps = []
 for (let i = 0; i < everySnap.length; i++) {
   const s = everySnap[i]
-  const first = truths[i] || { total: null, items: [] }
+  const expected = new Set(expectedShas[s.dir])
   const bySha = new Map()
-  for (const t of first.items || []) if (t && t.sha && !bySha.has(t.sha)) bySha.set(t.sha, t)
-  const total = Number.isInteger(first.total) ? first.total : null
-  for (let attempt = 0; attempt < 2 && (total === null || bySha.size < total); attempt++) {
+  const take = (r) => {
+    for (const t of (r && r.items) || []) if (t && expected.has(t.sha) && !bySha.has(t.sha)) bySha.set(t.sha, t)
+  }
+  take(truths[i])
+  for (let attempt = 0; attempt < 2 && bySha.size < expected.size; attempt++) {
     const more = await agent(truthPrompt(s, [...bySha.keys()]), { label: `truth-rest:${s.flow}@${s.date}`, phase: 'Truth', schema: TRUTH_SCHEMA, effort: 'high' })
     const before = bySha.size
-    for (const t of (more && more.items) || []) if (t && t.sha && !bySha.has(t.sha)) bySha.set(t.sha, t)
+    take(more)
     if (bySha.size === before) break
   }
   const items = [...bySha.values()].map((t, idx) => ({ ...t, truth_index: idx }))
   truthBy[s.dir] = items
-  if (total === null || items.length < total) truthGaps.push({ flow: s.flow, date: s.date, returned: items.length, total })
+  if (items.length < expected.size) {
+    truthGaps.push({ flow: s.flow, date: s.date, returned: items.length, total: expected.size, missing: [...expected].filter((h) => !bySha.has(h)) })
+  }
   const visible = items.filter((t) => t.visible)
-  log(`${s.flow}@${s.date}: ${visible.length} member-visible changes of ${items.length} commits${total !== null && items.length < total ? ` (file has ${total}: INCOMPLETE)` : ''}`)
+  log(`${s.flow}@${s.date}: ${visible.length} member-visible changes of ${items.length} commits${items.length < expected.size ? ` (file has ${expected.size}: INCOMPLETE)` : ''}`)
 }
 
 // ---------------------------------------------------------------- one scored pass
@@ -178,11 +200,11 @@ async function scorePass(list, round, tag) {
     list,
     (s) =>
       agent(
-        `You are the UX idea generator under test. Everything you may look at is inside ${s.dir}: brief.json, and the member site's source as it was on ${s.date} under ${s.dir}/code (repository paths, no git history). Do NOT open ${s.dir}/truth.json (it holds the answers and reading it voids the test), do not run git, and do not read anything outside ${s.dir}: the rest of this machine has code from after ${s.date}.
+        `You are the UX idea generator under test. Everything you may look at is inside ${s.dir}: brief.json, and the member site's source as it was on ${s.date} under ${s.dir}/code (repository paths, no git history). Do not run git, and do not read anything outside ${s.dir}: the rest of this machine has code from after ${s.date}.
 
 1. Run: node ${cli} ${s.dir}/brief.json   and read the printed prompt in full. It is the prompt the live generator gets, with the code folder and the area's recent commit subjects. The snapshot has no figures, survey answers, member problems, reports or open issues, so those sections print as (none): work from the code and the history only.
 2. Run: node ${cli} ${s.dir}/brief.json --schema   to see the output schema the live generator uses.
-3. Do what the prompt says, as the live generator would: read the flow's files under ${s.dir}/code in full with your tools and follow their imports, list the problems the code shows before any solution, then propose and type the solutions. Return ${args.ideas || 40} ideas via the structured output, with the problems they solve.
+3. Do what the prompt says, as the live generator would: read the flow's files under ${s.dir}/code in full with your tools and follow their imports, list the problems the code shows before any solution, then propose and type the solutions. Return as many ideas as the printed prompt asks for, via the structured output, with the problems they solve.
 
 Base everything on the code and history as they were on ${s.date}, not on how you think the site looks today.`,
         { label: `generate:${tag}:${s.flow}@${s.date}#${round}`, phase: 'Generate', schema: IDEAS_SCHEMA, effort: 'high' }

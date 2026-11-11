@@ -10,8 +10,11 @@
 #                         commit subjects BEFORE the commit (what had just been done). It holds
 #                         no figures, surveys, reports or issues, so the backtest tests the part
 #                         of the generator that works from code and history
-#   <outdir>/truth.json   what it must not see: the area's commits after it, up to MONTHS later,
-#                         with subjects and short diffs, which the judges compare the ideas to
+#   <outdir>-truth/truth.json
+#                         what it must not see: the area's commits after it, up to MONTHS later,
+#                         with subjects and short diffs, which the judges compare the ideas to.
+#                         It sits beside <outdir>, not inside it, so a search of the folder the
+#                         generator is given cannot reach it
 #
 # Usage: scripts/ux-ideas-snapshot.sh <commit-ish> <flow> <outdir> [months-of-truth, default 6]
 # The flow's paths come from claude-agent-sdk/ux-ideas-prompt.js (FLOW_PATHS).
@@ -29,6 +32,8 @@ mapfile -t PATHS < <(node -e "const m=require('./claude-agent-sdk/ux-ideas-promp
 SHA=$(git rev-parse "$COMMIT")
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
+TRUTH="$OUT-truth"
+mkdir -p "$TRUTH"
 
 # The source the live generator is allowed to read (READABLE_DIRS and READABLE_FILES in
 # claude-agent-sdk/ux-ideas.js), whatever of it existed at the commit.
@@ -51,10 +56,10 @@ git archive "$SHA" -- "${SRC[@]}" | tar -x -C "$OUT/code"
 
 DATE=$(git show -s --format=%cs "$SHA")
 
-node - "$SHA" "$DATE" "$FLOW" "$OUT" "$MONTHS" <<'EOF'
+node - "$SHA" "$DATE" "$FLOW" "$OUT" "$MONTHS" "$TRUTH" <<'EOF'
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
-const [sha, date, flow, out, monthsText] = process.argv.slice(2)
+const [sha, date, flow, out, monthsText, truthDir] = process.argv.slice(2)
 const months = Number(monthsText)
 const paths = require('./claude-agent-sdk/ux-ideas-prompt.js').FLOW_PATHS[flow]
 const git = (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
@@ -83,6 +88,6 @@ const later = shas.map((h) => {
     stat: stat.trim().slice(0, 800), diff: diff.slice(0, 3000),
   }
 })
-fs.writeFileSync(`${out}/truth.json`, JSON.stringify({ commit: sha, date, flow, until: untilDate, count: later.length, later }, null, 1))
-console.log(`${flow} at ${sha.slice(0, 9)} (${date}): code in ${out}/code, ${recentCommits.length} commits before, ${later.length} commits after up to ${untilDate} -> ${out}`)
+fs.writeFileSync(`${truthDir}/truth.json`, JSON.stringify({ commit: sha, date, flow, until: untilDate, count: later.length, later }, null, 1))
+console.log(`${flow} at ${sha.slice(0, 9)} (${date}): code in ${out}/code, ${recentCommits.length} commits before, ${later.length} commits after up to ${untilDate} -> ${out}, answers in ${truthDir}`)
 EOF
