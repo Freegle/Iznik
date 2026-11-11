@@ -590,7 +590,7 @@ describe('StripeDonate', () => {
 
     it('shows session-expired message when tokens are cleared after fetchUser fails', async () => {
       // Simulate: tokens exist but fetchUser fails (both tokens expired)
-      // BaseAPI clears tokens on 401 before error reaches component
+      // fetchUser wipes the tokens itself when no user came back
       mockAuthStore.fetchUser = vi.fn(() => {
         mockAuthStore.auth = { jwt: null, persistent: null }
         return Promise.reject(new Error('401'))

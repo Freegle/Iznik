@@ -423,13 +423,13 @@ async function ensureIntent() {
   // Proactively refresh the session before attempting payment. The JWT is short-lived;
   // if the user opened the app after some time away the JWT may have expired while the
   // persistent token is still valid. Refreshing here gives the server a chance to issue
-  // a fresh JWT before we hit /stripecreateintent, preventing a 401 that would silently
-  // wipe auth and lose the donation.
+  // a fresh JWT before we hit /stripecreateintent, preventing a 401 that would lose the
+  // donation.
   if (authStore.auth?.jwt || authStore.auth?.persistent) {
     try {
       await authStore.fetchUser()
     } catch (e) {
-      // fetchUser failed (e.g. both tokens expired). BaseAPI already cleared auth.
+      // fetchUser failed (e.g. both tokens expired). It wipes auth itself when no user came back.
       console.log('Pre-payment session refresh failed', e)
     }
   }
