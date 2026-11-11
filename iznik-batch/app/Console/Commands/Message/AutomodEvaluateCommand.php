@@ -41,7 +41,7 @@ class AutomodEvaluateCommand extends Command
         {--limit=500 : Maximum number of posts to sample}
         {--group= : Restrict the sample to a single group id}
         {--backend=claude : claude, nli, or both - ignored when --export is given}
-        {--export= : Write the sample as JSONL to this path instead of calling the service}';
+        {--export= : Write the sample as JSONL to this path instead of calling the service. The file holds member posts and is readable by you only: delete it after use}';
 
     protected $description = 'Backtest the automod chart against posts a moderator already decided';
 
@@ -92,14 +92,20 @@ class AutomodEvaluateCommand extends Command
      * against its own (or a predecessor feature's) decision. Every Rejected row is a human
      * decision regardless, since the chart never auto-rejects (AutomodMode's docblock).
      *
+     * A deleted message, or a post from a deleted member, is left out, as it is from the live
+     * review (AutomodEligibility): that text is not read back, exported or sent to a model.
+     *
      * @return \Illuminate\Support\Collection<int, object{msgid: int, groupid: int, collection: string, decided_at: string}>
      */
     private function sample(int $days, int $limit, ?int $groupid)
     {
         return DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', 'u.id', '=', 'm.fromuser')
             ->whereNotNull('mg.contentcheck_checked_at')
             ->where('mg.deleted', 0)
+            ->whereNull('m.deleted')
+            ->whereNull('u.deleted')
             ->where('mg.arrival', '>=', now()->subDays($days))
             ->where(function ($query) {
                 $query->where(function ($approved) {
@@ -123,7 +129,13 @@ class AutomodEvaluateCommand extends Command
 
     private function export($sample, AutomodFactsService $facts, string $path): int
     {
+        // The file is member content and moderation history: readable by this user only.
+        $umask = umask(0077);
         $handle = fopen($path, 'w');
+        umask($umask);
+        if ($handle !== false) {
+            chmod($path, 0600);
+        }
         if ($handle === false) {
             $this->error("Could not open {$path} for writing.");
 
@@ -154,7 +166,7 @@ class AutomodEvaluateCommand extends Command
 
         fclose($handle);
 
-        $this->info("Wrote {$written} posts to {$path}");
+        $this->info("Wrote {$written} posts to {$path}. It holds member posts: delete it after use.");
 
         return Command::SUCCESS;
     }

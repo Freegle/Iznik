@@ -46,4 +46,47 @@ class AutomodEvaluateCommandTest extends TestCase
             @unlink($file);
         }
     }
+
+    /** A decided post on a fresh community, for the sampling tests. */
+    private function decidedPost($user, $group): object
+    {
+        $message = $this->createTestMessage($user, $group);
+        DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $group->id)->update([
+            'collection' => MessageGroup::COLLECTION_REJECTED,
+            'rejectedat' => now()->subHours(3),
+            'arrival' => now()->subHours(4),
+            'contentcheck_checked_at' => now()->subHours(4),
+        ]);
+
+        return $message;
+    }
+
+    public function test_the_export_leaves_out_deleted_members_and_deleted_posts_and_is_private(): void
+    {
+        $group = $this->createTestGroup();
+        $kept = $this->createTestUser();
+        $deletedMember = $this->createTestUser();
+        $deletedPostMember = $this->createTestUser();
+        foreach ([$kept, $deletedMember, $deletedPostMember] as $user) {
+            $this->createMembership($user, $group);
+        }
+        $keptPost = $this->decidedPost($kept, $group);
+        $this->decidedPost($deletedMember, $group);
+        $deletedPost = $this->decidedPost($deletedPostMember, $group);
+        DB::table('users')->where('id', $deletedMember->id)->update(['deleted' => now()]);
+        DB::table('messages')->where('id', $deletedPost->id)->update(['deleted' => now()]);
+        // A path that does not exist yet, so the mode is the one the command creates it with.
+        $file = tempnam(sys_get_temp_dir(), 'evaluate');
+        unlink($file);
+
+        try {
+            $this->artisan('automod:evaluate', ['--export' => $file, '--days' => 30, '--group' => $group->id])->assertExitCode(0);
+
+            $rows = array_map(fn ($line) => json_decode($line, true), array_filter(explode("\n", file_get_contents($file))));
+            $this->assertSame([$keptPost->id], array_column($rows, 'id'), 'a deleted member and a deleted post are not exported');
+            $this->assertSame('0600', substr(sprintf('%o', fileperms($file)), -4), 'the export is readable by its owner only');
+        } finally {
+            @unlink($file);
+        }
+    }
 }
