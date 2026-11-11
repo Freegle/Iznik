@@ -179,7 +179,7 @@ default.
 | Env var | Default | What it changes |
 |---|---|---|
 | `AUTOMOD_BACKEND` | `claude` | Which backend answers a question when neither the request nor the chart node names one. `claude` is the frontier model, through the API when `ANTHROPIC_API_KEY` is set and otherwise through the `claude` CLI on `CLAUDE_CODE_OAUTH_TOKEN`. The others are `nli` (the local model), `jev` (TypeSafe's) and `fake` (deterministic, for tests and local runs). No chart node names a backend today, so this chooses for all of them. |
-| `AUTOMOD_CLAUDE_MODEL` | `claude-opus-5-5` | The model the API backend asks for. docker-compose supplies this default; the service on its own falls back to `claude-opus-5`. The model that answered each step is stored with it and shown by Why? in ModTools. |
+| `AUTOMOD_CLAUDE_MODEL` | `claude-opus-5-5` | The model the API backend asks for. docker-compose supplies this default; the service on its own falls back to the same `claude-opus-5-5`. The model that answered each step is stored with it and shown by Why? in ModTools. |
 | `AUTOMOD_CLAUDE_EFFORT` | `medium` | The effort the API backend asks the model to put in (`output_config.effort`). The CLI backend does not use it. |
 | `AUTOMOD_CLAUDE_CLI_MODEL` | `opus` | The model alias the CLI backend asks for. The model the CLI reports having used is what gets recorded, not the alias. |
 | `AUTOMOD_CLAUDE_BIN` | `claude` | The CLI binary the CLI backend runs. |

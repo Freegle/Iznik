@@ -146,7 +146,7 @@ or badge, no post-moderation help text, and no automated review line or its expl
 The one change you will see on every community is how the notices on a pending post are
 drawn (flagged words, no location, a bulk clearance and the like): they were made
 consistent, with the same colours for the same seriousness. Their wording and the buttons
-beside them are unchanged. Two effects reach a community that is not in the trial:
+beside them are unchanged. Three effects reach a community that is not in the trial:
 
 - **Posts from participating communities can ripple in.** This is the substantive one.
   A post that auto-published on a trial community, with no human look, can spread to
@@ -154,12 +154,18 @@ beside them are unchanged. Two effects reach a community that is not in the tria
   far and how fast (see above: an hour's head start, spread earned by clean exposure,
   any complaint freezing it, a moderator look settling it). If you reject the copy on
   your community, that removes it from your area exactly as any secondary rejection
-  does. The hold applies to any post no human has looked at, wherever it started.
+  does. The hold applies only to a post that published itself on a community in the
+  trial. A post that started on a community outside the trial is not held or capped.
 - **A post pulled back from Check can come back to your queue.** If a moderator of a
   trial community pulls a post back, a copy of it on your community that none of your
   moderators has approved or checked goes back to your Pending queue too, with the
   note "A moderator moved this post back to pending for review." It is what Back to
   Pending does from any community. A copy one of you has approved or checked stays live.
+- **Approve on a copy that is already live is refused.** Clicking Approve on a post that
+  went live a moment earlier, or that another moderator just approved, now answers "no
+  longer pending" and does nothing. It used to approve a second time, which logged a
+  second approval, told the poster again and could send a second alert. It is a safety
+  fix on every community, not part of the trial.
 
 What does **not** cross over: no member of yours starts auto-publishing because a
 neighbouring community joined the trial. Whether a post auto-publishes is decided by the
@@ -183,7 +189,9 @@ them unless they are published (see "Remaining problems").
   time paused waiting for a moderator are all tracked from day one, so the trial produces numbers rather
   than anecdotes.
 - **It is reversible.** Dark by default, per-group trial list, a master switch that can
-  be turned off again, and no schema or behaviour change while off.
+  be turned off again, and no change to what members or moderators see on a community
+  outside the trial, apart from the effects listed in "What a community NOT taking part
+  still sees".
 - **One consistent member experience** network-wide once rolled out, rather than a
   patchwork of moderation models per community.
 
