@@ -6,7 +6,9 @@ use App\Services\Promise\DatasetExtractor;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'promise:extract')]
 class ExtractPromiseDatasetCommand extends Command
 {
     protected $signature = 'promise:extract {--since=} {--max-rooms=} {--window=8} {--tolerance=1} {--negatives-per-room=} {--out=storage/promise/dataset.csv}';

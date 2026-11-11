@@ -11,7 +11,9 @@ use Rubix\ML\Datasets\Dataset;
 use Rubix\ML\PersistentModel;
 use Rubix\ML\Persisters\Filesystem;
 use Rubix\ML\Datasets\Labeled;
+use Symfony\Component\Console\Attribute\AsCommand;
 
+#[AsCommand(name: 'promise:train')]
 class TrainPromiseClassifierCommand extends Command
 {
     /**
