@@ -238,17 +238,17 @@ async function openMessagePage(page, testEnv) {
     offer,
     'the seeded test offer is missing from the test environment, so there is no message page to open'
   ).toBeTruthy()
-  // The wrapper asks at most once an hour; take that memory out of the persisted store.
+  // The wrapper asks at most once an hour. The test fixture records a recent ask on every page
+  // load that has none, so that the invite stays out of other tests' way; an old ask is left
+  // alone, and an old ask is due.
   await page.evaluate(() => {
     try {
-      const raw = localStorage.getItem('misc')
-      if (raw) {
-        const misc = JSON.parse(raw)
-        if (misc && misc.vals) delete misc.vals.microvolunteeringlastask
-        localStorage.setItem('misc', JSON.stringify(misc))
-      }
+      const misc = JSON.parse(localStorage.getItem('misc') || '{}') || {}
+      misc.vals = misc.vals || {}
+      misc.vals.microvolunteeringlastask = '2020-01-01T00:00:00.000Z'
+      localStorage.setItem('misc', JSON.stringify(misc))
     } catch {
-      // Nothing stored yet: nothing to remove.
+      // No storage: the wrapper has no memory of an ask either.
     }
   })
   await page.gotoAndVerify(`/message/${offer}`, {
