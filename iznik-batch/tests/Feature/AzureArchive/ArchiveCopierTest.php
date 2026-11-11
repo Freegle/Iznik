@@ -645,4 +645,53 @@ class ArchiveCopierTest extends TestCase
         $this->assertSame(0.0, $ack['current']);
         $this->assertSame(0.07, $ack['previous']);
     }
+
+    public function test_a_container_moved_to_the_archive_tier_stops_after_ten(): void
+    {
+        for ($i = 0; $i < 15; $i++) {
+            $id = $this->attachment();
+            $this->blob("img_{$id}.jpg", 'archived', null, 409);
+        }
+
+        $result = $this->copier()->copy(self::PLENTY);
+
+        $this->assertSame(ArchiveCopier::STOP_SUSPECT, $result['stopped']['kind']);
+        $this->assertCount(10, $this->fetches);
+    }
+
+    public function test_alternating_refusals_still_stop_after_ten(): void
+    {
+        for ($i = 0; $i < 15; $i++) {
+            $id = $this->attachment();
+            $i % 2
+                ? $this->blob("img_{$id}.jpg", 'archived', null, 409)
+                : $this->azure["img_{$id}.jpg"] = ['status' => 403, 'body' => '<Error><Code>AuthorizationFailure</Code></Error>', 'md5' => null];
+        }
+
+        $result = $this->copier()->copy(self::PLENTY);
+
+        $this->assertSame(ArchiveCopier::STOP_SUSPECT, $result['stopped']['kind']);
+        $this->assertCount(10, $this->fetches);
+    }
+
+    public function test_ten_hash_failures_in_a_row_stop_the_run(): void
+    {
+        for ($i = 0; $i < 15; $i++) {
+            $id = $this->attachment();
+            $this->blob("img_{$id}.jpg", 'altered on the way', base64_encode(md5('original', true)));
+        }
+
+        $result = $this->copier()->copy(self::PLENTY);
+
+        $this->assertSame(ArchiveCopier::STOP_SUSPECT, $result['stopped']['kind']);
+        $this->assertStringContainsString('Content-MD5', $result['stopped']['message']);
+        $this->assertCount(10, $this->fetches);
+    }
+
+    public function test_the_probe_is_removed_after_each_check(): void
+    {
+        $this->copier()->copy(self::PLENTY);
+
+        Storage::disk('images')->assertMissing('archive/.probe');
+    }
 }

@@ -33,9 +33,10 @@ views of old photos come out of the same 100 GB. So the copy is paced by Azure's
 - **Any bandwidth charge stops everything**, in this billing period or the last (Cost Management
   lags, so a charge from the last days of a period shows after it has closed). It raises
   `AzureArchiveAlert` in Sentry and is latched: it holds until a person has looked at the bill
-  and runs `azure-archive:status --clear-stop`. Clearing records the charges it saw, and only a
-  charge above them stops the copy again; when the billing period turns, what was acknowledged
-  moves with it. A charge from members' views before the copy ever ran latches it too, on purpose.
+  and runs `azure-archive:status --clear-stop`. Clearing accepts no charge by itself: a charge is
+  accepted on purpose, with `--clear-stop --acknowledge-charges`, and then only a charge above it
+  stops the copy again. When the billing period turns, what was accepted moves with it, and an
+  acceptance not checked against the bill for a month is dropped. A charge from members' views before the copy ever ran latches it too, on purpose.
 - **Azure's figures are checked, not just read.** Hours Azure has not recorded yet come back as
   zero, so the newest hour that counts is the newest with traffic, and the copy's own bytes from
   that hour on are added. If Azure shows less egress for the hours before than the copy alone
@@ -43,8 +44,9 @@ views of old photos come out of the same 100 GB. So the copy is paced by Azure's
   raise an alert from the hourly status check, because they leave the bill unwatched.
 - **A wrong container stops the copy, and the stop is latched.** Only Azure's `BlobNotFound`
   marks a row Missing. Any other 404 (the container gone or made private), the same refusal three
-  times in a row (403 or 409, such as public access switched off), or a run where most blobs come
-  back missing stops it with an alert until a person clears it. Before each run the bucket is
+  times in a row (403 or 409, such as public access switched off), ten blobs in a row that come to
+  nothing for any reason (the Archive tier, bytes that fail their check), or a run where most blobs
+  come back missing stops it with an alert until a person clears it. Before each run the bucket is
   written to and read back, and three blobs in a row it will not take stop the run, so a wrong
   bucket cannot spend the allowance on fetches that are thrown away.
 - **Each blob is read once.** The ledger row (`azure_archive_copies`) is written before the
@@ -142,7 +144,8 @@ which would cost money to read. Once the cause is dealt with,
 The copy has stopped itself and Sentry has the alert. Look at the bill in the Azure portal
 (Cost Management) and at `azure-archive:status`. Usually it is members' views growing, or other
 traffic on the same billing account. Lower `AZURE_ARCHIVE_CEILING_GB` if the margin was too thin,
-then clear the stop with `php artisan azure-archive:status --clear-stop`.
+then clear the stop and accept the charge with
+`php artisan azure-archive:status --clear-stop --acknowledge-charges`.
 
 ## The end
 

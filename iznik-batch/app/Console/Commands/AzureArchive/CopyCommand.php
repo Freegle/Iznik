@@ -163,6 +163,12 @@ class CopyCommand extends Command
 
             if ($stopped['kind'] === ArchiveCopier::STOP_BUCKET) {
                 report(new ObjectStoreUnavailable('azure-archive:copy: ' . $stopped['message']));
+
+                // A fault the probe did not catch: blobs were fetched and thrown away, and every
+                // run would do it again.
+                if ($s['fetched'] > 0) {
+                    $ledger->latchStop($stopped['message']);
+                }
             }
 
             if ($stopped['kind'] === ArchiveCopier::STOP_SUSPECT) {

@@ -76,6 +76,15 @@ class ArchiveCopier
 
     private int $storeFailuresInARow = 0;
 
+    /**
+     * Blobs in a row that came to nothing for a reason that is not Azure being slow: any refusal
+     * (Archive tier included), or bytes that failed their check. This many means the fault is not
+     * in the blobs.
+     */
+    private const MAX_BAD_IN_A_ROW = 10;
+
+    private int $badInARow = 0;
+
     /** @var array{kind: string, message: string}|null */
     private ?array $stopped = null;
 
@@ -104,6 +113,7 @@ class ArchiveCopier
         $this->lastRefusal = null;
         $this->refusalsInARow = 0;
         $this->storeFailuresInARow = 0;
+        $this->badInARow = 0;
         $this->stopped = null;
         $this->deadline = microtime(true) + $this->maxSeconds;
 
@@ -116,6 +126,8 @@ class ArchiveCopier
             if ($this->store->sizeOf($this->keyPrefix . '.probe') !== 5) {
                 throw new \RuntimeException('the probe did not read back');
             }
+
+            $this->store->delete($this->keyPrefix . '.probe');
         } catch (\Throwable $e) {
             return ['stats' => $this->stats, 'stopped' => ['kind' => self::STOP_BUCKET, 'message' => 'The bucket is unavailable: ' . $e->getMessage()]];
         }
@@ -265,6 +277,7 @@ class ArchiveCopier
         if ($result->status === 404) {
             $this->ledger->finish($blob, 'Missing', $result->bytesCounted, ['error' => null]);
             $this->stats['missing']++;
+            $this->badInARow = 0;
 
             if ($this->stats['fetched'] >= self::MISSING_CHECK_AFTER && $this->stats['missing'] > self::MAX_MISSING_SHARE * $this->stats['fetched']) {
                 $this->stopped = ['kind' => self::STOP_SUSPECT, 'message' => "{$this->stats['missing']} of {$this->stats['fetched']} blobs fetched in this run are missing, far more than expected."];
@@ -293,7 +306,7 @@ class ArchiveCopier
                 return false;
             }
 
-            return true;
+            return $this->bad("Azure refused " . self::MAX_BAD_IN_A_ROW . " blobs in a row, the last with {$refusal}.");
         }
 
         $this->lastRefusal = null;
@@ -305,7 +318,7 @@ class ArchiveCopier
             if (! $result->lengthMatched()) {
                 $this->fail($blob, $result->bytesCounted, $attempt, true, 'Azure sent no Content-MD5, and the length did not match its Content-Length');
 
-                return true;
+                return $this->bad(self::MAX_BAD_IN_A_ROW . ' blobs in a row arrived shorter than Azure said.');
             }
 
             // Fetched and paid for: keep it rather than lose it when Azure goes, and say how it was checked.
@@ -313,7 +326,7 @@ class ArchiveCopier
         } elseif (! $result->verified()) {
             $this->fail($blob, $result->bytesCounted, $attempt, true, 'The bytes did not match Azure\'s Content-MD5');
 
-            return true;
+            return $this->bad(self::MAX_BAD_IN_A_ROW . ' blobs in a row did not match their Content-MD5.');
         }
 
         $key = $this->keyPrefix . $blob;
@@ -345,6 +358,7 @@ class ArchiveCopier
         }
 
         $this->storeFailuresInARow = 0;
+        $this->badInARow = 0;
 
         $this->ledger->finish($blob, 'Copied', $result->bytesCounted, [
             'azuremd5' => $result->contentMd5,
@@ -358,6 +372,18 @@ class ArchiveCopier
         $this->stats['copied']++;
         $this->stats['bytes_stored'] += $size;
         $this->stats['bytes_original'] += strlen($result->body);
+
+        return true;
+    }
+
+    /** Count a blob that came to nothing; false once that has happened too often in a row. */
+    private function bad(string $why): bool
+    {
+        if (++$this->badInARow >= self::MAX_BAD_IN_A_ROW) {
+            $this->stopped = ['kind' => self::STOP_SUSPECT, 'message' => $why];
+
+            return false;
+        }
 
         return true;
     }

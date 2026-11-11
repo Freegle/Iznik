@@ -536,7 +536,14 @@ class AzureArchiveCommandsTest extends TestCase
         $this->artisan('azure-archive:copy')->assertFailed();
         $this->assertNotNull((new ArchiveLedger())->latchedStop());
 
+        // Clearing alone accepts nothing: the charge is shown, and stops the copy again.
         $this->artisan('azure-archive:status', ['--clear-stop' => true])
+            ->expectsOutputToContain('--acknowledge-charges')
+            ->assertSuccessful();
+        $this->artisan('azure-archive:copy')->assertFailed();
+        $this->assertSame(0, $this->blobFetches);
+
+        $this->artisan('azure-archive:status', ['--clear-stop' => true, '--acknowledge-charges' => true])
             ->expectsOutputToContain('Acknowledged bandwidth charges of 0.07')
             ->assertSuccessful();
         $this->artisan('azure-archive:copy')->assertSuccessful();
@@ -565,5 +572,49 @@ class AzureArchiveCommandsTest extends TestCase
         $this->artisan('azure-archive:status', ['--report' => true])->assertSuccessful();
 
         Exceptions::assertNothingReported();
+    }
+
+    public function test_a_bucket_fault_found_after_fetching_is_latched(): void
+    {
+        Exceptions::fake();
+        $this->fakeAzure();
+
+        for ($i = 0; $i < 4; $i++) {
+            $this->archivedAttachment();
+        }
+
+        $disk = $this->createMock(\Illuminate\Contracts\Filesystem\Filesystem::class);
+        $disk->method('put')->willReturnCallback(fn (string $key) => $key === 'archive/.probe' ? true : throw new \RuntimeException('415 Unsupported Media Type'));
+        $disk->method('size')->willReturn(5);
+        Storage::set('images', $disk);
+
+        $this->artisan('azure-archive:copy')->assertFailed();
+
+        $this->assertSame(3, $this->blobFetches);
+        $this->assertStringContainsString('415', (string) (new ArchiveLedger())->latchedStop());
+    }
+
+    public function test_a_second_reason_is_added_to_a_latched_stop(): void
+    {
+        $ledger = new ArchiveLedger();
+        $ledger->latchStop('Azure answered 403 (AuthorizationFailure) for 3 blobs in a row');
+        $ledger->latchStop('Azure has charged 0.40 for bandwidth this billing period');
+        $ledger->latchStop('Azure has charged 0.40 for bandwidth this billing period');
+
+        $stop = (string) $ledger->latchedStop();
+        $this->assertStringContainsString('AuthorizationFailure', $stop);
+        $this->assertSame(1, substr_count($stop, '0.40'));
+    }
+
+    public function test_an_acknowledgement_not_seen_for_a_billing_period_is_dropped(): void
+    {
+        $ledger = new ArchiveLedger();
+        $ledger->acknowledgeCosts(0.4, 0.2);
+        $this->assertSame(0.4, $ledger->costAcknowledgement()['current']);
+
+        $this->travel(32)->days();
+
+        $this->assertSame(0.0, $ledger->costAcknowledgement()['current']);
+        $this->assertSame(0.0, $ledger->costAcknowledgement()['previous']);
     }
 }

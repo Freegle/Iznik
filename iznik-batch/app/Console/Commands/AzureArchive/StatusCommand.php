@@ -29,7 +29,8 @@ class StatusCommand extends Command
 {
     protected $signature = 'azure-archive:status
                             {--report : Raise an alert in Sentry when anything needs a person}
-                            {--clear-stop : Clear a latched stop, after a person has looked at the bill}
+                            {--clear-stop : Clear a latched stop, after a person has looked at why}
+                            {--acknowledge-charges : With --clear-stop, also accept the bandwidth charges on the bill now, so only more stops the copy}
                             {--requeue-failed : Give failed rows one more fetch, after a person has looked at why}';
 
     protected $description = 'Progress of the Azure archive copy, its egress budget and the Azure bill';
@@ -42,7 +43,7 @@ class StatusCommand extends Command
             $was = $ledger->latchedStop();
             $ledger->clearStop();
             $this->info($was === null ? 'No stop was latched.' : "Cleared: {$was}");
-            $this->acknowledge($ledger);
+            $this->acknowledge($ledger, (bool) $this->option('acknowledge-charges'));
 
             return Command::SUCCESS;
         }
@@ -93,10 +94,11 @@ class StatusCommand extends Command
     }
 
     /**
-     * Clearing a stop says a person has looked at the bill, so the charges it shows now stop
-     * latching. Only a charge above them latches again.
+     * Show the bandwidth charges on the bill now and, only when asked, accept them, so that only a
+     * charge above them stops the copy again. Clearing a stop for another reason accepts nothing:
+     * a charge must be accepted on purpose, having been seen.
      */
-    private function acknowledge(ArchiveLedger $ledger): void
+    private function acknowledge(ArchiveLedger $ledger, bool $accept): void
     {
         $azure = AzureClient::fromConfig();
 
@@ -112,6 +114,16 @@ class StatusCommand extends Command
             $previous = $gatherer->costs('TheLastBillingMonth')->bandwidthCost();
         } catch (AzureUnavailable $e) {
             $this->warn('The bill could not be read, so no charge was acknowledged; a charge will latch the stop again: ' . $e->getMessage());
+
+            return;
+        }
+
+        if (! $accept) {
+            $ack = $ledger->costAcknowledgement();
+
+            if ($current > $ack['current'] + 0.005 || $previous > $ack['previous'] + 0.005) {
+                $this->warn(sprintf('Azure shows bandwidth charges of %.2f this billing period and %.2f the last, which will stop the copy again. Once they are understood, run --clear-stop --acknowledge-charges to accept them.', $current, $previous));
+            }
 
             return;
         }

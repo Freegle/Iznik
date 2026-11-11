@@ -40,6 +40,12 @@ class ArchiveLedger
     private const COST_EPSILON = 0.005;
 
     /**
+     * An acknowledgement whose figures were last seen longer ago than a billing period has lost
+     * track of which period it belongs to, so it is dropped and every charge latches again.
+     */
+    private const COST_ACK_DAYS = 31;
+
+    /**
      * The bandwidth charges a person has acknowledged by clearing a stop, for this billing period
      * and the last, and the figures last seen. A charge latches a stop only when it is above what
      * was acknowledged.
@@ -51,6 +57,10 @@ class ArchiveLedger
         $value = DB::table('config')->where('key', self::COST_ACK_KEY)->value('value');
         $d = is_string($value) ? json_decode($value, true) : null;
         $d = is_array($d) ? $d : [];
+
+        if (! isset($d['seenAt']) || CarbonImmutable::parse($d['seenAt'])->lt(CarbonImmutable::now('UTC')->subDays(self::COST_ACK_DAYS))) {
+            $d = [];
+        }
 
         return [
             'current' => (float) ($d['current'] ?? 0),
@@ -91,6 +101,7 @@ class ArchiveLedger
     /** @param  array{current: float, previous: float, lastCurrent: ?float, lastPrevious: ?float}  $ack */
     private function saveCostAcknowledgement(array $ack): void
     {
+        $ack['seenAt'] = CarbonImmutable::now('UTC')->toIso8601String();
         DB::table('config')->upsert([['key' => self::COST_ACK_KEY, 'value' => json_encode($ack)]], ['key'], ['value']);
     }
 
@@ -179,16 +190,21 @@ class ArchiveLedger
         return is_array($decoded) ? ($decoded['reason'] ?? 'stopped') . ' (since ' . ($decoded['at'] ?? '?') . ')' : $value;
     }
 
+    /** Latch a stop, or add a new reason to one already latched, so a person sees every reason. */
     public function latchStop(string $reason): void
     {
-        if ($this->latchedStop() !== null) {
+        $value = DB::table('config')->where('key', self::STOP_KEY)->value('value');
+        $current = is_string($value) ? json_decode($value, true) : null;
+
+        if (is_array($current) && str_contains((string) ($current['reason'] ?? ''), $reason)) {
             return;
         }
 
-        DB::table('config')->upsert([[
-            'key' => self::STOP_KEY,
-            'value' => json_encode(['reason' => $reason, 'at' => CarbonImmutable::now('UTC')->toIso8601String()]),
-        ]], ['key'], ['value']);
+        $stop = is_array($current)
+            ? ['reason' => mb_substr($current['reason'] . '; and ' . $reason, 0, 2000), 'at' => $current['at'] ?? CarbonImmutable::now('UTC')->toIso8601String()]
+            : ['reason' => $reason, 'at' => CarbonImmutable::now('UTC')->toIso8601String()];
+
+        DB::table('config')->upsert([['key' => self::STOP_KEY, 'value' => json_encode($stop)]], ['key'], ['value']);
     }
 
     public function clearStop(): void
