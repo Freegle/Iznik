@@ -20,8 +20,9 @@ export function isLocalStack({ hostname, protocol }) {
 //     viewability score.min.js.
 //   - Browser extensions, and the iabjs: bridge of Facebook's in-app browser
 //     ("Java object is gone").
-// Only the frame the error was thrown from is tested, so an error in our own
-// code that merely passes through one of these is still reported.
+// Only the frame the error was thrown from is tested, and only for the error
+// itself, not for errors it wraps as a cause, so an error in our own code that
+// passes through or wraps one of these is still reported.
 const THIRD_PARTY_SCRIPTS = [
   /^https:\/\/accounts\.google\.com\/gsi\//,
   /^https:\/\/([a-z0-9-]+\.)*btloader\.com\//,
@@ -32,22 +33,18 @@ const THIRD_PARTY_SCRIPTS = [
 ]
 
 export function thrownByThirdParty(event) {
-  for (const ex of event?.exception?.values || []) {
-    const frames = (ex.stacktrace?.frames || []).filter(
-      (f) => f.filename && f.filename !== '<anonymous>'
-    )
-    // Sentry orders frames outermost first, so the last is where it was thrown.
-    const thrownAt = frames[frames.length - 1]
+  // Sentry lists an error's causes first and the error itself last.
+  const values = event?.exception?.values || []
+  const ex = values[values.length - 1]
+  const frames = (ex?.stacktrace?.frames || []).filter(
+    (f) => f.filename && f.filename !== '<anonymous>'
+  )
+  // Frames are ordered outermost first, so the last is where it was thrown.
+  const thrownAt = frames[frames.length - 1]
 
-    if (
-      thrownAt &&
-      THIRD_PARTY_SCRIPTS.some((re) => re.test(thrownAt.filename))
-    ) {
-      return true
-    }
-  }
-
-  return false
+  return Boolean(
+    thrownAt && THIRD_PARTY_SCRIPTS.some((re) => re.test(thrownAt.filename))
+  )
 }
 
 // Robust suppression for Freestar ftUtils.js null-property errors

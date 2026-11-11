@@ -5,7 +5,7 @@ const ADS_SQUARISH_SIZES = [[300, 250]]
 export function sentryEnvironment(env) {
   if (env.ENVIRONMENT) return env.ENVIRONMENT
   if (env.APP_ENV === 'production') return 'production'
-  if (env.APP_ENV === 'development') return 'dev'
+  if (env.APP_ENV) return 'dev'
   if (env.CIRCLECI) return 'ci'
   return env.NODE_ENV === 'production' ? 'production' : 'dev'
 }
@@ -17,7 +17,7 @@ const CONFIG = {
 
   // Sentry environment. An explicit ENVIRONMENT wins. The app is built on
   // CircleCI, so APP_ENV is read before CIRCLECI: the store builds set
-  // APP_ENV=production and the debug builds APP_ENV=development. Read the
+  // APP_ENV=production and the debug builds development or debug. Read the
   // other way round, the app in members' hands reported itself as 'ci'.
   // Otherwise CI builds are 'ci', production builds (nuxt build/generate) are
   // 'production' and the dev server is 'dev'.

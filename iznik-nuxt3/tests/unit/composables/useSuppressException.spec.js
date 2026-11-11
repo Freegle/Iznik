@@ -537,6 +537,23 @@ describe('thrownByThirdParty', () => {
     ).toBe(false)
   })
 
+  // Sentry lists causes first and the error itself last.
+  it('keeps our own error that wraps a vendor error as its cause', () => {
+    const vendorCause = eventWithFrames(
+      'https://accounts.google.com/gsi/client'
+    ).exception.values[0]
+    const ours = eventWithFrames(
+      'https://www.ilovefreegle.org/_nuxt/LoginModal.def456.js'
+    ).exception.values[0]
+
+    expect(
+      thrownByThirdParty({ exception: { values: [vendorCause, ours] } })
+    ).toBe(false)
+    expect(
+      thrownByThirdParty({ exception: { values: [ours, vendorCause] } })
+    ).toBe(true)
+  })
+
   it('keeps an event with no frames', () => {
     expect(thrownByThirdParty({ message: 'hello' })).toBe(false)
     expect(thrownByThirdParty(eventWithFrames())).toBe(false)

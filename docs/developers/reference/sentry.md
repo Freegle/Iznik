@@ -33,14 +33,15 @@ one grouped issue with an alert on how often it fires, not one issue per endpoin
 
 ## Where the client filters live
 
-- `iznik-nuxt3/plugins/sentry.client.ts`: `ignoreErrors` (messages) and `beforeSend`.
-  `beforeSend` drops events from automation (`navigator.webdriver`) and from a page served by a
-  local or CI stack (`isLocalStack`), after logging the `[Exception for Sentry]` console line that
-  the Playwright fixtures read.
+- `iznik-nuxt3/plugins/sentry.client.ts`: `ignoreErrors` (messages), `beforeSend` and
+  `beforeSendTransaction`. Both drop anything from automation (`navigator.webdriver`) and from a
+  page served by a local or CI stack (`isLocalStack`); `beforeSend` logs the
+  `[Exception for Sentry]` console line first, which the Playwright fixtures allow.
 - `iznik-nuxt3/composables/useSuppressException.js`: rules that look at frames.
   `thrownByThirdParty` drops an error thrown inside a vendor script (Google sign-in, ad scripts,
-  extensions, in-app browser bridges). It tests only the frame the error was thrown from, so an
-  error in our code that passes through a vendor script is still reported.
+  extensions, in-app browser bridges). It tests only the frame the error itself was thrown from,
+  not any cause it wraps, so an error in our code that passes through or wraps a vendor error is
+  still reported.
 
 Every rule carries the Sentry issue it answers and the evidence that it is not ours. A rule
 without that evidence is how a real fault gets hidden: do not add one on a hunch.

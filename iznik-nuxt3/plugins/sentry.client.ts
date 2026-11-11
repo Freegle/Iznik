@@ -129,7 +129,9 @@ export default defineNuxtPlugin((nuxtApp) => {
 
           // Something cancelled on purpose: an ad video paused or ended before
           // it played, or a request aborted by whoever started it. Not a fault
-          // in itself, and these come with no frames to say whose it was.
+          // in itself, and these come with no frames to say whose it was; the
+          // breadcrumbs before them are the IMA and GPT ad scripts, and there is
+          // no .play() in our code. About 90 events in the 14 days to 2026-11-11.
           /The play\(\) request was interrupted/,
           'signal is aborted without reason',
           'The operation was aborted',
@@ -150,6 +152,15 @@ export default defineNuxtPlugin((nuxtApp) => {
         debug: config.public.SENTRY_ENABLE_DEBUG || false, // Enable debug mode
         environment: config.public.ENVIRONMENT || 'dev', // Set environment
         // The following enables exceptions to be logged to console despite logErrors being set to false (preventing them from being passed to the default Vue err handler)
+        // Performance data from automation or a local stack is no more ours to
+        // keep than its errors.
+        beforeSendTransaction(event) {
+          if (window.navigator.webdriver || isLocalStack(window.location)) {
+            return null
+          }
+
+          return event
+        },
         beforeSend(event, hint) {
           if (useMiscStore()?.unloading) {
             // All network requests are aborted during unload, and so we'll get spurious errors.  Ignore them.

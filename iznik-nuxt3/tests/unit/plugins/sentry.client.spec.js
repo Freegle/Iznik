@@ -338,4 +338,29 @@ describe('plugins/sentry.client', () => {
       expect(await ignored(message)).toBe(false)
     })
   })
+
+  describe('beforeSendTransaction', () => {
+    afterEach(() => {
+      isLocalStackMock.mockReturnValue(false)
+      delete window.navigator.webdriver
+    })
+
+    it('drops performance data from a local stack and from automation', async () => {
+      await runPlugin()
+      const { beforeSendTransaction } = mockInit.mock.calls[0][0]
+      const transaction = { type: 'transaction' }
+
+      expect(beforeSendTransaction(transaction)).toBe(transaction)
+
+      isLocalStackMock.mockReturnValue(true)
+      expect(beforeSendTransaction(transaction)).toBeNull()
+
+      isLocalStackMock.mockReturnValue(false)
+      Object.defineProperty(window.navigator, 'webdriver', {
+        value: true,
+        configurable: true,
+      })
+      expect(beforeSendTransaction(transaction)).toBeNull()
+    })
+  })
 })

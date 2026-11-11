@@ -17,6 +17,12 @@ describe('sentryEnvironment', () => {
     ).toBe('dev')
   })
 
+  it('labels a local debug build of the app (APP_ENV=debug) dev', () => {
+    expect(
+      sentryEnvironment({ APP_ENV: 'debug', NODE_ENV: 'production' })
+    ).toBe('dev')
+  })
+
   it('labels a web build on CI ci', () => {
     expect(
       sentryEnvironment({ CIRCLECI: 'true', NODE_ENV: 'production' })
