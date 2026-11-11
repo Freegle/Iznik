@@ -26,6 +26,9 @@ function severalCommunities(groupids) {
   return groupids ? [groupids] : []
 }
 
+// The most ids one markchecked request may name (maxMarkCheckedIDs in the Go API).
+const MARK_CHECKED_BATCH = 1000
+
 export const useMessageStore = defineStore('message', {
   state: () => ({
     list: {},
@@ -767,10 +770,24 @@ export const useMessageStore = defineStore('message', {
       return fetched.filter((id) => id !== null)
     },
     // Mark auto-published posts as reviewed by a moderator, clearing them from
-    // the Check oversight queue. Returns the number marked.
+    // the Check oversight queue. Returns the number marked. The server takes at most
+    // MARK_CHECKED_BATCH ids in one request, so a longer list goes in batches.
     async markChecked(params) {
-      const data = await api(this.config).message.markChecked(params)
-      return data?.checked ?? 0
+      const ids = params?.ids || []
+      if (ids.length <= MARK_CHECKED_BATCH) {
+        const data = await api(this.config).message.markChecked(params)
+        return data?.checked ?? 0
+      }
+
+      let checked = 0
+      for (let i = 0; i < ids.length; i += MARK_CHECKED_BATCH) {
+        const data = await api(this.config).message.markChecked({
+          ...params,
+          ids: ids.slice(i, i + MARK_CHECKED_BATCH),
+        })
+        checked += data?.checked ?? 0
+      }
+      return checked
     },
 
     // One card's "Checked": the post leaves the Check queue, and the card leaves the list.

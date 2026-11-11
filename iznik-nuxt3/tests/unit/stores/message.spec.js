@@ -974,6 +974,43 @@ describe('message store - rejectFromOversight()', () => {
   })
 })
 
+// The server refuses more than 1000 ids in one request.
+describe('message store - markChecked()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('sends a short list in one request', async () => {
+    const store = useMessageStore()
+    store.config = {}
+    mockMarkChecked.mockResolvedValue({ success: true, checked: 2 })
+
+    expect(await store.markChecked({ groupid: 3, ids: [1, 2] })).toBe(2)
+    expect(mockMarkChecked).toHaveBeenCalledTimes(1)
+    expect(mockMarkChecked).toHaveBeenCalledWith({ groupid: 3, ids: [1, 2] })
+  })
+
+  it('sends a long list in batches of 1000 and adds up the counts', async () => {
+    const store = useMessageStore()
+    store.config = {}
+    const ids = Array.from({ length: 2300 }, (_, i) => i + 1)
+    mockMarkChecked.mockImplementation((params) =>
+      Promise.resolve({ success: true, checked: params.ids.length })
+    )
+
+    expect(await store.markChecked({ groupid: 3, ids })).toBe(2300)
+    expect(mockMarkChecked).toHaveBeenCalledTimes(3)
+    expect(mockMarkChecked.mock.calls.map((c) => c[0].ids.length)).toEqual([
+      1000, 1000, 300,
+    ])
+    expect(mockMarkChecked.mock.calls[2][0]).toEqual({
+      groupid: 3,
+      ids: ids.slice(2000),
+    })
+  })
+})
+
 // One card's "Checked": the post leaves the Check queue, and so does the card.
 describe('message store - markCheckedPost()', () => {
   beforeEach(() => {
