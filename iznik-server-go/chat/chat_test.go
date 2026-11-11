@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
@@ -345,4 +346,19 @@ func TestGetSnippetCompletedWordingFollowsPostType(t *testing.T) {
 	assert.Equal(t, "Item is no longer available", getSnippet(utils.CHAT_MESSAGE_COMPLETED, "", utils.OFFER))
 	assert.Equal(t, "No longer looking for this", getSnippet(utils.CHAT_MESSAGE_COMPLETED, "", utils.WANTED))
 	assert.Equal(t, "Thanks", getSnippet(utils.CHAT_MESSAGE_COMPLETED, "Thanks", utils.WANTED))
+}
+
+// A member whose name is split across firstname and lastname (fullname NULL) still
+// gets a chat name, and reading the NULL does not raise a scan error.
+func TestGetChatNameFallsBackToFirstAndLastName(t *testing.T) {
+	db := database.DBConn
+
+	row := map[string]interface{}{"firstname": "Pat", "lastname": "Example", "added": gorm.Expr("NOW()")}
+	require.NoError(t, db.Table("users").Create(row).Error)
+	otherID, _ := row["@id"].(int64)
+	require.NotZero(t, otherID)
+	t.Cleanup(func() { db.Exec("DELETE FROM users WHERE id = ?", otherID) })
+
+	name := getChatName(db, utils.CHAT_TYPE_USER2USER, 0, uint64(otherID), 1, 1)
+	assert.Equal(t, "Pat Example", name)
 }

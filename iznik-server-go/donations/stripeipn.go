@@ -221,7 +221,7 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 	// Get user name and email for the matched user.
 	if userID > 0 {
 		gdb.Table("users_emails").Select("email").Where("userid = ?", userID).Order("preferred DESC").Limit(1).Scan(&userEmail)
-		gdb.Table("users").Select("fullname").Where("id = ?", userID).Scan(&userName)
+		gdb.Table("users").Select("COALESCE(fullname, NULLIF(CONCAT_WS(' ', firstname, lastname), ''), '')").Where("id = ?", userID).Scan(&userName)
 		log.Printf("[StripeIPN] User %d: name=%s email=%s", userID, userName, userEmail)
 	} else {
 		// Use billing details as fallback.

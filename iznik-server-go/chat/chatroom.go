@@ -2208,7 +2208,7 @@ func getChatName(db *gorm.DB, chattype string, groupid uint64, user1 uint64, use
 		}
 		if otheruid > 0 {
 			var fullname string
-			db.Table("users").Select("fullname").Where("id = ?", otheruid).Scan(&fullname)
+			db.Table("users").Select("COALESCE(fullname, NULLIF(CONCAT_WS(' ', firstname, lastname), ''), '')").Where("id = ?", otheruid).Scan(&fullname)
 			if fullname != "" {
 				return fullname
 			}

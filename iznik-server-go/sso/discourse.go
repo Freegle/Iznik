@@ -224,7 +224,7 @@ func moderatorDetails(userID uint64, systemrole string) *ssoSession {
 	db.Table("users_emails").Select("email").Where("userid = ?", userID).Order("preferred DESC").Limit(1).Scan(&email)
 
 	var profileURL string
-	db.Table("users_images").Select("url").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&profileURL)
+	db.Table("users_images").Select("COALESCE(url, '')").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&profileURL)
 
 	// Get group list - try active mod groups first, fall back to all moderatorships.
 	groupList := getModGroupList(userID)
