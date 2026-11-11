@@ -23,6 +23,7 @@ class TrainPromiseClassifierCommand extends Command
         {--csv=storage/promise/dataset.csv : Path to training CSV}
         {--test-fraction=0.2 : Fraction of rooms for test set}
         {--threshold=0.5 : Classification threshold for evaluation}
+        {--seed=42 : Seed for the room split, so a rerun gives the same test rooms}
         {--out=storage/promise : Output directory for model and report}
     ';
 
@@ -38,11 +39,17 @@ class TrainPromiseClassifierCommand extends Command
         $csvPath = $this->option('csv');
         $testFraction = (float)$this->option('test-fraction');
         $threshold = (float)$this->option('threshold');
+        $seed = (int)$this->option('seed');
         $outDir = $this->option('out');
 
-        // Ensure output directory exists
+        if ($testFraction <= 0.0 || $testFraction >= 1.0) {
+            $this->error('--test-fraction must be above 0 and below 1');
+            return Command::FAILURE;
+        }
+
+        // The model and report hold fragments of member chat text: batch user only.
         if (!is_dir($outDir)) {
-            mkdir($outDir, 0755, true);
+            mkdir($outDir, 0700, true);
         }
 
         try {
@@ -54,7 +61,8 @@ class TrainPromiseClassifierCommand extends Command
             $this->info('Splitting by room_id...');
             [$trainDataset, $testDataset] = $this->splitByRoom(
                 $dataset,
-                $testFraction
+                $testFraction,
+                $seed
             );
 
             $this->info(sprintf(
@@ -89,10 +97,12 @@ class TrainPromiseClassifierCommand extends Command
                 samples: array_map(fn ($s) => [$s], $testDataset['samples'])
             );
 
-            $predictions = array_map('intval', $pipeline->predict($testRubixDataset));
-
             // Real positive-class probabilities from the logistic regression.
             $probaClass1 = $pipeline->probaPositive($testRubixDataset);
+
+            // Hard predictions at the same threshold as the metrics, so the error examples
+            // below describe the confusion matrix that is printed next to them.
+            $predictions = array_map(fn($p) => $p >= $threshold ? 1 : 0, $probaClass1);
 
             // Evaluate
             $evaluator = new Evaluator();
@@ -113,9 +123,12 @@ class TrainPromiseClassifierCommand extends Command
             $missCount = 0;
             $totalRooms = 0;
 
-            $uniqueRooms = array_unique($testDataset['groups']);
-            foreach ($uniqueRooms as $roomId) {
-                $indices = array_keys($testDataset['groups'], $roomId);
+            $indicesByRoom = [];
+            foreach ($testDataset['groups'] as $i => $roomId) {
+                $indicesByRoom[$roomId][] = $i;
+            }
+
+            foreach ($indicesByRoom as $indices) {
                 $roomEndTurns = array_map(fn($i) => $testDataset['endTurns'][$i], $indices);
                 $roomProba = array_map(fn($i) => $probaClass1[$i], $indices);
                 $actualPromiseTurn = $testDataset['promiseTurns'][$indices[0]]; // Same for all turns in room
@@ -181,10 +194,12 @@ class TrainPromiseClassifierCommand extends Command
                 'train_set_size' => count($trainDataset['samples']),
             ];
 
+            $reportPath = $outDir . '/report.json';
             file_put_contents(
-                $outDir . '/report.json',
+                $reportPath,
                 json_encode($reportData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
             );
+            chmod($reportPath, 0600);
 
             $this->info("Report saved to: $outDir/report.json");
 
@@ -192,6 +207,7 @@ class TrainPromiseClassifierCommand extends Command
             $this->info('Persisting model...');
             $modelPath = $outDir . '/model.phpser';
             $pipeline->save($modelPath);
+            chmod($modelPath, 0600);
 
             $this->info("Model saved to: $modelPath");
 
@@ -208,13 +224,24 @@ class TrainPromiseClassifierCommand extends Command
      *
      * @return array<array{samples: string[], labels: int[], groups: int[], endTurns: int[], promiseTurns: int[], postTypes: string[]}>
      */
-    private function splitByRoom(array $dataset, float $testFraction): array
+    private function splitByRoom(array $dataset, float $testFraction, int $seed): array
     {
-        $uniqueRooms = array_unique($dataset['groups']);
+        // Sorted, then shuffled from a fixed seed: the same CSV and seed give the same split.
+        $uniqueRooms = array_values(array_unique($dataset['groups']));
+        sort($uniqueRooms);
+        mt_srand($seed);
         shuffle($uniqueRooms);
 
         $testCount = (int)ceil(count($uniqueRooms) * $testFraction);
-        $testRooms = array_slice($uniqueRooms, 0, $testCount);
+        if ($testCount < 1 || $testCount >= count($uniqueRooms)) {
+            throw new \RuntimeException(sprintf(
+                'Cannot split %d rooms with --test-fraction=%s: the train and test sets must both have rooms',
+                count($uniqueRooms),
+                $testFraction
+            ));
+        }
+
+        $testRooms = array_flip(array_slice($uniqueRooms, 0, $testCount));
 
         $trainSamples = [];
         $trainLabels = [];
@@ -231,7 +258,7 @@ class TrainPromiseClassifierCommand extends Command
         $testPostTypes = [];
 
         foreach ($dataset['groups'] as $i => $roomId) {
-            if (in_array($roomId, $testRooms, true)) {
+            if (isset($testRooms[$roomId])) {
                 $testSamples[] = $dataset['samples'][$i];
                 $testLabels[] = $dataset['labels'][$i];
                 $testGroups[] = $dataset['groups'][$i];

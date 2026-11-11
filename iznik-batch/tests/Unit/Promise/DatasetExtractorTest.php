@@ -198,6 +198,43 @@ class DatasetExtractorTest extends TestCase
         $this->assertLessThanOrEqual(2, $negatives->count());
     }
 
+    public function test_cap_keeps_negatives_nearest_the_promise()
+    {
+        $messages = [];
+        foreach (range(0, 6) as $i) {
+            $messages[] = ['type' => 'Default', 'role' => $i % 2 ? 'GIVER' : 'TAKER', 'text' => "Turn $i"];
+        }
+        $messages[] = ['type' => 'Promised', 'role' => 'GIVER', 'text' => ''];
+        $messages[] = ['type' => 'Default', 'role' => 'TAKER', 'text' => 'Turn 7'];
+
+        $rows = $this->extractor->extractRoom(
+            roomId: 140,
+            postType: 'Offer',
+            messages: $messages,
+            opts: ['window' => 8, 'tolerance' => 0, 'negativesPerRoom' => 2]
+        );
+
+        $negativeTurns = collect($rows)->filter(fn($r) => $r['label'] === 0)->pluck('end_turn')->sort()->values()->all();
+        $this->assertSame([4, 5], $negativeTurns);
+    }
+
+    public function test_cap_samples_evenly_when_there_is_no_promise()
+    {
+        $messages = [];
+        foreach (range(0, 4) as $i) {
+            $messages[] = ['type' => 'Default', 'role' => $i % 2 ? 'GIVER' : 'TAKER', 'text' => "Turn $i"];
+        }
+
+        $rows = $this->extractor->extractRoom(
+            roomId: 141,
+            postType: 'Offer',
+            messages: $messages,
+            opts: ['window' => 8, 'tolerance' => 1, 'negativesPerRoom' => 2]
+        );
+
+        $turns = collect($rows)->pluck('end_turn')->sort()->values()->all();
+        $this->assertSame([0, 2], $turns);
+    }
     public function test_positives_never_dropped_by_cap()
     {
         $messages = [

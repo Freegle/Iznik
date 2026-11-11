@@ -118,9 +118,20 @@ class DatasetExtractor
             // Keep all positives
             $kept = $positives;
 
-            // Cap negatives, keeping those closest to promise or evenly sampled
+            // Cap negatives. With a promise, keep the ones nearest it (the hard cases);
+            // with none, sample evenly across the room.
+            $negatives = array_values($negatives);
             if (count($negatives) > $negativesPerRoom) {
-                $negatives = array_slice($negatives, 0, $negativesPerRoom);
+                if ($promiseTurn >= 0) {
+                    $negatives = array_slice($negatives, -$negativesPerRoom);
+                } else {
+                    $total = count($negatives);
+                    $picked = [];
+                    for ($k = 0; $k < $negativesPerRoom; $k++) {
+                        $picked[] = $negatives[intdiv($k * $total, $negativesPerRoom)];
+                    }
+                    $negatives = $picked;
+                }
             }
 
             $rows = array_merge($kept, $negatives);
