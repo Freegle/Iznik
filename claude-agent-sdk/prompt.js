@@ -7,6 +7,25 @@
  * mysql2, so nothing that lives there can be unit-tested that way.
  */
 
+// The two reply-style rules, shared with the support first pass (first-pass-prompt.js), so a draft
+// written there sounds the same as one written here.
+const REPLY_VOICE =
+  `- **A suggested reply must sound like a kind, capable volunteer wrote it, not like software.** Start with a ` +
+  `friendly greeting ("Hi" or "Hello" and their name if you have it) and a short, warm line that shows you ` +
+  `understood what happened to them. Use short sentences, plain everyday words and contractions ("we've", ` +
+  `"you'll"). Say sorry once if something went wrong on our side, without grovelling. Say what to do next in ` +
+  `one or two clear steps. Sign off "Thanks, and best wishes" with a first name only if the volunteer gave one. ` +
+  `Never use corporate or AI phrasing ("I hope this message finds you well", "I understand your frustration", ` +
+  `"please be advised", "rest assured", "I apologise for any inconvenience"), no bullet-point walls, no bold, ` +
+  `no idioms, and no em dashes. Keep it under about 120 words unless the problem genuinely needs more.\n`
+
+const REPLY_EVIDENCE =
+  `- **Only say what you have checked.** Every fact in a suggested reply (what happened, when, what we found, what ` +
+  `a page or button does, what we will do) must come from the data or code you actually looked at. Do not promise ` +
+  `a fix, a date or a refund. If you could not confirm something, leave it out or ask the member a question ` +
+  `instead. A second review pass checks your draft against your evidence, so write nothing you could not defend.\n`
+
+
 function systemPrompt(userId, codebase) {
   const member = userId
     ? `\n\n## The member under investigation\n` +
@@ -53,6 +72,9 @@ function systemPrompt(userId, codebase) {
     `In testing this repeatedly found the real cause faster than live guesswork.\n` +
     `- **git_fixed_already** — date-aware history check for a suspect path.\n` +
     `- **Read / Grep / Glob** — read the code at ${codebase} to understand how a feature actually behaves before guessing.\n` +
+    `\n**Run independent checks together.** When several lookups do not depend on each other's results (a few ` +
+    `query_dump queries, a Sentry search, a Grep of the code), make all of those tool calls in the same turn rather ` +
+    `than one per turn. The volunteer is waiting, and each extra turn adds seconds.\n` +
     `\n## Playbook (common cases)\n` +
     `- **"Oh dear, something went wrong"** has two surfaces. Full-page (Nuxt error.vue) → Sentry tag ` +
     `\`source:error-page-mount\` or the SSR stderr line "SSR error on <method> <url>". Toast (SomethingWentWrong.vue) ` +
@@ -126,8 +148,41 @@ function systemPrompt(userId, codebase) {
     `never the third person ("she hasn't"), and use no internal names (tables, files, tools). Put the draft under a ` +
     `**Suggested reply** heading, in a blockquote, so it can be copied out as-is, and keep the analysis for the ` +
     `volunteer outside it.\n` +
+    REPLY_VOICE +
+    REPLY_EVIDENCE +
+    `- **Links and instructions in a reply must be real.** Before putting a www.ilovefreegle.org link in a reply, ` +
+    `find its page under iznik-nuxt3/pages (Glob it: /volunteering/<id> is pages/volunteering/[[id]].vue). If there ` +
+    `is none, say where to go in words you have checked in the code. Never name a page, tab or button you have not ` +
+    `seen in the code. Links that match no page are flagged under your answer.\n` +
     `- If the data genuinely isn't logged, say so plainly rather than guessing.`
   )
 }
 
-module.exports = { systemPrompt }
+/**
+ * The follow-up turn that fact-checks a draft before the volunteer sees it. It runs in the same
+ * session, so the model still has every tool result it relied on, and may query again.
+ */
+function reviewPrompt() {
+  return (
+    'REVIEW PASS. Before this goes to the volunteer, check the **Suggested reply** in your last answer.\n\n' +
+    '1. List each factual claim in the reply: what happened to the member, dates and times, what the data or ' +
+    'logs showed, what a page, button or setting does, links, and anything promised.\n' +
+    '2. For each claim, confirm it against what your tools returned in this investigation (query again if you ' +
+    'are not sure). A claim you cannot support must be removed, or turned into a question to the member.\n' +
+    '3. Remove any promise of a fix, a date or a refund that nobody has agreed. Remove internal names.\n' +
+    '4. Read it as the member would. It must sound like a kind, capable volunteer: friendly greeting, short ' +
+    'sentences, plain words, contractions, no corporate or AI phrasing, no em dashes, no idioms. Rewrite it if it ' +
+    'does not.\n\n' +
+    'Then give the COMPLETE final answer again in the same shape as before (your analysis for the volunteer, then ' +
+    'the corrected **Suggested reply** in a blockquote), followed by a short **Fact check** section: one line per ' +
+    'claim you checked, saying what supported it, plus a line for each claim you removed or changed and why. Do ' +
+    'not mention this review pass anywhere else.'
+  )
+}
+
+module.exports = { systemPrompt, reviewPrompt, hasSuggestedReply, REPLY_VOICE, REPLY_EVIDENCE }
+
+/** True when an answer contains a draft reply worth fact-checking. */
+function hasSuggestedReply(text) {
+  return /suggested reply/i.test(String(text || ''))
+}

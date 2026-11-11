@@ -12,6 +12,7 @@ import {
   prewarmRoadDistances,
   roadAnswersVersion,
 } from '~/composables/useDriveDistance'
+import { ROLE_MODERATOR, ROLE_OWNER } from '~/constants'
 
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
@@ -33,6 +34,10 @@ export const useMessageStore = defineStore('message', {
     // ModTools Check queue: posts a moderator pulled back to Pending from there. They stay
     // in the Check list, now showing as Pending, so the moderator acts on them in place.
     pulledBack: {},
+    // Ids whose last fetch failed for a reason other than "not found" (an API error or
+    // timeout). A batch fetch resolves with nothing either way, so this is how a caller
+    // tells "this post does not exist" from "we could not reach the API just now".
+    fetchFailed: {},
 
     // Count of unseen items
     count: 0,
@@ -232,6 +237,10 @@ export const useMessageStore = defineStore('message', {
           try {
             const msgs = await batchPromise
 
+            chunk.forEach((id) => {
+              delete this.fetchFailed[id]
+            })
+
             if (msgs && msgs.forEach) {
               msgs.forEach((msg) => {
                 this.list[msg.id] = msg
@@ -260,7 +269,13 @@ export const useMessageStore = defineStore('message', {
             console.log('Failed to fetch messages', e)
             if (e instanceof APIError && e.response.status === 404) {
               console.log('Ignore 404 error')
+              chunk.forEach((id) => {
+                delete this.fetchFailed[id]
+              })
             } else {
+              chunk.forEach((id) => {
+                this.fetchFailed[id] = true
+              })
               throw e
             }
           } finally {
@@ -418,6 +433,22 @@ export const useMessageStore = defineStore('message', {
       )
       const message = await this.fetch(id, true)
       this.list[id] = message
+      return data
+    },
+    // Owner/mod: mark one item TAKEN or undo that, then refetch.
+    async bulkItemAvailable(id, bulkitemid, available) {
+      const data = await api(this.config).message.bulkItemAvailable(
+        id,
+        bulkitemid,
+        available
+      )
+      this.list[id] = await this.fetch(id, true)
+      return data
+    },
+    // Owner/mod: undo an automatic split, then refetch.
+    async autoSplitUndo(id) {
+      const data = await api(this.config).message.autoSplitUndo(id)
+      this.list[id] = await this.fetch(id, true)
       return data
     },
     // Offerer/mod: change the state of one interest row, then refetch.
@@ -902,7 +933,7 @@ export const useMessageStore = defineStore('message', {
       const authStore = useAuthStore()
       const moderates = (g) =>
         typeof authStore?.member !== 'function' ||
-        ['Moderator', 'Owner'].includes(authStore.member(g.groupid))
+        [ROLE_MODERATOR, ROLE_OWNER].includes(authStore.member(g.groupid))
       const myid = parseInt(authStore?.user?.id)
       const leftAlone = (g) => {
         if (!severalCommunities) return false

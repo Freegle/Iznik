@@ -50,7 +50,7 @@ class VolunteeringMaintenanceService
      *
      * Ports the legacy V1 PHP Volunteering::askRenew(): for opportunities with no end
      * date, not deleted, not expired, added more than ASK_AGE days ago and not
-     * renewed within the last ASK_AGE days, email the owner.
+     * renewed within the last ASK_AGE days, email the owner (one email per owner listing all their due opportunities).
      *
      * DELIBERATE IMPROVEMENT over V1: we stamp askedtorenew = NOW() after asking
      * and gate the query on it, so a daily schedule asks ONCE per renewal cycle
@@ -84,7 +84,8 @@ class VolunteeringMaintenanceService
             ->distinct()
             ->pluck('volunteering.id');
 
-        $count = 0;
+        // One email per owner per run, listing every opportunity of theirs that is due.
+        $byOwner = [];
 
         foreach ($ids as $volId) {
             $vol = Volunteering::find($volId);
@@ -94,36 +95,46 @@ class VolunteeringMaintenanceService
 
             // V1 only mails when the owning user still exists and has an address.
             $user = $vol->userid ? User::find($vol->userid) : null;
-            if (!$user) {
+            if (!$user || !$user->email_preferred) {
+                continue;
+            }
+
+            $byOwner[$user->id]['user'] = $user;
+            $byOwner[$user->id]['vols'][] = $vol;
+        }
+
+        $count = 0;
+
+        foreach ($byOwner as $owner) {
+            $user = $owner['user'];
+            $vols = $owner['vols'];
+
+            if ($dryRun) {
+                $count += count($vols);
                 continue;
             }
 
             $email = $user->email_preferred;
-            if (!$email) {
-                continue;
-            }
-
-            if ($dryRun) {
-                $count++;
-                continue;
-            }
-
-            $url = $user->loginLink('/volunteering/' . $volId, self::LOGIN_SRC);
 
             try {
+                $opportunities = array_map(fn ($vol) => [
+                    'id' => (int) $vol->id,
+                    'title' => (string) $vol->title,
+                    'groupName' => $this->groupNameFor((int) $vol->id),
+                    'renewUrl' => $user->loginLink('/volunteering/' . $vol->id, self::LOGIN_SRC),
+                ], $vols);
+
                 app(EmailSpoolerService::class)->spool(new VolunteeringRenewMail(
                     recipientEmail: $email,
-                    title: (string) $vol->title,
-                    renewUrl: $url,
-                    groupName: $this->groupNameFor((int) $volId),
+                    opportunities: $opportunities,
                     userId: (int) $user->id,
                 ), $email);
             } catch (\Throwable $e) {
                 // spool() re-throws transient render/build errors; one bad
                 // recipient must not abort the whole run. askedtorenew is left
-                // unstamped so this opportunity is retried next run.
+                // unstamped so these opportunities are retried next run.
                 Log::warning('Skipping volunteering renewal ask after spool failure; continuing', [
-                    'volunteering_id' => $volId,
+                    'volunteering_ids' => array_map(fn ($vol) => $vol->id, $vols),
                     'user_id' => $user->id,
                     'error' => $e->getMessage(),
                 ]);
@@ -131,9 +142,11 @@ class VolunteeringMaintenanceService
             }
 
             // Eloquent save() (not a bulk UPDATE) so model events fire for Auditing.
-            $vol->askedtorenew = now();
-            $vol->save();
-            $count++;
+            foreach ($vols as $vol) {
+                $vol->askedtorenew = now();
+                $vol->save();
+                $count++;
+            }
         }
 
         return $count;

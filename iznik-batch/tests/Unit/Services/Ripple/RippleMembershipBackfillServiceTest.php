@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Models\Membership;
 use App\Services\Ripple\RippleMembershipBackfillService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -21,7 +22,7 @@ class RippleMembershipBackfillServiceTest extends TestCase
         $group = $this->createTestGroup();
 
         DB::table('memberships')->insert([
-            'userid' => $user->id, 'groupid' => $group->id, 'role' => 'Member',
+            'userid' => $user->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => -1, 'rippled' => 0, 'added' => now(),
         ]);
         DB::table('logs')->insert([
@@ -46,6 +47,7 @@ class RippleMembershipBackfillServiceTest extends TestCase
         // Nothing actually changed.
         $m = DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)->first();
         $this->assertSame(0, (int) $m->rippled, 'dry run does not flag');
+        $this->assertSame(0, (int) $m->implicit, 'dry run does not flag implicit');
         $this->assertSame(-1, (int) $m->emailfrequency, 'dry run does not downgrade');
         $this->assertFalse(
             DB::table('logs')->where('user', $userId)->where('type', 'User')
@@ -63,6 +65,7 @@ class RippleMembershipBackfillServiceTest extends TestCase
 
         $m = DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)->first();
         $this->assertSame(1, (int) $m->rippled, 'membership flagged rippled=1');
+        $this->assertSame(1, (int) $m->implicit, 'and implicit=1 with it');
         $this->assertSame(24, (int) $m->emailfrequency, 'immediate downgraded to daily');
         $this->assertSame(
             1,
@@ -93,7 +96,7 @@ class RippleMembershipBackfillServiceTest extends TestCase
         DB::table('groups')->where('id', $group->id)
             ->update(['onhere' => 1, 'welcomemail' => 'Welcome to our community!']);
         DB::table('memberships')->insert([
-            'userid' => $user->id, 'groupid' => $group->id, 'role' => 'Member',
+            'userid' => $user->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved', 'emailfrequency' => -1, 'rippled' => 0, 'added' => now(),
         ]);
         DB::table('logs')->insert([
@@ -132,6 +135,66 @@ class RippleMembershipBackfillServiceTest extends TestCase
         $this->assertSame(0, $stats['flagged']);
         $this->assertSame(0, (int) DB::table('memberships')
             ->where('userid', $userId)->where('groupid', $groupId)->value('rippled'));
+    }
+
+    public function test_a_member_who_left_and_joined_by_hand_is_not_flagged(): void
+    {
+        // Rippled in, left, and joined again themselves: the current row is the later join.
+        [$userId, $groupId] = $this->seedPreMitigationRippledMember();
+        DB::table('logs')->insert([
+            'timestamp' => now(), 'type' => 'Group', 'subtype' => 'Joined',
+            'user' => $userId, 'groupid' => $groupId, 'byuser' => $userId, 'text' => 'Manual',
+        ]);
+
+        $stats = $this->service()->backfill($userId, 0, send: true);
+
+        $this->assertSame(0, $stats['flagged']);
+        $this->assertSame(0, (int) DB::table('memberships')
+            ->where('userid', $userId)->where('groupid', $groupId)->value('rippled'));
+    }
+
+    public function test_a_flagged_membership_is_given_the_rippled_origin(): void
+    {
+        [$userId, $groupId] = $this->seedPreMitigationRippledMember();
+
+        $this->service()->backfill($userId, 0, send: true);
+
+        $this->assertSame('rippled', DB::table('memberships')
+            ->where('userid', $userId)->where('groupid', $groupId)->value('added_origin'));
+    }
+
+    /**
+     * A row whose origin is known and is not rippled was made some other way since the Rippled
+     * log, by a path that writes no join log (a moderator command, a group move). Its origin
+     * is kept, and it is not flagged.
+     */
+    public function test_a_membership_with_a_known_other_origin_is_left_alone(): void
+    {
+        foreach ([Membership::ADDED_ORIGIN_MODERATOR, Membership::ADDED_ORIGIN_MANUAL] as $origin) {
+            [$userId, $groupId] = $this->seedPreMitigationRippledMember();
+            DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)
+                ->update(['added_origin' => $origin]);
+
+            $stats = $this->service()->backfill($userId, 0, send: true);
+
+            $this->assertSame(0, $stats['flagged'], $origin);
+            $m = DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)->first();
+            $this->assertSame($origin, $m->added_origin);
+            $this->assertSame([0, 0, -1], [(int) $m->rippled, (int) $m->implicit, (int) $m->emailfrequency], $origin);
+        }
+    }
+
+    public function test_an_unknown_origin_is_still_flagged(): void
+    {
+        [$userId, $groupId] = $this->seedPreMitigationRippledMember();
+        DB::table('memberships')->where('userid', $userId)->where('groupid', $groupId)
+            ->update(['added_origin' => Membership::ADDED_ORIGIN_UNKNOWN]);
+
+        $stats = $this->service()->backfill($userId, 0, send: true);
+
+        $this->assertSame(1, $stats['flagged']);
+        $this->assertSame(Membership::ADDED_ORIGIN_RIPPLED, DB::table('memberships')
+            ->where('userid', $userId)->where('groupid', $groupId)->value('added_origin'));
     }
 
     public function test_user_filter_restricts_scope(): void

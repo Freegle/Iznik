@@ -236,6 +236,9 @@ class AutoRepostService
                                 userName: $user->displayname,
                                 userEmail: $user->email_preferred,
                                 groupId: $group->id,
+                                repostDate: $msg->arrival
+                                    ? \Illuminate\Support\Carbon::parse($msg->arrival)->addDays($interval)->toDateString()
+                                    : null,
                             ));
                         }
                     }

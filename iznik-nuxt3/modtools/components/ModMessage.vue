@@ -638,15 +638,26 @@
                 </span>
               </div>
               <NoticeMessage v-if="isBulk" variant="info" class="mb-2">
-                <strong>
+                <strong v-if="isSplit" data-testid="autosplit-banner">
+                  <v-icon icon="list" /> Split automatically into
+                  {{ message.bulkcount }} items.
+                </strong>
+                <strong v-else>
                   <v-icon icon="boxes-stacked" /> Bulk clearance —
                   {{ message.bulkcount }} item{{
                     message.bulkcount === 1 ? '' : 's'
                   }}.
                 </strong>
-                This is a single post on the group, but when a member opens it
-                they can see each item and turn on the ones they'd like (and how
-                many).
+                <template v-if="isSplit">
+                  The member posted these as one post and Freegle listed them
+                  separately, so people can say which they want. The member can
+                  undo it.
+                </template>
+                <template v-else>
+                  This is a single post on the group, but when a member opens it
+                  they can see each item and turn on the ones they'd like (and
+                  how many).
+                </template>
                 <b-button
                   variant="link"
                   class="p-0 ms-1 align-baseline"
@@ -723,7 +734,7 @@
                 <NoticeMessage
                   v-if="
                     message.myrole === 'Non-member' ||
-                    message.myrole === 'Member'
+                    message.myrole === ROLE_MEMBER
                   "
                   variant="danger"
                   class="mb-2"
@@ -945,7 +956,7 @@ import { setupKeywords } from '~/composables/useKeywords'
 import { useMemberStore } from '~/stores/member'
 import { useModConfigStore } from '~/stores/modconfig'
 import { useMiscStore } from '~/stores/misc'
-import { SUBJECT_REGEX } from '~/constants'
+import { ROLE_MEMBER, SUBJECT_REGEX } from '~/constants'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
 import {
@@ -957,6 +968,7 @@ import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 import { useModGroupStore } from '@/stores/modgroup'
 
 import { twem } from '~/composables/useTwem'
+import { hasItemList, isAutoSplit } from '~/composables/useAutoSplit'
 import {
   isRippledInToContextGroup as isRippledIn,
   isHomeGroupRow,
@@ -1104,12 +1116,10 @@ const showEmailSourceModal = ref(false)
 const showSpamModal = ref(false)
 const showBulkPreview = ref(false)
 
-// A bulk "clearance" offer carries a structured catalogue of items.
-const isBulk = computed(
-  () =>
-    (message.value?.bulkcount || 0) > 0 ||
-    (message.value?.bulkitems?.length || 0) > 0
-)
+// A bulk "clearance" offer carries a structured catalogue of items, and so does an
+// ordinary post the server split into items (isSplit).
+const isBulk = computed(() => hasItemList(message.value))
+const isSplit = computed(() => isAutoSplit(message.value))
 const showMailSettings = ref(false)
 const showActions = ref(false)
 const showEmails = ref(false)

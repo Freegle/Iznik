@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
@@ -329,6 +330,10 @@ type Message struct {
 	// exposed so list/summary views can flag a bulk offer cheaply.
 	BulkItems []BulkItem `json:"bulkitems,omitempty" gorm:"-"`
 	Bulkcount int        `json:"bulkcount,omitempty" gorm:"-"`
+	// Autosplit is true when the item list was made by the auto-splitter from an
+	// ordinary member's post, not by a clearance: the post gets the item list and
+	// none of the clearance extras. docs/developers/reference/auto-split.md.
+	Autosplit bool `json:"autosplit,omitempty" gorm:"-"`
 	// Bulkslots are the offerer-defined collection windows a replier picks from.
 	Bulkslots []string `json:"bulkslots,omitempty" gorm:"-"`
 	// Accessinstructions is the offerer's private note (address / gate code /
@@ -642,8 +647,19 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// who load it here too, as well as for Support and Admin.
 				if len(messageGroups) > 0 && myid > 0 && (isMod || modOfAnyMessageGroup(db, myid, messageGroups)) {
 					messaging := PosterMessagingGroups(db, messageGroups[0].Msgid)
+
+					// A TrashNothing poster can be written to only by a community they chose
+					// and still belong to (modmessaging.ModsMayContact), as prepareModReply
+					// enforces.
+					var poster uint64
+					db.Table("messages").Select("fromuser").Where("id = ?", messageGroups[0].Msgid).Scan(&poster)
+					tnPoster := !auth.IsAdminOrSupport(myid) && modmessaging.IsTrashNothingMember(db, poster)
+
 					for i := range messageGroups {
 						can := NotifyPosterFlag(messaging, messageGroups[i].Groupid) == 1
+						if can && tnPoster {
+							can = modmessaging.HasChosenMembership(db, poster, messageGroups[i].Groupid)
+						}
 						messageGroups[i].CanMessagePoster = &can
 					}
 				}
@@ -689,6 +705,14 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// the "My Posts" replies + replycount, so it must gate too or the poster sees a held reply
 				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
 				// (no mod exemption), matching the #927 count-surface gates.
+				//
+				// A reply held for its sender's answer (the car seat question) is gated the same way and
+				// for the same reason: it is left unprocessed, which every surface that reads
+				// processingsuccessful already skips, and this list does not. utils.ReplyHeldByQuestionSQL
+				// is the gate every count of replies shares. It is out while its question is unanswered,
+				// including the three days before the batch drops it, and after a no or when the post has
+				// gone. After a yes it is listed, as any reply the batch has yet to deliver is, for the
+				// minute before the batch delivers it.
 				db.Table("chat_messages").
 					Select("DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
 						"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname").
@@ -698,6 +722,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					Where("refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
 						"AND reviewrequired = 0 AND reviewrejected = 0 "+
 						"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
+						"AND NOT "+utils.ReplyHeldByQuestionSQL("chat_messages")+" "+
 						"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ?",
 						id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).
 					Group("userid").
@@ -1077,6 +1102,11 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				canSeeInterest := message.Fromuser == myid || isGroupMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 				message.Bulkcount = len(message.BulkItems)
+				if message.Bulkcount > 0 {
+					message.Autosplit = isAutoSplit(db, message.ID)
+				}
+				// Crops are shown with their items, not again among the post's photos.
+				message.MessageAttachments = withoutCrops(message.MessageAttachments)
 
 				// Part gone: somebody has taken some. Read from the takers rather than
 				// from availablenow, which an ordinary post no longer maintains.
@@ -1319,8 +1349,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	return messages
 }
 
+// globalWorryWordsWhere selects the global keywords the display check scans: the fuzzy flag
+// keywords, plus every 'allowed' row whatever its match_mode. Whitelist phrases such as a place
+// name ('Gun Quarter') are stored as literal rows, and the PHP content check strips every allowed
+// row regardless of mode, so loading only fuzzy rows left a literal whitelist entry with no
+// effect here and the post's 'gun' flagged again.
+const globalWorryWordsWhere = "scope = 'global' AND (match_mode = 'fuzzy' OR category = 'allowed')"
+
 // checkWorryWords checks message subjects and textbodies against global concern
-// keywords (fuzzy match mode).  Matches are stored in Message.Worry.
+// keywords (fuzzy match mode, plus the allowed whitelist).  Matches are stored in Message.Worry.
 func checkWorryWords(db *gorm.DB, messages []Message) {
 	var globalWords []WorryWord
 	db.Table("concern_keywords").
@@ -1332,7 +1369,7 @@ func checkWorryWords(db *gorm.DB, messages []Message) {
 			"WHEN 'review' THEN 'Review' " +
 			"WHEN 'allowed' THEN 'Allowed' " +
 			"ELSE 'Review' END AS type").
-		Where("match_mode = 'fuzzy' AND scope = 'global'").
+		Where(globalWorryWordsWhere).
 		Scan(&globalWords)
 
 	// Collect unique group IDs from all messages so we can load group-specific
@@ -1446,8 +1483,14 @@ func matchesFuzzyToken(token, kw string) bool {
 		return false
 	}
 
-	// Reject initial-consonant swaps: "hangers" vs "bangers" differ only at
-	// position 0 and are a different word, not a typo.
+	// Reject single-letter substitutions: "meditation" vs "medication" or
+	// "hangers" vs "bangers" are different words, not typos. Insertions,
+	// deletions and transpositions are the typo shapes we still accept.
+	if isSingleSubstitution(token, kw) {
+		return false
+	}
+
+	// Reject initial-consonant swaps (different length, e.g. insert at 0).
 	minLen := tokLen
 	if kwLen < minLen {
 		minLen = kwLen
@@ -1459,6 +1502,22 @@ func matchesFuzzyToken(token, kw string) bool {
 	}
 
 	return true
+}
+
+// isSingleSubstitution reports whether the strings are the same length and
+// differ in exactly one position: a different word ("meditation" vs
+// "medication"), not a typo. Mirrors ContentCheckService::isSingleSubstitution.
+func isSingleSubstitution(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	diffs := 0
+	for i := 0; i < len(a); i++ {
+		if a[i] != b[i] {
+			diffs++
+		}
+	}
+	return diffs == 1
 }
 
 // matchWorryWords scans subject and textbody for worry word matches.
@@ -2733,12 +2792,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Notify freebiealerts.app about newly approved Offer posts.
-	// Clearance/bulk-offer posts are excluded — the concierge manages their
-	// fulfilment directly and freebiealerts.app is not the right channel for them.
+	// Clearances are excluded — the concierge manages their fulfilment directly and
+	// freebiealerts.app is not the right channel for them. An automatically split post
+	// is an ordinary Offer and goes.
 	var approvedMsgType string
 	db.Table("messages").Select("type").Where("id = ?", req.ID).Scan(&approvedMsgType)
 	var isClearance int64
-	db.Table("messages_bulk_items").Where("msgid = ?", req.ID).Count(&isClearance)
+	db.Table("messages").Where("messages.id = ?", req.ID).Where(utils.IsClearanceSQL("messages.id")).Count(&isClearance)
 	if approvedMsgType == "Offer" && isClearance == 0 {
 		if err := queue.QueueTask(queue.TaskFreebieAlertsAdd, map[string]interface{}{
 			"msgid": req.ID,
@@ -2895,8 +2955,9 @@ func modOfAnyMessageGroup(db *gorm.DB, myid uint64, groups []MessageGroup) bool 
 
 // PosterMessagingGroups is HomeGroups plus every community the post rippled into where its
 // poster is an ordinary member: one they joined, moved into, or dealt with, rather than
-// one rippling joined them to (memberships.rippled = 0). Those communities may write to
-// the poster about the post, as the home community may (Discourse 10239).
+// one rippling joined them to (memberships.rippled = 0) or TrashNothing placed them on
+// (implicit = 0). Those communities may write to the poster about the post, as the home
+// community may (Discourse 10239).
 //
 // Use it only for whether the poster is written to. Whether an action is a receiving
 // community turning the post away - which stops it rippling back - still goes by
@@ -2912,7 +2973,7 @@ func PosterMessagingGroups(db *gorm.DB, msgid uint64) map[uint64]bool {
 		Select("mg.groupid").
 		Joins("JOIN messages m ON m.id = mg.msgid").
 		Joins("JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
-			"AND mem.rippled = 0 AND mem.collection = ?", utils.COLLECTION_APPROVED).
+			"AND mem.rippled = 0 AND mem.implicit = 0 AND mem.collection = ?", utils.COLLECTION_APPROVED).
 		Where("mg.msgid = ? AND mg.rippled_in = 1", msgid).
 		Scan(&ordinary)
 
@@ -3741,17 +3802,13 @@ func handlePartnerConsent(c *fiber.Ctx, myid uint64, req PostMessageRequest) err
 func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
-	ctx := getMessageModContext(db, myid, req.ID)
-	if ctx == nil {
-		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
 	}
-
-	// The whole point of an unaddressed TN post is that its poster has not agreed to hear
-	// from this community's moderators. ModTools hides Blank Reply and the standard
-	// messages for these posts; this is the guard behind that, and it matters because app
-	// bundles are baked into the APK and can be months out of date.
-	if modmessaging.PostIsUnaddressed(db, req.ID) {
-		return fiber.NewError(fiber.StatusForbidden, "This poster didn't choose this community, so they can't be messaged")
+	ctx, err := prepareModReply(db, myid, req.ID, reqGid)
+	if err != nil {
+		return err
 	}
 
 	subject := ""
@@ -3767,24 +3824,44 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		stdmsgid = *req.Stdmsgid
 	}
 
+	if err := sendModReply(db, ctx, myid, req.ID, subject, body, stdmsgid); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to send the message")
+	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// prepareModReply runs every check that can refuse a moderator's message to a poster, and
+// returns the context with Groupid set to the community the message goes out as. It
+// changes nothing, so a caller that also edits the post can run it first.
+func prepareModReply(db *gorm.DB, myid uint64, msgid uint64, reqGid uint64) (*MessageModContext, error) {
+	ctx := getMessageModContext(db, myid, msgid)
+	if ctx == nil {
+		return nil, fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+	}
+
+	// The whole point of an unaddressed TN post is that its poster has not agreed to hear
+	// from this community's moderators. ModTools hides Blank Reply and the standard
+	// messages for these posts; this is the guard behind that, and it matters because app
+	// bundles are baked into the APK and can be months out of date.
+	if modmessaging.PostIsUnaddressed(db, msgid) {
+		return nil, fiber.NewError(fiber.StatusForbidden, "This poster didn't choose this community, so they can't be messaged")
+	}
+
 	// Resolve the group the reply is sent as, the way every other mod action does. A bare
 	// "am I a moderator of this message?" check is not enough here: the requested group is
 	// whose name the message goes out under, so a moderator of a group the post rippled
 	// into must not be able to name the HOME group and write to the poster as them.
-	reqGid := uint64(0)
-	if req.Groupid != nil {
-		reqGid = *req.Groupid
-	}
 	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// With no group named, keep the message's primary group when the caller may act on it,
 	// which is the group a reply has always gone out as.
 	ctx.Groupid = authorizedGroups[0]
 	if reqGid == 0 {
-		primary := getPrimaryGroupForMessage(db, req.ID)
+		primary := getPrimaryGroupForMessage(db, msgid)
 		for _, gid := range authorizedGroups {
 			if gid == primary {
 				ctx.Groupid = primary
@@ -3798,28 +3875,40 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// to the community it was posted on (Discourse 10102). Refuse rather than accept and
 	// silently drop it — the moderator wrote those words deliberately and must be told
 	// they did not go.
-	if NotifyPosterFlag(PosterMessagingGroups(db, req.ID), ctx.Groupid) == 0 {
-		return fiber.NewError(fiber.StatusForbidden,
+	if NotifyPosterFlag(PosterMessagingGroups(db, msgid), ctx.Groupid) == 0 {
+		return nil, fiber.NewError(fiber.StatusForbidden,
 			"Only the community this was posted on can message the freegler about it")
 	}
 
+	// A TrashNothing poster can be messaged only by a community they chose and still
+	// belong to (modmessaging.ModsMayContact). An unaddressed post is refused above; this
+	// is the poster who has since left.
+	if !modmessaging.MayContact(db, myid, ctx.Fromuser, ctx.Groupid) {
+		return nil, fiber.NewError(fiber.StatusForbidden,
+			"This freegler isn't a member of this community any more, so they can't be messaged")
+	}
+
+	return ctx, nil
+}
+
+// sendModReply logs a moderator's message to a poster and queues it for sending, as the
+// community prepareModReply chose.
+func sendModReply(db *gorm.DB, ctx *MessageModContext, myid uint64, msgid uint64, subject string, body string, stdmsgid uint64) error {
 	// Write the mod log entry synchronously, exactly once, like the other mod actions
 	// (hold/release/repost/edit). Previously the log was written by the batch processor,
 	// but that INSERT is unconditional and runs again whenever the task is retried (e.g.
 	// after a transient email-spool failure), producing duplicate "Replied" rows in the
 	// mod history (Discourse 9672/6). The batch now skips the log for this action.
-	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, ctx.Groupid, ctx.Fromuser, myid, req.ID, stdmsgid, subject)
+	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, ctx.Groupid, ctx.Fromuser, myid, msgid, stdmsgid, subject)
 
 	// Queue the email via background task (the log is already written above).
 	// Identical golden to
 	// b25ea3ba4ade, 02b3821ea3b9 and 7603ee833330; converted together per gate (h).
-	db.Table("background_tasks").Create(map[string]interface{}{
+	return db.Table("background_tasks").Create(map[string]interface{}{
 		"task_type": "email_message_reply",
 		"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?, 'notifyposter', ?)",
-			req.ID, ctx.Groupid, myid, subject, body, stdmsgid, "Leave Approved Message", 1),
-	})
-
-	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+			msgid, ctx.Groupid, myid, subject, body, stdmsgid, "Leave Approved Message", 1),
+	}).Error
 }
 
 // handleRejectToDraft converts a message back into a draft for reposting.
@@ -4091,10 +4180,11 @@ func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRe
 
 	// Join group if not already a member.
 	result := db.Table("memberships").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
-		"userid":     myid,
-		"groupid":    groupid,
-		"role":       utils.ROLE_MEMBER,
-		"collection": utils.COLLECTION_APPROVED,
+		"userid":       myid,
+		"groupid":      groupid,
+		"role":         utils.ROLE_MEMBER,
+		"collection":   utils.COLLECTION_APPROVED,
+		"added_origin": addedorigin.ForInsert("message.JoinAndPostAs", myid, groupid, addedorigin.Posted),
 	})
 
 	// Log the join event when a new membership row was created.
@@ -4305,6 +4395,12 @@ type patchMessageRequest struct {
 	Bulkitems          []BulkItemInput `json:"bulkitems"`
 	Bulkslots          []string        `json:"bulkslots"`
 	Accessinstructions *string         `json:"accessinstructions"`
+
+	// With Replybody set, a moderator's edit also messages the poster (the "Edit and
+	// Message" standard message). Stdmsgid is recorded on the edit and the message.
+	Replysubject *string `json:"replysubject"`
+	Replybody    *string `json:"replybody"`
+	Stdmsgid     *uint64 `json:"stdmsgid"`
 }
 
 // resolvePartnerAuth reads a ?partner= query param and resolves the acting user
@@ -4471,8 +4567,11 @@ var errLockdownResponded = errors.New("lockdown: response already written")
 func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, fromPartner bool) error {
 	db := database.DBConn
 
-	// Editing a clearance (bulk offer) is gated on the Clearance permission.
-	if req.Bulkitems != nil && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+	// Editing a clearance (bulk offer) is gated on the Clearance permission. The item
+	// list of an automatic split is the poster's to edit; who may edit the post at all
+	// is checked below.
+	splitPost := isAutoSplit(db, req.ID)
+	if req.Bulkitems != nil && !splitPost && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
 		return fiber.NewError(fiber.StatusForbidden, "You do not have permission to edit a clearance")
 	}
 
@@ -4488,6 +4587,16 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 	if !isOwner && !isMod {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
+	}
+
+	// An automatic split's items can only be taken off the list or recounted; the
+	// list written is built from the post's own items (splitItemsEdit).
+	if req.Bulkitems != nil && splitPost {
+		items, err := splitItemsEdit(db, req.ID, req.Bulkitems)
+		if err != nil {
+			return err
+		}
+		req.Bulkitems = items
 	}
 
 	// Section 11.3 of the lockdown plan: a moderator editing someone else's post is
@@ -4507,6 +4616,18 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// which arrive from TN as the owner, are untouched.
 	if isMod && !isOwner && modmessaging.PostIsUnaddressed(db, req.ID) {
 		return fiber.NewError(fiber.StatusForbidden, "This post can't be edited - the poster didn't choose this community")
+	}
+
+	// Only an OFFER is ever split. A split post changed to a WANTED, by its poster or a
+	// moderator, is first put back as it was written, so a WANTED never has an item list,
+	// Mark TAKEN on its items, or "Which would you like?" in its reply box. Any item list
+	// sent with the change goes with the split.
+	if splitPost && req.Type != nil && *req.Type != utils.OFFER {
+		if err := undoAutoSplit(db, req.ID); err != nil && !errors.Is(err, errAlreadyUndone) {
+			return fiber.NewError(fiber.StatusInternalServerError, "Could not undo the split")
+		}
+		splitPost = false
+		req.Bulkitems = nil
 	}
 
 	// Get old values for edit tracking.
@@ -4750,7 +4871,11 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	}
 
 	// Issue 2: Log the edit (type='Message', subtype='Edit').
-	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_EDIT, 0, fromuser, myid, req.ID, 0, "Message edited")
+	editStdmsgid := uint64(0)
+	if req.Stdmsgid != nil {
+		editStdmsgid = *req.Stdmsgid
+	}
+	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_EDIT, 0, fromuser, myid, req.ID, editStdmsgid, "Message edited")
 
 	// Update attachment ordering if provided.
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
@@ -4794,8 +4919,10 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 				db.Table("messages_attachments").Where("id = ?", attid).
 					Updates(map[string]interface{}{"msgid": req.ID, "primary": primary})
 			}
-			// Delete any attachments not in the new list.
-			db.Table("messages_attachments").Where("msgid = ? AND id NOT IN (?)", req.ID, req.Attachments).Delete(nil)
+			// Delete any attachments not in the new list. The list never holds an
+			// auto-split item crop, which is kept while its photo is.
+			keep := keepCropsOfKeptPhotos(db, req.ID, req.Attachments)
+			db.Table("messages_attachments").Where("msgid = ? AND id NOT IN (?)", req.ID, keep).Delete(nil)
 		} else {
 			// Empty array — remove all attachments.
 			// Identical golden to
@@ -5010,15 +5137,23 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		// 9d1cfd7098bc (PutMessageAs); converted together per gate (h).
 		db.Table("messages").Where("id = ?", req.ID).
 			Updates(map[string]interface{}{"availableinitially": total, "availablenow": total})
-		if req.Textbody == nil {
-			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
-				// Identical golden to
-				// 9beaa0265ff1 (PutMessageAs); converted together per gate (h).
-				db.Table("messages").Where("id = ?", req.ID).
-					Updates(map[string]interface{}{"textbody": summary, "message": summary})
+		if splitPost {
+			// The poster's own description stays; a removed item takes its crops with
+			// it; items already marked gone stay gone in the count. No photo links to
+			// fetch: a split item's photos are the post's own.
+			deleteOrphanCrops(db, req.ID)
+			recomputeBulkAvailableNow(db, req.ID)
+		} else {
+			if req.Textbody == nil {
+				if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
+					// Identical golden to
+					// 9beaa0265ff1 (PutMessageAs); converted together per gate (h).
+					db.Table("messages").Where("id = ?", req.ID).
+						Updates(map[string]interface{}{"textbody": summary, "message": summary})
+				}
 			}
+			go ingestBulkItemPhotos(db, req.ID)
 		}
-		go ingestBulkItemPhotos(db, req.ID)
 	}
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, req.ID, req.Bulkslots)
@@ -5032,12 +5167,54 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 // applyPatchMessage performs the edit on a message after auth and ID are resolved.
 func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
+	db := database.DBConn
+
+	// Every check that could refuse the message runs before the edit, so a refused
+	// message never leaves a changed post the poster hasn't been told about.
+	var replyCtx *MessageModContext
+	if req.Replybody != nil {
+		if c.Query("partner") != "" {
+			return fiber.NewError(fiber.StatusForbidden, "Partners can't message posters")
+		}
+		if strings.TrimSpace(*req.Replybody) == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "The message to the poster is empty")
+		}
+
+		reqGid := uint64(0)
+		if req.Groupid != nil {
+			reqGid = *req.Groupid
+		}
+
+		var err error
+		replyCtx, err = prepareModReply(db, myid, req.ID, reqGid)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := applyPatchMessageCore(c, myid, req, false); err != nil {
 		if err == errLockdownResponded {
 			return nil
 		}
 		return err
 	}
+
+	if replyCtx != nil {
+		subject := ""
+		if req.Replysubject != nil {
+			subject = *req.Replysubject
+		}
+		stdmsgid := uint64(0)
+		if req.Stdmsgid != nil {
+			stdmsgid = *req.Stdmsgid
+		}
+
+		if err := sendModReply(db, replyCtx, myid, req.ID, subject, *req.Replybody, stdmsgid); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError,
+				"The edit was saved, but the message to the poster was not sent")
+		}
+	}
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
@@ -5921,9 +6098,11 @@ type PostMessageRequest struct {
 	// Only the offerer may pass another user's id — e.g. to record a replier's
 	// verbally-expressed interest against the structured catalogue.
 	Interestuserid *uint64 `json:"interestuserid"`
-	// Bulk-offer interest state change (action "BulkInterestState").
+	// Bulk-offer interest state change (action "BulkInterestState"), and the item
+	// marked gone or back on offer (action "BulkItemAvailable").
 	Bulkitemid *uint64 `json:"bulkitemid"`
 	State      *string `json:"state"`
+	Available  *bool   `json:"available"`
 	// Optional structured terms attached to a promise (action "Promise"). Stored
 	// as JSON on messages_promises.terms and returned on the message's promises;
 	// omit it and nothing changes. Deployments that turn a promise into a formal
@@ -6255,6 +6434,10 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 		return handleBulkInterestState(c, myid, req)
 	case "BulkEditLink":
 		return handleBulkEditLink(c, myid, req)
+	case "BulkItemAvailable":
+		return handleBulkItemAvailable(c, myid, req)
+	case "AutoSplitUndo":
+		return handleAutoSplitUndo(c, myid, req)
 	case "Report":
 		return handleReport(c, myid, req)
 	default:
@@ -6353,6 +6536,20 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	if req.Userid != nil && *req.Userid > 0 && *req.Userid != myid {
 		createSystemChatMessage(db, myid, *req.Userid, req.ID, utils.CHAT_MESSAGE_PROMISED)
 	}
+
+	// Tell the other members who replied that it is promised to someone else. Queued rather than
+	// done here, like the Taken notice: the batch finds the repliers, skips the promisee and
+	// anyone already told, and checks the promise still stands when it runs. A promise to
+	// nobody in particular (userid 0) tells every replier, except from a Trash Nothing member:
+	// Trash Nothing promises arrive that way and do not say who to, so the batch tells nobody.
+	notifiedPromisee := uint64(0)
+	if promisedTo != myid {
+		notifiedPromisee = promisedTo
+	}
+	db.Table("background_tasks").Create(map[string]interface{}{
+		"task_type": "message_promised",
+		"data":      gorm.Expr("JSON_OBJECT('msgid', ?, 'userid', ?, 'byuser', ?)", req.ID, notifiedPromisee, myid),
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -6480,6 +6677,11 @@ func handleOutcomeIntended(c *fiber.Ctx, myid uint64, req PostMessageRequest) er
 // handleOutcome marks a message with an outcome (Taken, Received, Withdrawn).
 // Records the outcome in the DB and queues background processing for
 // notifications and chat messages.
+//
+// iznik-batch/app/Services/TrashNothing/Ingestion/ClosedPostOutcome.php repeats these rules
+// for a TrashNothing post that was closed on TN before Freegle received it (batch runs on
+// other machines, so it cannot call this). A change to what an outcome does here belongs
+// there too.
 func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
@@ -6625,6 +6827,11 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		db.Table("messages_by").Create(map[string]interface{}{
 			"msgid": req.ID, "userid": *req.Userid, "count": availNow,
 		})
+	}
+
+	// An automatic split marked Taken as a whole: its items went with it.
+	if req.Outcome == utils.OUTCOME_TAKEN {
+		markSplitItemsGone(db, req.ID)
 	}
 
 	// Mark successful in spatial index so that:
@@ -7012,7 +7219,7 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 		if aiImageID > 0 {
 			if containsUint64(badAttachmentIDs, att.ID) {
 				microvolunteering.ForceRejectAIImage(db, userID, aiImageID)
-			} else {
+			} else if !removeAIImageAlias(db, msgID, aiImageID) {
 				microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
 			}
 		}
@@ -7024,6 +7231,22 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 			"msgid": msgID,
 		})
 	}
+}
+
+// removeAIImageAlias handles a moderator removing a picture this post borrowed from another
+// item name (an ai_image_aliases row the batch made). What was wrong is the match, not the
+// picture, so the alias goes and the picture's own votes are left alone. Returns whether
+// there was such an alias.
+func removeAIImageAlias(db *gorm.DB, msgID uint64, aiImageID uint64) bool {
+	var subject string
+	db.Table("messages").Select("COALESCE(subject, '')").Where("id = ?", msgID).Scan(&subject)
+	name := misc.IllustrationItemName(subject)
+	if name == "" {
+		return false
+	}
+
+	res := db.Table("ai_image_aliases").Where("name = ? AND aiimageid = ?", name, aiImageID).Delete(nil)
+	return res.Error == nil && res.RowsAffected > 0
 }
 
 func containsUint64(slice []uint64, val uint64) bool {

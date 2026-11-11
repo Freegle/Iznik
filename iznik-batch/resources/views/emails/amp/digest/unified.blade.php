@@ -738,13 +738,17 @@
       <p class="jobs-note">If you are interested and click, it will raise a little to help keep Freegle running and free to use.</p>
       <div class="jobs-buttons">
         <a href="{{ $jobsUrl }}" class="jobs-button">View more jobs</a>
+        @if($donateUrl)
         <a href="{{ $donateUrl }}" class="jobs-button">Donating helps too!</a>
+        @endif
       </div>
       {{-- Donate lands on our Stripe page, not PayPal, so show what's on offer
            there. 8:1 is the strip's native aspect ratio. --}}
+      @if($donateUrl)
       <div class="donate-marks">
         <a href="{{ $donateUrl }}"><amp-img src="{{ $donateMarksUrl ?? config('freegle.images.paymethods') }}" width="192" height="24" layout="fixed" alt="Donate with Apple Pay, Google Pay, PayPal or card"></amp-img></a>
       </div>
+      @endif
     </div>
     @endif
 

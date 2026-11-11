@@ -159,7 +159,7 @@ func TestPostMatchesReachFilteredForOwner(t *testing.T) {
 
 	prefix := uniquePrefix("postmatchesreach")
 	groupID := CreateTestGroup(t, prefix)
-	posterOut := CreateTestUser(t, prefix+"po", "Member")
+	posterOut := CreateTestUser(t, prefix+"po", "Member") // role-literal-ok: not a system role, see #2023
 	// Out-of-reach candidate needs a real message row (rippling_reach FK).
 	outReachID := CreateTestMessage(t, posterOut, groupID, "out of reach wanted", 51.5, -0.1)
 

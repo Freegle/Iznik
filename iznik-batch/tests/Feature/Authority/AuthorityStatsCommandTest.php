@@ -90,6 +90,46 @@ class AuthorityStatsCommandTest extends TestCase
         $sheet->disconnectWorksheets();
     }
 
+    public function test_benefit_includes_the_fly_tipping_saving(): void
+    {
+        $this->seedAuthorityScenario();
+
+        // Pin prices: a tonne is worth 711 x 100 / 50 = £1,422, and one fly-tip
+        // costs 29 x 100 / 77.5 = £37.42, so each gift saves 1.95% of that.
+        DB::table('config')->updateOrInsert(
+            ['key' => 'cpi_annual_data'],
+            ['value' => json_encode(['data' => [2011 => 50.0, 2025 => 100.0]])]
+        );
+
+        $this->artisan('authority:stats', [
+            '--i' => (string) $this->authorityId,
+            '--q' => $this->quarterStart,
+            '--output' => $this->outputDir,
+        ])->assertExitCode(0);
+
+        $files = glob($this->outputDir . '/*.xlsx') ?: [];
+        $sheet = (new XlsxReader())->load($files[0]);
+        $standard = $sheet->getSheetByName('Standard report');
+
+        // First month: 150 kg and 14 gifts. 213.30 + 14 x 0.7297 = 223.52.
+        $this->assertSame('Benefit*', $standard->getCell('A12')->getValue());
+        $this->assertEqualsWithDelta(223.5, (float) $standard->getCell('B12')->getValue(), 0.001);
+        // The quarter: 600 kg and 53 gifts. 853.20 + 53 x 0.7297 = 891.87.
+        $this->assertEqualsWithDelta(891.9, (float) $standard->getCell('E12')->getValue(), 0.001);
+
+        // 53 gifts at £0.73 each.
+        $this->assertSame(
+            '* Includes £39 saved on clearing up fly-tipping, based on a 2020 study of Freegle data by DEFRA volunteers.',
+            $standard->getCell('A14')->getValue()
+        );
+
+        // Postcode AB1 2: 25 kg and 1 gift. 35.55 + 0.73 = 36.28.
+        $postcode = $sheet->getSheetByName('Postcode breakdown');
+        $this->assertEqualsWithDelta(36.28, (float) $postcode->getCell('H2')->getValue(), 0.001);
+
+        $sheet->disconnectWorksheets();
+    }
+
     public function test_shows_user_stories_section_when_present(): void
     {
         $this->seedAuthorityScenario();

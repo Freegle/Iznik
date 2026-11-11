@@ -1,10 +1,11 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Support/EnvSetting.php
   - iznik-batch/tests/Unit/Config/BlankEnvMeansDefaultTest.php
   - iznik-batch/config/freegle.php
+  - iznik-batch/app/Services/Ux/UxPromptService.php
   - iznik-batch/routes/console.php
   - iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php
   - iznik-batch/app/Mail/Session/LoginLinkMail.php
@@ -26,6 +27,7 @@ covers:
   - iznik-batch/app/Console/Commands/Monitor/AutomodHealthCommand.php
   - automod/src/backend.js
   - automod/src/server.js
+  - iznik-batch/app/Services/Ux/UxExperimentService.php
 ---
 
 # Deployment switches
@@ -50,7 +52,6 @@ variables like every other Freegle setting.
 |---|---|---|---|
 | `auth.passwordless` | `FREEGLE_PASSWORDLESS_LOGIN` | `false` | A "forgot password" request sends a **sign-in link** email (`LoginLinkMail`) instead of the "set a new password" one. |
 | `auth.login_link_path` | `FREEGLE_LOGIN_LINK_PATH` | `/` | Where that sign-in link lands on the site. The page there must consume `?u=&k=` to sign the member in; the root app already does. |
-| `trashnothing.merge_legacy_duplicates` | `FREEGLE_TN_MERGE_LEGACY_DUPLICATES` | `false` | On, `tn:sync` narrows to Trash Nothing addresses on the address itself rather than on one form of `users_emails.backwards`, and so sees the ~96 duplicate account pairs the old filter could not. Merging a pair deletes one of the two accounts, so read `tn:sync --report-duplicates` before setting it. |
 | `freebie_alerts.api_key`, `yeybu.api_key` | `FREEBIE_ALERTS_KEY`, `YEYBU_KEY` | blank | Set, approved Offers are pushed to that partner's post feed (see [partner-integrations.md](partner-integrations.md)). Blank, nothing is sent, so a separate deployment never pushes its posts as Freegle's. |
 | `mail.tracking_enabled` | `FREEGLE_MAIL_TRACKING_ENABLED` | `true` | Off, no `email_tracking` row is written and every tracked link, image and pixel helper returns the plain destination. For a deployment whose API does not serve the tracking redirect and pixel. |
 | `mail.enabled_types` | `FREEGLE_MAIL_ENABLED_TYPES` | (as before) | New: a `*` in the list enables every type, so a deployment with its own mailables need not re-list Freegle's whole catalogue. |
@@ -60,6 +61,8 @@ variables like every other Freegle setting.
 | `mail.relay_queue.min_queued` | `FREEGLE_MAIL_RELAY_QUEUE_MIN` | `25` | How many messages a recipient domain needs in the relay queue before the delayed view shows it. Lower and every paced provider is listed permanently, because a sending address on a rate delay always has something queued. |
 | `mail.relay_queue.min_age_minutes` | `FREEGLE_MAIL_RELAY_QUEUE_MIN_AGE` | `120` | The other way a domain earns a row. A handful of messages stuck for a day never reaches the size threshold and is the shape nobody notices, so age qualifies on its own. |
 | `mail.relay_queue.max_rows` | `FREEGLE_MAIL_RELAY_QUEUE_MAX_ROWS` | `500` | Most rows kept. An estate-wide episode names thousands of domains; the worst are kept and the rest dropped. |
+| `ai_images.gemini_api_key`, `ai_images.clean_model` | `GOOGLE_GEMINI_API_KEY`, `AI_IMAGE_CLEAN_MODEL` | blank, `gemini-3.5-flash-lite` | With a key, `messages:clean-items` works out each post's item, and AI item pictures, matched posts and search use it (see [message-items.md](message-items.md)). Blank, nothing is cleaned and all three behave as before. The model is fixed because the results were measured on it. |
+| `autosplit.mode`, `autosplit.model`, `autosplit.window_minutes`, `autosplit.max_photos` | `AUTOSPLIT_MODE`, `AUTOSPLIT_MODEL`, `AUTOSPLIT_WINDOW_MINUTES`, `AUTOSPLIT_MAX_PHOTOS` | `off`, `gemini-3.8-flash`, `120`, `8` | `on` turns new posts of several items into item lists, photos included; `shadow` records what it would do in `messages_autosplit` without changing posts; anything else is off. It also needs `GOOGLE_GEMINI_API_KEY`. The model is fixed because the prompts were backtested on it. See [auto-split.md](auto-split.md). |
 | `schedule.profile` | `FREEGLE_SCHEDULE_PROFILE` | `full` | `overlay-only` runs nothing from `routes/console.php` except what the overlay file below schedules. Any other value behaves as `full`, so a typo can never quietly stop the schedule. |
 | `schedule.overlay` | `FREEGLE_SCHEDULE_OVERLAY` | `routes/console.deployment.php` | A schedule file loaded **if it exists** (relative to the app root, or absolute). Freegle ships none. A deployment puts its own jobs there. |
 | `autoapprove.enabled`, `autoapprove.trial_group_ids` | `FREEGLE_AUTOAPPROVE_ENABLED`, `FREEGLE_AUTOAPPROVE_TRIAL_GROUPS` | `false`, empty | The approve-mode communities: the comma-separated list, or every community when the switch is on. There a post automated review approves publishes itself after the wait (`messages:auto-approve-clean`). **These two and the shadow list are fixed when each container is created, by both the Go API (the countdown, the Check queue, what moderators see) and the batch container (what actually publishes). Change them in both environments and recreate both together** (`docker compose up -d <service>`; a plain restart keeps the old environment); one recreated without the other shows a countdown the cron never honours, or publishes posts no countdown announced. See [../../moderators/post-moderation.md](../../moderators/post-moderation.md). |
@@ -74,11 +77,13 @@ variables like every other Freegle setting.
 | `ripple.clean_views_per_group` | `RIPPLE_CLEAN_VIEWS_PER_GROUP` | `5` | With the gate on, how many different members other than the poster must have seen a post that published itself, with nobody flagging it, for each community it would then be on. A member's report to the moderators, or a microvolunteer's Reject, pauses further spread until a moderator looks. `0` turns the cap off. Leave the variable unset to get the default. |
 | `ripple.rippled_in_pending_hours` | `RIPPLE_RIPPLED_IN_PENDING_HOURS` | `0` | Hours a rippled-in copy, already approved on its origin community, waits in the receiving community's Pending queue before it is approved there. `0` approves it the moment it ripples in. The ModTools countdown on such a copy reads the same figure (`iznik-server-go/message/autoapproveat.go`), so set it in the Go environment too. |
 | `cookieyes.enabled` | `COOKIEYES_ENABLED` | `true` | Off, the weekly `cookieyes:check` is not scheduled. For a deployment with no CookieYes account, which would otherwise fail and email every week. See [cookieyes-watchdog.md](cookieyes-watchdog.md). |
+| `google.search_console_enabled` | `GOOGLE_SEARCH_CONSOLE_CHECK_ENABLED` | `true` | Off, the weekly `google:search-console-check` is not scheduled. See [google-housekeeping.md](google-housekeeping.md). |
+| `google.ads_enabled` | `GOOGLE_ADS_CHECK_ENABLED` | `true` | Off, the weekly `google:ads-check` is not scheduled. See [google-housekeeping.md](google-housekeeping.md). |
 | `image_store.enabled` | `IMAGE_STORE_ENABLED` | `false` | On, `images:push-spool` runs every minute, moving completed tusd uploads from the local spool to the `images` S3 disk. Off, uploads stay in the spool and are served from there, which is how a deployment without a bucket runs. Turn on only after `images:object-store-check` passes; see [the runbook](../../ops/runbooks/images-to-object-storage.md). |
 | `backup.drain.enabled` | `BACKUP_DRAIN_ENABLED` | `false` | Holds batch work off while the nightly database backup runs. Off ships as a no-op. See below. |
 | `backup.drain.start` | `BACKUP_DRAIN_START` | `03:50` | When the hold starts, `HH:MM` in the app timezone. Anything that is not a valid `HH:MM` leaves the drain off rather than holding the schedule back for ever. |
 | `backup.drain.minutes` | `BACKUP_DRAIN_MINUTES` | `45` | How long the hold lasts. Zero or negative leaves it off, on the same reasoning. |
-| `backup.drain.always_run` | `BACKUP_DRAIN_ALWAYS_RUN` | `lockdown:tick,lockdown:report` | Comma-separated artisan command names that run anyway, matched without their arguments. Anything listed is competing with the backup, so keep it short. |
+| `backup.drain.always_run` | `BACKUP_DRAIN_ALWAYS_RUN` | `lockdown:tick,lockdown:report,ux:experiments-tick` | Comma-separated artisan command names that run anyway, matched without their arguments. Anything listed is competing with the backup, so keep it short. Set it starting from this list, not from the lockdown pair alone, or the experiment tick is held off again. |
 | `backup.database.enabled` | `BACKUP_DB_ENABLED` | `false` | Takes the nightly physical backup from Laravel instead of the shell script on the database node. Off ships as a no-op: the command refuses and the scheduled entry does not fire. |
 | `backup.database.host` | `BACKUP_DB_HOST` | empty | The node being backed up. xtrabackup copies a local data directory, so the pipeline runs there and only control flow crosses ssh. Empty is a configuration error rather than a default. |
 | `backup.database.ssh_key` | `BACKUP_DB_SSH_KEY` | `/etc/monitoring-ssh-key` | The private key the batch container uses to reach the node, at its path inside the container. The default is the monitoring key, which docker-compose already mounts and which is the root shell the backup needs anyway. |
@@ -87,6 +92,55 @@ variables like every other Freegle setting.
 | `backup.database.bucket` | `BACKUP_DB_BUCKET` | `gs://freegle_backup_uk` | Where the compressed stream goes. |
 | `backup.database.compress_threads` | `BACKUP_DB_COMPRESS_THREADS` | `4` | xtrabackup compression threads. More finishes sooner and competes harder. |
 | `ux.report_to` | `UX_REPORT_TO` | falls back to `FREEGLE_GEEKS_ADDR` | Where `ux:weekly-report` sends the Monday summary of the biggest week-on-week UX changes. See [ux-telemetry.md](ux-telemetry.md). |
+| `ux.experiments.max_concurrent` | `UX_EXPERIMENTS_MAX_CONCURRENT` | `5` | Most UX experiments running at once. `ux:experiment start` refuses one more. The Go API reads the same variable from its own environment to report the cap, and `docker-compose.yml` does not pass it to `apiv2`: set it on both sides or on neither, or the experiment routes report a cap that the batch does not use. The whole loop is in [ux-experiments.md](ux-experiments.md). |
+| `ux.experiments.max_hours` | `UX_EXPERIMENTS_MAX_HOURS` | `24` | How long a UX experiment may run before `ux:experiments-tick` must decide it. |
+| `ux.experiments.settle_minutes` | `UX_EXPERIMENTS_SETTLE_MINUTES` | `45` | Only flows that started at least this many minutes before now (or the end) are counted, with everything they did up to then, so flows that have not had time to finish do not count against the arm that got more traffic. |
+| `ux.experiments.min_starts_per_arm` | `UX_EXPERIMENTS_MIN_STARTS` | `50` | Flow starts each arm needs before any decision at the end. Fewer is inconclusive. |
+| `ux.experiments.early_min_starts_per_arm` | `UX_EXPERIMENTS_EARLY_MIN_STARTS` | `300` | Flow starts each arm needs before an early stop or any re-weighting of traffic. Every hourly look is another chance to be fooled by noise, so these ask for far more than a decision at the end. |
+| `ux.experiments.adopt_probability` | `UX_EXPERIMENTS_ADOPT_P` | `0.80` | At the end, adopt at or above this probability the change is better (and the expected loss is small enough), revert at or below one minus it, and call it inconclusive between. |
+| `ux.experiments.max_expected_loss_points` | `UX_EXPERIMENTS_MAX_LOSS_POINTS` | `0.5` | Adoption also needs the expected loss of choosing the change, if it turns out worse, to be at most this many points of completion. Stops a near-zero effect being adopted on a lucky probability. |
+| `ux.experiments.early_adopt_probability` | `UX_EXPERIMENTS_EARLY_ADOPT_P` | `0.99` | On any hourly read, once both arms have `early_min_starts_per_arm`, adopt at once at this probability (and the same loss bar, and no guardrail blocking). |
+| `ux.experiments.early_revert_probability` | `UX_EXPERIMENTS_EARLY_REVERT_P` | `0.02` | On any hourly read, once both arms have `early_min_starts_per_arm`, revert at once at or below this probability the change is better. |
+| `ux.experiments.guardrail_margin_points` | `UX_EXPERIMENTS_GUARDRAIL_MARGIN` | `2.0` | A guardrail (submit failures, validation failures, help sought, another touched flow's completion) trips only when the change is worse by more than this many points. A null change read every hour would otherwise trip one by chance. |
+| `ux.experiments.guardrail_error` | `UX_EXPERIMENTS_GUARDRAIL_ERROR` | `0.10` | The chance of a false alarm across all of an experiment's guardrails together at the end, split between the `k` guardrails: one blocks adoption at probability `1 - 0.10 / k`. Replaces `UX_EXPERIMENTS_GUARDRAIL_P`, which no longer does anything. |
+| `ux.experiments.early_guardrail_error` | `UX_EXPERIMENTS_EARLY_GUARDRAIL_ERROR` | `0.03` | The same for the early revert on any hourly read: probability `1 - 0.03 / k`. Replaces `UX_EXPERIMENTS_EARLY_HARM_P`, which no longer does anything. |
+| `ux.experiments.guardrail_min_events` | `UX_EXPERIMENTS_GUARDRAIL_MIN` | `100` | Events needed behind a guardrail, across both arms, before it is read at all. |
+| `ux.experiments.bandit` | `UX_EXPERIMENTS_BANDIT` | `true` | Each hourly read moves traffic towards the winning arm by Thompson sampling, once both arms have `early_min_starts_per_arm`. Off keeps the opening split. |
+| `ux.experiments.min_control_share` | `UX_EXPERIMENTS_MIN_CONTROL` | `35` | Percent of traffic control always keeps, so the comparison never stops being one. Every variant keeps the same floor (scaled by 2/k for k arms), so no arm is starved or emptied. |
+| `ux.experiments.max_variant_share` | `UX_EXPERIMENTS_MAX_VARIANT` | `65` | Percent of traffic one variant can take. |
+| `ux.experiments.cleanup_days` | `UX_EXPERIMENTS_CLEANUP_DAYS` | `7` | Days after an experiment is adopted before its switch still being in the code is reported as overdue. The Go API reads this variable too (for the overdue flag), so set it on both sides or on neither. |
+| `ux.experiments.min_power` | `UX_EXPERIMENTS_MIN_POWER` | `0.30` | `ux:experiment start` refuses an experiment whose expected effect a day of its flow would adopt less often than this. `0` turns the check off. Only applies where the daily rollup already has figures for the flow. |
+| `ux.experiments.default_expected_points` | `UX_EXPERIMENTS_DEFAULT_EXPECTED_POINTS` | `5.0` | The effect, in points of completion, the power check assumes when the experiment's design does not say. |
+| `ux.experiments.stale_read_hours` | `UX_EXPERIMENTS_STALE_READ_HOURS` | `2` | When Loki is down, the tick may carry on from its last stored read only if it is younger than this. |
+| `ux.experiments.stale_wait_hours` | `UX_EXPERIMENTS_STALE_WAIT_HOURS` | `6` | Past an experiment's end with no usable read, the tick waits this long for Loki and then marks the experiment inconclusive. |
+| `ux.experiments.sample_ratio_points` | `UX_EXPERIMENTS_SAMPLE_RATIO_POINTS` | `5` | A variant whose share of starts is further than this many points (and over 3.5 standard errors) from the share it was served is never adopted. A change that loses people before the flow starts looks better on the rate among starters while fewer finish. |
+| `ux.experiments.holdout_share` | `UX_EXPERIMENTS_HOLDOUT_SHARE` | `10` | After adoption this percent of members keep the old version until the experiment is closed. `0` turns the holdout, and the decay check that needs it, off. The Go API reads this variable too (to report whether a holdout runs), so set it on both sides or on neither. |
+| `ux.experiments.holdout_days` | `UX_EXPERIMENTS_HOLDOUT_DAYS` | `14` | How many days after adoption the tick compares the holdout with the adopted arm, once a day. The Go API reads this variable too (to report when the holdout ends), so set it on both sides or on neither. |
+| `ux.experiments.holdout_revert_probability` | `UX_EXPERIMENTS_HOLDOUT_REVERT_P` | `0.99` | The holdout check reverts an adopted change when the old version is this likely to be better on `holdout_revert_looks` looks in a row (both sides need `early_min_starts_per_arm`). High because there are up to 14 daily looks. |
+| `ux.experiments.holdout_revert_looks` | `UX_EXPERIMENTS_HOLDOUT_REVERT_LOOKS` | `2` | How many daily looks in a row must be against an adopted change before it is reverted. |
+| `ux_server_arms` | none: a row in the `config` table, set with `PATCH /config/admin` and `{"ux_server_arms":"1"}` | unset, which is off | The one switch for every server arm. Only `1` serves arms. Missing or anything else makes every sender in the batch and the Go API act as control within a minute and stop writing exposure rows, with no deploy. `ux:experiment start` refuses a mail, push or server experiment while it is off. See [Experiments in mail, push and the server](ux-experiments.md#experiments-in-mail-push-and-the-server). |
+| `ux.channels.<channel>.ceiling_hours`, `.intake_hours` | none, set in `config/freegle.php` | push `48` and `24`, email `168` and `24`, server `336` and `168` | For an experiment decided on the server: the longest run `start` accepts, and the hours members are reached by default (the rest of the run is the window they have to convert in). A web experiment keeps `ux.experiments.max_hours`. |
+| `ux.sources.<name>` | none, set in `config/freegle.php` | `email_click`, `active_after`, `interested_reply`, `familiar_reply`, `hosting_ad_click` | The metric sources an experiment can name in `design.source`, each a class that counts from the database instead of Loki. A new source is a class and a line here. |
+| `interested.chaseup_after_hours` | `FREEGLE_INTERESTED_CHASEUP_AFTER_HOURS` | `24` | How old an I'm interested mark must be before `messages:interested-chaseup` emails a reminder about it. See [An I'm interested button](ux-experiments.md#an-im-interested-button). |
+| `interested.max_age_days` | `FREEGLE_INTERESTED_MAX_AGE_DAYS` | `7` | Marks older than this are never chased. |
+| `interested.chunk` | `FREEGLE_INTERESTED_CHUNK` | `200` | Members the chase-up handles per round. |
+| `familiar_posts.lookback_days` | `FREEGLE_FAMILIAR_POSTS_LOOKBACK_DAYS` | `90` | How recent a chat must be for `messages:familiar-posts` to treat two members as knowing each other. See [familiar-posts-email.md](familiar-posts-email.md). |
+| `familiar_posts.max_recipients_per_post` | `FREEGLE_FAMILIAR_POSTS_MAX_RECIPIENTS_PER_POST` | `20` | Members told about one new post, those chatted with most recently first. |
+| `familiar_posts.max_posts_per_email` | `FREEGLE_FAMILIAR_POSTS_MAX_POSTS_PER_EMAIL` | `3` | Posts in one familiar-posts email. |
+| `familiar_posts.min_gap_hours` | `FREEGLE_FAMILIAR_POSTS_MIN_GAP_HOURS` | `24` | A member is reached about familiar posts at most once in this many hours. |
+| `familiar_posts.max_days_per_week` | `FREEGLE_FAMILIAR_POSTS_MAX_DAYS_PER_WEEK` | `2` | And on at most this many of the last seven days. The email says how often it can come from this number. |
+| `familiar_posts.window_hours` | `FREEGLE_FAMILIAR_POSTS_WINDOW_HOURS` | `6` | A familiar-posts run never reads posts older than this. |
+| `ux.prompts.helper_url` | `UX_HELPER_URL` | `http://ai-support-helper:3000` | Where `ux:prompt analyse` and `regroup` reach the helper. See [ux-member-surveys.md](ux-member-surveys.md). |
+| `ux.prompts.themes_timeout` | `UX_THEMES_TIMEOUT` | `660` | Seconds the batch waits for the coder. It must be longer than the helper's own limit of 10 minutes (`UX_THEMES_TIMEOUT_MS`), or the batch hangs up first, the helper stops at the disconnect and every retry fails the same way. |
+| `ux.prompts.internal_secret` | `UX_INTERNAL_SECRET` | empty | The shared secret the helper's internal routes ask for. Empty, `ux:prompt analyse` and `regroup` stop with "UX_INTERNAL_SECRET is not set" and the helper refuses every call. The same value must be in the helper's environment: see [ai-support-helper.md](ai-support-helper.md). |
+| `support.first_pass.enabled` | `SUPPORT_FIRST_PASS_ENABLED` | off | On, `support:first-pass` runs the AI first pass for each chat a moderator refers to Support and puts the brief in the referral mail. Off, the referral mail goes out at once without a brief and the case says "The first pass is turned off". Turning it on needs `UX_INTERNAL_SECRET` set on both the batch and the helper (as above), and `USERDUMP_INTERNAL_KEY` set to the same value on the helper and the Go API (`apiv2` and `apiv2-live`). A pass about a member fails with `DUMP_AUTH` when the key is missing, and stops with `DUMP_AUTH` when the Go API refuses it or `DUMP_LOCKDOWN` during a lockdown. The agent does not work round either by other means; the case gets a plain reason. See [support-cases.md](support-cases.md). |
+| `support.first_pass.timeout` | `SUPPORT_FIRST_PASS_TIMEOUT` | `510` | Seconds the batch waits for the helper. The helper's own deadline (`FIRST_PASS_DEADLINE_MS`, default 480000) must stay shorter. |
+| (helper) | `FIRST_PASS_MAX_TURNS` | `30` | Most turns the helper's agent may take on one first pass. Hitting it fails the case with `TOO_MANY_STEPS` ("The first pass ran out of steps before it could answer"). Set in the helper's `environment:` block. |
+| (helper) | `FIRST_PASS_DEADLINE_MS` | `480000` | One deadline, in milliseconds, over a whole first pass. Set in the helper's `environment:` block. |
+| `support.first_pass.per_referrer_per_day` | `SUPPORT_FIRST_PASS_PER_REFERRER_PER_DAY` | `10` | Model passes one moderator can use a day. Beyond it the case gets the plain mail. |
+| `support.first_pass.max_age_minutes` | `SUPPORT_FIRST_PASS_MAX_AGE_MINUTES` | `60` | A case still waiting this long is never run late. It gets the plain mail. |
+| `support.first_pass.run_minutes` | `SUPPORT_FIRST_PASS_RUN_MINUTES` | `10` | One `support:first-pass` run stops claiming new cases after this long. |
+| `ux.prompts.privacy_cleared` | `UX_PRIVACY_CLEARED` | off | Only `1` or `true` opens it. Closed, `ux:prompt analyse` and `regroup` refuse to run, because members' written answers go to an AI service for coding. A person sets it, after checking that the public privacy wording covers that. See [ux-member-surveys.md](ux-member-surveys.md). |
 | `backup.database.alert_email` | `BACKUP_DB_ALERT_EMAIL` | `geek-alerts@ilovefreegle.org` | Where a failure is mailed. Plain text, no template, because this has to work when the database is unhappy. |
 
 Every setting in `config/freegle.php` is read through `EnvSetting::env`, which is Laravel's
@@ -194,6 +248,12 @@ a 45-minute hold cannot explain a day-old row.
 lockdown is a live security incident, not routine batch work: the announce mail, holding
 and releasing, and the hourly report cannot wait out a 45-minute backup drain
 window while a spam wave is still going out. See the [lockdown runbook](../../ops/runbooks/lockdown.md).
+
+**`ux:experiments-tick` is in the default list too.** It only reads Loki and writes a few small rows, and
+it is the clock a 24-hour experiment is decided by. An hourly job that falls inside the window is skipped,
+not delayed, so holding it would leave an experiment that ends in the window decided an hour late, on more
+than a day of data, and the early-revert guardrails unchecked for two hours. See
+[the hourly tick](ux-experiments.md#the-hourly-tick).
 
 ### Taking the backup from Laravel
 

@@ -151,3 +151,48 @@ batch_drain() {
 batch_undrain() {
   act local "start the batch scheduler" "docker exec $MAINT_BATCH_CONTAINER supervisorctl start laravel-scheduler"
 }
+
+# Hold scheduled work while one database node carries everything. The digests alone run
+# twelve shards against the batch's database, and the recreate just before this restarts
+# them all at once; on the remaining node they compete with every member request and with
+# its routing server. Jobs that started before the hold get MAINT_BATCH_HOLD_WAIT to end,
+# then SIGTERM, which is what the recreate at the move-back would send them anyway. The
+# queue workers, mail spoolers and mail receiver keep running.
+MAINT_BATCH_HOLD_WAIT="${MAINT_BATCH_HOLD_WAIT:-90}"
+BATCH_HELD=false
+batch_hold() {
+  local i jobs pids
+  act local "hold the batch scheduler" "docker exec $MAINT_BATCH_CONTAINER supervisorctl stop laravel-scheduler" \
+    || die "could not stop the batch scheduler"
+  ledger "batch scheduler held" "docker exec $MAINT_BATCH_CONTAINER supervisorctl start laravel-scheduler"
+  BATCH_HELD=true
+  $DRY && return 0
+  for i in $(seq 1 $(( MAINT_BATCH_HOLD_WAIT / 10 ))); do
+    jobs=$(batch_scheduled_jobs)
+    [ -z "$jobs" ] && { info "batch: scheduler held, no scheduled jobs running"; return 0; }
+    sleep 10
+  done
+  info "batch: scheduled jobs still running after ${MAINT_BATCH_HOLD_WAIT}s, stopping them: $jobs"
+  pids=$(bexec "for p in /proc/[0-9]*; do c=\$(tr '\\0' ' ' < \$p/cmdline 2>/dev/null); case \"\$c\" in *php*artisan*) echo \"\$c\" | grep -q -E $(printf '%q' "$MAINT_BATCH_DAEMON_RE") || echo \${p#/proc/};; esac; done" | tr '\n' ' ')
+  [ -n "${pids// }" ] && act local "stop the scheduled jobs" "docker exec $MAINT_BATCH_CONTAINER kill -TERM $pids"
+  for i in $(seq 1 6); do
+    [ -z "$(batch_scheduled_jobs)" ] && { info "batch: scheduler held, scheduled jobs stopped"; return 0; }
+    sleep 10
+  done
+  warn "batch: scheduled jobs still running after SIGTERM: $(batch_scheduled_jobs)"
+}
+
+# Give the scheduler back. A recreate starts it anyway; this is for a run that did not move
+# the batch.
+batch_release() {
+  $BATCH_HELD || return 0
+  batch_undrain || die "could not start the batch scheduler"
+  BATCH_HELD=false
+  $DRY && return 0
+  local i
+  for i in $(seq 1 12); do
+    bexec "supervisorctl status laravel-scheduler" | grep -q RUNNING && { info "batch: scheduler running again"; return 0; }
+    sleep 5
+  done
+  die "batch: scheduler not RUNNING after release"
+}

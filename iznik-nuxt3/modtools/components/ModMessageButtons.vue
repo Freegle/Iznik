@@ -467,7 +467,14 @@ const validActions = computed(() => {
       return ['Reject', 'Delete', 'Edit']
     }
 
-    const ret = ['Reject', 'Leave', 'Delete', 'Edit', 'Hold Message']
+    const ret = [
+      'Reject',
+      'Leave',
+      'Delete',
+      'Edit',
+      'Edit and Message',
+      'Hold Message',
+    ]
     if (canApprove.value) {
       ret.push('Approve')
     }
@@ -477,7 +484,12 @@ const validActions = computed(() => {
       return ['Delete Approved Message', 'Edit']
     }
 
-    return ['Leave Approved Message', 'Delete Approved Message', 'Edit']
+    return [
+      'Leave Approved Message',
+      'Delete Approved Message',
+      'Edit',
+      'Edit and Message',
+    ]
   }
 
   return []

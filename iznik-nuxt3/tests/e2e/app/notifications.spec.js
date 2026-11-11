@@ -135,3 +135,113 @@ test.describe('Push notifications', () => {
       .toBe(false)
   })
 })
+
+// What the app's debug store recorded since it started: stores/mobile.js logs
+// "PUSH ACTION" as soon as a notification tap reaches it, and
+// "initPushNotifications completed" once push setup is done. A tap carried by the
+// start intent is delivered while the listeners are added, so by the second entry
+// the first is either there or never coming.
+async function pushStartupLog(page) {
+  await expect
+    .poll(
+      () =>
+        page
+          .evaluate(() =>
+            (
+              document.getElementById('__nuxt')?.__vue_app__?.config
+                .globalProperties.$pinia?.state.value.debug?.logs || []
+            ).map((l) => l.message)
+          )
+          .catch(() => []),
+      { timeout: timeouts.navigation.initial }
+    )
+    .toContainEqual(expect.stringContaining('initPushNotifications completed'))
+  return page.evaluate(() =>
+    document
+      .getElementById('__nuxt')
+      .__vue_app__.config.globalProperties.$pinia.state.value.debug.logs.map(
+        (l) => l.message
+      )
+  )
+}
+
+test.describe('Starting from a notification', () => {
+  // Android keeps the intent a task first started with. When it rebuilds the app
+  // after killing it, that intent comes back; if it was a notification tap, the app
+  // must not take it as a new one. A member's app opened on the same chat for days.
+  async function startFromChatNotification(appWebView) {
+    await device.forceStop()
+    // A fixed google.message_id lets a test hand the same tap back from Recents.
+    const payload = {
+      ...chatPayload(`E2E start ${Date.now()}`),
+      'google.message_id': `app-e2e-start-${Date.now()}`,
+    }
+    await device.openFromNotification(payload)
+    const page = await appWebView.reattach()
+
+    // The tap itself still works: it reaches the app and opens chats.
+    expect(await pushStartupLog(page)).toContainEqual(
+      expect.stringContaining('PUSH ACTION')
+    )
+    await expect
+      .poll(() => new URL(page.url()).pathname, {
+        timeout: timeouts.ui.appearance,
+      })
+      .toMatch(/^\/chats/)
+    return payload
+  }
+
+  test('reopening from the launcher after Android kills the app does not replay the tap', async ({
+    appWebView,
+  }) => {
+    await startFromChatNotification(appWebView)
+
+    await device.pressHome()
+    await device.killInBackground()
+    await device.launchFromLauncher()
+    const page = await appWebView.reattach()
+
+    expect(await pushStartupLog(page)).not.toContainEqual(
+      expect.stringContaining('PUSH ACTION')
+    )
+    expect(new URL(page.url()).pathname).not.toMatch(/^\/chats/)
+  })
+
+  test('reopening from Recents after Android kills the app does not replay the tap', async ({
+    appWebView,
+  }) => {
+    const payload = await startFromChatNotification(appWebView)
+
+    // Recents hands back the intent the task started with: the same message id.
+    await device.forceStop()
+    await device.openFromNotification(payload, {
+      fromHistory: true,
+    })
+    const page = await appWebView.reattach()
+
+    expect(await pushStartupLog(page)).not.toContainEqual(
+      expect.stringContaining('PUSH ACTION')
+    )
+    expect(new URL(page.url()).pathname).not.toMatch(/^\/chats/)
+  })
+
+  test('a new tap after Android kills the app still opens chats', async ({
+    appWebView,
+  }) => {
+    await startFromChatNotification(appWebView)
+
+    await device.pressHome()
+    await device.killInBackground()
+    await device.openFromNotification(chatPayload(`E2E second ${Date.now()}`))
+    const page = await appWebView.reattach()
+
+    expect(await pushStartupLog(page)).toContainEqual(
+      expect.stringContaining('PUSH ACTION')
+    )
+    await expect
+      .poll(() => new URL(page.url()).pathname, {
+        timeout: timeouts.ui.appearance,
+      })
+      .toMatch(/^\/chats/)
+  })
+})

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\TrashNothing;
 
+use App\Models\User;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\UserEmail;
@@ -542,6 +543,19 @@ class EmailApiParityTest extends TestCase
         $this->assertEmpty($layers['layer3Mismatches'], 'Layer 3: ' . implode(' | ', $layers['layer3Mismatches']));
     }
 
+    public function test_a_rebuilt_location_bracket_is_not_a_mismatch(): void
+    {
+        // The API path rebuilds the bracket from the resolved postcode; the email
+        // path keeps the one TN wrote per group. The item is the same post.
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', ['subject' => 'OFFER: Single mattress (Rosemount AB25)']),
+            $this->syntheticLines('api', 'tn_api', ['subject' => 'OFFER: Single mattress (Stockethill AB15)']),
+        );
+
+        $this->assertEmpty($layers['layer5Mismatches'], 'Layer 5: ' . implode(' | ', $layers['layer5Mismatches']));
+        $this->assertEmpty($layers['layer3Mismatches'], 'Layer 3: ' . implode(' | ', $layers['layer3Mismatches']));
+    }
+
     public function test_a_subject_only_mismatch_is_offered_for_tn_edit_reclassification(): void
     {
         // A subject-only disagreement is the shape of a TN-side title edit, so
@@ -761,7 +775,7 @@ class EmailApiParityTest extends TestCase
             // The fixture posts carry $id as TN's user_id; the API path resolves it via tnuserid.
             'tnuserid'     => $id,
             'fullname'     => 'TN Parity Test User ' . $id,
-            'systemrole'   => 'User',
+            'systemrole'   => User::SYSTEMROLE_USER,
             'added'        => now(),
             'lastlocation' => $this->fakeLocationId,
         ]);

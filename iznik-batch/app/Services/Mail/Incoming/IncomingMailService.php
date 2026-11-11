@@ -1126,7 +1126,7 @@ class IncomingMailService
     {
         return DB::table('memberships')
             ->where('userid', $userId)
-            ->whereIn('role', ['Moderator', 'Owner'])
+            ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->exists();
     }
 
@@ -1181,11 +1181,11 @@ class IncomingMailService
         // Find or create the user.
         //
         // findUserByEmail falls back to a canon lookup, which is the thing that stops a
-        // Trash Nothing member's second per-group address creating a second Freegle
-        // account: canon strips the -gNNNN suffix, so every alias of one member reduces
-        // to the same value. Matching the address alone, as this did, is how the member
-        // in Discourse's 403 report came to hold two accounts - TN sends a Subscribe
-        // mail per group, each from a different alias.
+        // Trash Nothing member's second address creating a second Freegle account: canon
+        // strips the -gNNNN suffix, so the bare username@ address and every per-group
+        // alias of one member reduce to the same value. Matching the address alone, as
+        // this did, is how the member in Discourse's 403 report came to hold two accounts
+        // - TN sends a Subscribe mail per group, each from a different alias.
         $envFrom = $email->envelopeFrom;
         $user = $this->findUserByEmail($envFrom);
 
@@ -1207,7 +1207,7 @@ class IncomingMailService
             // Create a new user
             $user = User::create([
                 'fullname' => $email->fromName,
-                'systemrole' => 'User',
+                'systemrole' => User::SYSTEMROLE_USER,
                 'added' => now(),
                 'lastaccess' => now(),
             ]);
@@ -1228,9 +1228,9 @@ class IncomingMailService
                 'created_new' => true,
             ]);
         } else {
-            // It may have matched on canon rather than on the address itself - another
-            // per-group alias of the same member. Attach this one so later mail from it
-            // matches outright.
+            // It may have matched on canon rather than on the address itself - the bare
+            // address or another per-group alias of the same member. Attach this one so
+            // later mail from it matches outright.
             $this->addEmailToUser($user->id, $envFrom);
 
             // Update last access
@@ -1275,10 +1275,13 @@ class IncomingMailService
         $membership = Membership::create([
             'userid' => $user->id,
             'groupid' => $group->id,
-            'role' => 'Member',
+            'role' => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'added' => now(),
             'emailfrequency' => 24, // Daily digest by default
+            'added_origin' => Membership::addedOriginForInsert(
+                Membership::ADDED_ORIGIN_SUBSCRIBED, 'IncomingMailService::subscribe', $user->id, $group->id,
+            ),
         ]);
 
         // Record the join the way every other join path does, so moderators can see how
@@ -1380,7 +1383,7 @@ class IncomingMailService
             return $this->dropped("User not a member of group for unsubscribe");
         }
 
-        if (in_array($membership->role, ['Moderator', 'Owner'])) {
+        if (in_array($membership->role, [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])) {
             Log::info('Ignoring unsubscribe for moderator/owner', [
                 'user_id' => $user->id,
                 'group_id' => $group->id,
@@ -1975,6 +1978,20 @@ class IncomingMailService
             return $this->dropped("User not part of chat");
         }
 
+        // The roster says the sender is in the chat, not that they may write to its member.
+        // Dropped before anything is written, and nothing is mailed to the member.
+        if ($this->chatIsClosedToModerator($chat, $userId)) {
+            Log::info('Dropping moderator reply to a chat closed to moderators', [
+                'chat_id' => $chat->id,
+                'user_id' => $userId,
+            ]);
+
+            return $this->dropped('Moderator reply to a chat closed to moderators', [
+                'user_id' => $userId,
+                'chat_id' => $chat->id,
+            ]);
+        }
+
         // Update user's last access
         DB::table('users')
             ->where('id', $userId)
@@ -1996,6 +2013,28 @@ class IncomingMailService
         ];
 
         return RoutingResult::TO_USER;
+    }
+
+    /**
+     * Whether $writerId may not write into this chat because it is a User2Mod chat closed to
+     * the community's moderators: its member is a TrashNothing member with no membership of
+     * the community that they chose (User::modsMayContact), typically because they left.
+     * The member can still write, and Support and Admin act for Freegle as a whole, so
+     * neither is held back. The Go API refuses the same write from a moderator
+     * (modmessaging.MayContact in chat/chatmessage.go).
+     */
+    private function chatIsClosedToModerator(ChatRoom $chat, int $writerId): bool
+    {
+        if ($chat->chattype !== ChatRoom::TYPE_USER2MOD || $chat->user1 === null || (int) $chat->user1 === $writerId) {
+            return false;
+        }
+
+        $member = User::find($chat->user1);
+        if ($member === null || $member->modsMayContact((int) $chat->groupid)) {
+            return false;
+        }
+
+        return !User::find($writerId)?->isSupportOrAdmin();
     }
 
     /**
@@ -3800,42 +3839,12 @@ class IncomingMailService
      * Canonicalize an email address for matching.
      *
      * Handles: TN group suffixes, googlemail->gmail, plus addressing, gmail dots.
+     * Delegates to User::canonMail, which is also what writes users_emails.canon, so the
+     * canon looked up cannot drift from the canon stored.
      */
     private function canonicalizeEmail(string $email): string
     {
-        // Googlemail → Gmail
-        $email = str_replace('@googlemail.', '@gmail.', $email);
-        $email = str_replace('@googlemail.co.uk', '@gmail.co.uk', $email);
-
-        // Strip TN group suffix: user-gNNNN@user.trashnothing.com → user@user.trashnothing.com
-        if (preg_match('/(.*)\-(.*)(@user\.trashnothing\.com)/', $email, $matches)) {
-            $email = $matches[1].$matches[3];
-        }
-
-        // Remove plus addressing (except Facebook proxy and leading +)
-        if (
-            str_starts_with($email, '+') === false &&
-            preg_match('/(.*)\+(.*)(@.*)/', $email, $matches) &&
-            strpos($email, '@proxymail.facebook.com') === false
-        ) {
-            $email = $matches[1].$matches[3];
-        }
-
-        // Remove dots in Gmail LHS
-        $p = strpos($email, '@');
-        if ($p !== false) {
-            $lhs = substr($email, 0, $p);
-            $rhs = substr($email, $p);
-
-            if (stripos($rhs, '@gmail') !== false || stripos($rhs, '@googlemail') !== false) {
-                $lhs = str_replace('.', '', $lhs);
-            }
-
-            // Remove dots from RHS for canonical comparison
-            $email = $lhs.str_replace('.', '', $rhs);
-        }
-
-        return $email;
+        return User::canonMail($email);
     }
 
     /**
@@ -4240,16 +4249,7 @@ class IncomingMailService
      */
     public function stripTnPicLinks(?string $textBody): ?string
     {
-        if (! $textBody) {
-            return $textBody;
-        }
-
-        // Remove "Check out the pictures..." block with TN URLs
-        return preg_replace(
-            '/Check out the pictures[\s\S]*?https:\/\/trashnothing[\s\S]*?pics\/[a-zA-Z0-9]*/',
-            '',
-            $textBody
-        );
+        return \App\Support\TrashNothingPicLinks::strip($textBody);
     }
 
     /**

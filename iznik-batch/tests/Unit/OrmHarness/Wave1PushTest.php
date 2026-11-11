@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\OrmHarness;
 
+use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\OrmHarness\GoldenSql;
 use Tests\TestCase;
@@ -57,7 +58,7 @@ class Wave1PushTest extends TestCase
             ->distinct()
             ->select('userid')
             ->where('groupid', 1)
-            ->whereIn('role', ['Owner', 'Moderator']));
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR]));
     }
 
     public function test_mod_memberships_with_settings(): void
@@ -65,7 +66,7 @@ class Wave1PushTest extends TestCase
         GoldenSql::assert(self::SITE_MOD_MEMBERSHIPS, fn () => DB::table('memberships')
             ->select('groupid', 'settings')
             ->where('userid', 1)
-            ->whereIn('role', ['Owner', 'Moderator'])
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->where('collection', 'Approved'));
     }
 
@@ -83,7 +84,7 @@ class Wave1PushTest extends TestCase
             ->distinct()
             ->select('userid', 'settings')
             ->where('groupid', 1)
-            ->whereIn('role', ['Owner', 'Moderator']));
+            ->whereIn('role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR]));
     }
 
     public function test_push_notification_lookups(): void

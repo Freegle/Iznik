@@ -84,8 +84,8 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
         'url' => 'string',
         'repost_count' => 'int',
         // Not part of the published OpenAPI spec (see the note above the class
-        // declaration): TN's live API returns freegle_group_ids for FD API keys — the
-        // Freegle group ids the poster has allowed moderator messages from. It has to be
+        // declaration): TN's live API returns freegle_group_ids for FD API keys: the
+        // Freegle group ids the member chose for this post (not the groups they belong to). It has to be
         // declared in every one of these generated maps, not just the constructor:
         // ObjectSerializer::deserialize() builds a Post with `new Post()` and no data,
         // then copies only the properties listed in openAPITypes()/attributeMap()/

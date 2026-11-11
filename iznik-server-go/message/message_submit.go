@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	flog "github.com/freegle/iznik-server-go/log"
@@ -128,8 +129,13 @@ func SubmitMessage(c *fiber.Ctx) error {
 	}
 
 	// Auto-join the group (V1 parity with JoinAndPost), logging a new membership.
-	joinRes := db.Exec("INSERT IGNORE INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-		myid, req.Groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+	joinRes := db.Table("memberships").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"userid":       myid,
+		"groupid":      req.Groupid,
+		"role":         utils.ROLE_MEMBER,
+		"collection":   utils.COLLECTION_APPROVED,
+		"added_origin": addedorigin.ForInsert("message.SubmitMessage", myid, req.Groupid, addedorigin.Posted),
+	})
 	if joinRes.RowsAffected > 0 {
 		db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
 			flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, req.Groupid, myid, myid)

@@ -574,6 +574,35 @@ const fixtures = {
       }
     }
 
+    // Google's sign-in script throws inside its own callbacks when Google's service answers it
+    // with an error (seen as "Error: pa" after a 400 from accounts.google.com). That is no fault
+    // of ours, and it failed whichever spec was collecting page errors at that moment. A spec's
+    // pageerror listener never sees an error whose top stack frame is in that script; one thrown
+    // by our code, even when Google's script called it, still reaches it.
+    const isGoogleSignInError = (error) => {
+      const topFrame = (error?.stack || '')
+        .split('\n')
+        .find((line) => /^\s*at /.test(line))
+      return /accounts\.google\.com\/gsi\//.test(topFrame || '')
+    }
+    for (const method of ['on', 'once', 'addListener']) {
+      const original = page[method].bind(page)
+      page[method] = (event, listener) => {
+        if (event !== 'pageerror') {
+          return original(event, listener)
+        }
+        return original(event, (error) => {
+          if (isGoogleSignInError(error)) {
+            console.log(
+              `[page error from Google sign-in, ignored] ${error.message}`
+            )
+            return
+          }
+          return listener(error)
+        })
+      }
+    }
+
     // Create a logging proxy for the page
     const loggingPage = logger.createLoggingPage(page)
 
@@ -711,6 +740,23 @@ const fixtures = {
     const isAllowedError = (errorText) => {
       return allowedErrorPatterns.some((pattern) => pattern.test(errorText))
     }
+
+    // Put the page's own console in the test log. Until now only the postMessage
+    // fixture did, so a login that never completed left no trace of why: the
+    // errors, warnings, reloads, chunk failures and "Login failed" lines were
+    // all in the browser and nowhere else. Errors the suite already allows
+    // (Google and FedCM noise, several hundred a run) are left out.
+    page.on('console', (message) => {
+      const type = message.type()
+      const text = message.text()
+      const interesting =
+        type === 'warning' ||
+        /reload|chunk|Login failed/i.test(text) ||
+        (type === 'error' && !isAllowedError(text))
+      if (interesting) {
+        console.log(`[page console ${type}] ${text.substring(0, 500)}`)
+      }
+    })
 
     // Track console errors and fail immediately on critical ones
     page.on('console', async (message) => {

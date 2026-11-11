@@ -3,6 +3,7 @@
 namespace App\Monitoring\Checks;
 
 use App\Monitoring\HostCommandRunner;
+use App\Monitoring\HostPatchTracker;
 use App\Monitoring\OutcomeResult;
 use Carbon\CarbonInterface;
 
@@ -12,9 +13,15 @@ use Carbon\CarbonInterface;
  * ModTools status dot blind to host state (reboot-required sat unreported on
  * every host). It checks what V1 checked, where the check still applies:
  *
- *  - pending security updates  (V1: "Security patches to apply")   → warning
- *  - /var/run/reboot-required  (V1: "Server reboot required")      → warning
  *  - monit summary             (V1: per-line OK-pattern match)     → warning/error
+ *  - ssh unreachable                                               → warning
+ *
+ * Pending security updates and /var/run/reboot-required are still probed, but
+ * they no longer turn the status light amber. scripts/maintenance/freegle-maint
+ * patches and reboots the estate on a schedule, so "pending" is normal for most
+ * of a week. HostPatchTracker records how long each has been pending on the
+ * SysAdmin Cron Jobs tab instead, where it becomes a red number only when
+ * patching is not happening as scheduled.
  *
  * V1's beanstalkd, exim-queue and V1-spool checks are not ported: beanstalkd
  * and the V1 spool went with the V1 removal, and mail health has its own
@@ -37,6 +44,7 @@ class HostHealthCheck extends AbstractOutcomeCheck
      */
     public const PROBE = <<<'SH'
 echo "REBOOT:$([ -f /var/run/reboot-required ] && echo yes || echo no)"
+echo "REBOOT_SINCE:$(stat -c %Y /var/run/reboot-required 2>/dev/null || echo 0)"
 echo "SECURITY:$(apt-get upgrade -s 2>/dev/null | grep -c '^Inst.*[Ss]ecurit')"
 if command -v monit >/dev/null 2>&1; then echo "MONIT_BEGIN"; monit summary -B 2>&1; echo "MONIT_END"; echo "MONIT_STATUS_BEGIN"; monit status -B 2>/dev/null; echo "MONIT_STATUS_END"; else echo "MONIT_ABSENT"; fi
 SH;
@@ -86,10 +94,15 @@ SH;
 
     private readonly string $host;
 
+    private readonly HostPatchTracker $patchTracker;
+
     public function __construct(
         private readonly string $target,
         private readonly HostCommandRunner $runner,
+        ?HostPatchTracker $patchTracker = null,
     ) {
+        $this->patchTracker = $patchTracker ?? new HostPatchTracker();
+
         // Slug on the bare host, not the ssh target — "root@" is transport
         // detail, and the slug is what the ModTools status modal displays.
         $at = strrpos($target, '@');
@@ -112,6 +125,8 @@ SH;
             );
         }
 
+        $this->patchTracker->record($this->host, $output, $now);
+
         [$errors, $warnings] = $this->interpret($output);
 
         if (! empty($errors)) {
@@ -127,7 +142,7 @@ SH;
             ? ''
             : '; monit holds ' . implode(', ', $this->held) . ' retired on purpose';
 
-        return OutcomeResult::ok($this->slug, "{$this->host} healthy (no reboot needed, no pending security updates{$held})");
+        return OutcomeResult::ok($this->slug, "{$this->host} healthy (monit ok{$held})");
     }
 
     /**
@@ -138,17 +153,7 @@ SH;
         $errors = [];
         $warnings = [];
 
-        if (preg_match('/^REBOOT:yes$/m', $output)) {
-            // Just the fact. The package list (even version-stripped) tells a
-            // mod nothing they act on — the action is identical whatever
-            // triggered the flag, and the operator who reboots can read
-            // /var/run/reboot-required.pkgs on the host.
-            $warnings[] = 'reboot required';
-        }
-
-        if (preg_match('/^SECURITY:(\d+)$/m', $output, $m) && (int) $m[1] > 0) {
-            $warnings[] = "{$m[1]} security update(s) to apply";
-        }
+        // REBOOT and SECURITY are judged by HostPatchTracker, not here.
 
         if (preg_match('/^MONIT_BEGIN$(.*?)^MONIT_END$/ms', $output, $m)) {
             $modes = preg_match('/^MONIT_STATUS_BEGIN$(.*?)^MONIT_STATUS_END$/ms', $output, $s)

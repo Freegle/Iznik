@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-10
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -11,8 +11,17 @@ covers:
   - iznik-batch/app/Services/UnifiedDigestService.php
   - iznik-batch/app/Services/TrashNothing/Ingestion/**
   - iznik-batch/app/Services/TrashNothing/Sync/**
+  - iznik-batch/app/Services/TrashNothing/SharedAccountSplitter.php
+  - iznik-batch/app/Services/TnMembershipBackfillService.php
+  - iznik-batch/app/Console/Commands/Membership/BackfillTnCommand.php
   - iznik-server-go/modmessaging/**
+  - iznik-server-go/membership/membership.go
+  - iznik-server-go/story/story.go
+  - iznik-batch/app/Services/MembershipsProcessingService.php
+  - iznik-batch/app/Services/BirthdayService.php
+  - iznik-batch/app/Services/ReengageContentService.php
   - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
+  - iznik-batch/app/Support/TrashNothingSignOff.php
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
   - iznik-server-go/user/partner.go
@@ -57,26 +66,58 @@ When processing TN messages, the system:
 
 ### Email Canonicalization
 
-To prevent duplicate user accounts when the same TN user joins multiple groups:
-1. Strip `-g{groupid}` suffix: `john-g123@user.trashnothing.com` → `john@user.trashnothing.com`
+To prevent duplicate user accounts when the same TN user joins multiple groups,
+`User::canonMail()` reduces an address to the canon that `users_emails.canon` holds and
+the email path's `findUserByEmail` falls back to:
+1. Strip a per-group `-g{digits}` suffix, and only that: `john-g123@user.trashnothing.com` → `john@user.trashnothing.com`. A bare `john@user.trashnothing.com` and every alias of it share one canon, and a hyphenated username keeps its hyphen (`mary-jane@` is not `mary-g12@`).
 2. Strip plus addressing
 3. Remove dots (Gmail-style normalization)
+
+`IncomingMailService::canonicalizeEmail()` delegates to `canonMail()`, so the canon looked up
+cannot differ from the canon written. Go's `CanonicalizePartnerEmail` is not a copy of it: it
+treats a per-group alias and a bare `username@user.trashnothing.com` alike as a TN address
+(`user.TNIdentity`), strips the suffix, lowercases and removes the domain's dots, so every
+address of one member gets one canon. It lowercases, which `canonMail` does not, and it does not
+strip a `+` suffix, which `canonMail` does for any address. Nothing in this repository says
+whether a TN username can contain `+`; one that does would get a different canon in the two
+stacks. Any other address falls to Go's general `CanonicalizeEmail`, which gives `canonMail`'s answer. The rule used to strip everything after the last hyphen; rows written
+then keep their old canon until `users:backfill-email-canon` rewrites them, which is why a
+canon match alone is never taken as "same member" (see below). See
+[.claude/rules/mail-and-data.md](../../../.claude/rules/mail-and-data.md).
 
 ### Identifying the member behind an address
 
 A member's TN identity is the username in their per-group addresses - `bibiana` in
 `bibiana-g288@user.trashnothing.com` - and it is the whole of it, not a prefix of it.
-`tn:sync`'s duplicate check (`TNSyncCommand::mergeDuplicateTNUsers`) merges the accounts
-that share one, keeping the lowest `users_emails.id`.
+`tn:sync`'s duplicate check (`TNSyncCommand::flagDuplicateTNUsers`) finds the accounts that
+share one and flags each group for a person. It merges nothing.
 
 Per tick it reads only addresses added since the last run and probes for siblings of each
 with `LIKE '<username>-g%@user.trashnothing.com'`; one tick a day regroups the whole table
 instead, which is what catches a duplicate made by re-pointing an existing row. That
 `LIKE` is an index narrowing and not the test: its `%` runs on past the end of the
 username, so `bibiana-g%` also matches `bibiana-gomes-g4840@...`, a different member.
-Both passes decide on an exact username from `tnUsernameFromAddress()`. Merging two
-members into one account deletes one of them and re-points their mail, so the exact test
-is what stands between a longer username and being absorbed by its own prefix.
+Both passes decide on an exact username from `tnUsernameFromAddress()`, so a longer username
+is never grouped with its own prefix.
+`tnUsernameFromAddress()` strips only a `-g{digits}` suffix, so a bare `username@` address is
+its own group key and is not yet grouped with the aliases of the same username. The
+provisioner and the canon fallback in `findUserByEmail` keep the bare and alias forms on one
+account at creation time, so this only matters for twins that already exist.
+
+**A shared username is not a shared identity.** TN does not promise usernames are unique, and
+a released one can be retaken, so two accounts on one username may be two people. Merging on
+the username joined two members on one account more than once (the accounts that were split by
+hand in November 2026 were made that way). Only the same TN user id would prove two accounts are
+one member, and `users.tnuserid` is unique, so no two accounts can hold the same one. So every
+group is left alone and logged (`TN-SYNC-TRACE [MERGE-SKIP]`, Loki `tn-sync`/`user-merge-skip`)
+with its reason: `tnuserid-conflict` when the accounts hold different TN user ids, and
+`tnuserid-unproven` when fewer than two do. `User::merge` still refuses a merge of two different
+TN user ids and reports a `TnUserIdMergeConflict` to Sentry; passing `$forceMerge` proceeds but
+still reports it.
+
+The three helpers for reading an address are `User::tnUsernameFromEmail()` (bare or alias,
+lowercased, `NULL` for a non-TN address), `User::tnEmailForUsername()` and
+`User::tnDisplayName()` (`tricia.hayes` becomes `Tricia Hayes`, as Go's `CreatePartnerUser` makes it).
 
 ### Finding the addresses: not via the backwards column
 
@@ -106,29 +147,62 @@ production over 4.2M rows, `backwards` takes 3.3s and finds 94 of the 96, the ad
 and finds all 96. The per-tick pass pays neither, since its `id >` range narrows on the primary
 key first.
 
-### Reviewing the backlog before merging it
-
-Widening that filter exposes ~96 pairs of live member accounts at once, and `User::merge`
-deletes one of each, so merging them is gated:
+### Listing the groups
 
 ```bash
 php artisan tn:sync --report-duplicates
 ```
 
-is read-only. It always uses the wider filter, lists each candidate pair with its
-`tnuserid` and message count, flags pairs whose accounts carry **two different tnuserids**
-(a member who re-registered on TN, or a username released and retaken by somebody else -
-only a person can tell which), moves no cursor and merges nothing.
-
-The sync itself keeps the old, narrow filter until
-`FREEGLE_TN_MERGE_LEGACY_DUPLICATES=true`. Until then its behaviour is exactly what it was,
-so duplicates created from now on are still merged and the reviewed backlog waits.
+is read-only. It lists each group of accounts sharing a username with each account's
+`tnuserid` and message count, calls out groups whose accounts carry **two different
+tnuserids** (a member who re-registered on TN, or a username released and retaken by somebody
+else - only a person can tell which), and moves no cursor.
 
 **Key functions**:
 - `User::isTN()` - Check if user is from TN
 - `User::findByTNId($id)` - Look up user by TN ID
 - `User::removeTNGroup($name)` - Remove `-gxxx` suffix from display names
+- `users:fix-tn-names` (daily) - Names a member who has no name from the group alias they came in on. It leaves alone any member whose name is already `User::tnDisplayName()` of one of their usernames, and never derives a name from a bare `username@` address, where a hyphen belongs to the username
 - `User::canonMail($email)` - Normalize TN email addresses
+- `User::tnUsernameFromEmail($email)` - The TN username behind a bare or per-group address
+
+### Splitting an account that holds two members
+
+When one Freegle account turns out to hold two Trash Nothing members (two usernames, and TN's
+API gives the second one a different TN user id), `tn:split-shared-account` moves the second
+member out onto a new account with their TN user id:
+
+```bash
+php artisan tn:split-shared-account <freegle-user-id> <tn-username> <tn-user-id>          # report only
+php artisan tn:split-shared-account <freegle-user-id> <tn-username> <tn-user-id> --commit # write it
+```
+
+Without `--commit` it writes nothing and prints, per table, how many rows would move and on
+what evidence, plus the chats it cannot attribute and why. It prints ids and counts only.
+`SharedAccountSplitter` holds the rules:
+
+- An address moves when it carries the username; a post moves when one of those addresses sent it.
+- A member's alias stands for a Freegle community when its posts went there, or when it first
+  reached us within `SAME_MOMENT_SECONDS` of the account joining that community (TN added both
+  at once). A membership moves when only the moved member's aliases stand for its community, is
+  copied (dated when their alias for it first reached us) when both members' do, and stays
+  otherwise. Membership history moves on the same join-time match.
+- A chat moves when only the moved member could have written in it: the account's own post
+  in it was theirs, and every message the account wrote came after their alias for the post's
+  community first reached us and before the other member had one. A chat both could have
+  written in, or that nothing ties to either, is **undecided** and stays; name it in
+  `--move-chats=` to move it after looking.
+- Promises, collections and reneges about posts in moved chats move with them, and ratings,
+  arrangements and expected replies with people the account now only chats with as the moved
+  member. Logs move when they are about a moved post, or are a community log for a moved or
+  copied membership at the moved alias's time. Other logs stay.
+
+`--commit` does it in one transaction of single-row updates, each re-asserting the current
+owner, so a row that has changed since the report aborts the whole split. Before committing it
+writes the SQL that undoes it (under `storage/app/tn-splits/`, or `--rollback-file=`) and logs
+`User`/`Split` on both accounts. A second run finds nothing to move. It refuses an account that
+does not hold the username, a TN user id another account holds, the account's own TN user id,
+and an account whose only TN username it is.
 
 ## Integration Mechanisms
 
@@ -185,14 +259,17 @@ when reading any coverage report:
 
 - **The poster is resolved through `users.tnuserid`.** The API's `user_id` is TN's own
   id, never a Freegle id, and `users.tnuserid` (unique, written by the partner
-  membership-add flow) is the only mapping. A TN user Freegle has never met is skipped
-  (`post-skip-unknown-user`): the API gives no name and no address for them, so nothing
-  could deliver a reply, and nothing is invented for them - no stub account, no
-  synthetic address. Treating the number as a Freegle id would hand the post to whichever
-  unrelated account holds it.
-- **Group placement is by coordinates**, via `Location::groupsNear()` on the
-  post's own lat/lng — never TN's `group_id`, which is TN's internal ID and
-  drifts from Freegle's boundaries.
+  membership-add flow) is the only mapping. Treating the number as a Freegle id would hand
+  the post to whichever unrelated account holds it. A TN user Freegle has never met is not
+  skipped, unlike the email path, which drops the post as `Post from unknown user`:
+  `TnUserProvisioner` asks TN who they are and creates them (below).
+- **The member chooses the community.** TN's out-of-spec `freegle_group_ids` lists the
+  Freegle communities the member picked for this post, and the post goes on one of them:
+  the one whose area contains it, otherwise the one whose centre is nearest, wherever the
+  post is (`PostSyncer::placement()`). A chosen community that is not published is passed
+  over. Only a post that names none is placed by its own lat/lng, via
+  `Location::groupsNear()`, on the local community. TN's `group_id` is never used: it is
+  TN's internal ID and drifts from Freegle's boundaries.
 - **Crossposts collapse.** TN gives every per-group copy of a post its own post
   id and emails each one, so the email path creates N messages for an item
   crossposted to N groups. The API path ingests only the source post (empty
@@ -214,8 +291,26 @@ when reading any coverage report:
   content difference, and `ParityComparer` canonicalizes it before comparing
   subjects — otherwise every such post fails parity twice (same-group content
   and Loki entry) and buries the real mismatches.
-- **Deletion is final.** The API path's idempotency guard
-  (`GroupPostIngestionService::existingMessageForGroup()`) counts a *deleted*
+- **The subject's location bracket is rebuilt.** TN's `title` ends in the member's
+  own words for where they are, in no fixed shape: a town, a street, or the whole
+  postcode ("(LE2 3HE)", "(Hilmorton road 101 cv22 5aj)"). The email path never saw
+  that, because TN rewrote the subject per group before sending ("(Stoneygate LE2)").
+  `GroupPostIngestionService::createMessage()` replaces the bracket with the one the
+  Go API gives every Freegle post, `Location::subjectArea()` on the post's resolved
+  postcode: the area name and the outward half, "(Stoneygate LE2)". A post that
+  resolves to no location loses the bracket rather than keeping the member's text.
+  `SubjectParser::withLocation()` does the replacement, and `ParityComparer`
+  compares subjects without their bracket for the same reason. `tn:rewrite-subjects`
+  (dry run unless `--apply`; `--since=<date>` to bound it) is the backfill for posts
+  ingested before this: it rebuilds `subject`, and `suggestedsubject` when the two
+  still agree, and leaves a subject that already has the right bracket alone.
+- **One TN post is one message.** The API path's idempotency guard
+  (`GroupPostIngestionService::existingMessage()`) matches the TN post id on any
+  group. A post can resolve to a different group on a later read (one on the line
+  between two groups, or a member who changes the communities they chose), and the sync
+  reads each post more than once, so a check scoped to the resolved group would place it
+  twice.
+- **Deletion is final.** The same guard counts a *deleted*
   message as already ingested, unlike the email path's `findLiveTnMessage()`,
   which skips deleted ones. Deleting is a decision — a moderator, the member, or
   a user purge — and every overlapping sync window re-fetches the post, so
@@ -232,18 +327,29 @@ when reading any coverage report:
   TN invoice on `sourceheader LIKE 'TN-%'`, `LoveJunkService` attributes the post's
   source by it, and `ProcessBackgroundTasksCommand` uses it to skip creating
   freebie alerts for TN posts, which TN syndicates itself.
+- **The sender is the member's TN address**, as on a post TN emails to the group:
+  `fromaddr` and `envelopefrom` on the message and its `messages_history` row, and the
+  From line of the synthesized message, come from `User::tnAddress()` (the preferred email
+  when it is a TN address, otherwise the newest one). `MessageHistory.vue` says "via
+  TrashNothing" only when `fromaddr` is a TN address, and `FindPartnerOwnerForMessage` lets
+  TN's partner key act as the owner only of a post whose sender is in TN's domain. Posts
+  ingested before this had no sender; `tn:backfill-post-senders` fills them in. A member with
+  no TN address at all posts with none.
 
 **Routing matches the email path**, including approval. A post from an unmoderated
 poster (`ourPostingStatus` `DEFAULT`/`UNMODERATED`, which is also the fallback used
-when the poster isn't a member of the group its coordinates resolved to) is *not*
+when the poster isn't a member of the group the post went on) is *not*
 approved on arrival: it lands Pending, and `messages:contentcheck` promotes it
 within a minute if clean, or holds it for a moderator if a concern keyword or
 content rule matches. `GroupPostIngestionService` deliberately does not notify mods
 or add such a post to the spatial index — both belong to the content check, so a
 clean post makes no mod work and a flagged one is never live in the meantime.
-Because these posts often have no membership row, `ContentCheckService::isUserModerated()`
-applies the same `DEFAULT` fallback for a post with a `tnpostid`; without that they
-would sit in the mod queue with nothing able to promote them.
+A member whose `ourPostingStatus` is blank is moderated, as on the email path, on the web
+and in the content check: the post waits for a moderator, who is notified when it arrives.
+Ingestion now gives the poster a membership with `ourPostingStatus` `DEFAULT` (below), but a
+post from before that, or from a poster banned from the group, has no membership row, so
+`ContentCheckService::isUserModerated()` applies the same `DEFAULT` fallback for a post with a
+`tnpostid`; without that they would sit in the mod queue with nothing able to promote them.
 
 **A stale spatial-index location costs the post its location, not the post.** The
 spatial server keeps its own R-tree, rebuilt from MySQL on its own schedule, so its
@@ -259,7 +365,10 @@ Photos come from the API's own `photos[].images` array rather than being scraped
 out of the post body. TN documents that array as ordered *smallest to largest*
 (`PublicApi/docs/Model/Photo.md`), so `GroupPostIngestionService::bestPhotoUrl()`
 takes the **last** entry — taking the first ingested a thumbnail where the email
-path got the full-size image.
+path got the full-size image. The post's text still ends with TN's "Check out the
+pictures at:" and a `trashnothing.com/pics/` address, sometimes the address alone;
+`App\Support\TrashNothingPicLinks::strip()` takes it out on both paths, since the photos
+are already attachments.
 
 `tn:parity-check` reclassifies two families of TN-side mutation rather than
 failing on them, because nothing on the Freegle side can prevent either: a post
@@ -283,20 +392,205 @@ nothing. `ParityComparer::parseUnknownGroupDrops()` counts those drops per
 group, the report lists them, and `tn:parity-check` fails outright when they
 account for the whole email side.
 
+### Posters Freegle has never met
+
+`TnUserProvisioner`, called from `GroupPostIngestionService::ingest()`, turns a TN `user_id`
+into a Freegle user:
+
+1. A live user with that `users.tnuserid` is used, with no call to TN. A deleted account does
+   not count: it is never handed the post, and while it still holds the id the post is skipped
+   (`tn-account-deleted`, below).
+2. Otherwise it asks TN's public API, `GET /users/{id}`, with the developer key as `?api_key=`
+   (a header gets 401), paced by the rate limiter the posts sync shares. TN's errors are
+   `text/html`, so the status is read before the body is decoded. The call gives up after 10
+   seconds (5 to connect), because it holds up the whole sync. The lookups for an existing
+   `tnuserid`, and for the winner of a lost race below, read the primary: a poster created a
+   moment ago may not be on the replica yet, and missing them there fails the post on the
+   unique index.
+3. The username gives `username@user.trashnothing.com`, which TN confirm is deliverable, so a
+   reply to the post reaches the member.
+4. A live account already holding that address, or a per-group alias of the same username,
+   is linked rather than twinned: it gets the `tnuserid`, the bare address is attached as a
+   non-preferred one, and its preferred address stays. The username must match exactly,
+   compared lowercased. A canon match alone is not enough, because rows written under the old
+   canon rule can share a canon with a different member.
+5. Otherwise a user is created: display name from the username, TN's first and last names,
+   `about_me` and `reply_time` when given, the bare address as preferred, and no
+   `lastlocation`, so the first post goes Pending as an unmapped user.
+
+It writes user data only. The one membership the post needs is written by ingestion, as for
+any poster. When no user can be had the post is skipped with a `routing_reason`:
+
+| `routing_reason` | Cause |
+|---|---|
+| `Post from unknown user` | TN has no such user (404), or no usable username for them. TN answered, so this is final, and the answer is remembered for an hour |
+| `tn-user-lookup-failed` | TN could not be asked (network error, timeout, 408, 429, 5xx, Cloudflare challenge). Transient: the sync stops here and the next run asks again, below. Written to Loki only if the post is finally skipped, as `tn-user-lookup-gave-up` |
+| `tn-user-lookup-refused` | TN answered with a client error other than 404 (400, 410, 422, 451 and the like). It is about this poster and a retry gets it again, so it is final like a 404, and remembered for an hour like one |
+| `tn-user-lookup-gave-up` | TN could not be asked about this post's poster for 30 minutes. The post is skipped so that one poster cannot hold up every post behind it |
+| `tn-user-lookup-key-rejected` | TN rejected the public API key (401 or 403 without a Cloudflare challenge). Every lookup fails until the key is fixed, so the sync does not stop: the post is skipped as a miss and the posters Freegle already knows keep coming in. Sentry hears about the key at most once an hour |
+| `tn-username-clash` | An account with a different `tnuserid` holds the address: usernames are not unique, so these are two people |
+| `tn-address-held-by-deleted-user` | A deleted account still holds the bare address, which is unique and not the provisioner's to take back |
+| `tn-account-deleted` | A deleted account still holds the `tnuserid`. It is unique, so no live account can be given it, and a post is not handed to a deleted account. Deleting is a decision (the member leaving, or a merge) and the provisioner does not take the id back. Forgetting the account clears it (`User::forget()` and `UserManagementService::forgetUser()` both do), after which the poster's next post finds or makes a live account. Checked before TN is asked |
+
+**A failed lookup stops the sync, for a while; an answered one does not.** A post whose poster
+TN would not answer for cannot be judged, and passing over it would put it behind the stored
+cursor for good. So `PostSyncer::sync()` stops at the first one (`stalledAt()`), and `tn:sync`
+holds the stored date back to the start of the window it stopped in, even when ratings or
+user changes saw later dates. That is the stored date less the 10 second overlap on a normal
+run, so the date it already had; it is a day boundary only when a backlog is being read.
+Nothing is lost by re-reading: ingestion skips a post it already has, and ratings and changes
+are idempotent. The same goes for `tn:verify-email-coverage`: a
+backfill whose poster lookup failed is neither remembered as backfilled (it would come back as a
+repeat miss and fail the run) nor counted as a failure, and is tried again next run.
+
+The date is held at the start of the window, not at the stalled post's own date, to save
+re-reading the posts before it, because the order of the feed is not known. `/posts/all` takes
+no sort parameter and TN documents no order for it (its sibling `/posts` sorts newest first), and
+the posts the run has not reached may be older than the one it stopped on. A date at the stalled
+post would pass them for good. The cost is a `duplicate` routed entry for each post already
+ingested, on each retry, and the retries are bounded by the give-up count below.
+
+Only a failure to ask is retried: a network error or timeout, 408, 429, 5xx, a Cloudflare
+challenge, and a 200 that is not JSON. Any other 4xx is TN's answer about that poster, so it is
+`tn-user-lookup-refused` and the sync moves on. It is logged each time, and Sentry hears of each
+status once a day. A rejected key (401/403) is neither: it says nothing about the poster and
+fails every lookup until it is fixed, so holding the window for it would only hold up the posts
+behind. The post is skipped as `tn-user-lookup-key-rejected`, a miss that
+`tn:verify-email-coverage` shows and, with auto-ingest on, asks about again on each run until the
+key works or the post is too old. In that backfill a rejected key is "try later", like a failed
+lookup.
+
+The wait is bounded, because with API ingestion on the email path no longer routes TN posts, so
+one poster that always fails would otherwise stop every post behind it for ever.
+`TnUserProvisioner` times the failed lookups of each TN post id from the first one, in the cache
+(kept 24 hours; a lost race with no winner counts too). After 5 minutes
+(`LOOKUP_WARN_AFTER_MINUTES`) Sentry hears of the post, so a wedge is seen early. After 30
+(`LOOKUP_GIVE_UP_AFTER_MINUTES`) the post is skipped as `tn-user-lookup-gave-up`, Sentry hears
+again, and the window moves on. The limits are minutes, not runs, so they do not change with how
+often `tn:sync` runs. An answer, whatever it is, is not a failure and does not start the clock,
+so a 404 poster ahead of a failing one cannot hide it. A dry run times nothing. A given-up post
+is still looked up if it is read again later, and ingested if TN answers by then. A rejected key
+is not timed.
+
+A post held for a retry writes no routed Loki entry. The stream carries one entry per post, so
+the entry is written when the post is ingested or skipped, whichever reason it ends with.
+
+TN's final answer about a poster is remembered, so the same poster is not asked about again
+for each of their posts in each overlapping sync window. A 404, a user with no usable username
+and a refusal are each cached for an hour per TN user id (`ANSWER_TTL_MINUTES`), with their
+reason kept (`TnUserProvisioner::failFinal()`). It is an hour because the answer can be wrong, as
+with a bad base URL, a 404 from an edge, or a member too new to be on TN's replica yet: until it
+expires every post by the poster is skipped, and putting the cause right does not bring them back. Nothing else is: a failure to get an answer is asked again,
+as above, and a username clash or a deleted account holding the address is decided from
+Freegle's data each time, so one that has been put right takes effect at once. An account that
+gets the `tnuserid` meanwhile (the partner flow stamps it) wins over a remembered answer,
+because the account lookup comes first. A dry run reads the remembered answers and writes none,
+and `--local-testing` does neither. A member who is given a username within the hour is created
+on the first post after the answer expires.
+
+`tn:sync` and the hourly `tn:verify-email-coverage`
+backfill can provision the same poster at once; the loser of the `tnuserid` unique index takes
+the winner's user. In dry-run nothing is written and each would-be write is a
+`TN-SYNC-TRACE [WRITE]` line. With `--local-testing` the answer comes from
+`tests/fixtures/tn_sync/users/{id}.json`.
+
+Expect API-side Pending against email-side Dropped for the same post when the poster is new.
+That is a deliberate difference, like the others above.
+
 ### Posts nobody chose: unaddressed TN posts
 
-Because the API path picks the group from the post's coordinates, a TN poster
-frequently ends up on a Freegle community they never asked for. TN's out-of-spec
-`freegle_group_ids` field says which Freegle groups that poster *did* choose, and
-`PostSyncer::processPost()` compares the resolved group against it, storing the answer
-as `messages_groups.mod_messaging_allowed` (default-deny for TN posts, table default 1
-for everything else). A post with 0 there is **unaddressed**: nobody on Freegle has any
-standing to moderate it in the usual sense, because the person behind it has not joined
-Freegle at all.
+TN's out-of-spec `freegle_group_ids` field lists the Freegle groups chosen for **this post**
+that the poster has consented to posting to (per post, not a list of their memberships: a member of two
+communities who posts to one gets only that one, checked against TN on 2026-11-08).
+`PostSyncer::placement()` puts a post that names any on one of them, and stores
+`messages_groups.mod_messaging_allowed = 1`. A post that names none is placed by its
+coordinates on the local community, which the poster never asked for, and stores 0
+(default-deny for TN posts, table default 1 for everything else). A post with 0 there is
+**unaddressed**: nobody on Freegle has any standing to moderate it in the usual sense,
+because the person behind it did not choose that community for it.
+
+The choice is the member's, made on TN for each post. Their memberships play no part in
+placing it: a member of one community who posts from inside another's area, naming their
+own, goes on their own; one who names none goes on the local community, unaddressed, even
+if they are a member there (decided 2026-11-08, Discourse 10315).
 
 The rule is read off the **origin** row (`rippled_in = 0`). The rippling engine inserts
 its copies without the column, so they take the table default and would otherwise make
 every rippled copy of an unaddressed post read as addressed.
+
+**The poster's membership is moving to carry the same answer.** After routing,
+`GroupPostIngestionService::recordMembership()` makes sure every TN post has a membership
+behind it. A poster with no membership of the group gets one either way, Member, Approved, with
+`ourPostingStatus` `DEFAULT`, not blank, because `isUserModerated()` reads a blank status as
+moderated and would hold the poster's posts:
+
+- **Unaddressed:** an **implicit** membership (`implicit = 1`, `added_origin =
+  'tn_unaddressed'`) with mail off (`emailfrequency`, `eventsallowed` and `volunteeringallowed`
+  all 0). A ripple join copies the poster's settings from their home group instead, but a ripple
+  poster is told by the intro mail and a TN poster is told nothing; digests already skip TN
+  users, and the events and volunteering roundups would otherwise mail them from a group they
+  never chose. The join log is `TrashNothing unaddressed`, made by nobody.
+- **Addressed:** an ordinary one (`added_origin = 'partner'`) with the column's mail defaults,
+  the same as TN's own partner add, logged `via partner` by the member.
+
+Both write a `memberships_history` row with the same origin, in one transaction with the
+membership and the log. `memberships:process` sends no per-group welcome for a
+`tn_unaddressed` row and leaves those joins out of the "seen on many groups" check, as it does
+for a ripple join; birthday appeals, the re-engagement sign-off and the story feeds leave out
+`implicit = 1` memberships. Freegle's own mailings, the Stories newsletter, the engage mails
+and Community News, leave out TrashNothing members altogether, whatever memberships they hold
+(`User::scopeNotTrashNothing`, `User::isTrashNothingAccount`). A moderator cannot add a
+TrashNothing member through `PUT /memberships`: they join through TrashNothing, and the add would
+turn a placement into a membership they never chose. An existing membership keeps its `added_origin`. A post that **is**
+addressed clears an implicit or ripple membership through `RippleEngagementService::clear`,
+logging `TrashNothing-placed membership became ordinary: consented through TrashNothing` for a
+`tn_unaddressed` row (a ripple membership gets the `Ripple-created ...` wording); consent
+only goes one way, so a later unaddressed post leaves an ordinary membership alone. The membership is also what lets the post auto-approve: `AutoApproveService::shouldApproveOnGroup` releases a
+Pending post only for a poster whose membership of the group was added more than 48 hours ago
+(`MEMBERSHIP_HOURS`), and it used to hold a TN poster's post for good because there was no
+membership to read. So a TN API post flagged by the content check, unaddressed ones included,
+now goes live about 49 hours after the placement, like an ordinary member's. That is deliberate.
+A moderator can still approve or delete it first.
+
+**A banned poster's post is not placed.** A Freegle member banned from a group can't post to
+it, and nor can a TrashNothing one. Ingestion checks `users_banned` before it writes anything
+and skips the group with `REASON_BANNED` (`post-skip-banned` in Loki): no message, no
+membership. Each post goes to one group, so a post skipped here is not ingested at all. The trace tag is `TN-SYNC-TRACE [MEMBERSHIP]`, which the parity comparison
+ignores.
+
+The membership is written after the post, so a failure there keeps the post and leaves the
+poster with no membership. The write is retried on a deadlock, and a failure goes to Sentry.
+`tn:reconcile-memberships` (`TnMembershipReconcileService`, hourly while the API path is on)
+then writes it for any TN API post from the last seven days whose poster has no membership of
+the group, unless they are banned or have left it since; each repair is reported to Sentry
+too. A post that fails to ingest at all is reported, and `tn:verify-email-coverage` fetches it
+again from the email archive.
+
+Posts that arrived unaddressed before ingestion made memberships have the flag and no
+membership. `memberships:backfill-tn` (`TnMembershipBackfillService`; dry run unless `--send`,
+safe to run again) reads only their own rows (`rippled_in = 0`, `mod_messaging_allowed = 0`,
+live or not) and, for each poster and group, writes the membership ingestion would through
+`GroupPostIngestionService::writeMembership`, dated from their earliest such post there. An
+earlier addressed post to the group does not stop it: consent lives on the membership, and a
+poster with none has left since, so being placed back makes a new implicit row, as ingestion
+does. It skips a banned or deleted poster, a poster with no `tnuserid` (the first API posts,
+before posters were resolved through it, went to whichever account had TN's id or to a stub
+made with it). An addressed TrashNothing post to the group since a membership was added is
+consent, as for ingestion: an API post that named the group, or one that came by email, since
+TrashNothing emails a post only to groups the poster joined there. An implicit membership (TN
+or ripple) is then cleared with the "became ordinary" log. An ordinary Freegle post is not
+consent to a placement, because nothing live clears one for it; a ripple membership is cleared
+for one by the engagement pass instead. Any other membership is left alone: an ordinary
+membership is never made implicit, a `tn_unaddressed` row without `implicit` included (it was cleared, or merged with a membership
+the member chose). It lists every pair with its contact
+under the old mixed-poster rule (one addressed post on any group opened every group) and per group
+(an ordinary membership of that group after the run), and counts the pairs that lose and gain
+contact when contact is decided per group.
+
+A post with no `freegle_group_ids` field at all is read as unaddressed, but `PostSyncer`
+reports it to Sentry once a run: TN enables the field per API key, and a key without it would
+make every poster implicit. An empty list is the poster's choice and is not reported. The
+checks below still read `mod_messaging_allowed`.
 
 `iznik-server-go/modmessaging` is the one place that decides this, and everything else
 asks it:
@@ -304,12 +598,17 @@ asks it:
 | Question | Function |
 |---|---|
 | Is this post unaddressed? | `PostIsUnaddressed` |
-| Is every post this person has made unaddressed? | `UserIsUnaddressedOnly` / `UsersUnaddressedOnly` |
+| May this community's moderators contact this person? | `ModsMayContact` (`MembershipAllowsContact` for a row in hand) |
+| Which of these people are TrashNothing members? | `TrashNothingMembers` / `IsTrashNothingMember` |
 | Take an unaddressed post off the platform | `RemoveUnaddressedPost` |
 
-A **mixed** poster - one unaddressed post plus any ordinary Freegle post - is a real
-member and is not restricted at all. That is the case `UserIsUnaddressedOnly` exists to
-get right.
+Contact is decided **per community, from the membership**. Anyone who is not a TrashNothing
+member can be contacted. A TrashNothing member can be contacted by a community's moderators
+only through a membership of that community they chose: Approved, `implicit = 0` and
+`rippled = 0`. A placement, a ripple join, or no membership because they have left all
+refuse. Their posts and memberships elsewhere count for nothing; the old "mixed poster" rule,
+where one addressed post on any group opened every group's moderators to them, is gone. The
+batch has the same rule as `User::modsMayContact()`.
 
 What changes as a result:
 
@@ -345,6 +644,66 @@ Members are **not** restricted: an ordinary freegler can still reply to one of t
 posts, and the reply relays back to TN as it always has. The restriction is about
 moderators, who are the ones with no relationship to the poster.
 
+### Contacting a TrashNothing member
+
+`MayContact` (`ModsMayContact` for one person acting) gates every way a moderator writes to
+someone: starting a User2Mod chat (`PutChatRoom`), writing in one (`CreateChatMessage`), Mail and
+the member standard messages (`PostMemberships` `Leave (Approved) Member`), and a reply about a
+post (`prepareModReply`). Support and Admin act for Freegle as a whole, so the rule does not bind
+them: `MayContact` passes them, the members list and the post's `canmessageposter` show them the
+buttons, and `ProcessBackgroundTasksCommand` sends a task whose `byuser` is Support or Admin.
+`ProcessBackgroundTasksCommand` checks again before it sends a standard message, so a task
+queued before the member left sends nothing. `Reject` and `Delete Approved Member` remove the
+membership first, so the table can no longer answer by the time the task runs. `PostMemberships`
+decides before it deletes and puts the answer in the task as `modsmaycontact`, which the batch
+uses in place of the lookup. A task without the key (every other action, and tasks queued before
+it existed) still asks the table.
+
+- **A chat closes when they leave.** `PutChatRoom` still hands back an existing room, so the
+  moderators can read it, but `CreateChatMessage` refuses their messages in it, so an old chat
+  can't get round the rule; only a new chat is refused outright. The member can still write;
+  that is how someone banned appeals. The chat payload carries `modsclosed` for the moderators,
+  and `ModChatFooter` shows a notice in place of the reply box. A refused new chat comes back as
+  a 403 that `stores/chat.js` treats as expected rather than an error, and `ChatButton` says
+  why instead of opening anything. A moderator's reply by email to a chat notification is held
+  to the same rule: `IncomingMailService::handleChatNotificationReply` drops it before writing
+  anything, with the routing reason `Moderator reply to a chat closed to moderators`, so no
+  chat message exists and nothing is mailed to the member. The member's own reply, and Support
+  or Admin, still go through.
+- **Notes in chat review follow the same rule.** A moderator writing into a chat between two
+  members (`CreateChatMessage` on a User2User room they are not in) speaks for no one
+  community, so `MayContactThroughAnyGroup` needs each TrashNothing member in it to have
+  chosen a community the moderator moderates.
+- **The post says whether its poster can be written to.** `canmessageposter` on each of the
+  post's groups folds the rule in, so ModTools stops offering Blank Reply and the standard
+  messages once a TrashNothing poster has left.
+- **The members list follows the row.** `mod_messaging_allowed` on each member is
+  `MembershipAllowsContact` for that membership, with the TrashNothing check batched for
+  the page.
+- **Moderators' messages are signed.** TrashNothing shows our mail to its members as coming
+  from a Freegle user, so the "{Group} Volunteers" or moderator sender name is lost.
+  `TrashNothingSignOff` adds "From the volunteers who run {group}" to the body of a
+  moderator's chat message (`ChatNotification`) and of a standard message or reply about a
+  post (`ModStdMessageMail`) to a TrashNothing member. A chat mail signs only the new message,
+  not the earlier ones it quotes.
+- **A replier has a membership.** TrashNothing joins its members to a community before they
+  can reply to its posts by email: of 28,051 TN replies to Freegle posts in the 30 days to
+  2026-11-03, 28,027 came from someone who had joined a community the post was on before
+  replying, 19 from someone who joined just after, and 5 from someone who never joined. So
+  moderators deal with a TN replier through that membership (ban, chat review), and there is no
+  separate report path to TrashNothing. A TN account replying on Freegle itself is joined like
+  anyone (`CreateChatMessage`, and a `replied` join through `PUT /memberships`), but a reply
+  never makes an existing placement ordinary: `PUT /memberships` leaves a TN member's existing
+  membership as it is, and `RippleEngagementService` does not clear a ripple join for their
+  reply or write-back. Only choosing the community through TrashNothing does.
+- **A ban takes their posts down.** Banning deletes the membership, so a placed post would
+  stay up with nobody able to talk to its poster about it. Both ban paths (`DELETE /memberships`
+  with `ban`, which ModTools uses, and the `Ban` action on `POST /memberships`) call
+  `message.WithdrawPostsOnBan`. It withdraws the member's open OFFER and WANTED posts whose
+  home is the community, as V1's `removeMembership($ban)` did, for every member, not only
+  TrashNothing ones, and retires any copy still pending on a neighbour. A post still only
+  pending is deleted instead. A post that rippled in from a neighbour is left to it.
+
 ### Verifying nothing is dropped after the cutover
 
 Once the email path stops routing, `tn:parity-check` no longer works: it compares
@@ -356,6 +715,7 @@ replaces it, checking coverage only.
 | `TnEmailRoutingGate` | Decides which inbound mail stops being routed. Narrow by design — a wider predicate silently drops mail. It mirrors `IncomingMailService::route()` phase by phase and matches only what would have reached Phase 5, so chat replies, bounces, digest replies, auto-replies and volunteer mail all keep routing. |
 | `ArchiveInventoryService` | Lists the TN posts that arrived in a window — the independent witness. Walks the archive via the shared `IncomingArchiveReader` (also used by `mail:recover-dropped-merged`); only the TN-specific selection and keying live here. |
 | `CoverageVerifier` | Checks each against `messages.tnpostid` and classifies the absences. |
+| `DeliberateSkips` | Ingestion's note of why it skipped each post for want of a user (TN post id and reason, in the cache), and which reasons are expected and which need a person. The verifier reads it. |
 | `TNVerifyEmailCoverageCommand` | Orchestrates, backfills, reports. |
 
 Both mail entry points archive the raw email *before* routing
@@ -371,13 +731,73 @@ posts outside every group boundary, deleted posts, resolved outcomes
 window, from genuine gaps. Distinguishing them needs a single-post
 `GET /posts/{id}` per absence — `PostSyncer::lookupPostById()`.
 
-The out-of-boundary verdict comes from the **live** post's coordinates, which are
-the ones `PostSyncer::processPost()` would have placed it from. The archived
-email's `X-Trash-Nothing-Post-Coordinates` header is only allowed to skip the
-lookup when it names coordinates that resolve to no group — a post the email path
-would itself have dropped as an unknown group. A header that is missing or
+**`/posts/all` lists the posts TN holds until Freegle approves them.** TN emails a post to
+the Freegle community the poster chose, but for some posts (a new member's, or one under
+moderation) it does not publish it until a Freegle moderator has approved it. TN learns of
+the approval from `/api/changes` (`ApprovedOrReposted`), then publishes the post. The feed
+lists a held post at the date it was posted, so `tn:sync` ingests it like any other and
+Freegle's own moderation takes over, as it did when the post came by email. Once the post is
+approved, TN publishes it with a new date, and the sync meets it again and skips it as a
+`duplicate`. Until 5 November 2026 the feed left held posts out, so coverage reports from
+before then count them as genuine misses, roughly one addressed post in four or five.
+
+The same command also runs every ten minutes over the last 70, stopping five minutes short
+of now (`--recent=70 --auto-ingest --ingest-closed --max=100`, `routes/console.php`). It is
+the second chance for a post the sync skipped as "try later" (TN could not be asked about
+the poster, or rejected the key) and for anything else the feed missed, so a normal run
+finds nothing. It ingests each missing post by id, and Freegle's own moderation then takes
+over as it did when the post came by email. A post the poster had already closed on TN (`satisfied` or
+`withdrawn`, which the check otherwise counts as an expected absence) is ingested too and
+given its outcome by `ClosedPostOutcome`, so it still counts in the stats. That class
+repeats the rules of `handleOutcome` in `iznik-server-go/message/message.go`, because batch
+cannot call the Go API: Taken or Received is recorded and the post keeps its place, and a
+post withdrawn while still Pending is deleted. The hourly run stays report-only and still
+reports anything that was missed. A post ingestion skips for a reason it notes and a person has to
+sort out, such as a TN username another member's account holds, is tried again on each run and
+reported as "skipped by ingestion, needs a person", never as a failed backfill.
+
+The out-of-boundary verdict asks `PostSyncer::placement()` the question ingestion asks,
+with the **live** post's coordinates and `freegle_group_ids`, so a post that names a
+community is never unplaceable. The archived email's
+`X-Trash-Nothing-Post-Coordinates` header is only allowed to skip the lookup when the
+email was not sent to one of our communities and the header names coordinates that resolve
+to no group. An email sent to a community is the member's choice of it, and ingestion
+places the post there wherever it is. A header that is missing or
 unparseable establishes nothing and must never be read as "unplaceable": that
 would file a real coverage gap in a bucket the report labels expected.
+
+A post ingestion skipped for want of a user has no message, so asking only whether
+`messages.tnpostid` exists would call it a miss on every run. When ingestion makes a final
+decision not to place a post it leaves a note of the post id and the reason (`DeliberateSkips`,
+in the cache, kept three days: longer than the 48 hours the archive lasts, which is as far back
+as the verifier can look). The verifier reads the note after the `messages` check (a post with a
+message is covered whatever a note says). What it does next depends on the reason.
+
+Two reasons are skipped on purpose and are not a miss (`DeliberateSkips::EXPECTED_REASONS`): a
+poster banned from the group (`banned`), and a post TN gave no user id for (`no-user-id`). The
+verifier does not ask TN about these. It reports them as "skipped on purpose", with a count and
+the reasons, in the command output and the `deliberate_skip` field of the Loki run entry. They are
+not backfilled, cannot come back as a repeat miss and do not count towards the mass-miss cap.
+
+Every other reason is still a miss. The note is read only to name the reason beside it: the post
+is classified like any other, and if nothing explains its absence it is a genuine miss, with
+`skip_reason` on the entry, `skipped=<reason>` on its line in the output, the count per reason
+after GENUINE MISSES, and `miss_reasons` in the Loki run entry. That keeps these posts where the
+backfill can retry them, and where a repeat fails the run:
+
+- `Post from unknown user` and `tn-user-lookup-refused`: TN's answer may have been wrong, or may
+  change.
+- `tn-username-clash`, `tn-address-held-by-deleted-user` and `tn-account-deleted`
+  (`DeliberateSkips::NEEDS_A_HUMAN_REASONS`): only a person can put these right. The first one of
+  the day for each reason is sent to Sentry from ingestion. For `tn-account-deleted` the member
+  deleted their Freegle account but still posts on TN, and the id is released only when the
+  account is forgotten, up to 15 days later, so those posts are lost unless someone acts.
+
+`tn-user-lookup-failed` and `tn-user-lookup-gave-up` leave no note. Nothing was decided on the
+first, and a post given up on is still wanted, so both stay misses and the verifier is the second
+chance they get. A dry run and a `--local-testing` run write no note, and report nothing to
+Sentry. A flushed cache loses the notes: a banned poster's post is a miss, backfilled, skipped
+again and noted again.
 
 Genuine misses can be backfilled automatically (`FREEGLE_TN_VERIFY_AUTO_INGEST`,
 off by default) via `PostSyncer::ingestFetchedPost()`, which reuses the normal
@@ -410,6 +830,9 @@ Two things gate and record that join:
 - **A ban blocks it.** A row in `users_banned` for that (user, group) means the subscribe
   mail is dropped. TN re-sends these mails routinely, so without the gate a member a
   moderator had banned would simply reappear on the group at the next TN sync.
+- **A placement stays a placement.** TN re-sends a subscribe mail for every group its member is
+  on, including one ingestion placed them on. An existing membership is left exactly as it is,
+  so the mail never makes an implicit membership ordinary.
 - **The join is logged.** A `Group`/`Joined` row with text `Subscribed` goes into `logs`,
   so the join shows in the modlog as "Joined by emailing the group's subscribe address"
   and counts toward the "seen on many groups" check in `MembershipsProcessingService`.
@@ -428,9 +851,16 @@ TN sends photo links as URLs like `https://trashnothing.com/pics/{id}`. Freegle:
 3. Stores photos in Freegle's image system
 4. Replaces TN URLs with local attachments
 
-### API Synchronization (Daily Cron)
+### API Synchronization (`tn:sync`, every ten seconds)
 
-The `tn_sync.php` cron job runs daily to synchronize:
+`tn:sync` runs every ten seconds (`routes/console.php`), so a post reaches Freegle seconds after
+it is posted on TN. The command's own lock (`PreventsOverlapping`) keeps runs one at a time: a run
+that starts while another is going exits at once. The scheduler's `withoutOverlapping()` is not
+used for it, because under `FlockEventMutex` its lock is held by `schedule:run` for the whole
+minute and would skip every repeat. A run takes three to five seconds, mostly its three
+requests, which `TrashNothingRateLimiter` spaces 750ms apart; that is about a sixth of the two
+requests a second TN allows a key. TN can also call the "kick" API for an immediate run. Each
+run synchronizes:
 
 #### Ratings API
 ```
@@ -446,9 +876,51 @@ https://trashnothing.com/fd/api/user-changes?key={TNKEY}&page={page}&per_page=10
 Syncs:
 - Reply time statistics
 - About me text
-- Username changes
+- Username changes: the old username is read from the member's preferred TN address, not
+  from `fullname`, which is a display name. Every address of the old username, bare and
+  per-group alias, moves to the new one with its suffix and preferred flag kept. If another
+  member already holds one of the new addresses, or the new username does not make a valid
+  address, nothing changes. Every later change event for the member repeats the username, so
+  the rename is logged each time and reported to Sentry once per member per day.
 - Location updates
 - Account removal notifications
+
+**Which account a change is about.** Each change carries TN's id for the member (`tn_user_id`)
+and, where TN knows it, ours (`fd_user_id`). TN learns our id only when it adds the member
+through the partner API, so a member the posts API provisioned has changes with no `fd_user_id`;
+those are matched on `users.tnuserid`, or the member's removal and renames would never reach us.
+When the account TN names holds a different TN user id, the change belongs to another TN member
+sharing that account, and is skipped (Loki `tn-sync`/`user-change-skip`, reason
+`tn-user-id-mismatch`) rather than forgetting or renaming the wrong person. An account with no TN
+user id is given the change's, unless another account already holds it, which is skipped as
+`tn-user-id-held-elsewhere` for a person to look at. See `UserChangesSyncer::resolveMember`.
+
+**A feed that cannot be read holds the stored date, for an hour.** `tn:sync` stores one date for
+ratings, user changes and posts: the latest any of them saw. When a page of the ratings or the
+user changes feed fails (any answer that is not a 2xx), the syncer stops there and says so
+(`fetchFailed()`), and the command leaves the stored date where it was, whatever the other feeds
+saw. The changes behind the failed page were not read, and the order of the feed is TN's, so
+nothing says how far it got. The next run reads the window again, and what the run did apply is
+applied again. The run still exits successfully and the posts sync still runs, so while a feed
+is down each run re-reads the posts since the old date and logs the ones already ingested as
+`duplicate`. A request that throws (a network error) already ended the run before the date was
+stored.
+
+The hold is bounded, because a feed that never recovers would otherwise make every run read a
+longer window for ever, with nothing to say so. The hold is timed from its first run, in the
+cache (`FEED_HOLD_SINCE_KEY`, cleared by a run that reads every feed). Sentry hears when it has
+lasted 15 minutes (`FEED_HOLD_ALERT_MINUTES`). After an hour (`FEED_HOLD_MAX_MINUTES`) the hold is
+given up: the date moves on to what the other feeds saw, or to the end of the window
+when they saw nothing, Sentry hears again, and what the failed feed held back in that time is
+lost. A post sync that has stalled still holds the date, as before.
+
+Reading a window again must not undo a newer change with an older one. The date of the latest
+username and the latest location applied to each member is kept in the cache for a day
+(`UserChangesSyncer`), and a change older than that is skipped, so two renames or two moves in
+one window are applied once each and not again on every read, which would have flipped the
+member between the two, deleting and creating an address, or writing a `PostcodeChange` log row,
+each time. The same change coming round again is applied as before and finds nothing to change. A
+dry run keeps no date.
 
 **TN is the master for a TN member's location.** A change row's `location` sets
 `users.lastlocation` to the nearest postcode. `settings.mylocation` is read before
@@ -459,12 +931,17 @@ account was linked to TN, so every reader ignores it when `tnuserid` is set:
   `ResolveOnBehalfPosting` and the visualise map. The session's own location is left
   alone, as TN members do not log in.
 - Batch: `User::chosenLatLng()` for code holding a user, and `AND <alias>.tnuserid IS NULL`
-  in the SQL "mylocation else lastlocation" expressions (digests, Community News,
+  in the SQL "mylocation else lastlocation" expressions (digests,
   first-reply match mail, the approximate-location map).
 
 The sync also removes the setting when TN sends a location, so the stale data goes as
 members are active. For the same reason a TN post (either path) only writes `lastlocation` when it is
 empty: the post's coordinates are where the item is, not where the member is.
+
+When the sync moves `lastlocation` it writes a `User`/`PostcodeChange` log row with the
+postcode name, the same row a postcode change in Settings writes, so moderators see a TN
+member's moves in their logs. The nightly reach reconcile reads those rows and queues the
+member for reach mail; the digest code skips TN members, so nothing is sent to them.
 
 Each change row carries the member's *current* state, not the state at that row's
 `date`, so re-reading old rows from the feed cannot show what a past sync received;
@@ -751,7 +1228,7 @@ message to match, and the post ripples like any other.
 
 ### Groups Table
 ```sql
-groups.ontn        TINYINT  -- Whether group is syndicated to TN
+groups.ontn        TINYINT  -- Always 1 for Freegle communities: every community is on TN
 groups.onlovejunk  TINYINT  -- Whether offers go to LoveJunk (default: 1)
 ```
 
@@ -824,12 +1301,13 @@ The following one-off maintenance scripts existed in the legacy V1 PHP implement
 
 **Current State**: Creation is handled - `EnsurePartnerIdentifiers` attaches a member's new
 per-group alias to the account they already have, which stopped new duplicates on
-2026-08-11. What remains is the backlog created before that, which merges once
-`FREEGLE_TN_MERGE_LEGACY_DUPLICATES` is set (see "Reviewing the backlog before merging it").
-
-**Improvement**: Retire the flag once the backlog is cleared. The Go partner path meanwhile
-acts as whichever of a member's accounts owns the post rather than refusing the action, so a
+2026-08-11. What remains is the backlog created before that. `tn:sync` flags those groups
+and merges none (see "Identifying the member behind an address"), because nothing we hold
+proves two accounts on one username are one member. The Go partner path meanwhile acts as
+whichever of a member's accounts owns the post rather than refusing the action, so a
 duplicate that slips through is no longer member-visible.
+
+**Improvement**: A TN user id for every account, so a group can be proved one member or two.
 
 ### 8. Error Handling for TN API Failures
 
@@ -900,5 +1378,5 @@ define('LOVE_JUNK_SECRET', '...'); // LoveJunk API secret
 ### Group Settings
 
 Per-group TN integration can be controlled via:
-- `groups.ontn` - Whether group is syndicated to TrashNothing
+- `groups.ontn` - Always on for Freegle communities. It is not a moderator setting; PATCH /group ignores it
 - `groups.onlovejunk` - Whether offers are sent to LoveJunk

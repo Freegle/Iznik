@@ -93,6 +93,30 @@ return [
             ]) : [],
         ],
 
+        // The write host alone, for the cache locks (config/cache.php). DatabaseLock::release() reads the
+        // owner back before deleting, and on 'mysql' that read goes to the read host. A lock row taken
+        // a moment earlier was not always there yet (wsrep_sync_wait is 0), so release() did nothing and
+        // the lock stayed held until it expired: the UX experiments tick then failed on its next lock.
+        'mysql_write' => [
+            'driver' => 'mysql',
+            'url' => env('DB_URL'),
+            'host' => array_map('trim', explode(',', (string) env('DB_HOST', '127.0.0.1'))),
+            'port' => env('DB_PORT', '3306'),
+            'database' => defined('PHPUNIT_COMPOSER_INSTALL') ? 'iznik_batch_test' : env('DB_DATABASE', 'iznik'),
+            'username' => env('DB_USERNAME', 'root'),
+            'password' => env('DB_PASSWORD', ''),
+            'unix_socket' => env('DB_SOCKET', ''),
+            'charset' => env('DB_CHARSET', 'utf8mb4'),
+            'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'strict' => FALSE,
+            'engine' => NULL,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+        ],
+
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),

@@ -6,6 +6,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,10 +30,10 @@ func TestChatRoomListJoinsYieldOneRowPerRoom(t *testing.T) {
 	prefix := uniquePrefix("roomjoins")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, replierID, groupID, utils.ROLE_MEMBER)
 
 	postMsgID := CreateTestMessage(t, posterID, groupID, "OFFER: join fan-out probe", 51.5, -0.1)
 

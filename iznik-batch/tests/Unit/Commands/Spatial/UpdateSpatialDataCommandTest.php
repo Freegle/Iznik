@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\Spatial;
 
+use App\Console\Commands\Spatial\UpdateSpatialDataCommand;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
@@ -65,6 +66,36 @@ class UpdateSpatialDataCommandTest extends TestCase
         Http::assertSent(function ($request) {
             return str_contains($request->url(), 'geofabrik.de');
         });
+    }
+
+    /**
+     * The GB extract is about 2.2 GB, so a ten-minute limit on the whole transfer failed whenever
+     * Geofabrik was slow (2026-11-01: 286 MB in ten minutes). The download must allow hours, and
+     * stop only when the transfer stalls.
+     */
+    public function test_pbf_download_allows_a_slow_transfer_and_aborts_a_stall(): void
+    {
+        $responses = $this->buildFakeHttpResponses($this->generateValidCsv());
+        $pbfOptions = [];
+
+        Http::fake(function ($request, array $options) use ($responses, &$pbfOptions) {
+            if (str_contains($request->url(), 'geofabrik.de')) {
+                $pbfOptions[] = $options;
+            }
+
+            return $responses[$request->url()] ?? Http::response('Not Found', 404);
+        });
+
+        $this->artisan('spatial:update-data')->assertExitCode(0);
+
+        $this->assertCount(2, $pbfOptions);
+        foreach ($pbfOptions as $options) {
+            $this->assertSame(UpdateSpatialDataCommand::PBF_DOWNLOAD_TIMEOUT, $options['timeout']);
+            $this->assertGreaterThanOrEqual(3600, $options['timeout']);
+            $this->assertSame(UpdateSpatialDataCommand::PBF_CONNECT_TIMEOUT, $options['connect_timeout']);
+            $this->assertSame(UpdateSpatialDataCommand::PBF_STALL_BYTES_PER_SEC, $options['curl'][CURLOPT_LOW_SPEED_LIMIT]);
+            $this->assertSame(UpdateSpatialDataCommand::PBF_STALL_SECONDS, $options['curl'][CURLOPT_LOW_SPEED_TIME]);
+        }
     }
 
     /**

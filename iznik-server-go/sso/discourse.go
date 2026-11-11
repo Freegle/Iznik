@@ -121,6 +121,13 @@ func DiscourseSSO(c *fiber.Ctx) error {
 		return c.Redirect(ssoErrorURL(failure), fiber.StatusFound)
 	}
 
+	// A moderator who has merged Freegle accounts may still have their Discourse account linked
+	// to the number that went. Re-link it first, or Discourse would not know them and would make
+	// them a new, empty account.
+	if _, err := RelinkMerged(session.UserID); err != nil {
+		log.Printf("[DiscourseSSO] Relink for %d failed, signing in anyway: %v", session.UserID, err)
+	}
+
 	// Build the SSO response.
 	responsePayload := buildSSOResponse(nonce, session)
 	encodedPayload := base64.StdEncoding.EncodeToString([]byte(responsePayload))
@@ -195,14 +202,21 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, ssoFailure, erro
 	var freegleGroupCount int64
 	db.Table("memberships").
 		Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
-		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
+		Where("memberships.userid = ? AND memberships.role IN (?, ?) AND `groups`.type = 'Freegle'", userID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).
 		Count(&freegleGroupCount)
 
 	if freegleGroupCount == 0 {
 		return nil, ssoFailureNotMod, fmt.Errorf("user %d is not a moderator of a Freegle group", userID)
 	}
 
-	// Get user details.
+	return moderatorDetails(userID, systemrole), "", nil
+}
+
+// moderatorDetails is what Discourse is told about a moderator: on sign-in, and when
+// RelinkMerged brings a re-linked account up to date.
+func moderatorDetails(userID uint64, systemrole string) *ssoSession {
+	db := database.DBConn
+
 	var fullname string
 	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", userID).Scan(&fullname)
 
@@ -223,7 +237,7 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, ssoFailure, erro
 		Email:     email,
 		GroupList: groupList,
 		IsMod:     true,
-	}, "", nil
+	}
 }
 
 // getModGroupList returns a comma-separated list of group display names for a moderator.
@@ -238,7 +252,7 @@ func getModGroupList(userID uint64) string {
 	db.Table("`groups`").
 		Select("COALESCE(namefull, nameshort) AS namedisplay").
 		Joins("INNER JOIN memberships ON memberships.groupid = `groups`.id").
-		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
+		Where("memberships.userid = ? AND memberships.role IN (?, ?) AND `groups`.type = 'Freegle'", userID, utils.ROLE_OWNER, utils.ROLE_MODERATOR).
 		Scan(&groups)
 
 	names := make([]string, 0, len(groups))
@@ -291,10 +305,17 @@ func extractNonce(ssoPayload string) (string, error) {
 
 // buildSSOResponse builds the query string for the Discourse SSO response.
 func buildSSOResponse(nonce string, session *ssoSession) string {
+	params := ssoParams(session)
+	params.Set("nonce", nonce)
+
+	return params.Encode()
+}
+
+// ssoParams is the moderator's details as Discourse takes them, in a sign-in or a sync_sso.
+func ssoParams(session *ssoSession) url.Values {
 	bio := session.Email + " \r\n\r\nis a mod on " + session.GroupList
 
 	params := url.Values{}
-	params.Set("nonce", nonce)
 	params.Set("email", session.Email)
 	params.Set("external_id", fmt.Sprint(session.UserID))
 	params.Set("username", session.Name)
@@ -307,5 +328,5 @@ func buildSSOResponse(nonce string, session *ssoSession) string {
 	}
 	params.Set("bio", bio)
 
-	return params.Encode()
+	return params
 }

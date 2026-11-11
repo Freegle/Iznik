@@ -17,8 +17,11 @@ package modmessaging
 import (
 	stdlog "log"
 
+	"github.com/freegle/iznik-server-go/auth"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
 
@@ -43,64 +46,100 @@ func PostIsUnaddressed(db *gorm.DB, msgid uint64) bool {
 	return n > 0
 }
 
-// UserIsUnaddressedOnly reports whether every post this user has ever made is unaddressed.
-// A "mixed" poster - one unaddressed post plus any ordinary one - is a real Freegle member
-// and is deliberately NOT restricted, so moderators can still reach them.
+// ModsMayContact reports whether groupid's moderators may contact userid: open a new chat to
+// them, or send them mail or a standard message. A chat the member already opened is not
+// gated by it: moderators can always reply in one.
 //
-// Deleted posts still count. Someone whose only unaddressed post has been taken down has
-// not thereby become contactable, and a post removed by the report path would otherwise
-// silently restore the chat button.
-func UserIsUnaddressedOnly(db *gorm.DB, userid uint64) bool {
+// Anyone who is not a TrashNothing member can be contacted. A TrashNothing member can be
+// contacted only through a membership of this community that they chose: Approved, not
+// implicit and not rippled. A TrashNothing placement or a ripple join is not one, and once
+// they leave, the community's moderators can no longer reach them, even in a chat they
+// had before. It is decided per community. A TrashNothing member's posts and memberships
+// elsewhere give this community's moderators nothing.
+//
+// TrashNothing shows our messages to its members as coming from a Freegle user, so a
+// member who never chose this community cannot tell its moderators from a stranger.
+func ModsMayContact(db *gorm.DB, userid uint64, groupid uint64) bool {
 	if userid == 0 {
+		return true
+	}
+
+	if !IsTrashNothingMember(db, userid) {
+		return true
+	}
+
+	return HasChosenMembership(db, userid, groupid)
+}
+
+// MayContact is ModsMayContact for one person acting: Support and Admin act for Freegle as a
+// whole rather than for a community, so the rule does not bind them.
+func MayContact(db *gorm.DB, actor uint64, userid uint64, groupid uint64) bool {
+	return auth.IsAdminOrSupport(actor) || ModsMayContact(db, userid, groupid)
+}
+
+// HasChosenMembership reports whether userid has a membership of groupid they chose:
+// Approved, not implicit and not rippled. A failed read answers no.
+func HasChosenMembership(db *gorm.DB, userid uint64, groupid uint64) bool {
+	var chosen int64
+	if err := db.Table("memberships").
+		Where("userid = ? AND groupid = ? AND collection = ? AND implicit = 0 AND rippled = 0",
+			userid, groupid, utils.COLLECTION_APPROVED).
+		Count(&chosen).Error; err != nil {
+		stdlog.Printf("Failed to read membership of user %d in group %d: %v", userid, groupid, err)
 		return false
 	}
 
-	return UsersUnaddressedOnly(db, []uint64{userid})[userid]
+	return chosen > 0
 }
 
-// UsersUnaddressedOnly answers UserIsUnaddressedOnly for a whole page of users in one
-// query, for the members list. Users absent from the map - including any user with no
-// posts at all - are unrestricted.
-func UsersUnaddressedOnly(db *gorm.DB, userids []uint64) map[uint64]bool {
+// MayContactThroughAnyGroup reports whether actor may contact userid as a moderator of any
+// community: Support or Admin, someone who is not a TrashNothing member, or a TrashNothing
+// member with a membership they chose of a community actor moderates. For a note added
+// to a chat between two members, which speaks for no one community.
+func MayContactThroughAnyGroup(db *gorm.DB, actor uint64, userid uint64) bool {
+	if userid == 0 || auth.IsAdminOrSupport(actor) || !IsTrashNothingMember(db, userid) {
+		return true
+	}
+
+	var shared int64
+	if err := db.Table("memberships mm").
+		Joins("INNER JOIN memberships mp ON mp.groupid = mm.groupid").
+		Where("mm.userid = ? AND mm.role IN (?, ?) AND mp.userid = ? AND mp.collection = ? AND mp.implicit = 0 AND mp.rippled = 0",
+			actor, utils.ROLE_MODERATOR, utils.ROLE_OWNER, userid, utils.COLLECTION_APPROVED).
+		Count(&shared).Error; err != nil {
+		stdlog.Printf("Failed to read shared communities of user %d and moderator %d: %v", userid, actor, err)
+		return false
+	}
+
+	return shared > 0
+}
+
+// MembershipAllowsContact is ModsMayContact for a membership row already in hand, for the
+// members list.
+func MembershipAllowsContact(trashNothing bool, collection string, implicit bool, rippled bool) bool {
+	return !trashNothing || (collection == utils.COLLECTION_APPROVED && !implicit && !rippled)
+}
+
+// IsTrashNothingMember is TrashNothingMembers for one user.
+func IsTrashNothingMember(db *gorm.DB, userid uint64) bool {
+	return userid > 0 && TrashNothingMembers(db, []uint64{userid})[userid]
+}
+
+// TrashNothingMembers says which of userids are TrashNothing members, in one query, by
+// the definition in user.TrashNothingSQL. Users absent from the map are not.
+func TrashNothingMembers(db *gorm.DB, userids []uint64) map[uint64]bool {
 	out := make(map[uint64]bool, len(userids))
 	if len(userids) == 0 {
 		return out
 	}
 
-	// One pass over the users' origin rows, reduced per user: MIN() is 0 only if they have
-	// an unaddressed post, MAX() is 0 only if they have no addressed one.
-	//
-	// Positional Rows().Scan, not Scan(&struct): a SELECT of SEVERAL aggregates scanned
-	// into a struct silently comes back all-zero through GORM here (no error, no log), and
-	// all-zero is exactly the value that reads as "restrict this member".
-	rows, err := db.Raw(
-		"SELECT m.fromuser, MIN(mg.mod_messaging_allowed), MAX(mg.mod_messaging_allowed) "+
-			"FROM messages m "+
-			"INNER JOIN messages_groups mg ON mg.msgid = m.id AND mg.rippled_in = 0 "+
-			"WHERE m.fromuser IN (?) "+
-			"GROUP BY m.fromuser", userids).Rows()
-	if err != nil || rows == nil {
-		if err != nil {
-			stdlog.Printf("Failed to read mod-messaging status for %d users: %v", len(userids), err)
-		}
-		return out
+	var ids []uint64
+	if err := db.Table("users u").Where("u.id IN ?", userids).Where(user.TrashNothingSQL("u")).
+		Pluck("u.id", &ids).Error; err != nil {
+		stdlog.Printf("Failed to read which of %d users are TrashNothing members: %v", len(userids), err)
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var userid uint64
-		var minimum, maximum int
-		if err := rows.Scan(&userid, &minimum, &maximum); err != nil {
-			stdlog.Printf("Failed to scan mod-messaging status row: %v", err)
-			continue
-		}
-		out[userid] = minimum == 0 && maximum == 0
-	}
-
-	// A read that died halfway leaves the rest of the page looking unrestricted, which is
-	// the wrong way for a moderator to find out. Log it; the members list still renders.
-	if err := rows.Err(); err != nil {
-		stdlog.Printf("Failed to read mod-messaging status for %d users: %v", len(userids), err)
+	for _, id := range ids {
+		out[id] = true
 	}
 
 	return out

@@ -1,5 +1,6 @@
 {
   "name": "iznik-modtools",
+  "license": "AGPL-3.0-or-later",
   "version": "3.2.14",
   "description": "Moderation tool for Freegle volunteers",
   "private": true,
@@ -14,10 +15,8 @@
   },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.20.0",
-    "@handsontable/vue3": "^18.0.0",
     "@vueup/vue-quill": "^1.2.0",
     "diff": "^9.0.0",
-    "handsontable": "^18.0.0",
     "leaflet-draw": "^1.0.4",
     "letterparser": "^0.1.4",
     "papaparse": "^5.4.1",

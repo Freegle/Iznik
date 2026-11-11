@@ -1,8 +1,10 @@
 ---
-last_reviewed: 2026-10-14
+last_reviewed: 2026-11-07
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
+  - iznik-batch/app/Monitoring/**
+  - iznik-server-go/housekeeper/housekeeper.go
   - iznik-batch/app/Console/Commands/Cron/**
 ---
 
@@ -43,7 +45,7 @@ outside its start window.
 | Slot | When | Machine | Why this time |
 |---|---|---|---|
 | `lb` | Monday 04:00 UK time | the load balancer | The overnight low, when its reboot outage is accepted. |
-| `db` | Tuesday 04:40 | db2 in even weeks, db3 in odd weeks | After the backup drain and the backup's desync on db2, before the morning digest. Each data node is done every other week, and never both in one week. |
+| `db` | Tuesday 04:40 | the data node patched least recently | After the backup drain and the backup's desync on db2, before the morning digest. Each data node is done every other week, and never both in one week. |
 | `mail` | Wednesday 02:15 | bulk2 | The overnight low in outgoing mail, clear of the relay's own 05:00 log rotation. |
 | `docker` | Wednesday 23:35 | the Docker host | After the 23:00 jobs and before the 00:30 log rotation and 01:00 postcode remap. Wednesday has no 23:00 digest. |
 | `arbitrator` | Friday 04:40 | db1 | Three days clear of the data-node slot. |
@@ -52,14 +54,22 @@ Nothing runs at the weekend, the busiest time. Slots start at least 21 hours apa
 run refuses when the last live run finished less than 20 hours before, so a long run can
 push the next slot to the following week; the Cron Jobs tab then shows it failed.
 
-Weeks are counted from the Unix epoch, so the data nodes alternate strictly. A 53-week
-year does not repeat one. Swap the order with `MAINT_DB_ROTATION`.
+The `db` slot takes the data node whose last live run finished longest ago, so a slot
+that was skipped or failed, or a node done by hand on another day, is made up the next
+Tuesday rather than a fortnight later. A node that has never had a live run counts as
+the oldest. While neither has one, the node goes by the week, counted from the Unix
+epoch (db2 in even weeks, db3 in odd; swap with `MAINT_DB_ROTATION`).
+
+When the other data node finished a live run less than 6 days before, nothing is due
+that week: the slot starts no run, sends no alert, and the Cron Jobs tab shows a success
+that says which node is next. That is the spacing working, not a failure.
 
 ## What every run does
 
 1. **Preflight**, read-only. Any failure stops the run before anything changes, and the
    alert says why. See [the gates](#the-gates).
-2. **Plan.** Refresh the package lists and work out what would be upgraded, minus the
+2. **Plan.** Bring the repository signing keys up to date (below), refresh the package
+   lists and work out what would be upgraded, minus the
    packages this tool never touches. Decide whether a reboot is needed: the machine
    already says so (`/var/run/reboot-required`), the upgrade includes a kernel, C
    library, systemd, dbus or OpenSSL, or the uptime has reached the optional cadence.
@@ -79,6 +89,19 @@ the list is `MAINT_SVC_IGNORE_RE` in `lib/common.sh`. Until monit has
 completed a check cycle after boot it reports services it has not polled yet as "Does not
 exist" or "Initializing", so the check after a reboot keeps looking until every service is
 OK, and fails only if one is still not OK after `MAINT_MONIT_TIMEOUT` (300 seconds).
+
+### Repository signing keys
+
+Vendors rotate the keys that sign their repositories. A machine still holding the old one
+cannot refresh that repository, `apt-get update` fails, and the run stops before it
+patches anything. So before refreshing the package lists, each run fetches the current key
+for every keyring in `MAINT_APT_KEYS` (`lib/common.sh`: Google Cloud, NodeSource, Docker)
+from the vendor over HTTPS. When it differs from the one on the machine and holds a public
+key, it replaces it, keeps the old one beside it as `<keyring>.freegle-maint-prev`, and
+puts the undo in the ledger. A keyring the machine does not have is skipped. A key that
+cannot be fetched is a warning, not a stop: the package refresh then shows whether it
+mattered. Repositories not in the list, such as Launchpad PPAs and Percona's (kept current
+by `percona-release`), are not touched.
 
 ### Packages left alone
 
@@ -104,7 +127,10 @@ around a reboot. No step lets writes or reads fail while the node is down.
    repo `.env`, then recreate batch-prod. It waits for no `ripple:expand` to be running
    first. Afterwards it checks the container's database aliases, a query, every
    supervisor program RUNNING, and that the schedule parses. It releases an orphaned
-   `ripple:expand` lock only when no such process exists.
+   `ripple:expand` lock only when no such process exists. Then it holds the batch
+   scheduler until the move-back, so that the digests and other scheduled work do not land
+   on the other node while it carries every member request. Jobs still running after 90
+   seconds get SIGTERM. The queue workers, mail spoolers and mail receiver keep running.
 3. Drain this node's API (`monit unmonitor`, then `SIGQUIT`) and wait for the load
    balancer to mark it DOWN with the other node UP.
 4. Unmonitor the spatial, routing and MySQL checks, wait until monit shows them "Not
@@ -118,12 +144,23 @@ around a reboot. No step lets writes or reads fail while the node is down.
    for the two cases the runbook names: the five-minute reboot gate, and the IST handshake
    that fails with "wrong seqno". A full state transfer is left to run. The other node
    must stay Synced throughout.
-9. Start monit and monitor every service explicitly. Verify the API, spatial `/health`,
-   routing `/health` and its internal route (monit's grace would report a dead routing
-   server as OK), the API boot line, no panics in its log, and monit all OK.
+9. Start monit and monitor every service but the API explicitly. Start the spatial and
+   routing servers if they are not running: monit checks them only through their ports,
+   so it neither starts them when monitored again nor restarts routing for 15 minutes.
+   Wait for spatial `/health`, routing `/health` and its internal route (monit's grace
+   would report a dead routing server as OK). Only then start and monitor the API, since
+   the load balancer sends members to it as soon as it answers, and an API whose routing
+   server is down fails every reach question. Verify the API, its boot line, no panics in
+   its log, and monit all OK.
+
+Every API restart, here and in steps 1 and 11, waits until the API has kept one process
+for two and a half minutes with monit reporting it OK. monit's check runs its retries back
+to back straight after a start, finds the port not yet open, and restarts the API a second
+time, so a process that has already answered can still be replaced.
 10. Wait for the load balancer to mark the node UP in both backends.
-11. Move the batch back, then the other node's API. The order matters: this node's API is
-    already UP, so the load balancer is never left without an API server.
+11. Move the batch back, which starts its scheduler again, then the other node's API. The
+    order matters: this node's API is already UP, so the load balancer is never left
+    without an API server.
 
 The summary says whether the node rejoined by IST or by a full copy (SST). After an SST,
 check the donor's write-set cache the next day, as the runbook says.
@@ -194,12 +231,13 @@ Preflight refuses, and changes nothing, if any of these holds:
   plain systemd (a hand bootstrap needs a person); inside the backup drain, or a backup
   or state-transfer process running; less than 40 GB free in the data directory, or more
   than 4 write-set cache page files, on either node; the other node with less than 6 GB
-  memory free or a write-set cache covering less than 90 minutes; any API, spatial or
+  memory free or a write-set cache covering less than 90 minutes at the write rate of the last
+  five minutes; any API, spatial or
   routing check not 200 on either node; monit not all OK; the load balancer not showing
   both API servers and the other node's routing server UP; an API or batch database
   setting naming neither node, or batch-prod running with settings that differ from its
   `.env`; batch-prod unhealthy or running a daily digest or a backup; the other data node
-  done within 6 days.
+  done within 6 days (a manual `run`; the timer reports that week as not due instead).
 - **Arbitrator:** either data node unhealthy as above, or its API not answering;
   `garbd` not active or not enabled at boot; monit not enabled at boot.
 - **Load balancer:** HAProxy not active or not enabled; `haproxy -c` failing; a backend
@@ -252,6 +290,33 @@ name, schedule and overdue interval are in the Go API's cron registry
 |---|---|
 | `freegle-maint <slot>` | The slot's last outcome, with its log when the row is expanded. A run that was skipped, stopped or failed shows as failed. A dry run's log starts with "Dry run:". A slot that has not run for a week and an hour shows overdue. |
 | `freegle-maint rollout` | Which hosts are live and which are still dry runs. While any host is still on dry runs it is refreshed only when that set changes, so it shows overdue when no host has been made live for 14 days. Once every host is live it is refreshed on every timer run, so it stays green. |
+
+### Patch freshness
+
+Separately from the timers, the batch monitor probes every host every 10 minutes and
+records how long security updates, or a required reboot, have been pending, as a
+`host-patch <host>` row under Host Maintenance. It does not matter whether the host's
+maintenance is live or still a dry run, and it covers the packages `freegle-maint`
+leaves alone (Percona, Docker engine, HAProxy, postfix).
+
+| Row | Shows |
+|---|---|
+| `host-patch <host>` | Green with "up to date", or with how long something has been pending ("3 security updates pending for 2 days"). Red once it has been pending longer than the host's limit: 9 days by default (7 for the weekly run plus 2), 16 for db2 and db3 (14 plus 2, as they alternate weeks). Overdue when the monitor has not reached the host for over two hours. |
+
+The limits are `FREEGLE_MONITORING_PATCH_MAX_AGE_DAYS` and
+`FREEGLE_MONITORING_PATCH_MAX_AGE_OVERRIDES` in `.env.background`. The pending-since time is
+kept in the row's own output, on its last line, so no table changed. Pending patches and
+reboots no longer turn the ModTools status light amber. That light now shows only monit
+failures and hosts that cannot be reached.
+
+### What the red number counts
+
+The red number on the **Cron Jobs** tab counts every active job in the registry whose last
+run failed, that has never run, or that is overdue. A job is overdue once it has missed its
+next run by more than a grace period: one whole interval, capped at an hour, and at least
+two minutes. The server counts it, and the table on the tab applies the same rule, so the
+number and the crosses always agree. The Host Maintenance rows are part of that count, so a
+patch that is not happening, a reboot nobody did, and a timer that stopped all show there.
 
 Runs started by hand with `freegle-maint run` are not recorded. `freegle-maint report`
 refreshes the rollout row straight away, for instance after editing `MAINT_LIVE_HOSTS`.

@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateCharitySignup(t *testing.T) {
 	prefix := uniquePrefix("charity")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	defer func() {
 		db := database.DBConn
@@ -59,7 +60,7 @@ func TestCreateCharitySignup(t *testing.T) {
 
 func TestCreateCharitySignup_MissingOrgName(t *testing.T) {
 	prefix := uniquePrefix("charity_no_name")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	defer func() {
 		db := database.DBConn
@@ -77,7 +78,7 @@ func TestCreateCharitySignup_MissingOrgName(t *testing.T) {
 
 func TestCreateCharitySignup_MissingContactEmail(t *testing.T) {
 	prefix := uniquePrefix("charity_no_email")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 	defer func() {
 		db := database.DBConn

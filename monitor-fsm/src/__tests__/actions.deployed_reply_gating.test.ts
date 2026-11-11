@@ -48,7 +48,7 @@ describe('retestReplyBody', () => {
   it('ends with the PR link under a Technical details label', () => {
     const body = retestReplyBody({ affectsApp: false, link: 'https://github.com/Freegle/Iznik/pull/500' })
     expect(body).toBe(
-      'AI Edward: possible fix applied, please retest and report back'
+      'AIdward: possible fix applied, please retest and report back'
       + '\n\nTechnical details: https://github.com/Freegle/Iznik/pull/500',
     )
   })
@@ -56,7 +56,7 @@ describe('retestReplyBody', () => {
   it('keeps the app caveat with the retest line, above the link', () => {
     const body = retestReplyBody({ affectsApp: true, link: 'https://github.com/Freegle/Iznik/pull/7' })
     expect(body).toBe(
-      'AI Edward: possible fix applied, please retest and report back'
+      'AIdward: possible fix applied, please retest and report back'
       + ' (but app releases may take up to one week)'
       + '\n\nTechnical details: https://github.com/Freegle/Iznik/pull/7',
     )
@@ -64,10 +64,10 @@ describe('retestReplyBody', () => {
 
   it('says nothing extra when there is no link to give', () => {
     expect(retestReplyBody({ affectsApp: false })).toBe(
-      'AI Edward: possible fix applied, please retest and report back',
+      'AIdward: possible fix applied, please retest and report back',
     )
     expect(retestReplyBody({ affectsApp: false, link: null })).toBe(
-      'AI Edward: possible fix applied, please retest and report back',
+      'AIdward: possible fix applied, please retest and report back',
     )
   })
 })

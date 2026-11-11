@@ -334,6 +334,26 @@ class StoriesNewsletterCommandTest extends TestCase
      * had not logged in for over six months - the median recipient had been
      * gone for ten years. Mailing decade-old addresses finds spam traps.
      */
+    public function test_skips_trash_nothing_members(): void
+    {
+        $this->minStories();
+        $group = $this->createTestGroup(['publish' => 1]);
+
+        $stamped = $this->createTestUser(['newslettersallowed' => 1, 'bouncing' => 0]);
+        DB::table('users')->where('id', $stamped->id)->update(['tnuserid' => random_int(900000000, 999999999)]);
+        $this->createMembership($stamped, $group);
+
+        $tnEmail = $this->createTestUser([
+            'email_preferred' => 'tn' . uniqid() . '-g1' . User::TN_EMAIL_SUFFIX,
+            'newslettersallowed' => 1, 'bouncing' => 0,
+        ]);
+        $this->createMembership($tnEmail, $group);
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+    }
+
     public function test_skips_members_not_seen_for_six_months(): void
     {
         $this->minStories();

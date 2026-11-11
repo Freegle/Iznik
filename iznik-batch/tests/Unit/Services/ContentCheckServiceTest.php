@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
@@ -140,6 +141,14 @@ class ContentCheckServiceTest extends TestCase
         // "hangers" vs "bangers" differ at position 0 — should NOT match
         $result = $this->callPrivate('matchesFuzzy', 'coat hangers', 'bangers');
         $this->assertFalse($result);
+    }
+
+    public function test_matches_fuzzy_rejects_single_substitution_word(): void
+    {
+        // "meditation" is one substitution from "medication" but a different word.
+        $this->assertFalse($this->callPrivate('matchesFuzzy', 'meditation cushion', 'medication'));
+        $this->assertTrue($this->callPrivate('matchesFuzzy', 'spare medication', 'medication'));
+        $this->assertTrue($this->callPrivate('matchesFuzzy', 'spare medicaton', 'medication'));
     }
 
     public function test_matches_fuzzy_short_keyword_no_levenshtein(): void
@@ -718,7 +727,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => null,
@@ -737,7 +746,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'MODERATED',
@@ -756,7 +765,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'PROHIBITED',
@@ -777,7 +786,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'DEFAULT',
@@ -824,7 +833,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'MODERATED',
@@ -843,7 +852,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'moderated', // lowercase
@@ -862,7 +871,7 @@ class ContentCheckServiceTest extends TestCase
         DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
-            'role'    => 'Member',
+            'role'    => Membership::ROLE_MEMBER,
             'collection' => 'Approved',
             'emailfrequency' => -2,
             'ourPostingStatus' => 'DEFAULT',

@@ -39,6 +39,13 @@
               <span v-else-if="log.text === 'Subscribed'">
                 Joined by emailing the group's subscribe address
               </span>
+              <span v-else-if="log.text === 'TrashNothing unaddressed'">
+                TN post with no Freegle groups chosen by user, group chosen by
+                system
+              </span>
+              <span v-else-if="log.text === 'via partner'">
+                Joined through a partner site, such as TrashNothing
+              </span>
               <span v-else> Joined automatically when posting/replying </span>
             </span>
           </span>
@@ -175,6 +182,7 @@
           </span>
           <span v-else-if="log.subtype === 'Edit'">
             Edited <ModLogMessage :logid="logid" notext />
+            <ModLogStdMsg :logid="logid" />
             <ModLogUser
               v-if="logUser && logByuser && logByuser.id !== logUser.id"
               :userid="logByuser.id"

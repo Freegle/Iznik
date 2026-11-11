@@ -13,6 +13,7 @@ use OwenIt\Auditing\Contracts\Auditable;
  * @property string $collection
  * @property \Illuminate\Support\Carbon $added
  * @property bool $processingrequired
+ * @property string $added_origin How the membership was created; one of Membership::ADDED_ORIGINS
  * @method static \Illuminate\Database\Eloquent\Builder<static>|MembershipHistory newModelQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|MembershipHistory newQuery()
  * @method static \Illuminate\Database\Eloquent\Builder<static>|MembershipHistory query()

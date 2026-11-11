@@ -7,6 +7,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,8 +25,8 @@ func TestMyGroupsOwnPostFlaggedMine(t *testing.T) {
 	otherID := CreateTestUser(t, prefix+"_other", "Other")
 
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
-	CreateTestMembership(t, otherID, group, "Member")
+	CreateTestMembership(t, viewerID, group, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, group, utils.ROLE_MEMBER)
 
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
@@ -62,8 +63,8 @@ func TestBoundsOwnPostFlaggedMine(t *testing.T) {
 	otherID := CreateTestUser(t, prefix+"_other", "Other")
 
 	group := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, viewerID, group, "Member")
-	CreateTestMembership(t, otherID, group, "Member")
+	CreateTestMembership(t, viewerID, group, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, group, utils.ROLE_MEMBER)
 
 	own := CreateTestMessage(t, viewerID, group, prefix+" my own offer", 51.5, -0.1)
 	rival := CreateTestMessage(t, otherID, group, prefix+" someone else's offer", 51.5, -0.1)

@@ -210,4 +210,22 @@ describe('AddressModal', () => {
       }
     })
   })
+
+  describe('adding an address', () => {
+    it('reports success only when the address was added', async () => {
+      const wrapper = createWrapper()
+      const done = vi.fn()
+      mockAddressStore.add.mockResolvedValueOnce(5)
+      await wrapper.vm.add(done)
+      expect(done).toHaveBeenCalledWith()
+    })
+
+    it('does not report success when no address came back', async () => {
+      const wrapper = createWrapper()
+      const done = vi.fn()
+      mockAddressStore.add.mockResolvedValueOnce(undefined)
+      await wrapper.vm.add(done)
+      expect(done).toHaveBeenCalledWith(false)
+    })
+  })
 })

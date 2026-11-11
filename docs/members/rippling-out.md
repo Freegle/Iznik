@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-11
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/components/DistanceSliders.vue
@@ -13,7 +13,7 @@ covers:
 # Rippling Out - A Guide for Members
 
 > **Current reference document.** Supersedes the draft at
-> `plans/rippling-out-rollout/CHANGES-FOR-MEMBERS.md`.
+> `plans/rippling-out-rollout/CHANGES-FOR-MEMBERS.md`, removed in a63ca819fc and kept in git history.
 
 ---
 

@@ -148,6 +148,11 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 	// Posts.
 	add("messages", "fromuser = ?", u, 0)
 	add("messages_drafts", "userid = ?", u, 0)
+	// Which experiment arm each send, reply or promise to this member used. Skipped quietly while
+	// the table does not exist, like every spec for a table this schema lacks.
+	add("ux_experiment_exposures", "userid = ?", u, 0)
+	// The questions Freegle asked this member in a chat (the reply confirmation) and how they answered.
+	add("chat_prompts", "userid = ?", u, 0)
 
 	if in, args := inClause(msgIDs); in != "" {
 		withU := func(a []interface{}) []interface{} { return append([]interface{}{userID}, a...) }
@@ -222,6 +227,9 @@ func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []inter
 	add("spam_users", "userid = ? OR byuserid = ?", uu, 0)
 	add("spam_whitelist_links", "userid = ?", u, 0)
 	add("microactions", "userid = ?", u, 0)
+	// What the member answered to the UX questions asked in microvolunteering, including any
+	// free text: it is theirs and a subject access request has to include it.
+	add("ux_prompt_responses", "userid = ?", u, 0)
 	add("modnotifs", "userid = ?", u, 0)
 	add("users_modmails", "userid = ?", u, 0)
 	add("users_related", "user1 = ? OR user2 = ?", uu, 0)

@@ -83,7 +83,16 @@
                 <span v-if="task.last_summary">{{ task.last_summary }}</span>
                 <span v-else class="text-muted">-</span>
                 <b-button
-                  v-if="task.placeholder"
+                  v-if="task.task_key === PAF_TASK && admin"
+                  size="sm"
+                  variant="primary"
+                  class="ms-2"
+                  @click.stop="showPaf = true"
+                >
+                  Open
+                </b-button>
+                <b-button
+                  v-else-if="task.placeholder && task.task_key !== PAF_TASK"
                   size="sm"
                   variant="outline-success"
                   class="ms-2"
@@ -113,12 +122,32 @@
         </b-tbody>
       </b-table-simple>
     </div>
+    <ModSysAdminPafModal v-if="showPaf && admin" @hidden="pafClosed" />
   </div>
 </template>
 
 <script setup>
 import api from '~/api'
 import { timeago } from '~/composables/useTimeFormat'
+import ModSysAdminPafModal from '~/modtools/components/ModSysAdminPafModal.vue'
+import { useMe } from '~/composables/useMe'
+
+const props = defineProps({
+  // Open the PAF update as soon as the tab shows (a link to ?tab=paf).
+  openPaf: { type: Boolean, default: false },
+})
+
+// The housekeeping task for the quarterly PAF update. Its row opens the update itself, for Admins
+// (the API refuses anyone else); a finished import marks the task done, so it has no Mark Done.
+const { admin } = useMe()
+const PAF_TASK = 'paf-database'
+const showPaf = ref(props.openPaf)
+
+function pafClosed() {
+  showPaf.value = false
+  // An import may have finished while it was open.
+  fetchTasks()
+}
 
 const runtimeConfig = useRuntimeConfig()
 const apiInstance = api(runtimeConfig)
@@ -210,6 +239,7 @@ function formatInterval(hours) {
   const days = Math.round(hours / 24)
   if (days === 7) return 'Weekly'
   if (days === 30) return 'Monthly'
+  if (days === 90) return 'Quarterly'
   return `Every ${days}d`
 }
 

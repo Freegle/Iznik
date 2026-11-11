@@ -124,9 +124,15 @@ vi.mock('~/composables/useId', () => ({
   uid: (prefix) => prefix + 'test-id',
 }))
 
+const { mockAskForDonations } = vi.hoisted(() => {
+  const { ref } = require('vue')
+  return { mockAskForDonations: ref(true) }
+})
+
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     supportOrAdmin: false,
+    askForDonations: mockAskForDonations,
   }),
 }))
 
@@ -544,6 +550,112 @@ describe('CommunityEventModal', () => {
       expect(wrapper.find('[data-icon="envelope"]').exists()).toBe(true)
       expect(wrapper.find('[data-icon="globe-europe"]').exists()).toBe(true)
       expect(wrapper.find('[data-icon="phone"]').exists()).toBe(true)
+    })
+  })
+
+  describe('saving', () => {
+    async function openAdd() {
+      mockCommunityEventStore.byId.mockReturnValue(null)
+      mockCommunityEventStore.add.mockResolvedValue(123)
+      mockCommunityEventStore.addGroup.mockResolvedValue(undefined)
+      const wrapper = await createWrapper({ id: null, startEdit: true })
+      const vm = wrapper.findComponent(CommunityEventModal).vm
+      vm.form = { validate: async () => ({ valid: true }) }
+      vm.groupid = 1
+      Object.assign(vm.event.dates[0], {
+        start: '2030-01-01',
+        end: '2030-01-01',
+        starttime: '10:00',
+        endtime: '12:00',
+      })
+      return { wrapper, vm }
+    }
+
+    it('shows the success tick only when the create worked', async () => {
+      const { vm } = await openAdd()
+      const done = vi.fn()
+      await vm.saveIt(done)
+      expect(done).toHaveBeenCalledWith(true)
+    })
+
+    it('does not show success when the create returns no id', async () => {
+      const { wrapper, vm } = await openAdd()
+      mockCommunityEventStore.add.mockResolvedValueOnce(undefined)
+      const done = vi.fn()
+      await vm.saveIt(done)
+      await wrapper.vm.$nextTick()
+      expect(done).toHaveBeenCalledWith(false)
+      expect(vm.added).toBe(false)
+      expect(wrapper.text()).toContain('was not saved')
+    })
+
+    it('does not show success when the create throws', async () => {
+      const { wrapper, vm } = await openAdd()
+      mockCommunityEventStore.add.mockRejectedValueOnce(new Error('network'))
+      const done = vi.fn()
+      await vm.saveIt(done)
+      await wrapper.vm.$nextTick()
+      expect(done).toHaveBeenCalledWith(false)
+      expect(vm.added).toBe(false)
+      expect(wrapper.text()).toContain('was not saved')
+    })
+
+    it('does not save while the photo is still uploading', async () => {
+      const { wrapper, vm } = await openAdd()
+      vm.photoUploading = true
+      const done = vi.fn()
+      await vm.saveIt(done)
+      await wrapper.vm.$nextTick()
+      expect(mockCommunityEventStore.add).not.toHaveBeenCalled()
+      expect(done).toHaveBeenCalledWith(false)
+      expect(wrapper.text()).toContain('still uploading')
+    })
+
+    it('does not save when the photo upload failed', async () => {
+      const { wrapper, vm } = await openAdd()
+      vm.photoFailed = true
+      const done = vi.fn()
+      await vm.saveIt(done)
+      await wrapper.vm.$nextTick()
+      expect(mockCommunityEventStore.add).not.toHaveBeenCalled()
+      expect(done).toHaveBeenCalledWith(false)
+      expect(wrapper.text()).toContain('did not upload')
+    })
+
+    it('does not create a second event when a retry follows a partial failure', async () => {
+      const { vm } = await openAdd()
+      mockCommunityEventStore.addGroup.mockRejectedValueOnce(
+        new Error('network')
+      )
+      const first = vi.fn()
+      await vm.saveIt(first)
+      expect(first).toHaveBeenCalledWith(false)
+      // The error message re-renders the form, which resets the template ref.
+      vm.form = { validate: async () => ({ valid: true }) }
+      const second = vi.fn()
+      await vm.saveIt(second)
+      expect(second).toHaveBeenCalledWith(true)
+      expect(mockCommunityEventStore.add).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('donation ask', () => {
+    it('asks for a donation once added', async () => {
+      mockAskForDonations.value = true
+      const wrapper = await createWrapper()
+      await flushPromises()
+      wrapper.findComponent(CommunityEventModal).vm.added = true
+      await flushPromises()
+      expect(wrapper.text()).toContain('please donate')
+    })
+
+    it('does not ask someone who has asked not to be asked to donate', async () => {
+      mockAskForDonations.value = false
+      const wrapper = await createWrapper()
+      await flushPromises()
+      wrapper.findComponent(CommunityEventModal).vm.added = true
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('please donate')
     })
   })
 })

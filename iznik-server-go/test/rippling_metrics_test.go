@@ -17,7 +17,7 @@ import (
 // only (§15/§16).
 func TestRipplingMetricsEndpoint(t *testing.T) {
 	prefix := uniquePrefix("ripplemetrics")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -55,7 +55,7 @@ func TestRipplingMetricsEndpoint(t *testing.T) {
 // sections the dashboard actually reads must still be there.
 func TestRipplingMetricsOmitsHeavyScanKPIs(t *testing.T) {
 	prefix := uniquePrefix("ripplefast")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
@@ -89,7 +89,7 @@ func TestRipplingMetricsOmitsHeavyScanKPIs(t *testing.T) {
 // timeout rather than as no data. Proved by shrinking the deadline so every section trips it.
 func TestRipplingMetricsReportsDegradedSectionsOnDeadline(t *testing.T) {
 	prefix := uniquePrefix("rippledeadline")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	restore := rippling.MetricsDeadline
@@ -109,7 +109,7 @@ func TestRipplingMetricsReportsDegradedSectionsOnDeadline(t *testing.T) {
 // A non-admin must be forbidden from the sysadmin metrics endpoint.
 func TestRipplingMetricsRequiresAdmin(t *testing.T) {
 	prefix := uniquePrefix("ripplemetrics_noauth")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
@@ -120,7 +120,7 @@ func TestRipplingMetricsRequiresAdmin(t *testing.T) {
 // a local problem the overall average hides.
 func TestRipplingMetricsSurfacesHotspots(t *testing.T) {
 	prefix := uniquePrefix("ripplehotspot")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -155,7 +155,7 @@ func TestRipplingMetricsSurfacesHotspots(t *testing.T) {
 // back by the sysadmin dashboard as a trend.
 func TestRipplingMetricsSurfacesLiveMetrics(t *testing.T) {
 	prefix := uniquePrefix("ripplive")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -195,7 +195,7 @@ func TestRipplingMetricsSurfacesLiveMetrics(t *testing.T) {
 // capture). The capture_rate is computed from pairs_in_time / pairs_total.
 func TestRipplingMetricsCaptureSummary(t *testing.T) {
 	prefix := uniquePrefix("ripplecapture")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -235,7 +235,7 @@ func TestRipplingMetricsCaptureSummary(t *testing.T) {
 // The endpoint returns a held_reply_summary from rippling_held_replies (§15 friction / §16.5).
 func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 	prefix := uniquePrefix("rippleheld")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -251,8 +251,8 @@ func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 
 	// The real table has FKs (chatmsgid -> chat_messages, msgid -> messages), so create
 	// real referenced rows rather than sentinel ids.
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: held summary test", 51.5, -0.1)
 	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
@@ -295,7 +295,7 @@ func TestRipplingMetricsHeldReplySummary(t *testing.T) {
 // row and a rippling row on the same day must yield a 50% rippling share.
 func TestRipplingMetricsReplyKPIs(t *testing.T) {
 	prefix := uniquePrefix("ripplereply")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -347,30 +347,30 @@ func TestRipplingMetricsReplyKPIs(t *testing.T) {
 // crediting rippling's own side-effect to the home column.
 func TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance(t *testing.T) {
 	prefix := uniquePrefix("ripplejoinderive")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: legacy derive test item", 51.5, -0.1)
 	// The post arrived a month ago, so both memberships below predate it.
 	db.Exec("UPDATE messages_groups SET arrival = NOW() - INTERVAL 30 DAY WHERE msgid = ?", msgID)
 
-	joinedID := CreateTestUser(t, prefix+"_ripplejoined", "User")
-	CreateTestMembership(t, joinedID, groupID, "Member")
+	joinedID := CreateTestUser(t, prefix+"_ripplejoined", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, joinedID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 1 "+
 		"WHERE userid = ? AND groupid = ?", joinedID, groupID)
 
-	ordinaryID := CreateTestUser(t, prefix+"_ordinary", "User")
-	CreateTestMembership(t, ordinaryID, groupID, "Member")
+	ordinaryID := CreateTestUser(t, prefix+"_ordinary", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ordinaryID, groupID, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 60 DAY, collection = 'Approved', rippled = 0 "+
 		"WHERE userid = ? AND groupid = ?", ordinaryID, groupID)
 
 	// A user with no membership left at all: their frozen home bit is all the evidence there is,
 	// so it must be honoured rather than reclassified.
-	goneID := CreateTestUser(t, prefix+"_gone", "User")
+	goneID := CreateTestUser(t, prefix+"_gone", utils.SYSTEMROLE_USER)
 
 	// Legacy shape: was_home_member = 1, attribution NULL (backfill has not run).
 	day := "2020-03-15 12:00:00"
@@ -407,7 +407,7 @@ func TestRipplingMetricsLegacyHomeBitSplitsByMembershipProvenance(t *testing.T) 
 // The default (no params) range is echoed back non-empty.
 func TestRipplingMetricsDateRange(t *testing.T) {
 	prefix := uniquePrefix("rippledate")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -452,7 +452,7 @@ func TestRipplingMetricsDateRange(t *testing.T) {
 // response) instead of scoping to the old RIPPLE_WITHIN_GROUPS set.
 func TestRipplingMetricsTrialScopeRetired(t *testing.T) {
 	prefix := uniquePrefix("rippletrial")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?trialOnly=1&jwt=%s", token), nil))
@@ -469,7 +469,7 @@ func TestRipplingMetricsTrialScopeRetired(t *testing.T) {
 // summarised over the same window, with NULL reported as '(not reported)'.
 func TestRipplingMetricsClientSourceSummary(t *testing.T) {
 	prefix := uniquePrefix("ripplesrc")
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
@@ -510,8 +510,8 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: legacy split test item", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM rippling_reach_notified WHERE msgid = ?", msgID)
@@ -526,16 +526,16 @@ func TestReplySourceSplitLegacyVariant(t *testing.T) {
 	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW() - INTERVAL 1 DAY, 'Approved', 0, 1)", msgID, rippledGroup)
-	groupMemberID := CreateTestUser(t, prefix+"_member", "User")
-	CreateTestMembership(t, groupMemberID, rippledGroup, "Member")
+	groupMemberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, groupMemberID, rippledGroup, utils.ROLE_MEMBER)
 	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 2 DAY, collection = 'Approved' WHERE userid = ? AND groupid = ?",
 		groupMemberID, rippledGroup)
 
-	notifiedID := CreateTestUser(t, prefix+"_notified", "User")
+	notifiedID := CreateTestUser(t, prefix+"_notified", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO rippling_reach_notified (msgid, userid, notified_at) VALUES (?, ?, NOW() - INTERVAL 1 DAY)",
 		msgID, notifiedID)
 
-	unknownID := CreateTestUser(t, prefix+"_unknown", "User")
+	unknownID := CreateTestUser(t, prefix+"_unknown", utils.SYSTEMROLE_USER)
 
 	// Rows the attribution backfill has not reached: was_home_member only, attribution NULL.
 	db.Exec("INSERT IGNORE INTO rippling_reply_attribution (msgid, userid, replied_at, was_home_member) VALUES "+

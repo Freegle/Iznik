@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,9 +27,9 @@ import (
 func TestForgetWritesGroupLeftLog(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("forget-left")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	groupID := CreateTestGroup(t, prefix)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Approved')", userID, groupID)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", userID, groupID, utils.ROLE_MEMBER)
 
 	token := getToken(t, userID)
 	req := httptest.NewRequest("POST", "/api/session?jwt="+token, strings.NewReader(`{"action":"Forget"}`))
@@ -57,11 +58,11 @@ func TestForgetWritesGroupLeftLog(t *testing.T) {
 func TestLimboUserWritesGroupLeftLogPerGroup(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("limbo-left")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	group1 := CreateTestGroup(t, prefix+"a")
 	group2 := CreateTestGroup(t, prefix+"b")
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Approved')", userID, group1)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Approved')", userID, group2)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", userID, group1, utils.ROLE_MEMBER)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, 'Approved')", userID, group2, utils.ROLE_MEMBER)
 
 	token := getToken(t, userID)
 	req := httptest.NewRequest("DELETE", "/api/user?jwt="+token, nil)
@@ -95,6 +96,7 @@ func TestPutUserWithGroupWritesMembershipsHistory(t *testing.T) {
 		"firstname": "Hist",
 		"lastname":  "Joiner",
 		"groupid":   groupID,
+		"origin":    "signup",
 	}
 	s, _ := json.Marshal(payload)
 	req := httptest.NewRequest("PUT", "/api/user", strings.NewReader(string(s)))
@@ -112,4 +114,5 @@ func TestPutUserWithGroupWritesMembershipsHistory(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships_history WHERE userid = ? AND groupid = ? AND collection = 'Approved' AND processingrequired = 1",
 		userID, groupID).Scan(&histCount)
 	assert.Equal(t, int64(1), histCount, "expected a memberships_history row with processingrequired=1 for the signup join")
+	assert.Equal(t, "signup", addedOriginOf(t, "memberships_history", userID, groupID))
 }

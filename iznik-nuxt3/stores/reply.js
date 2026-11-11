@@ -8,12 +8,14 @@ export const useReplyStore = defineStore('reply', {
       'replyMessage',
       'replyingAt',
       'replySource',
+      'replyImage',
       'machineState',
       'isNewUser',
       'draftMsgId',
       'draftMessage',
       'draftCollect',
       'draftEmail',
+      'draftImage',
       'draftAt',
     ],
   },
@@ -28,6 +30,10 @@ export const useReplyStore = defineStore('reply', {
     // email, ...) - persisted so provenance survives the login/registration
     // redirect and still reaches the server with the eventual send.
     replySource: null,
+    // An optional photo ({ id, paththumb }) sent as a second chat message after
+    // the reply text. Uploaded before login is allowed, so it rides the same
+    // redirect as the text.
+    replyImage: null,
     // State machine state for resume capability
     machineState: null,
     isNewUser: false,
@@ -38,6 +44,7 @@ export const useReplyStore = defineStore('reply', {
     draftMessage: null,
     draftCollect: null,
     draftEmail: null,
+    draftImage: null,
     draftAt: null,
   }),
   actions: {
@@ -50,6 +57,7 @@ export const useReplyStore = defineStore('reply', {
       this.replyMessage = null
       this.replyingAt = null
       this.replySource = null
+      this.replyImage = null
       this.machineState = null
       this.isNewUser = false
       this.clearDraft()
@@ -60,11 +68,12 @@ export const useReplyStore = defineStore('reply', {
       this.isNewUser = isNewUser
     },
     // Save a composing draft so close/reopen doesn't lose typed text
-    saveDraft({ msgId, message, collect, email }) {
+    saveDraft({ msgId, message, collect, email, image }) {
       this.draftMsgId = msgId
       this.draftMessage = message
       this.draftCollect = collect
       this.draftEmail = email
+      this.draftImage = image || null
       this.draftAt = Date.now()
     },
     clearDraft() {
@@ -72,6 +81,7 @@ export const useReplyStore = defineStore('reply', {
       this.draftMessage = null
       this.draftCollect = null
       this.draftEmail = null
+      this.draftImage = null
       this.draftAt = null
     },
   },

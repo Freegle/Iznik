@@ -93,6 +93,14 @@ describe('useDonationAskModal', () => {
     expect(mockBanditShown).not.toHaveBeenCalled()
   })
 
+  it('does not ask someone who has asked not to be asked to donate', async () => {
+    mockUser = { settings: { nodonationasks: true } }
+    useDonationAskModal()
+    await outcomeHandler({ groupid: 1, outcome: 'Received' })
+    expect(mockMiscSet).not.toHaveBeenCalled()
+    expect(mockBanditShown).not.toHaveBeenCalled()
+  })
+
   it('does not ask again within a week of the last ask', async () => {
     mockMiscGet.mockReturnValue(new Date().getTime() - 1000)
     useDonationAskModal()

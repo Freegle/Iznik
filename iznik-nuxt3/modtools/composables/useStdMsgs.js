@@ -13,6 +13,7 @@ export function icon(stdmsg) {
     case 'Delete Approved Member':
       return 'trash-alt'
     case 'Edit':
+    case 'Edit and Message':
       return 'pen'
     case 'Hold Message':
       return 'pause'
@@ -36,6 +37,7 @@ export function variant(stdmsg) {
     case 'Delete Approved Member':
       return 'danger'
     case 'Edit':
+    case 'Edit and Message':
       return 'primary'
     case 'Hold Message':
       // Amber is what the rejects use. Holding a post keeps it, so it belongs

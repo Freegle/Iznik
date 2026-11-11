@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -45,8 +46,8 @@ func TestPatchSpammerCannotHoldAsAnotherUser(t *testing.T) {
 	prefix := uniquePrefix("spam_holdas")
 	modID, token := createSpamAdminUser(t, prefix)
 
-	impersonated := CreateTestUser(t, prefix+"_other", "User")
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	impersonated := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Suspicious")
 
 	body := fmt.Sprintf(`{"id":%d,"collection":"PendingAdd","reason":"Suspicious","heldby":%d}`,
@@ -65,7 +66,7 @@ func TestPatchSpammerBlockedWhenHeldByAnotherMod(t *testing.T) {
 	_, tokenA := createSpamAdminUser(t, prefix+"a")
 	modB, tokenB := createSpamAdminUser(t, prefix+"b")
 
-	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
 	spamID := createTestSpammer(t, targetID, "PendingAdd", "Suspicious")
 
 	// Mod A holds it.
@@ -102,10 +103,10 @@ func TestPatchSpammerBlockedWhenHeldByAnotherMod(t *testing.T) {
 func adminHoldSetup(t *testing.T, prefix string) (uint64, uint64, string, string) {
 	t.Helper()
 	groupID := CreateTestGroup(t, prefix)
-	modA := CreateTestUser(t, prefix+"_moda", "User")
-	modB := CreateTestUser(t, prefix+"_modb", "User")
-	CreateTestMembership(t, modA, groupID, "Moderator")
-	CreateTestMembership(t, modB, groupID, "Moderator")
+	modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modA, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modB, groupID, utils.ROLE_MODERATOR)
 	_, tokenA := CreateTestSession(t, modA)
 	_, tokenB := CreateTestSession(t, modB)
 
@@ -157,12 +158,12 @@ func TestAdminHoldDoesNotStealAnotherModsHold(t *testing.T) {
 func membershipHoldSetup(t *testing.T, prefix string) (uint64, uint64, uint64, string) {
 	t.Helper()
 	groupID := CreateTestGroup(t, prefix)
-	modA := CreateTestUser(t, prefix+"_moda", "User")
-	modB := CreateTestUser(t, prefix+"_modb", "User")
-	target := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modA, groupID, "Moderator")
-	CreateTestMembership(t, modB, groupID, "Moderator")
-	CreateTestMembership(t, target, groupID, "Member")
+	modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+	modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modA, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, modB, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, target, groupID, utils.ROLE_MEMBER)
 	_, tokenB := CreateTestSession(t, modB)
 
 	database.DBConn.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
@@ -206,10 +207,10 @@ func TestMembershipReleaseAllowedWhenHeldByAnotherMod(t *testing.T) {
 func TestMembershipReviewIgnoreClearsOwnHold(t *testing.T) {
 	prefix := uniquePrefix("mem_rvign")
 	groupID := CreateTestGroup(t, prefix)
-	modID := CreateTestUser(t, prefix+"_mod", "User")
-	target := CreateTestUser(t, prefix+"_target", "User")
-	CreateTestMembership(t, modID, groupID, "Moderator")
-	CreateTestMembership(t, target, groupID, "Member")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	target := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, target, groupID, utils.ROLE_MEMBER)
 	_, token := CreateTestSession(t, modID)
 
 	database.DBConn.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",

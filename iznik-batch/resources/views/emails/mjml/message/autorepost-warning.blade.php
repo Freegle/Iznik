@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => 'Will repost soon: ' . \Illuminate\Support\Str::limit(strip_tags($messageSubject), 75)])
+    @include('emails.mjml.partials.head', ['preview' => 'Will repost ' . $repostWhen . ': ' . \Illuminate\Support\Str::limit(strip_tags($messageSubject), 75)])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')
@@ -13,7 +13,7 @@
                     Dear {{ $userName ?? 'there' }},
                 </mj-text>
                 <mj-text>
-                    We will automatically repost your message <strong>{{ $messageSubject }}</strong> soon, so that more people will see it.
+                    We will automatically repost your post <strong>{{ $messageSubject }}</strong> {{ $repostWhen }}, so that more people will see it.
                 </mj-text>
                 <mj-text>
                     If you <strong>don't</strong> want us to do that, please click on one of the following buttons to let us know:
@@ -23,12 +23,12 @@
 
         <mj-section background-color="#ffffff" padding="10px 20px">
             <mj-column width="50%">
-                <mj-button href="{{ $completedUrl }}" mj-class="btn-success" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $completedUrl }}" mj-class="btn-success btn-group" border-radius="3px" font-size="14px">
                     Mark as {{ $outcomeType }}
                 </mj-button>
             </mj-column>
             <mj-column width="50%">
-                <mj-button href="{{ $withdrawUrl }}" mj-class="btn-dark" border-radius="3px" font-size="14px">
+                <mj-button href="{{ $withdrawUrl }}" mj-class="btn-dark btn-group" border-radius="3px" font-size="14px">
                     Withdraw
                 </mj-button>
             </mj-column>

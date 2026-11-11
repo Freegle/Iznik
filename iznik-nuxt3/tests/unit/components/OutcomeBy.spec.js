@@ -28,6 +28,14 @@ const mockUserStore = {
   byId: vi.fn().mockReturnValue({ id: 100, displayname: 'Jane Doe' }),
 }
 
+// Experiment outcome-taker-preselect: the arm comes from flowArm(FlowName.CHAT_OUTCOME, ...).
+let mockArm = null
+const mockFlowArm = vi.fn(() => mockArm)
+vi.mock('~/composables/useFlowTelemetry', () => ({
+  FlowName: { CHAT_OUTCOME: 'chat_outcome' },
+  flowArm: (...args) => mockFlowArm(...args),
+}))
+
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
@@ -403,6 +411,159 @@ describe('OutcomeBy', () => {
     it('does not show come back later for single item', async () => {
       const wrapper = await createWrapper({ availablenow: 1, left: 1 })
       expect(wrapper.text()).not.toContain('save and come back later')
+    })
+  })
+
+  // Experiment outcome-taker-preselect. The post has no recorded taker (no `by`), so the list
+  // starts empty in control.
+  describe('taker preselection (outcome-taker-preselect)', () => {
+    const noTaker = {
+      id: 1,
+      subject: 'OFFER: Sofa',
+      replies: [{ userid: 200, displayname: 'Bob Smith' }],
+      promises: [],
+    }
+
+    function setMessage(overrides = {}) {
+      const msg = { ...noTaker, ...overrides }
+      mockMessageStore.byId.mockReturnValue(msg)
+      mockMessageStore.fetch.mockResolvedValue(msg)
+    }
+
+    function lastEmitted(wrapper) {
+      const all = wrapper.findComponent(OutcomeBy).emitted('tookUsers')
+      return all[all.length - 1][0]
+    }
+
+    beforeEach(() => {
+      mockArm = null
+      mockFlowArm.mockClear()
+      mockUserStore.byId.mockReturnValue({ id: 200, displayname: 'Bob Smith' })
+    })
+
+    it('control: the list starts empty even with one replier', async () => {
+      setMessage()
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.remove-taker').exists()).toBe(false)
+      expect(lastEmitted(wrapper)).toEqual([])
+    })
+
+    it('arm b: one replier and no promise starts chosen, with the x', async () => {
+      mockArm = 'b'
+      setMessage()
+      const wrapper = await createWrapper()
+      expect(mockFlowArm).toHaveBeenCalledWith(
+        'chat_outcome',
+        'outcome-taker-preselect'
+      )
+      expect(wrapper.find('.layout').text()).toContain('Bob Smith')
+      expect(wrapper.find('.remove-taker').exists()).toBe(true)
+      expect(lastEmitted(wrapper)).toEqual([
+        { userid: 200, displayname: 'Bob Smith' },
+      ])
+    })
+
+    it('arm b: one promise wins over several repliers', async () => {
+      mockArm = 'b'
+      mockUserStore.byId.mockReturnValue({ id: 300, displayname: 'Cat Jones' })
+      setMessage({
+        replies: [
+          { userid: 200, displayname: 'Bob Smith' },
+          { userid: 300, displayname: 'Cat Jones' },
+        ],
+        promises: [{ userid: 300 }],
+      })
+      const wrapper = await createWrapper()
+      expect(lastEmitted(wrapper)).toEqual([
+        { userid: 300, displayname: 'Cat Jones' },
+      ])
+    })
+
+    it('arm b: two promises preselect nobody', async () => {
+      mockArm = 'b'
+      setMessage({
+        replies: [
+          { userid: 200, displayname: 'Bob Smith' },
+          { userid: 300, displayname: 'Cat Jones' },
+        ],
+        promises: [{ userid: 200 }, { userid: 300 }],
+      })
+      const wrapper = await createWrapper()
+      expect(lastEmitted(wrapper)).toEqual([])
+      expect(wrapper.find('.remove-taker').exists()).toBe(false)
+      expect(mockFlowArm).not.toHaveBeenCalled()
+    })
+
+    it('arm b: several repliers and no promise preselect nobody', async () => {
+      mockArm = 'b'
+      setMessage({
+        replies: [
+          { userid: 200, displayname: 'Bob Smith' },
+          { userid: 300, displayname: 'Cat Jones' },
+        ],
+      })
+      const wrapper = await createWrapper()
+      expect(lastEmitted(wrapper)).toEqual([])
+      expect(mockFlowArm).not.toHaveBeenCalled()
+    })
+
+    it('arm b: no repliers and no promise preselect nobody', async () => {
+      mockArm = 'b'
+      setMessage({ replies: [] })
+      const wrapper = await createWrapper()
+      expect(lastEmitted(wrapper)).toEqual([])
+    })
+
+    it('arm b: a bulk post preselects nobody', async () => {
+      mockArm = 'b'
+      setMessage({ bulkcount: 4 })
+      const wrapper = await createWrapper({ availablenow: 2, left: 2 })
+      expect(lastEmitted(wrapper)).toEqual([])
+      expect(mockFlowArm).not.toHaveBeenCalled()
+    })
+
+    it('arm b: another outcome type preselects nobody', async () => {
+      mockArm = 'b'
+      setMessage()
+      const wrapper = await createWrapper({ type: 'Received' })
+      expect(lastEmitted(wrapper)).toEqual([])
+      expect(mockFlowArm).not.toHaveBeenCalled()
+    })
+
+    it('arm b: a promised person whose profile has not loaded is not guessed', async () => {
+      mockArm = 'b'
+      mockUserStore.byId.mockReturnValue(null)
+      setMessage({ replies: [], promises: [{ userid: 300 }] })
+      const wrapper = await createWrapper()
+      expect(lastEmitted(wrapper)).toEqual([])
+    })
+
+    it('arm b: a recorded taker is left alone', async () => {
+      mockArm = 'b'
+      setMessage({ by: { userid: 100, displayname: 'Jane Doe' } })
+      const wrapper = await createWrapper()
+      expect(lastEmitted(wrapper)).toEqual([
+        { userid: 100, displayname: 'Jane Doe' },
+      ])
+      expect(mockFlowArm).not.toHaveBeenCalled()
+    })
+
+    it('arm b: the member can remove the chosen person', async () => {
+      mockArm = 'b'
+      setMessage()
+      const wrapper = await createWrapper()
+      await wrapper.find('.remove-taker').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.remove-taker').exists()).toBe(false)
+      expect(lastEmitted(wrapper)).toEqual([])
+      expect(wrapper.find('.b-form-select').text()).toContain('Bob Smith')
+    })
+
+    it('a non-b arm behaves as control', async () => {
+      mockArm = 'control'
+      setMessage()
+      const wrapper = await createWrapper()
+      expect(lastEmitted(wrapper)).toEqual([])
     })
   })
 })

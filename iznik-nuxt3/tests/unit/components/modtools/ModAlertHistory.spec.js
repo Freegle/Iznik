@@ -57,6 +57,35 @@ describe('ModAlertHistory', () => {
     )
   })
 
+  describe('required replies', () => {
+    it('offers to stop requiring replies and cancels through the store', async () => {
+      mockAlertStore.cancel = vi.fn().mockResolvedValue()
+      const wrapper = mountComponent({}, { ...defaultAlert, requirereply: 1 })
+
+      const stop = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Stop requiring replies'))
+      expect(stop).toBeTruthy()
+      await stop.trigger('click')
+
+      expect(mockAlertStore.cancel).toHaveBeenCalledWith(1)
+    })
+
+    it('says so once replies are no longer required', () => {
+      const wrapper = mountComponent(
+        {},
+        { ...defaultAlert, requirereply: 1, cancelled: '2024-01-02T10:00:00' }
+      )
+      expect(wrapper.text()).toContain('Replies no longer required')
+      expect(wrapper.text()).not.toContain('Stop requiring replies')
+    })
+
+    it('shows nothing about replies for an ordinary alert', () => {
+      const wrapper = mountComponent({}, { ...defaultAlert })
+      expect(wrapper.text()).not.toContain('requiring replies')
+    })
+  })
+
   describe('rendering', () => {
     it('displays alert subject', () => {
       const wrapper = mountComponent()

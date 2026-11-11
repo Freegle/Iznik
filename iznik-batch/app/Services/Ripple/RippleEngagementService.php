@@ -2,6 +2,9 @@
 
 namespace App\Services\Ripple;
 
+use App\Models\Membership;
+use App\Models\User;
+use App\Support\TransactionPolicy;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -24,6 +27,9 @@ use Illuminate\Support\Facades\DB;
  *
  * One pass covers every route a reply or a post arrives by - the API, email and
  * TrashNothing - because it reads what was stored rather than hooking each route.
+ *
+ * A TrashNothing member's reply or write-back clears nothing: replying is not choosing the
+ * community, and only choosing it through TrashNothing makes their membership ordinary.
  */
 class RippleEngagementService
 {
@@ -37,10 +43,26 @@ class RippleEngagementService
 
     public const REASON_WROTE_BACK = 'wrote back to a member about their post';
 
+    // An account merge (User::merge) where one account had chosen a group the other was placed
+    // on. Matches rippling.ReasonMerged in iznik-server-go.
+    public const REASON_MERGED = 'merged with an account that chose this community';
+
     /** Prefix of the log text every clear writes, here and in iznik-server-go. */
     public const LOG_PREFIX = 'Ripple-created membership became ordinary: ';
 
+    /** The same, for a TrashNothing poster placed on a group they never chose (tn_unaddressed). */
+    public const LOG_PREFIX_TN = 'TrashNothing-placed membership became ordinary: ';
+
     private const CHAT_CHUNK = 5000;
+
+    /**
+     * The "became ordinary" log prefix for a membership created with $origin, as
+     * rippling.BecameOrdinaryText chooses it in iznik-server-go.
+     */
+    public static function logPrefix(?string $origin): string
+    {
+        return $origin === Membership::ADDED_ORIGIN_TN_UNADDRESSED ? self::LOG_PREFIX_TN : self::LOG_PREFIX;
+    }
 
     /**
      * Posts are found by their arrival, which approval sets to the time of approval. Each
@@ -93,30 +115,48 @@ class RippleEngagementService
     /**
      * Makes the member's ripple-created membership of the group ordinary, if it is one.
      * Returns whether anything changed.
+     *
+     * memberships.implicit is cleared alongside rippled, as rippling.ClearRippledMembership
+     * does in iznik-server-go. A row with implicit = 1 alone is a TrashNothing poster placed on
+     * a group they never chose; GroupPostIngestionService clears it here once they consent.
+     * Every pass in this class picks its rows on rippled = 1, so none of them reaches one. The
+     * log is worded from the row's added_origin (logPrefix), so that clear says it was a
+     * TrashNothing placement.
      */
     public function clear(int $userid, int $groupid, string $reason): bool
     {
-        $changed = DB::table('memberships')
-            ->where('userid', $userid)
-            ->where('groupid', $groupid)
-            ->where('rippled', 1)
-            ->update(['rippled' => 0]);
+        // The flag and its "became ordinary" log go together or not at all, and a deadlock is
+        // retried. A retry re-runs the update on rows the failed attempt rolled back.
+        return TransactionPolicy::atomic(function () use ($userid, $groupid, $reason) {
+            // For the log text. From the write node, as a row made moments ago may not be on a reader.
+            $origin = DB::table('memberships')
+                ->useWritePdo()
+                ->where('userid', $userid)
+                ->where('groupid', $groupid)
+                ->value('added_origin');
 
-        if ($changed < 1) {
-            return false;
-        }
+            $changed = DB::table('memberships')
+                ->where('userid', $userid)
+                ->where('groupid', $groupid)
+                ->where(fn ($q) => $q->where('rippled', 1)->orWhere('implicit', 1))
+                ->update(['rippled' => 0, 'implicit' => 0]);
 
-        DB::table('logs')->insert([
-            'timestamp' => now(),
-            'type' => 'Group',
-            'subtype' => 'Joined',
-            'groupid' => $groupid,
-            'user' => $userid,
-            'byuser' => $userid,
-            'text' => self::LOG_PREFIX.$reason,
-        ]);
+            if ($changed < 1) {
+                return false;
+            }
 
-        return true;
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Group',
+                'subtype' => 'Joined',
+                'groupid' => $groupid,
+                'user' => $userid,
+                'byuser' => $userid,
+                'text' => self::logPrefix($origin).$reason,
+            ]);
+
+            return true;
+        }, 'Clearing the ripple flag and logging it');
     }
 
     /**
@@ -205,10 +245,28 @@ class RippleEngagementService
         $this->save(self::LAST_CHAT_MESSAGE_KEY, (string) $done);
     }
 
+    /**
+     * Leave out chat messages written by a TrashNothing member, by the definition in
+     * User::isTrashNothingAccount().
+     */
+    private function notByTrashNothing(\Illuminate\Database\Query\Builder $query): \Illuminate\Database\Query\Builder
+    {
+        return $query
+            ->join('users as author', 'author.id', '=', 'cm.userid')
+            ->whereNull('author.tnuserid')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('users_emails as tne')
+                    ->whereColumn('tne.userid', 'author.id')
+                    ->where('tne.preferred', 1)
+                    ->where('tne.email', 'LIKE', '%' . User::TN_EMAIL_SUFFIX);
+            });
+    }
+
     /** Replied to a post whose home copy is on the community. */
     private function clearForReplies(int $start, int $end, array &$stats): void
     {
-        $pairs = DB::table('chat_messages as cm')
+        $pairs = $this->notByTrashNothing(DB::table('chat_messages as cm'))
             ->join('messages_groups as mg', function ($j) {
                 $j->on('mg.msgid', '=', 'cm.refmsgid')->where('mg.rippled_in', 0);
             })
@@ -240,7 +298,7 @@ class RippleEngagementService
      */
     private function clearForWriteBacks(int $start, int $end, array &$stats): void
     {
-        $pairs = DB::table('chat_messages as cm')
+        $pairs = $this->notByTrashNothing(DB::table('chat_messages as cm'))
             ->join('chat_messages as r', function ($j) {
                 $j->on('r.chatid', '=', 'cm.chatid')
                     ->on('r.userid', '!=', 'cm.userid')
@@ -254,9 +312,12 @@ class RippleEngagementService
                 $j->on('mg.msgid', '=', 'msg.id')->where('mg.rippled_in', 1);
             })
             ->join('memberships as mr', function ($j) {
+                // A TrashNothing poster placed on the community (implicit = 1) is no more its
+                // member than a ripple join is. rippled goes when Phase 5 moves this to implicit.
                 $j->on('mr.userid', '=', 'r.userid')
                     ->on('mr.groupid', '=', 'mg.groupid')
                     ->where('mr.rippled', 0)
+                    ->where('mr.implicit', 0)
                     ->where('mr.collection', 'Approved');
             })
             ->join('memberships as mp', function ($j) {

@@ -407,6 +407,38 @@ describe('ModSupportAIAssistant', () => {
     })
   })
 
+  describe('fetching the member snapshot early', () => {
+    it('asks the helper to start the snapshot as soon as a member is picked', async () => {
+      const wrapper = mountComponent()
+
+      wrapper.vm.selectUser({ id: 4242, displayname: 'Test User' })
+      await flushPromises()
+
+      const call = mockFetch.mock.calls.find(([url]) =>
+        String(url).endsWith('/api/prefetch-dump')
+      )
+      expect(call).toBeTruthy()
+      expect(call[1].method).toBe('POST')
+      expect(call[1].headers.Authorization).toBe('Bearer test-jwt-123')
+      expect(JSON.parse(call[1].body)).toEqual({ userId: 4242 })
+    })
+
+    it('carries on as normal when the early fetch fails', async () => {
+      mockFetch.mockImplementation((url) =>
+        String(url).endsWith('/api/prefetch-dump')
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+      )
+      const wrapper = mountComponent()
+
+      wrapper.vm.selectUser({ id: 4242 })
+      await flushPromises()
+
+      expect(wrapper.vm.selectedUser.id).toBe(4242)
+      expect(wrapper.vm.deviceError).toBe('')
+    })
+  })
+
   describe('query input', () => {
     it('shows query textarea after user is selected', async () => {
       const wrapper = mountComponent()
@@ -941,7 +973,7 @@ describe('ModSupportAIAssistant', () => {
       wrapper.vm.messages = [{ role: 'user', content: 'test' }]
       await nextTick()
 
-      const input = wrapper.find('.chat-input-area input')
+      const input = wrapper.find('.chat-input-area input:not([type="file"])')
       expect(input.exists()).toBe(true)
       expect(input.attributes('placeholder')).toContain('follow-up')
     })
@@ -1322,6 +1354,138 @@ describe('ModSupportAIAssistant', () => {
 
       expect(wrapper.vm.referralNote).toBe('')
       expect(wrapper.vm.referralResult).toBeNull()
+    })
+
+    it('sends the earlier references so a second referral threads under the first', async () => {
+      const wrapper = await withConversation()
+      mockFetch.mockReset()
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ok: true, ref: 'SR-AAAAA' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ok: true, ref: 'SR-BBBBB' }),
+        })
+
+      wrapper.vm.referralNote = 'First.'
+      await wrapper.vm.sendReferral()
+      await flushPromises()
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body).earlierRefs).toEqual(
+        []
+      )
+
+      wrapper.vm.referralNote = 'Second.'
+      await wrapper.vm.sendReferral()
+      await flushPromises()
+      expect(JSON.parse(mockFetch.mock.calls[1][1].body).earlierRefs).toEqual([
+        'SR-AAAAA',
+      ])
+
+      wrapper.vm.changeUser()
+      expect(wrapper.vm.referralRefs).toEqual([])
+    })
+
+    it('passes the screenshots from the whole investigation on with the referral', async () => {
+      const wrapper = await withConversation()
+      wrapper.vm.messages[0].images = [
+        {
+          name: 'a.png',
+          mime: 'image/png',
+          data: 'AAAA',
+          preview: 'data:image/png;base64,AAAA',
+        },
+        {
+          name: 'b.png',
+          mime: 'image/png',
+          data: 'BBBB',
+          preview: 'data:image/png;base64,BBBB',
+        },
+      ]
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: true, ref: 'SR-4F2QW' }),
+      })
+
+      wrapper.vm.referralNote = 'See the pictures.'
+      await wrapper.vm.sendReferral()
+      await flushPromises()
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.screenshots).toEqual([
+        { name: 'a.png', mime: 'image/png', data: 'AAAA' },
+        { name: 'b.png', mime: 'image/png', data: 'BBBB' },
+      ])
+      // The preview URL is for the screen only and is not sent twice.
+      expect(JSON.stringify(body.screenshots)).not.toContain('preview')
+    })
+  })
+
+  describe('screenshots on a question', () => {
+    const SHOT = {
+      name: 'err.png',
+      mime: 'image/png',
+      data: 'AAAA',
+      preview: 'data:image/png;base64,AAAA',
+    }
+
+    async function withMember() {
+      const wrapper = mountComponent()
+      wrapper.vm.selectedUser = { id: 7, displayname: 'Sam' }
+      await nextTick()
+      return wrapper
+    }
+
+    it('sends the attached screenshots with the question and not the preview', async () => {
+      const wrapper = await withMember()
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue(
+        sseResponse([
+          { type: 'result', analysis: 'Seen.', claudeSessionId: 's' },
+        ])
+      )
+
+      wrapper.vm.screenshots.push(SHOT, { ...SHOT, name: 'two.png' })
+      wrapper.vm.query = 'What is this error?'
+      await wrapper.vm.submitQuery()
+      await flushPromises()
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.images).toEqual([
+        { name: 'err.png', mime: 'image/png', data: 'AAAA' },
+        { name: 'two.png', mime: 'image/png', data: 'AAAA' },
+      ])
+      // They are cleared once sent, and kept on the message so they show in the chat.
+      expect(wrapper.vm.screenshots).toHaveLength(0)
+      expect(wrapper.vm.messages[0].images).toHaveLength(2)
+    })
+
+    it('sends no images field when nothing is attached', async () => {
+      const wrapper = await withMember()
+      mockFetch.mockReset()
+      mockFetch.mockResolvedValue(
+        sseResponse([{ type: 'result', analysis: 'Ok.' }])
+      )
+
+      wrapper.vm.query = 'Plain question'
+      await wrapper.vm.submitQuery()
+      await flushPromises()
+
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body).images).toBeUndefined()
+    })
+
+    it('shows a thumbnail of what was attached in the chat', async () => {
+      const wrapper = await withMember()
+      wrapper.vm.messages = [{ role: 'user', content: 'Look', images: [SHOT] }]
+      await nextTick()
+      expect(wrapper.find('img.message-screenshot').attributes('src')).toBe(
+        SHOT.preview
+      )
     })
   })
 })

@@ -26,7 +26,7 @@ const minNearbyKmForTest = 1.0
 // query applied. RecentNonAlertNewsfeedIDs restores them so alerts and stale
 // posts don't shrink the computed "nearby" radius.
 func TestRecentNonAlertNewsfeedIDs(t *testing.T) {
-	uid := CreateTestUser(t, "nearbydist", "User")
+	uid := CreateTestUser(t, "nearbydist", utils.SYSTEMROLE_USER)
 	lat, lng := 51.5, -0.1
 
 	recentMsg := CreateTestNewsfeedWithType(t, uid, lat, lng, "recent message", "Message", 24*5) // 5 days ago
@@ -99,8 +99,8 @@ func mockNewsfeedKNN(t *testing.T, ids []int64, dists []float64) func() {
 // that an uncapped implementation would return a radius far past
 // maxNearbyKmForTest, and only a genuine unconditional clamp passes it.
 func TestGetNearbyDistanceCapsRawKNNFallbackRadius(t *testing.T) {
-	uid := CreateTestUser(t, "nearbycapfallback", "User")
-	author := CreateTestUser(t, "nearbycapfallbackauthor", "User")
+	uid := CreateTestUser(t, "nearbycapfallback", utils.SYSTEMROLE_USER)
+	author := CreateTestUser(t, "nearbycapfallbackauthor", utils.SYSTEMROLE_USER)
 	lat, lng := 55.9533, -3.1883
 
 	var ids []int64
@@ -139,8 +139,8 @@ func TestGetNearbyDistanceCapsRawKNNFallbackRadius(t *testing.T) {
 // an unbounded radius directly from their distance. That path must be
 // capped too.
 func TestGetNearbyDistanceCapsHappyPathRadius(t *testing.T) {
-	uid := CreateTestUser(t, "nearbycaphappy", "User")
-	author := CreateTestUser(t, "nearbycaphappyauthor", "User")
+	uid := CreateTestUser(t, "nearbycaphappy", utils.SYSTEMROLE_USER)
+	author := CreateTestUser(t, "nearbycaphappyauthor", utils.SYSTEMROLE_USER)
 	lat, lng := 55.9533, -3.1883
 
 	var ids []int64
@@ -178,8 +178,8 @@ func TestGetNearbyDistanceCapsHappyPathRadius(t *testing.T) {
 // ONE location, so this routes through the too-few fallback - and its
 // window-reach distance is also 0, exercising the floor there.
 func TestGetNearbyDistanceFloorsHappyPathZeroRadius(t *testing.T) {
-	uid := CreateTestUser(t, "nearbyfloorhappy", "User")
-	author := CreateTestUser(t, "nearbyfloorhappyauthor", "User")
+	uid := CreateTestUser(t, "nearbyfloorhappy", utils.SYSTEMROLE_USER)
+	author := CreateTestUser(t, "nearbyfloorhappyauthor", utils.SYSTEMROLE_USER)
 	lat, lng := 55.9533, -3.1883
 
 	var ids []int64
@@ -209,8 +209,8 @@ func TestGetNearbyDistanceFloorsHappyPathZeroRadius(t *testing.T) {
 // non-alert posts to reach nearbyLimit, and the raw nearbyLimit-th KNN
 // candidate is also co-located with the user (distance 0).
 func TestGetNearbyDistanceFloorsRawKNNFallbackZeroRadius(t *testing.T) {
-	uid := CreateTestUser(t, "nearbyfloorfallback", "User")
-	author := CreateTestUser(t, "nearbyfloorfallbackauthor", "User")
+	uid := CreateTestUser(t, "nearbyfloorfallback", utils.SYSTEMROLE_USER)
+	author := CreateTestUser(t, "nearbyfloorfallbackauthor", utils.SYSTEMROLE_USER)
 	lat, lng := 55.9533, -3.1883
 
 	var ids []int64

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-10
+last_reviewed: 2026-10-24
 owner: Freegle ops
 covers:
   - iznik-batch/app/Services/EmailSpoolerService.php
@@ -45,6 +45,10 @@ refusing us is stopped *before* the render - see
 
 A file queue at `storage/spool/mail/{pending,sending,sent,failed}` on the batch host.
 A message survives a container restart, and generation is not blocked by delivery.
+
+A spool file holds the whole message: recipients, headers, text and HTML, and any attached files as
+base64 under `attachments`. Only the contact-group alerts attach files today, so a file in the
+spool is normally a few kilobytes and an alert with pictures can be a few megabytes.
 
 **Priority bands.** The band is part of the filename, so the drain orders tens of
 thousands of entries without opening any:

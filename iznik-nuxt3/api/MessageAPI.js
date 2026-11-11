@@ -28,6 +28,21 @@ export default class MessageAPI extends BaseAPI {
     return await this.$getv2('/message/' + id, rest, logError)
   }
 
+  // The "I'm interested" mark on someone else's post. Failures are not logged: an API that does
+  // not have the routes yet answers 404, and that must read as "no button", not as an error.
+  interestedState(id) {
+    return this.$getv2('/message/' + id + '/interested', {}, false)
+  }
+
+  setInterested(id, interested) {
+    return this.$postv2('/message/' + id + '/interested', { interested }, false)
+  }
+
+  // The member's marks, newest first.
+  interestedList() {
+    return this.$getv2('/message/interested', {}, false)
+  }
+
   // Actual rippling-out progress of a post, for the moderation reach map (mod-of-group only).
   reach(id, logError = true) {
     return this.$getv2('/message/' + id + '/reach', {}, logError)
@@ -202,6 +217,22 @@ export default class MessageAPI extends BaseAPI {
       ...(interestuserid ? { interestuserid } : {}),
       ...(comment ? { comment } : {}),
     })
+  }
+
+  // Owner/mod: mark one item of a multi-item post TAKEN (available false), or undo
+  // that (available true).
+  bulkItemAvailable(id, bulkitemid, available) {
+    return this.$postv2('/message', {
+      action: 'BulkItemAvailable',
+      id,
+      bulkitemid,
+      available,
+    })
+  }
+
+  // Owner/mod: take back an automatic split, so the post is as it was written.
+  autoSplitUndo(id) {
+    return this.$postv2('/message', { action: 'AutoSplitUndo', id })
   }
 
   // Offerer/mod transition of one interest row (Interested → Reserved →

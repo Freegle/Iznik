@@ -86,11 +86,13 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import UserRatings from './UserRatings'
 import NumberIncrementDecrement from './NumberIncrementDecrement'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
+import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
+import { isClearance } from '~/composables/useAutoSplit'
 
 const props = defineProps({
   type: {
@@ -142,7 +144,7 @@ const message = computed(() =>
 // Bulk clearance offers keep the per-person counts: those posters are working
 // through a catalogue and the arithmetic is the point. On an ordinary post we
 // only ask who took some, never how many each of them took.
-const isBulk = computed(() => (message.value?.bulkcount ?? 0) > 0)
+const isBulk = computed(() => isClearance(message.value))
 
 // Was this post offering more than one thing? For a bulk offer that is a live
 // count, so availablenow is right. For an ordinary post the pool size is what
@@ -232,6 +234,63 @@ const moreUsersToSelect = computed(() => {
     currentlySelectedUsers.value?.length <= repliers.value?.length ||
     !currentlySelectedUsers.value.find((u) => !u.userid)
   )
+})
+
+// Experiment outcome-taker-preselect: when the member's own actions already answer "who took it" (they
+// promised it to one person, or only one person replied), start with that person chosen. They show as
+// a normal row with the x, so the member can see them and remove them. Control starts empty, as ever.
+// The arm is read after mount, never in setup, so server render and hydration match (control). It is
+// read only when there is someone to preselect, because reading it counts the member as having seen it.
+function singleLikelyTaker() {
+  if (props.type !== 'Taken' || isBulk.value) return null
+
+  // More than one promise: no safe guess.
+  const promised = [
+    ...new Set(
+      (message.value?.promises || [])
+        .filter((u) => u.userid > 0)
+        .map((u) => u.userid)
+    ),
+  ]
+  if (promised.length > 1) return null
+
+  const replied = repliers.value.filter((u) =>
+    (message.value?.replies || []).some((r) => r.userid === u.userid)
+  )
+
+  let candidate = null
+
+  if (promised.length === 1) {
+    candidate = repliers.value.find((u) => u.userid === promised[0])
+  } else if (replied.length === 1) {
+    candidate = replied[0]
+  }
+
+  if (!candidate?.userid) return null
+
+  // Never show a made-up name: a promisee whose profile has not loaded is left for the member to pick.
+  if (
+    candidate.displayname === 'Freegler' &&
+    !userStore.byId(candidate.userid)?.displayname &&
+    !(message.value?.replies || []).some((r) => r.userid === candidate.userid)
+  ) {
+    return null
+  }
+
+  return { userid: candidate.userid, displayname: candidate.displayname }
+}
+
+onMounted(() => {
+  if (currentlySelectedUsers.value.length) return
+
+  const candidate = singleLikelyTaker()
+
+  if (
+    candidate &&
+    flowArm(FlowName.CHAT_OUTCOME, 'outcome-taker-preselect') === 'b'
+  ) {
+    currentlySelectedUsers.value = [candidate]
+  }
 })
 
 function removeTaker(user) {

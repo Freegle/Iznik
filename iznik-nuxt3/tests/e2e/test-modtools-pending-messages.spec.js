@@ -197,4 +197,154 @@ test.describe('ModTools Pending Messages', () => {
 
     await assertNoErrors(page)
   })
+
+  // Discourse 10321: a poster can leave the community after posting, and the post
+  // stays pending. A standard message that approves and unmoderates them has no
+  // membership to change, and the approve must still go ahead.
+  test('a standard message approves a post whose poster has left', async ({
+    page,
+    testEnv,
+    testEmail,
+  }) => {
+    const API_V2 = environment.apiV2BaseUrl
+    const groupid = Number(testEnv.group.id)
+    const stamp = Date.now()
+    const title = `PW Approve and unmod ${stamp}`
+
+    // A config holding the standard message, used by the mod on the test group.
+    const loginResp = await page.request.post(`${API_V2}/session`, {
+      data: { email: testEnv.mod.email, password: 'freegle' },
+    })
+    const { jwt } = await loginResp.json()
+    expect(jwt).toBeTruthy()
+    const headers = { Authorization: jwt }
+
+    const cfgResp = await page.request.post(`${API_V2}/modtools/modconfig`, {
+      data: { name: `PW Poster left ${stamp}` },
+      headers,
+    })
+    expect(cfgResp.ok()).toBeTruthy()
+    const configid = (await cfgResp.json()).id
+    expect(configid).toBeTruthy()
+
+    const stdmsgResp = await page.request.post(`${API_V2}/modtools/stdmsg`, {
+      data: {
+        configid,
+        title,
+        action: 'Approve',
+        body: 'Thanks for your post, it has been approved and will go out shortly.',
+        newmodstatus: 'DEFAULT',
+      },
+      headers,
+    })
+    expect(stdmsgResp.ok()).toBeTruthy()
+
+    const modResp = await page.request.patch(`${API_V2}/memberships`, {
+      data: { userid: Number(testEnv.mod.id), groupid, configid },
+      headers,
+    })
+    expect(modResp.ok()).toBeTruthy()
+
+    // A new member posts on the test group, then leaves it.
+    const submitResp = await page.request.put(`${API_V2}/message/submit`, {
+      data: {
+        type: 'Wanted',
+        item: `pw-poster-left-${stamp}`,
+        textbody: 'Looking for one of these, please.',
+        groupid,
+        email: testEmail,
+      },
+    })
+    expect(submitResp.ok()).toBeTruthy()
+    const submitted = await submitResp.json()
+    const msgid = submitted.id
+    expect(msgid).toBeTruthy()
+    expect(submitted.jwt).toBeTruthy()
+
+    const leaveResp = await page.request.delete(`${API_V2}/memberships`, {
+      data: { groupid },
+      headers: { Authorization: submitted.jwt },
+    })
+    expect(leaveResp.ok()).toBeTruthy()
+
+    // The pending queue only shows a post once the content check has seen it.
+    const statusUrl = process.env.STATUS_API_URL || 'http://localhost:8081'
+    const ccResp = await page.request.post(
+      `${statusUrl}/api/utility/run-contentcheck`
+    )
+    expect(ccResp.ok()).toBeTruthy()
+
+    await loginViaModTools(page, testEnv.mod.email)
+    await page.goto(`${MODTOOLS_URL}/messages/pending`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    const groupSelect = page.locator('#communitieslist')
+    await expect(groupSelect).toBeVisible({
+      timeout: timeouts.navigation.slowPage,
+    })
+    await dismissAllModals(page)
+    await expect
+      .poll(
+        async () =>
+          (await groupSelect.locator(`option[value="${groupid}"]`).count()) > 0,
+        { timeout: timeouts.navigation.slowPage }
+      )
+      .toBe(true)
+    await groupSelect.selectOption(String(groupid))
+
+    const card = page
+      .locator('.card')
+      .filter({ hasText: new RegExp(`#${msgid}(?!\\d)`) })
+      .first()
+    await expect(card).toBeVisible({ timeout: timeouts.navigation.slowPage })
+
+    const stdmsgButton = card.locator(`button:has-text("${title}")`).first()
+    await expect(stdmsgButton).toBeVisible({ timeout: timeouts.ui.appearance })
+    await dismissAllModals(page)
+    await stdmsgButton.click()
+
+    // The message box says there is no membership to change, and does not offer to.
+    const modal = page.locator('#stdmsgmodal')
+    await expect(modal.locator('[data-test="stdmsg-not-member"]')).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    await expect(modal).not.toContainText('Change moderation status to')
+
+    const membershipChanges = []
+    page.on('request', (r) => {
+      if (r.method() === 'PATCH' && r.url().includes('/memberships')) {
+        membershipChanges.push(r.url())
+      }
+    })
+
+    const isApprove = (r) => {
+      if (r.request().method() !== 'POST' || !/\/message(\?|$)/.test(r.url())) {
+        return false
+      }
+      try {
+        return r.request().postDataJSON()?.action === 'Approve'
+      } catch (e) {
+        return false
+      }
+    }
+    const approvePromise = page.waitForResponse(isApprove, {
+      timeout: timeouts.api.slowApi,
+    })
+    await modal.locator('button:has-text("Send and Approve")').click()
+    const approveResp = await approvePromise
+    expect(approveResp.status()).toBe(200)
+
+    await expect(modal).not.toBeVisible({ timeout: timeouts.api.default })
+    expect(membershipChanges).toHaveLength(0)
+    await assertNoErrors(page)
+
+    const afterResp = await page.request.get(`${API_V2}/message/${msgid}`, {
+      headers,
+    })
+    const after = await afterResp.json()
+    expect(after.groups.find((g) => g.groupid === groupid)?.collection).toBe(
+      'Approved'
+    )
+  })
 })

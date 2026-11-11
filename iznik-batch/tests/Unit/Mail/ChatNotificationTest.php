@@ -5,6 +5,7 @@ namespace Tests\Unit\Mail;
 use App\Mail\Chat\ChatNotification;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
+use App\Models\Message;
 use App\Models\User;
 use Tests\TestCase;
 
@@ -521,6 +522,57 @@ class ChatNotificationTest extends TestCase
         $html = $mail->render();
 
         $this->assertStringContainsString('no longer available', $html);
+    }
+
+    public function test_chat_notification_completed_message_wording_differs_for_wanted(): void
+    {
+        $poster = $this->createTestUser(['fullname' => 'Alice']);
+        $group = $this->createTestGroup();
+
+        $wanted = $this->createTestMessage($poster, $group, ['type' => Message::TYPE_WANTED, 'subject' => 'WANTED: Test Item (TestLocation)']);
+        $offer = $this->createTestMessage($poster, $group, ['type' => Message::TYPE_OFFER]);
+
+        $html = [];
+        foreach (['wanted' => $wanted, 'offer' => $offer] as $key => $ref) {
+            ['mail' => $mail] = $this->createUser2UserChatSetup([
+                'user1_attrs' => ['fullname' => 'Alice'],
+                'user2_attrs' => ['fullname' => 'Bob'],
+                'message_text' => '',
+                'message_type' => ChatMessage::TYPE_COMPLETED,
+                'message_attrs' => ['refmsgid' => $ref->id],
+            ]);
+            $mail->build();
+            $html[$key] = $mail->render();
+        }
+
+        $this->assertStringContainsString('no longer available', $html['offer']);
+        $this->assertStringNotContainsString('no longer available', $html['wanted']);
+        $this->assertStringContainsString('no longer looking', $html['wanted']);
+    }
+
+    public function test_chat_notification_completed_plain_text_wording_differs_for_wanted(): void
+    {
+        $poster = $this->createTestUser(['fullname' => 'Alice']);
+        $group = $this->createTestGroup();
+        $wanted = $this->createTestMessage($poster, $group, ['type' => Message::TYPE_WANTED, 'subject' => 'WANTED: Test Item (TestLocation)']);
+        $offer = $this->createTestMessage($poster, $group, ['type' => Message::TYPE_OFFER]);
+
+        $text = [];
+        foreach (['wanted' => $wanted, 'offer' => $offer] as $key => $ref) {
+            ['mail' => $mail] = $this->createUser2UserChatSetup([
+                'user1_attrs' => ['fullname' => 'Alice'],
+                'user2_attrs' => ['fullname' => 'Bob'],
+                'message_text' => '',
+                'message_type' => ChatMessage::TYPE_COMPLETED,
+                'message_attrs' => ['refmsgid' => $ref->id],
+            ]);
+            $mail->build();
+            $text[$key] = view($mail->textView, $mail->buildViewData())->render();
+        }
+
+        $this->assertStringContainsString('no longer available', $text['offer']);
+        $this->assertStringNotContainsString('no longer available', $text['wanted']);
+        $this->assertStringContainsString('no longer looking', $text['wanted']);
     }
 
     public function test_chat_notification_reply_to_format(): void
@@ -2196,5 +2248,90 @@ class ChatNotificationTest extends TestCase
         // The tracked link, with its & intact: plain text must not carry &amp;.
         $this->assertStringContainsString($tracked, $text);
         $this->assertStringNotContainsString('/job/4242', $text);
+    }
+
+    // -------------------------------------------------------------------------
+    // TrashNothing shows our mail to its members as coming from a Freegle user, and the
+    // "{Group} Volunteers" sender name is lost, so a moderator's message to a TrashNothing
+    // member carries a sign-off in the body.
+    // -------------------------------------------------------------------------
+
+    public function test_a_moderators_message_to_a_trashnothing_member_is_signed(): void
+    {
+        ['mail' => $mail, 'group' => $group] = $this->createUser2ModChatSetup([
+            'member_attrs' => ['tnuserid' => random_int(900000000, 999999999)],
+            'moderator_attrs' => [],
+            'sender' => 'moderator',
+            'message_text' => 'Please add a postcode to your post.',
+        ]);
+
+        $mail->build();
+        $signOff = \App\Support\TrashNothingSignOff::line($group->namedisplay ?: $group->namefull ?: $group->nameshort);
+        $this->assertStringContainsString('the volunteers who run', $signOff);
+
+        $html = $mail->render();
+        $this->assertStringContainsString('Please add a postcode to your post.', $html);
+        $this->assertStringContainsString(e($signOff), $html);
+        $this->assertStringContainsString($signOff, $this->renderTextEmail($mail));
+    }
+
+    /**
+     * The mail shows the earlier messages of the chat above the new one. Only the new
+     * message is the volunteers writing to the member now; signing each quoted earlier
+     * message as well put the line in the mail once per message.
+     */
+    public function test_only_the_new_moderator_message_is_signed_not_the_quoted_earlier_ones(): void
+    {
+        ['mail' => $unused, 'member' => $member, 'moderator' => $moderator, 'room' => $room, 'group' => $group] = $this->createUser2ModChatSetup([
+            'member_attrs' => ['tnuserid' => random_int(900000000, 999999999)],
+            'moderator_attrs' => [],
+            'sender' => 'moderator',
+            'message_text' => 'Setup message',
+        ]);
+
+        $earlier = collect([
+            $this->createTestChatMessage($room, $moderator, ['message' => 'First earlier volunteer note.', 'date' => now()->subMinutes(20)]),
+            $this->createTestChatMessage($room, $member, ['message' => 'A reply from the member.', 'date' => now()->subMinutes(15)]),
+            $this->createTestChatMessage($room, $moderator, ['message' => 'Second earlier volunteer note.', 'date' => now()->subMinutes(10)]),
+        ]);
+        $latest = $this->createTestChatMessage($room, $moderator, ['message' => 'The new volunteer message.']);
+
+        $mail = new ChatNotification($member, $moderator, $room, $latest, ChatRoom::TYPE_USER2MOD, $earlier);
+        $mail->build();
+        $signOff = \App\Support\TrashNothingSignOff::line($group->namedisplay ?: $group->namefull ?: $group->nameshort);
+
+        $html = $mail->render();
+        $this->assertStringContainsString('First earlier volunteer note.', $html);
+        $this->assertStringContainsString('Second earlier volunteer note.', $html);
+        $this->assertStringContainsString('The new volunteer message.', $html);
+        $this->assertSame(1, substr_count($html, e($signOff)), 'the new message is signed once and the quoted ones not at all');
+
+        $text = $this->renderTextEmail($mail);
+        $this->assertSame(1, substr_count($text, $signOff));
+    }
+
+    public function test_a_moderators_message_to_an_ordinary_member_is_not_signed(): void
+    {
+        ['mail' => $mail] = $this->createUser2ModChatSetup([
+            'moderator_attrs' => [],
+            'sender' => 'moderator',
+            'message_text' => 'Please add a postcode to your post.',
+        ]);
+
+        $mail->build();
+        $this->assertStringNotContainsString('the volunteers who run', $mail->render());
+    }
+
+    public function test_a_trashnothing_members_own_message_to_the_moderators_is_not_signed(): void
+    {
+        ['mail' => $mail] = $this->createUser2ModChatSetup([
+            'member_attrs' => ['tnuserid' => random_int(900000000, 999999999)],
+            'sender' => 'member',
+            'recipient' => 'moderator',
+            'message_text' => 'Is my post OK now?',
+        ]);
+
+        $mail->build();
+        $this->assertStringNotContainsString('the volunteers who run', $mail->render());
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Database\Expressions\Coalesce;
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Count;
@@ -9,10 +10,13 @@ use App\Database\Expressions\Greatest;
 use App\Database\Expressions\TimestampDiff;
 use App\Database\Expressions\Value;
 use App\Helpers\MailHelper;
+use App\Models\ChatMessage;
 use App\Models\Message;
 use App\Models\User;
 use App\Models\UserDeletion;
 use App\Models\UserEmail;
+use App\Models\UxExperimentExposure;
+use App\Services\Ux\UxPromptService;
 use App\Traits\ChunkedProcessing;
 use Illuminate\Database\Query\Expression as RawExpression;
 use Illuminate\Support\Carbon;
@@ -287,7 +291,7 @@ class UserManagementService
             ->whereNull('spam_users.userid')
             ->whereNull('users_comments.userid')
             ->where('users.lastaccess', '<', $sixMonthsAgo)
-            ->where('users.systemrole', 'User')
+            ->where('users.systemrole', User::SYSTEMROLE_USER)
             ->whereNull('users.deleted')
             ->whereNull('users.forgotten')
             ->limit($limit)
@@ -424,6 +428,8 @@ class UserManagementService
             'message' => NULL,
         ]);
 
+        $this->forgetReplyQuestions($userId);
+
         // Delete community events, volunteering, newsfeed, stories, searches, about me.
         DB::table('communityevents')->where('userid', $userId)->delete();
         DB::table('volunteering')->where('userid', $userId)->delete();
@@ -454,6 +460,32 @@ class UserManagementService
         // Remove promises.
         DB::table('messages_promises')->where('userid', $userId)->delete();
 
+        // Remove the posts they marked "I'm interested" in.
+        DB::table('messages_interested')->where('userid', $userId)->delete();
+
+        // Remove the record of which experiment arm a send, a reply or a promise used. An erasure must
+        // not depend on an analytics table, so a table that has not been created yet is skipped. The write
+        // node is asked, because a read node that is behind would say the table is not there.
+        if (UxExperimentExposure::tableExists()) {
+            DB::table('ux_experiment_exposures')->where('userid', $userId)->delete();
+        }
+
+        // Answers to the questions microvolunteers are asked (ux_prompt_responses): they can hold
+        // free text in the member's own words, which is personal data.
+        // The themes they fed hold verbatim spans of those words, so those go first.
+        UxPromptService::forgetAnswers(DB::table('ux_prompt_responses')->where('userid', $userId)->pluck('id')->all());
+        DB::table('ux_prompt_responses')->where('userid', $userId)->delete();
+
+        // Support cases about this member: the brief and what the referrer said hold facts about them,
+        // and so do the case thread and the first pass and helper runs written for them.
+        // One UPDATE with a subquery, so the erasure reads nothing through the read connection and depends
+        // only on the node it writes to.
+        DB::table('support_case_messages')
+            ->whereIn('caseid', fn ($q) => $q->select('id')->from('support_cases')->where('userid', $userId))
+            ->update(['body' => '']);
+        DB::table('support_cases')->where('userid', $userId)->update(['brief' => NULL, 'reason' => NULL]);
+        DB::table('support_ai_runs')->where('userid', $userId)->update(['analysis' => NULL, 'transcript' => NULL]);
+
         // Mark as forgotten and clear TN user ID.
         DB::table('users')->where('id', $userId)->update([
             'forgotten' => now(),
@@ -474,6 +506,60 @@ class UserManagementService
 
         // Tell partners, who mirror our users and can only find out by polling.
         UserDeletion::record($userId, UserDeletion::TYPE_FORGOTTEN, $reason);
+    }
+
+    /**
+     * The questions Freegle asked a member about their replies (chat_prompts kind confirm_reply) are written by the
+     * Freegle account and begin with the member's name, so blanking what the member wrote does not reach them, and
+     * the poster's chat would go on showing the name. Each is blanked and taken out of the chat, and the rows that tie
+     * it to the member are deleted. A reply of theirs that is still waiting for the batch is dropped, with whatever they
+     * wrote after it while the question was open: with the row gone nothing would hold them, and the batch would
+     * deliver them blank.
+     */
+    private function forgetReplyQuestions(int $userId): void
+    {
+        $prompts = DB::table('chat_prompts')->where('userid', $userId)->get(['chatmsgid', 'heldchatmsgid']);
+
+        if ($prompts->isEmpty()) {
+            return;
+        }
+
+        DB::table('chat_messages')->whereIn('id', $prompts->pluck('chatmsgid')->all())->update([
+            'message' => NULL,
+            'processingsuccessful' => 0,
+        ]);
+
+        $this->dropRepliesHeldForAnswer($userId);
+
+        DB::table('chat_prompts')->where('userid', $userId)->delete();
+    }
+
+    /**
+     * Drop the replies of a member that are waiting for them to answer a question (chat_prompts kind confirm_reply), and
+     * whatever they wrote after each while it was open. Run before the member's questions are deleted: a reply that
+     * nothing holds any more would be delivered to the poster with no question asked. A member who is deleted outright
+     * needs no such step, because their chat messages are deleted with them (the foreign key cascades).
+     */
+    private function dropRepliesHeldForAnswer(int $userId): void
+    {
+        $heldIds = DB::table('chat_prompts')
+            ->where('userid', $userId)
+            ->where('kind', 'confirm_reply')
+            ->whereNotNull('heldchatmsgid')
+            ->pluck('heldchatmsgid');
+
+        foreach ($heldIds as $heldId) {
+            DB::table('chat_messages')
+                ->where('chatid', DB::table('chat_messages')->where('id', $heldId)->value('chatid'))
+                ->where('userid', $userId)
+                ->where('id', '>=', $heldId)
+                ->where('processingrequired', 1)
+                ->update([
+                    'processingrequired' => 0,
+                    'processingsuccessful' => 0,
+                    'processingfailreason' => ChatMessage::PROCESSFAIL_NOT_CONFIRMED,
+                ]);
+        }
     }
 
     /**
@@ -712,7 +798,7 @@ class UserManagementService
 
         // Users who currently have Support or Admin role.
         $currentSupport = DB::table('users')
-            ->whereIn('systemrole', ['Support', 'Admin'])
+            ->whereIn('systemrole', [User::SYSTEMROLE_SUPPORT, User::SYSTEMROLE_ADMIN])
             ->pluck('id')
             ->all();
 
@@ -730,7 +816,7 @@ class UserManagementService
                 if (!$dryRun) {
                     DB::table('users')
                         ->where('id', $userId)
-                        ->update(['systemrole' => 'Support']);
+                        ->update(['systemrole' => User::SYSTEMROLE_SUPPORT]);
 
                     Log::info("Granted support role to user #{$userId}");
                 }
@@ -749,11 +835,11 @@ class UserManagementService
                 ->value('systemrole');
 
             // Only downgrade Support, never Admin.
-            if ($currentRole === 'Support') {
+            if ($currentRole === User::SYSTEMROLE_SUPPORT) {
                 if (!$dryRun) {
                     DB::table('users')
                         ->where('id', $userId)
-                        ->update(['systemrole' => 'Moderator']);
+                        ->update(['systemrole' => User::SYSTEMROLE_MODERATOR]);
 
                     Log::info("Removed support role from user #{$userId}");
                 }
@@ -785,14 +871,14 @@ class UserManagementService
         $stats = ['demoted' => 0];
 
         $staleMods = DB::table('users')
-            ->where('systemrole', 'Moderator')
+            ->where('systemrole', User::SYSTEMROLE_MODERATOR)
             ->whereNotExists(function ($q) {
                 // No select() call needed: the subquery is used only for its
                 // existence, not its column list, so the default "select *" is
                 // functionally identical to "select 1" here.
                 $q->from('memberships')
                     ->whereColumn('memberships.userid', 'users.id')
-                    ->whereIn('memberships.role', ['Moderator', 'Owner']);
+                    ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
             })
             ->pluck('id')
             ->all();
@@ -801,8 +887,8 @@ class UserManagementService
             if (!$dryRun) {
                 DB::table('users')
                     ->where('id', $userId)
-                    ->where('systemrole', 'Moderator')
-                    ->update(['systemrole' => 'User']);
+                    ->where('systemrole', User::SYSTEMROLE_MODERATOR)
+                    ->update(['systemrole' => User::SYSTEMROLE_USER]);
 
                 Log::info("Demoted stale Moderator systemrole to User for user #{$userId}");
             }

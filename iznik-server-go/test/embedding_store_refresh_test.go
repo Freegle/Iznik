@@ -94,7 +94,7 @@ func searchFindsAsTop(t *testing.T, store *embedding.Store, vec [embedding.Embed
 func TestStoreRefreshAddsNewEmbedding(t *testing.T) {
 	prefix := uniquePrefix("storerefreshadd")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 
 	vec1 := unitVec(0.3)
 	msg1 := createOpenTestMessageWithEmbedding(t, userID, groupID, "First "+prefix, 51.5, -0.1, vec1)
@@ -117,7 +117,7 @@ func TestStoreRefreshAddsNewEmbedding(t *testing.T) {
 func TestStoreRefreshRemovesClosedMessage(t *testing.T) {
 	prefix := uniquePrefix("storerefreshremove")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 
 	vec1 := unitVec(0.7)
 	vec2 := unitVec(9.0)
@@ -143,7 +143,7 @@ func TestStoreRefreshRemovesClosedMessage(t *testing.T) {
 func TestStoreRefreshNoChange(t *testing.T) {
 	prefix := uniquePrefix("storerefreshnochange")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 
 	vec1 := unitVec(1.2)
 	createOpenTestMessageWithEmbedding(t, userID, groupID, "Stable "+prefix, 51.5, -0.1, vec1)
@@ -170,7 +170,7 @@ func TestStoreRefreshNoChange(t *testing.T) {
 func TestStoreRefreshPicksUpRegeneratedEmbedding(t *testing.T) {
 	prefix := uniquePrefix("storerefreshregenerate")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 
 	vecOld := unitVec(2.0)
 	msg1 := createOpenTestMessageWithEmbedding(t, userID, groupID, "Regen "+prefix, 51.5, -0.1, vecOld)
@@ -208,7 +208,7 @@ func TestStoreRefreshPicksUpRegeneratedEmbedding(t *testing.T) {
 func TestStoreRefreshFallsBackToLoadWhenEmpty(t *testing.T) {
 	prefix := uniquePrefix("storerefreshempty")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
 
 	vec1 := unitVec(3.3)
 	createOpenTestMessageWithEmbedding(t, userID, groupID, "Bootstrap "+prefix, 51.5, -0.1, vec1)

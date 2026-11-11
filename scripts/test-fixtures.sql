@@ -191,11 +191,6 @@ LOCK TABLES `domains_common` WRITE;
 /*!40000 ALTER TABLE `domains_common` ENABLE KEYS */;
 UNLOCK TABLES;
 
-LOCK TABLES `ebay_favourites` WRITE;
-/*!40000 ALTER TABLE `ebay_favourites` DISABLE KEYS */;
-/*!40000 ALTER TABLE `ebay_favourites` ENABLE KEYS */;
-UNLOCK TABLES;
-
 LOCK TABLES `eee_classified_attachments` WRITE;
 /*!40000 ALTER TABLE `eee_classified_attachments` DISABLE KEYS */;
 /*!40000 ALTER TABLE `eee_classified_attachments` ENABLE KEYS */;
@@ -279,11 +274,6 @@ LOCK TABLES `groups_sponsorship` WRITE;
 /*!40000 ALTER TABLE `groups_sponsorship` ENABLE KEYS */;
 UNLOCK TABLES;
 
-LOCK TABLES `groups_twitter` WRITE;
-/*!40000 ALTER TABLE `groups_twitter` DISABLE KEYS */;
-/*!40000 ALTER TABLE `groups_twitter` ENABLE KEYS */;
-UNLOCK TABLES;
-
 LOCK TABLES `helper_batches` WRITE;
 /*!40000 ALTER TABLE `helper_batches` DISABLE KEYS */;
 /*!40000 ALTER TABLE `helper_batches` ENABLE KEYS */;
@@ -335,11 +325,6 @@ LOCK TABLES `items` WRITE;
 /*!40000 ALTER TABLE `items` DISABLE KEYS */;
 INSERT  IGNORE INTO `items` (`id`, `name`, `popularity`, `weight`, `updated`, `suggestfromphoto`, `suggestfromtypeahead`) VALUES (1,'Test due',0,NULL,'2026-07-09 10:01:22',1,1),(2,'Test item',0,NULL,'2026-07-09 10:01:22',1,1),(3,'chair',0,NULL,'2026-07-09 10:01:22',1,1),(4,'Pending sofa',0,NULL,'2026-07-09 10:01:22',1,1),(5,'Pending bookshelf',0,NULL,'2026-07-09 10:01:22',1,1),(6,'PW_browse Test Item',0,NULL,'2026-07-09 10:01:23',1,1),(7,'PW_browse Wanted Item',0,NULL,'2026-07-09 10:01:23',1,1),(8,'PW_browse Pending Sofa',0,37.00,'2026-07-09 10:01:24',1,1),(9,'PW_browse Pending Bookshelf',0,NULL,'2026-07-09 10:01:24',1,1),(10,'PW_browse Rejected Chair',0,NULL,'2026-07-09 10:01:24',1,1),(11,'PW_bulkofferflow Test Item',0,NULL,'2026-07-09 10:01:25',1,1),(12,'PW_bulkofferflow Wanted Item',0,NULL,'2026-07-09 10:01:25',1,1),(13,'PW_bulkofferflow Pending Sofa',0,37.00,'2026-07-09 10:01:25',1,1),(14,'PW_bulkofferflow Pending Bookshelf',0,NULL,'2026-07-09 10:01:25',1,1),(15,'PW_bulkofferflow Rejected Chair',0,NULL,'2026-07-09 10:01:25',1,1),(16,'PW_bulkuxreview Test Item',0,NULL,'2026-07-09 10:01:26',1,1),(17,'PW_bulkuxreview Wanted Item',0,NULL,'2026-07-09 10:01:26',1,1),(18,'PW_bulkuxreview Pending Sofa',0,37.00,'2026-07-09 10:01:27',1,1),(19,'PW_bulkuxreview Pending Bookshelf',0,NULL,'2026-07-09 10:01:27',1,1),(20,'PW_bulkuxreview Rejected Chair',0,NULL,'2026-07-09 10:01:27',1,1),(21,'PW_contactvolunteers Test Item',0,NULL,'2026-07-09 10:01:28',1,1),(22,'PW_contactvolunteers Wanted Item',0,NULL,'2026-07-09 10:01:28',1,1),(23,'PW_contactvolunteers Pending Sofa',0,37.00,'2026-07-09 10:01:28',1,1),(24,'PW_contactvolunteers Pending Bookshelf',0,NULL,'2026-07-09 10:01:28',1,1),(25,'PW_contactvolunteers Rejected Chair',0,NULL,'2026-07-09 10:01:28',1,1),(26,'PW_editdeadline Test Item',0,NULL,'2026-07-09 10:01:29',1,1),(27,'PW_editdeadline Wanted Item',0,NULL,'2026-07-09 10:01:29',1,1),(28,'PW_editdeadline Pending Sofa',0,37.00,'2026-07-09 10:01:29',1,1),(29,'PW_editdeadline Pending Bookshelf',0,NULL,'2026-07-09 10:01:30',1,1),(30,'PW_editdeadline Rejected Chair',0,NULL,'2026-07-09 10:01:30',1,1),(31,'PW_explore Test Item',0,NULL,'2026-07-09 10:01:31',1,1),(32,'PW_explore Wanted Item',0,NULL,'2026-07-09 10:01:31',1,1),(33,'PW_explore Pending Sofa',0,37.00,'2026-07-09 10:01:31',1,1),(34,'PW_explore Pending Bookshelf',0,NULL,'2026-07-09 10:01:31',1,1),(35,'PW_explore Rejected Chair',0,NULL,'2026-07-09 10:01:31',1,1),(36,'PW_extendexpireddeadline Test Item',0,NULL,'2026-07-09 10:01:32',1,1),(37,'PW_extendexpireddeadline Wanted Item',0,NULL,'2026-07-09 10:01:32',1,1),(38,'PW_extendexpireddeadline Pending Sofa',0,37.00,'2026-07-09 10:01:32',1,1),(39,'PW_extendexpireddeadline Pending Bookshelf',0,NULL,'2026-07-09 10:01:32',1,1),(40,'PW_extendexpireddeadline Rejected Chair',0,NULL,'2026-07-09 10:01:33',1,1),(41,'PW_mtchatlist Test Item',0,NULL,'2026-07-09 10:01:33',1,1),(42,'PW_mtchatlist Wanted Item',0,NULL,'2026-07-09 10:01:33',1,1),(43,'PW_mtchatlist Pending Sofa',0,37.00,'2026-07-09 10:01:34',1,1),(44,'PW_mtchatlist Pending Bookshelf',0,NULL,'2026-07-09 10:01:34',1,1),(45,'PW_mtchatlist Rejected Chair',0,NULL,'2026-07-09 10:01:34',1,1),(46,'PW_mtchatreply Test Item',0,NULL,'2026-07-09 10:01:35',1,1),(47,'PW_mtchatreply Wanted Item',0,NULL,'2026-07-09 10:01:35',1,1),(48,'PW_mtchatreply Pending Sofa',0,37.00,'2026-07-09 10:01:35',1,1),(49,'PW_mtchatreply Pending Bookshelf',0,NULL,'2026-07-09 10:01:35',1,1),(50,'PW_mtchatreply Rejected Chair',0,NULL,'2026-07-09 10:01:36',1,1),(51,'PW_mtdashboard Test Item',0,NULL,'2026-07-09 10:01:36',1,1),(52,'PW_mtdashboard Wanted Item',0,NULL,'2026-07-09 10:01:37',1,1),(53,'PW_mtdashboard Pending Sofa',0,37.00,'2026-07-09 10:01:37',1,1),(54,'PW_mtdashboard Pending Bookshelf',0,NULL,'2026-07-09 10:01:37',1,1),(55,'PW_mtdashboard Rejected Chair',0,NULL,'2026-07-09 10:01:37',1,1),(56,'PW_mteditmessage Test Item',0,NULL,'2026-07-09 10:01:41',1,1),(57,'PW_mteditmessage Wanted Item',0,NULL,'2026-07-09 10:01:41',1,1),(58,'PW_mteditmessage Pending Sofa',0,37.00,'2026-07-09 10:01:41',1,1),(59,'PW_mteditmessage Pending Bookshelf',0,NULL,'2026-07-09 10:01:41',1,1),(60,'PW_mteditmessage Rejected Chair',0,NULL,'2026-07-09 10:01:42',1,1),(61,'PW_mtedits Test Item',0,NULL,'2026-07-09 10:01:42',1,1),(62,'PW_mtedits Wanted Item',0,NULL,'2026-07-09 10:01:43',1,1),(63,'PW_mtedits Pending Sofa',0,37.00,'2026-07-09 10:01:43',1,1),(64,'PW_mtedits Pending Bookshelf',0,NULL,'2026-07-09 10:01:43',1,1),(65,'PW_mtedits Rejected Chair',0,NULL,'2026-07-09 10:01:43',1,1),(66,'PW_mteditsflow Test Item',0,NULL,'2026-07-09 10:01:44',1,1),(67,'PW_mteditsflow Wanted Item',0,NULL,'2026-07-09 10:01:44',1,1),(68,'PW_mteditsflow Pending Sofa',0,37.00,'2026-07-09 10:01:44',1,1),(69,'PW_mteditsflow Pending Bookshelf',0,NULL,'2026-07-09 10:01:44',1,1),(70,'PW_mteditsflow Rejected Chair',0,NULL,'2026-07-09 10:01:45',1,1),(71,'PW_mtholdrelease Test Item',0,NULL,'2026-07-09 10:01:45',1,1),(72,'PW_mtholdrelease Wanted Item',0,NULL,'2026-07-09 10:01:46',1,1),(73,'PW_mtholdrelease Pending Sofa',0,37.00,'2026-07-09 10:01:46',1,1),(74,'PW_mtholdrelease Pending Bookshelf',0,NULL,'2026-07-09 10:01:46',1,1),(75,'PW_mtholdrelease Rejected Chair',0,NULL,'2026-07-09 10:01:46',1,1),(76,'PW_mtmemberlogs Test Item',0,NULL,'2026-07-09 10:01:47',1,1),(77,'PW_mtmemberlogs Wanted Item',0,NULL,'2026-07-09 10:01:47',1,1),(78,'PW_mtmemberlogs Pending Sofa',0,37.00,'2026-07-09 10:01:47',1,1),(79,'PW_mtmemberlogs Pending Bookshelf',0,NULL,'2026-07-09 10:01:48',1,1),(80,'PW_mtmemberlogs Rejected Chair',0,NULL,'2026-07-09 10:01:48',1,1),(81,'PW_mtmemberreview Test Item',0,NULL,'2026-07-09 10:01:48',1,1),(82,'PW_mtmemberreview Wanted Item',0,NULL,'2026-07-09 10:01:49',1,1),(83,'PW_mtmemberreview Pending Sofa',0,37.00,'2026-07-09 10:01:49',1,1),(84,'PW_mtmemberreview Pending Bookshelf',0,NULL,'2026-07-09 10:01:49',1,1),(85,'PW_mtmemberreview Rejected Chair',0,NULL,'2026-07-09 10:01:49',1,1),(86,'PW_mtmovemessage Test Item',0,NULL,'2026-07-09 10:01:50',1,1),(87,'PW_mtmovemessage Wanted Item',0,NULL,'2026-07-09 10:01:50',1,1),(88,'PW_mtmovemessage Pending Sofa',0,37.00,'2026-07-09 10:01:51',1,1),(89,'PW_mtmovemessage Pending Bookshelf',0,NULL,'2026-07-09 10:01:51',1,1),(90,'PW_mtmovemessage Rejected Chair',0,NULL,'2026-07-09 10:01:51',1,1),(91,'PW_mtpageloads Test Item',0,NULL,'2026-07-09 10:01:52',1,1),(92,'PW_mtpageloads Wanted Item',0,NULL,'2026-07-09 10:01:52',1,1),(93,'PW_mtpageloads Pending Sofa',0,37.00,'2026-07-09 10:01:52',1,1),(94,'PW_mtpageloads Pending Bookshelf',0,NULL,'2026-07-09 10:01:52',1,1),(95,'PW_mtpageloads Rejected Chair',0,NULL,'2026-07-09 10:01:53',1,1),(96,'PW_mtpendingmessages Test Item',0,NULL,'2026-07-09 10:01:53',1,1),(97,'PW_mtpendingmessages Wanted Item',0,NULL,'2026-07-09 10:01:54',1,1),(98,'PW_mtpendingmessages Pending Sofa',0,37.00,'2026-07-09 10:01:54',1,1),(99,'PW_mtpendingmessages Pending Bookshelf',0,NULL,'2026-07-09 10:01:54',1,1),(100,'PW_mtpendingmessages Rejected Chair',0,NULL,'2026-07-09 10:01:54',1,1),(101,'PW_mtsettingsmodconfig Test Item',0,NULL,'2026-07-09 10:01:55',1,1),(102,'PW_mtsettingsmodconfig Wanted Item',0,NULL,'2026-07-09 10:01:55',1,1),(103,'PW_mtsettingsmodconfig Pending Sofa',0,37.00,'2026-07-09 10:01:55',1,1),(104,'PW_mtsettingsmodconfig Pending Bookshelf',0,NULL,'2026-07-09 10:01:55',1,1),(105,'PW_mtsettingsmodconfig Rejected Chair',0,NULL,'2026-07-09 10:01:56',1,1),(106,'PW_mtspammers Test Item',0,NULL,'2026-07-09 10:01:56',1,1),(107,'PW_mtspammers Wanted Item',0,NULL,'2026-07-09 10:01:57',1,1),(108,'PW_mtspammers Pending Sofa',0,37.00,'2026-07-09 10:01:57',1,1),(109,'PW_mtspammers Pending Bookshelf',0,NULL,'2026-07-09 10:01:57',1,1),(110,'PW_mtspammers Rejected Chair',0,NULL,'2026-07-09 10:01:57',1,1),(111,'PW_mtsupport Test Item',0,NULL,'2026-07-09 10:01:58',1,1),(112,'PW_mtsupport Wanted Item',0,NULL,'2026-07-09 10:01:58',1,1),(113,'PW_mtsupport Pending Sofa',0,37.00,'2026-07-09 10:01:58',1,1),(114,'PW_mtsupport Pending Bookshelf',0,NULL,'2026-07-09 10:01:58',1,1),(115,'PW_mtsupport Rejected Chair',0,NULL,'2026-07-09 10:01:59',1,1),(116,'PW_postflow Test Item',0,NULL,'2026-07-09 10:01:59',1,1),(117,'PW_postflow Wanted Item',0,NULL,'2026-07-09 10:02:00',1,1),(118,'PW_postflow Pending Sofa',0,37.00,'2026-07-09 10:02:00',1,1),(119,'PW_postflow Pending Bookshelf',0,NULL,'2026-07-09 10:02:00',1,1),(120,'PW_postflow Rejected Chair',0,NULL,'2026-07-09 10:02:01',1,1),(121,'PW_replyflowedgecases Test Item',0,NULL,'2026-07-09 10:02:03',1,1),(122,'PW_replyflowedgecases Wanted Item',0,NULL,'2026-07-09 10:02:03',1,1),(123,'PW_replyflowedgecases Pending Sofa',0,37.00,'2026-07-09 10:02:03',1,1),(124,'PW_replyflowedgecases Pending Bookshelf',0,NULL,'2026-07-09 10:02:03',1,1),(125,'PW_replyflowedgecases Rejected Chair',0,NULL,'2026-07-09 10:02:04',1,1),(126,'PW_replyflowexistinguser Test Item',0,NULL,'2026-07-09 10:02:05',1,1),(127,'PW_replyflowexistinguser Wanted Item',0,NULL,'2026-07-09 10:02:05',1,1),(128,'PW_replyflowexistinguser Pending Sofa',0,37.00,'2026-07-09 10:02:05',1,1),(129,'PW_replyflowexistinguser Pending Bookshelf',0,NULL,'2026-07-09 10:02:05',1,1),(130,'PW_replyflowexistinguser Rejected Chair',0,NULL,'2026-07-09 10:02:06',1,1),(131,'PW_replyflowloggedin Test Item',0,NULL,'2026-07-09 10:02:07',1,1),(132,'PW_replyflowloggedin Wanted Item',0,NULL,'2026-07-09 10:02:07',1,1),(133,'PW_replyflowloggedin Pending Sofa',0,37.00,'2026-07-09 10:02:07',1,1),(134,'PW_replyflowloggedin Pending Bookshelf',0,NULL,'2026-07-09 10:02:07',1,1),(135,'PW_replyflowloggedin Rejected Chair',0,NULL,'2026-07-09 10:02:08',1,1),(136,'PW_replyflowlogging Test Item',0,NULL,'2026-07-09 10:02:08',1,1),(137,'PW_replyflowlogging Wanted Item',0,NULL,'2026-07-09 10:02:09',1,1),(138,'PW_replyflowlogging Pending Sofa',0,37.00,'2026-07-09 10:02:09',1,1),(139,'PW_replyflowlogging Pending Bookshelf',0,NULL,'2026-07-09 10:02:09',1,1),(140,'PW_replyflowlogging Rejected Chair',0,NULL,'2026-07-09 10:02:09',1,1),(141,'PW_replyflownewuser Test Item',0,NULL,'2026-07-09 10:02:10',1,1),(142,'PW_replyflownewuser Wanted Item',0,NULL,'2026-07-09 10:02:10',1,1),(143,'PW_replyflownewuser Pending Sofa',0,37.00,'2026-07-09 10:02:10',1,1),(144,'PW_replyflownewuser Pending Bookshelf',0,NULL,'2026-07-09 10:02:11',1,1),(145,'PW_replyflownewuser Rejected Chair',0,NULL,'2026-07-09 10:02:11',1,1),(146,'PW_replyflowsocial Test Item',0,NULL,'2026-07-09 10:02:11',1,1),(147,'PW_replyflowsocial Wanted Item',0,NULL,'2026-07-09 10:02:12',1,1),(148,'PW_replyflowsocial Pending Sofa',0,37.00,'2026-07-09 10:02:12',1,1),(149,'PW_replyflowsocial Pending Bookshelf',0,NULL,'2026-07-09 10:02:12',1,1),(150,'PW_replyflowsocial Rejected Chair',0,NULL,'2026-07-09 10:02:12',1,1),(151,'PW_replytochat Test Item',0,NULL,'2026-07-09 10:02:15',1,1),(152,'PW_replytochat Wanted Item',0,NULL,'2026-07-09 10:02:15',1,1),(153,'PW_replytochat Pending Sofa',0,37.00,'2026-07-09 10:02:15',1,1),(154,'PW_replytochat Pending Bookshelf',0,NULL,'2026-07-09 10:02:16',1,1),(155,'PW_replytochat Rejected Chair',0,NULL,'2026-07-09 10:02:16',1,1),(156,'PW_repostgroupchange Test Item',0,NULL,'2026-07-09 10:02:17',1,1),(157,'PW_repostgroupchange Wanted Item',0,NULL,'2026-07-09 10:02:17',1,1),(158,'PW_repostgroupchange Pending Sofa',0,37.00,'2026-07-09 10:02:17',1,1),(159,'PW_repostgroupchange Pending Bookshelf',0,NULL,'2026-07-09 10:02:17',1,1),(160,'PW_repostgroupchange Rejected Chair',0,NULL,'2026-07-09 10:02:17',1,1),(161,'PW_userratings Test Item',0,NULL,'2026-07-09 10:02:18',1,1),(162,'PW_userratings Wanted Item',0,NULL,'2026-07-09 10:02:18',1,1),(163,'PW_userratings Pending Sofa',0,37.00,'2026-07-09 10:02:19',1,1),(164,'PW_userratings Pending Bookshelf',0,NULL,'2026-07-09 10:02:19',1,1),(165,'PW_userratings Rejected Chair',0,NULL,'2026-07-09 10:02:19',1,1),(166,'PW_v2apipages Test Item',0,NULL,'2026-07-09 10:02:20',1,1),(167,'PW_v2apipages Wanted Item',0,NULL,'2026-07-09 10:02:20',1,1),(168,'PW_v2apipages Pending Sofa',0,37.00,'2026-07-09 10:02:20',1,1),(169,'PW_v2apipages Pending Bookshelf',0,NULL,'2026-07-09 10:02:20',1,1),(170,'PW_v2apipages Rejected Chair',0,NULL,'2026-07-09 10:02:20',1,1);
 /*!40000 ALTER TABLE `items` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `items_non` WRITE;
-/*!40000 ALTER TABLE `items_non` DISABLE KEYS */;
-/*!40000 ALTER TABLE `items_non` ENABLE KEYS */;
 UNLOCK TABLES;
 
 LOCK TABLES `jobs` WRITE;
@@ -635,11 +620,6 @@ LOCK TABLES `mod_bulkops` WRITE;
 /*!40000 ALTER TABLE `mod_bulkops` ENABLE KEYS */;
 UNLOCK TABLES;
 
-LOCK TABLES `mod_bulkops_run` WRITE;
-/*!40000 ALTER TABLE `mod_bulkops_run` DISABLE KEYS */;
-/*!40000 ALTER TABLE `mod_bulkops_run` ENABLE KEYS */;
-UNLOCK TABLES;
-
 LOCK TABLES `mod_configs` WRITE;
 /*!40000 ALTER TABLE `mod_configs` DISABLE KEYS */;
 /*!40000 ALTER TABLE `mod_configs` ENABLE KEYS */;
@@ -821,11 +801,6 @@ LOCK TABLES `ratings` WRITE;
 /*!40000 ALTER TABLE `ratings` ENABLE KEYS */;
 UNLOCK TABLES;
 
-LOCK TABLES `returnpath_seedlist` WRITE;
-/*!40000 ALTER TABLE `returnpath_seedlist` DISABLE KEYS */;
-/*!40000 ALTER TABLE `returnpath_seedlist` ENABLE KEYS */;
-UNLOCK TABLES;
-
 LOCK TABLES `rippling_algorithm_metrics` WRITE;
 /*!40000 ALTER TABLE `rippling_algorithm_metrics` DISABLE KEYS */;
 /*!40000 ALTER TABLE `rippling_algorithm_metrics` ENABLE KEYS */;
@@ -902,31 +877,6 @@ INSERT  IGNORE INTO `shortlinks` (`id`, `name`, `type`, `groupid`, `url`, `click
 /*!40000 ALTER TABLE `shortlinks` ENABLE KEYS */;
 UNLOCK TABLES;
 
-LOCK TABLES `simulation_message_isochrones_expansions` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_expansions` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_expansions` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `simulation_message_isochrones_messages` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_messages` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_messages` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `simulation_message_isochrones_runs` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_runs` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_runs` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `simulation_message_isochrones_sessions` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_sessions` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_sessions` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `simulation_message_isochrones_users` WRITE;
-/*!40000 ALTER TABLE `simulation_message_isochrones_users` DISABLE KEYS */;
-/*!40000 ALTER TABLE `simulation_message_isochrones_users` ENABLE KEYS */;
-UNLOCK TABLES;
-
 LOCK TABLES `spam_countries` WRITE;
 /*!40000 ALTER TABLE `spam_countries` DISABLE KEYS */;
 INSERT  IGNORE INTO `spam_countries` (`id`, `country`) VALUES (1,'Cameroon');
@@ -959,11 +909,6 @@ UNLOCK TABLES;
 LOCK TABLES `spam_whitelist_subjects` WRITE;
 /*!40000 ALTER TABLE `spam_whitelist_subjects` DISABLE KEYS */;
 /*!40000 ALTER TABLE `spam_whitelist_subjects` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `spatial_ref_sys` WRITE;
-/*!40000 ALTER TABLE `spatial_ref_sys` DISABLE KEYS */;
-/*!40000 ALTER TABLE `spatial_ref_sys` ENABLE KEYS */;
 UNLOCK TABLES;
 
 LOCK TABLES `stats` WRITE;
@@ -1027,16 +972,6 @@ INSERT  IGNORE INTO `towns` (`id`, `name`, `lat`, `lng`, `position`, `comment`) 
 /*!40000 ALTER TABLE `towns` ENABLE KEYS */;
 UNLOCK TABLES;
 
-LOCK TABLES `transport_duration_model` WRITE;
-/*!40000 ALTER TABLE `transport_duration_model` DISABLE KEYS */;
-/*!40000 ALTER TABLE `transport_duration_model` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `transport_mode_probabilities` WRITE;
-/*!40000 ALTER TABLE `transport_mode_probabilities` DISABLE KEYS */;
-/*!40000 ALTER TABLE `transport_mode_probabilities` ENABLE KEYS */;
-UNLOCK TABLES;
-
 LOCK TABLES `transport_postcode_classification` WRITE;
 /*!40000 ALTER TABLE `transport_postcode_classification` DISABLE KEYS */;
 /*!40000 ALTER TABLE `transport_postcode_classification` ENABLE KEYS */;
@@ -1097,11 +1032,6 @@ UNLOCK TABLES;
 LOCK TABLES `users_comments` WRITE;
 /*!40000 ALTER TABLE `users_comments` DISABLE KEYS */;
 /*!40000 ALTER TABLE `users_comments` ENABLE KEYS */;
-UNLOCK TABLES;
-
-LOCK TABLES `users_dashboard` WRITE;
-/*!40000 ALTER TABLE `users_dashboard` DISABLE KEYS */;
-/*!40000 ALTER TABLE `users_dashboard` ENABLE KEYS */;
 UNLOCK TABLES;
 
 LOCK TABLES `users_digests` WRITE;

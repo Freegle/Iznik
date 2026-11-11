@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Mail\Chat\SpamWarningMail;
 use App\Models\ChatMessage;
 use App\Models\Group;
@@ -132,11 +133,11 @@ class ChatSpamService
              WHERE chat_messages.date >= ?
                AND reviewrejected = 1
                AND (spam_users.collection IS NULL OR spam_users.collection != 'Whitelisted')
-               AND users.systemrole = 'User'
+               AND users.systemrole = ?
              GROUP BY chat_messages.userid
              HAVING count > ?
              ORDER BY count DESC",
-            [$start, self::AUTO_MARK_THRESHOLD]
+            [$start, User::SYSTEMROLE_USER, self::AUTO_MARK_THRESHOLD]
         );
 
         $count = 0;
@@ -146,7 +147,7 @@ class ChatSpamService
 
             $isModerator = DB::table('memberships')
                 ->where('userid', $user->userid)
-                ->whereIn('role', ['Moderator', 'Owner'])
+                ->whereIn('role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
                 ->exists();
 
             if ($isModerator) {

@@ -120,11 +120,8 @@
         spamignore
         label="Ignore"
       />
-      <!-- Not for a membership rippling created: there is nobody here to write to, and the
-           server refuses the send (Discourse 10102), as it does for the standard messages
-           filtered out in validActions. -->
       <ModMemberButton
-        v-if="modMessagingAllowed && !member.rippled"
+        v-if="modMessagingAllowed"
         class="ms-1 me-1"
         :userid="member.userid"
         :groupid="member.groupid"
@@ -146,7 +143,6 @@
         :userid="member.userid"
         :groupid="member.groupid"
         :membershipid="member.id"
-        :ripple-only="Boolean(member.rippled)"
         class="me-1"
         :autosend="Boolean(stdmsg.autosend && allowAutoSend)"
       />
@@ -276,13 +272,6 @@ const validActions = computed(() => {
 
   // The standard messages we show depend on the valid ones for this type of member.
   if (approved.value) {
-    // A membership rippling created for a poster records where their post travelled, not
-    // a relationship with this community, so its volunteers have nobody to write to and
-    // the server refuses the attempt (Discourse 10102). Removing them is still theirs.
-    if (member.value?.rippled) {
-      return ['Delete Approved Member']
-    }
-
     return ['Leave Approved Member', 'Delete Approved Member']
   }
 

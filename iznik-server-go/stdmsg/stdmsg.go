@@ -26,6 +26,7 @@ type StdMsg struct {
 	Newdelstatus string  `json:"newdelstatus"`
 	Edittext     string  `json:"edittext"`
 	Insert       *string `json:"insert"`
+	Replybody    *string `json:"replybody"`
 }
 
 // canModifyConfig checks if user can modify the parent config.
@@ -121,6 +122,7 @@ func PostStdMsg(c *fiber.Ctx) error {
 		Newdelstatus string  `json:"newdelstatus"`
 		Edittext     string  `json:"edittext"`
 		Insert       *string `json:"insert"`
+		Replybody    *string `json:"replybody"`
 	}
 
 	var req CreateRequest
@@ -178,6 +180,21 @@ func PostStdMsg(c *fiber.Ctx) error {
 	if req.Autosend != 0 {
 		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("autosend", req.Autosend)
 	}
+	if req.Newmodstatus != "" {
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("newmodstatus", req.Newmodstatus)
+	}
+	if req.Newdelstatus != "" {
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("newdelstatus", req.Newdelstatus)
+	}
+	if req.Edittext != "" {
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("edittext", req.Edittext)
+	}
+	if req.Insert != nil {
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("insert", *req.Insert)
+	}
+	if req.Replybody != nil {
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("replybody", *req.Replybody)
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }
@@ -213,6 +230,7 @@ func PatchStdMsg(c *fiber.Ctx) error {
 		Newdelstatus *string `json:"newdelstatus"`
 		Edittext     *string `json:"edittext"`
 		Insert       *string `json:"insert"`
+		Replybody    *string `json:"replybody"`
 	}
 
 	var req PatchRequest
@@ -272,6 +290,9 @@ func PatchStdMsg(c *fiber.Ctx) error {
 	}
 	if req.Insert != nil {
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("insert", *req.Insert)
+	}
+	if req.Replybody != nil {
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("replybody", *req.Replybody)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

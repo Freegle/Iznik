@@ -1,16 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import Sysadmin from '~/modtools/pages/sysadmin/index.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Controllable route query so deep-link (?tab=...) behaviour can be exercised.
 const mockRouteQuery = { value: {} }
+// The signed-in system role. Admin by default: SysAdmin is for Admin only.
+const mockRole = { value: SYSTEMROLE_ADMIN }
 
 vi.mock('~/composables/useMe', () => ({
-  useMe: () => ({ supportOrAdmin: true }),
+  useMe: () => ({
+    admin: mockRole.value === SYSTEMROLE_ADMIN,
+    supportOrAdmin: [SYSTEMROLE_SUPPORT, SYSTEMROLE_ADMIN].includes(
+      mockRole.value
+    ),
+  }),
 }))
 
+const mockWork = { value: { emailout: 0, emailin: 0 } }
+
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ work: { emailout: 0, emailin: 0 } }),
+  useAuthStore: () => ({ work: mockWork.value }),
 }))
 
 // The page calls the auto-imported useRoute() bare; the shared setup globalises
@@ -34,7 +48,10 @@ function mountComponent() {
             '<div class="tab" @click="$emit(\'click\')"><slot name="title" /><slot /></div>',
         },
         'b-badge': { template: '<span class="badge"><slot /></span>' },
-        ModSysAdminHousekeeping: stub('c-housekeeping'),
+        ModSysAdminHousekeeping: {
+          props: ['openPaf'],
+          template: '<div class="c-housekeeping" :data-open-paf="openPaf" />',
+        },
         ModSysAdminCronJobs: stub('c-cronjobs'),
         ModSupportEmailStats: stub('c-emailstats'),
         ModSupportIncomingEmail: stub('c-incomingemail'),
@@ -57,6 +74,95 @@ describe('sysadmin page tab grouping', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockRouteQuery.value = {}
+    mockRole.value = SYSTEMROLE_ADMIN
+    mockWork.value = { emailout: 0, emailin: 0 }
+  })
+
+  it('shows a red number on the Behaviour tab when experiments have a verdict', async () => {
+    mockWork.value = {
+      emailout: 0,
+      emailin: 0,
+      uxexperiments: 2,
+      uxexperimentsconfirm: 1,
+      uxexperimentsremove: 1,
+    }
+    const wrapper = mountComponent()
+    await flushPromises()
+    const badges = wrapper
+      .findAll('.tab')
+      .find((t) => t.text().includes('Behaviour'))
+      .findAll('.badge')
+    expect(badges.map((b) => b.text())).toContain('2')
+  })
+
+  it('repeats the red number on the UX sub-tab and says in words what it is', async () => {
+    mockRouteQuery.value = { tab: 'behaviour' }
+    mockWork.value = {
+      emailout: 0,
+      emailin: 0,
+      uxexperiments: 2,
+      uxexperimentsconfirm: 1,
+      uxexperimentsremove: 1,
+    }
+    const wrapper = mountComponent()
+    await flushPromises()
+    const sub = wrapper
+      .findAll('.tab')
+      .find(
+        (t) => t.find('.subtab-label').exists() && t.text().startsWith('UX')
+      )
+    expect(sub.find('.subtab-label .badge').text()).toBe('2')
+    const note = wrapper.find('.ux-verdict-note')
+    expect(note.text()).toContain(
+      '2 experiments have a verdict: 1 to confirm, 1 to remove code'
+    )
+    expect(note.find('a').attributes('href')).toBe(
+      '?tab=ux&ux_section=experiments'
+    )
+  })
+
+  it('draws no verdict line on the UX sub-tab when none is waiting', async () => {
+    mockRouteQuery.value = { tab: 'ux' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.ux-verdict-note').exists()).toBe(false)
+  })
+
+  it('opens Behaviour on UX by default, with ?tab=behaviour', async () => {
+    mockRouteQuery.value = { tab: 'behaviour' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.c-ux').exists()).toBe(true)
+    expect(wrapper.find('.c-digestclicks').exists()).toBe(false)
+    expect(wrapper.find('.c-reengage').exists()).toBe(false)
+  })
+
+  it('orders the Behaviour sub-tabs UX, Scrolling, Reengagement', () => {
+    const labels = mountComponent()
+      .findAll('.subtab-label')
+      .map((l) => l.text().replace(/\s+\d+$/, ''))
+      .filter((t) => ['UX', 'Scrolling', 'Reengagement'].includes(t))
+    expect(labels).toEqual(['UX', 'Scrolling', 'Reengagement'])
+  })
+
+  it.each(['scrolling', 'digest'])(
+    'lands ?tab=%s on Scrolling',
+    async (tab) => {
+      mockRouteQuery.value = { tab }
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.find('.c-digestclicks').exists()).toBe(true)
+      expect(wrapper.find('.c-ux').exists()).toBe(false)
+    }
+  )
+
+  it('shows no number on the Behaviour tab when none is waiting', async () => {
+    const wrapper = mountComponent()
+    await flushPromises()
+    const tab = wrapper
+      .findAll('.tab')
+      .find((t) => t.text().includes('Behaviour'))
+    expect(tab.findAll('.badge')).toHaveLength(0)
   })
 
   it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling, AI Helper, Moderation', async () => {
@@ -191,10 +297,50 @@ describe('sysadmin page tab grouping', () => {
     expect(wrapper.find('.c-automod').exists()).toBe(true)
   })
 
-  it('shows an access notice to non-admins', () => {
-    // supportOrAdmin is mocked true above; this asserts the guarded region renders
-    // rather than the notice, confirming the v-if wiring is intact.
+  it('has no tab of its own for the PAF update', async () => {
+    expect(mountComponent().text()).not.toContain('Addresses')
+    expect(mountComponent().text()).not.toContain('PAF')
+  })
+
+  it.each(['paf', 'addresses'])(
+    'deep-links ?tab=%s to Housekeeping with the PAF update open',
+    async (tab) => {
+      mockRouteQuery.value = { tab }
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.find('.c-housekeeping').attributes('data-open-paf')).toBe(
+        'true'
+      )
+    }
+  )
+
+  it('opens Housekeeping without the PAF update otherwise', async () => {
+    mockRouteQuery.value = { tab: 'housekeeping' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.c-housekeeping').attributes('data-open-paf')).toBe(
+      'false'
+    )
+  })
+
+  it('shows the tabs to Admin, with no notice', () => {
     const wrapper = mountComponent()
     expect(wrapper.find('.tabs').exists()).toBe(true)
+    expect(wrapper.find('.notice').exists()).toBe(false)
   })
+
+  it.each([SYSTEMROLE_SUPPORT, SYSTEMROLE_USER])(
+    'shows %s the notice and no tabs',
+    async (role) => {
+      mockRole.value = role
+      mockWork.value = { emailout: 1, emailin: 1, uxexperiments: 2 }
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.find('.tabs').exists()).toBe(false)
+      expect(wrapper.find('.badge').exists()).toBe(false)
+      expect(wrapper.find('.notice').text()).toContain(
+        "You don't have access to SysAdmin tools."
+      )
+    }
+  )
 })

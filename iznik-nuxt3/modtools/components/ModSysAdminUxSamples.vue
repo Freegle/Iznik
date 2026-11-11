@@ -1,7 +1,7 @@
 <template>
   <b-modal
     :model-value="modelValue"
-    :title="`Sample sessions: ${flow} / ${step} on ${day}`"
+    :title="`Sample sessions: ${flowTitle(flow)} / ${stepName(flow, step)} on ${day}`"
     size="xl"
     scrollable
     ok-only
@@ -21,6 +21,9 @@
         class="sample-day w-auto"
       />
     </b-form-group>
+    <p class="small text-muted mb-2">
+      Sample sessions are not filtered by device or sign-in.
+    </p>
     <div v-if="store.samples.loading" class="text-center py-3">
       <b-spinner small class="me-2" />
       Loading...
@@ -66,6 +69,8 @@
 import { computed, ref, watch } from 'vue'
 import { useUxStore } from '~/modtools/stores/ux'
 import { ms } from '~/modtools/composables/useUxFormat'
+import { flowTitle } from '~/modtools/composables/useUxFlows'
+import { stepName } from '~/modtools/composables/useUxFunnel'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },

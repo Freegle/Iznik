@@ -49,6 +49,7 @@ Follow existing patterns in iznik-server-go. Structure: AUTH → PARSE → DB �
 - No copy-paste — extract shared logic. Address linting/static analysis warnings.
 - Tools: `jscpd`, `golangci-lint`, PHPStan, ESLint.
 - **Use model constants, never naked string literals**: `Group::TYPE_FREEGLE` not `'Freegle'`; `Membership::ROLE_OWNER/MODERATOR/MEMBER`, `Membership::COLLECTION_APPROVED/PENDING`; `Message::TYPE_OFFER/TAKEN/WANTED`, `Message::SOURCE_PLATFORM`; `ChatRoom::TYPE_USER2MOD/USER2USER/MOD2MOD`. This applies in services AND tests.
+- **Roles come from constants in all three code bases, and SQL binds them**: `utils.SYSTEMROLE_*` and `utils.ROLE_*` in Go, `User::SYSTEMROLE_*` and `Membership::ROLE_*` in PHP, `SYSTEMROLE_*` and `ROLE_*` from `iznik-nuxt3/constants.js` in the frontend. `Moderator` is both a system role and a membership role: use the constant for the column it is compared with. A role inside a SQL string is a bound parameter, never a literal. `.claude/check-role-literals.sh` enforces this as an editor hook and in the `check-role-literals` CI job, which checks the whole tree. Where a value only shares a word with a role (the support-case message role, a log type), mark the line `role-literal-ok: <reason>`.
 
 ## Containers & CI
 

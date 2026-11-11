@@ -226,7 +226,7 @@ const debugBirthdayModal = computed(() => {
 })
 
 // Use me and myGroups computed properties from useMe composable for consistency
-const { me, myGroups } = useMe()
+const { me, myGroups, askForDonations } = useMe()
 
 // Rippling-out relevance ordering + distance slider (#D/#E): unlike selectedSort/
 // selectedType (which only get updated via PostFilters' emit, so a persisted
@@ -512,6 +512,9 @@ async function checkForBirthdays() {
   }
 
   if (!myGroups.value?.length) return
+
+  // The birthday modal is a donation appeal.
+  if (!askForDonations.value) return
 
   const today = dayjs()
   const lastAppeal = me.value.settings?.lastbirthdayappeal

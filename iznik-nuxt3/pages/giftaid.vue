@@ -71,9 +71,9 @@
                 variant="secondary"
                 size="sm"
                 class="giftaid-form__autofill"
-                @click="homeaddress = address.multiline"
+                @click="homeaddress = constructMultiLine(address)"
               >
-                Use <strong>{{ address.singleline }}</strong>
+                Use <strong>{{ constructSingleLine(address) }}</strong>
               </b-button>
             </div>
             <p class="giftaid-form__hint">
@@ -168,6 +168,7 @@
 </template>
 <script setup>
 import { useAddressStore } from '~/stores/address'
+import { constructMultiLine, constructSingleLine } from '~/composables/usePAF'
 import { useGiftAidStore } from '~/stores/giftaid'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
@@ -216,7 +217,7 @@ const marketingconsent = ref(false)
 const fetchingGiftAid = ref(false)
 const giftAidFetched = ref(false)
 
-const addresses = computed(() => addressStore.addresses)
+const addresses = computed(() => addressStore.list)
 const giftaid = computed(() => giftAidStore.giftaid)
 
 const period = computed({

@@ -49,8 +49,8 @@ func createOAuthOnlyUser(t *testing.T, prefix string) (uint64, string) {
 	email := fmt.Sprintf("%s@test.com", prefix)
 	fullname := fmt.Sprintf("OAuth User %s", prefix)
 
-	result := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole) VALUES ('OAuth', ?, ?, 'User')",
-		prefix, fullname)
+	result := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole) VALUES ('OAuth', ?, ?, ?)",
+		prefix, fullname, utils.SYSTEMROLE_USER)
 	require.NoError(t, result.Error)
 
 	var userID uint64

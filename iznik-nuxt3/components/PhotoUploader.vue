@@ -130,7 +130,19 @@
       >
         <v-icon icon="camera" /> Add Photos
       </b-button>
-      <p class="skip-link">
+      <!-- Experiment ask-photos-carry-on (the Wanted photos step passes carryOn): only the Skip
+           control changes. -->
+      <b-button
+        v-if="carryOn"
+        variant="outline-primary"
+        size="lg"
+        class="add-photos-button carry-on-button"
+        data-testid="carry-on-button"
+        @click="emit('skip')"
+      >
+        No photo? Carry on
+      </b-button>
+      <p v-else class="skip-link">
         <button class="skip-link-btn" @click="emit('skip')">Skip</button>
       </p>
     </div>
@@ -228,7 +240,10 @@ import {
   createHeicPreProcessor,
   createHeicSafeCompressor,
 } from '~/composables/useUppyHeic'
-import { createInMemoryPreProcessor } from '~/composables/useUppyInMemory'
+import {
+  createInMemoryPreProcessor,
+  UNREADABLE_PHOTO_MESSAGE,
+} from '~/composables/useUppyInMemory'
 import { action, error as logError } from '~/composables/useClientLog'
 import { describeUploadError } from '~/composables/useUploadErrorDetail'
 import { reportCameraError } from '~/composables/useCameraErrorMessage'
@@ -282,6 +297,13 @@ const props = defineProps({
     type: String,
     required: false,
     default: "You'll get a better response",
+  },
+  // Experiment ask-photos-carry-on: on the Wanted photos step, an outlined "Carry on" button replaces
+  // the small Skip link. Nothing else on the step changes. Delete this prop and the carry-on markup with the experiment.
+  carryOn: {
+    type: Boolean,
+    required: false,
+    default: false,
   },
 })
 
@@ -789,7 +811,13 @@ onMounted(() => {
   // After Compressor, so it copies what we will actually upload. See
   // useUppyInMemory.
   uppy.value.addPreProcessor(
-    createInMemoryPreProcessor({ getUppy: () => uppy.value, uploader: 'photo' })
+    createInMemoryPreProcessor({
+      getUppy: () => uppy.value,
+      uploader: 'photo',
+      onUnreadable: () => {
+        photoError.value = UNREADABLE_PHOTO_MESSAGE
+      },
+    })
   )
 
   uppy.value.on('complete', handleUppySuccess)
@@ -797,6 +825,9 @@ onMounted(() => {
   // had none. Per-file so selected/compress/succeeded counts are comparable
   // (avoid mixing per-file file-added with per-batch upload events).
   uppy.value.on('file-added', (file) => {
+    // A new photo starts afresh; an earlier one that could not be opened
+    // should not leave its message showing.
+    photoError.value = null
     action('upload_file_selected', {
       uploader: 'photo',
       file_size: file?.size,
@@ -1274,6 +1305,11 @@ defineExpose({ processPhoto })
     cursor: pointer;
     font: inherit;
   }
+}
+
+.carry-on-button {
+  margin-top: 0.75rem;
+  max-width: 100%;
 }
 
 .add-more-section {

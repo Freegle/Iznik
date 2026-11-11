@@ -322,6 +322,27 @@ describe('buildModConfigDocument', () => {
       expect(message.body).toBe('Hi there,\n\nPlease repost.')
     })
 
+    it('carries the message to the poster for Edit and Message', () => {
+      const doc = buildModConfigDocument(
+        makeConfig({
+          stdmsgs: [
+            makeStdMsg({
+              title: 'Knives',
+              action: 'Edit and Message',
+              body: 'Over 18s only.',
+              replybody: 'We added a note to your post.',
+            }),
+          ],
+        }),
+        { exportedAt }
+      )
+
+      const message = sectionNamed(doc, 'Pending Messages').messages[0]
+      expect(message.title).toBe('Knives')
+      expect(message.body).toBe('Over 18s only.')
+      expect(message.replyBody).toBe('We added a note to your post.')
+    })
+
     it('copes with a config that has no messages at all', () => {
       const doc = buildModConfigDocument(makeConfig({ stdmsgs: [] }), {
         exportedAt,
@@ -438,6 +459,35 @@ describe('renderModConfigPdf', () => {
     expect(text).toContain('Edit text')
     expect(text).toContain('Message body')
     expect(text).toContain('Hi there,')
+  })
+
+  it('labels both texts of an Edit and Message', () => {
+    const pdf = fakePdf()
+    renderModConfigPdf(pdf, {
+      ...doc,
+      sections: [
+        doc.sections[0],
+        {
+          heading: 'Pending Messages',
+          rows: [],
+          messages: [
+            {
+              title: 'Knives',
+              rows: [{ label: 'Action', value: 'Edit and Message' }],
+              editText: '',
+              body: 'Over 18s only.',
+              replyBody: 'We added a note to your post.',
+            },
+          ],
+        },
+      ],
+    })
+
+    const text = drawn(pdf)
+    expect(text).toContain('Added to post')
+    expect(text).toContain('Message to poster')
+    expect(text).toContain('We added a note to your post.')
+    expect(text).not.toContain('Message body')
   })
 
   it('numbers every page', () => {

@@ -196,7 +196,7 @@ describe('ModMessage', () => {
     microvolunteering: [],
     worry: null,
     spamreason: null,
-    myrole: 'Moderator',
+    myrole: ROLE_MODERATOR,
     edits: null,
     item: { name: 'Test Item' },
     ...overrides,

@@ -1,12 +1,18 @@
 ---
-last_reviewed: 2026-10-14
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/give/**
   - iznik-nuxt3/pages/myposts.vue
   - iznik-nuxt3/pages/mypost/**
   - iznik-nuxt3/components/MyMessage.vue
+  - iznik-nuxt3/components/OutcomeModal.vue
+  - iznik-nuxt3/components/MessageOwnActions.vue
+  - iznik-batch/app/Console/Commands/Queue/ProcessBackgroundTasksCommand.php
   - iznik-nuxt3/components/PhotoUploader.vue
+  - iznik-nuxt3/components/PostItem.vue
+  - iznik-nuxt3/components/PostItemWarning.vue
+  - iznik-nuxt3/composables/useItemWarnings.js
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-nuxt3/tests/e2e/test-post-flow.spec.js
   - iznik-nuxt3/tests/e2e/test-bulk-offer-flow.spec.js
@@ -27,6 +33,10 @@ reply, you pick someone, and they collect. This guide walks through the whole th
    short description. A description that is only numbers or symbols, like "24", does not
    count, and the form says so. You can add one or more **photos**. On the app you can take a photo
    there and then, and Freegle can suggest a name from the picture.
+   Some items get a note under the name box as you type: for a child car seat it asks you to
+   say the make, model and age and that it has never been in a crash, and there are notes for
+   cycle helmets, knives, upholstered furniture, things that must be sealed and in date, and
+   plants that cannot be given away. The notes are the same on a computer, a phone and the app.
    Tap a photo in the strip underneath to see it large, and the rotate button turns it
    the right way up. The first photo is the main one; drag a photo onto the big one to make
    it the main photo.
@@ -42,7 +52,11 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 6. Click **Freegle it!** Your post goes live and starts reaching people nearby.
 
 On a phone the steps are the same but split into photo, details, options and location
-screens.
+screens. The photo screen has an **Add Photos** button. You do not need a photo to carry
+on: below the button is a small **Skip** link, which takes you to the details screen.
+After the details screen, some members (while a change is being tried) go straight to the
+location screen. They have a **Delivery or a deadline?** link under the postcode box, which
+opens the options screen. Everyone else sees the options screen first, as described above.
 
 Occasionally, when Freegle is dealing with a wave of spam, new posts are held back for a
 while before they appear. Yours is not lost: it goes through the usual checks once the
@@ -63,16 +77,37 @@ If you are clearing a house, office or garage, use the **bulk clearance** post
 post, instead of making dozens of separate ones. You can then manage who gets what from a
 single dashboard.
 
+## Posts of several things
+
+If one OFFER lists several separate things ("sofa, bed and two chairs"), Freegle lists them as
+separate items a minute or two after you post, and puts each photo with the thing it shows. People
+can then say which item they want, and you can mark each one TAKEN as it goes. You will see "We've
+listed this as N items" on the post in My Posts:
+
+- **Mark TAKEN** on an item when it has gone. If you press it by mistake, **Undo TAKEN** puts it
+  back. When the last one is TAKEN, you are asked to mark the post TAKEN as usual.
+- **Edit items** to change how many there are, or take an item off the list. To change the
+  names, use **Undo** and edit your post.
+- **Undo** to put the post back exactly as you wrote it. It will not be split again.
+
+Things that belong together, such as a dining set, a box of toys, or a drill and its bits, are
+left as one post. So is anything Freegle is not sure about. A WANTED is never split, and if you
+change a split OFFER to a WANTED, it goes back to one post.
+
 ## Replies and choosing someone
 
 When people are interested they reply, and each reply starts a private **chat** with you.
 You will get a notification and can see all your posts and their replies under **My
 Posts** (`/myposts`).
 
+In My Posts, tap a post's title to read what you wrote, and tap it again to close it. Your post's own page
+always shows it.
+
 From My Posts, or from the post itself, you can:
 
 - **Promise** the item to a particular person, so others know it is spoken for. If it
   falls through, you can undo this ("renege") and offer it to someone else.
+  The reminder emails about your post have a Mark as Promised button for offers, which opens the Promise window for you.
 - **Edit** the post if you got a detail wrong.
 - **Edit and resend** to freshen it up.
 - **Repost** to bump it back to the top.
@@ -91,6 +126,8 @@ When someone has collected the item, mark your OFFER as **TAKEN**. This closes t
 you stop getting replies, and lets you thank and rate the person who collected.
 
 - Go to **My Posts**, open the post, and choose **Mark as TAKEN**.
+- Or open your post anywhere on the site, for example from Browse. Your own post shows
+  **Mark as TAKEN** where other people see **Reply**.
 - You can also do this from the "What happened to ..." email we send you.
 
 If nobody took it and you no longer want to offer it, choose **Withdraw** instead. The
@@ -101,9 +138,10 @@ waiting for a moderator's look on a neighbouring community.
 
 Say who took some, then tell us whether that is everything:
 
-- **That's everything gone** closes the post, and asks how it went.
-- **There's still some left** leaves your post up. Other people see it as "Part gone,
-  some still available", and you can come back and add the next person later.
+- **Yes, it's all gone** closes the post, and asks how it went.
+- **No, some are left** leaves your post up. The button then says **Save, keep my post up**,
+  not Mark as TAKEN. Other people see it as "Part gone, some still available". When the
+  rest has gone, choose **Mark as TAKEN** again and pick **Yes, it's all gone**.
 
 You are never asked how many each person took. If you find you have more to give away
 than you posted, change the number on the post itself with **Edit**.
@@ -113,6 +151,13 @@ been promised as there are items left. Promise one of seven jars and the post st
 with six to go; the people you have promised to still see "promised to you" in their chat.
 A promise counts as one item, so if one person is having the whole lot, mark the post
 taken once they have collected.
+
+When a post becomes promised, everyone else who replied to it gets one message in their chat
+with you: "This has been promised to someone else for now. If they do not collect it, I will let you know." followed by
+a line saying it is an automated message, as other automated chat messages carry. The person promised to is not sent it, nobody is sent it twice for the same post,
+and undoing the promise sends nothing. It is sent for Offers only, and only once every item is promised.
+It is not sent when a Trash Nothing member promises an item on Trash Nothing. Trash Nothing does not
+say who the item went to, so that person would be told it went to someone else.
 
 ## Reminders and auto-reposting
 

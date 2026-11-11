@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import MessageReportModal from '~/components/MessageReportModal.vue'
+import {
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_MODERATOR,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 const { mockMessage } = vi.hoisted(() => {
   return {
@@ -30,7 +36,7 @@ const mockAuthStore = {
   groups: [{ groupid: 100 }, { groupid: 200 }],
 }
 
-const mockMe = ref({ systemrole: 'User' })
+const mockMe = ref({ systemrole: SYSTEMROLE_USER })
 
 const mockGroupStore = {
   get: vi.fn((id) => ({ namedisplay: 'Community ' + id })),
@@ -75,7 +81,7 @@ describe('MessageReportModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockMessageStore.byId.mockReturnValue(mockMessage)
-    mockMe.value = { systemrole: 'User' }
+    mockMe.value = { systemrole: SYSTEMROLE_USER }
     mockGroupStore.get.mockImplementation((id) => ({
       namedisplay: 'Community ' + id,
     }))
@@ -317,7 +323,7 @@ describe('MessageReportModal', () => {
   })
 
   describe('mod multi-community reporting', () => {
-    function modWrapperOnGroups(groups, role = 'Moderator') {
+    function modWrapperOnGroups(groups, role = SYSTEMROLE_MODERATOR) {
       mockMe.value = { systemrole: role }
       mockMessageStore.byId.mockReturnValue({ ...mockMessage, groups })
       return createWrapper()
@@ -349,18 +355,22 @@ describe('MessageReportModal', () => {
 
     it('shows the selector for Support and Admin too', () => {
       expect(
-        modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }], 'Support').vm
-          .showGroupSelector
+        modWrapperOnGroups(
+          [{ groupid: 100 }, { groupid: 300 }],
+          SYSTEMROLE_SUPPORT
+        ).vm.showGroupSelector
       ).toBe(true)
       expect(
-        modWrapperOnGroups([{ groupid: 100 }, { groupid: 300 }], 'Admin').vm
-          .showGroupSelector
+        modWrapperOnGroups(
+          [{ groupid: 100 }, { groupid: 300 }],
+          SYSTEMROLE_ADMIN
+        ).vm.showGroupSelector
       ).toBe(true)
     })
 
     it('lists the default group first', () => {
       // User shares group 300; it should be the default and sort first.
-      mockMe.value = { systemrole: 'Moderator' }
+      mockMe.value = { systemrole: SYSTEMROLE_MODERATOR }
       mockMessageStore.byId.mockReturnValue({
         ...mockMessage,
         groups: [
@@ -505,7 +515,7 @@ describe('MessageReportModal', () => {
     })
 
     it('offers a mod no multi-community selector - there is no team on any of them', () => {
-      mockMe.value = { systemrole: 'Moderator' }
+      mockMe.value = { systemrole: SYSTEMROLE_MODERATOR }
       mockMessageStore.byId.mockReturnValue({
         ...mockMessage,
         mod_messaging_allowed: false,

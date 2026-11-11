@@ -48,9 +48,10 @@ type section struct {
 // @Success 200 {file} binary
 // @Router /modtools/user/{id}/dump [get]
 func GetUserDump(c *fiber.Ctx) error {
-	// Two ways in: a logged-in Support/Admin user, or a configured third-party
-	// API key (USERDUMP_API_KEY) presented via the X-Dump-Key header or ?key=.
-	viaKey := validDumpKey(c)
+	// Two ways in: a logged-in Support/Admin user, or a configured API key: the third party's
+	// (USERDUMP_API_KEY, X-Dump-Key header or ?key=) or the internal one the AI helper uses for its
+	// first pass (USERDUMP_INTERNAL_KEY, X-Dump-Key header only).
+	viaKey, internal := validDumpKey(c)
 	var myid uint64
 	if !viaKey {
 		myid = user.WhoAmI(c)
@@ -87,12 +88,15 @@ func GetUserDump(c *fiber.Ctx) error {
 	startNs, endNs := dumpTimeRange(c)
 
 	// Audit trail: who dumped whom.
-	if viaKey {
-		log.Printf("userdump: API-key client generated a data dump for user %d (include=%s)",
-			targetID, includeString(include))
+	if viaKey && internal {
+		log.Printf("userdump: internal-key client generated a data dump for user %d (include=%s)%s",
+			targetID, includeString(include), caseSuffix(c))
+	} else if viaKey {
+		log.Printf("userdump: API-key client generated a data dump for user %d (include=%s)%s",
+			targetID, includeString(include), caseSuffix(c))
 	} else {
-		log.Printf("userdump: support user %d generated a data dump for user %d (include=%s)",
-			myid, targetID, includeString(include))
+		log.Printf("userdump: support user %d generated a data dump for user %d (include=%s)%s",
+			myid, targetID, includeString(include), caseSuffix(c))
 	}
 
 	if c.Query("format", "framed") == "raw" {
@@ -108,23 +112,49 @@ func GetUserDump(c *fiber.Ctx) error {
 	return nil
 }
 
-// validDumpKey reports whether the request carries the configured third-party
-// API key (USERDUMP_API_KEY), which authorises a dump without a logged-in
-// Support/Admin session. Presented via the X-Dump-Key header or ?key=. The
-// feature is disabled when the env var is empty. Comparison is constant-time.
-func validDumpKey(c *fiber.Ctx) bool {
+// validDumpKey reports whether the request carries a configured API key, which authorises a dump
+// without a logged-in Support/Admin session, and whether it was the internal one. The third party's
+// key (USERDUMP_API_KEY) may come in the X-Dump-Key header or ?key=; the internal key
+// (USERDUMP_INTERNAL_KEY) only in the header, so it never appears in a URL or an access log. A key
+// whose env var is empty is disabled. Comparison is constant-time.
+func validDumpKey(c *fiber.Ctx) (valid bool, internal bool) {
+	header := c.Get("X-Dump-Key")
+	if want := os.Getenv("USERDUMP_INTERNAL_KEY"); want != "" && header != "" &&
+		subtle.ConstantTimeCompare([]byte(header), []byte(want)) == 1 {
+		return true, true
+	}
+
 	want := os.Getenv("USERDUMP_API_KEY")
 	if want == "" {
-		return false
+		return false, false
 	}
-	got := c.Get("X-Dump-Key")
+	got := header
 	if got == "" {
 		got = c.Query("key")
 	}
 	if got == "" {
-		return false
+		return false, false
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1, false
+}
+
+// caseSuffix is the support case the dump is for, from the X-Freegle-Case header, as a log suffix.
+// Only digits are kept so a header cannot write anything else into the log.
+func caseSuffix(c *fiber.Ctx) string {
+	v := c.Get("X-Freegle-Case")
+	if v == "" {
+		return ""
+	}
+	digits := make([]byte, 0, 20)
+	for i := 0; i < len(v) && len(digits) < 20; i++ {
+		if v[i] >= '0' && v[i] <= '9' {
+			digits = append(digits, v[i])
+		}
+	}
+	if len(digits) == 0 {
+		return ""
+	}
+	return " case=" + string(digits)
 }
 
 func parseInclude(s string) map[string]bool {

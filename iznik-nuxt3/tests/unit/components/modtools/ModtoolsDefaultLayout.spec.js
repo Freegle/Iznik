@@ -4,34 +4,43 @@ import { defineComponent, h, Suspense, computed, nextTick } from 'vue'
 
 // Import layout after mocks
 import DefaultLayout from '~/modtools/layouts/default.vue'
-import { ROLE_MODERATOR } from '~/constants'
+import {
+  ROLE_MODERATOR,
+  SYSTEMROLE_ADMIN,
+  SYSTEMROLE_SUPPORT,
+  SYSTEMROLE_USER,
+} from '~/constants'
 
 // Stub Nuxt auto-imported globals not available in vitest
 vi.stubGlobal('useHead', vi.fn())
 vi.stubGlobal('useRuntimeConfig', vi.fn().mockReturnValue({ public: {} }))
 
 // Use vi.hoisted so these refs are available inside vi.mock factories (which are hoisted)
-const { mockAuthStore, mockCheckWork, mockResetCheckWork } = vi.hoisted(() => {
-  const { reactive } = require('vue')
-  const mockAuthStore = reactive({
-    user: null,
-    auth: { jwt: null, persistent: null },
-    loginStateKnown: false,
-    forceLogin: false,
-    discourse: null,
-    work: null,
-    fetchUser: () => Promise.resolve(null),
-    logout: () => Promise.resolve(undefined),
-    // The layout adopts a session transferred from a previous device before it
-    // looks at jwt/persistent.
-    adoptRestoredSession: () => Promise.resolve(false),
+const { mockAuthStore, mockCheckWork, mockResetCheckWork, mockMe } =
+  await vi.hoisted(async () => {
+    const { SYSTEMROLE_USER } = await import('~/constants')
+    const { reactive } = require('vue')
+    const mockAuthStore = reactive({
+      user: null,
+      auth: { jwt: null, persistent: null },
+      loginStateKnown: false,
+      forceLogin: false,
+      discourse: null,
+      work: null,
+      fetchUser: () => Promise.resolve(null),
+      logout: () => Promise.resolve(undefined),
+      // The layout adopts a session transferred from a previous device before it
+      // looks at jwt/persistent.
+      adoptRestoredSession: () => Promise.resolve(false),
+    })
+    return {
+      mockAuthStore,
+      mockCheckWork: vi.fn(),
+      mockResetCheckWork: vi.fn(),
+      // The signed-in system role, read by the useMe mock when the layout mounts.
+      mockMe: { role: SYSTEMROLE_USER },
+    }
   })
-  return {
-    mockAuthStore,
-    mockCheckWork: vi.fn(),
-    mockResetCheckWork: vi.fn(),
-  }
-})
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
@@ -84,7 +93,10 @@ vi.mock('@/stores/mobile', () => ({
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
-    supportOrAdmin: computed(() => false),
+    supportOrAdmin: computed(() =>
+      [SYSTEMROLE_SUPPORT, SYSTEMROLE_ADMIN].includes(mockMe.role)
+    ),
+    admin: computed(() => mockMe.role === SYSTEMROLE_ADMIN),
   }),
 }))
 
@@ -149,6 +161,7 @@ function mountLayout(stubs = {}) {
         ModMissingProfile: { template: '<div />' },
         ModLockdownBanner: { template: '<div class="lockdown-banner-stub" />' },
         SomethingWentWrong: { template: '<div />' },
+        ModAlertReplyGate: { template: '<div />' },
         ExternalLink: { template: '<a><slot /></a>' },
         'b-navbar': { template: '<nav><slot /></nav>' },
         'b-navbar-brand': { template: '<div><slot /></div>' },
@@ -329,6 +342,48 @@ describe('modtools default layout — pending badge includes spam', () => {
     expect(item, 'Volunteering menu item must be rendered').toBeDefined()
     expect(item.count).toEqual(['pendingvolunteering'])
     expect(item.othercount).toEqual(['pendingvolunteeringother'])
+  })
+
+  describe('SysAdmin is for Admin only', () => {
+    afterEach(() => {
+      mockMe.role = SYSTEMROLE_USER
+    })
+
+    it.each([SYSTEMROLE_USER, SYSTEMROLE_SUPPORT])(
+      'has no SysAdmin item for %s',
+      async (role) => {
+        mockMe.role = role
+        const links = (await captureMenu()).map((i) => i.link)
+        expect(links).not.toContain('/sysadmin')
+      }
+    )
+
+    it('leaves Support with Support and Images', async () => {
+      mockMe.role = SYSTEMROLE_SUPPORT
+      const links = (await captureMenu()).map((i) => i.link)
+      expect(links).toContain('/support')
+      expect(links).toContain('/images')
+    })
+
+    it('puts the cases waiting for Support on the Support item', async () => {
+      mockMe.role = SYSTEMROLE_SUPPORT
+      const item = (await captureMenu()).find((i) => i.link === '/support')
+      expect(item.count).toEqual(['supportcases'])
+    })
+
+    it('gives Admin the SysAdmin item with every SysAdmin count', async () => {
+      mockMe.role = SYSTEMROLE_ADMIN
+      const item = (await captureMenu()).find((i) => i.link === '/sysadmin')
+      expect(item, 'SysAdmin menu item must be rendered').toBeDefined()
+      expect(item.count).toEqual([
+        'housekeeping',
+        'cronjobs',
+        'emailin',
+        'emailout',
+        'maildeferrals',
+        'uxexperiments',
+      ])
+    })
   })
 })
 

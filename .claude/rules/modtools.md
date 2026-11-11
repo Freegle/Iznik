@@ -249,6 +249,12 @@ account records that it was rewritten, so the API, ModTools, chat and the spam w
 all show "A freegler" with no sign that a name was ever set. `utils.TidyName` produces the same
 string for an empty name, so the two cases are indistinguishable on screen.
 
+Every place that shows a member's name has to apply the rewrite itself; nothing does it centrally.
+The member-site chat list and chat header (`chat/chatroom.go` `listChats`, which `GetChatRoom`
+reuses) built the name from `users.fullname` directly until October 2026, so the scam accounts
+showed as "ilovefreegle" in Chats beside a profile saying "A freegler" (Discourse 10173/52).
+A new name path needs `SanitizeDisplayName` with `IsNameExempt`, and a test with a brand name.
+
 Read the stored name before saying what a member chose. On 2026-09-20 the scam that mailed the
 group forwarders created 4,580 accounts from its own From header, every one stored as
 "ilovefreegle"; members, moderators and the warning email all saw "A freegler", and a reply on

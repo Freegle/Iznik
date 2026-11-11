@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { ref } from 'vue'
 
 import PhotosPage from '~/pages/give/mobile/photos.vue'
 
@@ -20,6 +21,7 @@ const mockSetAttachments = vi.fn()
 let mockComposeMessages = {}
 let mockComposeAll = []
 let mockComposeAttachments = []
+const mockAttachmentsTick = ref(0)
 
 vi.mock('~/stores/compose', () => ({
   useComposeStore: () => ({
@@ -32,9 +34,18 @@ vi.mock('~/stores/compose', () => ({
     get all() {
       return mockComposeAll
     },
-    attachments: vi.fn(() => mockComposeAttachments),
+    // Reads the tick so a test can change the photos and have the page see it, as the store would.
+    attachments: vi.fn(() => {
+      mockAttachmentsTick.value
+      return mockComposeAttachments
+    }),
   }),
 }))
+
+function setPhotos(list) {
+  mockComposeAttachments = list
+  mockAttachmentsTick.value++
+}
 
 let mockAuthUser = { id: 1 }
 vi.mock('~/stores/auth', () => ({
@@ -99,7 +110,7 @@ describe('pages/give/mobile/photos.vue', () => {
     mockPendingSharedImages = []
     mockComposeMessages = { 42: { id: 42, type: 'Offer' } }
     mockComposeAll = []
-    mockComposeAttachments = []
+    setPhotos([])
     mockComposeAdd.mockReturnValue(42)
     mockAuthUser = { id: 1 }
     mockStickyAdRendered = false

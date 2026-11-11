@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Mail;
 
+use App\Models\Membership;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Traits\AvatarResolver;
@@ -87,6 +88,9 @@ class SendAdminCommand extends Command
             'emails_sent' => 0,
             'skipped_activeonly' => 0,
             'skipped_relevantallowed' => 0,
+            'skipped_marketingconsent' => 0,
+            'skipped_donationasks' => 0,
+            'skipped_not_chosen' => 0,
             'skipped_dedup' => 0,
             'skipped_no_email' => 0,
             'skipped_simplemail' => 0,
@@ -126,6 +130,9 @@ class SendAdminCommand extends Command
                 ['Emails Sent', $stats['emails_sent']],
                 ['Skipped (active only)', $stats['skipped_activeonly']],
                 ['Skipped (relevantallowed)', $stats['skipped_relevantallowed']],
+                ['Skipped (no marketing consent)', $stats['skipped_marketingconsent']],
+                ['Skipped (donation requests off)', $stats['skipped_donationasks']],
+                ['Skipped (not chosen by member)', $stats['skipped_not_chosen']],
                 ['Skipped (dedup)', $stats['skipped_dedup']],
                 ['Skipped (no email)', $stats['skipped_no_email']],
                 ['Skipped (simplemail=None)', $stats['skipped_simplemail']],
@@ -224,7 +231,7 @@ class SendAdminCommand extends Command
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->where('memberships.groupid', $groupId)
             ->where('memberships.collection', 'Approved')
-            ->whereIn('memberships.role', ['Moderator', 'Owner'])
+            ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->where('users.lastaccess', '>', $oneYearAgo)
             ->where(function ($q) {
                 $q->whereJsonDoesntContainKey('users.settings->showmod')
@@ -300,8 +307,8 @@ class SendAdminCommand extends Command
             ->pluck('userid')
             ->flip();
 
-        // Get local volunteers for the group footer.
-        $volunteers = self::getLocalVolunteers($admin->groupid);
+        // Get local volunteers for the group footer, unless the ADMIN is sent for someone else.
+        $volunteers = ($admin->volunteercredits ?? 1) ? self::getLocalVolunteers($admin->groupid) : [];
 
         // Query members with relevantallowed from users table.
         // Note: V1 queries all memberships regardless of collection. We intentionally
@@ -313,7 +320,10 @@ class SendAdminCommand extends Command
             ->select([
                 'memberships.userid',
                 'memberships.role',
+                'memberships.rippled',
+                'memberships.implicit',
                 'users.relevantallowed',
+                'users.marketingconsent',
                 'users.lastaccess',
                 'users.deleted',
             ])
@@ -370,12 +380,27 @@ class SendAdminCommand extends Command
             // Filter: non-essential admins skip users with relevantallowed=0.
             // Moderators are always included (they can't opt out).
             if (!$admin->essential && !$member->relevantallowed) {
-                $isMod = in_array($member->role, ['Moderator', 'Owner']);
+                $isMod = in_array($member->role, [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER]);
                 if (!$isMod) {
                     $stats['skipped_relevantallowed']++;
 
                     continue;
                 }
+            }
+
+            // A Newsletter ADMIN can be a fundraising appeal, which needs the member's marketing
+            // consent. That holds for moderators too.
+            if (!$admin->essential && !$member->marketingconsent) {
+                $stats['skipped_marketingconsent']++;
+
+                continue;
+            }
+
+            // Nor may it come from a community Rippling or TrashNothing put the member on.
+            if (!$admin->essential && ($member->rippled || $member->implicit)) {
+                $stats['skipped_not_chosen']++;
+
+                continue;
             }
 
             // Filter: dedup via pre-loaded set (covers both suggested and regular admins).
@@ -474,6 +499,14 @@ class SendAdminCommand extends Command
             // Filter: skip simplemail=None for non-essential admins.
             if (!$admin->essential && $user->getSimpleMail() === User::SIMPLE_MAIL_NONE) {
                 $stats['skipped_simplemail']++;
+
+                continue;
+            }
+
+            // Filter: a member who turned off donation requests gets no Newsletter ADMIN until
+            // that lapses.
+            if (!$admin->essential && !User::settingsAllowDonationAsks($user->settings)) {
+                $stats['skipped_donationasks']++;
 
                 continue;
             }

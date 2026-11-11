@@ -26,7 +26,12 @@ class MessageIllustrationsService
     // rather than swallow a quarter of an hour of ticks.
     private const MAX_RUN_SECONDS = 300;
 
-    public function __construct(private PollinationsService $pollinations) {}
+    private AiImageMatcherService $matcher;
+
+    public function __construct(private PollinationsService $pollinations, ?AiImageMatcherService $matcher = null)
+    {
+        $this->matcher = $matcher ?? app(AiImageMatcherService::class);
+    }
 
     /**
      * Generate AI illustrations for messages that have no attachments.
@@ -219,6 +224,7 @@ class MessageIllustrationsService
             $newMessages = [];
             $maxArrival = $lastArrival;
             $unresolved = [];
+            $candidates = [];
 
             foreach ($msgs as $msg) {
                 $arrival = $msg->arrival;
@@ -247,16 +253,40 @@ class MessageIllustrationsService
                 if ($image && ($image->status ?? 'active') !== 'active') {
                     continue;
                 }
-                $cached = $image->externaluid ?? null;
+                $candidates[] = ['msgid' => $msg->msgid, 'itemName' => $itemName, 'uid' => $image->externaluid ?? null, 'arrival' => $arrival];
+            }
 
-                if ($cached) {
-                    $cachedMessages[] = ['msgid' => $msg->msgid, 'itemName' => $itemName, 'uid' => $cached, 'arrival' => $arrival];
+            // A name with no picture of its own is usually an item we have drawn under other
+            // wording ("3 bags of cat litter" is cat litter). The matcher reuses that picture,
+            // or names the item to draw so the next variant finds it. All of the pass's names
+            // go in one request.
+            $unpictured = array_column(array_filter($candidates, fn ($c) => ! $c['uid']), 'itemName');
+            // Most posts already have their item from messages:clean-items; only the rest are cleaned here.
+            $known = [];
+            if ($unpictured) {
+                $stored = DB::table('messages_cleaned_items')
+                    ->whereIn('msgid', array_column(array_filter($candidates, fn ($c) => ! $c['uid']), 'msgid'))
+                    ->pluck('item', 'msgid');
+                foreach ($candidates as $c) {
+                    if (isset($stored[$c['msgid']])) {
+                        $known[$c['itemName']] = $stored[$c['msgid']];
+                    }
+                }
+            }
+            $match = $unpictured ? $this->matcher->matchMany($unpictured, $dryRun, $known) : ['reuse' => [], 'items' => []];
+
+            foreach ($candidates as $c) {
+                $c['uid'] ??= $match['reuse'][$c['itemName']] ?? null;
+                $c['draw'] = $match['items'][$c['itemName']] ?? $c['itemName'];
+
+                if ($c['uid']) {
+                    $cachedMessages[] = $c;
                 } elseif (count($newMessages) < self::BATCH_SIZE) {
-                    $newMessages[] = ['msgid' => $msg->msgid, 'itemName' => $itemName, 'arrival' => $arrival];
+                    $newMessages[] = $c;
                 } else {
                     // Past this pass's batch. It is a candidate we have not dealt with,
                     // so the saved watermark must not move beyond it.
-                    $unresolved[] = $arrival;
+                    $unresolved[] = $c['arrival'];
                 }
             }
 
@@ -288,11 +318,14 @@ class MessageIllustrationsService
                     break;
                 }
 
+                // The picture is drawn from, and stored under, the item where there is one.
                 $batchItems = [];
+                $postName = [];
                 foreach ($newMessages as $msg) {
+                    $postName[$msg['msgid']] = $msg['itemName'];
                     $batchItems[] = [
-                        'name' => $msg['itemName'],
-                        'prompt' => $this->pollinations->buildMessagePrompt($msg['itemName']),
+                        'name' => $msg['draw'],
+                        'prompt' => $this->pollinations->buildMessagePrompt($msg['draw']),
                         'width' => 640,
                         'height' => 480,
                         'msgid' => $msg['msgid'],
@@ -340,6 +373,9 @@ class MessageIllustrationsService
                             'externalmods' => json_encode(['ai' => true]),
                             'contenttype' => 'image/jpeg',
                         ]);
+                        if (isset($postName[$msgid]) && $postName[$msgid] !== $itemName) {
+                            $this->matcher->recordGenerated($postName[$msgid], $itemName, $uid);
+                        }
                         $processed++;
                         Log::info("MessageIllustrations: created illustration for message {$msgid}: {$itemName}");
                     }
@@ -409,12 +445,7 @@ class MessageIllustrationsService
 
     private function extractItemName(string $subject): string
     {
-        $name = preg_replace('/^(OFFER|WANTED|TAKEN|RECEIVED):\s*/i', '', $subject);
-        $name = preg_replace('/\s*\([^)]+\)\s*$/', '', $name ?? '');
-
-        // "iron please" is a request for an iron, not for an "iron please" - and the clean
-        // name is what finds the illustration we have already generated for one.
-        return ItemName::stripCourtesy(trim($name ?? ''));
+        return ItemName::fromSubject($subject);
     }
 
     /**

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/addedorigin"
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
@@ -25,12 +26,12 @@ func TestCreateChatMessage_ReplyJoinsGroup(t *testing.T) {
 	prefix := uniquePrefix("replyjoin")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply-joins test item", 51.5, -0.1)
 
 	// A brand-new user who is NOT a member of the group replies to the post.
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	var before int
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", replierID, groupID).Scan(&before)
 	assert.Equal(t, 0, before, "the replier starts as a non-member")
@@ -65,7 +66,7 @@ func TestCreateChatMessage_ReplyJoinsGroup(t *testing.T) {
 		"MAX(emailfrequency) AS emailfrequency FROM memberships WHERE userid = ? AND groupid = ?",
 		replierID, groupID).Scan(&m)
 	assert.Equal(t, 1, m.Cnt, "replying to a post joins the replier to its group (Discourse #9969)")
-	assert.Equal(t, "Member", m.Role)
+	assert.Equal(t, utils.ROLE_MEMBER, m.Role)
 	assert.Equal(t, "Approved", m.Collection)
 	assert.Equal(t, 24, m.Emailfrequency,
 		"joined with the normal-join default email frequency (daily), not FREQUENCY_NEVER")
@@ -93,11 +94,11 @@ func TestCreateChatMessage_ReplyRespectsBan(t *testing.T) {
 	prefix := uniquePrefix("replybanned")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply-banned test item", 51.5, -0.1)
 
-	bannedID := CreateTestUser(t, prefix+"_banned", "User")
+	bannedID := CreateTestUser(t, prefix+"_banned", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO users_banned (userid, groupid, byuser, date) VALUES (?, ?, ?, NOW())",
 		bannedID, groupID, posterID)
 	defer db.Exec("DELETE FROM users_banned WHERE userid = ? AND groupid = ?", bannedID, groupID)
@@ -119,11 +120,11 @@ func TestCreateChatMessage_ReportDoesNotJoinGroup(t *testing.T) {
 	prefix := uniquePrefix("reportnojoin")
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: report-no-join test item", 51.5, -0.1)
 
-	reporterID := CreateTestUser(t, prefix+"_reporter", "User")
+	reporterID := CreateTestUser(t, prefix+"_reporter", utils.SYSTEMROLE_USER)
 	chatID := CreateTestChatRoom(t, reporterID, nil, &groupID, "User2Mod")
 	_, token := CreateTestSession(t, reporterID)
 
@@ -157,16 +158,16 @@ func TestCreateChatMessage_ReplyDoesNotJoinWhenAlreadySharingAGroup(t *testing.T
 		homeGroup, rippledGroup = rippledGroup, homeGroup
 	}
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, homeGroup, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, homeGroup, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, homeGroup, "OFFER: already-a-member test item", 51.5, -0.1)
 	// The post also sits on the lower-numbered group, as a rippled-in copy would.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)",
 		msgID, rippledGroup)
 
 	// The replier is already a member of the group the post is native to.
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, replierID, homeGroup, "Member")
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, replierID, homeGroup, utils.ROLE_MEMBER)
 
 	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
 	_, token := CreateTestSession(t, replierID)
@@ -207,14 +208,14 @@ func TestCreateChatMessage_ReplyJoinsNearestGroup(t *testing.T) {
 	db.Exec("UPDATE `groups` SET lat = 55.9533, lng = -3.1883, polyindex = ST_GeomFromText('POINT(-3.1883 55.9533)', ?) WHERE id = ?", utils.SRID, farGroup)
 	db.Exec("UPDATE `groups` SET lat = 51.5, lng = -0.1, polyindex = ST_GeomFromText('POINT(-0.1 51.5)', ?) WHERE id = ?", utils.SRID, nearGroup)
 
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	CreateTestMembership(t, posterID, farGroup, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, farGroup, utils.ROLE_MEMBER)
 	msgID := CreateTestMessage(t, posterID, farGroup, "OFFER: nearest-group test item", 51.5, -0.1)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)",
 		msgID, nearGroup)
 
 	// The replier lives beside the NEAR group and is a member of neither.
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
 	// JSON_SET will not create a path whose parent is missing, so setting
 	// '$.mylocation.lat' on a user with no mylocation silently does nothing and
 	// GetLatLng then returns 0,0, which skips the nearest-group query entirely.
@@ -238,4 +239,75 @@ func TestCreateChatMessage_ReplyJoinsNearestGroup(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", replierID, farGroup).Scan(&inFar)
 	assert.Equal(t, 1, inNear, "the replier is joined to the group nearest them")
 	assert.Equal(t, 0, inFar, "not the lower-numbered group on the other side of the country")
+}
+
+// A TrashNothing member who replies to a post is joined to its community like anyone else,
+// through the chat endpoint or the reply flow's own PUT /memberships, so its moderators can
+// ban them or hold their chat. TrashNothing joins its members to a community before they can
+// reply there, so this only matters for a TN account replying on Freegle itself. A reply never
+// makes a TrashNothing placement ordinary: only choosing the community through TrashNothing does.
+func TestReplyJoinsATrashNothingMemberButLeavesAPlacement(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("replytn")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply-tn test item", 51.5, -0.1)
+
+	type row struct {
+		Implicit    int
+		AddedOrigin string
+	}
+	membership := func(userid uint64) (int, row) {
+		var rows []row
+		db.Raw("SELECT implicit, added_origin FROM memberships WHERE userid = ? AND groupid = ?", userid, groupID).Scan(&rows)
+		if len(rows) == 0 {
+			return 0, row{}
+		}
+		return len(rows), rows[0]
+	}
+
+	// A TN member with no membership is joined by the chat reply, as anyone is.
+	tn := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
+	makeTrashNothing(tn)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, tn, posterID, msgID, ""), "the reply is accepted")
+	n, m := membership(tn)
+	assert.Equal(t, 1, n, "a TN member who replies is joined to the post's community")
+	assert.Equal(t, 0, m.Implicit)
+	assert.Equal(t, addedorigin.Replied, m.AddedOrigin)
+
+	// The reply flow's join call joins them too, with either form of the request.
+	for i, body := range []map[string]interface{}{
+		{"groupid": groupID, "origin": addedorigin.Replied},
+		{"groupid": groupID, "manual": false},
+	} {
+		joiner := CreateTestUser(t, fmt.Sprintf("%s_tnjoin%d", prefix, i), utils.SYSTEMROLE_USER)
+		makeTrashNothing(joiner)
+		_, token := CreateTestSession(t, joiner)
+		assert.Equal(t, 200, joinGroup(t, token, body))
+		n, m := membership(joiner)
+		assert.Equal(t, 1, n, "the reply flow's join joins a TN member: %v", body)
+		assert.Equal(t, addedorigin.Replied, m.AddedOrigin)
+	}
+
+	// A TN placement stays a placement, whichever way the reply comes.
+	placed := CreateTestUser(t, prefix+"_placed", utils.SYSTEMROLE_USER)
+	makeTrashNothing(placed)
+	CreateTestMembership(t, placed, groupID, utils.ROLE_MEMBER)
+	makePlacement(placed, groupID)
+	_, placedToken := CreateTestSession(t, placed)
+	assert.Equal(t, 200, joinGroup(t, placedToken, map[string]interface{}{"groupid": groupID, "origin": addedorigin.Replied}))
+	_, m = membership(placed)
+	assert.Equal(t, 1, m.Implicit, "the reply flow's join does not make a TN placement ordinary")
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, placed, posterID, msgID, ""))
+	_, m = membership(placed)
+	assert.Equal(t, 1, m.Implicit, "a chat reply does not make a TN placement ordinary")
+
+	// Someone who is not a TN member is joined as before.
+	ordinary := CreateTestUser(t, prefix+"_ordinary", utils.SYSTEMROLE_USER)
+	_, ordToken := CreateTestSession(t, ordinary)
+	assert.Equal(t, 200, joinGroup(t, ordToken, map[string]interface{}{"groupid": groupID, "origin": addedorigin.Replied}))
+	n, _ = membership(ordinary)
+	assert.Equal(t, 1, n)
 }

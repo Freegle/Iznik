@@ -33,7 +33,7 @@ const LABELS = [
   { key: 'chat', label: 'Chat messages' },
   { key: 'post', label: 'Posts' },
   { key: 'chitchat', label: 'ChitChat posts' },
-  { key: 'events', label: 'Events, volunteering, noticeboards and stories' },
+  { key: 'events', label: 'Events, volunteering and stories' },
   { key: 'email', label: 'Emails not sent' },
   { key: 'push', label: 'App notifications not sent' },
   { key: 'export', label: 'Downloads refused' },

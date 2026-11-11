@@ -15,7 +15,8 @@
     "reconcile_direct_master_fixes",
     "check_bug_feedback",
     "queue_deployed_reply_drafts",
-    "post_pending_discourse_drafts"
+    "post_pending_discourse_drafts",
+    "chase_waiting_reports"
    ],
    "writeActions": []
   },

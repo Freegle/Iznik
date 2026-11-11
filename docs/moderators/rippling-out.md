@@ -58,21 +58,26 @@ It is not a relationship with your community, though, and it does not make the p
 yours to write to. They posted somewhere else and may never have heard of you - see
 [Talking to the poster](#talking-to-the-poster) below.
 
+The exception is a Trash Nothing post whose poster didn't choose the community it was placed
+on. That post still ripples, but the poster isn't joined to the communities it reaches and
+isn't sent the intro email.
+
 What this means in practice:
 
 - You moderate their post exactly as you would any other: approve it, or take it off
   your community.
-- The poster appears in your member list, but with no Chat button and no standard
-  messages that only write to a member, because there is no conversation for you to
-  start. If they write to you first, that chat works as normal.
-- You can still take them off your community or ban them, and that happens as usual. It
-  is done quietly: they never joined you, so a message about it would be as confusing as
-  one about their post.
+- The poster appears in your member list, and you can contact them from there as you
+  would any member: **Chat**, **Mail** and the member standard messages all work. Taking
+  them off your community or banning them works as usual too, with the message you choose.
+  Only replies about the rippled post itself stay with the community they posted it on (see
+  below).
 - Your community's member count may include rippled members.
 - The join is recorded as **'Rippled'** in the membership log, so you can distinguish it
-  from a manual or organic join if you need to.
-- The membership becomes an ordinary one, and none of the above applies any more, once
-  they have something to do with your community. That is when they:
+  from a manual or organic join if you need to. A TrashNothing poster placed on your
+  community is logged **'TrashNothing unaddressed'** instead, and is treated the same way
+  until they do something with it.
+- The membership becomes an ordinary one once they have something to do with your
+  community. That is when they:
   - join it themselves, or move house into your area;
   - post on it;
   - reply to a post that was posted on it;
@@ -623,8 +628,9 @@ otherwise each copy would carry the same item further on its own account. Once t
 copies have been merged into a single post, it ripples normally. A TrashNothing item
 posted to one community ripples straight away, exactly like a member's post.
 
-TrashNothing posts now arrive as a single post per item, placed on the community whose
-area contains the item, so new items never start out as several copies and ripple straight
+TrashNothing posts now arrive as a single post per item, placed on the community the
+member chose on TrashNothing, or on the community whose area contains the item if they chose
+none, so new items never start out as several copies and ripple straight
 away. The exception only still applies to older items that already exist as several copies,
 until those are merged. On your own community, TrashNothing posts behave exactly as they
 always have, and replies to them follow the same reach rules as everything else.

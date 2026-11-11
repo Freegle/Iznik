@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-10
+last_reviewed: 2026-11-02
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/partnerships.vue
@@ -9,6 +9,7 @@ covers:
   - iznik-nuxt3/api/PartnershipsAPI.js
   - iznik-server-go/partnerships/**
   - iznik-server-go/authority/authority.go
+  - iznik-server-go/group/groupSponsor.go
   - iznik-batch/app/Console/Commands/Partnerships/**
   - iznik-batch/app/Services/PartnershipGroupsService.php
   - iznik-batch/app/Services/AuthorityStatsService.php
@@ -104,6 +105,10 @@ Community names link to their Explore page.
 Each covered community gets a sponsor entry, which is what members see. Editing the tagline,
 description, link or logo on the partnership changes all of them at once.
 
+Members only see a sponsor between its start and end dates. Old entries set up by hand before
+this page stay in the table after they end, but no longer show, so this page is what members
+see.
+
 ## The money
 
 | Field | Question it answers |
@@ -151,6 +156,10 @@ once per reminder, so the daily check does not nag. Hidden deals are chased too.
 The bottom of the page generates the quarterly spreadsheet councils receive - membership,
 weight reused, CO2 and financial benefit, gifts made, a per-community breakdown, shortlink
 clicks, member stories and a postcode breakdown.
+
+The financial benefit is the same figure the council pages show. It includes the cost of
+fly-tipping the council avoids, and a note under the summary table says how much of it that
+is. See [impact figures](../developers/reference/impact-figures.md) for how it is worked out.
 
 For a council we have a deal with, the per-community breakdown is exactly the communities the
 deal covers, as listed on this page. For any other council they are worked out from the

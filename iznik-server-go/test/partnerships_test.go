@@ -67,7 +67,7 @@ func partnershipsUser(t *testing.T, prefix string) (uint64, string) {
 	db.Raw("SELECT id FROM teams WHERE name = 'Partnerships'").Scan(&teamID)
 	require.NotZero(t, teamID)
 
-	userID := CreateTestUser(t, prefix+"_partner", "Moderator")
+	userID := CreateTestUser(t, prefix+"_partner", utils.SYSTEMROLE_MODERATOR)
 	db.Exec("INSERT IGNORE INTO teams_members (userid, teamid) VALUES (?, ?)", userID, teamID)
 
 	_, token := CreateTestSession(t, userID)
@@ -117,7 +117,7 @@ func TestPartnershipRequiresLogin(t *testing.T) {
 
 func TestPartnershipRequiresTeamMembership(t *testing.T) {
 	prefix := uniquePrefix("PartnershipNoPerm")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/partnership?jwt=%s", token), nil)
@@ -181,7 +181,7 @@ func TestPartnershipTeamMemberIsAllowed(t *testing.T) {
 
 func TestPartnershipAdminIsAllowedWithoutTeam(t *testing.T) {
 	prefix := uniquePrefix("PartnershipAdmin")
-	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
 	_, token := CreateTestSession(t, adminID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/partnership?jwt=%s", token), nil)
@@ -1348,7 +1348,7 @@ func TestSessionReportsTeamMembership(t *testing.T) {
 
 func TestSessionReportsNoTeamsForSomeoneOnNone(t *testing.T) {
 	prefix := uniquePrefix("PartnershipSessionUser")
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, token := CreateTestSession(t, userID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/session?jwt=%s", token), nil)
@@ -1375,7 +1375,7 @@ func TestSessionReportsTeamsForAPlainMemberOnATeam(t *testing.T) {
 	db.Raw("SELECT id FROM teams WHERE name = 'Partnerships'").Scan(&teamID)
 	require.NotZero(t, teamID)
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db.Exec("INSERT IGNORE INTO teams_members (userid, teamid) VALUES (?, ?)", userID, teamID)
 
 	_, token := CreateTestSession(t, userID)
@@ -1401,7 +1401,7 @@ func TestPartnershipPlainMemberOnTheTeamMayUseThePage(t *testing.T) {
 	var teamID uint64
 	db.Raw("SELECT id FROM teams WHERE name = 'Partnerships'").Scan(&teamID)
 
-	userID := CreateTestUser(t, prefix, "User")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	db.Exec("INSERT IGNORE INTO teams_members (userid, teamid) VALUES (?, ?)", userID, teamID)
 
 	_, token := CreateTestSession(t, userID)

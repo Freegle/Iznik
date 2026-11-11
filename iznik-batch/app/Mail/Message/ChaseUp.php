@@ -45,7 +45,8 @@ class ChaseUp extends MjmlMailable implements DescribesMemberContent
     public function build(): static
     {
         $userSite = config('freegle.sites.user');
-        $outcomeType = $this->messageType === Message::TYPE_OFFER
+        $isOffer = $this->messageType === Message::TYPE_OFFER;
+        $outcomeType = $isOffer
             ? Message::OUTCOME_TAKEN
             : Message::OUTCOME_RECEIVED;
 
@@ -55,6 +56,12 @@ class ChaseUp extends MjmlMailable implements DescribesMemberContent
                 'userName' => $this->userName,
                 'messageSubject' => $this->messageSubject,
                 'outcomeType' => $outcomeType,
+                'isOffer' => $isOffer,
+                'promiseUrl' => $this->trackedUrl(
+                    "{$userSite}/mypost/{$this->messageId}/promise",
+                    'promise_button',
+                    'promise'
+                ),
                 'repostUrl' => $this->trackedUrl(
                     "{$userSite}/mypost/{$this->messageId}/repost",
                     'repost_button',

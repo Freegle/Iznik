@@ -11,6 +11,23 @@ import { componentNameTransform } from './build-plugins/componentNameTransform'
 // the og:title / twitter:title meta tags so they stay in lockstep.
 const fullTitle = `${branding.siteName} - ${branding.tagline}`
 
+// Sentry errors that must not stop a build. The source maps and the release are a convenience; the
+// site and the app are what members need. sentry-cli reports a failed upload only as "Command ...
+// sourcemaps upload ... failed with exit code 1", with the HTTP status on its own output, so a rate
+// limit (429, which stopped the 19 October 2026 builds) looks no different from a gateway error.
+function sentryErrorIsNonFatal(err: { message?: string } | undefined) {
+  const msg = err?.message || ''
+  return [
+    '502',
+    '504',
+    '429',
+    'bad gateway',
+    'Too many requests',
+    'API request failed',
+    'sourcemaps upload',
+  ].some((s) => msg.includes(s))
+}
+
 // Mobile version change:
 // - config.js: MOBILE_VERSION eg 3.1.9
 // - android\app\build.gradle
@@ -188,6 +205,11 @@ export default defineNuxtConfig({
     // Redirects.
     '/councils': { redirect: '/partnerships' },
 
+    // The members' noticeboard map and poster recording were removed. Old links
+    // and bookmarks go to the poster downloads on /promote.
+    '/noticeboards': { redirect: { to: '/promote', statusCode: 301 } },
+    '/noticeboards/**': { redirect: { to: '/promote', statusCode: 301 } },
+
     // The WANTED flow was called "find" until Aug 2026. Old emails, app shortcuts
     // and bookmarks still point at /find, so this is permanent, not a migration
     // shim. Nitro serves the 301 for direct hits; middleware/ask.global.js covers
@@ -207,7 +229,6 @@ export default defineNuxtConfig({
     '/merge/**': { ssr: false },
     '/myposts': { ssr: false },
     '/mypost/**': { ssr: false },
-    '/noticeboards/**': { ssr: false },
     '/post': { ssr: false },
     '/profile/**': { ssr: false },
     '/promote': { ssr: false },
@@ -279,6 +300,13 @@ export default defineNuxtConfig({
             '/netlify/**', // CDN URLs for Netlify permanent links
           ],
           crawlLinks: true,
+
+          // Write /about as about.html, not about/index.html. Netlify answers a
+          // folder index with a 301 to /about/, while our canonical tags and the
+          // sitemap say /about, so Google was told one URL and redirected to
+          // another, and left the page out of the index. App builds keep the
+          // default because the app's file layout is not served by Netlify.
+          autoSubfolderIndex: !!config.ISAPP,
         }
       : {
           // In CI/Docker, disable all prerendering to avoid failures when API is not accessible
@@ -573,16 +601,10 @@ export default defineNuxtConfig({
                 // In strict mode, still throw on non-API errors (wrong auth token, etc.).
                 errorHandler: config.SENTRY_STRICT
                   ? (err) => {
-                      const msg = err.message || ''
-                      if (
-                        msg.includes('502') ||
-                        msg.includes('504') ||
-                        msg.includes('bad gateway') ||
-                        msg.includes('API request failed')
-                      ) {
+                      if (sentryErrorIsNonFatal(err)) {
                         console.warn(
                           '⚠️ Sentry API error (non-fatal) - release creation skipped:',
-                          msg
+                          err.message
                         )
                       } else {
                         throw err
@@ -629,16 +651,10 @@ export default defineNuxtConfig({
                   // Still throw for non-API errors (wrong auth token, etc.) so real
                   // misconfigurations remain fatal.
                   errorHandler: (err) => {
-                    const msg = err.message || ''
-                    if (
-                      msg.includes('502') ||
-                      msg.includes('504') ||
-                      msg.includes('bad gateway') ||
-                      msg.includes('API request failed')
-                    ) {
+                    if (sentryErrorIsNonFatal(err)) {
                       console.warn(
                         '⚠️ Sentry API error (non-fatal) - release creation skipped:',
-                        msg
+                        err.message
                       )
                     } else {
                       throw err

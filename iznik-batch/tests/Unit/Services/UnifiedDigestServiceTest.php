@@ -3298,6 +3298,51 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertSame(1, (int) $row->replies);
     }
 
+    public function test_the_reply_count_leaves_out_a_reply_held_for_its_sender_s_answer(): void
+    {
+        $recipient = $this->createTestUser();
+        $poster = $this->createTestUser();
+        $replier = $this->createTestUser();
+        $freegle = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Armchair (TestLocation)', 'arrival' => now()->subHours(2)]);
+
+        $room = $this->createTestChatRoom($replier, $poster);
+        $replyId = DB::table('chat_messages')->insertGetId([
+            'refmsgid' => $msg->id, 'userid' => $replier->id, 'chatid' => $room->id,
+            'type' => 'Interested', 'message' => 'Is it still there?',
+            'reviewrejected' => 0, 'reviewrequired' => 0, 'date' => now(),
+            'processingrequired' => 1, 'processingsuccessful' => 0,
+            'mailedtoall' => 0, 'seenbyall' => 0, 'platform' => 1,
+        ]);
+        $questionId = DB::table('chat_messages')->insertGetId([
+            'refmsgid' => $msg->id, 'userid' => $freegle->id, 'chatid' => $room->id,
+            'type' => 'Prompt', 'message' => '@Sam, do you still want it?',
+            'reviewrejected' => 0, 'reviewrequired' => 0, 'date' => now(),
+            'processingrequired' => 0, 'processingsuccessful' => 0,
+            'mailedtoall' => 0, 'seenbyall' => 0, 'platform' => 1,
+        ]);
+        DB::table('chat_prompts')->insert([
+            'chatmsgid' => $questionId, 'msgid' => $msg->id, 'msgids' => json_encode([$msg->id]), 'userid' => $replier->id,
+            'heldchatmsgid' => $replyId, 'kind' => 'confirm_reply', 'options' => '[]',
+            'created_at' => now(), 'expires_at' => now()->addDays(3),
+        ]);
+
+        $tracker = UserDigest::create(['userid' => $recipient->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgdate' => null]);
+        $replies = function () use ($recipient, $tracker, $msg) {
+            return (int) $this->service->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY)->firstWhere('id', $msg->id)->replies;
+        };
+
+        $this->assertSame(0, $replies(), 'a reply nobody has got yet does not make the post look busy');
+
+        DB::table('chat_prompts')->where('chatmsgid', $questionId)->update(['answer' => 'no', 'answered_via' => 'button', 'answered_at' => now()]);
+        $this->assertSame(0, $replies(), 'and neither does one the replier took back');
+
+        DB::table('chat_prompts')->where('chatmsgid', $questionId)->update(['answer' => 'yes']);
+        $this->assertSame(1, $replies(), 'released, it counts');
+    }
+
     // -----------------------------------------------------------------------
     // Task 4: Per-run reach-radius lookup
     // -----------------------------------------------------------------------

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Membership;
 use App\Mail\Birthday\BirthdayMail;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -49,9 +50,11 @@ class BirthdayService
                 ->join('memberships', 'users.id', '=', 'memberships.userid')
                 ->where('memberships.groupid', $group->id)
                 ->where('memberships.collection', 'Approved')
-                // Exclude Rippling Out auto-joins: a birthday appeal must never appear to come
-                // "from" a community the member never knowingly joined.
+                // Exclude Rippling Out auto-joins and TrashNothing posters placed on a group they did
+                // not pick: a birthday appeal must never appear to come "from" a community the
+                // member never knowingly joined. rippled goes when Phase 5 moves this to implicit.
                 ->where('memberships.rippled', 0)
+                ->where('memberships.implicit', 0)
                 ->whereNull('users.deleted')
                 ->where('users.marketingconsent', 1)
                 ->select('users.id', 'users.settings')
@@ -70,6 +73,11 @@ class BirthdayService
                 }
 
                 if (!$emailOverride && $this->sentBirthdayAppealRecently($member->settings)) {
+                    continue;
+                }
+
+                // The birthday mail is a donation appeal.
+                if (!$emailOverride && !User::settingsAllowDonationAsks($member->settings)) {
                     continue;
                 }
 
@@ -121,7 +129,7 @@ class BirthdayService
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
             ->where('memberships.collection', 'Approved')
-            ->whereIn('memberships.role', ['Moderator', 'Owner'])
+            ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
             ->whereNull('users.deleted')
             ->where('users.lastaccess', '>=', $oneYearAgo)
             ->where(function ($q) {

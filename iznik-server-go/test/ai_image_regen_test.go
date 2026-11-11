@@ -15,6 +15,7 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -87,7 +88,7 @@ func TestAIImageRegen_QuorumRejectSetsStatusRejected(t *testing.T) {
 	// Cast 5 Reject votes (majority Reject = quorum should trigger status update).
 	for i := 0; i < 5; i++ {
 		vPrefix := uniquePrefix(fmt.Sprintf("%s_v%d", prefix, i))
-		uid := CreateTestUser(t, vPrefix, "User")
+		uid := CreateTestUser(t, vPrefix, utils.SYSTEMROLE_USER)
 		_, tok := CreateTestSession(t, uid)
 		body := fmt.Sprintf(`{"aiimageid":%d,"response":"Reject","containspeople":false}`, imgID)
 		req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+tok, strings.NewReader(body))
@@ -110,7 +111,7 @@ func TestAIImageRegen_QuorumApproveDoesNotSetRejected(t *testing.T) {
 	// Cast 5 Approve votes — should NOT trigger rejected status.
 	for i := 0; i < 5; i++ {
 		vPrefix := uniquePrefix(fmt.Sprintf("%s_v%d", prefix, i))
-		uid := CreateTestUser(t, vPrefix, "User")
+		uid := CreateTestUser(t, vPrefix, utils.SYSTEMROLE_USER)
 		_, tok := CreateTestSession(t, uid)
 		body := fmt.Sprintf(`{"aiimageid":%d,"response":"Approve","containspeople":false}`, imgID)
 		req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+tok, strings.NewReader(body))
@@ -134,7 +135,7 @@ func TestAIImageRegen_MixedVotesNoRejectQuorum(t *testing.T) {
 	responses := []string{"Reject", "Reject", "Reject", "Approve", "Approve"}
 	for i, resp := range responses {
 		vPrefix := uniquePrefix(fmt.Sprintf("%s_v%d", prefix, i))
-		uid := CreateTestUser(t, vPrefix, "User")
+		uid := CreateTestUser(t, vPrefix, utils.SYSTEMROLE_USER)
 		_, tok := CreateTestSession(t, uid)
 		body := fmt.Sprintf(`{"aiimageid":%d,"response":"%s","containspeople":false}`, imgID, resp)
 		req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+tok, strings.NewReader(body))
@@ -159,7 +160,7 @@ func TestAIImageRegen_AdminListReview_RequiresAuth(t *testing.T) {
 
 func TestAIImageRegen_AdminListReview_RequiresAdminOrSupport(t *testing.T) {
 	prefix := uniquePrefix("airegen_authnorm")
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, tok := CreateTestSession(t, uid)
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/admin/ai-images/review?jwt="+tok, nil))
 	assert.Equal(t, 403, resp.StatusCode)
@@ -170,15 +171,15 @@ func TestAIImageRegen_AdminListReview_ReturnsList(t *testing.T) {
 	prefix := uniquePrefix("airegen_list")
 
 	// Create Support user.
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	// Create a rejected image.
 	imgID := createTestAIImageWithStatus(t, "rejected-img-"+prefix, "freegletusd-rej-"+prefix, "rejected")
 
 	// Add some votes with known users.
-	voter1 := CreateTestUser(t, prefix+"_v1", "User")
-	voter2 := CreateTestUser(t, prefix+"_v2", "User")
+	voter1 := CreateTestUser(t, prefix+"_v1", utils.SYSTEMROLE_USER)
+	voter2 := CreateTestUser(t, prefix+"_v2", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version, score_negative) VALUES (?, ?, ?, 'Reject', 0, 4, 0)",
 		microvolunteering.ChallengeAIImageReview, voter1, imgID)
 	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version, score_negative) VALUES (?, ?, ?, 'Reject', 0, 4, 0)",
@@ -221,7 +222,7 @@ func TestAIImageRegen_AdminListReview_ReturnsList(t *testing.T) {
 
 func TestAIImageRegen_AdminListReview_ActiveNotIncluded(t *testing.T) {
 	prefix := uniquePrefix("airegen_active")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	// Create an active image (should NOT appear).
@@ -244,7 +245,7 @@ func TestAIImageRegen_AdminListReview_ActiveNotIncluded(t *testing.T) {
 
 func TestAIImageRegen_Regenerate_RequiresAdminOrSupport(t *testing.T) {
 	prefix := uniquePrefix("airegen_regauth")
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, tok := CreateTestSession(t, uid)
 	imgID := createTestAIImageWithStatus(t, "regen-test-"+prefix, "freegletusd-regen-"+prefix, "rejected")
 
@@ -259,7 +260,7 @@ func TestAIImageRegen_Regenerate_SavesNotes(t *testing.T) {
 	withMockImageGeneration(t)
 	db := database.DBConn
 	prefix := uniquePrefix("airegen_regnotes")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	imgID := createTestAIImageWithStatus(t, "regen-notes-"+prefix, "freegletusd-regnotes-"+prefix, "rejected")
@@ -296,7 +297,7 @@ func TestAIImageRegen_Regenerate_SavesNotes(t *testing.T) {
 
 func TestAIImageRegen_Accept_RequiresAdminOrSupport(t *testing.T) {
 	prefix := uniquePrefix("airegen_accauth")
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, tok := CreateTestSession(t, uid)
 	imgID := createTestAIImageWithStatus(t, "accept-auth-"+prefix, "freegletusd-accauth-"+prefix, "rejected")
 
@@ -314,7 +315,7 @@ func TestAIImageRegen_Accept_RequiresAdminOrSupport(t *testing.T) {
 // was to regenerate.
 func TestAIImageRegen_Accept_NoPendingSaysRegenerateFirst(t *testing.T) {
 	prefix := uniquePrefix("airegen_accnopend")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	imgID := createTestAIImageWithStatus(t, "accept-nopend-"+prefix, "freegletusd-old-"+prefix, "rejected")
@@ -331,7 +332,7 @@ func TestAIImageRegen_Accept_NoPendingSaysRegenerateFirst(t *testing.T) {
 func TestAIImageRegen_Accept_UpdatesExternaluidAndResetStatus(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("airegen_accept")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	oldUID := "freegletusd-old-" + prefix
@@ -343,7 +344,7 @@ func TestAIImageRegen_Accept_UpdatesExternaluidAndResetStatus(t *testing.T) {
 	db.Exec("UPDATE ai_images SET pending_externaluid = ? WHERE id = ?", newUID, imgID)
 
 	// Create some microactions (votes) for this image — should be deleted on accept.
-	voter := CreateTestUser(t, prefix+"_voter", "User")
+	voter := CreateTestUser(t, prefix+"_voter", utils.SYSTEMROLE_USER)
 	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative) VALUES (?, ?, ?, 'Reject', 4, 0)",
 		microvolunteering.ChallengeAIImageReview, voter, imgID)
 
@@ -399,7 +400,7 @@ func TestAIImageRegen_RegenerateAndAccept_FullFlow(t *testing.T) {
 	withMockImageGeneration(t)
 	db := database.DBConn
 	prefix := uniquePrefix("airegen_fullflow")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	oldUID := "freegletusd-old-flow-" + prefix
@@ -445,7 +446,7 @@ func TestAIImageCount_RequiresAuth(t *testing.T) {
 
 func TestAIImageCount_RequiresAdminOrSupport(t *testing.T) {
 	prefix := uniquePrefix("aicount_auth")
-	uid := CreateTestUser(t, prefix, "User")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
 	_, tok := CreateTestSession(t, uid)
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/admin/ai-images/count?jwt="+tok, nil))
 	assert.Equal(t, 403, resp.StatusCode)
@@ -453,7 +454,7 @@ func TestAIImageCount_RequiresAdminOrSupport(t *testing.T) {
 
 func TestAIImageCount_ReturnsCount(t *testing.T) {
 	prefix := uniquePrefix("aicount_val")
-	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	supportID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
 	_, tok := CreateTestSession(t, supportID)
 
 	// Get baseline count before creating test images.

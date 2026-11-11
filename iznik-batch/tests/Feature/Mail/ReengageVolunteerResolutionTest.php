@@ -253,4 +253,44 @@ class ReengageVolunteerResolutionTest extends TestCase
         $this->assertNotNull($volunteer);
         $this->assertSame($real->id, $volunteer['groupid'], 'a rippled-in group must never sign off');
     }
+
+    public function test_a_trashnothing_implicit_membership_is_never_a_sign_off_community(): void
+    {
+        $lat = 51.45;
+        $lng = -2.60;
+
+        $real = $this->createGroupAt(51.45, -2.20);
+        $this->setCatchment(
+            $real->id,
+            'POLYGON((-2.75 51.35, -2.45 51.35, -2.45 51.55, -2.75 51.55, -2.75 51.35))'
+        );
+        $this->addModerator($real->id, 'Real');
+
+        $member = $this->createMemberAt($real->id, $lat, $lng);
+
+        // A group TrashNothing placed the member's post on, which they did not choose
+        // (implicit = 1, rippled = 0). Its catchment contains the member and its centre is
+        // nearer, so only the implicit flag keeps it out.
+        $placed = $this->createGroupAt(51.45, -2.60);
+        $this->setCatchment(
+            $placed->id,
+            'POLYGON((-2.70 51.40, -2.50 51.40, -2.50 51.50, -2.70 51.50, -2.70 51.40))'
+        );
+        $this->addModerator($placed->id, 'Placed');
+        DB::table('memberships')->insert([
+            'userid'       => $member->id,
+            'groupid'      => $placed->id,
+            'role'         => Membership::ROLE_MEMBER,
+            'collection'   => Membership::COLLECTION_APPROVED,
+            'rippled'      => 0,
+            'implicit'     => 1,
+            'added_origin' => Membership::ADDED_ORIGIN_TN_UNADDRESSED,
+            'added'        => now(),
+        ]);
+
+        $volunteer = (new ReengageContentService())->resolveVolunteer($member);
+
+        $this->assertNotNull($volunteer);
+        $this->assertSame($real->id, $volunteer['groupid'], 'a group TrashNothing placed them on must never sign off');
+    }
 }

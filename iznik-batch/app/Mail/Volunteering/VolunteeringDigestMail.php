@@ -5,6 +5,7 @@ namespace App\Mail\Volunteering;
 use App\Mail\Contracts\DescribesMemberContent;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\TrackableEmail;
+use App\Models\User;
 use App\Services\DonateLinkService;
 use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
@@ -119,8 +120,9 @@ class VolunteeringDigestMail extends MjmlMailable implements DescribesMemberCont
             // Our own Stripe donate page rather than the PayPal-only shortlink,
             // so Apple Pay / Google Pay / Link are on offer too. USER_SITE is on
             // the Go API's isValidRedirectURL allow-list, so the tracked
-            // redirect still resolves. See DonateLinkService.
-            'donateUrl'      => $this->trackedUrl(
+            // redirect still resolves. See DonateLinkService. Null for a donor
+            // who asked not to be asked.
+            'donateUrl'      => $this->wantsDonationAsks() ? $this->trackedUrl(
                 app(DonateLinkService::class)->urlForUserId(
                     $this->userId,
                     app(DonateLinkService::class)->defaultAmount(),
@@ -128,8 +130,15 @@ class VolunteeringDigestMail extends MjmlMailable implements DescribesMemberCont
                 ),
                 'donate_link',
                 'donate'
-            ),
+            ) : NULL,
             'donateMarksUrl' => config('freegle.images.paymethods'),
         ]);
+    }
+
+    private function wantsDonationAsks(): bool
+    {
+        $user = $this->userId ? User::find($this->userId) : NULL;
+
+        return !$user || $user->wantsDonationAsks();
     }
 }

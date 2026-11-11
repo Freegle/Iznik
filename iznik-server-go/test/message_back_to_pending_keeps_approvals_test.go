@@ -5,6 +5,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,8 +24,8 @@ type modCommunity struct {
 func addModCommunity(t *testing.T, name string) modCommunity {
 	prefix := uniquePrefix(name)
 	c := modCommunity{gid: CreateTestGroup(t, prefix)}
-	c.mod = CreateTestUser(t, prefix+"_mod", "User")
-	CreateTestMembership(t, c.mod, c.gid, "Moderator")
+	c.mod = CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, c.mod, c.gid, utils.ROLE_MODERATOR)
 	_, c.tok = CreateTestSession(t, c.mod)
 	return c
 }
@@ -93,8 +94,8 @@ func TestHomeBackToPendingKeepsHandApprovedRippledCopy(t *testing.T) {
 
 	var poster uint64
 	db.Raw("SELECT fromuser FROM messages WHERE id = ?", f.msgID).Scan(&poster)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, 'Member', 1)", poster, f.recv)
-	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, 'Member', 1)", poster, other.gid)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, ?, 1)", poster, f.recv, utils.ROLE_MEMBER)
+	db.Exec("INSERT INTO memberships (userid, groupid, role, rippled) VALUES (?, ?, ?, 1)", poster, other.gid, utils.ROLE_MEMBER)
 
 	approveByHand(t, f.msgID, f.recv, f.tokRecv)
 	before := approvalOf(f.msgID, f.recv)

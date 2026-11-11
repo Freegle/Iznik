@@ -1,13 +1,22 @@
 ---
-last_reviewed: 2026-10-15
+last_reviewed: 2026-11-10
 owner: Freegle dev team
 covers:
+  - iznik-nuxt3/composables/useMe.js
+  - iznik-nuxt3/modtools/components/ModSupportUser.vue
+  - iznik-nuxt3/modtools/pages/giftaid.vue
+  - iznik-nuxt3/modtools/components/ModGiftAidNoResponse.vue
+  - iznik-nuxt3/api/GiftAidAPI.js
   - iznik-server-go/donations/**
   - iznik-server-go/user/user.go
   - iznik-batch/app/Services/DonationService.php
   - iznik-batch/app/Services/GiftAidClaimService.php
+  - iznik-batch/app/Services/DonationThankPrepService.php
+  - iznik-batch/resources/views/emails/mjml/donation/thank-prep.blade.php
   - iznik-batch/app/Services/PaypalDownloadService.php
   - iznik-batch/app/Console/Commands/Donation/**
+  - iznik-batch/app/Console/Commands/Mail/SendAdminCommand.php
+  - iznik-nuxt3/pages/marketing-optout.vue
 ---
 
 # Donations and Gift Aid
@@ -49,15 +58,20 @@ appears in email is described in
 flowchart LR
     A[Member donates<br/>Stripe or PayPal] --> B[IPN/webhook<br/>Go API]
     B --> C[(users_donations)]
-    C --> D[donations:update-ads-target<br/>turns ads off for the day]
-    C --> E[donations:thank<br/>thank-you mail]
-    C --> F[Gift Aid matching]
+    P[donations:paypal-download<br/>every 4h, IPN misses] --> C
+    X[Bank, cheque, PPGF<br/>recorded in ModTools or bulk upload] --> C
+    C --> D[donations:update-ads-target<br/>ads off once the day's target is met]
+    C --> E[donations:thank<br/>thank-you mail, daily]
+    C --> E2[donations:thank-prep<br/>one card per gift needing a personal reply]
+    C --> E3[donations:summary<br/>hourly running total]
+    C --> F[donations:update-giftaid<br/>every 10 min: match, chase]
     F --> G[(giftaid)]
     G --> H[donations:giftaid-claim<br/>CSV for HMRC]
 ```
 
-There is also a drawn overview of the donor journey:
-[freegle-donor-process.svg](../../freegle-donor-process.svg).
+There is also a drawn overview of the donor journey, including the people's steps and the
+bank flow agreed with the finance team in May 2026 that is not yet built:
+[freegle-donor-process.html](../../freegle-donor-process.html).
 
 ## Gift Aid
 
@@ -85,6 +99,93 @@ Claims are submitted to HMRC by a person, not by this code. Who does that is in
 `donations:thank` and `donations:thank-prep` send thank-you mail; `thanked` on
 `users_donations` stops anyone being thanked twice. A separate daily summary
 (`donations:summary`) reports the day's takings to the people who need to see it.
+
+## Three answers: given, declined, no response
+
+A donor's Gift Aid answer is one of three things, and the records keep them apart:
+
+| Answer | Where it is recorded |
+|---|---|
+| Consent given | a `giftaid` row with a period other than `Declined` |
+| Consent declined | a `giftaid` row with period `Declined` |
+| Asked, no response | no answer in `giftaid`, and one or more rows in `giftaid_asks` |
+
+A `giftaid` row that was given up in review (deleted, and not `Declined`) is not an answer.
+
+- **`giftaid_asks`** has one row per time we asked and heard nothing, so a donor can have many.
+  `askedby` is the volunteer who asked, or NULL for the chase-up mail, which writes a row each
+  time it sends (`sendGiftAidChaseUps`). The migration backfilled each donor's first
+  `users_donations.giftaidchaseup` as one row.
+- **`giftaid.recordedby`** is the volunteer who recorded an answer for the donor. It is NULL when
+  the donor filled in the form themselves, and the donor's own declaration or withdrawal clears it.
+  A donor's own `GET /giftaid` leaves it out.
+- **`POST /giftaid/record`** (Gift Aid permission) takes `{userid, outcome}`. `Declined` writes or
+  replaces the declaration as Declined, dated now and keeping any name and address already there.
+  `NoResponse` adds an ask, and answers 409 once the donor has answered. Volunteers used to sign in
+  as the donor to decline; this replaces that.
+- **`GET /giftaid?noresponse=true`** lists donors with asks and no answer, with the number of asks,
+  the latest, who made it, and what they have given. The ModTools page shows it
+  (`ModGiftAidNoResponse.vue`), with the buttons that call `POST /giftaid/record`.
+
+The Gift Aid status on each thank-prep card follows the same three answers: Active, Just declared,
+On file: Declined (with "recorded by a volunteer" when `recordedby` is set), and, with no
+declaration, "Asked on <date>, no reply" or "Asked 3 times, last on <date>, no reply" from
+`giftaid_asks`, otherwise "Never asked / not on file".
+
+## Donors who ask not to be asked
+
+Anyone who has ever donated (`me.donated`, the latest `users_donations` timestamp) gets a
+**Donation requests** switch in Settings (`components/settings/OtherSettingsSection.vue`).
+Turning it off sets `users.settings.nodonationasks = true`, and the opt-out lasts a year.
+The server owns the end date, `users.settings.nodonationasksuntil` (UTC, RFC 3339): settings saves
+go through `applyDonationAskLapse` in `iznik-server-go/user/donationasks.go`, which dates a new
+opt-out a year ahead, keeps the date of a running one (clients send the whole settings object on
+unrelated saves), clears it when asks go back on, and lets a lapsed opt-out lapse when a client
+echoes it back with its old date. Every reader treats a passed date as lapsed: `DonationAsksPaused`
+in Go, `User::settingsAllowDonationAsks` in batch and `composables/useDonationAsks.js` on the
+client. An opt-out with no date predates the lapse and still holds. The daily
+`donations:lapse-optouts` command dates those a year from its run, and switches off the ones
+whose date has passed, so app builds that read only the switch catch up. Settings shows "We won't
+ask you to donate until <date>" while one runs. Support can see and change the
+same switch in the ModTools support view (`ModSupportUser.vue`), which saves through
+`PATCH /user`. Support needs to know whether the member has donated to show it, but the
+donation list needs Gift Aid permission, and Admin or Support who do not moderate the member's
+communities do not get their full settings. So `GET /user/:id` also returns two yes/no fields to
+Admin and Support (and to the member themselves): `donor` and `nodonationasks`, which is false
+once the opt-out has lapsed, plus `nodonationasksuntil` while it runs. No amounts, donation dates
+or other settings go with them. The switch is shown to people who have never donated only if the flag is
+already set, so it cannot be left stranded.
+
+The flag stops every ask:
+
+- **On the site:** `useMe().askForDonations` is false, and every ask checks it: the
+  post-outcome modal (`useDonationAskModal`), the My Posts ask, the group birthday modal, the
+  donate banner in ad slots, "Hate ads? Donate", and the "please donate £1" after adding an
+  event or volunteering opportunity.
+- **By email:** `User::wantsDonationAsks()` is false. The ask email
+  (`DonationService::askForDonations`), the birthday appeal and Newsletter ADMINs
+  (`SendAdminCommand`) skip the member, and the
+  digest, chat notification and volunteering digest get a null `donateUrl`, which leaves out
+  every donate button. See [Donation asks in email](donation-asks-in-email.md).
+
+Links to `/donate` in footers and menus stay; they are not asks.
+
+## Marketing consent
+
+Fundraising and newsletter email needs the member's yes, held in `users.marketingconsent`
+(default 0). The server owns it.
+
+- **Giving it at sign-up or login.** The box under the form (`LoginModal.vue`) starts unticked.
+  A tick sets `marketingConsentTicked` in the misc store, which is not persisted, and the next
+  `fetchUser` in `stores/auth.js` saves it. The box can only give consent; it never withdraws it.
+- **Changing it.** **Freegle updates** in Settings (`OtherSettingsSection.vue`) shows and saves the
+  server value. The opt-out link in a Newsletter ADMIN (`pages/marketing-optout.vue`) sets it
+  to 0, and `relevantallowed` to 0 as well.
+- **Other places that set it.** Microvolunteering and the Gift Aid form, from their own wording.
+- **Readers.** The birthday appeal (`BirthdayService`) and Newsletter ADMINs
+  (`SendAdminCommand`). A Newsletter ADMIN also skips members with donation requests off, and
+  memberships that Rippling or TrashNothing made (`memberships.rippled`, `memberships.implicit`).
+  Essential ADMINs ignore all three.
 
 ## Things to be careful about
 

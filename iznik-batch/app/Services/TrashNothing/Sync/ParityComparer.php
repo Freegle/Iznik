@@ -2,6 +2,8 @@
 
 namespace App\Services\TrashNothing\Sync;
 
+use App\Support\SubjectParser;
+
 /**
  * Coverage-first, four-layer comparison between the legacy email path's and
  * the new API path's TN-SYNC-TRACE trace lines. Extracted from
@@ -984,7 +986,10 @@ class ParityComparer
 
         $prefix = strtoupper($m[1]);
 
-        return (self::SUBJECT_PREFIX_CANONICAL[$prefix] ?? $prefix) . ': ' . $m[2];
+        // The API path rebuilds the location bracket from the resolved postcode
+        // (GroupPostIngestionService::createMessage); the email path keeps the
+        // bracket TN wrote. Neither is the item, so compare without it.
+        return SubjectParser::withLocation((self::SUBJECT_PREFIX_CANONICAL[$prefix] ?? $prefix) . ': ' . $m[2], null);
     }
 
     /**

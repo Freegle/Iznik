@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import ModDashboardFreeglersPosting from '~/modtools/components/ModDashboardFreeglersPosting.vue'
+import { SYSTEMROLE_MODERATOR, SYSTEMROLE_USER } from '~/constants'
 
 // Mock the composable
 const mockLoading = ref(false)
@@ -39,14 +40,14 @@ describe('ModDashboardFreeglersPosting', () => {
       displayname: 'User One',
       posts: 5,
       profile: { turl: 'https://example.com/avatar1.jpg' },
-      systemrole: 'User',
+      systemrole: SYSTEMROLE_USER,
     },
     {
       id: 2,
       displayname: 'User Two',
       posts: 3,
       profile: { turl: 'https://example.com/avatar2.jpg' },
-      systemrole: 'Moderator',
+      systemrole: SYSTEMROLE_MODERATOR,
     },
   ]
 

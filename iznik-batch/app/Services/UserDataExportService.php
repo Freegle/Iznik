@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Length;
+use App\Models\UserAddress;
+use App\Models\UxExperimentExposure;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -127,10 +129,14 @@ class UserDataExportService
         $data['excluded_locations'] = $this->getExcludedLocations($userId);
         $data['messages'] = $this->getMessages($userId);
         $data['chats'] = $this->getChats($userId);
+        $data['questions'] = $this->getQuestions($userId);
         $data['newsfeed'] = $this->getNewsfeed($userId);
         $data['aboutme'] = $this->getAboutMe($userId);
         $data['stories'] = $this->getStories($userId);
+        $data['question_answers'] = $this->getQuestionAnswers($userId);
         $data['exports'] = $this->getExportHistory($userId);
+        $data['interested'] = $this->getInterested($userId);
+        $data['experiments'] = $this->getExperiments($userId);
         $data['logs'] = $this->getLogs($userId);
 
         return $data;
@@ -376,11 +382,17 @@ class UserDataExportService
 
     private function getAddresses(int $userId): array
     {
-        return DB::table('users_addresses')
-            ->where('userid', $userId)
-            ->select('id', 'pafid', 'lat', 'lng')
-            ->get()
-            ->map(fn($e) => (array) $e)
+        // The address as text, not just its PAF id, so the member can read it.
+        return UserAddress::where('userid', $userId)
+            ->get(['id', 'pafid', 'lat', 'lng'])
+            ->map(fn($a) => [
+                'id' => $a->id,
+                'pafid' => $a->pafid,
+                'lat' => $a->lat,
+                'lng' => $a->lng,
+                'singleline' => $a->getSingleLine(),
+                'multiline' => $a->getMultiLine(),
+            ])
             ->toArray();
     }
 
@@ -573,6 +585,21 @@ class UserDataExportService
         return $chats;
     }
 
+    /**
+     * The questions Freegle asked this member in a chat, and how they answered: which post it was about, the answer,
+     * whether it was a button or another message, and when. The text of a question is Freegle's, and is not in it.
+     */
+    private function getQuestions(int $userId): array
+    {
+        return DB::table('chat_prompts')
+            ->where('userid', $userId)
+            ->select('kind', 'msgid', 'answer', 'answered_via', 'answered_at', 'created_at')
+            ->orderBy('chatmsgid', 'asc')
+            ->get()
+            ->map(fn($e) => (array) $e)
+            ->toArray();
+    }
+
     private function getNewsfeed(int $userId): array
     {
         $items = DB::table('newsfeed')
@@ -648,6 +675,59 @@ class UserDataExportService
             'stories' => $stories,
             'likes' => $likes,
         ];
+    }
+
+    /**
+     * The posts the member marked "I'm interested" in: the post, when they marked it and when the reminder email
+     * named it, if it has.
+     */
+    private function getInterested(int $userId): array
+    {
+        return DB::table('messages_interested')
+            ->where('userid', $userId)
+            ->select('msgid', 'added', 'chasedat')
+            ->orderBy('id', 'asc')
+            ->get()
+            ->map(fn($i) => (array) $i)
+            ->toArray();
+    }
+
+    /**
+     * Which experiment arm each send, reply or promise to this member used: the experiment, the arm,
+     * what kind of thing it decided and when. An export must not depend on an analytics table, so a
+     * table that has not been created yet gives an empty list. The write node is asked and read, because a
+     * read node that is behind would leave rows out of what is the member's own data.
+     */
+    private function getExperiments(int $userId): array
+    {
+        if (! UxExperimentExposure::tableExists()) {
+            return [];
+        }
+
+        return DB::table('ux_experiment_exposures')
+            ->useWritePdo()
+            ->where('userid', $userId)
+            ->select('experiment', 'arm', 'subject_type', 'exposed_at')
+            ->orderBy('id', 'asc')
+            ->get()
+            ->map(fn($e) => (array) $e)
+            ->toArray();
+    }
+
+    /**
+     * What the member answered when microvolunteering asked them questions about Freegle: the
+     * question, their answer (the words they wrote, or the option they picked) and when.
+     */
+    private function getQuestionAnswers(int $userId): array
+    {
+        return DB::table('ux_prompt_responses as r')
+            ->join('ux_prompts as p', 'p.id', '=', 'r.prompt_id')
+            ->where('r.userid', $userId)
+            ->select('p.question', 'r.answer', 'r.comment', 'r.timestamp')
+            ->orderBy('r.timestamp', 'asc')
+            ->get()
+            ->map(fn ($e) => ['question' => $e->question, 'answer' => json_decode($e->answer, true), 'comment' => $e->comment, 'timestamp' => $e->timestamp])
+            ->toArray();
     }
 
     private function getExportHistory(int $userId): array

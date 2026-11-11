@@ -27,9 +27,10 @@ const {
   mockLoggedInEver,
   mockLoginType,
   mockForceLogin,
-  mockMarketingConsent,
-  mockSetMarketingConsent,
+  mockMarketingConsentTicked,
+  mockSetMarketingConsentTicked,
   mockModtools,
+  mockAppOutOfDate,
   mockIsApp,
   mockIsiOS,
   mockOsVersion,
@@ -38,6 +39,7 @@ const {
   mockRouterPush,
   mockBandit,
   mockLoginTele,
+  mockRoute,
 } = vi.hoisted(() => {
   return {
     mockLogin: vi.fn().mockResolvedValue(),
@@ -46,9 +48,10 @@ const {
     mockLoggedInEver: { value: false },
     mockLoginType: { value: null },
     mockForceLogin: { value: false },
-    mockMarketingConsent: { value: true },
-    mockSetMarketingConsent: vi.fn(),
+    mockMarketingConsentTicked: { value: false },
+    mockSetMarketingConsentTicked: vi.fn(),
     mockModtools: { value: false },
+    mockAppOutOfDate: { value: false },
     mockIsApp: { value: false },
     mockIsiOS: { value: false },
     mockOsVersion: { value: '16.0' },
@@ -57,6 +60,7 @@ const {
     mockRouterPush: vi.fn(),
     mockBandit: { chosen: vi.fn(), shown: vi.fn() },
     mockLoginTele: { submit: vi.fn(), forgot: vi.fn(), used: vi.fn() },
+    mockRoute: { path: '/', params: {} },
   }
 })
 
@@ -65,6 +69,25 @@ vi.mock('~/composables/useLoginTelemetry', () => ({
     mockLoginTele.used(refs)
     return mockLoginTele
   },
+}))
+
+// The experiment arm. The modal asks for it with flowArm(FlowName.LOGIN, 'join-name-optional').
+const { mockFlowArm } = vi.hoisted(() => ({
+  mockFlowArm: vi.fn(() => null),
+}))
+
+vi.mock('~/composables/useFlowTelemetry', () => ({
+  FlowName: { LOGIN: 'login' },
+  flowArm: (...args) => mockFlowArm(...args),
+}))
+
+// A member who joins in arm b is asked for a name when they next post or reply.
+const { mockMarkAskNameLater } = vi.hoisted(() => ({
+  mockMarkAskNameLater: vi.fn(() => Promise.resolve()),
+}))
+
+vi.mock('~/composables/useAskName', () => ({
+  useAskName: () => ({ markAskNameLater: mockMarkAskNameLater }),
 }))
 
 // Mock stores with getter syntax for reactive values
@@ -96,12 +119,15 @@ vi.mock('~/stores/auth', () => ({
 
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => ({
-    get marketingConsent() {
-      return mockMarketingConsent.value
+    get marketingConsentTicked() {
+      return mockMarketingConsentTicked.value
     },
-    setMarketingConsent: mockSetMarketingConsent,
+    setMarketingConsentTicked: mockSetMarketingConsentTicked,
     get modtools() {
       return mockModtools.value
+    },
+    get appOutOfDate() {
+      return mockAppOutOfDate.value
     },
   }),
 }))
@@ -156,11 +182,11 @@ vi.mock('#imports', async () => {
   return {
     ...actual,
     useRoute: () => ({
-      params: {},
+      params: mockRoute.params,
       query: {},
-      path: '/',
+      path: mockRoute.path,
       name: 'index',
-      fullPath: '/',
+      fullPath: mockRoute.path,
       matched: [],
       redirectedFrom: undefined,
       meta: {},
@@ -196,11 +222,11 @@ vi.mock('#app', async () => {
 })
 
 globalThis.__testUseRoute = () => ({
-  params: {},
+  params: mockRoute.params,
   query: {},
-  path: '/',
+  path: mockRoute.path,
   name: 'index',
-  fullPath: '/',
+  fullPath: mockRoute.path,
   matched: [],
   redirectedFrom: undefined,
   meta: {},
@@ -240,6 +266,7 @@ describe('LoginModal', () => {
   let wrapper = null
 
   beforeEach(() => {
+    mockMarkAskNameLater.mockClear()
     vi.clearAllMocks()
 
     // Reset mock data
@@ -249,12 +276,17 @@ describe('LoginModal', () => {
     mockLoggedInEver.value = false
     mockLoginType.value = null
     mockForceLogin.value = false
-    mockMarketingConsent.value = true
+    mockMarketingConsentTicked.value = false
+    mockAppOutOfDate.value = false
     mockIsApp.value = false
     mockIsiOS.value = false
     mockMe.value = null
     mockLoggedIn.value = false
     mockRouterPush.mockReset()
+    mockFlowArm.mockReset()
+    mockFlowArm.mockReturnValue(null)
+    mockRoute.path = '/'
+    mockRoute.params = {}
 
     // Mock window objects for social login
     global.window.FB = {
@@ -403,6 +435,24 @@ describe('LoginModal', () => {
       const wrapper = createWrapper()
       await flushPromises()
       expect(wrapper.find('.b-modal').exists()).toBe(true)
+    })
+
+    it('numbers each copy of the modal on its root as data-instance', async () => {
+      mockLoggedIn.value = false
+      mockForceLogin.value = true
+      const first = createWrapper()
+      await flushPromises()
+      const firstId = Number(first.find('.b-modal').attributes('data-instance'))
+      first.unmount()
+
+      const second = createWrapper()
+      await flushPromises()
+      const secondId = Number(
+        second.find('.b-modal').attributes('data-instance')
+      )
+
+      expect(firstId).toBeGreaterThan(0)
+      expect(secondId).toBe(firstId + 1)
     })
 
     it('hides modal when forceLogin is false', async () => {
@@ -747,6 +797,36 @@ describe('LoginModal', () => {
         email: 'test@example.com',
         password: 'password123',
       })
+      // They gave a name, so nobody asks for one later.
+      expect(mockMarkAskNameLater).not.toHaveBeenCalled()
+    })
+
+    it('signs up on the community when on its join page', async () => {
+      // Every logged-out Join lands on /explore/join/<id>, so the account is created on that
+      // community with added_origin signup (PutUser's groupid and origin).
+      mockRoute.path = '/explore/join/123'
+      mockRoute.params = { id: '123' }
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      await wrapper.find('input[name="fullname"]').setValue('Test User')
+      await wrapper.find('.email-validator').setValue('test@example.com')
+      await wrapper.find('.password-entry').setValue('password123')
+      await flushPromises()
+
+      await wrapper.find('form').trigger('submit', {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      })
+      await flushPromises()
+
+      expect(mockSignUp).toHaveBeenCalledWith({
+        displayname: 'Test User',
+        email: 'test@example.com',
+        password: 'password123',
+        groupid: 123,
+        origin: 'signup',
+      })
     })
 
     it('shows error when sign up fails', async () => {
@@ -794,6 +874,86 @@ describe('LoginModal', () => {
 
       // When name is missing but email/password present, it tries login instead (confused user case)
       expect(mockLogin).toHaveBeenCalled()
+    })
+  })
+
+  describe('experiment join-name-optional', () => {
+    beforeEach(() => {
+      mockLoggedInEver.value = false
+      mockForceLogin.value = true
+    })
+
+    async function submitJoin(w) {
+      await w.find('.email-validator').setValue('test@example.com')
+      await w.find('.password-entry').setValue('password123')
+      await flushPromises()
+      await w.find('form').trigger('submit', {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      })
+      await flushPromises()
+    }
+
+    it('control keeps the name box and asks for the arm', async () => {
+      const w = createWrapper()
+      await flushPromises()
+
+      expect(mockFlowArm).toHaveBeenCalledWith('login', 'join-name-optional')
+      expect(w.find('input[name="fullname"]').exists()).toBe(true)
+    })
+
+    it('control without a name still treats the form as a sign-in', async () => {
+      mockFlowArm.mockReturnValue('a')
+      const w = createWrapper()
+      await flushPromises()
+
+      await submitJoin(w)
+
+      expect(mockLogin).toHaveBeenCalled()
+      expect(mockSignUp).not.toHaveBeenCalled()
+    })
+
+    it('arm b hides the name box', async () => {
+      mockFlowArm.mockReturnValue('b')
+      const w = createWrapper()
+      await flushPromises()
+
+      expect(w.find('input[name="fullname"]').exists()).toBe(false)
+      expect(w.find('.email-validator').exists()).toBe(true)
+      expect(w.find('.password-entry').exists()).toBe(true)
+    })
+
+    it('arm b signs up with no displayname and does not try a login', async () => {
+      mockFlowArm.mockReturnValue('b')
+      const w = createWrapper()
+      await flushPromises()
+
+      await submitJoin(w)
+
+      expect(mockLogin).not.toHaveBeenCalled()
+      expect(mockSignUp).toHaveBeenCalledWith({
+        email: 'test@example.com',
+        password: 'password123',
+      })
+      // No name was given, so they are asked for one when they next post or reply.
+      expect(mockMarkAskNameLater).toHaveBeenCalledTimes(1)
+    })
+
+    it('arm b still asks for an email and a password', async () => {
+      mockFlowArm.mockReturnValue('b')
+      const w = createWrapper()
+      await flushPromises()
+
+      await w.find('.email-validator').setValue('test@example.com')
+      await flushPromises()
+      await w.find('form').trigger('submit', {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      })
+      await flushPromises()
+
+      expect(mockSignUp).not.toHaveBeenCalled()
+      expect(w.text()).toContain('Please fill out the form.')
     })
   })
 
@@ -1002,6 +1162,24 @@ describe('LoginModal', () => {
       await flushPromises()
       expect(wrapper.find('.b-modal').exists()).toBe(false)
     })
+
+    it('stays hidden when the server says the app is out of date', async () => {
+      // ret:123 from GET /session leaves us with no user. Signing in again
+      // cannot help, so the out-of-date notice must not be covered by login.
+      mockAppOutOfDate.value = true
+      mockForceLogin.value = true
+      const wrapper = createWrapper()
+      await flushPromises()
+      expect(wrapper.find('.b-modal').exists()).toBe(false)
+    })
+
+    it('stays hidden when asked to show while the app is out of date', async () => {
+      mockAppOutOfDate.value = true
+      const wrapper = createWrapper()
+      wrapper.vm.show()
+      await flushPromises()
+      expect(wrapper.find('.b-modal').exists()).toBe(false)
+    })
   })
 
   describe('gmail tip', () => {
@@ -1107,12 +1285,19 @@ describe('LoginModal', () => {
       expect(wrapper.find('input[type="checkbox"]').exists()).toBe(true)
     })
 
-    it('checkbox is checked by default', async () => {
-      mockMarketingConsent.value = true
+    // Consent has to be given, so the box is never ticked for the member.
+    it('checkbox is unticked by default', async () => {
       const wrapper = createWrapper()
       await flushPromises()
       const checkbox = wrapper.find('input[type="checkbox"]')
-      expect(checkbox.element.checked).toBe(true)
+      expect(checkbox.element.checked).toBe(false)
+    })
+
+    it('records a tick for the next user fetch to save', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('input[type="checkbox"]').setValue(true)
+      expect(mockSetMarketingConsentTicked).toHaveBeenCalledWith(true)
     })
   })
 
@@ -1128,20 +1313,12 @@ describe('LoginModal', () => {
   })
 
   describe('component initialization', () => {
-    it('sets marketing consent to true on mount if not set', async () => {
-      mockMarketingConsent.value = null
+    it('does not tick the marketing consent box on mount', async () => {
+      mockMarketingConsentTicked.value = null
       mockForceLogin.value = true
       createWrapper()
       await flushPromises()
-      expect(mockSetMarketingConsent).toHaveBeenCalledWith(true)
-    })
-
-    it('does not override existing marketing consent', async () => {
-      mockMarketingConsent.value = false
-      mockForceLogin.value = true
-      createWrapper()
-      await flushPromises()
-      expect(mockSetMarketingConsent).not.toHaveBeenCalled()
+      expect(mockSetMarketingConsentTicked).not.toHaveBeenCalled()
     })
   })
 

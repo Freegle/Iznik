@@ -1,5 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createInMemoryPreProcessor } from '~/composables/useUppyInMemory'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import {
+  createInMemoryPreProcessor,
+  READ_RETRY_DELAY_MS,
+} from '~/composables/useUppyInMemory'
 
 const mockAction = vi.hoisted(() => vi.fn())
 vi.mock('~/composables/useClientLog', async (importOriginal) => {
@@ -15,6 +18,7 @@ function fakeUppy(files = []) {
     setFileState: vi.fn((id, patch) => {
       state.set(id, { ...state.get(id), ...patch })
     }),
+    removeFile: vi.fn((id) => state.delete(id)),
     peek: (id) => state.get(id),
   }
 }
@@ -31,9 +35,29 @@ function pickedFile(data, overrides = {}) {
   }
 }
 
+function notReadable() {
+  return Promise.reject(
+    Object.assign(new Error('The requested file could not be read'), {
+      name: 'NotReadableError',
+    })
+  )
+}
+
+// Runs the pre-processor through its retry wait without really waiting.
+async function run(preProcessor, fileIDs) {
+  const done = preProcessor(fileIDs)
+  await vi.advanceTimersByTimeAsync(READ_RETRY_DELAY_MS)
+  await done
+}
+
 describe('createInMemoryPreProcessor', () => {
   beforeEach(() => {
     mockAction.mockClear()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('replaces the picked file with an in-memory copy of the same bytes', async () => {
@@ -43,10 +67,10 @@ describe('createInMemoryPreProcessor', () => {
     })
     const uppy = fakeUppy([pickedFile(original)])
 
-    await createInMemoryPreProcessor({
-      getUppy: () => uppy,
-      uploader: 'photo',
-    })(['file-1'])
+    await run(
+      createInMemoryPreProcessor({ getUppy: () => uppy, uploader: 'photo' }),
+      ['file-1']
+    )
 
     const copy = uppy.peek('file-1').data
     expect(copy).not.toBe(original)
@@ -56,28 +80,68 @@ describe('createInMemoryPreProcessor', () => {
     expect(copy.lastModified).toBe(1234)
     expect(await copy.text()).toBe('abcdef')
     expect(uppy.peek('file-1').size).toBe(6)
+    expect(uppy.removeFile).not.toHaveBeenCalled()
     expect(mockAction).not.toHaveBeenCalled()
   })
 
-  it('keeps the original and logs why when the phone will not let us read it', async () => {
+  it('uses a second read when the first fails, and logs that it recovered', async () => {
+    const bytes = new TextEncoder().encode('xyz').buffer
+    const flaky = {
+      size: 3,
+      type: 'image/jpeg',
+      arrayBuffer: vi
+        .fn()
+        .mockImplementationOnce(notReadable)
+        .mockResolvedValueOnce(bytes),
+    }
+    const uppy = fakeUppy([pickedFile(flaky)])
+    const onUnreadable = vi.fn()
+
+    await run(
+      createInMemoryPreProcessor({
+        getUppy: () => uppy,
+        uploader: 'photo',
+        onUnreadable,
+      }),
+      ['file-1']
+    )
+
+    expect(flaky.arrayBuffer).toHaveBeenCalledTimes(2)
+    expect(await uppy.peek('file-1').data.text()).toBe('xyz')
+    expect(uppy.removeFile).not.toHaveBeenCalled()
+    expect(onUnreadable).not.toHaveBeenCalled()
+    expect(mockAction).toHaveBeenCalledWith(
+      'upload_file_unreadable',
+      expect.objectContaining({
+        error_name: 'NotReadableError',
+        recovered: true,
+      })
+    )
+  })
+
+  it('drops a photo the phone will not let us read, logs why, and says so', async () => {
     const unreadable = {
       size: 263997,
       type: 'image/jpeg',
-      arrayBuffer: () =>
-        Promise.reject(
-          Object.assign(new Error('The requested file could not be read'), {
-            name: 'NotReadableError',
-          })
-        ),
+      arrayBuffer: vi.fn(notReadable),
     }
     const uppy = fakeUppy([pickedFile(unreadable)])
+    const onUnreadable = vi.fn()
 
-    await createInMemoryPreProcessor({ getUppy: () => uppy, uploader: 'our' })([
-      'file-1',
-    ])
+    await run(
+      createInMemoryPreProcessor({
+        getUppy: () => uppy,
+        uploader: 'our',
+        onUnreadable,
+      }),
+      ['file-1']
+    )
 
+    expect(unreadable.arrayBuffer).toHaveBeenCalledTimes(2)
     expect(uppy.setFileState).not.toHaveBeenCalled()
-    expect(uppy.peek('file-1').data).toBe(unreadable)
+    // Removed, so it does not go on to fail as a network error.
+    expect(uppy.removeFile).toHaveBeenCalledWith('file-1')
+    expect(onUnreadable).toHaveBeenCalledWith(1)
     expect(mockAction).toHaveBeenCalledWith(
       'upload_file_unreadable',
       expect.objectContaining({
@@ -86,6 +150,7 @@ describe('createInMemoryPreProcessor', () => {
         reason: 'The requested file could not be read',
         file_size: 263997,
         file_type: 'image/jpeg',
+        recovered: false,
       })
     )
   })
@@ -101,14 +166,34 @@ describe('createInMemoryPreProcessor', () => {
       pickedFile(bad, { id: 'a' }),
       pickedFile(good, { id: 'b', name: 'b.jpg' }),
     ])
+    const onUnreadable = vi.fn()
 
-    await createInMemoryPreProcessor({
-      getUppy: () => uppy,
-      uploader: 'photo',
-    })(['a', 'b'])
+    await run(
+      createInMemoryPreProcessor({
+        getUppy: () => uppy,
+        uploader: 'photo',
+        onUnreadable,
+      }),
+      ['a', 'b']
+    )
 
-    expect(uppy.peek('b').data).not.toBe(good)
+    expect(uppy.removeFile).toHaveBeenCalledWith('a')
+    expect(uppy.removeFile).not.toHaveBeenCalledWith('b')
     expect(await uppy.peek('b').data.text()).toBe('xy')
+    // Told once for the batch, not once per photo.
+    expect(onUnreadable).toHaveBeenCalledTimes(1)
+  })
+
+  it('still drops an unreadable photo when nobody is listening', async () => {
+    const bad = { size: 1, type: 'image/jpeg', arrayBuffer: vi.fn(notReadable) }
+    const uppy = fakeUppy([pickedFile(bad)])
+
+    await run(
+      createInMemoryPreProcessor({ getUppy: () => uppy, uploader: 'photo' }),
+      ['file-1']
+    )
+
+    expect(uppy.removeFile).toHaveBeenCalledWith('file-1')
   })
 
   it('ignores files with nothing to read and a missing Uppy', async () => {
@@ -118,11 +203,13 @@ describe('createInMemoryPreProcessor', () => {
       uploader: 'photo',
     })
 
-    await pre(['remote', 'missing'])
-    await createInMemoryPreProcessor({ getUppy: () => null, uploader: 'x' })([
-      'remote',
-    ])
+    await run(pre, ['remote', 'missing'])
+    await run(
+      createInMemoryPreProcessor({ getUppy: () => null, uploader: 'x' }),
+      ['remote']
+    )
 
     expect(uppy.setFileState).not.toHaveBeenCalled()
+    expect(uppy.removeFile).not.toHaveBeenCalled()
   })
 })

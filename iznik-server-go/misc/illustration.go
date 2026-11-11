@@ -11,7 +11,7 @@ import (
 )
 
 // Pre-compiled regexps for item name normalisation.
-var prefixPattern = regexp.MustCompile(`(?i)^(OFFER|WANTED|TAKEN|RECEIVED):\s*`)
+var prefixPattern = regexp.MustCompile(`(?i)^(OFFER|OFFERED|WANTED|REQUESTED|TAKEN|RECEIVED):\s*`)
 var suffixPattern = regexp.MustCompile(`\s*\([^)]+\)\s*$`)
 
 // IllustrationResult is the response structure for the illustration endpoint.
@@ -28,6 +28,18 @@ type IllustrationData struct {
 	Cached      bool   `json:"cached"`
 }
 
+// IllustrationItemName is the name a post's picture is keyed by: the subject without its
+// OFFER/WANTED prefix, location or courtesy words. The batch's extractItemName does the same.
+func IllustrationItemName(subject string) string {
+	itemName := strings.TrimSpace(subject)
+	itemName = prefixPattern.ReplaceAllString(itemName, "")
+	itemName = suffixPattern.ReplaceAllString(itemName, "")
+	// "iron please" is keyed as "iron".
+	itemName = StripCourtesy(itemName)
+
+	return strings.TrimSpace(itemName)
+}
+
 // GetIllustration returns an AI illustration for an item name.
 // This endpoint checks the cache and returns cached illustrations.
 // If not cached, returns ret=3 so the frontend can fall back to generation.
@@ -41,19 +53,7 @@ func GetIllustration(c *fiber.Ctx) error {
 		})
 	}
 
-	// Clean and normalise the item name.
-	itemName := strings.TrimSpace(item)
-
-	// Remove OFFER/WANTED prefix if present.
-	itemName = prefixPattern.ReplaceAllString(itemName, "")
-
-	// Remove location suffix in parentheses if present.
-	itemName = suffixPattern.ReplaceAllString(itemName, "")
-
-	// Remove courtesy words ("iron please"), so the lookup matches the cached clean name.
-	itemName = StripCourtesy(itemName)
-
-	itemName = strings.TrimSpace(itemName)
+	itemName := IllustrationItemName(item)
 
 	if itemName == "" {
 		return c.JSON(IllustrationResult{
@@ -69,6 +69,16 @@ func GetIllustration(c *fiber.Ctx) error {
 	// Only an active image is offered: rejected, regenerating and suppressed ones are
 	// blanked when a post is shown, so attaching one leaves the post with an empty picture.
 	err := db.Table("ai_images").Select("externaluid").Where("name = ? AND status = 'active'", itemName).Scan(&externalUID).Error
+
+	if err == nil && (!externalUID.Valid || externalUID.String == "") {
+		// A name the batch has matched to another name's picture ("Sofas" -> "Sofa"),
+		// see AiImageMatcherService. The match itself runs in the batch, not here.
+		err = db.Table("ai_image_aliases").
+			Select("ai_images.externaluid").
+			Joins("INNER JOIN ai_images ON ai_images.id = ai_image_aliases.aiimageid").
+			Where("ai_image_aliases.name = ? AND ai_images.status = 'active'", itemName).
+			Scan(&externalUID).Error
+	}
 
 	if err != nil || !externalUID.Valid || externalUID.String == "" {
 		// Not cached - frontend should fall back to image generation.

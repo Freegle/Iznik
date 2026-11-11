@@ -24,9 +24,13 @@
         </span>
       </b-button>
     </slot>
+    <span v-if="refused" class="small text-muted ms-1" data-test="chat-refused">
+      You can't contact this Trash Nothing member from this community.
+    </span>
   </div>
 </template>
 <script setup>
+import { ref } from 'vue'
 import { useChatStore } from '~/stores/chat'
 import { useMessageStore } from '~/stores/message'
 import { useMiscStore } from '~/stores/misc'
@@ -83,6 +87,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['click', 'sent'])
+
+// Set when ModTools may not start a chat with this member.
+const refused = ref(false)
 const chatStore = useChatStore()
 const messageStore = useMessageStore()
 const miscStore = useMiscStore()
@@ -105,7 +112,8 @@ const openChat = async (
   firstmsgid,
   openInNewTab,
   noNavigate = false,
-  replySource = null
+  replySource = null,
+  firstimageid = null
 ) => {
   emit('click')
   console.log(
@@ -121,6 +129,11 @@ const openChat = async (
     // mods; if we're in MT we pass the groupid and userid and it opens from us mods to the user.
     const chatuserid = miscStore.modtools ? props.userid : 0
     const chatid = await chatStore.openChatToMods(props.groupid, chatuserid)
+
+    if (!chatid && miscStore.modtools && chatuserid > 0) {
+      refused.value = true
+      return
+    }
 
     if (openInNewTab && typeof window !== 'undefined' && window.open) {
       window.open(`/chats/${chatid}`, '_blank')
@@ -169,6 +182,21 @@ const openChat = async (
             message_id: firstmsgid,
           })
           throw e
+        }
+
+        if (firstimageid) {
+          // The photo goes as its own message after the text, as it would if it
+          // were added from the chat. The reply has already reached them, so a
+          // failure here is logged rather than failing the reply.
+          try {
+            await chatStore.send(chatid, null, null, firstimageid)
+          } catch (e) {
+            action('chat_reply_photo_failed', {
+              error: e.message,
+              chat_id: chatid,
+              message_id: firstmsgid,
+            })
+          }
         }
 
         if (firstmsgid) {

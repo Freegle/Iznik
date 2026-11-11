@@ -24,6 +24,8 @@ use App\Database\Expressions\StUnion;
 use App\Database\Expressions\StX;
 use App\Database\Expressions\StY;
 use App\Database\Expressions\Value;
+use App\Models\Membership;
+use App\Models\MessageGroup;
 use App\Services\Automod\AutomodMode;
 use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
@@ -2307,6 +2309,26 @@ class ExpandService
                )
                {$leftAfterRippleSql}
                AND NOT EXISTS (
+                   -- A repost of an item the community already carries is a duplicate:
+                   -- same poster, type and subject as an earlier post still live there.
+                   -- Approving the repost on its home group must not ripple it back into
+                   -- the communities that hold the original, or each shows the item twice.
+                   SELECT 1
+                   FROM messages_groups dmg
+                   JOIN messages dm ON dm.id = dmg.msgid
+                   JOIN messages cur ON cur.id = ?
+                   WHERE dmg.groupid = g.id
+                     AND dmg.collection = 'Approved'
+                     AND dmg.deleted = 0
+                     AND dm.id <> cur.id
+                     AND dm.deleted IS NULL
+                     AND dm.fromuser = cur.fromuser
+                     AND dm.type = cur.type
+                     AND dm.subject = cur.subject
+                     AND (dm.arrival < cur.arrival OR (dm.arrival = cur.arrival AND dm.id < cur.id))
+                     AND NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = dm.id)
+               )
+               AND NOT EXISTS (
                    -- A ban is an explicit mod ejection: it withdraws the poster's live posts
                    -- and (modern ban) deletes their membership while recording a users_banned
                    -- row. Never ripple a poster's post into a group they are banned from - that
@@ -2331,11 +2353,12 @@ class ExpandService
                      AND UPPER(mp.ourPostingStatus) = 'PROHIBITED'
                )",
             // One binding per placeholder, in query order: the reach shape, the
-            // msgid twice (already on the group; turned away by the group), then the
+            // msgid twice (already on the group; turned away by the group), the msgid again
+            // (duplicate of an earlier live post), then the
             // poster three times (users_banned, Banned membership, PROHIBITED posting
             // status). The ripple opt-out is spliced in as a group-id list above, so it
             // has no placeholder.
-            [$reachWkt, $msgid, $msgid, $fromuser, $fromuser, $fromuser]
+            [$reachWkt, $msgid, $msgid, $msgid, $fromuser, $fromuser, $fromuser]
         );
     }
 
@@ -2548,7 +2571,7 @@ class ExpandService
      */
     /**
      * Add the poster as a member of every group their post has rippled into (role Member,
-     * collection Approved), marked rippled=1. Email settings come from the poster's home/origin
+     * collection Approved), marked rippled=1 and implicit=1. Email settings come from the poster's home/origin
      * group membership, except immediate (-1) is downgraded to daily (24) so an unrequested
      * membership never starts a flood of immediate mail (a no-email 0 or daily 24 home setting is
      * preserved). A poster who has left every group on the post falls back to any membership they
@@ -2568,6 +2591,14 @@ class ExpandService
             $msg = DB::table('messages')->where('id', $msgid)->first(['fromuser']);
             $posterId = $msg->fromuser ?? null;
             if (!$posterId) {
+                return;
+            }
+
+            // A TN post placed on a community its poster never chose comes from someone who
+            // has not opted in to hearing from Freegle communities. The post still ripples, but
+            // the poster is not joined anywhere it reaches: a membership is what Freegle's mail
+            // goes by, and this one would also send the intro mail below.
+            if (MessageGroup::postIsUnaddressed($msgid)) {
                 return;
             }
 
@@ -2659,15 +2690,21 @@ class ExpandService
 
             $addedThisCall = 0;
             foreach ($targets as $t) {
+                $origin = Membership::addedOriginForInsert(
+                    Membership::ADDED_ORIGIN_RIPPLED, 'ExpandService::addPosterMembershipToRippledGroups',
+                    (int) $posterId, (int) $t->groupid,
+                );
                 $added = DB::table('memberships')->insertOrIgnore([[
                     'userid' => $posterId,
                     'groupid' => $t->groupid,
-                    'role' => 'Member',
+                    'role' => Membership::ROLE_MEMBER,
                     'collection' => 'Approved',
                     'emailfrequency' => $emailfrequency,
                     'eventsallowed' => $eventsallowed,
                     'volunteeringallowed' => $volunteeringallowed,
                     'rippled' => 1,
+                    'implicit' => 1,
+                    'added_origin' => $origin,
                     'added' => now(),
                 ]]);
                 if ($added > 0) {
@@ -2685,6 +2722,7 @@ class ExpandService
                         'collection' => 'Approved',
                         'processingrequired' => 1,
                         'rippled' => 1,
+                        'added_origin' => $origin,
                     ]);
                     // Log the join with a rippling-specific reason. V1 addMembership logs a
                     // Group/Joined entry whose text is 'Manual' (clicked join) or 'Auto'; we use

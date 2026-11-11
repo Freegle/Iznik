@@ -88,6 +88,7 @@
                 <SupportLink
                   email="partnerships@ilovefreegle.org"
                   text="partnerships@ilovefreegle.org"
+                  from="the National Reuse Day page"
                 />.
               </p>
             </b-card>

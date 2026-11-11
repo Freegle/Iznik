@@ -134,9 +134,8 @@
             Essential - will be sent to {{ audience }}{{ whenSuffix }}.
           </span>
           <span v-else>
-            Newsletter - will be sent to {{ audience }} who haven't opted out{{
-              whenSuffix
-            }}.
+            Newsletter - will be sent to {{ audience }} who have said yes to
+            Freegle updates{{ whenSuffix }}.
           </span>
         </NoticeMessage>
         <template v-if="admin.template">

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -115,16 +116,16 @@ func TestRipplingAnalytics_HeldRepliesSplitFirstVsAdditional(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("heldsplit")
 
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierA := CreateTestUser(t, prefix+"_replierA", "User")
-	replierB := CreateTestUser(t, prefix+"_replierB", "User")
-	otherID := CreateTestUser(t, prefix+"_other", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierA := CreateTestUser(t, prefix+"_replierA", utils.SYSTEMROLE_USER)
+	replierB := CreateTestUser(t, prefix+"_replierB", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
 	for _, u := range []uint64{posterID, replierA, replierB, otherID} {
-		CreateTestMembership(t, u, groupID, "Member")
+		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
 	}
 
 	// Post 1: its held reply is the only reply on the post — a FIRST reply held.
@@ -181,14 +182,14 @@ func TestRipplingAnalytics_OwnEarlierReplyIsNotCompany(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("heldsplitown")
 
-	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_SUPPORT)
 	_, token := CreateTestSession(t, adminID)
 
 	groupID := CreateTestGroup(t, prefix)
-	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	CreateTestMembership(t, posterID, groupID, "Member")
-	CreateTestMembership(t, replierID, groupID, "Member")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	replierID := CreateTestUser(t, prefix+"_replier", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, replierID, groupID, utils.ROLE_MEMBER)
 
 	msgID := seedHeldSplitPost(t, posterID, groupID, "OFFER: same replier twice")
 	// Both replies are from the SAME member, so they share one chat room.
