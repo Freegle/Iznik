@@ -1597,7 +1597,7 @@ return [
         'enabled'               => EnvSetting::env('FREEGLE_AUTOAPPROVE_ENABLED', ''),
         'trial_group_ids'       => EnvSetting::env('FREEGLE_AUTOAPPROVE_TRIAL_GROUPS', ''),
         'delay_minutes'         => EnvSetting::env('FREEGLE_AUTOAPPROVE_DELAY_MINUTES', ''),
-        'quality_check_percent' => (int) EnvSetting::env('FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT', 0),
+        'quality_check_percent' => EnvSetting::env('FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT', ''),
         'danger_log_days'       => EnvSetting::env('FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS', ''),
         'max_per_run'           => EnvSetting::env('FREEGLE_AUTOAPPROVE_MAX_PER_RUN', ''),
     ],

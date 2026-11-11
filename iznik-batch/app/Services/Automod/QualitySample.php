@@ -2,6 +2,8 @@
 
 namespace App\Services\Automod;
 
+use App\Support\EnvSetting;
+
 /**
  * The site-wide quality-check sample: a deterministic share of otherwise-clean posts held in
  * Pending for a moderator's verdict, so the sample's error rate can be set against the
@@ -15,7 +17,7 @@ final class QualitySample
 {
     public static function percent(): int
     {
-        return (int) config('freegle.autoapprove.quality_check_percent', 0);
+        return min(100, EnvSetting::wholeNumber(config('freegle.autoapprove.quality_check_percent'), 0));
     }
 
     public static function sampled(int $msgid): bool
