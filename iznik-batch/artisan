@@ -68,8 +68,8 @@ try {
 
     exit($status);
 } catch (\Throwable $e) {
-    // Capture bootstrap failures to Sentry.
-    if (class_exists(\Sentry\SentrySdk::class)) {
+    // Capture bootstrap failures to Sentry, but not a mistyped command line.
+    if (class_exists(\Sentry\SentrySdk::class) && ! \App\Console\UsageError::is($e)) {
         try {
             \Sentry\captureException($e);
             // Flush to ensure async sending completes before we exit.
