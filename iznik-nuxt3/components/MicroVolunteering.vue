@@ -139,6 +139,7 @@
               <div v-if="task.type === 'CheckMessage'">
                 <MicroVolunteeringCheckMessage
                   :id="task.msgid"
+                  :gate="gate"
                   @next="considerNext"
                 />
               </div>
@@ -458,9 +459,10 @@ function uxSkipped() {
 
 function considerNext(graded) {
   if (props.gate) {
-    if (graded === false) {
+    // A wrong answer, or a post that could not be marked at all, gets another post.
+    if (graded !== true) {
       gateAttempts.value++
-      gateWrong.value = true
+      gateWrong.value = graded === false
       if (gateAttempts.value >= GATE_MAX_ATTEMPTS) {
         showTask.value = false
         emit('failed')
@@ -469,7 +471,7 @@ function considerNext(graded) {
       getTask()
       return
     }
-    // Right, or could not be marked: open.
+    // Right: open.
     showTask.value = false
     emit('verified')
     return

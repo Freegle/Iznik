@@ -81,7 +81,10 @@ func ListMembers(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "q is required for filter=search")
 		}
 		like := "%" + term + "%"
-		q = q.Where("deleted IS NULL AND (fullname LIKE ? OR firstname LIKE ? OR lastname LIKE ? OR email LIKE ?)", like, like, like, like).
+		// The address lives in users_emails. It is matched from the start, so it can use the
+		// index; the name is matched anywhere.
+		q = q.Where("deleted IS NULL AND (fullname LIKE ? OR firstname LIKE ? OR lastname LIKE ? "+
+			"OR id IN (SELECT userid FROM users_emails WHERE email LIKE ?))", like, like, like, term+"%").
 			Order("added DESC")
 	default:
 		filter = "new"
@@ -90,7 +93,9 @@ func ListMembers(c *fiber.Ctx) error {
 	}
 
 	var members []MemberSummary
-	q.Limit(200).Scan(&members)
+	if err := q.Limit(200).Scan(&members).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Database error listing members")
+	}
 
 	if members == nil {
 		members = make([]MemberSummary, 0)
@@ -173,16 +178,41 @@ func BanMember(c *fiber.Ctx) error {
 	var req banRequest
 	_ = c.BodyParser(&req)
 
+	if id == myid {
+		return fiber.NewError(fiber.StatusBadRequest, "You cannot ban yourself")
+	}
+
 	db := database.DBConn
 
-	db.Table("users").Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"banned":   gorm.Expr("NOW()"),
-			"bannedby": myid,
-		})
+	// The member must exist, and only an Admin may ban a Moderator, Support or Admin account.
+	var target struct {
+		ID         uint64
+		Systemrole string
+	}
+	if err := db.Table("users").Select("id, systemrole").Where("id = ? AND deleted IS NULL", id).Scan(&target).Error; err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Database error looking up member")
+	}
+	if target.ID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Member not found")
+	}
+	if target.Systemrole != utils.SYSTEMROLE_USER && !auth.IsAdmin(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only an admin can ban a moderator, support or admin account")
+	}
 
-	// A ban stops someone posting, so the posts already up come down too.
-	message.WithdrawPostsOnBan(db, id, myid)
+	// The ban and the withdrawal of the member's posts stand or fall together. A ban stops
+	// someone posting, so the posts already up come down too.
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("users").Where("id = ?", id).
+			Updates(map[string]interface{}{
+				"banned":   gorm.Expr("NOW()"),
+				"bannedby": myid,
+			}).Error; err != nil {
+			return err
+		}
+		return message.WithdrawPostsOnBan(tx, id, myid)
+	}); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to ban member")
+	}
 
 	reason := req.Reason
 	log.Log(log.LogEntry{

@@ -117,8 +117,8 @@ describe('MicroVolunteering', () => {
           },
           MicroVolunteeringCheckMessage: {
             template:
-              '<div class="mv-check-message"><button class="mv-right" @click="$emit(\'next\', true)" /><button class="mv-wrong" @click="$emit(\'next\', false)" /></div>',
-            props: ['id'],
+              '<div class="mv-check-message"><button class="mv-right" @click="$emit(\'next\', true)" /><button class="mv-wrong" @click="$emit(\'next\', false)" /><button class="mv-unmarked" @click="$emit(\'next\')" /></div>',
+            props: ['id', 'gate'],
             emits: ['next'],
           },
           MicroVolunteeringFacebook: {
@@ -564,6 +564,28 @@ describe('MicroVolunteering', () => {
         await wrapper.find('.mv-wrong').trigger('click')
         await flushPromises()
       }
+      expect(wrapper.emitted('failed')).toHaveLength(1)
+      expect(wrapper.emitted('verified')).toBeFalsy()
+    })
+
+    it('offers another post when a post could not be marked, and gives up after three', async () => {
+      mockMicroVolunteeringStore.challenge.mockResolvedValue({
+        type: 'CheckMessage',
+        msgid: 7,
+        graded: true,
+      })
+      const wrapper = createWrapper({ gate: true })
+      await flushPromises()
+      await wrapper.find('.mv-unmarked').trigger('click')
+      await flushPromises()
+      expect(wrapper.emitted('verified')).toBeFalsy()
+      expect(mockMicroVolunteeringStore.challenge).toHaveBeenCalledTimes(2)
+      expect(wrapper.text()).not.toContain('not what other freeglers said')
+
+      await wrapper.find('.mv-unmarked').trigger('click')
+      await flushPromises()
+      await wrapper.find('.mv-unmarked').trigger('click')
+      await flushPromises()
       expect(wrapper.emitted('failed')).toHaveLength(1)
       expect(wrapper.emitted('verified')).toBeFalsy()
     })

@@ -261,6 +261,9 @@ type Message struct {
 	// per group. nil unless the caller is a moderator (see GetMessagesByIds), so a
 	// held post does not announce that fact to anyone else.
 	Heldby *uint64 `json:"heldby"`
+	// Deleted is when the post was taken down. A moderator can read a taken-down post by id, so
+	// ModTools can show it and offer to restore it; nobody else can, so it is nil for them.
+	Deleted *time.Time `json:"deleted,omitempty"`
 	// Lockdownheld: section 10.6/10.12 of the lockdown plan. True while this post has an
 	// unresolved lockdown_holds row (kind='post') - inserted by the Laravel batch lockdown:tick
 	// service, not by this API - so ModTools can label the pending card "held by lockdown"
@@ -493,14 +496,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					"messages.collection, messages.approvedat, messages.rejectedat, messages.autoreposts, messages.lastautopostwarning, messages.lastchaseup, " +
 					"messages.contentcheck_checked_at AS contentcheck_checked_at, messages.contentcheck_reasons AS contentcheck_reasons, "
 				if isMod {
-					selectCols += "messages.message, messages.approvedby, "
+					selectCols += "messages.message, messages.approvedby, messages.deleted, "
 				}
 				selectCols += "CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen"
 
-				whereSQL := "messages.id = ? AND messages.deleted IS NULL"
+				// A moderator can read a post that has been taken down, to restore it.
+				whereSQL := "messages.id = ?"
 				whereArgs := []interface{}{id}
 				if !isMod {
-					whereSQL += " AND users.deleted IS NULL"
+					whereSQL += " AND messages.deleted IS NULL AND users.deleted IS NULL"
 				}
 
 				// Find, not First: First unconditionally adds an implicit

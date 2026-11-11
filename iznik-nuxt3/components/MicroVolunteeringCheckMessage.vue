@@ -8,8 +8,8 @@
     </div>
     <div v-else-if="noLongerNeeded">
       <NoticeMessage variant="info" class="no-longer-needed">
-        Thanks for looking. This post doesn't need checking any more: it has
-        been sorted, or it is no longer on your communities.
+        Thanks for looking. This post doesn't need checking any more. It has been
+        sorted, or it is no longer available to check.
       </NoticeMessage>
     </div>
     <div v-else>
@@ -185,7 +185,7 @@
   </div>
 </template>
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useTimeAgo } from '@vueuse/core'
 import SpinButton from './SpinButton'
 import MessagePhotosModal from './MessagePhotosModal'
@@ -201,6 +201,12 @@ const props = defineProps({
   id: {
     type: Number,
     required: true,
+  },
+  // In the reply gate there is no footer and no way to close, so a post that cannot be
+  // marked has to hand control back.
+  gate: {
+    type: Boolean,
+    default: false,
   },
 })
 
@@ -235,6 +241,18 @@ const noLongerNeeded = computed(() => {
   if (!message.value) return false
   return !!message.value.outcomes?.length
 })
+
+// In the reply gate a post that is gone, or no longer needs checking, cannot be answered and
+// the modal has no other exit: report it as unmarked so the gate asks for another post.
+watch(
+  [found, noLongerNeeded],
+  ([isFound, isDone]) => {
+    if (props.gate && (!isFound || isDone)) {
+      emit('next')
+    }
+  },
+  { immediate: true }
+)
 
 // A 403 means the post is no longer ours to check; anything else is a real error.
 // Returns { result } when the vote was recorded, null when it was refused.

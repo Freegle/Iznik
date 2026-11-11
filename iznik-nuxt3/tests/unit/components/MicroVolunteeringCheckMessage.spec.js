@@ -313,6 +313,34 @@ describe('MicroVolunteeringCheckMessage', () => {
     })
   })
 
+  describe('in the reply gate', () => {
+    it('hands control back when the post has an outcome', async () => {
+      const wrapper = createWrapper(
+        { gate: true },
+        { ...mockMessage, outcomes: [{ outcome: 'Taken' }] }
+      )
+      await flushPromises()
+      expect(wrapper.findComponent(MicroVolunteeringCheckMessage).emitted('next')).toHaveLength(1)
+    })
+
+    it('hands control back when the post cannot be found', async () => {
+      const wrapper = createWrapper({ gate: true }, null)
+      await flushPromises()
+      expect(
+        wrapper.findComponent(MicroVolunteeringCheckMessage).emitted('next')
+      ).toHaveLength(1)
+    })
+
+    it('does not hand control back outside the gate', async () => {
+      const wrapper = createWrapper(
+        {},
+        { ...mockMessage, outcomes: [{ outcome: 'Taken' }] }
+      )
+      await flushPromises()
+      expect(wrapper.findComponent(MicroVolunteeringCheckMessage).emitted('next')).toBeFalsy()
+    })
+  })
+
   describe('rejection flow', () => {
     it('shows comment form when not right clicked', async () => {
       const wrapper = createWrapper()
