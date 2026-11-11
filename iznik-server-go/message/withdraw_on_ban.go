@@ -17,10 +17,15 @@ const BanWithdrawnText = "Marked as withdrawn by ban"
 // outcome; a post that is only pending is deleted, as a member's own withdrawal of a pending
 // post is. Posts that already have an outcome are left alone. Nobody who replied is told.
 //
-// Each post is taken down in its own transaction, so a failure never leaves a post with its
-// intended outcome removed and no withdrawal recorded. The first error stops the run and is
-// returned; posts already withdrawn stay withdrawn.
-func WithdrawPostsOnBan(db *gorm.DB, userid uint64, byuser uint64) error {
+// Each post is taken down in its own transaction (a savepoint when db is already inside one),
+// so a failure never leaves a post with its intended outcome removed and no withdrawal
+// recorded. The first error stops the run and is returned. A caller that passes a transaction
+// decides whether the posts already withdrawn stand.
+//
+// It returns the ids of the posts it took down. The caller queues them with
+// QueueFreebieAlertsRemoved once its own transaction has committed, so a rolled back ban
+// queues nothing.
+func WithdrawPostsOnBan(db *gorm.DB, userid uint64, byuser uint64) ([]uint64, error) {
 	var posts []struct {
 		ID         uint64
 		Collection string
@@ -31,8 +36,10 @@ func WithdrawPostsOnBan(db *gorm.DB, userid uint64, byuser uint64) error {
 		Where("NOT EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = m.id)").
 		Scan(&posts).Error; err != nil {
 		log.Printf("Failed to find posts to withdraw for banned user %d: %v", userid, err)
-		return err
+		return nil, err
 	}
+
+	withdrawn := []uint64{}
 
 	for _, p := range posts {
 		if p.Collection != utils.COLLECTION_PENDING && p.Collection != utils.COLLECTION_APPROVED {
@@ -63,13 +70,21 @@ func WithdrawPostsOnBan(db *gorm.DB, userid uint64, byuser uint64) error {
 		})
 		if err != nil {
 			log.Printf("Failed to withdraw message %d for banned user %d: %v", p.ID, userid, err)
-			return err
+			return nil, err
 		}
 
-		if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{"msgid": p.ID}); err != nil {
-			log.Printf("Failed to queue freebie alerts remove for message %d withdrawn by ban: %v", p.ID, err)
-		}
+		withdrawn = append(withdrawn, p.ID)
 	}
 
-	return nil
+	return withdrawn, nil
+}
+
+// QueueFreebieAlertsRemoved queues the removal of the freebie alerts for posts that
+// WithdrawPostsOnBan took down. Call it after the withdrawal has committed.
+func QueueFreebieAlertsRemoved(msgids []uint64) {
+	for _, id := range msgids {
+		if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{"msgid": id}); err != nil {
+			log.Printf("Failed to queue freebie alerts remove for message %d withdrawn by ban: %v", id, err)
+		}
+	}
 }

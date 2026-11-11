@@ -214,6 +214,7 @@ func BanMember(c *fiber.Ctx) error {
 
 	// The ban and the withdrawal of the member's posts stand or fall together. A ban stops
 	// someone posting, so the posts already up come down too.
+	var withdrawn []uint64
 	if err := db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Table("users").Where("id = ?", id).
 			Updates(map[string]interface{}{
@@ -222,10 +223,15 @@ func BanMember(c *fiber.Ctx) error {
 			}).Error; err != nil {
 			return err
 		}
-		return message.WithdrawPostsOnBan(tx, id, myid)
+		var err error
+		withdrawn, err = message.WithdrawPostsOnBan(tx, id, myid)
+		return err
 	}); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to ban member")
 	}
+
+	// Queued only once the ban has committed.
+	message.QueueFreebieAlertsRemoved(withdrawn)
 
 	reason := req.Reason
 	log.Log(log.LogEntry{
