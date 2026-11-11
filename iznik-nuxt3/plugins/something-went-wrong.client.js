@@ -21,7 +21,7 @@ function reportApiError(err) {
     return
   }
 
-  if (apiFailureDisposition(status) === 'error') {
+  if (apiFailureDisposition(status, err.response?.data) === 'error') {
     Sentry.captureException(err)
   } else if (!err.failureHandled) {
     logDroppedApiFailure({

@@ -338,7 +338,7 @@ export default class BaseAPI {
       // handled in the code, so the logError parameter (a boolean or a function for more complex
       // decisions) lets a caller say it is dealing with the failure itself.
       if (status !== null) {
-        const disposition = apiFailureDisposition(status)
+        const disposition = apiFailureDisposition(status, data)
         const log = typeof logError === 'function' ? logError(data) : logError
 
         if (disposition === 'drop' || !log) {

@@ -61,6 +61,23 @@ describe('useApiFailurePolicy', () => {
     ])('%s is %s', (status, expected) => {
       expect(apiFailureDisposition(status)).toBe(expected)
     })
+
+    // A route the API does not have is a frontend shipped before the API it needs: our bug.
+    it('reports a 404 for a route the API does not have', () => {
+      expect(
+        apiFailureDisposition(404, {
+          error: 404,
+          message: 'Cannot GET /apiv2/nosuchroute',
+        })
+      ).toBe('error')
+    })
+
+    it('drops a 404 for a thing that is not there', () => {
+      expect(
+        apiFailureDisposition(404, { error: 404, message: 'Group not found' })
+      ).toBe('drop')
+      expect(apiFailureDisposition(404, null)).toBe('drop')
+    })
   })
 
   describe('apiFailureFingerprint', () => {

@@ -3,7 +3,9 @@
 // An API call fails for a reason we can act on, or because that is the answer. A 404 for a group
 // that no longer exists, a 401 for a signed-out member, a 429 from the load balancer and a 403 for
 // something a moderator may not see are all answers, so none of them is a Sentry issue. A 400 or a
-// 500 is the client or the server being wrong, and is. A call that got no reply, or only a gateway
+// 500 is the client or the server being wrong, and is. So is a 404 for a route the API does not
+// have ("Cannot GET /apiv2/..."), which is a frontend shipped before the API it needs, not a
+// missing thing. A call that got no reply, or only a gateway
 // error, is one thing seen from many places (the API is unreachable), so it is one issue with the
 // endpoint as a tag, and the number of events in it tells us how bad an outage is.
 //
@@ -43,17 +45,24 @@ export function normaliseApiPath(path) {
     .join('/')
 }
 
+// The Go API's answer for a path no handler serves. A handler's own 404 says what was not found.
+const NO_ROUTE = /^Cannot (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) \//
+
 /**
  * What to do with a failed call: 'drop' (not a Sentry issue), 'unreachable' (the API did not
- * answer) or 'error' (our bug).
+ * answer) or 'error' (our bug). data is the response body, when there was one.
  */
-export function apiFailureDisposition(status) {
+export function apiFailureDisposition(status, data = null) {
   if (status === null || status === undefined) {
     return 'unreachable'
   }
 
   if (UNREACHABLE_STATUSES.has(status)) {
     return 'unreachable'
+  }
+
+  if (status === 404 && NO_ROUTE.test(data?.message || '')) {
+    return 'error'
   }
 
   if (EXPECTED_STATUSES.has(status)) {
@@ -124,6 +133,7 @@ function failedCall(err) {
 
   return {
     status: err.response?.status ?? null,
+    data: err.response?.data ?? null,
     method: err.request?.method || '',
     path: err.request?.path || '',
   }
@@ -147,7 +157,7 @@ export function applyApiFailurePolicy(event, hint) {
     return false
   }
 
-  const disposition = apiFailureDisposition(call.status)
+  const disposition = apiFailureDisposition(call.status, call.data)
 
   if (disposition === 'drop') {
     logDroppedApiFailure({ ...call, reason: 'expected_status' })
