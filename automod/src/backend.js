@@ -100,6 +100,8 @@ export function remainingMs(deadline, max) {
  */
 export class NliBackend {
   async ask(question, text, opts = {}) {
+    // A classification already running cannot be cut off, but none starts after the deadline.
+    remainingMs(opts.deadline, Infinity);
     const { classifier, model } = await getModel();
     const result = await classifier(text, [question], {
       hypothesis_template: '{}',
@@ -265,7 +267,15 @@ export class ClaudeBackend {
         this.cache.delete(this.cache.keys().next().value);
       }
     }
-    const entry = await this.cache.get(key);
+    let entry;
+    try {
+      entry = await this.cache.get(key);
+    } catch (err) {
+      // The call this review waited on was another review's, cut off at that caller's deadline
+      // or failed on its own: ask once more with this review's own deadline.
+      if (!hit || opts.retried) throw err;
+      return this.askAll(text, hints, { ...opts, retried: true });
+    }
     const acct = opts.acct;
     if (acct && !acct.batch) {
       acct.batch = true;
@@ -454,8 +464,8 @@ export class ClaudeCliBackend extends ClaudeBackend {
           let out;
           try {
             out = JSON.parse(stdout);
-          } catch (e) {
-            return reject(new Error(`claude cli output was not JSON: ${e.message}`));
+          } catch {
+            return reject(new Error('claude cli output was not JSON'));
           }
           if (out.is_error || (out.subtype && out.subtype !== 'success') || (out.terminal_reason && out.terminal_reason !== 'completed')) {
             return reject(new Error(`claude cli ${out.terminal_reason || out.subtype || 'error'}: ${String(out.result || '').slice(0, 200)}`));
@@ -464,8 +474,8 @@ export class ClaudeCliBackend extends ClaudeBackend {
           let json;
           try {
             json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
-          } catch (e) {
-            return reject(new Error(`claude cli gave no usable answer: ${e.message}`));
+          } catch {
+            return reject(new Error('claude cli gave no usable answer'));
           }
           resolve({ json, usage: cliUsage(out, this.cliModel) });
         },
@@ -572,7 +582,8 @@ export class JevBackend {
     if (opts.context || !this.questions.includes(question)) {
       return this.askSingle(question, text, opts.context, opts);
     }
-    if (!this.cache.has(text)) {
+    const shared = this.cache.has(text);
+    if (!shared) {
       const pending = this.requestAll(text, opts).catch((err) => {
         this.cache.delete(text);
         throw err;
@@ -582,7 +593,16 @@ export class JevBackend {
         this.cache.delete(this.cache.keys().next().value);
       }
     }
-    const p = (await this.cache.get(text)).get(question);
+    let answers;
+    try {
+      answers = await this.cache.get(text);
+    } catch (err) {
+      // See ClaudeBackend.askAll: a shared call that failed is asked once more, on this
+      // review's own deadline.
+      if (!shared || opts.retried) throw err;
+      return this.ask(question, text, { ...opts, retried: true });
+    }
+    const p = answers.get(question);
     if (p === undefined) {
       throw new Error('jev left a question unanswered');
     }
