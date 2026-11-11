@@ -82,6 +82,10 @@ const (
 	EEELabelQuorum      = 3
 )
 
+// ApproverMinMembershipDays is how long a member must have belonged to a community before
+// their Approve vote counts towards marking a self-published post as checked.
+const ApproverMinMembershipDays = 7
+
 // EEE label vocabularies — kept here so the server rejects invalid client
 // submissions and the Vue component / sync command have a single source of
 // truth via a comment.
@@ -404,7 +408,6 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 	return nil
 }
 
-// getApprovedMessageChallenge returns an approved message for any user to review
 // getApprovedMessageChallenge returns an approved message for any user to review.
 // When the earned-reach gate is on and reviewerLat/reviewerLng are non-nil, candidates are
 // restricted to posts whose rippling_reach max_drive_min covers the reviewer (straight-line
@@ -991,10 +994,20 @@ func ModFeedback(c *fiber.Ctx) error {
 // where a stamp means anything. Everywhere else a copy with no approver is a trusted member's
 // post or a 48-hour fallback approval, and stamping it would count in the moderation stats as a
 // human review of a post nobody reviewed.
+//
+// Only a live copy is stamped (collection Approved). A copy that is Pending, or in Spam, is
+// waiting for a moderator, and a stamp on it would lift the hold on a post a moderator has pulled
+// back and send it into the Approved list already stamped.
+//
+// Only votes from members who could have been offered the post count: an Approved member,
+// for at least ApproverMinMembershipDays, of one of the trial communities the post is on, which
+// has microvolunteering on for approved posts, with a trust level other than Declined or
+// Excluded. Votes cast before the poster last edited the post are about different text and do
+// not count.
 func markCheckedByMicrovolunteers(db *gorm.DB, msgid uint64) {
 	var direct []uint64
 	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND rippled_in = 0 AND approvedby IS NULL AND checkedat IS NULL AND deleted = 0", msgid).
+		Where("msgid = ? AND collection = ? AND rippled_in = 0 AND approvedby IS NULL AND checkedat IS NULL AND deleted = 0", msgid, utils.COLLECTION_APPROVED).
 		Scan(&direct)
 	trial := utils.AutoapproveTrialGroups(direct)
 	if len(trial) == 0 {
@@ -1005,7 +1018,14 @@ func markCheckedByMicrovolunteers(db *gorm.DB, msgid uint64) {
 	db.Table("microactions ma").
 		Select("COUNT(DISTINCT ma.userid)").
 		Joins("INNER JOIN messages m ON m.id = ma.msgid").
-		Where("ma.msgid = ? AND ma.actiontype = ? AND ma.result = 'Approve' AND ma.userid != COALESCE(m.fromuser, 0)", msgid, ChallengeCheckMessage).
+		Joins("INNER JOIN users u ON u.id = ma.userid").
+		Joins("INNER JOIN memberships mem ON mem.userid = ma.userid AND mem.groupid IN ? AND mem.collection = ? "+
+			"AND mem.added < NOW() - INTERVAL ? DAY", trial, utils.COLLECTION_APPROVED, ApproverMinMembershipDays).
+		Joins("INNER JOIN `groups` g ON g.id = mem.groupid AND g.microvolunteering = 1 "+
+			"AND (g.microvolunteeringoptions IS NULL OR JSON_EXTRACT(g.microvolunteeringoptions, '$.approvedmessages') = 1)").
+		Where("ma.msgid = ? AND ma.actiontype = ? AND ma.result = 'Approve' AND ma.userid != COALESCE(m.fromuser, 0) "+
+			"AND COALESCE(u.trustlevel, ?) NOT IN (?, ?) AND (m.editedat IS NULL OR ma.timestamp > m.editedat)",
+			msgid, ChallengeCheckMessage, TrustBasic, TrustDeclined, TrustExcluded).
 		Scan(&approvers)
 	if approvers < int64(ApprovalQuorum) {
 		return
@@ -1020,7 +1040,7 @@ func markCheckedByMicrovolunteers(db *gorm.DB, msgid uint64) {
 	}
 
 	db.Table("messages_groups").
-		Where("msgid = ? AND groupid IN ? AND rippled_in = 0 AND approvedby IS NULL AND checkedat IS NULL AND deleted = 0", msgid, trial).
+		Where("msgid = ? AND groupid IN ? AND collection = ? AND rippled_in = 0 AND approvedby IS NULL AND checkedat IS NULL AND deleted = 0", msgid, trial, utils.COLLECTION_APPROVED).
 		Update("checkedat", gorm.Expr("NOW()"))
 }
 

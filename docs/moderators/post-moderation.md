@@ -298,8 +298,13 @@ write notes.
   human look) but it is a wider authority than it appears.
 - **Two microvolunteers can clear a post as well.** When two different members approve
   a post through microvolunteering and nobody has rejected it, it counts as looked at:
-  it leaves the Check queue and the hold is lifted. A rejection afterwards puts it
-  back in the queue. A moderator's own check is never undone this way.
+  it leaves the Check queue and the hold is lifted. Only votes from members who could
+  have been offered the post count: they have belonged to the community for at least a
+  week, the community has microvolunteering on for approved posts, and their trust level
+  is not Declined or Excluded. Only a live copy is stamped, never one that is Pending.
+  A rejection afterwards puts it back in the queue, and so does an edit by the poster,
+  which also discards the votes cast on the old text. A moderator's own check is never
+  undone by a rejection or an edit.
 - **A paused post does not say so.** There is no badge on the post, and no queue of
   "posts frozen awaiting review" - only the aggregate figures on the SysAdmin page. If a
   member asks why their post seems stuck locally, nothing in ModTools will tell you it

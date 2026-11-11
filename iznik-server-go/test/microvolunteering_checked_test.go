@@ -31,6 +31,16 @@ func checkedState(t *testing.T, msgid, groupid uint64) (checkedat, checkedby int
 	return
 }
 
+// makeApproversEligible gives the community microvolunteering and ages the members' memberships
+// past ApproverMinMembershipDays, so their Approve votes count towards a stamp.
+func makeApproversEligible(t *testing.T, groupID uint64, users ...uint64) {
+	db := database.DBConn
+	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
+	for _, u := range users {
+		db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY WHERE userid = ? AND groupid = ?", u, groupID)
+	}
+}
+
 // A post that published itself is looked at by a human once two different
 // microvolunteers have approved it: checkedat is stamped with no checkedby, which
 // clears it from the Checked queue and lifts the hold on spreading. One approval is
@@ -50,6 +60,7 @@ func TestMicroVolunteeringTwoApprovalsMarkChecked(t *testing.T) {
 		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
 	}
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
+	makeApproversEligible(t, groupID, r1, r2, r3)
 	_, t1 := CreateTestSession(t, r1)
 	_, t2 := CreateTestSession(t, r2)
 	_, t3 := CreateTestSession(t, r3)
@@ -90,6 +101,7 @@ func TestMicroVolunteeringApprovalsRespectRejectionsAndModerators(t *testing.T) 
 	}
 	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
 	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
+	makeApproversEligible(t, groupID, r1, r2, r3)
 	_, t1 := CreateTestSession(t, r1)
 	_, t2 := CreateTestSession(t, r2)
 	_, t3 := CreateTestSession(t, r3)
@@ -197,6 +209,7 @@ func TestMicroVolunteeringApprovalsOutsideTheTrialDoNotMarkChecked(t *testing.T)
 	for _, u := range []uint64{poster, r1, r2} {
 		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
 	}
+	makeApproversEligible(t, groupID, r1, r2)
 	_, t1 := CreateTestSession(t, r1)
 	_, t2 := CreateTestSession(t, r2)
 
@@ -215,4 +228,140 @@ func TestMicroVolunteeringApprovalsOutsideTheTrialDoNotMarkChecked(t *testing.T)
 	postVerdict(t, t1, msg, "Approve")
 	at, _ = checkedState(t, msg, groupID)
 	assert.NotNil(t, at, "in the trial the same two approvals do")
+}
+
+// Two accounts that are not eligible reviewers cannot stamp a post as checked: a membership that
+// is new, a member with a declined trust level, and a community without microvolunteering each
+// leave the vote uncounted.
+func TestMicroVolunteeringIneligibleApproversDoNotMarkChecked(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_inelig")
+	groupID := CreateTestGroup(t, prefix)
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
+	t.Setenv("FREEGLE_AUTOMOD_SHADOW_GROUPS", "")
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	fresh := CreateTestUser(t, prefix+"_fresh", utils.SYSTEMROLE_USER)
+	declined := CreateTestUser(t, prefix+"_declined", utils.SYSTEMROLE_USER)
+	good1 := CreateTestUser(t, prefix+"_good1", utils.SYSTEMROLE_USER)
+	good2 := CreateTestUser(t, prefix+"_good2", utils.SYSTEMROLE_USER)
+	for _, u := range []uint64{poster, fresh, declined, good1, good2} {
+		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
+	}
+	makeApproversEligible(t, groupID, declined, good1, good2)
+	db.Exec("UPDATE users SET trustlevel = ? WHERE id = ?", microvolunteering.TrustDeclined, declined)
+	_, tFresh := CreateTestSession(t, fresh)
+	_, tDeclined := CreateTestSession(t, declined)
+	_, tGood1 := CreateTestSession(t, good1)
+	_, tGood2 := CreateTestSession(t, good2)
+
+	msg := CreateTestMessage(t, poster, groupID, prefix+" self published", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', approvedby = NULL, approvedat = NOW(), checkedat = NULL, checkedby = NULL, rippled_in = 0 WHERE msgid = ?", msg)
+	defer db.Exec("DELETE FROM microactions WHERE msgid = ?", msg)
+
+	postVerdict(t, tFresh, msg, "Approve")
+	postVerdict(t, tDeclined, msg, "Approve")
+	postVerdict(t, tGood1, msg, "Approve")
+	at, _ := checkedState(t, msg, groupID)
+	assert.Nil(t, at, "a new membership and a declined member do not count, so one eligible approval is not a quorum")
+
+	postVerdict(t, tGood2, msg, "Approve")
+	at, _ = checkedState(t, msg, groupID)
+	assert.NotNil(t, at, "two eligible approvals mark the post checked")
+
+	// A community that has not turned microvolunteering on has no eligible reviewers.
+	other := CreateTestGroup(t, prefix+"_other")
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d,%d", groupID, other))
+	for _, u := range []uint64{poster, good1, good2} {
+		CreateTestMembership(t, u, other, utils.ROLE_MEMBER)
+		db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY WHERE userid = ? AND groupid = ?", u, other)
+	}
+	off := CreateTestMessage(t, poster, other, prefix+" no microvolunteering", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', approvedby = NULL, approvedat = NOW(), checkedat = NULL, checkedby = NULL, rippled_in = 0 WHERE msgid = ?", off)
+	defer db.Exec("DELETE FROM microactions WHERE msgid = ?", off)
+	postVerdict(t, tGood1, off, "Approve")
+	postVerdict(t, tGood2, off, "Approve")
+	at, _ = checkedState(t, off, other)
+	assert.Nil(t, at, "a community without microvolunteering has no reviewers whose votes count")
+}
+
+// A copy that is Pending (a moderator pulled it back, or it is still counting down) is never
+// stamped, however many approvals it has, and old approvals do not stamp it when it is
+// published later.
+func TestMicroVolunteeringApprovalsDoNotStampAPendingCopy(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_pending")
+	groupID := CreateTestGroup(t, prefix)
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
+	t.Setenv("FREEGLE_AUTOMOD_SHADOW_GROUPS", "")
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	r1 := CreateTestUser(t, prefix+"_r1", utils.SYSTEMROLE_USER)
+	r2 := CreateTestUser(t, prefix+"_r2", utils.SYSTEMROLE_USER)
+	r3 := CreateTestUser(t, prefix+"_r3", utils.SYSTEMROLE_USER)
+	for _, u := range []uint64{poster, r1, r2, r3} {
+		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
+	}
+	makeApproversEligible(t, groupID, r1, r2, r3)
+	_, t1 := CreateTestSession(t, r1)
+	_, t2 := CreateTestSession(t, r2)
+	_, t3 := CreateTestSession(t, r3)
+
+	msg := CreateTestMessage(t, poster, groupID, prefix+" pulled back", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Pending', approvedby = NULL, checkedat = NULL, checkedby = NULL, rippled_in = 0 WHERE msgid = ?", msg)
+	defer db.Exec("DELETE FROM microactions WHERE msgid = ?", msg)
+
+	postVerdict(t, t1, msg, "Approve")
+	postVerdict(t, t2, msg, "Approve")
+	postVerdict(t, t3, msg, "Approve")
+	at, _ := checkedState(t, msg, groupID)
+	assert.Nil(t, at, "a Pending copy is waiting for a moderator and is never stamped checked")
+}
+
+// An edit after the approvals reopens a microvolunteer check and discards the votes cast on the
+// old text, so the post needs a fresh quorum. A moderator's check is left alone.
+func TestMicroVolunteeringEditReopensTheCheck(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_edit")
+	groupID := CreateTestGroup(t, prefix)
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
+	t.Setenv("FREEGLE_AUTOMOD_SHADOW_GROUPS", "")
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", fmt.Sprintf("%d", groupID))
+	poster := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	r1 := CreateTestUser(t, prefix+"_r1", utils.SYSTEMROLE_USER)
+	r2 := CreateTestUser(t, prefix+"_r2", utils.SYSTEMROLE_USER)
+	r3 := CreateTestUser(t, prefix+"_r3", utils.SYSTEMROLE_USER)
+	for _, u := range []uint64{poster, r1, r2, r3} {
+		CreateTestMembership(t, u, groupID, utils.ROLE_MEMBER)
+	}
+	makeApproversEligible(t, groupID, r1, r2, r3)
+	_, t1 := CreateTestSession(t, r1)
+	_, t2 := CreateTestSession(t, r2)
+	_, t3 := CreateTestSession(t, r3)
+	_, tPoster := CreateTestSession(t, poster)
+
+	msg := CreateTestMessage(t, poster, groupID, prefix+" edited", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', approvedby = NULL, approvedat = NOW(), checkedat = NULL, checkedby = NULL, rippled_in = 0 WHERE msgid = ?", msg)
+	defer db.Exec("DELETE FROM microactions WHERE msgid = ?", msg)
+
+	postVerdict(t, t1, msg, "Approve")
+	postVerdict(t, t2, msg, "Approve")
+	at, _ := checkedState(t, msg, groupID)
+	assert.NotNil(t, at, "two approvals mark the post checked")
+
+	body := fmt.Sprintf(`{"id":%d,"textbody":"Now a different body for the edit test"}`, msg)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+tPoster, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	at, _ = checkedState(t, msg, groupID)
+	assert.Nil(t, at, "an edit reopens a microvolunteer check")
+
+	// The votes on the old text do not count, so a single new approval is not a quorum.
+	db.Exec("UPDATE microactions SET timestamp = NOW() - INTERVAL 1 HOUR WHERE msgid = ?", msg)
+	db.Exec("UPDATE messages SET editedat = NOW() - INTERVAL 30 MINUTE WHERE id = ?", msg)
+	postVerdict(t, t3, msg, "Approve")
+	at, _ = checkedState(t, msg, groupID)
+	assert.Nil(t, at, "approvals cast before the edit do not count")
 }

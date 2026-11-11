@@ -5008,6 +5008,11 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 			Updates(map[string]interface{}{
 				"contentcheck_reasons": gorm.Expr("NULL"),
 			})
+		// A microvolunteer check (checkedat with no checkedby) was a look at the old text, so the
+		// edit reopens it. A moderator's own check is left alone.
+		db.Table("messages_groups").
+			Where("msgid = ? AND checkedby IS NULL AND checkedat IS NOT NULL AND deleted = 0", req.ID).
+			Update("checkedat", gorm.Expr("NULL"))
 	}
 
 	// The subject/body drive the vector search embedding (messages_embeddings), which is
