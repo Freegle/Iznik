@@ -249,13 +249,13 @@ describe('useImageFailureDiagnostics', () => {
 
       expect(mockCaptureMessage).toHaveBeenCalledTimes(1)
       expect(mockCaptureMessage).toHaveBeenCalledWith(
-        'Image delivery error 400: libvips error: heif: Unsupported feature: Unsupported codec (N.N)',
+        'Image delivery error 400: libvips error: heif: Unsupported feature: Unsupported codec (N)',
         expect.objectContaining({
           level: 'warning',
           fingerprint: [
             'image-delivery-error',
             '400',
-            'libvips error: heif: Unsupported feature: Unsupported codec (N.N)',
+            'libvips error: heif: Unsupported feature: Unsupported codec (N)',
           ],
           extra: expect.objectContaining({
             src: 'freegletusd-abc',

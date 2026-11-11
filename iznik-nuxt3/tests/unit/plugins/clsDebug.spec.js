@@ -70,6 +70,8 @@ describe('plugins/cls-debug.client', () => {
     // Two earlier shifts plus these two; the one that followed user input is ignored, as
     // the browser defines it.
     expect(context.shift_count).toBe(4)
-    expect(context.top_shifts[0]).toContain('div.jobs-slot')
+    // Largest first.
+    expect(context.top_shifts[0]).toContain('0.0700')
+    expect(context.top_shifts[1]).toContain('div.jobs-slot')
   })
 })
