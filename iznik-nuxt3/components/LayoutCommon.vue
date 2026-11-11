@@ -249,8 +249,9 @@ function monitorTabVisibility() {
       miscStore.visible = !document.hidden
 
       // me is a ref, so it must be read for its value: the ref itself is always truthy, which sent a
-      // signed-out visitor's own-data calls to the API on every return to the page.
-      if (me.value && !document.hidden) {
+      // signed-out visitor's own-data calls to the API on every return to the page. A member whose
+      // user has not loaded yet still has a session token, and still wants their badges.
+      if ((me.value || authStore.auth?.jwt) && !document.hidden) {
         try {
           // We have become visible. Refetch our notification count and chat count, which are the two key things which
           // produce red badges people should click on.

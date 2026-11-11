@@ -388,6 +388,7 @@ describe('LayoutCommon', () => {
     }
 
     afterEach(() => {
+      mockAuthStore.auth = { jwt: null }
       Object.defineProperty(document, 'hidden', {
         configurable: true,
         get: () => false,
@@ -424,6 +425,17 @@ describe('LayoutCommon', () => {
       document.dispatchEvent(new Event('visibilitychange'))
       await flushPromises()
       expect(mockNotificationStore.fetchCount).not.toHaveBeenCalled()
+    })
+
+    it('refetches for a member whose user has not loaded yet but who has a session token', async () => {
+      mockMe.value = null
+      mockAuthStore.auth = { jwt: 'a-jwt' }
+      createWrapper()
+      await flushPromises()
+      setHidden(false)
+      document.dispatchEvent(new Event('visibilitychange'))
+      await flushPromises()
+      expect(mockChatStore.fetchChats).toHaveBeenCalled()
     })
 
     // A signed-out visitor has no chats or notifications, and asking for them answers 401.
