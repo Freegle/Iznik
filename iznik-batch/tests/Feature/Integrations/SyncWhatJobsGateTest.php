@@ -195,6 +195,32 @@ class SyncWhatJobsGateTest extends TestCase
         $this->assertTrue($gate['skip']);
     }
 
+    // The skip limit and the sync times have to agree with the freshness monitor. With an
+    // unchanged feed the only rebuilds are the forced ones, so the gap between them must stay
+    // under the monitor's floor even after a run of half an hour. The runs are the ones in
+    // routes/console.php: 04:40 daily, then 09:00 to 21:00 every three hours (UTC).
+    public function test_forced_rebuilds_on_a_frozen_feed_stay_inside_the_freshness_floor(): void
+    {
+        $runHours = [4 + 40 / 60, 9, 12, 15, 18, 21];
+        $lastRebuild = null;
+        $maxGap = 0.0;
+
+        for ($day = 0; $day < 10; $day++) {
+            foreach ($runHours as $hour) {
+                $at = $day * 24 + $hour;
+                if ($lastRebuild === null || $at - $lastRebuild >= WhatJobsService::MAX_SKIP_HOURS) {
+                    if ($lastRebuild !== null && $day >= 2) {
+                        $maxGap = max($maxGap, $at - $lastRebuild);
+                    }
+                    $lastRebuild = $at;
+                }
+            }
+        }
+
+        $floorHours = config('freegle.monitoring.whatjobs_max_age_hours');
+        $this->assertLessThan($floorHours - 0.5, $maxGap, "longest gap between forced rebuilds: {$maxGap}h");
+    }
+
     public function test_unreadable_stored_state_falls_back_to_a_full_run(): void
     {
         DB::table('config')->upsert(

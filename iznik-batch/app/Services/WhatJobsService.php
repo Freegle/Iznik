@@ -53,9 +53,16 @@ class WhatJobsService
     // "unchanged" would leave the jobs table - and the jobs.seenat freshness check
     // that watches it (ScheduledOutcomeRegistry, 24h floor) - untouched for a day,
     // and would turn a gate bug that wrongly reports "unchanged" into a silent
-    // permanent stall. Forcing a real rebuild once inside the monitor's window means
-    // the existing alarm still fires if anything here breaks.
-    const MAX_SKIP_HOURS = 20;
+    // permanent stall. Forcing a real rebuild well inside the monitor's window means
+    // the existing alarm still fires if anything here breaks, and not when the feed
+    // has simply not changed.
+    //
+    // 12 and not 20 because of when the syncs run: 04:40, then 09:00, 12:00, 15:00,
+    // 18:00 and 21:00 UTC, with nothing between 21:00 and 04:40. With 20, a rebuild at
+    // 04:40 is not due again until 00:40, and nothing runs then, so the next one is
+    // 04:40, a full day later, which is over the 24h floor once the run time is added.
+    // With 12 the longest gap between rebuilds is about 15 hours.
+    const MAX_SKIP_HOURS = 12;
 
     // UK bounding box for geocoder
     const UK_SWLAT = 49.959999905;
