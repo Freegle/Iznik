@@ -47,7 +47,9 @@ def ask(host, model, span, timeout=60):
         return None
     return max(0, min(100, int(m.group()))) / 100.0
 
-def metrics(labels, scores, fp_cost=20.0, fn_cost=1.0):
+def metrics(labels, scores, fp_cost=20.0, fn_cost=1.0, neg_weight=1.0):
+    # neg_weight re-weights the sampled negatives so precision, cost and PR-AUC describe the
+    # natural prevalence, not the positive-enriched probe sample.
     n = len(labels); pos = sum(labels); neg = n - pos
     order = sorted(range(n), key=lambda i: scores[i], reverse=True)
     tps = []; fps = []; tp = fp = 0
@@ -59,17 +61,17 @@ def metrics(labels, scores, fp_cost=20.0, fn_cost=1.0):
     roc = roc / (pos * neg) if pos and neg else float("nan")
     pr = 0.0; prev = 0.0
     for t, fpc in zip(tps, fps):
-        rec = t / pos if pos else 0.0; prec = t / (t + fpc) if (t + fpc) else 1.0
+        rec = t / pos if pos else 0.0; prec = t / (t + fpc * neg_weight) if (t + fpc * neg_weight) else 1.0
         pr += (rec - prev) * prec; prev = rec
     best = None
     for thr in [i / 100 for i in range(1, 100)]:
         TP = sum(1 for i in range(n) if scores[i] >= thr and labels[i] == 1)
         FP = sum(1 for i in range(n) if scores[i] >= thr and labels[i] == 0)
         FN = pos - TP
-        P = TP / (TP + FP) if (TP + FP) else 0.0
+        P = TP / (TP + FP * neg_weight) if (TP + FP * neg_weight) else 0.0
         R = TP / pos if pos else 0.0
         F1 = 2 * P * R / (P + R) if (P + R) else 0.0
-        cost = fp_cost * FP + fn_cost * FN
+        cost = fp_cost * FP * neg_weight + fn_cost * FN
         if best is None or cost < best["cost"]:
             best = dict(thr=thr, P=P, R=R, F1=F1, cost=cost, TP=TP, FP=FP, FN=FN)
     # highest precision reachable at recall >= 0.2 (is there a confident high-precision regime?)
@@ -77,10 +79,10 @@ def metrics(labels, scores, fp_cost=20.0, fn_cost=1.0):
     for thr in [i / 100 for i in range(1, 100)]:
         TP = sum(1 for i in range(n) if scores[i] >= thr and labels[i] == 1)
         FP = sum(1 for i in range(n) if scores[i] >= thr and labels[i] == 0)
-        R = TP / pos if pos else 0.0; P = TP / (TP + FP) if (TP + FP) else 0.0
+        R = TP / pos if pos else 0.0; P = TP / (TP + FP * neg_weight) if (TP + FP * neg_weight) else 0.0
         if R >= 0.2 and P > hp[0]:
             hp = (P, R)
-    return dict(n=n, pos=pos, base_rate=pos / n, roc=roc, pr=pr, best=best,
+    return dict(n=n, pos=pos, base_rate=pos / (pos + neg * neg_weight), roc=roc, pr=pr, best=best,
                 high_prec=hp, never_fire_cost=fn_cost * pos)
 
 def main():
@@ -99,6 +101,8 @@ def main():
     take_pos = min(len(pos), args.sample // 3)
     take_neg = min(len(neg), args.sample - take_pos)
     sample = pos[:take_pos] + neg[:take_neg]; random.shuffle(sample)
+    # The sample holds about a third positives. Weight each sampled negative up to the natural mix.
+    neg_weight = (len(neg) / take_neg) / (len(pos) / take_pos) if take_pos and take_neg else 1.0
     print(f"loaded {len(rows)} rows; probing {len(sample)} "
           f"({take_pos} pos / {take_neg} neg) with {args.model} via ollama", flush=True)
 
@@ -111,15 +115,19 @@ def main():
             if fails < 3:
                 print(f"  request error: {e}", flush=True)
         if p is None:
-            p = 0.0; fails += 1
-        labels.append(label); scores.append(p)
+            fails += 1  # failed or unparseable: left out of the metrics, not scored as a confident no
+        else:
+            labels.append(label); scores.append(p)
         if (j + 1) % 25 == 0:
             print(f"  {j+1}/{len(sample)}", flush=True)
 
-    M = metrics(labels, scores, fp_cost=args.fp_cost); b = M["best"]
+    if fails > 0.2 * len(sample) or not labels:
+        raise SystemExit(f"{fails} of {len(sample)} requests failed or were unparseable: "
+                         "not scoring a run this broken.")
+    M = metrics(labels, scores, fp_cost=args.fp_cost, neg_weight=neg_weight); b = M["best"]
     print("\n=== OLLAMA zero-shot result ===")
-    print(f"model       : {args.model}   (unparseable replies: {fails})")
-    print(f"samples     : {M['n']}  (base rate {M['base_rate']:.1%})")
+    print(f"model       : {args.model}   (failed or unparseable replies, left out: {fails})")
+    print(f"samples     : {M['n']}  (natural base rate {M['base_rate']:.1%}; negatives weighted x{neg_weight:.1f})")
     print(f"ROC-AUC     : {M['roc']:.3f}   PR-AUC: {M['pr']:.3f}")
     print(f"high-precision regime (recall>=0.2): precision {M['high_prec'][0]:.3f} "
           f"at recall {M['high_prec'][1]:.3f}")

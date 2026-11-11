@@ -30,7 +30,9 @@ def load(path):
             rows.append((int(d["room_id"]), int(d["label"]), d["span"]))
     return rows
 
-def metrics(labels, scores, fp_cost=20.0, fn_cost=1.0):
+def metrics(labels, scores, fp_cost=20.0, fn_cost=1.0, neg_weight=1.0):
+    # neg_weight re-weights the sampled negatives so precision, cost and PR-AUC describe the
+    # natural prevalence, not the positive-enriched probe sample.
     pos = sum(labels); n = len(labels); neg = n - pos
     order = sorted(range(n), key=lambda i: scores[i], reverse=True)
     tps = []; fps = []; tp = fp = 0
@@ -46,7 +48,7 @@ def metrics(labels, scores, fp_cost=20.0, fn_cost=1.0):
     pr = 0.0; prev_rec = 0.0
     for t, fpc in zip(tps, fps):
         rec = t / pos if pos else 0.0
-        prec = t / (t + fpc) if (t + fpc) else 1.0
+        prec = t / (t + fpc * neg_weight) if (t + fpc * neg_weight) else 1.0
         pr += (rec - prev_rec) * prec
         prev_rec = rec
     best = None
@@ -54,13 +56,13 @@ def metrics(labels, scores, fp_cost=20.0, fn_cost=1.0):
         TP = sum(1 for i in range(n) if scores[i] >= thr and labels[i] == 1)
         FP = sum(1 for i in range(n) if scores[i] >= thr and labels[i] == 0)
         FN = pos - TP
-        P = TP / (TP + FP) if (TP + FP) else 0.0
+        P = TP / (TP + FP * neg_weight) if (TP + FP * neg_weight) else 0.0
         R = TP / pos if pos else 0.0
         F1 = 2 * P * R / (P + R) if (P + R) else 0.0
-        cost = fp_cost * FP + fn_cost * FN
+        cost = fp_cost * FP * neg_weight + fn_cost * FN
         if best is None or cost < best["cost"]:
             best = dict(thr=thr, P=P, R=R, F1=F1, cost=cost, TP=TP, FP=FP, FN=FN)
-    return dict(n=n, pos=pos, base_rate=pos / n, roc=roc, pr=pr,
+    return dict(n=n, pos=pos, base_rate=pos / (pos + neg * neg_weight), roc=roc, pr=pr,
                 best=best, never_fire_cost=fn_cost * pos)
 
 def main():
@@ -84,6 +86,8 @@ def main():
     take_neg = min(len(neg), k - take_pos)
     sample = pos[:take_pos] + neg[:take_neg]
     random.shuffle(sample)
+    # The sample holds about a third positives. Weight each sampled negative up to the natural mix.
+    neg_weight = (len(neg) / take_neg) / (len(pos) / take_pos) if take_pos and take_neg else 1.0
     print(f"loaded {len(rows)} rows; probing {len(sample)} "
           f"({take_pos} pos / {take_neg} neg) with {args.model}", flush=True)
 
@@ -109,11 +113,11 @@ def main():
             if (j + 1) % 100 == 0:
                 print(f"  {j+1}/{len(sample)}", flush=True)
 
-    M = metrics(labels, scores, fp_cost=args.fp_cost)
+    M = metrics(labels, scores, fp_cost=args.fp_cost, neg_weight=neg_weight)
     b = M["best"]
     print("\n=== ZERO-SHOT probe result ===")
     print(f"model            : {args.model}")
-    print(f"samples          : {M['n']}  (base rate {M['base_rate']:.1%})")
+    print(f"samples          : {M['n']}  (natural base rate {M['base_rate']:.1%}; negatives weighted x{neg_weight:.1f})")
     print(f"ROC-AUC          : {M['roc']:.3f}   PR-AUC: {M['pr']:.3f}")
     print(f"cost-optimal thr : {b['thr']:.2f}")
     print(f"  precision      : {b['P']:.3f}   recall: {b['R']:.3f}   F1: {b['F1']:.3f}")

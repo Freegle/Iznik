@@ -5,9 +5,10 @@
 #
 #   CSV=/path/to/full.csv ./run_on_gpu.sh
 #
-# Everything below is scored on the SAME conversation split + expected-cost
-# metric (FP 20x worse than FN) so it's directly comparable to the linear
-# baseline and the CPU probes.
+# Everything below is scored with the expected-cost metric (FP 20x worse than FN).
+# The zero-shot probes sample rows from the whole CSV and re-weight the negatives to
+# the natural prevalence. finetune_encoder.py scores its own seeded room split.
+# None of these use the gold rooms or the PHP baseline's split, so compare with care.
 set -euo pipefail
 CSV="${CSV:-../iznik-batch/storage/promise/full.csv}"
 
