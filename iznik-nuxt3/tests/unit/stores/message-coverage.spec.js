@@ -1155,3 +1155,37 @@ describe('message store - getters', () => {
     expect(store.byUser(5)).toEqual([{ id: 1 }])
   })
 })
+
+describe('message store - a forced refetch while an earlier fetch of the same id is in flight', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('is issued again after the first settles, so the newer copy wins', async () => {
+    const store = freshStore()
+    let resolveFirst
+    mockFetch
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveFirst = resolve
+        })
+      )
+      .mockResolvedValueOnce([{ id: 5, subject: 'after the action' }])
+
+    const first = store.fetch(5)
+    await vi.advanceTimersByTimeAsync(50)
+    const forced = store.fetch(5, true)
+    resolveFirst([{ id: 5, subject: 'before the action' }])
+    await vi.advanceTimersByTimeAsync(100)
+    await Promise.all([first, forced])
+
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(store.list[5].subject).toBe('after the action')
+  })
+})
