@@ -219,8 +219,15 @@ func ResolvePartnerActor(db *gorm.DB, tnuserid uint64, email string) ([]uint64, 
 // moveTNAlias moves one address to the account of the member TN says owns it, and reports the
 // account it came from. users_emails.email is unique, so it cannot be on both. Posts and chats
 // already filed stay where they are: tn:split-shared-account is the way to move those.
+//
+// The account it came from may hold another TN id. TN's word on whose address it is still stands,
+// so it moves, but the report says so: either TN has given the username to someone else, or one
+// of the ids is wrong, and the other member has lost an address TN gave them before.
 func moveTNAlias(db *gorm.DB, email string, from, to uint64) error {
+	var fromTNId, toTNId uint64
 	err := db.Transaction(func(tx *gorm.DB) error {
+		fromTNId, toTNId = TNIdOf(tx, from), TNIdOf(tx, to)
+
 		var wasPreferred bool
 		if err := tx.Table("users_emails").Select("preferred").
 			Where("email = ? AND userid = ?", email, from).Row().Scan(&wasPreferred); err != nil {
@@ -261,9 +268,21 @@ func moveTNAlias(db *gorm.DB, email string, from, to uint64) error {
 	tnAliasReportMu.RLock()
 	report := tnAliasReporter
 	tnAliasReportMu.RUnlock()
-	report(fmt.Sprintf("TN alias moved from user %d to user %d, the member Trash Nothing named", from, to))
+	report(tnAliasMoveReport(from, fromTNId, to, toTNId))
 
 	return nil
+}
+
+// tnAliasMoveReport words the report of a moved address, flagging a move off an account that holds
+// another TN id. It names ids, never the address. User::takeTnAddress in iznik-batch words it the same.
+func tnAliasMoveReport(from, fromTNId, to, toTNId uint64) string {
+	if fromTNId != 0 && fromTNId != toTNId {
+		return fmt.Sprintf("TN alias moved from user %d, which holds another TN user id (%d), to user %d (TN user id %d), "+
+			"the member Trash Nothing named: TN has given the username to someone else, or one of the ids is wrong",
+			from, fromTNId, to, toTNId)
+	}
+
+	return fmt.Sprintf("TN alias moved from user %d to user %d, the member Trash Nothing named", from, to)
 }
 
 // FindPartnerOwnerForMessage returns the fromuser of a message when its fromaddr

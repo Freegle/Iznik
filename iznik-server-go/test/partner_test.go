@@ -403,6 +403,8 @@ func TestPartnerJoinMovesAliasHeldByAnotherTNMember(t *testing.T) {
 	require.Len(t, *reports, 1)
 	assert.Contains(t, (*reports)[0], fmt.Sprintf("user %d", holder), "the report says where it came from")
 	assert.Contains(t, (*reports)[0], fmt.Sprintf("user %d", member))
+	assert.Contains(t, (*reports)[0], "another TN user id (66702)",
+		"the account it left is another TN member's, which a person needs to see")
 	assert.NotContains(t, (*reports)[0], alias, "a report names ids, never an address")
 }
 
@@ -426,7 +428,8 @@ func TestPartnerJoinNeverMergesAnAccountWithNoTNId(t *testing.T) {
 
 	assert.True(t, userExists(holder), "the account must not be merged")
 	assert.Equal(t, member, addressOwner(alias))
-	assert.Len(t, *reports, 1)
+	require.Len(t, *reports, 1)
+	assert.NotContains(t, (*reports)[0], "another TN user id", "the account it left holds no TN id")
 }
 
 // TN names a member we have not met, on an address another member's account holds. Joining that
@@ -453,7 +456,8 @@ func TestPartnerJoinGivesAnUnknownTNMemberTheirOwnAccount(t *testing.T) {
 	assert.Equal(t, created, addressOwner(alias))
 	assert.True(t, isMember(created, groupID))
 	assert.False(t, isMember(holder, groupID))
-	assert.Len(t, *reports, 1)
+	require.Len(t, *reports, 1)
+	assert.Contains(t, (*reports)[0], "another TN user id (66705)", "a new account takes it from another TN member")
 }
 
 // The member leaving is one we have not met, on an address another member holds. Treating that as
