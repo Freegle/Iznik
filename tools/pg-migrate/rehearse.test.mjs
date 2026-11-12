@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { fixtureSourceMap, mysqlLiteral } from './lib.mjs'
 import { copyTable, etlTables, runEtl } from './etl.mjs'
 import { runAudit } from './audit.mjs'
-import { checkCounts, checkForeignKeys, checkGeometry } from './parity.mjs'
+import { checkCounts, checkForeignKeys, checkGeometry, checkValues } from './parity.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const PSQL = process.env.PG_PSQL
@@ -58,7 +58,10 @@ test('the ETL owns the geometry tables and the tables with a generated column', 
   assert.ok(by.users_emails, 'users_emails has a generated md5 column')
   assert.equal(by.helper_batches, undefined, 'a plain table is left to pgloader')
   assert.equal(by.migrations, undefined)
-  assert.ok(list.length >= 18 && list.length < 40, `${list.length} tables`)
+  // The list is the tables with a geometry or a generated column, counted here straight from the catalog.
+  assert.equal(list.length, Number(q(`SELECT count(DISTINCT c.relname) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+    WHERE c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace AND a.attnum > 0 AND NOT a.attisdropped
+      AND (a.attgenerated <> '' OR a.atttypid = 'geometry'::regtype)`)))
 })
 
 test('the audit passes clean fixtures and lists zero dates', { skip }, async () => {
@@ -67,6 +70,17 @@ test('the audit passes clean fixtures and lists zero dates', { skip }, async () 
   assert.deepEqual(rep.enums, [])
   assert.deepEqual(rep.zeroDates.map((z) => `${z.table}.${z.column}:${z.rows}`).sort(), ['messages_spatial.arrival:1', 'messages_spatial.modified:1'])
   assert.deepEqual(rep.failed, [])
+})
+
+test('the audit finds an impossible date and a NUL character that no loader accepts', { skip }, async () => {
+  const bad = {
+    messages_spatial: "SELECT 1 AS `id`, 5 AS `msgid`, ST_GeomFromText('POINT(0 0)', 3857) AS `point`, 0 AS `successful`, 0 AS `promised`, 1 AS `groupid`, 'Offer' AS `msgtype`, '2026-02-30 10:00:00' AS `arrival`, '2026-10-01 10:00:00' AS `modified`",
+    helper_batches: `SELECT 1 AS \`id\`, 1 AS \`msgid\`, 1 AS \`offereruserid\`, ${mysqlLiteral('active\0')} AS \`status\`, 'automatic' AS \`automode\`, NULL AS \`briefing\`, NULL AS \`lastpolledat\`, NULL AS \`lastrunat\`, NULL AS \`pausedat\`, '2026-10-01 10:00:00' AS \`created_at\`, '2026-10-01 10:00:00' AS \`updated_at\``,
+  }
+  const rep = await runAudit(env, { sourceMap: bad })
+  assert.equal(rep.ok, false)
+  assert.deepEqual(rep.badDates, [{ table: 'messages_spatial', column: 'arrival', rows: 1 }])
+  assert.deepEqual(rep.nuls, [{ table: 'helper_batches', column: 'status', rows: 1 }])
 })
 
 test('the audit finds an ENUM value the baseline would refuse', { skip }, async () => {
@@ -80,6 +94,7 @@ test('the fixture loads and every row is counted', { skip }, async () => {
   const results = await runEtl(env, tables, { sourceMap }, () => {})
   for (const [i, t] of tables.entries()) {
     assert.equal(results[i].inserted, fixture.tables[t].rows.length, t)
+    assert.equal(Number(q(`SELECT count(*) FROM "${t}"`)), fixture.tables[t].rows.length, `rows now in ${t}`)
   }
   assert.deepEqual(results.find((r) => r.table === 'messages_spatial').zeroDates, { arrival: 1, modified: 1 })
 })
@@ -156,6 +171,31 @@ test('row counts match, and a missing row is reported', { skip }, async () => {
   assert.equal((await checkCounts(env, { sourceMap })).ok, true)
 })
 
+test('values match after the load, and a shifted time, a cut string or a changed number is found', { skip }, async () => {
+  const ok = await checkValues(env, { sourceMap })
+  assert.equal(ok.ok, true, JSON.stringify(ok.mismatches))
+  assert.ok(ok.columns > 25, `${ok.columns} columns compared`)
+
+  // A timestamptz an hour out: what a MySQL or pgloader session that was not UTC would do to every row.
+  q(`UPDATE messages_outcomes SET timestamp = timestamp + interval '1 hour'`)
+  const shifted = await checkValues(env, { sourceMap, tables: ['messages_outcomes'] })
+  assert.equal(shifted.ok, false)
+  assert.deepEqual(shifted.mismatches.map((m) => `${m.column} ${m.what}`), ['timestamp seconds'])
+  q(`UPDATE messages_outcomes SET timestamp = timestamp - interval '1 hour'`)
+
+  q(`UPDATE authorities SET area_code = left(area_code, 2) WHERE id = 1; UPDATE partnerships_statsfiles SET size = size + 1 WHERE id = 1`)
+  const damaged = await checkValues(env, { sourceMap, tables: ['authorities', 'partnerships_statsfiles'] })
+  assert.deepEqual(damaged.mismatches.map((m) => `${m.table}.${m.column} ${m.what}`).sort(), ['authorities.area_code chars', 'partnerships_statsfiles.size sum'])
+  q(`UPDATE authorities SET area_code = 'UTW' WHERE id = 1; UPDATE partnerships_statsfiles SET size = size - 1 WHERE id = 1`)
+  assert.equal((await checkValues(env, { sourceMap })).ok, true)
+})
+
+test('a value longer than its varchar column is refused, not cut', { skip }, async () => {
+  const long = { authorities: "SELECT 1 AS `id`, 'Long Code' AS `name`, ST_GeomFromText('POINT(0 0)', 3857) AS `polygon`, 'ABCDEFGHIJKLMNOP' AS `area_code`, NULL AS `simplified`" }
+  await assert.rejects(copyTable(env, 'authorities', { sourceMap: long, truncate: true }), /value too long for type character varying\(10\)/)
+  assert.equal(q('SELECT count(*) FROM authorities'), '7', 'rolled back')
+})
+
 test('geometry parity flags the one repair that moved the extent, and passes when that is allowed', { skip }, async () => {
   const probes = fixture.probes
   const rep = await checkGeometry(env, { sourceMap, probes })
@@ -191,6 +231,32 @@ test('geometry parity catches damage to a loaded row', { skip }, async () => {
   await copyTable(env, 'users_approxlocs', { sourceMap, truncate: true })
 })
 
+test('geometry parity fails a polygon repaired into lines, a point or a collection, and one that lost area', { skip }, async () => {
+  const wkts = [
+    'POLYGON((0 0,4 0,4 4,0 4,0 0))', // valid
+    'POLYGON((0 0,1 1,2 2,0 0))', // collinear ring: repaired to a line
+    'POLYGON((0 0,0 0,0 0,0 0))', // repeated point: repaired to a point
+    'POLYGON((0 0,4 0,4 4,2 4,2 6,2 4,0 4,0 0))', // spike: repaired to a polygon plus a line
+    'POLYGON((0 0,1 0,1 1,0 1,0 0,1 0,1 1,0 1,0 0))', // wound twice: the area of the original reads as double
+  ]
+  const odd = fixtureSourceMap({ tables: { authorities: { columns: ['id', 'name', 'polygon', 'area_code', 'simplified'], rows: wkts.map((w, i) => [i + 1, `Shape ${i + 1}`, { wkt: w }, null, null]) } } })
+  await copyTable(env, 'authorities', { sourceMap: odd, truncate: true })
+  const rep = await checkGeometry(env, { sourceMap: odd, tables: ['authorities'], autoProbeCount: 0 })
+  const c = rep.columns.find((x) => x.column === 'polygon')
+  assert.deepEqual(c.classes, { identical: 1, 'repaired-type-changed': 3, 'repaired-area-lost': 1 })
+  assert.deepEqual(c.examples['repaired-type-changed'], ['2', '3', '4'])
+  assert.deepEqual(c.examples['repaired-area-lost'], ['5'])
+  assert.equal(c.ok, false)
+  assert.equal(c.geometryTypes.POLYGON, 2)
+  assert.equal(c.geometryTypes.MULTILINESTRING + c.geometryTypes.POINT + c.geometryTypes.GEOMETRYCOLLECTION, 3)
+
+  const extentOnly = await checkGeometry(env, { sourceMap: odd, tables: ['authorities'], autoProbeCount: 0, allowExtentChange: true })
+  assert.equal(extentOnly.ok, false, 'allowing a moved extent does not allow a changed type')
+  const allowed = await checkGeometry(env, { sourceMap: odd, tables: ['authorities'], autoProbeCount: 0, allowTypeChange: true })
+  assert.equal(allowed.ok, true)
+  await copyTable(env, 'authorities', { sourceMap, truncate: true })
+})
+
 test('the foreign key check finds rows whose parent was not loaded', { skip }, async () => {
   const rep = await checkForeignKeys(env)
   assert.equal(rep.ok, false)
@@ -200,4 +266,23 @@ test('the foreign key check finds rows whose parent was not loaded', { skip }, a
   q(`DELETE FROM helper_batches; DELETE FROM messages_outcomes; DELETE FROM messages_spatial; DELETE FROM users_approxlocs; DELETE FROM partnerships_statsfiles`)
   const clean = await checkForeignKeys(env)
   assert.equal(clean.ok, true, JSON.stringify(clean.rows))
+})
+
+test('the documented command line sequence loads the fixture and ends in a pass', { skip }, () => {
+  const file = path.join(here, 'fixtures/rehearsal.json')
+  const run = (...args) => spawnSync('node', [path.join(here, 'migrate.mjs'), ...args], {
+    encoding: 'utf8', env: { ...process.env, PG_DATABASE: DB, MYSQL_DB: env.mysqlDb, MYSQL_CMD: env.mysqlCmd, PG_PSQL: PSQL },
+  })
+  const load = run('etl', '--fixture', file, '--truncate')
+  assert.equal(load.status, 0, load.stderr)
+  assert.match(load.stdout, /Loaded 8 tables, 29 rows/)
+  const strict = run('parity', 'all', '--fixture', file)
+  assert.equal(strict.status, 1, 'the hole outside its shell is a failure until it has been looked at')
+  assert.match(strict.stdout, /repaired-extent-changed/)
+  const checked = run('parity', 'all', '--fixture', file, '--allow-extent-change')
+  assert.equal(checked.status, 0, checked.stdout + checked.stderr)
+  assert.match(checked.stdout, /Row counts: 8 of 8 tables match/)
+  assert.match(checked.stdout, /Values: \d+ columns in 8 tables compared; 0 differ/)
+  assert.match(checked.stdout, /Foreign keys: not checked with --fixture/)
+  assert.match(checked.stdout.trim().split('\n').pop(), /^PASS$/)
 })
