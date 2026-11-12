@@ -1953,6 +1953,9 @@ func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPos
 	if room.User1 != myid && room.User2 != myid {
 		return fiber.NewError(fiber.StatusForbidden, "Not a member of this chat")
 	}
+	if room.Chattype != utils.CHAT_TYPE_USER2USER {
+		return fiber.NewError(fiber.StatusBadRequest, "Only a chat between members can be reported this way")
+	}
 
 	// Re-check that there really is no group in common; if there is, the client
 	// should have used the normal group-routed report flow.
