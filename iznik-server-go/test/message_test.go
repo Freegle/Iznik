@@ -3480,6 +3480,70 @@ func TestDeleteMessageNotOwnerNotMod(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 }
 
+// Deleting is per community. A moderator who only runs a community the post rippled into
+// removes the post from that community alone; the home copy and the shared post stay.
+func TestDeleteMessageModOfRippledCopyKeepsHomeCopy(t *testing.T) {
+	prefix := uniquePrefix("msgmod_delripple")
+	db := database.DBConn
+
+	homeGroup := CreateTestGroup(t, prefix+"_home")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, homeGroup, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, rippledGroup, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := CreateTestMessage(t, posterID, homeGroup, prefix+" OFFER: rippled item", 51.5, -0.1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)",
+		msgID, rippledGroup)
+
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var homeDeleted int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, homeGroup).Scan(&homeDeleted)
+	assert.Equal(t, 0, homeDeleted, "the home community's copy is not deleted by a moderator of another community")
+
+	var sharedDeleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&sharedDeleted)
+	assert.Nil(t, sharedDeleted, "the shared post stays while an undeleted community copy remains")
+
+	var rippledDeleted int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup).Scan(&rippledDeleted)
+	assert.Equal(t, 1, rippledDeleted, "the moderator's own community's copy is deleted")
+}
+
+// A post another moderator is holding cannot be deleted from under them, here as in the
+// POST Delete action.
+func TestDeleteMessageModRefusedWhileHeldByAnotherMod(t *testing.T) {
+	prefix := uniquePrefix("msgmod_delheld")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	holderID := CreateTestUser(t, prefix+"_holder", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, holderID, groupID, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", holderID, msgID, groupID)
+
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 409, resp.StatusCode, "a post held by another moderator is not deleted")
+
+	var deleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&deleted)
+	assert.Nil(t, deleted, "the held post is still there")
+}
+
 // --- Test: PUT /message ---
 
 func TestPutMessage(t *testing.T) {
