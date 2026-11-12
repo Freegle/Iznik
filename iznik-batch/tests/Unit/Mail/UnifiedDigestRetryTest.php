@@ -252,4 +252,18 @@ class UnifiedDigestRetryTest extends TestCase
 
         return [$digest, $recipient, $group, $message];
     }
+
+    public function test_rebuilding_a_digest_for_a_retry_does_not_add_a_second_tracking_row(): void
+    {
+        [$digest, $recipient] = $this->makeDigestWithContext();
+
+        $rows = fn () => \Illuminate\Support\Facades\DB::table('email_tracking')->where('userid', $recipient->id)->count();
+        $this->assertSame(1, $rows(), 'one digest, one tracking row');
+
+        // The first send failed and the durable retry rebuilds it: still one digest for the member,
+        // so still one row.
+        UnifiedDigest::rebuildFromDescriptor($digest->mailDescriptor());
+
+        $this->assertSame(1, $rows(), 'a retried digest must not count as a second digest shown');
+    }
 }
