@@ -3,6 +3,7 @@ paths:
   - "iznik-batch/app/Services/Ripple/**"
   - "iznik-batch/app/Console/Commands/Ripple/**"
   - "iznik-server-go/rippling/**"
+  - "iznik-routing-go/**"
   - "iznik-batch/app/Services/ContentCheckService.php"
   - "iznik-batch/app/Services/AutoApproveService.php"
   - "iznik-server-go/microvolunteering/microvolunteering.go"
@@ -201,6 +202,20 @@ When comparing reaches across that date, you are not comparing like with like.
 
 Size a cap from the **recipient's** local density, not the post's origin. Sizing it at the
 origin permanently blocks rural members from posts in the nearest town they already drive to.
+
+## A routing statement exists once per engine, and a fingerprint is not an `int64`
+
+`iznik-routing-go` runs on MySQL or PostgreSQL by `DB_ENGINE`. Every statement it sends is in
+`iznik-routing-go/dbsql.go` (and `cmd/rippleextract/sql.go`), written for each engine, and a MySQL
+statement is held to a hash of its old text. Add a statement there, not at the call site, with a test that
+runs it on both engines (`internal/dbtest`).
+
+The partition fingerprint (`partFP`, `reach_labels_next_fp`, `rippling_reach_leaves.fp`) is a 64-bit
+FNV hash and uses the whole `uint64` range. MySQL stores it unsigned. PostgreSQL has only signed `bigint`,
+so about half of all fingerprints do not fit as a number, and the driver refuses them with an error only when
+one of those is sent. Send one through `fpArg`, which sends the same bit pattern as an `int64` on PostgreSQL,
+for every write and every comparison. A fingerprint written one way and compared the other way finds
+nothing and gives no error: the stored labels look absent and every post looks unreached.
 
 ## See also
 

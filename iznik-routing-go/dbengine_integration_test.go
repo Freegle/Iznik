@@ -24,6 +24,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -745,4 +746,31 @@ func TestEngine_LabelsApply(t *testing.T) {
 			t.Errorf("after --skip-staged: %d staged, %d leaf rows; want 2, 3", staged, leafRows)
 		}
 	})
+}
+
+// The PostgreSQL schema stores timestamptz, so a connection must read and write in UTC whatever the
+// database or server is set to. The DSN asks for it.
+func TestEngine_PostgresSessionIsUTC(t *testing.T) {
+	s := dbtest.Open(t, dbengine.Postgres)
+	s.Exec(t, `ALTER DATABASE `+dbtest.Quote(dbengine.Postgres, s.Settings.Name)+` SET timezone = 'Asia/Tokyo'`)
+	t.Setenv(dbengine.EnvEngine, "postgres")
+	s.SetEnv(t)
+	db, err := openGroupsDB(groupsDSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var zone string
+	if err := db.QueryRow("SHOW timezone").Scan(&zone); err != nil || zone != "UTC" {
+		t.Errorf("session time zone %q, %v; want UTC", zone, err)
+	}
+	// A pool opened without the setting sees the database's own zone, so the check above is a real one.
+	plain, err := sql.Open("pgx", strings.Split(groupsDSN(), "&timezone=")[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plain.Close()
+	if err := plain.QueryRow("SHOW timezone").Scan(&zone); err != nil || zone != "Asia/Tokyo" {
+		t.Errorf("session time zone without the setting %q, %v; want Asia/Tokyo", zone, err)
+	}
 }

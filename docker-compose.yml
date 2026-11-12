@@ -999,6 +999,13 @@ services:
       - MYSQL_USER=root
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
       - MYSQL_DBNAME=iznik
+      # The service reads MySQL unless this is "postgres", which switches it to the PGSQL_* settings.
+      - DB_ENGINE=${ROUTING_DB_ENGINE:-mysql}
+      - PGSQL_HOST=postgres
+      - PGSQL_PORT=5432
+      - PGSQL_USERNAME=root
+      - PGSQL_PASSWORD=iznik
+      - PGSQL_DATABASE=iznik
       - JWT_SECRET=${JWT_SECRET:-secret}
     volumes:
       - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
