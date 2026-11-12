@@ -282,9 +282,15 @@ WHERE live.collection = 'Approved'
   AND m.type IN ('Offer', 'Wanted')
   AND mp.id IS NULL
   AND (
-    EXISTS (
-      SELECT 1 FROM messages_outcomes mo
-      WHERE mo.msgid = m.id AND mo.outcome = ?
+    (
+      EXISTS (
+        SELECT 1 FROM messages_outcomes mo
+        WHERE mo.msgid = m.id AND mo.outcome = ?
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM messages_outcomes mo3
+        WHERE mo3.msgid = m.id AND mo3.outcome != ?
+      )
     )
     OR (
       live.arrival < DATE_SUB(NOW(), INTERVAL 1 DAY)
@@ -323,6 +329,7 @@ SQL;
         // keep-raw: the per-group threshold is arithmetic over JSON_EXTRACT values inside GREATEST/CASE in a correlated NOT EXISTS, and the ordering is over an aggregate of the outer join; the builder cannot render either without falling back to raw fragments anyway.
         return collect(DB::select($sql, [
             self::AGE_EXPIRY_LOOKBACK_DAYS,
+            MessageOutcome::OUTCOME_EXPIRED,
             MessageOutcome::OUTCOME_EXPIRED,
             self::AGE_EXPIRY_BATCH,
         ]))->pluck('msgid');
