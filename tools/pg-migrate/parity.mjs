@@ -1,6 +1,9 @@
 // Parity checks between the MySQL source and the PostgreSQL copy.
 //
 //   counts    exact row counts per table, both sides.
+//   values    per table and column, an aggregate over the non-geometry values on both sides: the sum of
+//             numbers, of text lengths, of byte lengths and of dates as seconds since 1970 read in UTC.
+//             A time zone shift, a truncated string or a changed number moves the aggregate.
 //   geometry  per geometry column: every row compared with its MySQL original, SRID and validity,
 //             and the answers to a set of probe questions (which rows contain this point, which are
 //             within this distance) compared between the two engines.
@@ -9,7 +12,7 @@
 // Row counts alone do not show the SRID relabel or the repair went right, so the geometry check
 // re-reads the originals from MySQL and compares them in PostgreSQL with the loaded rows.
 import {
-  PgSession, encodeCopyRow, geometryColumns, listTables, mi, mysqlRun, parseMysqlRow, pgJson, primaryKey, qi, ql,
+  PgSession, ZERO_DATE_RE, describeTable, encodeCopyRow, geometryColumns, listTables, mi, mysqlRun, parseMysqlRow, pgJson, primaryKey, qi, ql,
   relation, streamMysqlIntoCopy, SKIPPED_TABLES,
 } from './lib.mjs'
 
@@ -49,10 +52,111 @@ export async function checkCounts(env, { sourceMap, tables } = {}) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Values
+
+const NUMBER_TYPES = new Set(['int2', 'int4', 'int8', 'numeric'])
+const TEXT_TYPES = new Set(['text', 'varchar', 'citext'])
+const DATE_TYPES = new Set(['timestamp', 'timestamptz', 'date'])
+
+// What is summed for a column, on each side. Dates are whole seconds since 1970-01-01 00:00:00 read in
+// UTC: MySQL counts them with TIMESTAMPDIFF under the session zone the tooling pins to +00:00, and
+// PostgreSQL reads a timestamptz at UTC. A zero or partial date is MySQL's way of saying no date, so
+// it adds nothing on either side. Returns null for a column the check does not cover (geometry, json,
+// floats, booleans).
+export function valueAggregates(col) {
+  const m = mi(col.name)
+  const p = qi(col.name)
+  if (col.isGeom) return null
+  if (NUMBER_TYPES.has(col.typname)) {
+    return { kind: 'sum', mysql: [`COUNT(${m})`, `COALESCE(SUM(${m}), 0)`], pg: [`count(${p})`, `coalesce(sum(${p}), 0)`] }
+  }
+  if (TEXT_TYPES.has(col.typname)) {
+    return { kind: 'chars', mysql: [`COUNT(${m})`, `COALESCE(SUM(CHAR_LENGTH(${m})), 0)`], pg: [`count(${p})`, `coalesce(sum(char_length(${p})), 0)`] }
+  }
+  if (col.typname === 'bytea') {
+    return { kind: 'bytes', mysql: [`COUNT(${m})`, `COALESCE(SUM(LENGTH(${m})), 0)`], pg: [`count(${p})`, `coalesce(sum(length(${p})), 0)`] }
+  }
+  if (DATE_TYPES.has(col.typname)) {
+    const at = col.typname === 'timestamptz' ? `${p} AT TIME ZONE 'UTC'` : p
+    return {
+      kind: 'seconds',
+      mysql: [`COALESCE(SUM(CASE WHEN CAST(${m} AS CHAR) REGEXP ${ql(ZERO_DATE_RE)} THEN 0 ELSE TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', ${m}) END), 0)`],
+      pg: [`coalesce(sum(trunc(EXTRACT(EPOCH FROM ${at}))), 0)`],
+    }
+  }
+  return null
+}
+
+// Two aggregate strings agree: exactly for whole numbers, to a relative 1e-9 for decimals.
+export function sameAggregate(a, b) {
+  if (a === null || a === undefined || b === null || b === undefined) return false
+  const x = String(a).trim()
+  const y = String(b).trim()
+  if (/^-?\d+$/.test(x) && /^-?\d+$/.test(y)) return BigInt(x) === BigInt(y)
+  const nx = Number(x)
+  const ny = Number(y)
+  if (!Number.isFinite(nx) || !Number.isFinite(ny)) return false
+  return Math.abs(nx - ny) <= 1e-9 * Math.max(1, Math.abs(nx), Math.abs(ny))
+}
+
+export async function checkValues(env, { sourceMap, tables } = {}) {
+  const list = tables && tables.length ? tables : sourceMap ? Object.keys(sourceMap) : await listTables(env)
+  const plans = []
+  for (const t of list) {
+    const cols = (await describeTable(env, t)).filter((c) => !c.generated)
+    const aggs = cols.map((c) => ({ c, a: valueAggregates(c) })).filter((x) => x.a)
+    if (aggs.length) plans.push({ table: t, aggs })
+  }
+  const mysqlStatements = plans.map((p) =>
+    `SELECT JSON_ARRAY(${ql(p.table)}, JSON_ARRAY(${p.aggs.flatMap((x) => x.a.mysql).map((e) => `CAST(${e} AS CHAR)`).join(', ')})) FROM (${relation(env, p.table, sourceMap)}) AS src`)
+  const { lines, errors } = await mysqlRun(env, mysqlStatements, { force: true })
+  const mysqlVals = {}
+  for (const l of lines) {
+    const [t, vals] = parseMysqlRow(l)
+    mysqlVals[t] = vals
+  }
+  const session = new PgSession(env)
+  for (const p of plans) {
+    await session.write(`SELECT '@@val|' || ${ql(p.table)} || '|' || json_build_array(${p.aggs.flatMap((x) => x.a.pg).map((e) => `(${e})::text`).join(', ')})::text FROM ${qi(p.table)};\n`)
+  }
+  const r = await session.finish()
+  if (r.code !== 0) throw new Error(`value check failed: ${r.stderr.trim()}`)
+  const pgVals = {}
+  for (const l of r.stdout.split('\n')) {
+    const m = l.match(/^@@val\|([^|]*)\|(.*)$/)
+    if (m) pgVals[m[1]] = JSON.parse(m[2])
+  }
+  const mismatches = []
+  const failed = []
+  plans.forEach((p, i) => {
+    const err = errors.find((e) => e.index === i)
+    if (err || !mysqlVals[p.table] || !pgVals[p.table]) {
+      failed.push({ table: p.table, message: err ? err.message : 'no answer from one side' })
+      return
+    }
+    let k = 0
+    for (const { c, a } of p.aggs) {
+      const labels = a.kind === 'seconds' ? ['seconds'] : ['non-null', a.kind]
+      for (const label of labels) {
+        const mv = mysqlVals[p.table][k]
+        const pv = pgVals[p.table][k]
+        k++
+        if (!sameAggregate(mv, pv)) mismatches.push({ table: p.table, column: c.name, what: label, mysql: mv, pg: pv })
+      }
+    }
+  })
+  const columns = plans.reduce((n, p) => n + p.aggs.length, 0)
+  return { kind: 'values', tables: plans.length, columns, mismatches, failed, ok: mismatches.length === 0 && failed.length === 0 }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Geometry
 
-const FAIL_CLASSES = ['missing-in-pg', 'extra-in-pg', 'null-mismatch', 'bad-srid', 'invalid-in-pg', 'changed-though-valid', 'repaired-extent-changed']
-const REPAIRED = ['repaired', 'repaired-extent-changed']
+const FAIL_CLASSES = ['missing-in-pg', 'extra-in-pg', 'null-mismatch', 'bad-srid', 'invalid-in-pg', 'changed-though-valid',
+  'repaired-type-changed', 'repaired-extent-changed', 'repaired-area-lost']
+const REPAIRED = ['repaired', 'repaired-type-changed', 'repaired-extent-changed', 'repaired-area-lost']
+// Failure classes that --allow-extent-change and --allow-type-change let through once the rows were looked at.
+const ALLOWED_BY = { 'repaired-extent-changed': 'allowExtentChange', 'repaired-type-changed': 'allowTypeChange', 'repaired-area-lost': 'allowTypeChange' }
 
 // The probe points for a column: the explicit ones, plus a point on the surface of the first few
 // loaded geometries so that a column is always asked something it can answer.
@@ -69,15 +173,16 @@ const num = (v) => {
   return Number(v)
 }
 
-export async function checkGeometry(env, { sourceMap, tables, probes = [], autoProbeCount = 3, radius = 0.05, tolerance = 1e-9, allowExtentChange = false } = {}) {
+export async function checkGeometry(env, { sourceMap, tables, probes = [], autoProbeCount = 3, radius = 0.05, tolerance = 1e-9, allowExtentChange = false, allowTypeChange = false, areaLoss = 0.1 } = {}) {
   const cols = (await geometryColumns(env)).filter((c) => (!tables || !tables.length || tables.includes(c.table)) && (!sourceMap || c.table in sourceMap))
   const results = []
-  for (const c of cols) results.push(await checkOneGeometryColumn(env, c, { sourceMap, probes, autoProbeCount, radius, tolerance, allowExtentChange }))
+  for (const c of cols) results.push(await checkOneGeometryColumn(env, c, { sourceMap, probes, autoProbeCount, radius, tolerance, allowExtentChange, allowTypeChange, areaLoss }))
   return { kind: 'geometry', columns: results, ok: results.every((r) => r.ok) }
 }
 
 async function checkOneGeometryColumn(env, { table, column }, opts) {
-  const { sourceMap, probes, autoProbeCount, radius, tolerance, allowExtentChange } = opts
+  const { sourceMap, probes, autoProbeCount, radius, tolerance, allowExtentChange, allowTypeChange, areaLoss } = opts
+  const allow = { allowExtentChange, allowTypeChange }
   const result = { table, column, ok: false, classes: {}, geometryTypes: {}, srids: [], answers: { compared: 0, failures: [], warnings: [] }, notes: [] }
   const pk = await primaryKey(env, table)
   if (!pk) {
@@ -136,10 +241,15 @@ SELECT pk, srid, tg, og, CASE
   WHEN NOT ST_IsValid(tg) THEN 'invalid-in-pg'
   WHEN ST_AsBinary(tg, 'NDR') = ST_AsBinary(og, 'NDR') THEN 'identical'
   WHEN ST_IsValid(og) THEN 'changed-though-valid'
-  WHEN (ST_IsEmpty(tg) AND ST_IsEmpty(og)) OR coalesce(
+  WHEN ST_IsEmpty(tg) AND ST_IsEmpty(og) THEN 'repaired'
+  -- A polygon repaired into lines, points or a collection has no area left, so it answers containment wrongly.
+  WHEN ST_Dimension(tg) IS DISTINCT FROM ST_Dimension(og) OR GeometryType(tg) = 'GEOMETRYCOLLECTION' THEN 'repaired-type-changed'
+  WHEN NOT coalesce(
        abs(ST_XMin(tg) - ST_XMin(og)) <= ${tol} AND abs(ST_XMax(tg) - ST_XMax(og)) <= ${tol}
-       AND abs(ST_YMin(tg) - ST_YMin(og)) <= ${tol} AND abs(ST_YMax(tg) - ST_YMax(og)) <= ${tol}, false) THEN 'repaired'
-  ELSE 'repaired-extent-changed' END AS class
+       AND abs(ST_YMin(tg) - ST_YMin(og)) <= ${tol} AND abs(ST_YMax(tg) - ST_YMax(og)) <= ${tol}, false) THEN 'repaired-extent-changed'
+  -- The area of an invalid original is only a signed sum, so the check is one way: area lost, not area gained.
+  WHEN abs(ST_Area(og)) > 0 AND ST_Area(tg) < abs(ST_Area(og)) * (1 - ${Number(areaLoss)}) THEN 'repaired-area-lost'
+  ELSE 'repaired' END AS class
 FROM j;
 
 CREATE TEMP TABLE pgmig_pg_hits ON COMMIT DROP AS
@@ -185,7 +295,7 @@ COMMIT;
     if (REPAIRED.includes(d.class)) result.answers.warnings.push(entry)
     else result.answers.failures.push(entry)
   }
-  const failing = FAIL_CLASSES.filter((cl) => j.classes[cl] && !(allowExtentChange && cl === 'repaired-extent-changed'))
+  const failing = FAIL_CLASSES.filter((cl) => j.classes[cl] && !(ALLOWED_BY[cl] && allow[ALLOWED_BY[cl]]))
   const badSrids = j.srids.filter((s) => s !== 3857 && s !== 0)
   if (badSrids.length) result.notes.push(`MySQL labelled this column SRID ${badSrids.join(', ')}`)
   result.failingClasses = failing
@@ -231,6 +341,10 @@ export function formatReport(rep) {
     out.push(`Row counts: ${rep.rows.length - bad.length} of ${rep.rows.length} tables match.`)
     for (const r of bad) out.push(`  MISMATCH ${r.table}: MySQL ${r.mysql ?? 'n/a'}, PostgreSQL ${r.pg ?? 'n/a'}${r.error ? ` (${r.error})` : ''}`)
     if (rep.onlyMysql.length) out.push(`  In MySQL but not in the PostgreSQL schema: ${rep.onlyMysql.join(', ')}`)
+  } else if (rep.kind === 'values') {
+    out.push(`Values: ${rep.columns} columns in ${rep.tables} tables compared; ${rep.mismatches.length} differ.`)
+    for (const m of rep.mismatches) out.push(`  DIFFERS ${m.table}.${m.column} ${m.what}: MySQL ${m.mysql}, PostgreSQL ${m.pg}`)
+    for (const f of rep.failed) out.push(`  NOT CHECKED ${f.table}: ${f.message}`)
   } else if (rep.kind === 'geometry') {
     for (const c of rep.columns) {
       out.push(`${c.ok ? 'OK  ' : 'FAIL'} ${c.table}.${c.column}: ${c.rows ?? 0} rows; ${Object.entries(c.classes).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}`)

@@ -8,14 +8,20 @@
  * pgloader does not convert MySQL geometry, and it copies every source column, which PostgreSQL
  * refuses for a generated column.
  *
- * The schema already exists (the baseline), so pgloader creates nothing and only moves rows.
+ * The schema already exists (the baseline), so pgloader creates nothing and only moves rows. The
+ * target must be a fresh baseline: there is no `truncate`, because PostgreSQL refuses to truncate a
+ * table that a table outside this load (an ETL table) points at, even when both are empty. To load
+ * again, rebuild the database from the baseline.
+ *
+ * Both connections are pinned to UTC. MySQL TIMESTAMP values are converted to the session zone on
+ * the way out and pgloader sends them as text without an offset, so a session that is not UTC
+ * shifts every timestamp by the offset. `migrate.mjs parity values` compares date sums to catch it.
  */
 LOAD DATABASE
      FROM {{MYSQL_URI}}
      INTO {{PG_URI}}
 
 WITH data only,
-     truncate,
      disable triggers,
      create no tables,
      create no indexes,
@@ -26,10 +32,12 @@ WITH data only,
      batch rows = 25000, prefetch rows = 25000
 
 SET MySQL PARAMETERS
+    time_zone = '+00:00',
     net_read_timeout = '600',
     net_write_timeout = '600'
 
 SET PostgreSQL PARAMETERS
+    timezone to 'UTC',
     maintenance_work_mem to '512MB',
     work_mem to '64MB'
 

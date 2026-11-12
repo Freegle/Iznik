@@ -242,6 +242,9 @@ export function pgExpr(col, stage) {
     const fallback = col.notnull ? `'1970-01-01 00:00:00'::${col.type}` : 'NULL'
     return `CASE WHEN ${stage} ~ ${ql(ZERO_DATE_RE)} THEN ${fallback} ELSE ${stage}::${col.type} END`
   }
+  // A bounded character column takes the text as it is and lets the INSERT's assignment conversion
+  // check the length: an explicit cast to varchar(n) would cut an over-long value without an error.
+  if (col.typname === 'varchar' || col.typname === 'bpchar') return stage
   return `${stage}::${col.type}`
 }
 
@@ -293,12 +296,17 @@ function fixtureValue(v) {
 // Turns a fixture file ({tables: {name: {columns, rows}}}) into a source map: for each table, one
 // SELECT that yields its rows. Geometry is built with ST_GeomFromText under the 3857 label, as the
 // application stores it. The first row fixes each column's type, so a column that holds NULL in the
-// first row must hold NULL throughout or be text.
+// first row must hold NULL throughout or be text. A table's optional "types" object maps a column to a
+// MySQL CAST type (DATETIME, DECIMAL(10,6), JSON, UNSIGNED, DATE), so the derived table carries a real
+// typed column instead of a string literal. A zero date cannot be cast, so a column that holds one is
+// left untyped.
 export function fixtureSourceMap(fixture) {
   const map = {}
   for (const [table, def] of Object.entries(fixture.tables)) {
+    const types = def.types || {}
+    const value = (c, v) => (types[c] ? `CAST(${fixtureValue(v)} AS ${types[c]})` : fixtureValue(v))
     const selects = def.rows.map((row, i) =>
-      'SELECT ' + def.columns.map((c, j) => fixtureValue(row[j]) + (i === 0 ? ` AS ${mi(c)}` : '')).join(', '))
+      'SELECT ' + def.columns.map((c, j) => value(c, row[j]) + (i === 0 ? ` AS ${mi(c)}` : '')).join(', '))
     map[table] = selects.join(' UNION ALL ')
   }
   return map

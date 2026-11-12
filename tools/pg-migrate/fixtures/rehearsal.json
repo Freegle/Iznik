@@ -1,5 +1,5 @@
 {
-  "_comment": "Made-up rows for the migration rehearsal. Coordinates are WGS84 degrees stored under the 3857 label, as in the application. No member data.",
+  "_comment": "Made-up rows for the migration rehearsal. Coordinates are WGS84 degrees stored under the 3857 label, as in the application. No member data. A table's \"types\" object gives the MySQL CAST type of a column, so the derived table has real DATETIME, DECIMAL, JSON and integer columns. messages_spatial is left untyped because two of its dates are zero dates, which cannot be cast.",
   "tables": {
     "authorities": {
       "columns": [
@@ -75,7 +75,10 @@
           null,
           null
         ]
-      ]
+      ],
+      "types": {
+        "id": "SIGNED"
+      }
     },
     "messages_spatial": {
       "columns": [
@@ -191,7 +194,11 @@
           },
           "2026-10-02 10:01:00"
         ]
-      ]
+      ],
+      "types": {
+        "msgid": "SIGNED",
+        "updated_at": "DATETIME"
+      }
     },
     "os_county_electoral_division_region": {
       "columns": [
@@ -263,7 +270,14 @@
           },
           "2026-09-04 08:00:00"
         ]
-      ]
+      ],
+      "types": {
+        "id": "SIGNED",
+        "userid": "SIGNED",
+        "lat": "DECIMAL(10,6)",
+        "lng": "DECIMAL(10,6)",
+        "timestamp": "DATETIME"
+      }
     },
     "messages_outcomes": {
       "columns": [
@@ -317,7 +331,13 @@
           null,
           0
         ]
-      ]
+      ],
+      "types": {
+        "id": "SIGNED",
+        "timestamp": "DATETIME",
+        "msgid": "SIGNED",
+        "reviewed": "SIGNED"
+      }
     },
     "helper_batches": {
       "columns": [
@@ -360,7 +380,18 @@
           "2026-10-02 09:00:00",
           "2026-10-02 12:00:00"
         ]
-      ]
+      ],
+      "types": {
+        "id": "SIGNED",
+        "msgid": "SIGNED",
+        "offereruserid": "SIGNED",
+        "briefing": "JSON",
+        "lastpolledat": "DATETIME",
+        "lastrunat": "DATETIME",
+        "pausedat": "DATETIME",
+        "created_at": "DATETIME",
+        "updated_at": "DATETIME"
+      }
     },
     "partnerships_statsfiles": {
       "columns": [
@@ -390,7 +421,11 @@
           0,
           null
         ]
-      ]
+      ],
+      "types": {
+        "id": "SIGNED",
+        "size": "SIGNED"
+      }
     }
   },
   "probes": [
