@@ -111,3 +111,36 @@ func TestTruncateSQL_Long(t *testing.T) {
 	assert.Equal(t, 83, len(result)) // 80 + "..."
 	assert.True(t, len(result) <= 83)
 }
+
+func TestRetryOnDeadlockRunsAgainAfterADeadlock(t *testing.T) {
+	calls := 0
+	err := RetryOnDeadlock("test", func() error {
+		calls++
+		if calls < 3 {
+			return errors.New("Error 1213 (40001): Deadlock found when trying to get lock")
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 3, calls)
+}
+
+func TestRetryOnDeadlockGivesUpAfterThreeAttempts(t *testing.T) {
+	calls := 0
+	err := RetryOnDeadlock("test", func() error {
+		calls++
+		return errors.New("Error 1213 (40001): Deadlock found when trying to get lock")
+	})
+	assert.Error(t, err)
+	assert.Equal(t, 3, calls)
+}
+
+func TestRetryOnDeadlockDoesNotRetryOtherErrors(t *testing.T) {
+	calls := 0
+	err := RetryOnDeadlock("test", func() error {
+		calls++
+		return errors.New("Error 1062: Duplicate entry")
+	})
+	assert.Error(t, err)
+	assert.Equal(t, 1, calls)
+}

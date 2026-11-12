@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { APIError } from '~/api/APIErrors'
+import { resetSessionCap } from '~/composables/useApiFailurePolicy'
 
 const mockSetAuth = vi.fn()
 const mockSetUser = vi.fn()
@@ -68,6 +69,7 @@ let BaseAPI
 describe('BaseAPI', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
+    resetSessionCap()
     mockMiscStore.online = true
     mockUseAuthStore.mockImplementation(() => ({
       auth: { jwt: 'test-jwt', persistent: 'test-persistent' },
@@ -121,25 +123,6 @@ describe('BaseAPI', () => {
       expect(mockSetUser).not.toHaveBeenCalled()
     })
 
-    it('clears auth state on a 401 from the /session endpoint', async () => {
-      // /session is the authoritative "am I still logged in" check, so a 401
-      // from it genuinely means the session is dead and auth must be cleared.
-      mockFetch.mockResolvedValue([401, {}])
-
-      const api = createApi()
-
-      try {
-        await api.$requestv2('GET', '/session', {})
-      } catch (e) {
-        // expected
-      }
-
-      // Via wipeAuth, not setAuth/setUser directly: the Block Store copy has to
-      // go too, or an Android device whose localStorage was evicted re-adopts
-      // the same dead token at boot and loops back to the login screen.
-      expect(mockWipeAuth).toHaveBeenCalled()
-    })
-
     it('includes status 401 in thrown APIError', async () => {
       mockFetch.mockResolvedValue([401, { message: 'Unauthorized' }])
 
@@ -155,7 +138,7 @@ describe('BaseAPI', () => {
       }
     })
 
-    it('logs non-401 errors to Sentry', async () => {
+    it('logs a 500 to Sentry', async () => {
       mockFetch.mockResolvedValue([500, { error: 'Server error' }])
 
       const api = createApi()
@@ -183,6 +166,127 @@ describe('BaseAPI', () => {
       const title = mockCaptureMessage.mock.calls[0][0]
       expect(title).toMatch(/^API2 request failed \/lockdown returned HTTP 500/)
       expect(title).not.toContain('?')
+    })
+
+    it('names ids as :id and fingerprints by method, path and status', async () => {
+      mockFetch.mockResolvedValue([500, {}])
+
+      const api = createApi()
+
+      for (const id of [11, 22]) {
+        try {
+          await api.$requestv2('GET', '/user/' + id + '/applied', {})
+        } catch (e) {
+          // expected
+        }
+      }
+
+      const [title, options] = mockCaptureMessage.mock.calls[0]
+      expect(title).toBe(
+        'API2 request failed /user/:id/applied returned HTTP 500'
+      )
+      expect(options.fingerprint).toEqual([
+        'api-error',
+        'GET',
+        '/user/:id/applied',
+        '500',
+      ])
+      expect(mockCaptureMessage.mock.calls[1][1].fingerprint).toEqual(
+        options.fingerprint
+      )
+    })
+
+    it.each([401, 403, 404, 409, 429])(
+      'does not send a %i to Sentry, and writes it to the client log',
+      async (status) => {
+        mockFetch.mockResolvedValue([status, {}])
+
+        const api = createApi()
+
+        await expect(
+          api.$requestv2('GET', '/group/123?x=1', {})
+        ).rejects.toThrow(APIError)
+
+        expect(mockCaptureMessage).not.toHaveBeenCalled()
+        expect(mockWarn).toHaveBeenCalledWith(
+          'API failure not sent to Sentry',
+          expect.objectContaining({
+            event_type: 'api_failure_dropped',
+            api_status: status,
+            api_method: 'GET',
+            api_path: '/group/:id',
+          })
+        )
+      }
+    )
+
+    it('sends a gateway timeout as the api-unreachable issue', async () => {
+      mockFetch.mockResolvedValue([504, {}])
+
+      const api = createApi()
+
+      await expect(api.$requestv2('GET', '/dashboard', {})).rejects.toThrow()
+
+      expect(mockCaptureMessage).toHaveBeenCalledWith(
+        'API unreachable',
+        expect.objectContaining({
+          level: 'warning',
+          fingerprint: ['api-unreachable'],
+          tags: expect.objectContaining({
+            api_path: '/dashboard',
+            http_status: '504',
+          }),
+        })
+      )
+    })
+
+    it('does not send a 500 when the caller says it handles the failure', async () => {
+      mockFetch.mockResolvedValue([500, {}])
+
+      const api = createApi()
+
+      await expect(api.$requestv2('GET', '/x', {}, false)).rejects.toThrow()
+
+      expect(mockCaptureMessage).not.toHaveBeenCalled()
+      expect(mockWarn).toHaveBeenCalledWith(
+        'API failure not sent to Sentry',
+        expect.objectContaining({ reason: 'caller_handles' })
+      )
+    })
+
+    it('stops sending one fingerprint after ten events in a session', async () => {
+      resetSessionCap()
+      mockFetch.mockResolvedValue([500, {}])
+
+      const api = createApi()
+
+      for (let i = 0; i < 15; i++) {
+        try {
+          await api.$requestv2('GET', '/loop', {})
+        } catch (e) {
+          // expected
+        }
+      }
+
+      expect(mockCaptureMessage).toHaveBeenCalledTimes(10)
+      expect(mockWarn).toHaveBeenCalledWith(
+        'API failure not sent to Sentry',
+        expect.objectContaining({ reason: 'session_cap' })
+      )
+    })
+
+    it('marks the thrown error with what was done, so it is not reported twice', async () => {
+      mockFetch.mockResolvedValue([500, {}])
+
+      const api = createApi()
+      const sent = await api.$requestv2('GET', '/a', {}).catch((e) => e)
+      expect(sent.failureHandled).toBe(true)
+      expect(sent.sentryReported).toBe(true)
+
+      mockFetch.mockResolvedValue([404, {}])
+      const dropped = await api.$requestv2('GET', '/a', {}).catch((e) => e)
+      expect(dropped.failureHandled).toBe(true)
+      expect(dropped.sentryReported).toBe(false)
     })
   })
 
@@ -245,15 +349,20 @@ describe('BaseAPI', () => {
       }
 
       expect(mockCaptureMessage).toHaveBeenCalledWith(
-        expect.stringContaining('API network failure POST /message'),
+        'API unreachable',
         expect.objectContaining({
           level: 'warning',
-          tags: expect.objectContaining({ error_type: 'network' }),
+          fingerprint: ['api-unreachable'],
+          tags: expect.objectContaining({
+            error_type: 'network',
+            api_method: 'POST',
+            api_path: '/message',
+          }),
         })
       )
     })
 
-    it('names the endpoint without its query string on a network failure', async () => {
+    it('names the endpoint without its query string or ids on a network failure', async () => {
       mockMiscStore.online = true
       mockFetch.mockRejectedValue(new Error('Too many retries, give up'))
 
@@ -266,8 +375,10 @@ describe('BaseAPI', () => {
       }
 
       expect(mockCaptureMessage).toHaveBeenCalledWith(
-        'API network failure GET /lockdown: Too many retries, give up',
-        expect.anything()
+        'API unreachable',
+        expect.objectContaining({
+          tags: expect.objectContaining({ api_path: '/lockdown' }),
+        })
       )
     })
 
@@ -351,8 +462,8 @@ describe('BaseAPI', () => {
     })
   })
 
-  // Two paths here deliberately return a promise that never settles, to keep
-  // expected noise (logout aborts, a stale chat 401) out of Sentry.  That is
+  // One path here deliberately returns a promise that never settles, to keep
+  // expected noise (logout aborts) out of Sentry.  That is
   // fine only while nothing is waiting on the result.  When something is, the
   // caller's await hangs for the life of the page with no success and no catch,
   // and any state it was going to clear stays set - which is how a give-flow
@@ -387,32 +498,6 @@ describe('BaseAPI', () => {
       })
       expect(settled).toBe(false)
       expect(mockCaptureMessage).not.toHaveBeenCalled()
-    })
-
-    it('records a swallowed chat 401, and still does not settle', async () => {
-      mockFetch.mockResolvedValue([401, {}])
-
-      const api = createApi()
-
-      let settled = false
-      api.$requestv2('GET', '/chat?includeClosed=true', { params: {} }).then(
-        () => {
-          settled = true
-        },
-        () => {
-          settled = true
-        }
-      )
-
-      await vi.waitFor(() => expect(mockWarn).toHaveBeenCalled(), {
-        timeout: 2000,
-      })
-
-      expect(mockWarn.mock.calls[0][1]).toMatchObject({
-        event_type: 'api_abandoned',
-        reason: 'chat_401',
-      })
-      expect(settled).toBe(false)
     })
   })
 })

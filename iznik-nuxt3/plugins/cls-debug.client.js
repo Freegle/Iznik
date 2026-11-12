@@ -1,40 +1,40 @@
+import { createLayoutShiftWindows } from '~/composables/useLayoutShiftWindows'
+import { action } from '~/composables/useClientLog'
+
+// Layout shifts worse than this (web-vitals "needs improvement" starts at 0.1) are logged.
+const CLS_THRESHOLD = 0.1
+
+function describeSource(source) {
+  const el = source.node
+  if (!el) return '(removed)'
+  if (el.id) return '#' + el.id
+  if (el.className && el.tagName) {
+    return (
+      el.tagName.toLowerCase() +
+      '.' +
+      String(el.className).split(' ').slice(0, 2).join('.')
+    )
+  }
+  return (el.tagName || 'unknown').toLowerCase()
+}
+
+// Measures layout shift and logs it to Loki once per page load, when the page is hidden, if the
+// worst session window crossed the threshold. This is a measurement to read as a rate by route,
+// not a fault, so it does not go to Sentry. The route comes from the client log itself.
 export default defineNuxtPlugin(() => {
   if (typeof PerformanceObserver === 'undefined') return
 
-  const CLS_THRESHOLD = 0.1
-  let clsValue = 0
+  const windows = createLayoutShiftWindows()
   let reported = false
-  const shifts = []
 
   const observer = new PerformanceObserver((list) => {
     for (const entry of list.getEntries()) {
       if (!entry.hadRecentInput) {
-        clsValue += entry.value
-
-        const sources = entry.sources || []
-        const details = sources.map((s) => {
-          const el = s.node
-          const selector = el
-            ? el.id
-              ? '#' + el.id
-              : el.className && el.tagName
-                ? el.tagName.toLowerCase() +
-                  '.' +
-                  String(el.className).split(' ').slice(0, 2).join('.')
-                : (el.tagName || 'unknown').toLowerCase()
-            : '(removed)'
-          return {
-            selector,
-            previousRect: `${s.previousRect.width}x${s.previousRect.height} @ ${s.previousRect.x},${s.previousRect.y}`,
-            currentRect: `${s.currentRect.width}x${s.currentRect.height} @ ${s.currentRect.x},${s.currentRect.y}`,
-          }
-        })
-
-        shifts.push({
-          value: entry.value.toFixed(4),
-          cumulative: clsValue.toFixed(4),
-          time: Math.round(entry.startTime),
-          sources: details,
+        // The path at the time of the shift: the log is written when the page is
+        // hidden, by which time the member may be on another route.
+        windows.add(entry.value, entry.startTime, {
+          selectors: (entry.sources || []).map(describeSource),
+          path: window.location.pathname,
         })
       }
     }
@@ -42,42 +42,36 @@ export default defineNuxtPlugin(() => {
 
   observer.observe({ type: 'layout-shift', buffered: true })
 
-  function reportToSentry() {
-    if (reported || clsValue < CLS_THRESHOLD) return
+  function report() {
+    const result = windows.result()
+    if (reported || result.cls < CLS_THRESHOLD) return
     reported = true
 
-    const top5 = shifts
-      .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
-      .slice(0, 5)
-
-    import('@sentry/browser').then((Sentry) => {
-      Sentry.withScope((scope) => {
-        scope.setLevel('warning')
-        scope.setTag('cls_value', clsValue.toFixed(3))
-        scope.setTag('viewport', `${window.innerWidth}x${window.innerHeight}`)
-        scope.setContext('cls_shifts', {
-          total_cls: clsValue.toFixed(4),
-          shift_count: shifts.length,
-          top_shifts: top5.map(
-            (s) =>
-              `${s.value} @ ${s.time}ms: ${s.sources
-                .map((src) => src.selector)
-                .join(', ')}`
-          ),
-        })
-        Sentry.captureMessage(`CLS ${clsValue.toFixed(3)} exceeds threshold`)
-      })
+    action('cls_exceeds_threshold', {
+      cls_value: Number(result.cls.toFixed(4)),
+      cls_window_start_ms: Math.round(result.windowStart),
+      cls_window_shifts: result.windowShifts,
+      cls_cumulative: Number(result.cumulative.toFixed(4)),
+      shift_count: result.shiftCount,
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      top_shifts: windows
+        .topShifts(5)
+        .map(
+          (s) =>
+            `${s.value.toFixed(4)} @ ${Math.round(s.startTime)}ms ${s.detail.path}: ${s.detail.selectors.join(', ')}`
+        ),
     })
   }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-      reportToSentry()
+      report()
     }
   })
 
   window.__getCLS = () => {
-    console.table(shifts)
-    return { cls: clsValue.toFixed(4), shifts }
+    const result = windows.result()
+    console.table(windows.topShifts(20))
+    return { cls: result.cls.toFixed(4), ...result }
   }
 })

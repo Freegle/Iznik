@@ -218,23 +218,31 @@ onMounted(async () => {
         }
       }
 
-      try {
-        if (props.monthly) {
-          intent.value = await donationStore.stripeSubscription(props.price)
-        } else {
-          intent.value = await donationStore.stripeIntent({
-            amount: props.price,
+      // The API refuses to create an intent for someone who is not signed in, so only ask in advance
+      // when there is a session. Otherwise the intent is created when they press a button, which
+      // tells them to sign in.
+      if (authStore.auth?.jwt || authStore.auth?.persistent) {
+        try {
+          if (props.monthly) {
+            intent.value = await donationStore.stripeSubscription(props.price)
+          } else {
+            intent.value = await donationStore.stripeIntent({
+              amount: props.price,
+            })
+          }
+        } catch (intentError) {
+          console.error('Payment intent creation failed', intentError)
+          Sentry.captureException(intentError, {
+            tags: { stripe_step: 'intent_error' },
           })
+          // Don't re-throw - intent will be created lazily when user clicks a button
         }
-      } catch (intentError) {
-        console.error('Payment intent creation failed', intentError)
-        Sentry.captureException(intentError, {
-          tags: { stripe_step: 'intent_error' },
-        })
-        // Don't re-throw - intent will be created lazily when user clicks a button
       }
 
-      if (!intent.value?.clientSecret) {
+      if (
+        !intent.value?.clientSecret &&
+        (authStore.auth?.jwt || authStore.auth?.persistent)
+      ) {
         console.error('Payment intent returned no clientSecret', intent.value)
       }
 
@@ -415,13 +423,13 @@ async function ensureIntent() {
   // Proactively refresh the session before attempting payment. The JWT is short-lived;
   // if the user opened the app after some time away the JWT may have expired while the
   // persistent token is still valid. Refreshing here gives the server a chance to issue
-  // a fresh JWT before we hit /stripecreateintent, preventing a 401 that would silently
-  // wipe auth and lose the donation.
+  // a fresh JWT before we hit /stripecreateintent, preventing a 401 that would lose the
+  // donation.
   if (authStore.auth?.jwt || authStore.auth?.persistent) {
     try {
       await authStore.fetchUser()
     } catch (e) {
-      // fetchUser failed (e.g. both tokens expired). BaseAPI already cleared auth.
+      // fetchUser failed (e.g. both tokens expired). It wipes auth itself when no user came back.
       console.log('Pre-payment session refresh failed', e)
     }
   }

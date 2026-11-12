@@ -90,10 +90,14 @@ class ScanDeferralsCommand extends Command
                     $r['scope'],
                     $r['value']
                 ));
-                $this->alertSentry(
-                    sprintf('Mail suppression released as stale while the relay was unreachable: %s %s', $r['scope'], $r['value']),
-                    ['scope' => $r['scope'], 'value' => $r['value']]
-                );
+                // Only a whole provider is worth a Sentry event. Single addresses are released
+                // here in dozens when the probe is down, and the unreadable relay was reported above.
+                if ($r['scope'] === MailSuppressionService::SCOPE_MXGROUP) {
+                    $this->alertSentry(
+                        sprintf('Mail suppression released as stale while the relay was unreachable: %s %s', $r['scope'], $r['value']),
+                        ['scope' => $r['scope'], 'value' => $r['value']]
+                    );
+                }
             }
 
             return self::FAILURE;
@@ -170,7 +174,9 @@ class ScanDeferralsCommand extends Command
                 $r['stale'] ? ' (stale - probe had not confirmed it, failing open)' : ''
             ));
 
-            if ($r['stale']) {
+            // A provider released without confirmation is a person's business. A single address
+            // leaving the queue is routine, and is not reported.
+            if ($r['stale'] && $r['scope'] === MailSuppressionService::SCOPE_MXGROUP) {
                 $this->alertSentry(
                     sprintf('Mail suppression released as stale: %s %s', $r['scope'], $r['value']),
                     ['scope' => $r['scope'], 'value' => $r['value']]

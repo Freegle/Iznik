@@ -36,8 +36,9 @@ const (
 //
 // Deadlocks and lock wait timeouts are NOT retried here. In v1, prex() throws
 // DBException on deadlock inside a transaction, letting the API-level retry
-// (API.php) handle it by re-running the whole handler. We do the same: these
-// bubble up to handler.WithRetry (layer 2).
+// (API.php) re-run the whole handler. handler.WithRetry is the Go equivalent but no
+// route is wrapped in it today, so a site that needs a deadlock retried calls
+// RetryOnDeadlock itself.
 func isConnectionError(err error) bool {
 	if err == nil {
 		return false
@@ -206,4 +207,35 @@ func RetryGorm(db *gorm.DB, label string, build func(tx *gorm.DB) *gorm.DB) erro
 		dbBackoff()
 	}
 	return fmt.Errorf("database: no retries configured")
+}
+
+// deadlockAttempts is how many times RetryOnDeadlock tries a statement in all.
+const deadlockAttempts = 3
+
+// RetryOnDeadlock runs fn, and runs it again if it fails with a deadlock or lock
+// wait timeout. It is for a single autocommit statement that nothing else in the
+// request depends on, such as marking something seen or bumping a counter: the
+// server has already rolled that statement back, so running it again cannot count
+// twice, and nobody reads the error otherwise, so without this the write is just
+// lost. fn must build its query afresh each call.
+//
+// Do not use it around a statement inside a transaction: that transaction is
+// already dead, and the retry belongs around the whole transaction.
+func RetryOnDeadlock(label string, fn func() error) error {
+	var err error
+	for attempt := 1; attempt <= deadlockAttempts; attempt++ {
+		err = fn()
+		if err == nil {
+			if attempt > 1 {
+				fmt.Printf("DB DEADLOCK RETRY succeeded on attempt %d: %s\n", attempt, label)
+			}
+			return nil
+		}
+		if !IsDeadlockOrLockTimeout(err) || attempt == deadlockAttempts {
+			return err
+		}
+		fmt.Printf("DB DEADLOCK RETRY attempt %d/%d for %s: %v\n", attempt, deadlockAttempts, label, err)
+		dbBackoff()
+	}
+	return err
 }

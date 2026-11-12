@@ -213,16 +213,16 @@ describe('CommunityEventAPI', () => {
 
   describe('error reporting flags', () => {
     it('fetch reports a failure to Sentry by default', async () => {
-      mockFetch.mockResolvedValue([404, {}])
+      mockFetch.mockResolvedValue([500, {}])
 
-      await expect(createApi().fetch(7)).rejects.toThrow(/status: 404/)
+      await expect(createApi().fetch(7)).rejects.toThrow(/status: 500/)
       expect(captureMessage).toHaveBeenCalledTimes(1)
     })
 
     it('fetch with logError=false keeps the failure out of Sentry', async () => {
-      mockFetch.mockResolvedValue([404, {}])
+      mockFetch.mockResolvedValue([500, {}])
 
-      await expect(createApi().fetch(7, false)).rejects.toThrow(/status: 404/)
+      await expect(createApi().fetch(7, false)).rejects.toThrow(/status: 500/)
       expect(captureMessage).not.toHaveBeenCalled()
     })
 
@@ -241,7 +241,7 @@ describe('CommunityEventAPI', () => {
     })
 
     it('other patch methods report failures by default', async () => {
-      mockFetch.mockResolvedValue([409, { heldby: 9 }])
+      mockFetch.mockResolvedValue([500, {}])
 
       await expect(createApi().addGroup(7, 55)).rejects.toThrow()
       expect(captureMessage).toHaveBeenCalledTimes(1)

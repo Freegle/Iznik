@@ -97,10 +97,11 @@ describe('LocationAPI', () => {
       expect(captureMessage).not.toHaveBeenCalled()
     })
 
-    it('still reports a 404 for a call that has not opted out of logging', async () => {
+    it('still reports a failure for a call that has not opted out of logging', async () => {
       // Contrast case: without this, the test above would also pass if logError
-      // were ignored everywhere.
-      mockFetch.mockResolvedValue([404, null])
+      // were ignored everywhere. A plain 404 is an answer and never reported, so
+      // the contrast is a server error.
+      mockFetch.mockResolvedValue([500, null])
 
       await expect(createApi().fetchv2(12345)).rejects.toThrow()
 

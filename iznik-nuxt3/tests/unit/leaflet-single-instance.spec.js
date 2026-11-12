@@ -36,7 +36,18 @@ function sources(dir) {
   return out
 }
 
+// A library in node_modules can import the bare package too: leaflet-control-geocoder does, which
+// is how a second copy reached the bundle in August 2026 (Sentry NUXT3-DS1 and the rest of that
+// family). The app source scan below cannot see it, so the build maps the bare specifier itself.
 describe('single Leaflet instance', () => {
+  it('the build sends bare leaflet imports from libraries to the ES module build', () => {
+    // nuxt.config.ts is too heavy to load in a unit test, so check it installs the alias module
+    // in vite.resolve.alias; the alias itself is exercised in build-plugins/leafletAlias.spec.js.
+    const config = readFileSync(join(ROOT, 'nuxt.config.ts'), 'utf8')
+    expect(config).toMatch(/resolve:\s*\{[^}]*alias:\s*\[leafletAlias\]/)
+    expect(config).not.toContain('leafletSingleInstance')
+  })
+
   it('no app source imports the bare leaflet package', () => {
     const offenders = []
     for (const dir of SCAN) {

@@ -78,9 +78,12 @@ describe('ElectricalsAPI', () => {
   })
 
   it('still reports any other failure to Sentry', async () => {
-    // The quiet gate is narrow: a 404 that is not the expected message (a broken
-    // route, a deploy gone wrong) must stay loud.
-    mockFetch.mockResolvedValue([404, { message: 'Not Found' }])
+    // The quiet gate is narrow: a 404 for a route the API does not have (a deploy
+    // gone wrong) must stay loud. This is the Go API's answer for one.
+    mockFetch.mockResolvedValue([
+      404,
+      { error: 404, message: 'Cannot GET /apiv2/electricals/stats' },
+    ])
 
     await expect(createApi().stats()).rejects.toThrow()
 
