@@ -606,4 +606,36 @@ class DeferralCatchUpServiceTest extends TestCase
             return $mail->chatCount === 1 && $mail->messageCount === 1;
         });
     }
+
+    /**
+     * A member who blocked or closed a chat is not told about it: the notifier skips it, so the
+     * catch-up must too, and sends nothing when those chats were all there was.
+     */
+    public function test_does_not_count_chats_the_member_blocked_or_closed(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $blockedBy = $this->createTestUser();
+        $closedBy = $this->createTestUser();
+
+        $blocked = $this->createTestChatRoom($blockedBy, $member);
+        $this->roster($blocked, $blockedBy, $member);
+        $this->createTestChatMessage($blocked, $blockedBy);
+        DB::table('chat_roster')->where('chatid', $blocked->id)->where('userid', $member->id)
+            ->update(['status' => 'Blocked']);
+
+        $closed = $this->createTestChatRoom($closedBy, $member);
+        $this->roster($closed, $closedBy, $member);
+        $this->createTestChatMessage($closed, $closedBy);
+        DB::table('chat_roster')->where('chatid', $closed->id)->where('userid', $member->id)
+            ->update(['status' => 'Closed']);
+
+        $this->owe($member->id, 'chat', 2);
+
+        $result = $this->catchUp->run();
+
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNotSent(UnreadChatCatchUpMail::class);
+    }
 }
