@@ -3255,6 +3255,23 @@ func handleUserUnsubscribe(c *fiber.Ctx, myid uint64, req UserPostRequest) error
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// MayMergeAccounts reports whether myid may merge the two accounts, or offer to. Admin and Support
+// always may. A moderator must moderate both accounts. A moderator merge is for two duplicates of
+// one member: a moderator is always a member of their own community, so they pass the moderation
+// test for their own account, and without the further rules they could absorb another member's
+// emails and logins, or an Admin or Support account's role.
+func MayMergeAccounts(myid, id1, id2 uint64) bool {
+	if auth.IsAdminOrSupport(myid) {
+		return true
+	}
+
+	if !(IsModOfUser(myid, id1) && IsModOfUser(myid, id2)) {
+		return false
+	}
+
+	return id1 != myid && id2 != myid && !auth.IsAdminOrSupport(id1) && !auth.IsAdminOrSupport(id2)
+}
+
 // handleMerge merges user id1 (discard) into user id2 (keep).
 // UI text: "merge FROM the first user INTO the second user" → id1=discard, id2=keep.
 // Admin/Support can always merge. Moderators can merge if they moderate both users (V1 parity).
@@ -3310,15 +3327,14 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Cannot merge a user with themselves")
 	}
 
-	// Full permission check: admin/support can always merge; moderators must moderate both users.
-	if !auth.IsAdminOrSupport(myid) && !(IsModOfUser(myid, uint64(req.ID1)) && IsModOfUser(myid, uint64(req.ID2))) {
+	if !MayMergeAccounts(myid, uint64(req.ID1), uint64(req.ID2)) {
 		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
 	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
 	// with a Freegle account, whoever asks (.claude/rules/conventions.md). ModTools refuses this
 	// too, but only by looking at the email typed in, so a merge by id went straight through.
-	if isTrashNothingAccount(db, uint64(req.ID1)) != isTrashNothingAccount(db, uint64(req.ID2)) {
+	if IsTrashNothingAccount(db, uint64(req.ID1)) != IsTrashNothingAccount(db, uint64(req.ID2)) {
 		return fiber.NewError(fiber.StatusBadRequest, "You can't merge a TrashNothing member with a Freegle account. Add a note to each to say they are the same person.")
 	}
 
@@ -3358,8 +3374,9 @@ func userOptedOutOfMerge(db *gorm.DB, id uint64) bool {
 // the merge log entries.
 //
 // This is the only account merge. The moderator merge (handleMerge), the
-// email-verify merge (session.PatchSession, when a member confirms an address
-// that belongs to another of their accounts) and the TN divergence heal
+// accepted merge offer (merge.PostMerge), the email-verify merge (session.PatchSession,
+// when a member confirms an address that belongs to another of their accounts) and the
+// TN divergence heal
 // (HealTNDivergence) all come through here, so they move the same tables and
 // leave the same log rows. Do not add a cut-down copy for a new caller: the
 // email-verify path had one until October 2026, and it stranded chat rooms
@@ -4175,7 +4192,7 @@ func MergedMembershipFlags(a, b MembershipFlags) MembershipFlags {
 }
 
 // TrashNothingSQL is a SQL condition that is true when the users row aliased as alias is a
-// TrashNothing member, by the same definition as isTrashNothingAccount.
+// TrashNothing member, by the same definition as IsTrashNothingAccount.
 func TrashNothingSQL(alias string) string {
 	return "(" + alias + ".tnuserid IS NOT NULL OR EXISTS (SELECT 1 FROM users_emails tne WHERE tne.userid = " +
 		alias + ".id AND tne.preferred = 1 AND tne.email LIKE '%@user.trashnothing.com'))"
@@ -4188,11 +4205,11 @@ func MergeableSidesSQL(a, b string) string {
 	return "(" + TrashNothingSQL(a) + " = " + TrashNothingSQL(b) + ")"
 }
 
-// isTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
+// IsTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
 // tnuserid, or with a TrashNothing address as their preferred email. A non-preferred
 // TrashNothing address does not count, since volunteers may also use TrashNothing. Same
 // definition as the membership package's, which this package cannot import.
-func isTrashNothingAccount(db *gorm.DB, userid uint64) bool {
+func IsTrashNothingAccount(db *gorm.DB, userid uint64) bool {
 	var stamped int64
 	db.Table("users").Where("id = ? AND tnuserid IS NOT NULL", userid).Count(&stamped)
 	if stamped > 0 {

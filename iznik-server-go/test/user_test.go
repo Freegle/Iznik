@@ -2488,6 +2488,54 @@ func TestPostUserMergeByModeratorForbiddenForOutsideUser(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+func TestPostUserMergeByModeratorCannotTakeOnAnAdminsRole(t *testing.T) {
+	// A moderator merge is for two duplicates of one member. The moderator is a member of their own
+	// community, so they must not be able to name themselves as the kept account, and a merge by a
+	// moderator must never hand an Admin or Support account's role to the survivor.
+	prefix := uniquePrefix("mergemodadmin")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	_, modToken := CreateTestSession(t, modID)
+
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	CreateTestMembership(t, adminID, groupID, utils.ROLE_MEMBER)
+
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+
+	post := func(id1, id2 uint64) int {
+		s, _ := json.Marshal(map[string]interface{}{"action": "Merge", "id1": id1, "id2": id2})
+		request := httptest.NewRequest("POST", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+		request.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(request)
+		assert.NoError(t, err)
+		return resp.StatusCode
+	}
+
+	// The moderator absorbs the admin into their own account.
+	assert.Equal(t, fiber.StatusForbidden, post(adminID, modID))
+	// The moderator absorbs an ordinary member into their own account.
+	assert.Equal(t, fiber.StatusForbidden, post(memberID, modID))
+	// The moderator folds the admin into an ordinary member.
+	assert.Equal(t, fiber.StatusForbidden, post(adminID, memberID))
+
+	for _, id := range []uint64{adminID, memberID, modID} {
+		var cnt int64
+		db.Raw("SELECT COUNT(*) FROM users WHERE id = ?", id).Scan(&cnt)
+		assert.Equal(t, int64(1), cnt, "a refused merge must leave every account in place")
+	}
+
+	var role string
+	db.Raw("SELECT systemrole FROM users WHERE id = ?", modID).Scan(&role)
+	assert.Equal(t, utils.SYSTEMROLE_USER, role, "the moderator's system role must not change")
+	db.Raw("SELECT systemrole FROM users WHERE id = ?", memberID).Scan(&role)
+	assert.Equal(t, utils.SYSTEMROLE_USER, role, "the member's system role must not change")
+}
+
 // Tests for the support tools endpoints (GET /api/user/:id/*).
 // All endpoints require the caller to be a moderator of a group the target belongs to.
 
