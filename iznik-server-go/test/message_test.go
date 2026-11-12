@@ -11484,3 +11484,52 @@ func TestPostMessageHoldWithoutGroupStaysOnHoldersOwnGroups(t *testing.T) {
 	assert.NotNil(t, heldA, "the copy on the holder's own community is held")
 	assert.Nil(t, heldB, "the copy on a community the holder does not moderate is not held")
 }
+
+// PATCH /message/tn/:tnpostid accepts an ordinary logged-in session as well as a partner key,
+// and only the owner, a moderator or the owning partner may change a post's photos. A member who
+// does not own the post is refused, and the refusal must leave the post's photos alone.
+func TestPatchMessageByTnPostidRefusedForNonOwnerKeepsPhotos(t *testing.T) {
+	prefix := uniquePrefix("patchtn_nonowner")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
+	_, otherToken := CreateTestSession(t, otherID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.0, -3.0)
+	tnpostid := fmt.Sprintf("tn-nonowner-%s", prefix)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	plainUID := "freegletusd-plain-" + prefix
+	aiUID := "freegletusd-ai-" + prefix
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{}', 1)", msgID, plainUID)
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{\"ai\":true}', 0)", msgID, aiUID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
+	})
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"textbody": "Changed by someone else"})
+	reqURL := fmt.Sprintf("/api/message/tn/%s?jwt=%s", tnpostid, otherToken)
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var attachments int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msgID).Scan(&attachments)
+	assert.Equal(t, int64(2), attachments, "a refused edit must not delete the post's photos")
+
+	var declined int64
+	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msgID).Scan(&declined)
+	assert.Equal(t, int64(0), declined, "a refused edit must not record an AI image as declined")
+
+	var textbody string
+	db.Raw("SELECT COALESCE(textbody, '') FROM messages WHERE id = ?", msgID).Scan(&textbody)
+	assert.NotEqual(t, "Changed by someone else", textbody)
+}
