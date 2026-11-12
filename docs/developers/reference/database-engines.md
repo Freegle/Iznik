@@ -6,6 +6,12 @@ covers:
   - tools/pg-spike/*
   - iznik-batch/database/postgres/baseline.sql
   - scripts/setup-pg-database.sh
+  - iznik-batch/database/postgres/functions.sql
+  - iznik-batch/database/migrations/2026_02_20_000002_create_stored_functions.php
+  - iznik-batch/tests/fixtures/stored-functions/*
+  - iznik-batch/tests/Feature/Database/StoredFunctionsTest.php
+  - iznik-server-go/domain/domain.go
+  - iznik-server-go/utils/reachcap.go
   - scripts/setup-test-database.sh
   - iznik-server-go/database/database.go
   - iznik-server-go/database/failover.go
@@ -16,7 +22,7 @@ covers:
 Production runs on MySQL (Percona). The code is being made to run on PostgreSQL 18 with PostGIS as
 well, so that moving is an operations job and not a rewrite. Every change on the way leaves
 behaviour on MySQL exactly as it is. This page covers what exists for the second engine so far:
-the dev container, the schema baseline and its converter, and the routing spike. The plan is
+the dev container, the schema baseline and its converter, the stored functions, and the routing spike. The plan is
 `plans/token-burn/postgresql-migration.md`; the design is `plans/database-migration-evaluation-2026-07.md`.
 
 ## The dev container
@@ -36,7 +42,7 @@ run. No CI job uses the database yet, and the MySQL path and its test results ar
 
 `scripts/setup-test-database.sh` builds MySQL as it always did. When the PostgreSQL container is running it
 then calls `scripts/setup-pg-database.sh`, which builds two PostgreSQL databases from the baseline:
-`iznik` and `iznik_go_test`, both schema only. There are no PostgreSQL fixtures yet.
+`iznik` and `iznik_go_test`, both schema only, with the stored functions (below) loaded in the same transaction. There are no PostgreSQL fixtures yet. A database that already exists keeps its tables but has the functions file loaded over it again, so a changed function reaches it.
 
 - `PG_ENGINE` unset: build if the container is running. A failure is a loud warning and MySQL is still
   ready, so the MySQL path cannot be broken by the second engine.
@@ -110,7 +116,7 @@ Counts are for the baseline as generated on 2026-11-12 (297 tables).
 | `utf8mb4_bin` collation | `COLLATE "C"` | Byte order, as MySQL's binary collation. |
 | `COMMENT` on table or column | `COMMENT ON` | |
 | `ENGINE`, `CHARSET`, `COLLATE`, `ROW_FORMAT`, `AUTO_INCREMENT=n` | dropped | |
-| stored functions | not translated | Task 5 ports them (`damlevlim`, `GetMaxDimension`, `GetMaxDimensionT`, `haversine`). The converter names them in its report. |
+| stored functions | not translated | Ported by hand to `iznik-batch/database/postgres/functions.sql` (see Stored functions below). The converter names them in its report. |
 
 ### Case-insensitive text
 
@@ -167,6 +173,100 @@ and `check-triggers.sql` fires all 62 `ON UPDATE` triggers on scratch rows. It i
 ```bash
 PG_SCHEMA_PSQL="docker exec -i freegle-postgres psql -U root" node --test tools/pg-schema/pg.test.mjs
 ```
+
+## Stored functions
+
+MySQL has four stored functions, created by `2026_02_20_000002_create_stored_functions.php`. The converter
+skips routines, so `iznik-batch/database/postgres/functions.sql` holds the PostgreSQL versions. It is written
+by hand, is all `CREATE OR REPLACE`, and `scripts/setup-pg-database.sh` loads it after the baseline. The MySQL
+migration and the MySQL functions are not changed. PostgreSQL folds an unquoted name to lower case, so callers keep
+writing `GetMaxDimension(...)` as they do now.
+
+| Function | MySQL | PostgreSQL |
+|---|---|---|
+| `GetMaxDimension(g)`, `GetMaxDimensionT(g)` | The diagonal of the square inscribed in the circle of the same area as `g`, in degrees (the stored data is degrees); 0 for anything that is not an area and for NULL. The `T` copy is only without `DETERMINISTIC`. | PL/pgSQL on `ST_Area` and `ST_Dimension` of a `geometry` (planar, so degrees squared, as in MySQL). `GetMaxDimensionT` calls the first. |
+| `haversine(lat1, lon1, lat2, lon2)` | `69 * DEGREES(ACOS(...))`, FLOAT arguments, FLOAT result. | The same arithmetic. The arguments are rounded to single precision and the result is `real`, as in MySQL. The parameters are declared `double precision` so that a `numeric` column, a `real` column and a bare literal all resolve. |
+| `haversine_miles(lat1, lon1, lat2, lon2)` | None. | The 3959 mile great-circle distance at full precision, with the `ACOS` argument clamped to -1..1. See Distances in SQL. |
+| `damlevlim(s1, s2, n)` | A hand-written edit distance in a loop that stops once a whole row has reached `n`. | Exact distance below `n` from `levenshtein_less_equal`; past `n`, the same loop as MySQL in PL/pgSQL. Case and accents are ignored with `lower` and `unaccent`. |
+
+### Same answers, shown on a table of inputs
+
+`iznik-batch/tests/fixtures/stored-functions/cases.json` lists 163 pairs of points, 39 geometries, 94 string pairs
+and 42 typed domains with the answer MySQL gave for each. `tools/pg-schema/record-function-cases.mjs` builds it
+from the percona container with SELECT statements only (`--check` says whether MySQL still agrees). Both engines
+are tested against it:
+
+- `iznik-batch/tests/Feature/Database/StoredFunctionsTest.php` runs it on the connection's engine, calling the
+  functions as the application does. On MySQL it checks the table against the real functions, which is what
+  keeps the table honest: the recorder evaluates the bodies inline because the dev database has no functions
+  (it is not migrated), and runs the `damlevlim` loop as a recursive CTE.
+- `tools/pg-schema/functions.test.mjs` runs it on PostgreSQL. It needs `PG_SCHEMA_PSQL` like `pg.test.mjs`.
+
+```bash
+PG_SCHEMA_PSQL="docker exec -i freegle-postgres psql -U root" node --test tools/pg-schema/functions.test.mjs
+```
+
+Beyond the table, a sweep of 40,000 identical points and 40,000 random UK pairs gave identical `haversine`
+answers on both engines, to the bit, with 1,449 identical points giving NULL on each. A sweep of 1,500 random
+string pairs and limits gave the same `damlevlim` value on both.
+
+### What differs, on purpose
+
+- **GetMaxDimension of a geometry collection that holds a polygon.** MySQL refuses it (`ST_Area` rejects the type);
+  PostGIS adds up the polygons. No stored geometry is a collection.
+- **damlevlim with an accent that `unaccent` expands**, such as `ß` to `ss`, changes the length in PostgreSQL and
+  does not in MySQL. Domains are ASCII or punycode, so no input in the table does this.
+- **damlevlim with NULL**: MySQL gives 0 or NULL depending on which argument is NULL; PostgreSQL gives NULL. No caller
+  passes NULL.
+- **LENGTH(?) in the call site.** MySQL's `LENGTH` counts bytes and PostgreSQL's counts characters, so a typed domain
+  with an accent has a different limit. Use `octet_length` where the byte count is wanted.
+
+### damlevlim at its call site
+
+There is one caller, `GET /domains` (`iznik-server-go/domain/domain.go`): `damlevlim(domain, ?, LENGTH(?)) < 3`, most
+common first, five at most. The query runs unchanged on PostgreSQL. What it means:
+
+- For a typed domain of 3 bytes or more the limit is 3 or more, so it is "within 2 edits". The same test can be
+  written `levenshtein_less_equal(domain, typed, 2) < 3`, and the table checks that it agrees with MySQL for every
+  typed domain of 3 bytes or more.
+- For a typed domain of 1 or 2 bytes the limit is below 3. The loop gives up as soon as a row's smallest value reaches the limit and
+  returns that value, which is 1 or 2 and so below 3. In practice **every domain matches** and the member is shown
+  the five commonest domains. That
+  is what MySQL does today (`g`, `gm`, `ab` and `xy` in the table), and the PostgreSQL function reproduces it, value for
+  value. Fixing it would change MySQL, so it is left alone and noted here.
+- The existence check before it, `domain LIKE ?`, is case-insensitive on both engines (`domains_common.domain` is `citext`).
+
+The plan expected two call sites; one is left in the code.
+
+### Distances in SQL
+
+Five definitions of distance are in use. Only the first is a stored function.
+
+| Where | Earth | Notes |
+|---|---|---|
+| `haversine()`, MySQL and PostgreSQL | 69 miles to the degree, so a 3953 mile earth | Single precision. About 0.15 per cent short of the others. |
+| `utils/reachcap.go` `AuthorReachCapWhere`, `location.go` group distance | 3959 miles (111195 m to the degree) | Double precision. The reach cap clamps the `ACOS` argument. |
+| `DistancePreferenceFilter` (PHP) | 3959 miles | atan2 form. |
+| `UnifiedDigestService` and `CellSetService` (PHP) | 6371000 m, which is 3958.8 miles | Metres. |
+| `utils.Haversine` (Go) | The WGS84 ellipsoid | Miles; differs from the spherical ones by up to about 0.5 per cent. |
+
+The reconciliation does not change MySQL. `haversine()` stays at 69, because `ORDER BY` and `< radius` tests on its result
+(`Location::groupsNear`, the closest-groups query, the Reengage and TrashNothing orderings) were tuned with it, and
+moving it would change which group a member is offered. On PostgreSQL there are two functions with a stated job:
+
+- `haversine()` reproduces MySQL, so ported callers return the same rows. It is the compatibility function.
+- `haversine_miles()` is the 3959 mile distance with the clamp. Code that is written new, and `reachcap.go` when it
+  gets its PostgreSQL form, uses it. The ratio of the two is 69 divided by 69.0934, which is 0.99859, and
+  `functions.test.mjs` checks that relationship and that `haversine_miles` matches the PHP and Go form of the same
+  distance to under 0.001 miles.
+
+Two behaviours of `haversine()` are easy to trip on, and both are kept so that the engines agree:
+
+- **NULL for some identical points.** The argument of `ACOS` can come out a hair over 1, MySQL's `ACOS` then
+  returns NULL, and about 3.6 per cent of identical points do this. PostgreSQL's `acos` would raise an error, so the
+  function returns NULL. A `haversine(...) < radius` test loses such a row on both engines.
+- **NULL sorts differently.** `ORDER BY haversine(...) ASC` puts NULL first in MySQL and last in PostgreSQL. A caller
+  that cares writes `NULLS FIRST` or a `COALESCE`, as the TrashNothing ordering already does.
 
 ## The routing spike: dbresolver on pgx
 
@@ -234,6 +334,7 @@ return postgres.New(postgres.Config{Conn: sql.OpenDB(fc)}), fc, nil
 
 ## Not yet done
 
-PostgreSQL fixtures, the Go and Laravel suites on PostgreSQL, the stored functions, a CI job that runs the
-converter and PostgreSQL tests and `regenerate.sh --check` (it needs the orb changed), and the spatial
-benchmark are later steps in the plan.
+PostgreSQL fixtures, the Go and Laravel suites on PostgreSQL, a CI job that runs the converter and PostgreSQL
+tests (the functions test included) and `regenerate.sh --check` (it needs the orb changed), and the spatial
+benchmark are later steps in the plan. The Go API and Laravel suites do not yet run on PostgreSQL, so
+`StoredFunctionsTest.php` has only been run in its MySQL form, in CI.
