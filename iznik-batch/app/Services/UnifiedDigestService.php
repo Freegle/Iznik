@@ -2055,7 +2055,7 @@ class UnifiedDigestService
         // per-member reach-gate, so they recur every day until the goods are gone. Fetched and
         // deduplicated separately, and never fed to the cursor (updateDigestTracker uses only
         // $allPosts), so a pinned post never suppresses itself on the next run.
-        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user));
+        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user, $mode));
 
         if ($allPosts->isEmpty() && $pinnedCards->isEmpty()) {
             return ['status' => 'no_posts', 'count' => 0];
@@ -2133,7 +2133,7 @@ class UnifiedDigestService
         // Sponsors. The roll-up spans all the user's groups, so the cross-group union is
         // right. (The immediate paths scope sponsors per-post to that post's group instead -
         // V1 parity, one group's email, one group's sponsors.)
-        $sponsors = $this->getSponsorsForUser($user);
+        $sponsors = $this->getSponsorsForUser($user, $mode);
 
         // Put the pinned posts (paid bulk-offer clearances) at the very TOP of the daily
         // digest, dropping any that also appear in the normal window set so they are not
@@ -2486,11 +2486,11 @@ class UnifiedDigestService
      *
      * @return Collection of Message (each with ->groupid, ->arrival, and has_outcome/has_success=0)
      */
-    private function getPinnedOpenPostsForUser(User $user): Collection
+    private function getPinnedOpenPostsForUser(User $user, string $mode = self::MODE_DAILY): Collection
     {
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
+        // Only communities on this digest's cadence: one set to no emails sends nothing, and an
+        // immediate one is already mailed per post.
+        $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
 
         if ($groupIds->isEmpty()) {
             return collect();
@@ -3618,11 +3618,10 @@ class UnifiedDigestService
      * @param User $user
      * @return Collection Deduplicated sponsor records
      */
-    public function getSponsorsForUser(User $user): Collection
+    public function getSponsorsForUser(User $user, string $mode = self::MODE_DAILY): Collection
     {
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
+        // Only communities on this digest's cadence, as for the posts.
+        $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
 
         if ($groupIds->isEmpty()) {
             return collect();
