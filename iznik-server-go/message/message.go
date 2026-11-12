@@ -3880,8 +3880,20 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	//     that group only.
 	//   - no groupid (the owner withdrawing their own message): ALL groups
 	//     the message is on — a withdrawal is global to the poster.
+	//   - a moderator who is not the poster acts on the communities they moderate only, so a
+	//     moderator of a rippled copy cannot take the post off its home community.
 	var groupids []uint64
-	if req.Groupid != nil && *req.Groupid > 0 {
+	if !isOwner {
+		reqGid := uint64(0)
+		if req.Groupid != nil {
+			reqGid = *req.Groupid
+		}
+		var err error
+		groupids, err = resolveAuthorizedGroups(myid, reqGid, getAllGroupsForMessage(db, req.ID))
+		if err != nil {
+			return err
+		}
+	} else if req.Groupid != nil && *req.Groupid > 0 {
 		groupids = []uint64{*req.Groupid}
 	} else {
 		db.Table("messages_groups").Select("groupid").Where("msgid = ?", req.ID).Scan(&groupids)
@@ -7150,9 +7162,11 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
 	}
 
-	// Must be mod of the source group (i.e. a group the message is currently on).
-	if !isModForMessage(db, myid, req.ID) {
-		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+	// Must be mod of the source group (i.e. a group the message is currently on). The copies on
+	// the communities the moderator runs are the ones that move; the others stay as they are.
+	sourceGroups, err := resolveAuthorizedGroups(myid, 0, getAllGroupsForMessage(db, req.ID))
+	if err != nil {
+		return err
 	}
 
 	// Must also be mod of the target group.
@@ -7162,13 +7176,13 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// Use a transaction to ensure DELETE + INSERT are atomic.
 	// Without this, a failure after DELETE would orphan the message.
-	err := db.Transaction(func(tx *gorm.DB) error {
+	err = db.Transaction(func(tx *gorm.DB) error {
 		// Runs on tx (a *gorm.DB
 		// transaction), which the retired harness's dry-run build function
 		// rendered identically to the plain connection - same reasoning as
 		// the retired orm_wave2_pilot_test.go's handleMerge note (removed in
 		// d22ba1d6c).
-		result := tx.Table("messages_groups").Where("msgid = ?", req.ID).Delete(nil)
+		result := tx.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, sourceGroups).Delete(nil)
 		if result.Error != nil {
 			return result.Error
 		}
