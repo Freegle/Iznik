@@ -136,10 +136,15 @@ class ChatNotificationServiceTest extends TestCase
             'message' => 'Are these still available?',
             'date' => now()->subMinutes(5),
         ]);
-        $this->createTestChatMessage($room, $sender, [
+        $duplicate = $this->createTestChatMessage($room, $sender, [
             'message' => 'Are these still available?',
             'date' => now()->subMinutes(5)->addSecond(),
         ]);
+
+        // Processing has moved the sender's own roster row past both rows, as it does for every
+        // message they send, so the kept row is marked mailed to all once the recipient has it.
+        ChatRoster::where('chatid', $room->id)->where('userid', $sender->id)
+            ->update(['lastmsgemailed' => $duplicate->id]);
 
         $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
         $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
