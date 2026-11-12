@@ -896,7 +896,7 @@ class GroupPostIngestionService
             if (!$this->dryRun) {
                 DB::table('messages_history')->insert([
                     'groupid'       => $group->id,
-                    'source'        => Message::SOURCE_EMAIL,
+                    'source'        => Message::SOURCE_PLATFORM,
                     'fromuser'      => $user->id,
                     'envelopefrom'  => $fromAddr,
                     'envelopeto'    => $groupEmail,
