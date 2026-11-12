@@ -151,8 +151,14 @@ Three things make this worse than it sounds:
 
 ## Libraries and packaging
 
-- **vue-leaflet imports a bare `leaflet`** when the global is unset, producing a second Leaflet
-  instance and two maps that do not agree.
+- **A bare `leaflet` import loads a second Leaflet and overwrites `window.L`.** The package entry is the
+  UMD build, which ends `window.L = exports`. vue-leaflet does it when the global is unset, and
+  `leaflet-control-geocoder` does it always. Bounds built from one copy then fail the other's
+  `instanceof`, so `fitBounds` throws "Bounds are not valid" and `flyToBounds` reads
+  `_northEast.lat` of an empty object. No error names the cause. `build-plugins/leafletAlias.js`
+  sends the bare specifier to the ES build; keep every import on `leaflet/dist/leaflet-src.esm`.
+- **`loadLeaflet()` must not skip the extensions when `window.L` is already set.** The vue-leaflet plugin
+  sets it first, and wicket-leaflet then never loaded (`this.construct[this.type]`).
 - **Lockfiles are not interchangeable between npm 10 and npm 11.** A lockfile written by one
   fails a clean install under the other.
 - **Capacitor's plugin allowlist overrides dependency scanning**, so adding a dependency is not

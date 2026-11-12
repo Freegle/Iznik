@@ -6,6 +6,7 @@ import { sentryVitePlugin } from '@sentry/vite-plugin'
 import config from './config'
 import { branding } from './branding.config'
 import { componentNameTransform } from './build-plugins/componentNameTransform'
+import { leafletAlias } from './build-plugins/leafletAlias'
 
 // Cached, brand-aware page-title string used in both `app.head.title` and
 // the og:title / twitter:title meta tags so they stay in lockstep.
@@ -477,6 +478,10 @@ export default defineNuxtConfig({
   },
 
   vite: {
+    resolve: {
+      // One Leaflet: see build-plugins/leafletAlias.js.
+      alias: [leafletAlias],
+    },
     vue: {
       template: {
         compilerOptions: {
