@@ -232,6 +232,12 @@ fc := &failoverConnector{
 return postgres.New(postgres.Config{Conn: sql.OpenDB(fc)}), fc, nil
 ```
 
+## Proving a site works on both
+
+[The parity harness](parity-harness.md) is how a converted raw SQL site is shown to send the same SQL on MySQL and give
+the same rows on both engines, on a small fixture. It needs the second engine's database built by
+`scripts/setup-pg-database.sh`.
+
 ## Not yet done
 
 PostgreSQL fixtures, the Go and Laravel suites on PostgreSQL, the stored functions, a CI job that runs the

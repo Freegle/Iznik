@@ -114,12 +114,31 @@ A site's id is a hash of its file and its normalised SQL, so changing a query ch
 `update` carries the status and reason across when it is plainly the same site (same file, function
 and method), so editing a deliberate query needs a regenerate and not a new justification.
 
+## Golden stores and approved diffs
+
+The parity harness (docs/developers/reference/parity-harness.md) compares a converted site with its
+`goldenSql`. The Go and Laravel tests run in containers that cannot read this directory, so `update` also
+writes the part of the manifest each stack needs: `iznik-server-go/parity/goldens.json` and
+`iznik-batch/tests/fixtures/orm-parity/goldens.json` (`lib/parity-store.mjs`). `check` fails when either is
+stale, when an `approvedDiff` lacks its `sql` or `reason`, and when the two canonicaliser corpus copies
+(`iznik-server-go/parity/canonical-corpus.json` and `iznik-batch/tests/Support/OrmHarness/canonical-corpus.json`)
+differ.
+
+```
+node tools/orm-migration/extract.mjs approve ID --sql 'SELECT ...' --reason 'Why this is the same statement.'
+```
+
+records an approved diff on a manifest entry. It survives `update`.
+
+`iznik-server-go/parity/` is test support, so its fixture SQL is counted with the tests and is not a site.
+
 ## Files
 
 - `extract.mjs`: the command line.
 - `lib/go-scan.mjs`, `lib/php-scan.mjs`: the scanners. They read tokens, not lines.
 - `lib/sql.mjs`: normalising, dialect features, complexity and conversion wave.
 - `lib/inventory.mjs`: walking the repository, merging with the manifest, the ratchet.
+- `lib/parity-store.mjs`: the golden stores, approved diff checks and the corpus copy check.
 - `rules.json`: file-level decisions.
 - `manifest.json`: the inventory. One site per line so a diff reads as one line per change.
 - `services/laravel/`: the earlier Laravel inventory and the harness inputs the Laravel tests
