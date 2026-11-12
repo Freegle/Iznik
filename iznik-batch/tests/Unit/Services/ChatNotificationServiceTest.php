@@ -109,6 +109,47 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertCount(1, $toRecipient);
     }
 
+    public function test_notify_by_email_does_not_mail_the_duplicate_row_on_a_later_pass(): void
+    {
+        // The notifier runs again about a second after each pass. The duplicate row that
+        // was collapsed away in the first pass must not be picked up by the second and
+        // mailed as a new message: one send is one email, however many passes it takes.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $sender->id,
+            'lastmsgemailed' => null,
+        ]);
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $recipient->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Are these still available?',
+            'date' => now()->subMinutes(5),
+        ]);
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Are these still available?',
+            'date' => now()->subMinutes(5)->addSecond(),
+        ]);
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        $toRecipient = Mail::sent(ChatNotification::class)->filter(
+            fn (ChatNotification $mail) => $mail->hasTo($recipient->email_preferred)
+        );
+        $this->assertCount(1, $toRecipient);
+    }
+
     public function test_notify_by_email_with_specific_chat(): void
     {
         $sender = $this->createTestUser();
