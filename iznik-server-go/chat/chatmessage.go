@@ -1451,6 +1451,11 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
 	}
 
+	// A moderator acts only on messages in their own review queue.
+	if status := moderationAccess(db, myid, req.ID, req.Action); status != 0 {
+		return fiber.NewError(status, "Not allowed to moderate this chat message")
+	}
+
 	// Section 11.3 of the lockdown plan: chatmessages moderation Approve stays
 	// allowed (there is no subject/body field to carry a composed message, so it is
 	// inherently the basic button); ApproveAllFuture changes the member's moderation
@@ -1492,6 +1497,52 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 // =============================================================================
 // Review queue helpers
 // =============================================================================
+
+// moderationAccess decides whether a moderator may act on a chat message, using the same scope as the review
+// queue: the chat is visible to them (canSeeChatRoom, plus mod2ModAllowed for a moderators' chat), or they do wider
+// chat review and the action is Approve, the only action that review offers. It returns 0 when allowed, otherwise
+// the HTTP status to refuse with. A message that does not exist is left to the action handlers to report.
+func moderationAccess(db *gorm.DB, myid uint64, msgID uint64, action string) int {
+	var room struct {
+		ID       uint64
+		Userid   uint64
+		User1    uint64
+		User2    uint64
+		Groupid  uint64
+		Chattype string
+	}
+	db.Table("chat_messages cm").
+		Select("cr.id, cm.userid, cr.user1, cr.user2, COALESCE(cr.groupid, 0) AS groupid, cr.chattype").
+		Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").
+		Where("cm.id = ?", msgID).
+		Scan(&room)
+
+	if room.ID == 0 {
+		return fiber.StatusNotFound
+	}
+
+	if canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) && mod2ModAllowed(myid, room.Chattype, room.Groupid) {
+		return 0
+	}
+
+	if action == "Approve" && room.Chattype == utils.CHAT_TYPE_USER2USER && user.HasWiderReview(myid) {
+		recipient := room.User1
+		if room.Userid == room.User1 {
+			recipient = room.User2
+		}
+
+		var wider int64
+		db.Table("memberships m").
+			Joins("INNER JOIN `groups` g ON g.id = m.groupid AND g.type = ?", utils.GROUP_TYPE_FREEGLE).
+			Where("m.userid = ? AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1", recipient).
+			Count(&wider)
+		if wider > 0 {
+			return 0
+		}
+	}
+
+	return fiber.StatusForbidden
+}
 
 // mod2ModAllowed applies the extra Mod2Mod rule on top of canSeeChatRoom: the room is for the
 // group's active moderators, so a backup moderator (membership settings active:0) is left out,
