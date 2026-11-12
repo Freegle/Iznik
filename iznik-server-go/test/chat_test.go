@@ -1021,6 +1021,22 @@ func TestPostChatRoomTyping(t *testing.T) {
 	assert.NotEqual(t, dateBefore, dateAfter, "Typing should bump recent unmailed message dates")
 }
 
+// Creating a room through the ChatRoom struct, as the LoveJunk path does, must leave groupid NULL: a
+// zero community id would break the foreign key.
+func TestCreateChatRoomStructLeavesGroupidNull(t *testing.T) {
+	prefix := uniquePrefix("room_struct")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+
+	room := chat.ChatRoom{User1: user1ID, User2: user2ID, Chattype: utils.CHAT_TYPE_USER2USER}
+	assert.NoError(t, database.DBConn.Create(&room).Error)
+	assert.NotZero(t, room.ID)
+
+	var withGroup int64
+	database.DBConn.Table("chat_rooms").Where("id = ? AND groupid IS NOT NULL", room.ID).Count(&withGroup)
+	assert.Equal(t, int64(0), withGroup)
+}
+
 func TestPostChatRoomTypingNonParticipant(t *testing.T) {
 	prefix := uniquePrefix("typing_np")
 

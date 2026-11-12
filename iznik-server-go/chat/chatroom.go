@@ -113,7 +113,8 @@ type ChatRoom struct {
 	Chattype string `json:"chattype"`
 	User1    uint64 `json:"user1"`
 	User2    uint64 `json:"user2"`
-	Groupid  uint64 `json:"-" gorm:"column:groupid"`
+	// Read only: a User2User room has no community, and a Create through this struct must leave the column NULL.
+	Groupid uint64 `json:"-" gorm:"column:groupid;->"`
 }
 
 // parseChattypes extracts chattypes from query parameters.
