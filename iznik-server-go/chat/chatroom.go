@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
@@ -1412,6 +1413,19 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 	return r
 }
 
+// snippetLength is the most characters a chat list snippet holds.
+const snippetLength = 100
+
+// truncateSnippet keeps the first snippetLength characters. It counts characters, not bytes, so it never cuts
+// through a multi-byte character.
+func truncateSnippet(s string) string {
+	if utf8.RuneCountInString(s) <= snippetLength {
+		return s
+	}
+
+	return string([]rune(s)[:snippetLength])
+}
+
 func getSnippet(msgtype string, chatmsg string, refmsgtype string) string {
 	var ret string
 
@@ -1424,9 +1438,7 @@ func getSnippet(msgtype string, chatmsg string, refmsgtype string) string {
 		if len(chatmsg) > 0 {
 			ret = splitEmoji(chatmsg)
 
-			if len(ret) > 100 {
-				ret = ret[:100]
-			}
+			ret = truncateSnippet(ret)
 		} else if refmsgtype == utils.OFFER {
 			ret = "Item is no longer available"
 		} else {
@@ -1446,9 +1458,7 @@ func getSnippet(msgtype string, chatmsg string, refmsgtype string) string {
 			// wrongly.
 			ret = splitEmoji(chatmsg)
 
-			if len(ret) > 100 {
-				ret = ret[:100]
-			}
+			ret = truncateSnippet(ret)
 		}
 	}
 
@@ -1475,9 +1485,7 @@ func reportSnippet(chatmsg string) string {
 		if details != "" {
 			ret := splitEmoji(details)
 
-			if len(ret) > 100 {
-				ret = ret[:100]
-			}
+			ret = truncateSnippet(ret)
 
 			return "Reported: " + ret
 		}
@@ -1485,9 +1493,7 @@ func reportSnippet(chatmsg string) string {
 
 	ret := splitEmoji(chatmsg)
 
-	if len(ret) > 100 {
-		ret = ret[:100]
-	}
+	ret = truncateSnippet(ret)
 
 	return ret
 }
