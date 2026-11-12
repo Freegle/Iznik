@@ -77,7 +77,16 @@ class UserChangesSyncer
                 }
 
                 try {
-                    $match = TnMemberMatch::find((int) ($change['fd_user_id'] ?? 0), (int) ($change['tn_user_id'] ?? 0));
+                    $tnId = (int) ($change['tn_user_id'] ?? 0);
+
+                    // Forgetting the member clears their TN id, so read again, the removal would find
+                    // no account holding it and could take the account TN named for the member.
+                    if (!empty($change['account_removed']) && $this->removalApplied($tnId)) {
+                        Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . ($change['fd_user_id'] ?? 'null') . ' tn_user_id=' . $tnId . ' action=already-removed');
+                        continue;
+                    }
+
+                    $match = TnMemberMatch::find((int) ($change['fd_user_id'] ?? 0), $tnId);
                     $user = $this->resolveMember($change, $match);
                     if ($user === null) {
                         continue;
@@ -93,6 +102,7 @@ class UserChangesSyncer
                         Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $user->id . ' action=account-removed');
                         $user->forget('TN account removed', $this->dryRun);
                         $this->loki->logEvent('tn-sync', 'user-forget', ['user_id' => $user->id]);
+                        $this->markRemovalApplied($tnId);
 
                         // Only now the removal has been applied: before, it could still be skipped or fail.
                         if ($match->heldElsewhere()) {
@@ -253,6 +263,24 @@ class UserChangesSyncer
 
         if (!is_int($latest) || $time > $latest) {
             Cache::put($key, $time, now()->addHours(self::APPLIED_TTL_HOURS));
+        }
+    }
+
+    /** Whether this TN member's removal has already been applied, within the time a window can be read again. */
+    private function removalApplied(int $tnId): bool
+    {
+        return $tnId !== 0 && Cache::has(self::APPLIED_KEY_PREFIX . 'removal:' . $tnId);
+    }
+
+    /**
+     * Keep that this TN member's removal has been applied. Without a TN id there is nothing to
+     * keep: the account named is forgotten, so a re-read finds no TN account. A dry run applies
+     * nothing, so it keeps nothing.
+     */
+    private function markRemovalApplied(int $tnId): void
+    {
+        if (!$this->dryRun && $tnId !== 0) {
+            Cache::put(self::APPLIED_KEY_PREFIX . 'removal:' . $tnId, true, now()->addHours(self::APPLIED_TTL_HOURS));
         }
     }
 

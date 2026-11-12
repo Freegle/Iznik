@@ -10,6 +10,7 @@ use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
 use App\Services\TrashNothing\Sync\UserChangesSyncer;
 use Illuminate\Http\Client\Request;
 use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -1092,6 +1093,48 @@ class UserChangesSyncerTest extends TestCase
         $this->assertStringContainsString("not applied to user {$holder->id}", $sentry->calls[0]);
     }
 
+    /**
+     * Forgetting the holder clears its TN id, so when the window is read again no account holds it.
+     * The account TN named must still be left alone, not given the id and forgotten in its turn.
+     */
+    public function test_a_removal_from_the_holder_read_again_leaves_the_named_account(): void
+    {
+        $sentry = $this->recordSentry();
+        $named = $this->tnUserWithId(null);
+        $holder = $this->tnUserWithId(99130046);
+        $change = [
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130046,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ];
+
+        $this->syncChanges([$change]);
+        $this->syncChanges([$change]);
+
+        $this->assertSame('Deleted User #' . $holder->id, $holder->fresh()->fullname);
+        $this->assertSame('Test Member', $named->fresh()->fullname);
+        $this->assertNull($named->fresh()->tnuserid, 'the id of a member who left is not given to another account');
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
+    /** A dry run applies nothing, so the real run must still apply the removal. */
+    public function test_a_dry_run_does_not_mark_a_removal_applied(): void
+    {
+        $user = $this->tnUserWithId(99130047);
+        $change = [
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130047,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ];
+
+        $this->syncChanges([$change], dryRun: true);
+        $this->syncChanges([$change]);
+
+        $this->assertSame('Deleted User #' . $user->id, $user->fresh()->fullname);
+    }
+
     /** A dry run removes nothing, so it must not report a removal as having gone ahead. */
     public function test_a_dry_run_does_not_report_a_removal_from_the_holder(): void
     {
@@ -1125,8 +1168,10 @@ class UserChangesSyncerTest extends TestCase
         $this->syncChanges([$change]);
 
         // The id is no longer held, and the named account now holds two TN usernames, so the
-        // same removal is a real skip on it.
+        // same removal is a real skip on it. A removal already applied is not applied again while
+        // its marker lasts; that is cleared here, so this tests only the report's own keys.
         DB::table('users')->where('id', $holder->id)->update(['tnuserid' => null]);
+        Cache::forget('tn-sync:change-applied:removal:99130025');
         UserEmail::create(['userid' => $named->id, 'email' => $this->username('second') . '-g1' . self::TN_DOMAIN, 'preferred' => 0]);
 
         $this->syncChanges([$change]);
