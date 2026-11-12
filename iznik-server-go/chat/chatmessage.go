@@ -2321,16 +2321,23 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	// Auto-approve any ModMail messages after this one
 	autoApproveModmails(db, myid, msg.Chatid, msgID)
 
-	// Find and reject all identical pending messages from last 24 hours (spam flood prevention)
-	cutoff := time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
-
+	// Find and reject all identical pending messages from last 24 hours (spam flood prevention).
+	// Only a message with text has an identity to match on: an image-only message has empty text, which
+	// every other image-only message shares. A twin another moderator is holding is theirs to decide, so
+	// it is left pending and held.
 	type dupMsg struct {
 		ID     uint64
 		Chatid uint64
+		Userid uint64
 	}
 	var dups []dupMsg
-	db.Table("chat_messages").Select("id, chatid").Where("date >= ? AND reviewrequired = 1 AND message = ? AND id != ?",
-		cutoff, msg.Message, msgID).Scan(&dups)
+	if msg.Message != "" {
+		cutoff := time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
+		db.Table("chat_messages").Select("id, chatid, userid").
+			Where("date >= ? AND reviewrequired = 1 AND message = ? AND id != ?", cutoff, msg.Message, msgID).
+			Where("id NOT IN (SELECT msgid FROM chat_messages_held WHERE userid != ?)", myid).
+			Scan(&dups)
+	}
 
 	// Track affected chat IDs for count updates
 	affectedChats := map[uint64]bool{msg.Chatid: true}
@@ -2340,6 +2347,15 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 		// identical twin above (09878cd3c660).
 		db.Table("chat_messages").Where("id = ?", dup.ID).
 			Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid, "reviewrejected": gorm.Expr("1")})
+		db.Table("chat_messages_held").Where("msgid = ?", dup.ID).Delete(nil)
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"),
+			"type":      log.LOG_TYPE_CHAT,
+			"subtype":   log.LOG_SUBTYPE_REJECTED,
+			"user":      dup.Userid,
+			"byuser":    myid,
+			"text":      fmt.Sprintf("Chat message %d rejected as a duplicate of %d", dup.ID, msgID),
+		})
 		affectedChats[dup.Chatid] = true
 	}
 
