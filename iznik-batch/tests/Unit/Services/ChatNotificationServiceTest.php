@@ -1423,6 +1423,62 @@ class ChatNotificationServiceTest extends TestCase
         }
     }
 
+    public function test_notify_by_email_user2mod_mod_message_to_other_mod_is_from_the_author_not_the_member(): void
+    {
+        $member = $this->createTestUser(['fullname' => 'Alice Member']);
+        $group = $this->createTestGroup();
+
+        $modA = $this->createTestUser(['fullname' => 'Mod A (author)']);
+        $modB = $this->createTestUser(['fullname' => 'Mod B (recipient)']);
+
+        foreach ([$modA, $modB] as $mod) {
+            Membership::create([
+                'userid' => $mod->id,
+                'groupid' => $group->id,
+                'role' => Membership::ROLE_MODERATOR,
+                'added' => now(),
+                'settings' => null,
+            ]);
+        }
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id,
+            'groupid' => $group->id,
+            'created' => now(),
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $member->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        $this->createTestChatMessage($room, $modA, [
+            'date' => now()->subMinutes(5),
+            'message' => 'Hello from Mod A',
+        ]);
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id);
+
+        // Mod B reads Mod A's words, so the mail is from the author and from the volunteers, not from the member.
+        Mail::assertSent(ChatNotification::class, function ($mail) use ($modA, $modB, $member) {
+            if ($mail->recipient->id !== $modB->id) {
+                return false;
+            }
+
+            $this->assertSame($modA->id, $mail->sender->id, 'Sender is the message author, not the member');
+            $this->assertNotSame($member->id, $mail->sender->id);
+
+            $fromName = $mail->envelope()->from->name;
+            $this->assertStringNotContainsString('via', $fromName);
+            $this->assertStringContainsString('Volunteers', $fromName);
+
+            return true;
+        });
+    }
+
     public function test_notify_by_email_user2mod_active_mod_reply_notifies_other_active_not_backup(): void
     {
         $member = $this->createTestUser(['fullname' => 'Alice Member']);
