@@ -9,6 +9,7 @@ use App\Models\EmailTracking;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Traits\ChunkedProcessing;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -944,6 +945,32 @@ class PurgeService
     }
 
     /**
+     * Logs that name a message that no longer exists, between two times. The query is built here
+     * and not inline so the parity test renders the statement that runs.
+     *
+     * @internal
+     */
+    public static function orphanedMessageLogQuery(\DateTimeInterface|string $from, \DateTimeInterface|string $to): QueryBuilder
+    {
+        return DB::table('logs')
+            ->leftJoin('messages', 'messages.id', '=', 'logs.msgid')
+            ->whereNotNull('logs.msgid')
+            ->whereNull('messages.id')
+            ->where('logs.timestamp', '>=', $from)
+            ->where('logs.timestamp', '<', $to);
+    }
+
+    /**
+     * One log row, by id.
+     *
+     * @internal
+     */
+    public static function deleteLogQuery(int $id): QueryBuilder
+    {
+        return DB::table('logs')->where('id', $id);
+    }
+
+    /**
      * Purge logs for messages that no longer exist (30-60 days old).
      */
     public function purgeOrphanedMessageLogs(bool $dryRun = false): int
@@ -952,12 +979,7 @@ class PurgeService
         $end = now()->subDays(60)->startOfDay();
 
         if ($dryRun) {
-            $row = DB::selectOne(
-                "SELECT COUNT(*) AS cnt FROM logs LEFT JOIN messages ON messages.id = logs.msgid WHERE logs.msgid IS NOT NULL AND messages.id IS NULL AND logs.timestamp >= ? AND logs.timestamp < ?",
-                [$end, $start]
-            );
-
-            return (int) ($row->cnt ?? 0);
+            return self::orphanedMessageLogQuery($end, $start)->count();
         }
 
         $total = 0;
@@ -971,7 +993,7 @@ class PurgeService
             );
 
             foreach ($logs as $log) {
-                DB::delete("DELETE FROM logs WHERE id = ?", [$log->id]);
+                self::deleteLogQuery((int) $log->id)->delete();
                 $total++;
             }
         } while (count($logs) > 0);
@@ -1133,7 +1155,7 @@ class PurgeService
             );
 
             foreach ($logs as $log) {
-                DB::delete("DELETE FROM logs WHERE id = ?", [$log->id]);
+                self::deleteLogQuery((int) $log->id)->delete();
                 $total++;
                 $lastId = (int) $log->id;
             }

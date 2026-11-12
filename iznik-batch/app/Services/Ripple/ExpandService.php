@@ -29,6 +29,7 @@ use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
 use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -1972,6 +1973,22 @@ class ExpandService
      *
      * @return int[] groupids, ascending, deduplicated
      */
+    /**
+     * The member's join and leave history, oldest first. The query is built here and not inline so
+     * the parity test renders the statement that runs.
+     *
+     * @internal
+     */
+    public static function optOutLogQuery(int $userid): QueryBuilder
+    {
+        return DB::table('logs')
+            ->select('groupid', 'subtype', 'text')
+            ->where('user', $userid)
+            ->where('type', 'Group')
+            ->whereIn('subtype', ['Joined', 'Left'])
+            ->orderBy('id');
+    }
+
     private function rippleOptOutGroupIds(int $userid): array
     {
         $blocked = [];
@@ -1979,12 +1996,7 @@ class ExpandService
 
         // Ordered by id, so the stream replays the member's history oldest-first and the last
         // verdict written for a group is the one that stands.
-        foreach (DB::select(
-            "SELECT groupid, subtype, text FROM logs
-             WHERE user = ? AND type = 'Group' AND subtype IN ('Joined', 'Left')
-             ORDER BY id",
-            [$userid]
-        ) as $l) {
+        foreach (self::optOutLogQuery($userid)->get() as $l) {
             if ($l->subtype === 'Joined') {
                 $latestJoinText[$l->groupid] = $l->text;
                 // Any later join (manual or rippled) supersedes an earlier block:
@@ -2298,6 +2310,22 @@ class ExpandService
      * welcome is suppressed, and sends one bundled intro email per post. Best-effort: never breaks
      * the expander.
      */
+    /**
+     * The poster's memberships anywhere, organic ones before ripple-created ones and the newest
+     * first, with the settings a rippled-into membership copies. The query is built here and not
+     * inline so the parity test renders the statement that runs.
+     *
+     * @internal
+     */
+    public static function organicMembershipQuery(int $userid): QueryBuilder
+    {
+        return DB::table('memberships')
+            ->select('emailfrequency', 'eventsallowed', 'volunteeringallowed')
+            ->where('userid', $userid)
+            ->orderBy('rippled')
+            ->orderByDesc('added');
+    }
+
     private function addPosterMembershipToRippledGroups(int $msgid, array &$stats): void
     {
         try {
@@ -2332,13 +2360,7 @@ class ExpandService
             // previous ripple's guess - otherwise a wrong default propagates itself forward every time
             // another post ripples.
             if (!$home) {
-                $home = DB::selectOne(
-                    'SELECT emailfrequency, eventsallowed, volunteeringallowed
-                     FROM memberships WHERE userid = ?
-                     ORDER BY rippled ASC, added DESC
-                     LIMIT 1',
-                    [$posterId]
-                );
+                $home = self::organicMembershipQuery((int) $posterId)->first();
             }
             // Email frequency: preserve the poster's setting, but DOWNGRADE ONLY immediate (-1) to
             // daily (24). A rippled-into group is a lower-priority, unrequested membership, so we never
