@@ -966,4 +966,35 @@ class MessageExpiryServiceTest extends TestCase
         $this->assertEquals(100, $count);
     }
 
+    public function test_age_expiry_keeps_a_taken_outcome_that_sits_beside_an_expired_one(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group);
+
+        // Expired by deadline, then completed by the member afterwards.
+        MessageOutcome::create([
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_EXPIRED,
+            'timestamp' => now()->subHours(2),
+        ]);
+        MessageOutcome::create([
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_TAKEN,
+            'timestamp' => now()->subHour(),
+        ]);
+
+        $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_TAKEN,
+        ]);
+        $this->assertDatabaseMissing('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+        ]);
+    }
 }
