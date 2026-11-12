@@ -1,7 +1,8 @@
 #!/bin/bash
 # Builds the PostgreSQL test databases from the generated baseline.
 #
-# Called by scripts/setup-test-database.sh when PG_ENGINE=1, and runnable on its own:
+# Called by scripts/setup-test-database.sh when the PostgreSQL container is running, and runnable
+# on its own:
 #
 #   COMPOSE_PROJECT_NAME=freegle-<name> ./scripts/setup-pg-database.sh
 #
@@ -19,9 +20,10 @@
 #   PG_PSQL               a psql command line without -d, replacing the docker exec default
 #   PG_DATABASE           dev database name (default iznik)
 #   PG_TEST_DATABASE      Go test database name (default iznik_go_test)
+#   PG_BASELINE           a baseline file to load instead of the committed one (tests use this)
 
 REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
-BASELINE="${REPO_DIR}/iznik-batch/database/postgres/baseline.sql"
+BASELINE="${PG_BASELINE:-${REPO_DIR}/iznik-batch/database/postgres/baseline.sql}"
 PREFIX="${COMPOSE_PROJECT_NAME:-freegle}"
 PG_CONTAINER="${PG_CONTAINER:-${PREFIX}-postgres}"
 PG_DATABASE="${PG_DATABASE:-iznik}"
@@ -69,11 +71,13 @@ build() {
     return 0
   fi
   echo "Building PostgreSQL database ${db} from the baseline..."
+  # The baseline loads in one transaction (-1), so a failure leaves an empty database that the next
+  # run rebuilds, never a half-built one that looks finished.
   if ! $PG_PSQL -d postgres -X -q -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS \"${db}\" WITH (FORCE)" -c "CREATE DATABASE \"${db}\""; then
     echo "Could not create PostgreSQL database ${db}"
     return 1
   fi
-  if ! $PG_PSQL -d "$db" -X -q -v ON_ERROR_STOP=1 < "$BASELINE" >/dev/null; then
+  if ! $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 < "$BASELINE" >/dev/null; then
     echo "Loading the PostgreSQL baseline into ${db} FAILED"
     return 1
   fi

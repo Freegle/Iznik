@@ -178,13 +178,23 @@ docker exec "${PREFIX}-percona" sh -c "\
       mysql -u root -piznik iznik_go_test"
 echo "iznik_go_test ready (schema cloned from migrated iznik)"
 
-# 5. Optional second engine. Off unless PG_ENGINE=1, so nothing above changes and CI is unaffected.
-# Builds the PostgreSQL databases from the generated baseline; see scripts/setup-pg-database.sh.
-if [ "${PG_ENGINE:-}" = "1" ]; then
-  echo "PG_ENGINE=1: building the PostgreSQL databases..."
-  if ! "${REPO_DIR}/scripts/setup-pg-database.sh"; then
-    echo "PostgreSQL database setup FAILED"
-    exit 1
+# 5. Second engine. Builds the PostgreSQL databases from the generated baseline (see
+# scripts/setup-pg-database.sh) when the PostgreSQL container is running. Nothing above depends on it.
+#   PG_ENGINE unset  build if the container is running; a failure is a warning, MySQL is unaffected
+#   PG_ENGINE=1      build, and fail this script if it cannot
+#   PG_ENGINE=0      skip
+if [ "${PG_ENGINE:-}" != "0" ]; then
+  if [ "${PG_ENGINE:-}" = "1" ] || docker inspect -f '{{.State.Running}}' "${PREFIX}-postgres" 2>/dev/null | grep -q "true"; then
+    echo "Building the PostgreSQL databases..."
+    if ! "${REPO_DIR}/scripts/setup-pg-database.sh"; then
+      if [ "${PG_ENGINE:-}" = "1" ]; then
+        echo "PostgreSQL database setup FAILED"
+        exit 1
+      fi
+      echo "WARNING: PostgreSQL database setup failed; MySQL is ready. Set PG_ENGINE=1 to make this fatal."
+    fi
+  else
+    echo "${PREFIX}-postgres is not running; skipping the PostgreSQL databases"
   fi
 fi
 

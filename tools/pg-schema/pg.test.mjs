@@ -9,6 +9,7 @@ import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -101,6 +102,26 @@ test('a citext column matches and deduplicates case-insensitively', { skip }, ()
   assert.match(err, /duplicate key value violates unique constraint/)
 })
 
+test('a citext column keeps the varchar limit it had in MySQL', { skip }, () => {
+  const err = mustFail(`INSERT INTO ai_images (name) VALUES ('${'x'.repeat(256)}');`)
+  assert.match(err, /ai_images_name_length/)
+  assert.equal(scratch(`INSERT INTO ai_images (name) VALUES ('${'x'.repeat(255)}'); SELECT count(*) FROM ai_images;`), '1')
+})
+
+test('an ON UPDATE column moves unless the statement sets it to a different value; setting it to itself still moves it', { skip }, () => {
+  // MySQL leaves the column alone for SET ts = ts. A BEFORE trigger cannot tell that from not
+  // naming the column, so PostgreSQL moves it. The difference is listed in the docs page.
+  const out = scratch(`
+    INSERT INTO abtest (uid, variant, shown, action, rate, timestamp) VALUES ('u', 'v', 0, 0, 0, '2020-01-01 00:00:00+00');
+    UPDATE abtest SET shown = 1, timestamp = '2020-01-01 00:00:00+00';
+    SELECT timestamp = '2020-01-01 00:00:00+00' FROM abtest;
+    UPDATE abtest SET shown = 2, timestamp = '2021-02-03 04:05:06+00';
+    SELECT timestamp = '2021-02-03 04:05:06+00' FROM abtest;
+    UPDATE abtest SET shown = 3;
+    SELECT timestamp > '2022-01-01' FROM abtest;`).split('\n')
+  assert.deepEqual(out.slice(-3), ['f', 't', 't'])
+})
+
 test('a case-sensitive unique column stays case sensitive', { skip }, () => {
   assert.equal(scratch(`INSERT INTO abtest (uid, variant, shown, action, rate) VALUES ('A', 'x', 0, 0, 0), ('a', 'x', 0, 0, 0); SELECT count(*) FROM abtest;`), '2')
 })
@@ -138,7 +159,7 @@ test('every ON UPDATE CURRENT_TIMESTAMP trigger fires like MySQL', { skip }, () 
   assert.match(r.stderr, /triggers checked on \d+ tables; skipped \(no changeable column\):\s*$/m)
 })
 
-test('the baseline is repeatable: loading it again into an empty database gives the same objects', { skip }, () => {
+test('loading the baseline into a second empty database gives the same columns and types', { skip }, () => {
   const second = `${DB}_again`
   try {
     psql('postgres', `DROP DATABASE IF EXISTS ${second} WITH (FORCE); CREATE DATABASE ${second};`)
@@ -171,5 +192,25 @@ test('setup-pg-database.sh builds both databases, leaves a built one alone, and 
     assert.equal(psql(a, `SELECT count(*) FROM pg_class WHERE relname = 'marker'`), '0')
   } finally {
     psql('postgres', `DROP DATABASE IF EXISTS ${a} WITH (FORCE); DROP DATABASE IF EXISTS ${b} WITH (FORCE);`)
+  }
+})
+
+test('a baseline that fails to load leaves an empty database, and the next run does not call it built', { skip }, () => {
+  const script = path.join(here, '../../scripts/setup-pg-database.sh')
+  const db = `${DB}_bad`
+  const bad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pgbad-')), 'baseline.sql')
+  fs.writeFileSync(bad, 'CREATE TABLE half (a int);\nSELECT no_such_function();\n')
+  const run = () =>
+    spawnSync('bash', [script], { encoding: 'utf8', env: { ...process.env, PG_PSQL: `${PSQL}`, PG_DATABASE: db, PG_TEST_DATABASE: db, PG_BASELINE: bad } })
+  try {
+    for (let i = 0; i < 2; i++) {
+      const r = run()
+      assert.notEqual(r.status, 0, r.stdout)
+      assert.match(r.stdout, /FAILED/)
+      assert.ok(!/already has/.test(r.stdout), 'a failed load must not look built on the next run')
+    }
+    assert.equal(psql(db, `SELECT count(*) FROM pg_class WHERE relname = 'half'`), '0')
+  } finally {
+    psql('postgres', `DROP DATABASE IF EXISTS ${db} WITH (FORCE);`)
   }
 })
