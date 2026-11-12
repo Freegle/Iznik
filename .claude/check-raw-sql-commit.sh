@@ -2,18 +2,19 @@
 # PreToolUse hook for git commit: warn when the commit adds new raw SQL.
 #
 # The v2 API and iznik-batch are being moved off hand-written SQL onto GORM /
-# Eloquent a wave at a time. CI enforces this in ci-ratchet.sh gates (b) and
-# (d) - a new raw site with no manifest entry, or a raw+in-progress count above
-# the baseline, fails the build. That feedback arrives minutes after a push.
-# This hook says the same thing at commit time instead.
+# Eloquent a wave at a time. CI enforces this in the check-raw-sql-ratchet job
+# (tools/orm-migration) - a new raw site with no manifest entry, or a
+# raw+in-progress count above the baseline, fails the build. That feedback
+# arrives minutes after a push. This hook says the same thing at commit time
+# instead.
 #
-# WARNING ONLY - it never blocks. Raw SQL is sometimes right (see keep-raw.json)
-# and test fixtures are exempt by design. The point is to make the author decide
+# WARNING ONLY - it never blocks. Raw SQL is sometimes right (a keep-raw
+# comment says why) and test fixtures are exempt by design. The point is to make the author decide
 # deliberately rather than find out from CI.
 #
-# The method surfaces below came from the ORM migration extractors, which have
-# since been removed. .claude/check-raw-sql.sh, which CI runs, matches a
-# narrower set; this warning keeps the wider one.
+# The method surfaces below are a subset of what tools/orm-migration/extract.mjs
+# inventories. .claude/check-raw-sql.sh, which CI runs, matches a narrower set;
+# this warning keeps the wider one.
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)
@@ -94,5 +95,5 @@ if [ "$PROD_COUNT" = "0" ]; then
 fi
 
 # Emit as a systemMessage so it is a visible warning, not a block.
-jq -n --arg b "$BODY" '{systemMessage: ("Raw SQL check: this commit adds raw SQL.\n\n" + $b + "\nThe v2 API and iznik-batch are migrating onto GORM/Eloquent. Prefer the query builder. If raw is genuinely right, it needs a manifest entry, and if it changes a converted site'"'"'s SQL it needs an approved-diffs.json entry with a reason.\n\n  cd tools/orm-migration && go run .     # regenerate the manifest\n  bash tools/orm-migration/ci-ratchet.sh # what CI will check\n\nSee docs/developers/reference/orm-migration-harness.md. Warning only - nothing is blocked.")}'
+jq -n --arg b "$BODY" '{systemMessage: ("Raw SQL check: this commit adds raw SQL.\n\n" + $b + "\nThe v2 API and iznik-batch are migrating onto GORM/Eloquent. Prefer the query builder. If raw is genuinely right, put a \"// keep-raw: <reason>\" comment above it. That makes it a keep-raw entry in the manifest.\n\n  node tools/orm-migration/extract.mjs update   # regenerate the manifest\n  node tools/orm-migration/extract.mjs check    # what CI will check\n\nSee tools/orm-migration/README.md. Warning only - nothing is blocked.")}'
 exit 0
