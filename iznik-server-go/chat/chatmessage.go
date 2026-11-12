@@ -998,6 +998,25 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			}
 		}
 
+		// A reply held by rippling is written with its hold, in this transaction: chats:process-incoming takes any
+		// committed reply, so a hold written after the commit leaves a gap in which the reply is delivered first, and a
+		// hold that fails would leave an ordinary reply. A hold that cannot be written fails the send.
+		if holdReply {
+			if err := tx.Table("rippling_held_replies").Create(map[string]interface{}{
+				"chatid":        id,
+				"chatmsgid":     payload.ID,
+				"msgid":         *payload.Refmsgid,
+				"replieruserid": myid,
+				"source":        gorm.Expr("'web'"),
+				"lat":           reach.lat,
+				"lng":           reach.lng,
+				"status":        gorm.Expr("'held'"),
+				"created_at":    gorm.Expr("NOW()"),
+			}).Error; err != nil {
+				return err
+			}
+		}
+
 		if confirm != nil && confirm.asks() {
 			// In a savepoint of its own: a hold that cannot be written leaves the reply as it would have been with
 			// no question, not a reply that failed.
@@ -1029,25 +1048,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
 	}
 
-	// Rippling-out reply HOLD: the replier is outside the post's current reach, so the reply was
-	// created but must not reach the poster yet. Record a rippling_held_replies row (source='web')
-	// — the delivery gate withholds it from the poster until ripple:release-replies releases it
-	// when the post ripples to the replier. Same table and lifecycle as email/TN holds; only the
-	// source differs. Best-effort: an instrumentation failure must not fail the reply, and the
-	// sender still sees their own message. The 'held' metric mirrors RippleReplyService::recordEvent
-	// so web holds appear in the sysadmin rippling dashboard alongside email/TN holds.
+	// A reply held by rippling was written with its rippling_held_replies row above. The delivery gate withholds it
+	// from the poster until ripple:release-replies releases it when the post ripples to the replier. The counter
+	// mirrors RippleReplyService::recordEvent so web holds appear in the sysadmin rippling dashboard beside the
+	// email and TN holds; it is best-effort.
 	if holdReply {
-		db.Table("rippling_held_replies").Create(map[string]interface{}{
-			"chatid":        id,
-			"chatmsgid":     newid,
-			"msgid":         *payload.Refmsgid,
-			"replieruserid": myid,
-			"source":        gorm.Expr("'web'"),
-			"lat":           reach.lat,
-			"lng":           reach.lng,
-			"status":        gorm.Expr("'held'"),
-			"created_at":    gorm.Expr("NOW()"),
-		})
 		db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
 		}).Create(map[string]interface{}{
