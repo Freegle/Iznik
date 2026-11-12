@@ -2,6 +2,8 @@
 
 namespace App\Services\Mail;
 
+use App\Database\Expressions\SubstringIndex;
+use App\Database\Expressions\Alias;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -92,15 +94,15 @@ class DeliveryHealthService
 
         // One pass over the sent_at range, splitting the two windows with conditional sums.
         $rows = DB::table('email_tracking')
-            ->selectRaw("SUBSTRING_INDEX(recipient_email, '@', -1) AS domain")
-            ->selectRaw('SUM(sent_at >= ?) AS recent_sent', [$recentStart])
-            ->selectRaw('SUM(sent_at >= ? AND opened_at IS NOT NULL) AS recent_opened', [$recentStart])
-            ->selectRaw('SUM(sent_at < ?) AS baseline_sent', [$recentStart])
-            ->selectRaw('SUM(sent_at < ? AND opened_at IS NOT NULL) AS baseline_opened', [$recentStart])
+            ->select(new Alias(new SubstringIndex('recipient_email', '@', -1), 'domain'))
+            ->selectRaw('SUM(CASE WHEN sent_at >= ? THEN 1 ELSE 0 END) AS recent_sent', [$recentStart])
+            ->selectRaw('SUM(CASE WHEN sent_at >= ? AND opened_at IS NOT NULL THEN 1 ELSE 0 END) AS recent_opened', [$recentStart])
+            ->selectRaw('SUM(CASE WHEN sent_at < ? THEN 1 ELSE 0 END) AS baseline_sent', [$recentStart])
+            ->selectRaw('SUM(CASE WHEN sent_at < ? AND opened_at IS NOT NULL THEN 1 ELSE 0 END) AS baseline_opened', [$recentStart])
             ->where('sent_at', '>=', $baselineStart)
             ->where('sent_at', '<', $recentEnd)
             ->groupBy('domain')
-            ->havingRaw('recent_sent >= ?', [self::MIN_RECENT_SENDS])
+            ->havingRaw('SUM(CASE WHEN sent_at >= ? THEN 1 ELSE 0 END) >= ?', [$recentStart, self::MIN_RECENT_SENDS])
             ->get();
 
         $collapsed = [];

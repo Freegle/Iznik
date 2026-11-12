@@ -31,11 +31,20 @@ class LegacyGeometryDropTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            $this->markTestSkipped('MySQL only: the drop is an in-place MySQL ALTER sequence (virtual columns, SPATIAL indexes) run against a MySQL production table.');
+        }
         $this->makeClone();
     }
 
     protected function tearDown(): void
     {
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            parent::tearDown();
+
+            return;
+        }
+
         DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'`');
         DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'_geom`');
         parent::tearDown();

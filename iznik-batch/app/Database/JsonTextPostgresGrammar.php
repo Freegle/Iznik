@@ -2,17 +2,36 @@
 
 namespace App\Database;
 
+use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\Grammars\PostgresGrammar;
 
 /**
- * The query builder's JSON path syntax (where('settings->key', ...)) on PostgreSQL.
+ * The query builder on PostgreSQL where it differs from stock Laravel.
  *
+ * Index hints (forceIndex, ignoreIndex) are MySQL optimiser hints and render as nothing here.
+ *
+ * JSON paths (where('settings->key', ...)):
  * Several JSON columns (users.settings, groups.settings, memberships.settings) are text, as they were
  * stored on MySQL, and PostgreSQL's -> and ->> operators need json or jsonb. The column is cast to jsonb
  * first; for a column that is already jsonb the cast does nothing. MySQL is not affected.
  */
 class JsonTextPostgresGrammar extends PostgresGrammar
 {
+    /**
+     * PostgreSQL timestamps keep microseconds (MySQL DATETIME columns here hold whole seconds), so a bound
+     * date keeps them too: otherwise a value stored from NOW() compares as later than the same instant bound
+     * from PHP, which has been truncated to the second.
+     */
+    public function getDateFormat()
+    {
+        return 'Y-m-d H:i:s.u';
+    }
+
+    protected function compileIndexHint(Builder $query, $indexHint)
+    {
+        return '';
+    }
+
     protected function wrapJsonSelector($value)
     {
         $path = explode('->', $value);

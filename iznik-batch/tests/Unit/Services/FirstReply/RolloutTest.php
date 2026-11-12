@@ -70,7 +70,7 @@ class RolloutTest extends TestCase
 
         // And the database renders the identical bucket, so the SQL filters
         // and the PHP checks can never disagree about a post's arm.
-        $db = \DB::selectOne('SELECT CRC32(CONCAT(121254506, "|firstreply")) % 100 AS b');
+        $db = \DB::selectOne("SELECT CRC32(CONCAT(121254506, '|firstreply')) % 100 AS b");
         $this->assertSame(47, (int) $db->b);
     }
 

@@ -91,7 +91,7 @@ class ReachService
             return "{$prefix}reach_labels";
         }
 
-        return "COALESCE(IF({$prefix}reach_labels_next_fp = {$fp}, {$prefix}reach_labels_next, NULL), {$prefix}reach_labels)";
+        return "COALESCE(CASE WHEN {$prefix}reach_labels_next_fp = {$fp} THEN {$prefix}reach_labels_next END, {$prefix}reach_labels)";
     }
 
     /**

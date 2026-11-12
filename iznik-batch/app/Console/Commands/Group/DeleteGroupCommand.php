@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Group;
 
+use App\Database\Sql;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -36,13 +37,7 @@ class DeleteGroupCommand extends Command
         $gid = $group->id;
         $dbName = DB::getDatabaseName();
 
-        $refs = DB::table('INFORMATION_SCHEMA.KEY_COLUMN_USAGE')
-            ->select('TABLE_NAME', 'COLUMN_NAME')
-            ->where('REFERENCED_TABLE_NAME', 'groups')
-            ->where('TABLE_NAME', '!=', 'groups')
-            ->where('TABLE_SCHEMA', $dbName)
-            ->get()
-            ->all();
+        $refs = Sql::foreignKeysReferencing('groups');
 
         $this->line("Group: {$groupName} (#{$gid})");
         $hasData = false;

@@ -59,4 +59,49 @@ class SqlTest extends TestCase
 
         $this->assertSame($expected, Sql::jsonHasPath('cells', '?'));
     }
+
+    public function test_on_duplicate_key_update_renders_for_the_connections_dialect(): void
+    {
+        $expected = DB::connection()->getDriverName() === 'pgsql'
+            ? 'ON CONFLICT (msgid) DO UPDATE SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, updated_at = NOW()'
+            : 'ON DUPLICATE KEY UPDATE lat = VALUES(lat), lng = VALUES(lng), updated_at = NOW()';
+
+        $this->assertSame($expected, Sql::onDuplicateKeyUpdate(['msgid'], ['lat', 'lng'], ['updated_at = NOW()']));
+    }
+
+    public function test_column_is_quoted_only_where_the_engine_folds_case(): void
+    {
+        $this->assertSame(DB::connection()->getDriverName() === 'pgsql' ? '"ourPostingStatus"' : 'ourPostingStatus', Sql::column('ourPostingStatus'));
+    }
+
+    public function test_json_rows_renders_for_the_connections_dialect(): void
+    {
+        $expected = DB::connection()->getDriverName() === 'pgsql'
+            ? 'jsonb_to_recordset(CAST(? AS jsonb)) AS jt(userid bigint, lat double precision)'
+            : "JSON_TABLE(?, '$[*]' COLUMNS (userid BIGINT PATH '$.userid', lat DOUBLE PATH '$.lat')) AS jt";
+
+        $this->assertSame($expected, Sql::jsonRows('?', ['userid' => 'BIGINT', 'lat' => 'DOUBLE'], 'jt'));
+    }
+
+    public function test_foreign_keys_referencing_a_table_are_listed(): void
+    {
+        $refs = Sql::foreignKeysReferencing('groups');
+
+        foreach ($refs as $ref) {
+            $this->assertNotSame('groups', $ref->TABLE_NAME, 'the table itself is not listed');
+            $this->assertNotSame('', $ref->COLUMN_NAME);
+        }
+    }
+
+    public function test_attempt_leaves_the_transaction_usable_after_a_failed_statement(): void
+    {
+        try {
+            Sql::attempt(fn () => DB::select('SELECT ST_GeomFromText(?, 4326)', ['not geometry']));
+            $this->fail('the bad statement should have thrown');
+        } catch (\Throwable $e) {
+            // expected
+        }
+
+        $this->assertSame(1, (int) DB::selectOne('SELECT 1 AS one')->one);
+    }
 }

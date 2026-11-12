@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mail;
 
+use App\Database\Sql;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
@@ -28,7 +29,7 @@ class ReengageVolunteerResolutionTest extends TestCase
     private function setCatchment(int $groupId, string $polygonWkt): void
     {
         DB::statement(
-            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
             [$polygonWkt, config('freegle.srid'), $groupId]
         );
     }

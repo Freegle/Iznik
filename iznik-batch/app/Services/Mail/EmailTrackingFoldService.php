@@ -189,9 +189,9 @@ class EmailTrackingFoldService
             // opened_via is assigned BEFORE opened_at: MySQL evaluates SET left to right and a
             // later assignment sees the earlier one's new value, so the other order would
             // compare against the opened_at it had just overwritten and never change the via.
-            $set[] = 'opened_via = IF(opened_at IS NULL OR opened_at > ?, ?, opened_via)';
+            $set[] = 'opened_via = CASE WHEN opened_at IS NULL OR opened_at > ? THEN ? ELSE opened_via END';
             array_push($bind, $openedAt, $via);
-            $set[] = 'opened_at = IF(opened_at IS NULL OR opened_at > ?, ?, opened_at)';
+            $set[] = 'opened_at = CASE WHEN opened_at IS NULL OR opened_at > ? THEN ? ELSE opened_at END';
             array_push($bind, $openedAt, $openedAt);
         }
 

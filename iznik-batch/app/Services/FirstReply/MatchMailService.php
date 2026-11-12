@@ -2,6 +2,7 @@
 
 namespace App\Services\FirstReply;
 
+use App\Database\Sql;
 use App\Database\Expressions\JsonExtract;
 use App\Database\Expressions\JsonUnquote;
 use App\Database\Expressions\Value;
@@ -209,26 +210,22 @@ class MatchMailService
                 ->distinct()
                 ->get();
 
+            // The reply time is the earliest matching message: a correlated subquery, which both
+            // engines run, where a multi-table UPDATE would apply whichever matching row came last.
+            // keep-raw: fs.replied_at is set from a column of another table, which the builder cannot
+            // reference in the SET array; the subquery is the raw site.
             $attributed = DB::table('firstreply_scouts as fs')
-                ->join('chat_messages as cm', function ($join) {
-                    $join->on('cm.refmsgid', '=', 'fs.msgid')
-                        ->on('cm.userid', '=', 'fs.userid')
+                ->whereNull('fs.replied_at')
+                ->where('fs.sent_at', '>', $since)
+                ->whereExists(function ($q) {
+                    $q->select(DB::raw('1'))
+                        ->from('chat_messages as cm')
+                        ->whereColumn('cm.refmsgid', 'fs.msgid')
+                        ->whereColumn('cm.userid', 'fs.userid')
                         ->where('cm.type', 'Interested')
                         ->whereColumn('cm.date', '>=', 'fs.sent_at');
                 })
-                ->whereNull('fs.replied_at')
-                ->where('fs.sent_at', '>', $since)
-                // keep-raw: fs.replied_at is set from cm.date, a column on the JOINed
-                // table. The update() SET array only binds literal PHP values or takes
-                // a sub-builder/Expression; there is no non-Expression way to reference
-                // another table's column, and DB::raw() here is itself the raw site
-                // (same reasoning as ReachBoundsService::sync's `updated_at = updated_at`
-                // self-assignment). A correlated subquery would not remove it either -
-                // it would additionally have to pick a MIN/MAX cm.date where the JOIN
-                // matches more than one row, which is a behaviour decision the original
-                // does not make (MySQL's multi-table UPDATE applies whichever matching
-                // row it last processes).
-                ->update(['fs.replied_at' => DB::raw('cm.date')]);
+                ->update(['fs.replied_at' => DB::raw("(SELECT MIN(cm.date) FROM chat_messages cm WHERE cm.refmsgid = fs.msgid AND cm.userid = fs.userid AND cm.type = 'Interested' AND cm.date >= fs.sent_at)")]);
 
             foreach ($newlyReplied as $reply) {
                 $this->pullReachOutTo((int) $reply->msgid, (int) $reply->userid);
@@ -258,14 +255,8 @@ class MatchMailService
             ->leftJoin('locations as l', 'l.id', '=', 'u.lastlocation')
             ->where('u.id', $userId)
             ->selectRaw(
-                "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                           AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
-                      THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
-                      ELSE l.lat END AS lat,
-                 CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                           AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
-                      THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
-                      ELSE l.lng END AS lng"
+                Spatial::memberCoordinate('u.settings', 'lat', 'l.lat', ' AND u.tnuserid IS NULL') . ' AS lat, '
+                . Spatial::memberCoordinate('u.settings', 'lng', 'l.lng', ' AND u.tnuserid IS NULL') . ' AS lng'
             )
             ->first();
 
@@ -500,8 +491,8 @@ class MatchMailService
                     m.fromuser AS fromuser, m.subject AS subject
              FROM messages_spatial ms
              JOIN messages m ON m.id = ms.msgid
-             WHERE ms.arrival <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
-               AND ms.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)
+             WHERE ms.arrival <= " . Sql::nowMinus('?', 'MINUTE') . "
+               AND ms.arrival > " . Sql::nowMinus('?', 'HOUR') . "
                AND m.deleted IS NULL
                AND NOT EXISTS (
                      SELECT 1 FROM chat_messages cm
@@ -745,7 +736,7 @@ class MatchMailService
              JOIN rippling_reach rr ON rr.msgid = ?
              WHERE u.id IN (" . implode(',', array_fill(0, count($userIds), '?')) . ")
                AND u.deleted IS NULL
-               AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
+               AND (u.lastaccess IS NULL OR u.lastaccess > " . Sql::nowMinus('90', 'DAY') . ")
                AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id{$mailableSql})
                -- OUTSIDE the reach the post has right now, INSIDE the reach it
                -- will eventually have. Someone already inside the current
@@ -757,10 +748,10 @@ class MatchMailService
                AND rr.reach_labels IS NOT NULL
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
-                     WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
+                     WHERE fs.userid = u.id AND fs.sent_at > " . Sql::nowMinus('?', 'HOUR') . "
                    )
                AND (SELECT COUNT(*) FROM firstreply_scouts fs2
-                    WHERE fs2.userid = u.id AND fs2.sent_at > DATE_SUB(NOW(), INTERVAL 7 DAY)) < ?
+                    WHERE fs2.userid = u.id AND fs2.sent_at > " . Sql::nowMinus('7', 'DAY') . ") < ?
                AND NOT EXISTS (
                      SELECT 1 FROM rippling_reach_notified rn
                      WHERE rn.msgid = ? AND rn.userid = u.id
