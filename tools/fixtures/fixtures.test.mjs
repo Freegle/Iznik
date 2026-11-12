@@ -24,7 +24,7 @@ import {
   tableText,
   valueSql,
 } from './lib.mjs'
-import { exportTables, readInserts } from './export.mjs'
+import { exportTables, readInserts, writeTables } from './export.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const fixturesDir = path.join(here, '../../scripts/fixtures')
@@ -72,7 +72,7 @@ test('line and paragraph separators are written as escapes, so one row is one li
 
 // --- values and statements --------------------------------------------------------------------
 
-test('MySQL text is escaped as the dump it replaces escaped it', () => {
+test('MySQL text is escaped the way mysqldump escapes it', () => {
   assert.equal(mysql.str("a'b\\c\nd\re\0f\x1ag"), "'a\\'b\\\\c\\nd\\re\\0f\\Zg'")
   assert.equal(mysql.str('plain é ü 😀'), "'plain é ü 😀'")
 })
@@ -219,7 +219,7 @@ function smallDir() {
   return dir
 }
 
-test('a MySQL load keeps the session settings of the dump it replaces, and the steps follow the tables', () => {
+test('a MySQL load sets the session as mysqldump does, and the steps follow the tables', () => {
   const dir = smallDir()
   try {
     const sql = all(loadSql('mysql', dir))
@@ -419,6 +419,65 @@ test('every value a repair changes occurs in the fixtures, so none is left over'
   }
 })
 
-test('the loader and the export are not in the way of a FixtureError being the only failure they raise on bad input', () => {
-  assert.throws(() => parseTableText('', 't'), FixtureError)
+test('a bad step file stops the load before any SQL is produced', () => {
+  const dir = smallDir()
+  try {
+    fs.writeFileSync(path.join(dir, 'captured-steps.json'), JSON.stringify([{ op: 'delete', table: 'd', where: {} }]))
+    for (const engine of Object.keys(dialects)) {
+      const gen = loadSql(engine, dir)
+      assert.throws(() => gen.next(), FixtureError)
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a bad table file stops the load before any SQL is produced', () => {
+  const dir = smallDir()
+  try {
+    const bad = path.join(dir, 'tables', 'zzz.jsonl')
+    fs.writeFileSync(bad, '{"table":"zzz","columns":["id"]}\n[1,2]\n')
+    const gen = loadSql('pgsql', dir)
+    assert.throws(() => gen.next(), FixtureError)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an export of almost no tables writes nothing and keeps the committed files', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-export-'))
+  try {
+    fs.mkdirSync(path.join(dir, 'tables'))
+    fs.writeFileSync(path.join(dir, 'tables', 'keep.jsonl'), 'x')
+    assert.throws(() => writeTables([], dir), FixtureError)
+    assert.ok(fs.existsSync(path.join(dir, 'tables', 'keep.jsonl')))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the child car seat offer is a copy of message 150, group and map point included', () => {
+  const rows = (name) => {
+    const t = readTable(fixturesDir, name)
+    return t.rows.map((r) => Object.fromEntries(t.columns.map((c, i) => [c, r[i]])))
+  }
+  const steps = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'extra-steps.json'), 'utf8'))
+  const stepRow = (table) => {
+    const s = steps.find((x) => x.op === 'insert' && x.table === table && x.rows.some((r) => r[0] === 990101))
+    assert.ok(s, `no step inserts message 990101 into ${table}`)
+    const r = s.rows.find((x) => x[0] === 990101)
+    return Object.fromEntries(s.columns.map((c, i) => [c, r[i]]))
+  }
+  const src = rows('messages').find((r) => r.id === 150)
+  const copy = stepRow('messages')
+  for (const c of ['arrival', 'date', 'source', 'fromip', 'fromuser', 'fromname', 'fromaddr', 'lat', 'lng', 'locationid']) {
+    assert.deepEqual(copy[c], src[c], `messages.${c} differs from message 150`)
+  }
+  const srcGroup = rows('messages_groups').find((r) => r.msgid === 150)
+  const copyGroup = stepRow('messages_groups')
+  for (const c of ['groupid', 'arrival']) assert.deepEqual(copyGroup[c], srcGroup[c], `messages_groups.${c}`)
+  const srcSpatial = rows('messages_spatial').find((r) => r.msgid === 150)
+  const copySpatial = stepRow('messages_spatial')
+  assert.equal(copySpatial.point.geom, srcSpatial.point)
+  for (const c of ['groupid', 'arrival']) assert.deepEqual(copySpatial[c], srcSpatial[c], `messages_spatial.${c}`)
 })

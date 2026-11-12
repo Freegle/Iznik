@@ -8,7 +8,7 @@ covers:
   - scripts/setup-pg-database.sh
   - scripts/setup-test-database.sh
   - tools/fixtures/*
-  - scripts/fixtures/*
+  - scripts/fixtures/**
   - iznik-server-go/database/database.go
   - iznik-server-go/database/failover.go
 ---

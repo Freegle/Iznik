@@ -68,9 +68,10 @@ docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik \
 # without also removing its file from scripts/fixtures/tables breaks
 # the fixture load below with a cryptic "ERROR 1146 ... doesn't exist" that aborts on
 # the FIRST stale table and hides any others. Catch ALL stale tables here up front.
-# The fixture loader is Node. Use the host's, or a throwaway node container where the host has none.
+# The fixture loader is Node 20 or later. Use the host's, or a throwaway node container where the host has
+# none or an older one.
 fixture_loader() {
-  if command -v node >/dev/null 2>&1; then
+  if command -v node >/dev/null 2>&1 && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ] 2>/dev/null; then
     node "${REPO_DIR}/tools/fixtures/load.mjs" "$@"
   else
     docker run --rm -v "${REPO_DIR}:/repo:ro" node:22-slim node /repo/tools/fixtures/load.mjs "$@"
@@ -103,7 +104,7 @@ echo "Loading test fixtures into iznik (scripts/fixtures)..."
 FIXTURE_SQL=$(mktemp)
 trap 'rm -f "$FIXTURE_SQL"' EXIT
 if ! fixture_loader --engine mysql --part captured > "$FIXTURE_SQL"; then
-  echo "Writing the fixture SQL FAILED — aborting test database setup"
+  echo "Writing the fixture SQL FAILED: aborting test database setup"
   exit 1
 fi
 docker cp "$FIXTURE_SQL" "${PREFIX}-percona:/tmp/test-fixtures.sql"
@@ -115,7 +116,7 @@ echo "Fixtures loaded"
 
 # Hand-written additions that survive regenerating the captured tables (scripts/fixtures/extra-steps.json).
 if ! fixture_loader --engine mysql --part extra > "$FIXTURE_SQL"; then
-  echo "Writing the extra fixture SQL FAILED — aborting test database setup"
+  echo "Writing the extra fixture SQL FAILED: aborting test database setup"
   exit 1
 fi
 docker cp "$FIXTURE_SQL" "${PREFIX}-percona:/tmp/test-fixtures-extra.sql"

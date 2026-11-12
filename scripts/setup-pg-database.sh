@@ -88,9 +88,10 @@ build() {
   echo "PostgreSQL database ${db} ready (${tables} tables)"
 }
 
-# The fixture loader is Node. Use the host's, or a throwaway node container where the host has none.
+# The fixture loader is Node 20 or later. Use the host's, or a throwaway node container where the host has
+# none or an older one.
 fixture_loader() {
-  if command -v node >/dev/null 2>&1; then
+  if command -v node >/dev/null 2>&1 && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ] 2>/dev/null; then
     node "${REPO_DIR}/tools/fixtures/load.mjs" "$@"
   else
     docker run --rm -v "${REPO_DIR}:/repo:ro" node:22-slim node /repo/tools/fixtures/load.mjs "$@"

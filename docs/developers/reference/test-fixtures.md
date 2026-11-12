@@ -2,7 +2,7 @@
 last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
-  - scripts/fixtures/*
+  - scripts/fixtures/**
   - tools/fixtures/*
   - scripts/setup-test-database.sh
   - scripts/setup-pg-database.sh
@@ -13,8 +13,7 @@ covers:
 
 The seeded data for the dev and CI database lives in `scripts/fixtures/`, in a format that belongs to
 neither MySQL nor PostgreSQL. `tools/fixtures/load.mjs` turns it into SQL for the engine you name, so one
-set of fixtures seeds both. It used to be a mysqldump (`scripts/test-fixtures.sql`) plus a hand-written SQL
-file; neither could run on PostgreSQL.
+set of fixtures seeds both. A mysqldump cannot run on PostgreSQL, which is why the data is not kept as one.
 
 The data is the FreeglePlayground around Edinburgh and the accounts and posts the Playwright specs use.
 See [Testing](../testing.md) for what the suites do with it. The Go suite starts from a schema-only
@@ -46,7 +45,7 @@ A value is `null`, a number or a string. Rules the loader relies on:
 - A `bin` column holds hex. A `geom` column holds `<srid>:<wkb hex>`: the SRID MySQL stored with the
   value, then the OGC well-known binary. The SRID is per value because one column (`locations.geometry`)
   has no declared SRID and holds a 0 beside 3857.
-- A table with no rows has no file. The rows keep the order of the dump. Every row names its id.
+- A table with no rows has no file. The rows keep the order of the dump. Most tables have an `id` column and each row names it; a few join tables (for example `messages_groups`) have none.
 
 ### A step
 

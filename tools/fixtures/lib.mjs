@@ -343,7 +343,7 @@ export function* tableSql(d, table, { batch = 1000, maxChars = 1_000_000, repair
 
 // --- the whole load ---------------------------------------------------------------------------
 
-// What the dump this replaces did around its data, session setting for session setting.
+// The session settings a MySQL load runs under, as mysqldump writes them around its data.
 const MYSQL_PRELUDE = `SET FOREIGN_KEY_CHECKS=0;
 SET UNIQUE_CHECKS=0;
 
@@ -389,12 +389,18 @@ SET session_replication_role = replica;
 `
 const PG_RESET = 'SELECT iznik_reset_identities();\n'
 
-// Yields the SQL text of a load, in order. Options:
+// Yields the SQL text of a load, in order. Every file is read and every statement is written before
+// the first chunk is yielded, so a bad file or step stops the load before the client has been sent
+// anything. A client that commits when its input ends would otherwise keep a half load. Options:
 //   tables  load only these tables (and none of the steps)
 //   batch   rows per INSERT, to find every failing row (default: as many as fit)
 //   stats   an object that collects how many values each repair changed
 //   part    'all' (default), 'tables', 'captured' (tables and their steps) or 'extra' (the last steps)
 export function* loadSql(dialect, dir, opts = {}) {
+  yield* [...loadChunks(dialect, dir, opts)]
+}
+
+function* loadChunks(dialect, dir, opts) {
   const d = typeof dialect === 'string' ? dialects[dialect] : dialect
   if (!d) fail(`unknown engine ${dialect}`)
   const only = opts.tables ? new Set(opts.tables) : null

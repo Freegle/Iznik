@@ -205,7 +205,14 @@ function convert(t, i, v, colDef) {
   return `${srid}:${bytes.subarray(4).toString('hex')}`
 }
 
+// A real seeding has dozens of tables. An export with almost none is an empty or wrong database, and
+// writing it would delete the committed files.
+export const MIN_TABLES = 10
+
 export function writeTables(tables, outDir) {
+  if (tables.length < MIN_TABLES) {
+    fail(`the dump holds only ${tables.length} tables, fewer than ${MIN_TABLES}: is the database seeded? Nothing was written`)
+  }
   const dir = path.join(outDir, 'tables')
   fs.mkdirSync(dir, { recursive: true })
   const keep = new Set(tables.map((t) => `${t.table}.jsonl`))
