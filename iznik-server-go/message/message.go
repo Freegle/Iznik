@@ -5282,6 +5282,13 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		// recordAIDeletions is called with an empty keep-list so any AI attachment is
 		// properly logged (microaction + messages_ai_declined) before deletion.
 		if req.Textbody != nil {
+			// Nothing is deleted for someone who may not edit this post.
+			var fromuser uint64
+			db.Table("messages").Select("fromuser").Where("id = ?", msgID).Scan(&fromuser)
+			if fromuser != actingid && !isModForMessage(db, actingid, msgID) {
+				return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
+			}
+
 			recordAIDeletions(db, actingid, msgID, []uint64{}, nil)
 			// Identical golden to
 			// 8ef16859487a (applyPatchMessageCore); converted together per gate (h).
