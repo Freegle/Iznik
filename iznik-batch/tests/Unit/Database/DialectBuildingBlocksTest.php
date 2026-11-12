@@ -51,7 +51,7 @@ class DialectBuildingBlocksTest extends TestCase
         $add = new DateAdd('created', 2, 'hour');
 
         $this->assertSame('DATE_SUB(NOW(), INTERVAL 3 DAY)', $sub->getValue($this->mysql));
-        $this->assertSame("(NOW() - (CAST(3 AS numeric) * INTERVAL '1 day'))", $sub->getValue($this->pg));
+        $this->assertSame("(statement_timestamp() - (CAST(3 AS numeric) * INTERVAL '1 day'))", $sub->getValue($this->pg));
         $this->assertSame('DATE_ADD(`created`, INTERVAL 2 HOUR)', $add->getValue($this->mysql));
         $this->assertSame("(\"created\" + (CAST(2 AS numeric) * INTERVAL '1 hour'))", $add->getValue($this->pg));
     }
@@ -74,6 +74,12 @@ class DialectBuildingBlocksTest extends TestCase
         );
 
         $this->assertTrue((bool) $row->older);
+    }
+
+    public function test_now_is_the_statement_clock_on_postgresql(): void
+    {
+        $this->assertSame('NOW()', (new Now())->getValue($this->mysql));
+        $this->assertSame('statement_timestamp()', (new Now())->getValue($this->pg));
     }
 
     public function test_rand_renders_per_engine(): void
