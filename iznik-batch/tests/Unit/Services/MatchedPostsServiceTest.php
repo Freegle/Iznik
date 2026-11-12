@@ -261,4 +261,13 @@ class MatchedPostsServiceTest extends TestCase
         $this->assertCount(1, $toRecipient['items'], 'crossposts of one item collapse to a single card');
         $this->assertEquals($offerA->id, $toRecipient['items'][0]['message']->id, 'keeps the higher-scoring copy');
     }
+
+    public function test_a_deleted_member_is_not_notified(): void
+    {
+        [$recipient] = $this->seedMatch(['deleted' => now()]);
+
+        $notifications = app(MatchedPostsService::class)->buildNotifications();
+
+        $this->assertNull($this->notificationFor($notifications, $recipient->id), 'a deleted account gets no matched-posts notification');
+    }
 }
