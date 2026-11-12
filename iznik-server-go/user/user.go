@@ -2811,8 +2811,14 @@ func PatchUser(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
+	// newsfeedmodstatus is set by moderators about a member. A member cannot set
+	// their own, or a suppression could be undone with one request.
+	if req.Newsfeedmodstatus != nil && (req.ID == 0 || req.ID == myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Not authorized to set newsfeedmodstatus")
+	}
+
 	// Handle newsfeedmodstatus for another user (mod action).
-	if req.Newsfeedmodstatus != nil && req.ID > 0 && req.ID != myid {
+	if req.Newsfeedmodstatus != nil {
 		// Verify caller is admin/support or mod of a shared group.
 		if !auth.IsAdminOrSupport(myid) {
 			// Check if they share a group where the caller is a mod.
@@ -2833,6 +2839,14 @@ func PatchUser(c *fiber.Ctx) error {
 
 		if lockdown.GateMod(c, myid) {
 			return nil
+		}
+
+		// newsfeedmodstatus is an ENUM; an unrecognised value would be coerced to
+		// '' by MySQL in non-strict mode.
+		switch *req.Newsfeedmodstatus {
+		case utils.NEWSFEEDMODSTATUS_UNMODERATED, utils.NEWSFEEDMODSTATUS_MODERATED, utils.NEWSFEEDMODSTATUS_SUPPRESSED:
+		default:
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid newsfeedmodstatus")
 		}
 
 		db.Table("users").Where("id = ?", req.ID).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
@@ -2944,11 +2958,6 @@ func PatchUser(c *fiber.Ctx) error {
 		}
 
 		SaveAboutMe(db, myid, *req.Aboutme)
-	}
-
-	if req.Newsfeedmodstatus != nil {
-		// Self-update (no req.ID or req.ID == myid).
-		db.Table("users").Where("id = ?", myid).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
 	}
 
 	if req.Email != nil && *req.Email != "" {
