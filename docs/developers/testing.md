@@ -1,9 +1,13 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
   - iznik-nuxt3/tests/e2e/README.md
+  - tools/orm-migration/extract.mjs
+  - tools/orm-migration/lib/**
+  - tools/orm-migration/rules.json
+  - tools/orm-migration/README.md
 ---
 
 # Testing
@@ -119,3 +123,11 @@ CircleCI runs the full suite on every push to master, via a shared reusable orb.
 change tests, remember to update the orb too. The operational view of CI is in
 [../ops/deployment-and-ci.md](../ops/deployment-and-ci.md), and the reference is
 [../ops/reference/circleci.md](../ops/reference/circleci.md).
+
+## The raw SQL inventory
+
+`tools/orm-migration/` lists every raw SQL site in production Go and Laravel code in
+`manifest.json`, and the `check-raw-sql-ratchet` job fails a branch that adds one the manifest does
+not know or raises the count of `raw` sites. Its self-tests run with
+`node --test tools/orm-migration/test/*.test.mjs`. The README there says what counts as a site and
+what the scanner does not see.

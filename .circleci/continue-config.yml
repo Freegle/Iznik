@@ -123,6 +123,27 @@ jobs:
             git fetch --no-tags --depth=100 origin master
             .claude/check-raw-sql.sh --diff origin/master
 
+  # The inventory half of the raw-SQL guard. check-raw-sql above judges the lines a branch
+  # adds and accepts a written reason as the way out. This job holds the whole inventory:
+  # tools/orm-migration/manifest.json lists every raw SQL site in production Go and
+  # Laravel code with a status, and the job fails when a site is in the code and not in the
+  # manifest, when a site's SQL changed without its entry, or when the count of raw and
+  # in-progress sites rose. It runs on Node alone, as the other lightweight checks do.
+  check-raw-sql-ratchet:
+    docker:
+      - image: cimg/node:22.23.2
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Self-test the extractor and ratchet
+          command: node --test tools/orm-migration/test/*.test.mjs
+      - run:
+          name: Every raw SQL site is in the manifest
+          command: |
+            git fetch --no-tags --depth=100 origin master
+            node tools/orm-migration/extract.mjs check --base origin/master
+
   # The role-literal guard: a role (User, Moderator, Support, Admin, Member, Owner) is read
   # from a constant, never written as a string. The editor hook catches it at authoring
   # time; this job checks the whole tree, which holds at zero, so a literal planted
@@ -234,6 +255,7 @@ workflows:
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - check-raw-sql
+      - check-raw-sql-ratchet
       - check-role-literals
       - check-licences
       - check-ux-cleanups
@@ -309,6 +331,7 @@ workflows:
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - check-raw-sql
+      - check-raw-sql-ratchet
       - check-role-literals
       - check-licences
       - check-ux-cleanups
@@ -517,6 +540,7 @@ workflows:
         - not: << pipeline.parameters.run_apple_agreement_check >>
     jobs:
       - check-raw-sql
+      - check-raw-sql-ratchet
       - check-role-literals
       - check-licences
       - check-ux-cleanups
