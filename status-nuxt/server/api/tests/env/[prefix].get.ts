@@ -5,7 +5,7 @@ import { testEnvCache } from '../../../utils/testEnvCache'
 // GET /api/tests/env/:prefix
 //
 // The per-prefix seeded environments (groups, moderators, users, messages, chats) are
-// pre-seeded into the `iznik` DB by scripts/test-fixtures.sql (loaded by
+// pre-seeded into the `iznik` DB by the fixtures in scripts/fixtures (loaded by
 // setup-test-database.sh). Their IDs are captured, keyed by spec prefix, in the committed
 // iznik-nuxt3/tests/e2e/test-envs.json — this endpoint simply serves the matching entry.
 //

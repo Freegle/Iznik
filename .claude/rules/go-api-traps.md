@@ -275,7 +275,7 @@ from the pool, which sees only what is committed, at the moment the hold is writ
 The `ux_experiments` row in `config` is rebuilt from the `ux_experiments` table by `ux:experiments-tick` (17 past the hour,
 `UxExperimentService::rebuildConfig`), which writes `{}` when no row is running. A fixture that writes only the config row
 is gone within the hour wherever the batch container's scheduler runs: the dev stack, a long-lived worktree and CI. Seed a
-table row as well (`test-fixtures-extra.sql`), and the tick republishes the same entry. Separately, `ux.ExperimentArm`
+table row as well (`scripts/fixtures/extra-steps.json`), and the tick republishes the same entry. Separately, `ux.ExperimentArm`
 keeps its copy of the config rows for a minute, and a Playwright run resets the database as it starts, so the first minute
 of a run can still be served the old copy: a case that depends on those rows (`test-reply-to-chat.spec.js`, "still want
 it?") must not be the first thing its run does. A browser cannot flush the copy; a Go test can (`ux.FlushServerArmCache()`).

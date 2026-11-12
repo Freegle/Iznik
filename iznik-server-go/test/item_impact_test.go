@@ -95,7 +95,7 @@ func TestItemImpactExactItemsMatch(t *testing.T) {
 // TestItemImpactFuzzyWeightsMatch covers lookup step (b): no items-table
 // match, but the query name shares the word "sofa" with a weights reference
 // row ('2 seater sofa' / simplename 'sofa' / 37.00 — the same row
-// scripts/test-fixtures.sql ships for the dev DB). iznik_go_test is a
+// scripts/fixtures/tables/weights.jsonl ships for the dev DB). iznik_go_test is a
 // SCHEMA-ONLY clone (setup-test-database.sh: "Go tests create their own
 // fixture data at runtime"), so the test seeds the row itself.
 func TestItemImpactFuzzyWeightsMatch(t *testing.T) {

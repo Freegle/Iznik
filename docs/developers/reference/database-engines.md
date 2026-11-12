@@ -7,6 +7,8 @@ covers:
   - iznik-batch/database/postgres/baseline.sql
   - scripts/setup-pg-database.sh
   - scripts/setup-test-database.sh
+  - tools/fixtures/*
+  - scripts/fixtures/*
   - iznik-server-go/database/database.go
   - iznik-server-go/database/failover.go
 ---
@@ -36,12 +38,19 @@ run. No CI job uses the database yet, and the MySQL path and its test results ar
 
 `scripts/setup-test-database.sh` builds MySQL as it always did. When the PostgreSQL container is running it
 then calls `scripts/setup-pg-database.sh`, which builds two PostgreSQL databases from the baseline:
-`iznik` and `iznik_go_test`, both schema only. There are no PostgreSQL fixtures yet.
+`iznik` and `iznik_go_test`. It then loads the fixtures into `iznik` and rolls the fixture posts forward,
+as the MySQL path does; `iznik_go_test` stays schema only, as on MySQL. The fixtures are in a neutral format
+that loads into either engine: see [Test fixtures](test-fixtures.md). Both paths need Node on the host.
 
 - `PG_ENGINE` unset: build if the container is running. A failure is a loud warning and MySQL is still
   ready, so the MySQL path cannot be broken by the second engine.
 - `PG_ENGINE=1`: build, and fail the script if it cannot. The PostgreSQL CI job will set this.
 - `PG_ENGINE=0`: skip.
+
+`setup-pg-database.sh` takes `PG_FIXTURES=0` to leave `iznik` empty, and `PG_FIXTURE_ORPHANS=1` to list any
+foreign key that the loaded rows break (there are none). The fixture load is one transaction and can be run
+again; a value PostgreSQL refuses stops it. Three columns hold such values and are repaired on load, with
+reasons, in `scripts/fixtures/repairs.json`.
 
 ```bash
 COMPOSE_PROJECT_NAME=freegle-<name> ./scripts/setup-test-database.sh
@@ -234,6 +243,7 @@ return postgres.New(postgres.Config{Conn: sql.OpenDB(fc)}), fc, nil
 
 ## Not yet done
 
-PostgreSQL fixtures, the Go and Laravel suites on PostgreSQL, the stored functions, a CI job that runs the
+The Go and Laravel suites on PostgreSQL (the PHP suite builds `iznik_batch_test` with `migrate:fresh`, which
+runs the MySQL migrations, so it needs the baseline route first), the stored functions, a CI job that runs the
 converter and PostgreSQL tests and `regenerate.sh --check` (it needs the orb changed), and the spatial
 benchmark are later steps in the plan.

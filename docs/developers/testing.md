@@ -1,9 +1,10 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
   - iznik-nuxt3/tests/e2e/README.md
+  - scripts/fixtures/extra-steps.json
 ---
 
 # Testing
@@ -94,11 +95,12 @@ from Laravel migrations - see [APIs and data](apis-and-data.md)). After adding a
 migration, rerun the test-database setup so the test schema matches. The seeded data is
 FreeglePlayground around Edinburgh (postcode EH3 6SS).
 
-`scripts/test-fixtures.sql` is a dump from the retired V1 seeders and is replaced wholesale if
-it is ever regenerated, so rows added by hand go in `scripts/test-fixtures-extra.sql`, which is
-loaded straight after it (by `setup-test-database.sh` and by the status container's Playwright
-database reset). Keep it idempotent: explicit ids and `INSERT IGNORE`, or `ON DUPLICATE KEY UPDATE`
-for a row that must be refreshed.
+The seeded rows are in `scripts/fixtures/tables`, captured from the retired V1 seeders, in a format that
+loads into MySQL and PostgreSQL alike (see [Test fixtures](reference/test-fixtures.md)). They are replaced
+wholesale if they are ever regenerated, so rows added by hand go in `scripts/fixtures/extra-steps.json`,
+which loads straight after them (by `setup-test-database.sh` and by the status container's Playwright
+database reset). Keep each step safe to run twice: an `ignore` step for a row with an explicit id, or an
+`upsert` step for a row that must be refreshed.
 
 The extra fixtures also offer a child car seat (990101), whose replies are always asked about, and switch
 `ux_server_arms` on and serve the arm `button` of the experiment `interested-button` to everyone. The config row

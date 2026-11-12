@@ -8,8 +8,9 @@
 #
 # The schema comes from iznik-batch/database/postgres/baseline.sql, which
 # tools/pg-schema/regenerate.sh produces from the migrated MySQL schema. Two databases are built
-# from it: iznik (the dev database) and iznik_go_test (schema only, as on MySQL). Fixture data for
-# PostgreSQL does not exist yet, so neither database has rows.
+# from it: iznik (the dev database) and iznik_go_test (schema only, as on MySQL). The fixtures in
+# scripts/fixtures are then loaded into iznik, as on MySQL, by tools/fixtures/load.mjs (Node), and
+# the fixture posts are rolled forward so they stay inside the feed's 31 day window.
 #
 # A database that already has tables is left alone, so re-running is cheap. PG_REBUILD=1 (or
 # SELF_HOSTED_RUNNER=true) drops and rebuilds it.
@@ -21,6 +22,8 @@
 #   PG_DATABASE           dev database name (default iznik)
 #   PG_TEST_DATABASE      Go test database name (default iznik_go_test)
 #   PG_BASELINE           a baseline file to load instead of the committed one (tests use this)
+#   PG_FIXTURES           0 skips the fixtures (default: load them into PG_DATABASE)
+#   PG_FIXTURE_ORPHANS    1 prints every foreign key that loaded rows break, after the load
 
 REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 BASELINE="${PG_BASELINE:-${REPO_DIR}/iznik-batch/database/postgres/baseline.sql}"
@@ -85,6 +88,66 @@ build() {
   echo "PostgreSQL database ${db} ready (${tables} tables)"
 }
 
+# Loads the neutral fixtures into one database, in a single transaction: a value PostgreSQL refuses
+# stops the load and leaves the database as it was, so a half-seeded database never looks finished.
+# Foreign keys are switched off for the load, as on MySQL, which needs a superuser. The load can be
+# repeated: rows already there are left alone.
+load_fixtures() {
+  local db="$1"
+  if ! command -v node >/dev/null 2>&1; then
+    echo "node is needed to load the test fixtures (tools/fixtures/load.mjs) and is not installed"
+    return 1
+  fi
+  echo "Loading test fixtures into PostgreSQL database ${db} (scripts/fixtures)..."
+  if ! ( set -o pipefail; node "${REPO_DIR}/tools/fixtures/load.mjs" --engine pgsql | $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 >/dev/null ); then
+    echo "Loading the fixtures into PostgreSQL database ${db} FAILED"
+    return 1
+  fi
+  echo "Fixtures loaded into ${db}"
+}
+
+# The same roll-forward as setup-test-database.sh step 3a, for the same reason: the fixture posts carry
+# the dates they were captured with, and the feed only shows the last 31 days. Shifting by whole days
+# keeps their relative ages, and is a no-op once the newest post is a day old. `deadline` is not moved.
+roll_forward_fixtures() {
+  local db="$1" age
+  if ! $PG_PSQL -d "$db" -X -q -v ON_ERROR_STOP=1 -f - >/dev/null <<'SQL'
+SET TIME ZONE 'UTC';
+SELECT GREATEST((CURRENT_DATE - max(arrival)::date) - 1, 0) AS delta FROM messages_groups WHERE arrival <= now() \gset
+UPDATE messages_groups
+   SET arrival    = arrival    + make_interval(days => :delta),
+       approvedat = approvedat + make_interval(days => :delta),
+       rejectedat = rejectedat + make_interval(days => :delta)
+ WHERE :delta > 0 AND arrival <= now();
+UPDATE messages
+   SET arrival = arrival + make_interval(days => :delta),
+       date    = date    + make_interval(days => :delta)
+ WHERE :delta > 0 AND arrival <= now();
+UPDATE messages_spatial
+   SET arrival = arrival + make_interval(days => :delta)
+ WHERE :delta > 0 AND arrival <= now();
+SQL
+  then
+    echo "Fixture date roll-forward FAILED on PostgreSQL database ${db}"
+    return 1
+  fi
+  age=$($PG_PSQL -d "$db" -X -q -At -c "SELECT CURRENT_DATE - max(arrival)::date FROM messages_groups WHERE arrival <= now()" | tr -d '[:space:]')
+  if [ -n "$age" ] && [ "$age" -ge 31 ] 2>/dev/null; then
+    echo "Newest seeded post in ${db} is ${age} days old, outside the 31 day feed window. Aborting."
+    return 1
+  fi
+  echo "Newest seeded post in ${db} is ${age:-?} day(s) old, inside the feed window"
+}
+
 build "$PG_DATABASE" || exit 1
 build "$PG_TEST_DATABASE" || exit 1
-echo "PostgreSQL databases ready (schema only; PostgreSQL fixtures are not built yet)"
+if [ "${PG_FIXTURES:-}" != "0" ]; then
+  load_fixtures "$PG_DATABASE" || exit 1
+  roll_forward_fixtures "$PG_DATABASE" || exit 1
+  if [ "${PG_FIXTURE_ORPHANS:-}" = "1" ]; then
+    $PG_PSQL -d "$PG_DATABASE" -X -q -At -f - < "${REPO_DIR}/tools/fixtures/orphans.pg.sql" 2>&1
+  fi
+  echo "PostgreSQL databases ready (${PG_DATABASE} has the fixtures; ${PG_TEST_DATABASE} is schema only)"
+else
+  echo "PostgreSQL databases ready (schema only; PG_FIXTURES=0)"
+fi

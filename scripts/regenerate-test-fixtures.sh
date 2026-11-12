@@ -2,7 +2,7 @@
 # Regenerate the test fixtures used by the local/CI test bootstrap.
 #
 # Produces, from a single clean seeding pass, two consistent artifacts:
-#   - scripts/test-fixtures.sql                 (rows loaded into `iznik` after migrations)
+#   - scripts/fixtures/tables/*.jsonl           (rows loaded into `iznik` after migrations)
 #   - iznik-nuxt3/tests/e2e/test-envs.json      (per-prefix seeded IDs for Playwright)
 #
 # IMPORTANT: This script requires the (removed) V1 PHP `apiv1` container and its
@@ -10,6 +10,10 @@
 # that still contains `iznik-server/` (i.e. before this removal, via git history).
 # It is committed as documentation of how the fixtures were produced; it is NOT part
 # of the normal test bootstrap (see scripts/setup-test-database.sh for that).
+#
+# Only the tables are rewritten. scripts/fixtures/captured-steps.json, extra-steps.json and
+# repairs.json are kept by hand; check them against the new tables afterwards
+# (docs/developers/reference/test-fixtures.md).
 set -euo pipefail
 
 PREFIX="${COMPOSE_PROJECT_NAME:-freegle}"
@@ -58,22 +62,16 @@ echo "[4/5] Assemble test-envs.json..."
 } | jq . > "$REPO/iznik-nuxt3/tests/e2e/test-envs.json"
 rm -rf "$TMP"
 
-echo "[5/5] Dump test-fixtures.sql..."
-{
-  echo "-- Freegle test fixtures — captured from the (removed) V1 install/testenv.php"
-  echo "-- + install/create-test-env.php. Loaded into the 'iznik' DB AFTER Laravel migrations"
-  echo "-- by scripts/setup-test-database.sh. Regenerate with scripts/regenerate-test-fixtures.sh"
-  echo "-- (needs a checkout containing iznik-server/ — see that script's header)."
-  echo "SET FOREIGN_KEY_CHECKS=0;"
-  echo "SET UNIQUE_CHECKS=0;"
-  docker exec "${PREFIX}-apiv1" sh -c "mysqldump -h percona -u root -piznik \
-      --no-create-info --complete-insert --insert-ignore --hex-blob \
-      --skip-triggers --no-tablespaces --single-transaction --skip-comments \
-      --ignore-table=iznik.migrations iznik" 2>/dev/null
-  echo "SET UNIQUE_CHECKS=1;"
-  echo "SET FOREIGN_KEY_CHECKS=1;"
-} > "$REPO/scripts/test-fixtures.sql"
+echo "[5/5] Export the fixture tables (scripts/fixtures/tables)..."
+DUMP_DIR="$(mktemp -d)"
+docker exec "${PREFIX}-apiv1" sh -c "mysqldump -h percona -u root -piznik \
+    --no-create-info --complete-insert --insert-ignore --hex-blob \
+    --skip-triggers --no-tablespaces --single-transaction --skip-comments \
+    --ignore-table=iznik.migrations iznik" 2>/dev/null > "$DUMP_DIR/data.sql"
+docker exec "${PREFIX}-apiv1" sh -c "mysqldump -h percona -u root -piznik --no-data --skip-comments iznik" 2>/dev/null > "$DUMP_DIR/schema.sql"
+node "$REPO/tools/fixtures/export.mjs" --dump "$DUMP_DIR/data.sql" --schema "$DUMP_DIR/schema.sql" --out "$REPO/scripts/fixtures"
+rm -rf "$DUMP_DIR"
 
 echo "Done. Artifacts:"
-echo "  scripts/test-fixtures.sql            ($(wc -l < "$REPO/scripts/test-fixtures.sql") lines)"
+echo "  scripts/fixtures/tables              ($(ls "$REPO/scripts/fixtures/tables" | wc -l) tables)"
 echo "  iznik-nuxt3/tests/e2e/test-envs.json ($(jq 'keys|length' "$REPO/iznik-nuxt3/tests/e2e/test-envs.json") prefixes)"
