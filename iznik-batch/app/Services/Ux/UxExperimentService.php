@@ -883,10 +883,13 @@ class UxExperimentService
     {
         try {
             $cut = $now->copy()->subDays(self::EXPOSURE_KEEP_DAYS)->format('Y-m-d H:i:s');
-            foreach (DB::table('ux_experiment_exposures')->useWritePdo()->distinct()->pluck('experiment') as $name) {
+            // Each statement is its own transaction (a savepoint inside an outer one), so a failure of the
+            // first leaves the connection usable on PostgreSQL, where a failed statement aborts the transaction.
+            $names = DB::transaction(fn () => DB::table('ux_experiment_exposures')->useWritePdo()->distinct()->pluck('experiment'));
+            foreach ($names as $name) {
                 do {
-                    $n = DB::table('ux_experiment_exposures')->where('experiment', $name)->where('exposed_at', '<', $cut)
-                        ->limit(self::PURGE_BATCH)->delete();
+                    $n = DB::transaction(fn () => DB::table('ux_experiment_exposures')->where('experiment', $name)->where('exposed_at', '<', $cut)
+                        ->limit(self::PURGE_BATCH)->delete());
                 } while ($n >= self::PURGE_BATCH);
             }
         } catch (\Throwable $e) {
@@ -902,7 +905,7 @@ class UxExperimentService
     private function forgetExposures(string $name): void
     {
         try {
-            DB::table('ux_experiment_exposures')->where('experiment', $name)->delete();
+            DB::transaction(fn () => DB::table('ux_experiment_exposures')->where('experiment', $name)->delete());
         } catch (\Throwable $e) {
             Log::warning("ux:experiment: could not clear the old exposures of {$name}: ".$e->getMessage());
         }

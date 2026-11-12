@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class EloquentUtils
@@ -37,7 +38,9 @@ class EloquentUtils
             try {
                 $row->$column = $to;
                 if (!$dryRun) {
-                    $row->save();
+                    // A transaction of its own (a savepoint inside an outer one): a clash undoes only this row's
+                    // update, where PostgreSQL would otherwise abort the whole outer transaction.
+                    DB::transaction(fn () => $row->save());
                 }
             } catch (QueryException $e) {
                 Log::warning("Reparent conflict on {$modelClass}#{$row->getKey()} ({$column}): " . $e->getMessage());

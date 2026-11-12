@@ -18,6 +18,11 @@ use PDO;
  */
 class PostgresBinaryConnection extends PostgresConnection
 {
+    protected function getDefaultQueryGrammar()
+    {
+        return new PostgresTextJsonGrammar($this);
+    }
+
     public function bindValues($statement, $bindings)
     {
         foreach ($bindings as $key => $value) {

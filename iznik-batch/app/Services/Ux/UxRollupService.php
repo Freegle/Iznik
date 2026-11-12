@@ -128,14 +128,14 @@ class UxRollupService
         $withdrawn = $count("SELECT COUNT(*) c FROM messages m
             WHERE m.arrival >= ? AND m.arrival < ? AND m.type IN ('Offer', 'Wanted')
             AND EXISTS (SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = m.id AND mo.outcome = 'Withdrawn'
-                AND mo.timestamp <= m.arrival + INTERVAL 24 HOUR)");
+                AND mo.timestamp <= m.arrival + INTERVAL '24' HOUR)");
 
         // The later of two identical posts is the regret: the first was the poster's real attempt.
         $duplicates = $count("SELECT COUNT(*) c FROM messages m
             WHERE m.arrival >= ? AND m.arrival < ? AND m.type IN ('Offer', 'Wanted')
             AND m.fromuser IS NOT NULL AND m.subject IS NOT NULL
             AND EXISTS (SELECT 1 FROM messages m2 WHERE m2.fromuser = m.fromuser AND m2.subject = m.subject
-                AND m2.id < m.id AND m2.arrival >= m.arrival - INTERVAL 10 MINUTE AND m2.arrival <= m.arrival)");
+                AND m2.id < m.id AND m2.arrival >= m.arrival - INTERVAL '10' MINUTE AND m2.arrival <= m.arrival)");
 
         $promised = $count('SELECT COUNT(*) c FROM messages_promises WHERE promisedat >= ? AND promisedat < ?');
         $reneged = $count('SELECT COUNT(*) c FROM messages_reneged WHERE timestamp >= ? AND timestamp < ?');

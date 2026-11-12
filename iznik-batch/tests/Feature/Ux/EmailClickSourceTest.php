@@ -406,7 +406,7 @@ class EmailClickSourceTest extends TestCase
         ]);
 
         $started = $service->start($id);
-        $this->assertSame('2026-10-23 12:00:00', $started->ends_at, 'a day of mail and a day to click it');
+        $this->assertSame('2026-10-23 12:00:00', \Carbon\Carbon::parse($started->ends_at, 'UTC')->toDateTimeString(), 'a day of mail and a day to click it');
 
         // 400 members a side, mailed in the first 20 hours. The change is clicked by 18 percent, the control by 10.
         $mailedAt = '2026-10-21 14:00:00';
