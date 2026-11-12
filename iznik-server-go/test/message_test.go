@@ -3503,17 +3503,17 @@ func TestDeleteMessageModOfRippledCopyKeepsHomeCopy(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var homeDeleted int
-	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, homeGroup).Scan(&homeDeleted)
-	assert.Equal(t, 0, homeDeleted, "the home community's copy is not deleted by a moderator of another community")
+	var homeCopies int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND deleted = 0", msgID, homeGroup).Scan(&homeCopies)
+	assert.Equal(t, int64(1), homeCopies, "the home community's copy is not deleted by a moderator of another community")
 
 	var sharedDeleted *string
 	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&sharedDeleted)
 	assert.Nil(t, sharedDeleted, "the shared post stays while an undeleted community copy remains")
 
-	var rippledDeleted int
-	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup).Scan(&rippledDeleted)
-	assert.Equal(t, 1, rippledDeleted, "the moderator's own community's copy is deleted")
+	var rippledCopies int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup).Scan(&rippledCopies)
+	assert.Equal(t, int64(0), rippledCopies, "the moderator's own community's copy is removed, as the POST Delete action removes it")
 }
 
 // A post another moderator is holding cannot be deleted from under them, here as in the
@@ -11532,4 +11532,48 @@ func TestPatchMessageByTnPostidRefusedForNonOwnerKeepsPhotos(t *testing.T) {
 	var textbody string
 	db.Raw("SELECT COALESCE(textbody, '') FROM messages WHERE id = ?", msgID).Scan(&textbody)
 	assert.NotEqual(t, "Changed by someone else", textbody)
+}
+
+// A TN post crossposted to several communities is several messages with one tnpostid. A member who
+// owns only some of them is refused before any copy is touched, so the copies they do own keep
+// their photos.
+func TestPatchMessageByTnPostidRefusalOnLaterCopyChangesNoCopy(t *testing.T) {
+	prefix := uniquePrefix("patchtn_cross")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	callerID := CreateTestUser(t, prefix+"_caller", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, callerID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, groupB, utils.ROLE_MEMBER)
+	_, callerToken := CreateTestSession(t, callerID)
+
+	// The caller's copy is created first, so it has the lower id and is reached first.
+	ownedMsg := CreateTestMessage(t, callerID, groupA, prefix+" Offer A", 55.0, -3.0)
+	otherMsg := CreateTestMessage(t, otherID, groupB, prefix+" Offer B", 55.0, -3.0)
+	tnpostid := fmt.Sprintf("tn-cross-%s", prefix)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, ownedMsg, otherMsg)
+
+	ownedPhoto := CreateTestAttachment(t, ownedMsg)
+	otherPhoto := CreateTestAttachment(t, otherMsg)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE id IN (?, ?)", ownedPhoto, otherPhoto)
+	})
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"textbody": "Changed by someone who owns one copy"})
+	reqURL := fmt.Sprintf("/api/message/tn/%s?jwt=%s", tnpostid, callerToken)
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var photos int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id IN (?, ?)", ownedPhoto, otherPhoto).Scan(&photos)
+	assert.Equal(t, int64(2), photos, "a refused edit must not delete the photos of the copies the caller owns")
+
+	var textbody string
+	db.Raw("SELECT COALESCE(textbody, '') FROM messages WHERE id = ?", ownedMsg).Scan(&textbody)
+	assert.NotEqual(t, "Changed by someone who owns one copy", textbody, "the caller's own copy is not edited either")
 }
