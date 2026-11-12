@@ -180,3 +180,39 @@ func persistentTokenSession(c *fiber.Ctx) (uint64, uint64) {
 
 	return userid, pt.ID
 }
+
+// SessionUserRole is for route guards that need the caller's system role. It recognises the caller
+// as every other route does, by JWT or by the Authorization2 persistent token, and returns zero
+// unless that user and session are still in the database. A session not yet on a read replica is
+// looked up again on the write host.
+func SessionUserRole(c *fiber.Ctx) (uint64, string) {
+	userID, sessionID, _ := GetJWTFromRequest(c)
+	if userID == 0 {
+		userID, sessionID = persistentTokenSession(c)
+	}
+	if userID == 0 {
+		return 0, ""
+	}
+
+	var info struct {
+		ID         uint64
+		Systemrole string
+	}
+	query := func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("sessions").
+			Select("users.id, users.systemrole").
+			Joins("INNER JOIN users ON users.id = sessions.userid").
+			Where("sessions.id = ? AND users.id = ?", sessionID, userID).
+			Limit(1)
+	}
+	db := database.DBConn
+	query(db).Scan(&info)
+	if info.ID == 0 {
+		query(db.Clauses(dbresolver.Write)).Scan(&info)
+	}
+	if info.ID == 0 {
+		return 0, ""
+	}
+
+	return info.ID, info.Systemrole
+}
