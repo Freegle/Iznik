@@ -33,6 +33,12 @@ func buildDSN(host string) string {
 }
 
 func InitDatabase() {
+	// DB_ENGINE=postgres (postgres.go) opens PostgreSQL instead. Unset, this function is as it always was.
+	if Engine() == EnginePostgres {
+		initPostgres()
+		return
+	}
+
 	writeHost := os.Getenv("MYSQL_HOST")
 	readHost := os.Getenv("MYSQL_HOST_READ")
 

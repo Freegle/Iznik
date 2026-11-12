@@ -158,7 +158,9 @@ SQL
 }
 
 build "$PG_DATABASE" || exit 1
-build "$PG_TEST_DATABASE" || exit 1
+if [ "$PG_TEST_DATABASE" != "$PG_DATABASE" ]; then
+  build "$PG_TEST_DATABASE" || exit 1
+fi
 if [ "${PG_FIXTURES:-}" != "0" ]; then
   load_fixtures "$PG_DATABASE" || exit 1
   roll_forward_fixtures "$PG_DATABASE" || exit 1

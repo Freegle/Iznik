@@ -18,6 +18,7 @@ import (
 	"github.com/freegle/iznik-server-go/router"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // TestApp wraps fiber.App to override the default Test timeout from 1s to 30s.
@@ -91,6 +92,11 @@ func init() {
 func setupLocationTestData() {
 	db := database.DBConn
 
+	if database.Engine() == database.EnginePostgres {
+		setupLocationTestDataPostgres(db)
+		return
+	}
+
 	// Create area location first (for areaname in ClosestPostcode query)
 	db.Exec(`INSERT INTO locations (id, osm_id, name, type, osm_place, gridid, postcodeid, areaid, canon, popularity, osm_amenity, osm_shop, maxdimension, lat, lng, timestamp, geometry)
 		VALUES (999999, '999999', 'Edinburgh', 'Point', 0, NULL, NULL, NULL, 'edinburgh', 0, 0, 0, '0.1', '55.957571', '-3.205333', '2016-08-23 06:01:25',
@@ -135,6 +141,38 @@ func setupLocationTestData() {
 
 	// LoveJunk partner key for TestCreateChatMessageLoveJunk
 	db.Exec("INSERT IGNORE INTO partners_keys (partner, `key`) VALUES ('lovejunk', 'testkey123')")
+}
+
+// setupLocationTestDataPostgres writes the same rows as setupLocationTestData in PostgreSQL's spelling:
+// ON CONFLICT for ON DUPLICATE KEY and INSERT IGNORE, and SRID 4326 where MySQL carries 3857 (the baseline
+// relabels the geometry columns, it does not reproject them).
+func setupLocationTestDataPostgres(db *gorm.DB) {
+	const locationCols = "id, osm_id, name, type, osm_place, gridid, postcodeid, areaid, canon, popularity, osm_amenity, osm_shop, maxdimension, lat, lng, timestamp, geometry"
+
+	db.Exec("INSERT INTO locations (" + locationCols + ") " +
+		"VALUES (999999, '999999', 'Edinburgh', 'Point', 0, NULL, NULL, NULL, 'edinburgh', 0, 0, 0, '0.1', '55.957571', '-3.205333', '2016-08-23 06:01:25', " +
+		"ST_GeomFromText('POINT(-3.205333 55.957571)', 4326)) " +
+		"ON CONFLICT (id) DO UPDATE SET name = 'Edinburgh', type = 'Point'")
+
+	for _, loc := range []struct {
+		id, osmID, name, canon, lat, lng string
+	}{
+		{"1687412", "189543628", "SA65 9ET", "sa659et", "52.006292", "-4.939858"},
+		{"1000001", "100001", "EH3 6SS", "eh36ss", "55.957571", "-3.205333"},
+		{"1000002", "100002", "EH3 5AA", "eh35aa", "55.958000", "-3.206000"},
+	} {
+		db.Exec("INSERT INTO locations (" + locationCols + ") " +
+			"VALUES (" + loc.id + ", '" + loc.osmID + "', '" + loc.name + "', 'Postcode', 0, NULL, NULL, 999999, '" + loc.canon + "', 0, 0, 0, '0.002916', '" + loc.lat + "', '" + loc.lng + "', '2016-08-23 06:01:25', " +
+			"ST_GeomFromText('POINT(" + loc.lng + " " + loc.lat + ")', 4326)) " +
+			"ON CONFLICT (id) DO UPDATE SET areaid = 999999")
+		db.Exec("INSERT INTO locations_spatial (locationid, geometry) " +
+			"VALUES (" + loc.id + ", ST_GeomFromText('POINT(" + loc.lng + " " + loc.lat + ")', 4326)) ON CONFLICT DO NOTHING")
+	}
+
+	ensureSpatialMock()
+
+	db.Exec("INSERT INTO paf_addresses (id, postcodeid, udprn) VALUES (102367696, 1687412, 50464672) ON CONFLICT DO NOTHING")
+	db.Exec("INSERT INTO partners_keys (partner, \"key\") VALUES ('lovejunk', 'testkey123') ON CONFLICT DO NOTHING")
 }
 
 var spatialMockOnce sync.Once
@@ -234,7 +272,11 @@ func verifyRequiredTables() {
 	db := database.DBConn
 	for _, table := range []string{"background_tasks", "cron_job_status"} {
 		var count int64
-		db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&count)
+		if database.Engine() == database.EnginePostgres {
+			db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?", table).Scan(&count)
+		} else {
+			db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&count)
+		}
 		if count == 0 {
 			panic(fmt.Sprintf("Required table '%s' not found - ensure Laravel migrations have been run (setup-test-database.sh)", table))
 		}

@@ -40,6 +40,25 @@ if (! $runSetup) {
 $app = require __DIR__.'/../bootstrap/app.php';
 $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
+// TEST_DB_ENGINE=pgsql runs the suite on PostgreSQL. DB_CONNECTION=pgsql and PGSQL_DATABASE name the
+// connection and the database. The schema is the PostgreSQL baseline, loaded by the caller with
+// scripts/setup-pg-database.sh; the MySQL migrations are not run, so this only checks that it is there.
+if (getenv('TEST_DB_ENGINE') === 'pgsql') {
+    $pdo = new PDO(
+        'pgsql:host='.env('PGSQL_HOST', 'postgres').';port='.env('PGSQL_PORT', '5432').';dbname='.env('PGSQL_DATABASE', 'iznik_batch_test'),
+        env('PGSQL_USERNAME', 'root'),
+        env('PGSQL_PASSWORD', 'iznik')
+    );
+    $tables = (int) $pdo->query("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'messages'")->fetchColumn();
+    if ($tables === 0) {
+        die("TEST_DB_ENGINE=pgsql: the PostgreSQL database has no schema. Run scripts/setup-pg-database.sh first.\n");
+    }
+    echo "Using the PostgreSQL schema in ".env('PGSQL_DATABASE', 'iznik_batch_test').".\n";
+    file_put_contents($migrationLockFile, json_encode(['pid' => getmypid(), 'time' => time()]));
+
+    return;
+}
+
 // Force config to use test database
 config(['database.connections.mysql.database' => 'iznik_batch_test']);
 

@@ -1648,8 +1648,86 @@ commands:
             cat ~/test-output/<< parameters.suite >>.out
             if [ "$RC" -eq 0 ]; then echo pass > ~/test-output/<< parameters.suite >>.result; else echo fail > ~/test-output/<< parameters.suite >>.result; fi
 
+  start-pg-suite-tests:
+    description: "Start one of the PostgreSQL runs (go-pg, laravel-pg or pgtools) through the status container and poll it in the background. A run that has an 'after' suite waits for the MySQL run of that suite to finish first, so the two never share the runner's test containers at the same time. Result in ~/test-output/<suite>.result; collect-background-checks fails the job on a failure."
+    parameters:
+      suite:
+        type: enum
+        enum: ["go-pg", "laravel-pg", "pgtools"]
+      label:
+        type: string
+      after:
+        type: string
+        default: ""
+        description: "Status suite (go or laravel) whose MySQL run must have finished before this one starts. Empty starts at once."
+    steps:
+      - run:
+          name: Run << parameters.label >> (background)
+          background: true
+          command: |
+            # The MySQL runs keep their own endpoints and their own results. This is the second
+            # engine: the status container runs the suite on PostgreSQL, one result per test, and
+            # compares the failures with the committed list of tests known to fail there
+            # (tools/pg-ratchet/known-failures). A failure outside the list fails the run; so does a
+            # suite that did not run. The wait for the MySQL run uses the status API's own state,
+            # which is fresh for every job because the status container starts with it.
+            mkdir -p ~/test-output
+            rm -f ~/test-output/<< parameters.suite >>.result
+            RC=0
+            (
+              PORT=${PORT_STATUS:-8081}
+              if [ -n "<< parameters.after >>" ]; then
+                echo "Waiting for the MySQL << parameters.after >> run to finish..."
+                waited=0
+                while true; do
+                  st=$(curl -s "http://localhost:$PORT/api/tests/<< parameters.after >>/status" | jq -r '.status // "unknown"')
+                  if [ "$st" = "completed" ] || [ "$st" = "failed" ]; then break; fi
+                  sleep 10; waited=$((waited + 10))
+                  if [ $waited -gt 2400 ]; then
+                    echo "The MySQL << parameters.after >> run did not finish in 40 minutes"
+                    exit 1
+                  fi
+                done
+              fi
+              echo "<< parameters.label >>..."
+              response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" "http://localhost:$PORT/api/tests/<< parameters.suite >>")
+              http_code="${response: -3}"
+              if [ "$http_code" != "200" ] && [ "$http_code" != "409" ]; then
+                echo "Failed to trigger << parameters.suite >> (HTTP $http_code): ${response%???}"
+                exit 1
+              fi
+              start_time=$(date +%s)
+              while true; do
+                sleep 10
+                status_response=$(curl -s "http://localhost:$PORT/api/tests/<< parameters.suite >>/status" || echo '{"status":"error"}')
+                status=$(echo "$status_response" | jq -r '.status // "unknown"')
+                # The status API never reports "error"; the curl above substitutes it when it
+                # cannot connect, so it always means the container was unreachable.
+                if [ "$status" = "error" ]; then
+                  echo "Could not reach the status API at localhost:$PORT. This is not a test failure."
+                  echo "Check the status container: docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status"
+                  exit 1
+                fi
+                echo "[$(( ($(date +%s) - start_time) / 60 ))m] $status | $(echo "$status_response" | jq -r '.message // ""')"
+                if [ "$status" = "completed" ] || [ "$status" = "failed" ]; then
+                  echo "$status_response" | jq -r '.logs // ""' | grep -aE '^(RATCHET|PGTOOLS|DONE|PACKAGES|LISTED|FILES|DRIVER)|new failure:|now passes:|not in this run' | head -600
+                  if [ "$status" = "completed" ] && [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                    echo "<< parameters.label >>: matches its known failures"; break
+                  fi
+                  echo "--- last 60 lines ---"
+                  echo "$status_response" | jq -r '.logs // ""' | tail -60
+                  echo "<< parameters.label >>: FAILED"; exit 1
+                fi
+              done
+            ) > ~/test-output/<< parameters.suite >>.out 2>&1 || RC=$?
+            cat ~/test-output/<< parameters.suite >>.out
+            # The per-test results and the failure details are kept as artifacts: they are what
+            # regenerates the known-failures list.
+            docker cp ${COMPOSE_PROJECT_NAME:-freegle}-status:/tmp/pg-ratchet ~/test-output/pg-ratchet-<< parameters.suite >> 2>/dev/null || true
+            if [ "$RC" -eq 0 ]; then echo pass > ~/test-output/<< parameters.suite >>.result; else echo fail > ~/test-output/<< parameters.suite >>.result; fi
+
   collect-background-checks:
-    description: "Wait for the background checks (monitor-fsm, eslint, spatial-go, routing-go) and fail the job if any failed"
+    description: "Wait for the background checks (monitor-fsm, eslint, spatial-go, routing-go and the PostgreSQL runs) and fail the job if any failed"
     steps:
       - run:
           name: Collect background checks (monitor-fsm, eslint, spatial-go, routing-go)
@@ -1660,10 +1738,30 @@ commands:
             # gate. They all finish well inside the ten minutes the parallel block takes,
             # so the wait here is normally zero.
             FAILED=""
-            for name in monitor-fsm lint spatial routing; do
+            # The PostgreSQL runs (go-pg, laravel-pg, pgtools) start after the MySQL run of their
+            # suite, so they can still be going when the parallel block ends: wait up to 40 minutes
+            # for them, unless the MySQL run they follow already failed, when they never start.
+            for name in monitor-fsm lint spatial routing go-pg laravel-pg pgtools; do
               f=~/test-output/$name.result
+              limit=600
+              upstream=""
+              case $name in
+                go-pg) limit=2400; upstream=go ;;
+                laravel-pg) limit=2400; upstream=laravel ;;
+                pgtools) limit=1200 ;;
+              esac
               waited=0
-              while [ ! -f "$f" ] && [ $waited -lt 600 ]; do sleep 5; waited=$((waited + 5)); done
+              while [ ! -f "$f" ] && [ $waited -lt $limit ]; do
+                if [ -n "$upstream" ]; then
+                  case "$(cat /tmp/$upstream-result 2>/dev/null)" in fail|killed|timeout) break ;; esac
+                fi
+                sleep 5; waited=$((waited + 5))
+              done
+              if [ ! -f "$f" ] && [ -n "$upstream" ]; then
+                case "$(cat /tmp/$upstream-result 2>/dev/null)" in
+                  fail|killed|timeout) echo "=== $name: not run, the MySQL $upstream run did not pass (that failure is reported above) ==="; continue ;;
+                esac
+              fi
               result=$(cat "$f" 2>/dev/null || echo "missing")
               echo "=== $name: $result ==="
               if [ "$result" != "pass" ]; then
@@ -2824,6 +2922,20 @@ jobs:
       - start-go-service-tests:
           suite: routing
           label: "Routing-go (iznik-routing-go)"
+
+      # The second engine. The tooling tests start at once; the Go and Laravel runs on PostgreSQL
+      # start when the MySQL run of the same suite has finished, and overlap Playwright.
+      - start-pg-suite-tests:
+          suite: pgtools
+          label: "PostgreSQL tooling tests"
+      - start-pg-suite-tests:
+          suite: go-pg
+          label: "Go API tests on PostgreSQL"
+          after: go
+      - start-pg-suite-tests:
+          suite: laravel-pg
+          label: "Laravel tests on PostgreSQL"
+          after: laravel
 
       # Run all tests in parallel via status API.
       # On cloud runners: Vitest also runs here (no sequential pre-step).

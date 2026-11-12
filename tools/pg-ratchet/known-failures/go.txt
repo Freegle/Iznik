@@ -1,0 +1,2 @@
+# Tests of the go suite known to fail on PostgreSQL. Generated, one name per line.
+# Empty until the first CI run on PostgreSQL has produced the results to generate it from.

@@ -144,6 +144,24 @@ jobs:
             git fetch --no-tags --depth=100 origin master
             node tools/orm-migration/extract.mjs check --base origin/master
 
+  # The portable-migration convention (docs/developers/reference/database-engines.md): a migration
+  # a branch adds is written with Blueprint, and a raw statement in it carries a
+  # "// mysql-only: <reason>" marker. The existing migrations are not held to it. Node alone.
+  check-portable-migrations:
+    docker:
+      - image: cimg/node:22.23.2
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Self-test the check
+          command: node --test scripts/check-portable-migrations.test.mjs
+      - run:
+          name: New migrations are portable
+          command: |
+            git fetch --no-tags --depth=100 origin master
+            node scripts/check-portable-migrations.mjs --base origin/master
+
   # The role-literal guard: a role (User, Moderator, Support, Admin, Member, Owner) is read
   # from a constant, never written as a string. The editor hook catches it at authoring
   # time; this job checks the whole tree, which holds at zero, so a literal planted
@@ -256,6 +274,7 @@ workflows:
     jobs:
       - check-raw-sql
       - check-raw-sql-ratchet
+      - check-portable-migrations
       - check-role-literals
       - check-licences
       - check-ux-cleanups
@@ -332,6 +351,7 @@ workflows:
     jobs:
       - check-raw-sql
       - check-raw-sql-ratchet
+      - check-portable-migrations
       - check-role-literals
       - check-licences
       - check-ux-cleanups
@@ -541,6 +561,7 @@ workflows:
     jobs:
       - check-raw-sql
       - check-raw-sql-ratchet
+      - check-portable-migrations
       - check-role-literals
       - check-licences
       - check-ux-cleanups
