@@ -120,3 +120,26 @@ func TestStaleSessionJWTDoesNotRunAWrite(t *testing.T) {
 	db.Raw("SELECT fullname FROM users WHERE id = ?", uid).Scan(&after)
 	assert.Equal(t, before, after, "the write must not be committed for a logged-out session")
 }
+
+// A client that authenticates with the Authorization2 persistent token keeps its session alive
+// and its last access current, the same as a JWT client does.
+func TestAuthorization2OnlyRefreshesLastaccessAndLastactive(t *testing.T) {
+	prefix := uniquePrefix("la_auth2")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	sessionID, _ := CreateTestSession(t, uid)
+	persistent := CreatePersistentToken(t, uid, sessionID)
+	db := database.DBConn
+	db.Exec("UPDATE users SET lastaccess = DATE_SUB(NOW(), INTERVAL 20 MINUTE) WHERE id = ?", uid)
+	db.Exec("UPDATE sessions SET lastactive = DATE_SUB(NOW(), INTERVAL 20 MINUTE) WHERE id = ?", sessionID)
+
+	req := httptest.NewRequest("GET", "/api/notification/count", nil)
+	req.Header.Set("Authorization2", persistent)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	assert.Less(t, lastaccessAgeSecs(t, uid), int64(240), "lastaccess should be refreshed")
+
+	var lastactiveAge int64
+	db.Raw("SELECT TIMESTAMPDIFF(SECOND, lastactive, NOW()) FROM sessions WHERE id = ?", sessionID).Scan(&lastactiveAge)
+	assert.Less(t, lastactiveAge, int64(240), "sessions.lastactive should be refreshed")
+}
