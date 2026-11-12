@@ -103,6 +103,9 @@ echo "Fixture tables OK"
 echo "Loading test fixtures into iznik (scripts/fixtures)..."
 FIXTURE_SQL=$(mktemp)
 trap 'rm -f "$FIXTURE_SQL"' EXIT
+# mktemp makes the file readable by its owner only, and docker cp keeps that mode, so the mysql client in the
+# percona container (another user) could not read it.
+chmod 644 "$FIXTURE_SQL"
 if ! fixture_loader --engine mysql --part captured > "$FIXTURE_SQL"; then
   echo "Writing the fixture SQL FAILED: aborting test database setup"
   exit 1

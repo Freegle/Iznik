@@ -591,9 +591,11 @@ func TestEngine_LeafKeyCheck(t *testing.T) {
 			}
 			return n
 		}
-		// The live table has UNIQUE (msgid, leaf, fp).
-		if n := count("rippling_reach_leaves"); n != 1 {
-			t.Errorf("live table: %d keys, want 1", n)
+		// The live table has UNIQUE (msgid, leaf, fp). The service only asks whether the count is zero, and
+		// MySQL's information_schema.statistics has one row per column of the key, so it answers 3 where
+		// PostgreSQL answers 1: the test compares "any key" and not the number.
+		if n := count("rippling_reach_leaves"); n == 0 {
+			t.Errorf("live table: %d keys, want a key", n)
 		}
 		// A table with the key in another column order, one with a longer key and one with none do not
 		// qualify; a table with the right key under another name does.
@@ -604,7 +606,7 @@ func TestEngine_LeafKeyCheck(t *testing.T) {
 		for table, want := range map[string]int{
 			"leaves_wrong_order": 0, "leaves_no_key": 0, "leaves_primary_only": 0, "leaves_good": 1, "no_such_table": 0,
 		} {
-			if got := count(table); got != want {
+			if got := count(table); (got > 0) != (want > 0) {
 				t.Errorf("%s: %d keys, want %d", table, got, want)
 			}
 		}
