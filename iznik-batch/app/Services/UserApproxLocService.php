@@ -2,6 +2,11 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\JsonUnquote;
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StSrid;
+use App\Database\Expressions\Value;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -160,14 +165,21 @@ class UserApproxLocService
             ->orderBy('u.id')
             ->limit($take)
             ->select('u.id', 'u.lastaccess', 'l.lat as loc_lat', 'l.lng as loc_lng')
-            // keep-raw: JSON path extraction, which the builder has no expression for. Read as raw
-            // JSON text rather than CAST to DECIMAL because a JSON null casts to 0.000000, not
-            // NULL, which would silently place the member in the Atlantic.
+            // Read as raw JSON text rather than CAST to DECIMAL because a JSON null casts to 0.000000,
+            // not NULL, which would silently place the member in the Atlantic.
             // A Trash Nothing member's mylocation is stale V1 data; TN is the master for their
             // location (User::chosenLatLng), so it is not read for them.
-            ->selectRaw("CASE WHEN u.tnuserid IS NULL THEN JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lat')) END AS myloc_lat")
-            ->selectRaw("CASE WHEN u.tnuserid IS NULL THEN JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lng')) END AS myloc_lng")
+            ->selectRaw($this->settingsPoint('lat').' AS myloc_lat')
+            ->selectRaw($this->settingsPoint('lng').' AS myloc_lng')
             ->get();
+    }
+
+    /** The member's own settings.mylocation coordinate as JSON text, null for a Trash Nothing member. */
+    private function settingsPoint(string $axis): string
+    {
+        $value = new JsonUnquote(new JsonExtract('u.settings', Value::of('$.mylocation.'.$axis)));
+
+        return 'CASE WHEN u.tnuserid IS NULL THEN '.$value->getValue(DB::getQueryGrammar()).' END';
     }
 
     /**
@@ -230,27 +242,19 @@ class UserApproxLocService
     {
         $srid = (int) config('freegle.srid', 3857);
 
-        $placeholders = implode(', ', array_fill(0, count($rows), '(?, ?, ?, ST_SRID(POINT(?, ?), ?), ?)'));
-
-        $bindings = [];
+        $values = [];
 
         foreach ($rows as [$userid, $lat, $lng, $lastaccess]) {
-            array_push($bindings, $userid, $lat, $lng, $lng, $lat, $srid, $lastaccess);
+            $values[] = [
+                'userid' => $userid,
+                'lat' => $lat,
+                'lng' => $lng,
+                'position' => new StSrid(new Point((float) $lng, (float) $lat), $srid),
+                'timestamp' => $lastaccess,
+            ];
         }
 
-        // keep-raw: the builder's upsert() binds column values only, so it cannot put the
-        // ST_SRID(POINT(...)) spatial constructor in the VALUES list, and the SPATIAL index on
-        // position means the geometry has to be built in the same statement.
-        DB::statement(
-            "INSERT INTO users_approxlocs (userid, lat, lng, position, timestamp)
-             VALUES $placeholders AS new
-             ON DUPLICATE KEY UPDATE
-               lat = new.lat,
-               lng = new.lng,
-               position = new.position,
-               timestamp = new.timestamp",
-            $bindings
-        );
+        DB::table('users_approxlocs')->upsert($values, ['userid'], ['lat', 'lng', 'position', 'timestamp']);
     }
 
     /**
