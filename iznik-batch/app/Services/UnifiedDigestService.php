@@ -173,7 +173,7 @@ class UnifiedDigestService
                 } elseif ($result['status'] === 'suppressed') {
                     $stats['suppressed']++;
                 }
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 Log::error("UnifiedDigestService: Failed to send digest to user {$user->id}", [
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
@@ -3517,7 +3517,7 @@ class UnifiedDigestService
         // normalized bodies, so genuine cross-posts (same tnpostid) AND same-item
         // reposts (different tnpostid, same body) both merge, while two different
         // items that merely share subject+location stay separate (bodies differ).
-        $normalizedSubject = $this->normalizeSubject($message->subject);
+        $normalizedSubject = $this->normalizeSubject($message->subject ?? '');
 
         return implode('|', [
             $message->fromuser,
