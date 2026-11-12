@@ -85,6 +85,16 @@ func TestTranslatePostgres(t *testing.T) {
 		{"alias not touched", "SELECT x AS payer FROM t", "SELECT x AS payer FROM t"},
 		{"already postgres", `SELECT "a" FROM "t" WHERE x = $1 ON CONFLICT ("a") DO NOTHING`, `SELECT "a" FROM "t" WHERE x = $1 ON CONFLICT ("a") DO NOTHING`},
 		{"string with keywords untouched", "SELECT 'IFNULL(a) `x` INTERVAL 1 DAY'", "SELECT 'IFNULL(a) `x` INTERVAL 1 DAY'"},
+		{"group by bare column", "SELECT MAX(t.a) AS a, t.b, t.c FROM t GROUP BY t.c ORDER BY t.b",
+			`SELECT MAX(t.a) AS a, ANY_VALUE(t.b) AS "b", t.c FROM t GROUP BY t.c ORDER BY ANY_VALUE(t.b)`},
+		{"group by already valid", "SELECT c, COUNT(*) AS n FROM t GROUP BY c ORDER BY n DESC", "SELECT c, COUNT(*) AS n FROM t GROUP BY c ORDER BY n DESC"},
+		{"group by subquery", "SELECT x.id FROM (SELECT id, name FROM t GROUP BY name) x",
+			`SELECT x.id FROM (SELECT ANY_VALUE(id) AS "id", name FROM t GROUP BY name) x`},
+		{"distinct order by hidden", "SELECT DISTINCT a.id FROM a ORDER BY a.date DESC", "SELECT a.id FROM a GROUP BY a.id ORDER BY ANY_VALUE(a.date) DESC"},
+		{"having alias without group", "SELECT id, f(x) AS hav FROM t WHERE y = 1 HAVING hav < 5 ORDER BY hav", "SELECT id, f(x) AS hav FROM t WHERE (y = 1) AND ((f(x)) < 5) ORDER BY hav"},
+		{"json set pairs", "UPDATE u SET s = JSON_SET(s, '$.a', 'x', '$.b', 2)", "UPDATE u SET s = json_set(json_set(s, '$.a', 'x'::text), '$.b', 2)"},
+		{"srid literal", "ST_GeomFromText('POINT(1 2)', 3857)", "ST_GeomFromText('POINT(1 2)', 4326)"},
+		{"coalesce bool", "COALESCE(JSON_EXTRACT(s, '$.a') = 1, 0)", "COALESCE(JSON_EXTRACT(s, '$.a') = 1, false)"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {

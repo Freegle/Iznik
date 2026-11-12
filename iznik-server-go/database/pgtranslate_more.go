@@ -136,6 +136,87 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 
 	ts, changed = wrapJSONBranches(ts, changed)
 
+	// JSON_SET(doc, p1, v1, p2, v2): one json_set call per pair, and a string value is text.
+	for i := len(ts) - 1; i >= 0; i-- {
+		if !isKw(ts[i], "JSON_SET") {
+			continue
+		}
+		cl := callEnd(ts, i)
+		if cl < 0 {
+			continue
+		}
+		o := nextSig(ts, i+1)
+		args := splitArgs(ts[o+1 : cl])
+		if len(args) < 3 || len(args)%2 == 0 {
+			continue
+		}
+		expr := trimToks(args[0])
+		for n := 1; n+1 < len(args); n += 2 {
+			v := trimToks(args[n+1])
+			if len(v) == 1 && v[0].k == tkStr {
+				v = []tok{v[0], punct(":"), punct(":"), word("text")}
+			}
+			expr = concatToks([]tok{word("json_set"), punct("(")}, expr, []tok{punct(","), sp()}, trimToks(args[n]), []tok{punct(","), sp()}, v, []tok{punct(")")})
+		}
+		ts = concatToks(ts[:i], expr, ts[cl+1:])
+		changed = true
+	}
+
+	// The SRID label of a spatial constructor: the baseline relabels the columns from 3857 to 4326.
+	for i := len(ts) - 1; i >= 0; i-- {
+		if !(isKw(ts[i], "ST_GeomFromText") || isKw(ts[i], "ST_SetSRID") || isKw(ts[i], "ST_PointFromText") || isKw(ts[i], "ST_GeomFromGeoJSON")) {
+			continue
+		}
+		cl := callEnd(ts, i)
+		if cl < 0 {
+			continue
+		}
+		if l := prevSig(ts, cl-1); l >= 0 && ts[l].k == tkWord && ts[l].s == "3857" {
+			ts[l].s = "4326"
+			changed = true
+		}
+	}
+
+	// COALESCE(a comparison, 0 or 1): a comparison is a boolean here, 0 or 1 in MySQL.
+	for i := 0; i < len(ts); i++ {
+		if !isKw(ts[i], "COALESCE") {
+			continue
+		}
+		cl := callEnd(ts, i)
+		if cl < 0 {
+			continue
+		}
+		o := nextSig(ts, i+1)
+		args := splitArgs(ts[o+1 : cl])
+		if len(args) != 2 {
+			continue
+		}
+		last := trimToks(args[1])
+		if len(last) != 1 || (last[0].s != "0" && last[0].s != "1") || last[0].k != tkWord {
+			continue
+		}
+		cmp := false
+		depth := 0
+		for _, t := range args[0] {
+			if isP(t, "(") {
+				depth++
+			} else if isP(t, ")") {
+				depth--
+			} else if depth == 0 && (isP(t, "=") || isP(t, ">") || isP(t, "<") || isKw(t, "LIKE") || isKw(t, "IN") || isKw(t, "IS") || isKw(t, "AND") || isKw(t, "OR")) {
+				cmp = true
+			}
+		}
+		if !cmp {
+			continue
+		}
+		val := "false"
+		if last[0].s == "1" {
+			val = "true"
+		}
+		ts = concatToks(ts[:o+1], trimToks(args[0]), []tok{punct(","), sp(), word(val)}, ts[cl:])
+		changed = true
+	}
+
 	// ST_SRID(g, n) sets the SRID in MySQL.
 	for i := len(ts) - 1; i >= 0; i-- {
 		if !isKw(ts[i], "ST_SRID") {
@@ -343,6 +424,11 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 				changed = true
 			}
 		}
+	}
+
+	if t, ok := fixGrouping(ts); ok {
+		ts = t
+		changed = true
 	}
 
 	if t, ok := translateJoinDML(ts); ok {

@@ -542,3 +542,22 @@ BEGIN
   END LOOP;
 END
 $$;
+
+CREATE OR REPLACE FUNCTION json_merge_patch(a text, b jsonb) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_merge_patch(NULLIF(a, '')::jsonb, b) $$;
+
+-- JSON_REMOVE(doc, '$.a.b'): removes the key at a path made of object keys.
+CREATE OR REPLACE FUNCTION json_remove(j jsonb, path text) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT j #- string_to_array(regexp_replace(path, '^\$\.?', ''), '.') $$;
+
+CREATE OR REPLACE FUNCTION json_remove(j text, path text) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_remove(NULLIF(j, '')::jsonb, path) $$;
+
+-- JSON_LENGTH(doc [, path]): the number of elements of an array or keys of an object, 1 for a scalar.
+CREATE OR REPLACE FUNCTION json_length(j jsonb) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT CASE jsonb_typeof(j) WHEN 'array' THEN jsonb_array_length(j) WHEN 'object' THEN (SELECT count(*)::integer FROM jsonb_object_keys(j)) WHEN NULL THEN NULL ELSE 1 END
+$$;
+
+CREATE OR REPLACE FUNCTION json_length(j jsonb, path text) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_length(json_extract(j, path)) $$;

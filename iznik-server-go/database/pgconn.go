@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 )
 
 // pgTranslatingConnector wraps a connector so that every statement sent on its connections is
@@ -25,6 +26,7 @@ type pgTranslatingConnector struct {
 type pgStatement struct {
 	sql      string
 	insertID bool // an INSERT into a table with an id column, no RETURNING
+	jsonArgs bool // has a JSON constructor whose bound arguments need a type
 }
 
 func newPgTranslatingConnector(inner driver.Connector) *pgTranslatingConnector {
@@ -46,7 +48,7 @@ func (c *pgTranslatingConnector) statement(q string) pgStatement {
 		return v.(pgStatement)
 	}
 	t := translatePostgres(q, c)
-	st := pgStatement{sql: t}
+	st := pgStatement{sql: t, jsonArgs: strings.Contains(t, "jsonb_build_") || strings.Contains(t, "json_set(")}
 	if table, ok := plainInsertTable(t); ok && isColumnOf(c, table, "id") {
 		st.insertID = true
 	}
@@ -170,6 +172,9 @@ func (r pgInsertResult) RowsAffected() (int64, error) { return r.n, nil }
 
 func (p *pgTranslatingConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
 	st := p.c.statement(q)
+	if st.jsonArgs {
+		st.sql = typeJSONParams(st.sql, args)
+	}
 	if !st.insertID {
 		return p.Conn.(driver.ExecerContext).ExecContext(ctx, st.sql, args)
 	}
@@ -203,7 +208,11 @@ func (p *pgTranslatingConn) ExecContext(ctx context.Context, q string, args []dr
 }
 
 func (p *pgTranslatingConn) QueryContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
-	return p.Conn.(driver.QueryerContext).QueryContext(ctx, p.c.statement(q).sql, args)
+	st := p.c.statement(q)
+	if st.jsonArgs {
+		st.sql = typeJSONParams(st.sql, args)
+	}
+	return p.Conn.(driver.QueryerContext).QueryContext(ctx, st.sql, args)
 }
 
 func (p *pgTranslatingConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
@@ -230,4 +239,66 @@ func (p *pgTranslatingConn) IsValid() bool {
 
 func (p *pgTranslatingConn) CheckNamedValue(nv *driver.NamedValue) error {
 	return p.Conn.(driver.NamedValueChecker).CheckNamedValue(nv)
+}
+
+// typeJSONParams gives a bound parameter that is a whole argument of a JSON constructor the type of the Go
+// value sent for it. PostgreSQL cannot infer a type there, MySQL does not need one.
+func typeJSONParams(sql string, args []driver.NamedValue) string {
+	ts := lexSQL(sql)
+	changed := false
+	for i := 0; i < len(ts); i++ {
+		if !(isKw(ts[i], "jsonb_build_object") || isKw(ts[i], "jsonb_build_array") || isKw(ts[i], "json_set")) {
+			continue
+		}
+		o := nextSig(ts, i+1)
+		if o < 0 || !isP(ts[o], "(") {
+			continue
+		}
+		cl := matchClose(ts, o)
+		if cl < 0 {
+			continue
+		}
+		for j := o + 1; j < cl; j++ {
+			t := ts[j]
+			if t.k != tkWord || len(t.s) < 2 || t.s[0] != '$' {
+				continue
+			}
+			p, n := prevSig(ts, j-1), nextSig(ts, j+1)
+			if p < 0 || n < 0 || !(isP(ts[p], "(") || isP(ts[p], ",")) || !(isP(ts[n], ",") || isP(ts[n], ")")) {
+				continue
+			}
+			idx := 0
+			for _, c := range t.s[1:] {
+				if c < '0' || c > '9' {
+					idx = 0
+					break
+				}
+				idx = idx*10 + int(c-'0')
+			}
+			if idx < 1 || idx > len(args) {
+				continue
+			}
+			typ := "text"
+			switch v := args[idx-1].Value.(type) {
+			case int64:
+				typ = "bigint"
+			case float64:
+				typ = "double precision"
+			case bool:
+				typ = "boolean"
+			case time.Time:
+				typ = "timestamptz"
+			case string, []byte, nil:
+				typ = "text"
+			default:
+				_ = v
+			}
+			ts[j].s = t.s + "::" + typ
+			changed = true
+		}
+	}
+	if !changed {
+		return sql
+	}
+	return joinToks(ts)
 }
