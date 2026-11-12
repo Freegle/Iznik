@@ -38,3 +38,16 @@ func TestModeratorActionsRemoveTheSpatialRowWhenNoCopyIsApproved(t *testing.T) {
 		})
 	}
 }
+
+// A post still Approved on another community stays in browse.
+func TestModeratorActionKeepsTheSpatialRowWhileAnotherCopyIsApproved(t *testing.T) {
+	f := newHomeLockFixture(t, "spatial_keep")
+	database.DBConn.Exec("UPDATE messages SET lat = 51.5, lng = -0.1 WHERE id = ?", f.msgID)
+	database.DBConn.Exec("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
+		"VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), 0, ?, NOW(), 'Offer')", f.msgID, f.home)
+
+	status, body := postModAction(t, f.tokRecv, f.msgID, "Delete", f.recv)
+	require.Equal(t, 200, status, body)
+
+	assert.Equal(t, int64(1), spatialRowCount(f.msgID), "the home copy is still live, so the post stays in browse")
+}
