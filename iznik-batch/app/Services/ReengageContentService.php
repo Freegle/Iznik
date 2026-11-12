@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Spatial;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
@@ -253,8 +254,8 @@ class ReengageContentService
             // real area, so exclude those rather than let them match nothing
             // noisily. Same guard the rippling code uses.
             $containsSql = "(groups.polyindex IS NOT NULL"
-                . " AND ST_GeometryType(groups.polyindex) <> 'POINT'"
-                . " AND ST_Contains(groups.polyindex, ST_SRID(POINT(?, ?), " . self::srid() . ')))';
+                . " AND " . Spatial::geometryType('groups.polyindex') . " <> 'POINT'"
+                . " AND ST_Contains(groups.polyindex, " . Spatial::point('?', '?', self::srid()) . '))';
 
             // Recorded so the sysadmin dashboard can show how often the home
             // group was genuinely known rather than guessed at by distance.

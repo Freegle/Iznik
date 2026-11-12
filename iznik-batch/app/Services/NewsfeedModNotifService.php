@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Spatial;
 use App\Mail\Newsfeed\NewsfeedModNotifMail;
 use App\Mail\Traits\AvatarResolver;
 use App\Models\Group;
@@ -116,7 +117,7 @@ class NewsfeedModNotifService
                  INNER JOIN `groups` ON (
                      newsfeed.groupid = groups.id
                      OR (newsfeed.position IS NOT NULL AND groups.polyindex IS NOT NULL
-                         AND MBRContains(groups.polyindex, newsfeed.position))
+                         AND " . Spatial::mbrContains('groups.polyindex', 'newsfeed.position') . ")
                  )
                  WHERE newsfeed.added >= ?
                    AND newsfeed.id > ?

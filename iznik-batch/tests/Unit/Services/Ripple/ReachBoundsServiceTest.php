@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Database\Spatial;
 use App\Models\Message;
 use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Support\Facades\DB;
@@ -76,7 +77,7 @@ class ReachBoundsServiceTest extends TestCase
     {
         return DB::selectOne(
             'SELECT msgid,
-                    ST_GeometryType(outer_bound) AS outer_type,
+                    ' . Spatial::geometryType('outer_bound') . ' AS outer_type,
                     inner_bound IS NULL AS inner_null
                FROM rippling_reach WHERE msgid = ?',
             [$msgid]
@@ -140,7 +141,7 @@ class ReachBoundsServiceTest extends TestCase
             // MBR containment is well-defined even for invalid geometry: the stored
             // outer bound must at least cover the polygon's extent.
             $check = DB::selectOne(
-                'SELECT MBRContains(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS o
+                'SELECT ' . Spatial::mbrContains('outer_bound', 'ST_GeomFromText(?, ' . config('freegle.srid') . ')') . ' AS o
                    FROM rippling_reach WHERE msgid = ?',
                 [$this->seededWkt[$msgid], $msgid]
             );

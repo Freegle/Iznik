@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\CommunityNews;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Models\CommunityNewsArea;
 use App\Services\CommunityNews\CommunityNewsAreaService;
 use Illuminate\Support\Facades\DB;
@@ -20,7 +22,7 @@ class CommunityNewsAreaServiceTest extends TestCase
         // count (31 areas where a test built 2). Each test then opts its own
         // groups in or out deliberately.
         DB::statement(
-            "UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.communitynews', 0)"
+            "UPDATE " . Sql::table('groups') . " SET settings = JSON_SET(COALESCE(settings, '{}'), '$.communitynews', 0)"
         );
     }
 
@@ -57,7 +59,7 @@ class CommunityNewsAreaServiceTest extends TestCase
             'lat' => $lat,
             'lng' => $lng,
             'population' => $population,
-            'position' => DB::raw('ST_SRID(POINT(' . $lng . ', ' . $lat . '), ' . config('freegle.srid') . ')'),
+            'position' => DB::raw('' . Spatial::point('' . $lng . '', '' . $lat . '', config('freegle.srid')) . ''),
         ]);
     }
 

@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\FirstReply;
 
+use App\Database\Spatial;
 use App\Models\Message;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\FreegleApiClient;
@@ -175,7 +176,7 @@ class MatchMailServiceTest extends TestCase
 
         DB::statement(
             'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(-0.1, 51.5), ' . config('freegle.srid') . '), 0, 0, ?, ?, NOW())',
+             VALUES (?, ' . Spatial::point('-0.1', '51.5', config('freegle.srid')) . ', 0, 0, ?, ?, NOW())',
             [$message->id, $group->id, $type]
         );
 
@@ -741,7 +742,7 @@ class MatchMailServiceTest extends TestCase
         ]);
         DB::statement(
             'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(?, ?), ' . config('freegle.srid') . '), 0, 0, ?, ?, NOW())',
+             VALUES (?, ' . Spatial::point('?', '?', config('freegle.srid')) . ', 0, 0, ?, ?, NOW())',
             [$post->id, $lng, $lat, $group->id, $type]
         );
 

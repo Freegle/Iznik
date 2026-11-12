@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Sql;
 use App\Mail\Ripple\RippleIntroMail;
 use App\Models\Membership;
 use App\Models\User;
@@ -152,7 +153,7 @@ class RippleMembershipBackfillService
                 DB::select(
                     "SELECT COALESCE(g.namefull, g.nameshort) AS name, g.welcomemail AS welcome
                      FROM memberships m
-                     JOIN `groups` g ON g.id = m.groupid
+                     JOIN " . Sql::table('groups') . " g ON g.id = m.groupid
                      WHERE m.userid = ? AND m.rippled = 1
                        AND g.onhere = 1 AND g.welcomemail IS NOT NULL AND g.welcomemail <> ''
                      ORDER BY m.groupid ASC",

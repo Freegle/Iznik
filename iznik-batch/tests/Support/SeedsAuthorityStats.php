@@ -2,6 +2,7 @@
 
 namespace Tests\Support;
 
+use App\Database\Sql;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -158,7 +159,7 @@ trait SeedsAuthorityStats
     private function insertGroup(int $id, string $nameshort, string $namefull, string $wkt): void
     {
         $this->insertGeom(
-            'INSERT INTO `groups` (id, nameshort, namefull, type, publish, onmap, lat, lng, polyindex)
+            'INSERT INTO ' . Sql::table('groups') . ' (id, nameshort, namefull, type, publish, onmap, lat, lng, polyindex)
              VALUES (?, ?, ?, ?, 1, 1, 11, 0, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [$id, $nameshort, $namefull, 'Freegle', $wkt]
         );
