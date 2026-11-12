@@ -36,6 +36,11 @@ type PersistentToken struct {
 func WhoAmI(c *fiber.Ctx) uint64 {
 	id, _, _ := GetJWTFromRequest(c)
 
+	// The auth middleware has found that the session in this JWT is gone, so the JWT is not good.
+	if id > 0 && c.Locals("sessionInvalid") != nil {
+		id = 0
+	}
+
 	// If we don't manage to get a user from the JWT, which is fast, then try the old-style persistent token which
 	// is stored in the session table.
 	persistent := c.Get("Authorization2")
