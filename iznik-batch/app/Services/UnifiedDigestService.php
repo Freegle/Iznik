@@ -32,6 +32,7 @@ use App\Models\UserDigest;
 use App\Services\Ripple\DigestPostScorer;
 use App\Services\Ripple\DistancePreferenceFilter;
 use App\Services\Ripple\RingIndex;
+use App\Services\Ripple\RoutingRetryableException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -677,7 +678,7 @@ class UnifiedDigestService
      */
     public function sendReachDigests(?int $limit = null, bool $dryRun = false, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
     {
-        $stats = ['posts_processed' => 0, 'members_processed' => 0, 'emails_sent' => 0, 'errors' => 0];
+        $stats = ['posts_processed' => 0, 'members_processed' => 0, 'emails_sent' => 0, 'errors' => 0, 'retryable' => 0];
 
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             return $stats;
@@ -743,6 +744,9 @@ class UnifiedDigestService
                 $stats['posts_processed']++;
             } catch (\Throwable $e) {
                 $stats['errors']++;
+                if ($e instanceof RoutingRetryableException) {
+                    $stats['retryable']++;
+                }
                 Log::warning('reach-mail: failed for post', ['msgid' => $msgid, 'error' => $e->getMessage()]);
             }
         }
@@ -750,25 +754,24 @@ class UnifiedDigestService
         // The other direction: members whose eligibility changed since the last pass.
         $this->drainMemberQueue($stats, $dryRun, $shard, $shards, $shouldStop);
 
-        // Advance only after a complete, clean, real pass. A dry run must leave the mark where
-        // it is or the next real pass skips what it previewed; a pass stopped early or with a
-        // failed post must too, so the next pass re-examines from the old mark. Re-examining is
-        // free of side effects (the ledger dedupes); a post silently dropped is not.
+        // Advance after a complete, real pass. A dry run must leave the mark where it is or the next
+        // real pass skips what it previewed, and a pass stopped early must too. The only failure
+        // that holds the mark is routing being unreachable or returning a retryable error: asking
+        // again may work, and re-examining is free of side effects (the ledger dedupes). A post that
+        // failed for any other reason is logged and not retried, because it would fail the same way
+        // and each held pass re-reads the whole window.
         if (! $dryRun && empty($stats['stopped'])) {
-            if ($stats['errors'] === 0) {
+            if ($stats['retryable'] === 0) {
                 $this->setReachMailMark($shard, $passStart);
-            } else {
-                // A post or member that fails on every pass must not hold the mark for ever: each
-                // pass would re-read a window that only grows. Past the bound the mark moves up to
-                // it, so only what has been failing for longer than that is let go.
-                $bound = now()->subMinutes(self::REACH_MARK_MAX_HOLD_MINUTES);
-                if ($mark->lt($bound)) {
-                    Log::warning('reach-mail: mark held past its bound by failing posts, moving it up to the bound', [
-                        'shard' => $shard,
-                        'errors' => $stats['errors'],
-                    ]);
-                    $this->setReachMailMark($shard, $bound);
-                }
+            } elseif ($mark->lt(now()->subMinutes(self::REACH_MARK_MAX_HOLD_MINUTES))) {
+                // Routing has been failing for longer than the hold allows. Let the mark move on
+                // so the re-read does not keep growing; this is the one error line for the outage.
+                Log::error('reach-mail: routing still failing after the hold window, giving up on the posts it failed for', [
+                    'shard' => $shard,
+                    'retryable_failures' => $stats['retryable'],
+                    'held_minutes' => self::REACH_MARK_MAX_HOLD_MINUTES,
+                ]);
+                $this->setReachMailMark($shard, $passStart);
             }
         }
 
@@ -798,7 +801,9 @@ class UnifiedDigestService
     {
         $srid = (int) config('freegle.srid', 3857);
 
-        $pending = DB::table('rippling_reach_member_pending')->orderBy('id');
+        // Oldest-queued first. A row that fails for its own reasons is moved to the back (its
+        // `added` is set to now), so it cannot sit at the head and starve the rows behind it.
+        $pending = DB::table('rippling_reach_member_pending')->orderBy('added')->orderBy('id');
         if ($shards > 1) {
             $pending->whereRaw('MOD(userid, ?) = ?', [$shards, $shard]);
         }
@@ -851,6 +856,17 @@ class UnifiedDigestService
             } catch (\Throwable $e) {
                 $stats['errors']++;
                 Log::warning('reach-mail: failed for queued member', ['userid' => $row->userid, 'error' => $e->getMessage()]);
+
+                if ($e instanceof RoutingRetryableException) {
+                    // Routing is down for everyone: the rest would each wait out the timeout too.
+                    // The row stays at the head, which is right, as every row is waiting on the same thing.
+                    $stats['retryable']++;
+                    break;
+                }
+
+                if (! $dryRun) {
+                    DB::table('rippling_reach_member_pending')->where('id', $row->id)->update(['added' => now()]);
+                }
             }
         }
     }
@@ -859,8 +875,8 @@ class UnifiedDigestService
      * Where shard N of the reach pass keeps its mark. Shards partition posts by MOD(msgid, N)
      * and run concurrently, so each has its own.
      */
-    /** The longest a failing post or member may hold a shard's reach-mail mark back, in minutes. */
-    public const REACH_MARK_MAX_HOLD_MINUTES = 360;
+    /** The longest routing being unreachable may hold a shard's reach-mail mark back, in minutes. */
+    public const REACH_MARK_MAX_HOLD_MINUTES = 15;
 
     public static function reachMailMarkKey(int $shard): string
     {
@@ -1254,8 +1270,13 @@ class UnifiedDigestService
                 // Routing could not answer (it returns null rather than throwing). Reading that as
                 // "nobody is reached" would let the pass move its mark past this post for good, so
                 // a caller that retries is told, and tries again.
+                // Only an outage that may clear is worth the pass holding its mark for; a request the
+                // service rejected will fail the same way next time.
                 if ($evals === null && $propagateFailure) {
-                    throw new \RuntimeException('reach-arrival could not evaluate the label for post ' . $msgid);
+                    $message = 'reach-arrival could not evaluate the label for post ' . $msgid;
+                    throw $reachSvc->lastArrivalFailureRetryable()
+                        ? new RoutingRetryableException($message)
+                        : new \RuntimeException($message);
                 }
                 foreach ($points as $i => $p) {
                     $labelIn[$i] = (bool) (($evals[$i]['in'] ?? false));
