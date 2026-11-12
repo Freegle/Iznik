@@ -5944,9 +5944,11 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 		logMessageReceived(db, req.Groupid, myid, newMsgID)
 	}
 
-	// Link attachments.
-	for _, attID := range req.Attachments {
-		db.Table("messages_attachments").Where("id = ?", attID).Update("msgid", newMsgID)
+	// Link attachments. Only unattached photos can be linked: another post's photo stays where it is.
+	if len(req.Attachments) > 0 {
+		for _, attID := range linkableAttachments(db, newMsgID, req.Attachments) {
+			db.Table("messages_attachments").Where("id = ?", attID).Update("msgid", newMsgID)
+		}
 	}
 
 	// Create item record.
