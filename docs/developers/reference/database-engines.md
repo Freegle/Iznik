@@ -34,6 +34,10 @@ covers:
   - scripts/check-portable-migrations.mjs
   - iznik-server-go/database/postgres.go
   - iznik-batch/tests/bootstrap.php
+  - iznik-batch/database/postgres/test-mode.sql
+  - iznik-batch/app/Database/PostgresBinaryConnection.php
+  - iznik-batch/app/Database/Expressions/Concerns/PostgresDialect.php
+  - iznik-batch/tests/Unit/Database/ExpressionsPostgresTest.php
   - iznik-spatial-go/source*
   - iznik-spatial-go/testdata/mysql_source_queries.golden
 ---
