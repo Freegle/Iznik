@@ -29,3 +29,16 @@ func TestParityGolden_LogGroupJoined(t *testing.T) {
 		return logGroupJoined(tx, 10, 5)
 	})
 }
+
+// The PostgreSQL form of the same chains. The canonicaliser strips quotes, so this does not show
+// that "user" is quoted; TestParityResult_LogGroupJoined does, by running it.
+func TestParityDialect_PostgresForms(t *testing.T) {
+	var ids []uint64
+	parity.AssertDialectSQL(t, parity.Postgres,
+		"SELECT msgid FROM messages_likes WHERE userid = ? AND type = ? AND msgid IN (?)",
+		func(tx *gorm.DB) *gorm.DB { return viewedMessageIDsQuery(tx, []uint64{1, 2, 3}, 5, "View").Find(&ids) })
+
+	parity.AssertDialectSQL(t, parity.Postgres,
+		"INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
+		func(tx *gorm.DB) *gorm.DB { return logGroupJoined(tx, 10, 5) })
+}

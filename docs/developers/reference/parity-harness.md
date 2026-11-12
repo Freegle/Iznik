@@ -101,6 +101,8 @@ Rows go in insert order, parents first, because the foreign keys are real on bot
 so parallel packages do not wait on each other. Name every NOT NULL column with no default: MySQL here runs
 non-strict and fills one in quietly, and PostgreSQL refuses. `groups.polyindex` is NOT NULL, so a group needs
 `Geometry(...)`, which is labelled 3857 on MySQL and 4326 on PostgreSQL as in the baseline.
+An explicit id also moves a MySQL table's auto-increment counter, and a rollback does not move it back, so later rows
+in that database get ids above 2,000,000,000. That is harmless in a test database.
 
 The result is normalised before comparing. Integer widths and floats with no fraction are one number,
 `true` is 1, bytes are text, a time with a zone is the same instant in UTC. NULL is never 0 or an empty
