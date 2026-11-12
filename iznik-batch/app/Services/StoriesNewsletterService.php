@@ -39,8 +39,8 @@ class StoriesNewsletterService
         $since = DB::table('newsletters')->where('type', 'Stories')->max('created');
 
         // Get unsent stories ranked by vote count (likes), limited to MAX_STORIES.
-        // The LEFT JOIN to likes gives one row per like per story; COUNT(*) gives vote count.
-        // Stories with no likes still appear as one row (LEFT JOIN produces NULL for like columns).
+        // One row per story however many likes or images it has: the vote count is the number of
+        // distinct likes, and a story with images is shown with its first one.
         $rawStories = DB::table('users_stories')
             ->leftJoin('users_stories_likes', 'users_stories_likes.storyid', '=', 'users_stories.id')
             ->leftJoin('users_stories_images', 'users_stories_images.storyid', '=', 'users_stories.id')
@@ -53,10 +53,10 @@ class StoriesNewsletterService
             ->where('users_stories.mailedtomembers', 0)
             ->when($since, fn ($q) => $q->where('users_stories.updated', '>', $since))
             ->select(['users_stories.id'])
-            ->addSelect('users_stories_images.id as photoid')
-            // keep-raw: aliased COUNT(*) aggregate alongside non-aggregate columns (id, photoid) under GROUP BY.
-            ->selectRaw('COUNT(*) AS vote_count')
-            ->groupBy('users_stories.id', 'users_stories_images.id')
+            // keep-raw: aliased aggregates (the first image, the distinct likes) alongside the story id under GROUP BY.
+            ->selectRaw('MIN(users_stories_images.id) AS photoid')
+            ->selectRaw('COUNT(DISTINCT users_stories_likes.userid) AS vote_count')
+            ->groupBy('users_stories.id')
             ->orderByDesc('vote_count')
             ->limit(self::MAX_STORIES)
             ->get();
