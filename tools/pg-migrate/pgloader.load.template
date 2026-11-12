@@ -1,0 +1,49 @@
+/*
+ * pgloader load file for the plain tables: MySQL to the PostgreSQL baseline, data only.
+ * Rendered by `node tools/pg-migrate/migrate.mjs pgloader-config`, which fills the double-brace placeholders.
+ * The connection strings carry credentials, so the rendered file is written with mode 600 and is
+ * never committed.
+ *
+ * The tables in the EXCLUDING list are loaded by the ETL (tools/pg-migrate/etl.mjs), not here:
+ * pgloader does not convert MySQL geometry, and it copies every source column, which PostgreSQL
+ * refuses for a generated column.
+ *
+ * The schema already exists (the baseline), so pgloader creates nothing and only moves rows.
+ */
+LOAD DATABASE
+     FROM {{MYSQL_URI}}
+     INTO {{PG_URI}}
+
+WITH data only,
+     truncate,
+     disable triggers,
+     create no tables,
+     create no indexes,
+     no foreign keys,
+     no reset sequences,
+     quote identifiers,
+     workers = 8, concurrency = 2,
+     batch rows = 25000, prefetch rows = 25000
+
+SET MySQL PARAMETERS
+    net_read_timeout = '600',
+    net_write_timeout = '600'
+
+SET PostgreSQL PARAMETERS
+    maintenance_work_mem to '512MB',
+    work_mem to '64MB'
+
+/* The baseline types, not pgloader's defaults. tinyint stays a smallint (the code compares it with
+   = 1), a set stays a comma separated text, and zero dates become NULL. A zero date in a NOT NULL
+   column fails its batch; `migrate.mjs audit` lists those before the load. */
+CAST type tinyint to smallint drop typemod,
+     type set to text drop typemod,
+     type enum to text drop typemod,
+     type datetime to timestamp drop default drop not null using zero-dates-to-null,
+     type timestamp to timestamptz drop default drop not null using zero-dates-to-null,
+     type date to date drop default drop not null using zero-dates-to-null
+
+EXCLUDING TABLE NAMES MATCHING {{EXCLUDED_TABLES}}
+
+AFTER LOAD DO
+     $$ SELECT iznik_reset_identities(); $$;
