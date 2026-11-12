@@ -214,6 +214,11 @@ class ChatExpectedService
                 ->where('chatid', $msg->chatid)
                 ->where('id', '>', $msg->id)
                 ->where('userid', $other)
+                // Only a reply the expecter can see counts: one held for review, rejected or not yet processed
+                // is invisible to them (ChatMessage::scopeVisible), and replyreceived is never reset.
+                ->where('reviewrequired', 0)
+                ->where('reviewrejected', 0)
+                ->where('processingsuccessful', 1)
                 // A rippling-held reply hasn't reached the expecter yet, so it must not count as
                 // "reply received" (that would prematurely stop chase-up). Once released it counts.
                 // Inlined equivalent of RippleReplyService::deliveryGateSql('chat_messages.id').
