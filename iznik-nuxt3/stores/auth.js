@@ -281,7 +281,14 @@ export const useAuthStore = defineStore('auth', {
       // gets 401 → Sentry error.
       enterLogoutMode()
 
-      await this.$api.session.logout()
+      try {
+        await this.$api.session.logout()
+      } catch (e) {
+        // The sign-out did not happen, so the app has to keep working: leave logout mode or every
+        // later request is aborted until the page is reloaded.
+        exitLogoutMode()
+        throw e
+      }
 
       if (!mobileStore.isApp) {
         this.disableGoogleAutoselect()
