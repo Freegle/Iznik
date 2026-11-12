@@ -46,7 +46,7 @@ Location: {!! $post['locationName'] !!}
 
 {{ count($post['bulkItems']) }} items in this offer:
 @foreach($post['bulkItems'] as $i => $bi)
-  {{ $i + 1 }}) {{ $bi['quantity'] }}x {!! $bi['name'] !!}@if($bi['condition']) ({{ $bi['condition'] }})@endif{!! !empty($bi['description']) ? ' - '.\Illuminate\Support\Str::limit($bi['description'], 80) : '' !!}
+  {{ $i + 1 }}) {{ $bi['quantity'] }}x {!! $bi['name'] !!}@if($bi['condition']) ({!! $bi['condition'] !!})@endif{!! !empty($bi['description']) ? ' - '.\Illuminate\Support\Str::limit($bi['description'], 80) : '' !!}
 
 @endforeach
 @endif
@@ -66,7 +66,7 @@ Reply: {{ $post['messageUrl'] }}
 CAME AND WENT
 These were posted since your last email but have already gone. If you'd like to catch them in time, try a more frequent digest in Settings: {{ $settingsUrl }}
 @foreach($completedPosts as $cp)
-- {{ $cp['itemName'] }}@if($cp['locationName']) ({{ $cp['locationName'] }})@endif — {{ $cp['metaText'] }}: {{ $cp['messageUrl'] }}
+- {!! $cp['itemName'] !!}@if($cp['locationName']) ({!! $cp['locationName'] !!})@endif — {!! $cp['metaText'] !!}: {{ $cp['messageUrl'] }}
 @endforeach
 ------------------------------------
 @endif
@@ -76,7 +76,7 @@ Browse all posts: {{ $browseUrl }}
 
 Jobs near you:
 @foreach($jobAds as $job)
-- {!! $job->title !!}{{ ($job->location ?? null) ? ' (' . $job->location . ')' : '' }}: {{ $job->tracked_url }}
+- {!! $job->title !!}{!! ($job->location ?? null) ? ' (' . $job->location . ')' : '' !!}: {{ $job->tracked_url }}
 @endforeach
 If you are interested and click, it raises a little to help keep Freegle running and free to use.
 View more jobs: {{ $jobsUrl }}
@@ -85,7 +85,7 @@ View more jobs: {{ $jobsUrl }}
 
 Sponsored by:
 @foreach($sponsors as $sponsor)
-- {{ $sponsor->name }}{{ $sponsor->tagline ? ' - ' . $sponsor->tagline : '' }}{{ $sponsor->linkurl ? ' (' . $sponsor->linkurl . ')' : '' }}
+- {!! $sponsor->name !!}{!! $sponsor->tagline ? ' - ' . $sponsor->tagline : '' !!}{!! $sponsor->linkurl ? ' (' . $sponsor->linkurl . ')' : '' !!}
 @endforeach
 @endif
 
