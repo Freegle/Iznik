@@ -168,6 +168,16 @@ if (stripe) {
 
 const error = ref(null)
 
+// Whether this member had a session while the component was open, so that losing it
+// can be told apart from never having logged in.
+let hadSession = false
+
+function hasAuthTokens() {
+  const has = !!(authStore.auth?.jwt || authStore.auth?.persistent)
+  hadSession = hadSession || has
+  return has
+}
+
 onMounted(async () => {
   if (isApp.value) {
     const stripeKey = runtimeConfig.public.STRIPE_PUBLISHABLE_KEY
@@ -210,7 +220,7 @@ onMounted(async () => {
 
       // Refresh session before creating intent so an expired JWT doesn't cause a
       // silent 401 failure here (which would force a retry via ensureIntent later).
-      if (authStore.auth?.jwt || authStore.auth?.persistent) {
+      if (hasAuthTokens()) {
         try {
           await authStore.fetchUser()
         } catch (e) {
@@ -218,24 +228,29 @@ onMounted(async () => {
         }
       }
 
-      try {
-        if (props.monthly) {
-          intent.value = await donationStore.stripeSubscription(props.price)
-        } else {
-          intent.value = await donationStore.stripeIntent({
-            amount: props.price,
+      // The server only creates an intent for a logged-in member, so without tokens the
+      // request can only answer 401. Leave it to ensureIntent, which asks them to log in
+      // when they choose a payment method.
+      if (hasAuthTokens()) {
+        try {
+          if (props.monthly) {
+            intent.value = await donationStore.stripeSubscription(props.price)
+          } else {
+            intent.value = await donationStore.stripeIntent({
+              amount: props.price,
+            })
+          }
+        } catch (intentError) {
+          console.error('Payment intent creation failed', intentError)
+          Sentry.captureException(intentError, {
+            tags: { stripe_step: 'intent_error' },
           })
+          // Don't re-throw - intent will be created lazily when user clicks a button
         }
-      } catch (intentError) {
-        console.error('Payment intent creation failed', intentError)
-        Sentry.captureException(intentError, {
-          tags: { stripe_step: 'intent_error' },
-        })
-        // Don't re-throw - intent will be created lazily when user clicks a button
-      }
 
-      if (!intent.value?.clientSecret) {
-        console.error('Payment intent returned no clientSecret', intent.value)
+        if (!intent.value?.clientSecret) {
+          console.error('Payment intent returned no clientSecret', intent.value)
+        }
       }
 
       // Check payment method availability
@@ -412,6 +427,8 @@ async function ensureIntent() {
     return true
   }
 
+  hasAuthTokens()
+
   // Proactively refresh the session before attempting payment. The JWT is short-lived;
   // if the user opened the app after some time away the JWT may have expired while the
   // persistent token is still valid. Refreshing here gives the server a chance to issue
@@ -427,9 +444,14 @@ async function ensureIntent() {
   }
 
   // If tokens are gone after the refresh attempt, the user is not authenticated.
-  if (!authStore.auth?.jwt && !authStore.auth?.persistent) {
-    error.value =
-      'Your session has expired. Please log in again to complete your donation.'
+  if (!hasAuthTokens()) {
+    if (hadSession) {
+      error.value =
+        'Your session has expired. Please log in again to complete your donation.'
+    } else {
+      error.value = 'Please log in to donate.'
+    }
+    authStore.forceLogin = true
     return false
   }
 

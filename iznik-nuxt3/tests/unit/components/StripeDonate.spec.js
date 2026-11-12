@@ -611,6 +611,35 @@ describe('StripeDonate', () => {
       expect(fetchUserCallCount).toBe(0)
     })
 
+    it('does not ask for an intent at mount when logged out', async () => {
+      mockAuthStore.auth = { jwt: null, persistent: null }
+      mockDonationStore.stripeIntent = vi.fn(() =>
+        Promise.reject(new Error('401'))
+      )
+
+      await createWrapper()
+
+      expect(mockDonationStore.stripeIntent).not.toHaveBeenCalled()
+    })
+
+    it('asks a logged-out member to log in when they choose a payment method', async () => {
+      mockAuthStore.auth = { jwt: null, persistent: null }
+      mockAuthStore.forceLogin = false
+      mockDonationStore.stripeIntent = vi.fn(() =>
+        Promise.reject(new Error('401'))
+      )
+
+      const wrapper = await createWrapper()
+      const paypalBtn = wrapper.find('button[aria-label*="PayPay"]')
+      await paypalBtn.trigger('click')
+      await flushPromises()
+
+      expect(mockDonationStore.stripeIntent).not.toHaveBeenCalled()
+      expect(mockAuthStore.forceLogin).toBe(true)
+      expect(wrapper.text()).toContain('Please log in to donate')
+      expect(wrapper.text()).not.toContain('session has expired')
+    })
+
     it('proceeds with payment after successful session refresh', async () => {
       // Simulate expired JWT: fetchUser refreshes and restores tokens
       mockAuthStore.fetchUser = vi.fn(() => {
