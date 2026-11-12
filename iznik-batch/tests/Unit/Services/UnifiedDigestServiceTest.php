@@ -5170,4 +5170,46 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertSame(1, $this->service->mailNewlyReachedForPost($message->id));
     }
+
+    public function test_reach_mail_skips_a_member_with_a_bouncing_address(): void
+    {
+        [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+        $member->bouncing = 1;
+        $member->save();
+
+        $this->assertSame(0, $this->service->mailNewlyReachedForPost($message->id));
+    }
+
+    public function test_reach_mail_skips_a_member_who_turned_all_our_mail_off(): void
+    {
+        [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+        $member->settings = array_merge($member->settings, ['simplemail' => User::SIMPLE_MAIL_NONE]);
+        $member->save();
+
+        $this->assertSame(0, $this->service->mailNewlyReachedForPost($message->id));
+    }
+
+    public function test_cursor_immediate_digest_skips_bouncing_and_mail_off_members(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $normal = $this->createTestUser();
+        $bouncing = $this->createTestUser(['bouncing' => 1]);
+        $mailOff = $this->createTestUser(['settings' => ['simplemail' => User::SIMPLE_MAIL_NONE]]);
+
+        $group = $this->createTestGroup();
+        foreach ([$poster, $normal, $bouncing, $mailOff] as $u) {
+            $this->createMembership($u, $group);
+        }
+        $this->seedImmediateCursor($group);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        // The poster and the ordinary member only.
+        $this->assertEquals(2, $stats['emails_sent']);
+    }
 }
