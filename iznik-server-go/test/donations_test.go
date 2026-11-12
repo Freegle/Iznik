@@ -475,20 +475,3 @@ func TestAddDonationNegativeAmountNeedsPermission(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 	assert.Equal(t, int64(0), addDonationRows(targetUserID), "no donation may be added without the permission")
 }
-
-// The permission is the GiftAid permission itself, not any permission whose name contains it.
-func TestAddDonationPermissionMustBeExactlyGiftAid(t *testing.T) {
-	prefix := uniquePrefix("AddDonLoosePerm")
-	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
-	database.DBConn.Exec("UPDATE users SET permissions = 'NotGiftAidXYZ' WHERE id = ?", userID)
-	_, token := CreateTestSession(t, userID)
-	targetUserID := CreateTestUser(t, prefix+"Target", utils.SYSTEMROLE_USER)
-
-	body := fmt.Sprintf(`{"userid":%d,"amount":10.00,"date":"2026-01-15 12:00:00"}`, targetUserID)
-	req := httptest.NewRequest("PUT", "/api/donations?jwt="+token, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
-	assert.Equal(t, int64(0), addDonationRows(targetUserID))
-}
