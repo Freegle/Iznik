@@ -63,6 +63,9 @@ export const MYSQLISMS = [
   ['collate-or-charset', /\b(?:collate|character\s+set|charset)\b/i],
   ['engine-clause', /\bengine\s*=|\balgorithm\s*=|\block\s*=/i],
   ['now-precision', /\b(?:curdate|curtime|sysdate)\s*\(|\bnow\(\d/i],
+  ['update-join', /\bupdate\s+(?:ignore\s+)?[`\w.]+(?:\s+(?:as\s+)?\w+)?\s+(?:inner\s+|left\s+|right\s+|cross\s+)?join\b/i],
+  ['delete-join', /\bdelete\s+(?!from\b)[`\w.]+(?:\s*,\s*[`\w.]+)*\s+from\b/i],
+  ['database-function', /\b(?:database|schema)\s*\(\s*\)/i],
   ['concat-ws-or-field', /\b(?:field|elt|find_in_set)\s*\(/i],
 ];
 
