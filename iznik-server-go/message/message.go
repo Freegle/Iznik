@@ -922,7 +922,10 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					}
 				}
 
-				if message.Fromuser != myid {
+				// A post whose author row has gone has Fromuser 0, which is nobody, and an anonymous
+				// viewer is also 0: only a logged-in viewer can be the owner.
+				isOwner := myid > 0 && message.Fromuser == myid
+				if !isOwner {
 					// Privacy: a non-owner viewer shouldn't see *other people's*
 					// promise rows. But they CAN see their own row if they're a
 					// promisee — that row records terms they are themselves a
@@ -1072,14 +1075,14 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 				// Precise location only for mods and message owner.
 				// Other viewers get blurred lat/lng (handled elsewhere).
-				if message.Fromuser == myid || isModForMessage(db, myid, message.ID) {
+				if isOwner || isModForMessage(db, myid, message.ID) {
 					message.Location = loc
 				}
 
 				// Bulk-offer catalogue: group the (now path-resolved) attachments by
 				// item and attach per-item interest. The full per-user interest list
 				// is only visible to the offerer or a moderator.
-				canSeeInterest := message.Fromuser == myid || isGroupMod
+				canSeeInterest := isOwner || isGroupMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 				message.Bulkcount = len(message.BulkItems)
 				if message.Bulkcount > 0 {
