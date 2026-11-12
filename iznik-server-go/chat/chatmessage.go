@@ -1793,9 +1793,10 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	ctx, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
+	// The queue is oldest first and its context is the last id returned, so the next page is what comes after it.
 	ctxq := ""
 	if ctx > 0 {
-		ctxq = " AND cm.id < " + strconv.FormatUint(ctx, 10)
+		ctxq = " AND cm.id > " + strconv.FormatUint(ctx, 10)
 	}
 
 	// Find messages pending review where either participant is in the mod's groups,
