@@ -25,7 +25,7 @@ final class Spatial
     /** Renders an expression for the default connection's grammar. */
     public static function sql(ExpressionContract $expression): string
     {
-        return (string) $expression->getValue(DB::getQueryGrammar());
+        return Sql::render($expression);
     }
 
     /** A point from two SQL operands, labelled with the SRID: ST_SRID(POINT(x, y), srid) on MySQL. */

@@ -2164,7 +2164,7 @@ class ExpandService
                        -- moderator's decision.
                        SELECT 1 FROM rippling_reach rr
                        WHERE rr.msgid = ?
-                         AND JSON_CONTAINS(COALESCE(rr.rejected_groups, JSON_ARRAY()), CAST(g.id AS JSON))
+                         AND " . Sql::jsonArrayHas('rr.rejected_groups', 'g.id') . "
                    )
                    {$leftAfterRippleSql}
                    AND NOT EXISTS (
