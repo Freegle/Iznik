@@ -13,8 +13,8 @@ import (
 )
 
 // TestChatRosterUpdateRequiresParticipantOrMod covers the fix for the mod-chat roster IDOR (H2):
-// a logged-in user who is neither a participant of a User2Mod/Mod2Mod chat nor a system moderator
-// must not be able to read or forge its roster via POST /chatrooms. The room's own participant is
+// a logged-in user who is neither a participant of a User2Mod/Mod2Mod chat nor a moderator of its
+// community must not be able to read or forge its roster via POST /chatrooms. The room's own participant is
 // still allowed.
 func TestChatRosterUpdateRequiresParticipantOrMod(t *testing.T) {
 	prefix := uniquePrefix("RosterGate")
@@ -82,4 +82,35 @@ func TestChatRosterUpdateIsScopedToTheRoomsCommunity(t *testing.T) {
 		assert.Equal(t, fiber.StatusOK, postRosterUpdate(t, modB, chatID),
 			"a moderator of the room's own community may mark it read")
 	}
+}
+
+// A member who belongs to two communities has a modmail chat with one of them. A moderator of only
+// the other community shares that member but not the room's community, so they must not read the
+// roster, mark the chat read or signal typing in it.
+func TestChatPresenceRefusedForModeratorOfAnotherCommunityTheMemberIsIn(t *testing.T) {
+	prefix := uniquePrefix("RosterShared")
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+
+	member := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, member, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, member, groupB, utils.ROLE_MEMBER)
+
+	modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modB, groupB, utils.ROLE_MODERATOR)
+
+	chatID := CreateTestChatRoom(t, member, nil, &groupA, "User2Mod")
+
+	assert.Equal(t, fiber.StatusForbidden, postRosterUpdate(t, modB, chatID),
+		"a moderator of a different community must be refused a roster update")
+
+	var rows int64
+	database.DBConn.Table("chat_roster").Where("chatid = ? AND userid = ?", chatID, modB).Count(&rows)
+	assert.Equal(t, int64(0), rows, "a refused roster update must not create a roster row")
+
+	_, token := CreateTestSession(t, modB)
+	req := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, strings.NewReader(fmt.Sprintf(`{"id":%d,"action":"Typing"}`, chatID)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode, "a moderator of a different community must be refused typing")
 }
