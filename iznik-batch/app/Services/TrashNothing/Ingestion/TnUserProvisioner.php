@@ -9,8 +9,10 @@ use App\Models\UserReplyTime;
 use App\Services\LokiService;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Services\TrashNothing\Sync\TrashNothingRateLimiter;
+use App\Support\Savepoint;
 use App\Support\TransactionPolicy;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
@@ -102,9 +104,6 @@ class TnUserProvisioner
      * post finds or makes a live account.
      */
     public const REASON_ACCOUNT_DELETED = 'tn-account-deleted';
-
-    // MySQL ER_DUP_ENTRY.
-    private const DUPLICATE_KEY = 1062;
 
     // A lookup holds up the whole post sync, so it gives up quickly. Laravel's defaults
     // are 30 seconds and 10.
@@ -224,12 +223,9 @@ class TnUserProvisioner
         }
 
         try {
-            return $this->provision($tnUserId, $username, $email, $tnUser);
-        } catch (QueryException $e) {
-            if (($e->errorInfo[1] ?? null) !== self::DUPLICATE_KEY) {
-                throw $e;
-            }
-
+            // Under a savepoint when a transaction is open, so the lost race leaves it usable on PostgreSQL.
+            return Savepoint::around(fn () => $this->provision($tnUserId, $username, $email, $tnUser));
+        } catch (UniqueConstraintViolationException $e) {
             return $this->afterLostRace($tnUserId, $e);
         }
     }

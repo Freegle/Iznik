@@ -5,7 +5,7 @@ namespace App\Services\TrashNothing\Sync;
 use App\Models\Rating;
 use App\Models\User;
 use App\Services\LokiService;
-use Illuminate\Support\Facades\DB;
+use App\Support\Savepoint;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -81,9 +81,8 @@ class RatingsSyncer
                 }
 
                 try {
-                    // One transaction per rating: a failed write is undone on its own, and inside an outer
-                    // transaction it is a savepoint, so the run's later statements still work on PostgreSQL.
-                    DB::transaction(function () use ($rating, $ratingDate) {
+                    // A failed write must not spoil an outer transaction: PostgreSQL aborts it without a savepoint.
+                    Savepoint::around(function () use ($rating, $ratingDate) {
                         // Only an absent/null rating means "deleted" — a falsy but
                         // present value is a real rating, not a deletion.
                         if (($rating['rating'] ?? null) !== null) {

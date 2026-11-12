@@ -36,7 +36,6 @@ class UxExposureTableCheckTest extends TestCase
 
     public function test_a_read_node_that_is_behind_says_no_and_the_write_node_says_yes(): void
     {
-        $this->requiresMySql('it needs a MySQL read node that lags the write node');
         $this->withLaggingReadNode([], function (string $lag) {
             $this->assertFalse(Schema::connection($lag)->hasTable('ux_experiment_exposures'), 'Laravel asks the read node, which has not applied the SQL');
             $this->assertTrue(UxExperimentExposure::tableExists($lag), 'the write node has the table');
@@ -45,7 +44,6 @@ class UxExposureTableCheckTest extends TestCase
 
     public function test_forgetting_a_member_deletes_the_exposure_rows_when_the_read_node_is_behind(): void
     {
-        $this->requiresMySql('it needs a MySQL read node that lags the write node');
         $this->withLaggingReadNode(['users_emails', 'messages', 'chat_prompts', 'ux_prompt_responses'], function (string $lag) {
             $this->seedExposures($lag);
             DB::setDefaultConnection($lag);
@@ -64,7 +62,6 @@ class UxExposureTableCheckTest extends TestCase
 
     public function test_an_export_lists_the_exposure_rows_when_the_read_node_is_behind(): void
     {
-        $this->requiresMySql('it needs a MySQL read node that lags the write node');
         $this->withLaggingReadNode([], function (string $lag) {
             $this->seedExposures($lag);
             DB::setDefaultConnection($lag);

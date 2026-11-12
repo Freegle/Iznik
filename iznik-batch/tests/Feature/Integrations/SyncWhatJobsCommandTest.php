@@ -253,7 +253,7 @@ class SyncWhatJobsCommandTest extends TestCase
         $this->assertTrue($result['dry_run']);
         $this->assertEquals(0, $result['inserted']);
         $this->assertFalse(
-            DB::select("SHOW TABLES LIKE 'jobs_new'") !== [],
+            \Illuminate\Support\Facades\Schema::hasTable('jobs_new'),
             'jobs_new should not exist after dry-run'
         );
     }

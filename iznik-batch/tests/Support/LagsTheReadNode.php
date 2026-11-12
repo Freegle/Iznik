@@ -30,6 +30,8 @@ trait LagsTheReadNode
      */
     protected function withLaggingReadNode(array $tables, callable $work): mixed
     {
+        $this->requiresMySql('the lag is made with a second MySQL database that the read connection points at');
+
         $c = config('database.connections.mysql');
         $default = DB::getDefaultConnection();
         $side = $this->lagServerConnection($c);

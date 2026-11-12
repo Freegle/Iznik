@@ -461,6 +461,8 @@ class SyncRestartProjectCommandTest extends TestCase
 
     public function test_an_unreadable_start_is_never_treated_as_a_duplicate(): void
     {
+        $this->requiresMySql('the zero date 0000-00-00 can be stored only on MySQL');
+
         $this->makeGroup();
 
         // Over a thousand date rows in this table hold a zero date. If an unparseable
