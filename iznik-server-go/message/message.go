@@ -3327,6 +3327,8 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		}
 	}
 
+	removeFromBrowseIfNotLive(db, req.ID)
+
 	subject := ""
 	if req.Subject != nil {
 		subject = *req.Subject
@@ -3416,6 +3418,8 @@ func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
+	removeFromBrowseIfNotLive(db, req.ID)
+
 	// Record who deleted it, on each community acted on.
 	var fromuser uint64
 	db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&fromuser)
@@ -3498,6 +3502,18 @@ func actingOnHomeGroup(db *gorm.DB, msgid uint64, acting []uint64) bool {
 	}
 
 	return false
+}
+
+// removeFromBrowseIfNotLive takes a post out of the spatial index, which browse and the map
+// read, as soon as it is no longer Approved on any community, rather than leaving it for
+// the 5-minute reconciler.
+func removeFromBrowseIfNotLive(db *gorm.DB, msgid uint64) {
+	var live int64
+	db.Clauses(dbresolver.Write).Table("messages_groups").
+		Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).Count(&live)
+	if live == 0 {
+		db.Table("messages_spatial").Where("msgid = ?", msgid).Delete(nil)
+	}
 }
 
 // queueFreebieAlertsRemoveIfNotLive takes a post off freebiealerts.app once it is no longer
@@ -3597,6 +3613,7 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	}
 
 	queueFreebieAlertsRemoveIfNotLive(db, req.ID)
+	removeFromBrowseIfNotLive(db, req.ID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
