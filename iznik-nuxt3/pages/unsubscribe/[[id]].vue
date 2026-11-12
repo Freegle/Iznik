@@ -498,11 +498,7 @@ const LOGIN_WAIT_MS = 10000
 function loginPending() {
   const { u, k } = linkQuery()
 
-  return !!(
-    (u && k) ||
-    authStore.auth?.jwt ||
-    authStore.auth?.persistent
-  )
+  return !!((u && k) || authStore.auth?.jwt || authStore.auth?.persistent)
 }
 
 function waitForMember() {
