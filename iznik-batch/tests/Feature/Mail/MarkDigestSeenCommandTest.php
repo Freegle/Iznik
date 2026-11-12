@@ -107,4 +107,30 @@ class MarkDigestSeenCommandTest extends TestCase
 
         $this->assertSame(1, $this->seenCount($msg->id, $user->id), 'no duplicate seen rows');
     }
+
+    public function test_a_click_seconds_after_sending_is_not_taken_as_the_member_seeing_the_digest(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $msg = $this->createTestMessage($this->createTestUser(), $group);
+
+        // Mail-security scanners open the links in a real browser within a minute or two of the
+        // send. No person has seen the digest yet.
+        $sentAt = Carbon::now()->subMinutes(10);
+        $clickedAt = $sentAt->copy()->addSeconds(30);
+        $etid = $this->seedDigest($user->id, [$msg->id], [
+            'sent_at' => $sentAt,
+            'clicked_at' => $clickedAt,
+        ]);
+        DB::table('email_tracking_clicks')->insert([
+            'email_tracking_id' => $etid,
+            'link_url' => 'https://www.ilovefreegle.org/message/' . $msg->id,
+            'user_agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36',
+            'clicked_at' => $clickedAt,
+        ]);
+
+        $this->artisan('mail:digest:mark-seen')->assertExitCode(0);
+
+        $this->assertSame(0, $this->seenCount($msg->id, $user->id), 'an automated click must not mark the posts seen');
+    }
 }
