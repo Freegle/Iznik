@@ -1683,8 +1683,8 @@ commands:
                   st=$(curl -s "http://localhost:$PORT/api/tests/<< parameters.after >>/status" | jq -r '.status // "unknown"')
                   if [ "$st" = "completed" ] || [ "$st" = "failed" ]; then break; fi
                   sleep 10; waited=$((waited + 10))
-                  if [ $waited -gt 2400 ]; then
-                    echo "The MySQL << parameters.after >> run did not finish in 40 minutes"
+                  if [ $waited -gt 1800 ]; then
+                    echo "The MySQL << parameters.after >> run did not finish in 30 minutes"
                     exit 1
                   fi
                 done
@@ -1725,6 +1725,8 @@ commands:
             # regenerates the known-failures list.
             docker cp ${COMPOSE_PROJECT_NAME:-freegle}-status:/tmp/pg-ratchet ~/test-output/pg-ratchet-<< parameters.suite >> 2>/dev/null || true
             if [ "$RC" -eq 0 ]; then echo pass > ~/test-output/<< parameters.suite >>.result; else echo fail > ~/test-output/<< parameters.suite >>.result; fi
+          # The run waits for the MySQL run and then for its own, so it prints nothing for long stretches.
+          no_output_timeout: 70m
 
   collect-background-checks:
     description: "Wait for the background checks (monitor-fsm, eslint, spatial-go, routing-go and the PostgreSQL runs) and fail the job if any failed"
@@ -1756,6 +1758,7 @@ commands:
                   case "$(cat /tmp/$upstream-result 2>/dev/null)" in fail|killed|timeout) break ;; esac
                 fi
                 sleep 5; waited=$((waited + 5))
+                if [ $((waited % 60)) -eq 0 ]; then echo "still waiting for $name ($((waited / 60))m)"; fi
               done
               if [ ! -f "$f" ] && [ -n "$upstream" ]; then
                 case "$(cat /tmp/$upstream-result 2>/dev/null)" in
@@ -1775,6 +1778,8 @@ commands:
               exit 1
             fi
             echo "✅ All background checks passed"
+          # The PostgreSQL runs can still be going when the parallel block ends.
+          no_output_timeout: 45m
 
   run-vitest-tests:
     description: "Run Vitest unit tests for iznik-nuxt3 components"

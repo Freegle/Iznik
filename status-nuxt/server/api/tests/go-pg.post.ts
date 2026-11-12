@@ -56,7 +56,7 @@ export default defineEventHandler(async () => {
     rm -rf ${out}; mkdir -p ${out}
     echo "Building the PostgreSQL iznik_go_test from the baseline..."
     COMPOSE_PROJECT_NAME=${prefix} PG_DATABASE=iznik_go_test PG_TEST_DATABASE=iznik_go_test PG_REBUILD=1 PG_FIXTURES=0 /project/scripts/setup-pg-database.sh
-    node /project/tools/pg-ratchet/go-suite.mjs --root /app --out ${out} --exec-json ${shq(exec)}
+    node /project/tools/pg-ratchet/go-suite.mjs --deadline-min 30 --root /app --out ${out} --exec-json ${shq(exec)}
     node /project/tools/pg-ratchet/ratchet.mjs check --suite go --results ${out}/go-results.txt --list /project/tools/pg-ratchet/known-failures/go.txt
   `
   startPgSuite('go-pg', 'Go tests on PostgreSQL', script)

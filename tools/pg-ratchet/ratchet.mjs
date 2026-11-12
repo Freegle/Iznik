@@ -12,9 +12,9 @@
 //
 // The default list is tools/pg-ratchet/known-failures/<suite>.txt.
 
-import fs from 'node:fs'
+import fs, { realpathSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseResults, compare, failures, formatList, readList } from './lib.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -35,6 +35,12 @@ const HEADER = (suite) => [
   'docs/developers/reference/database-engines.md.',
 ]
 
+function readFloor(file) {
+  if (!fs.existsSync(file)) return 0
+  const m = /^# total-results: (\d+)/m.exec(fs.readFileSync(file, 'utf8'))
+  return m ? Number(m[1]) : 0
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2))
   const cmd = args._[0]
@@ -49,17 +55,24 @@ function main() {
   if (cmd === 'update') {
     const names = failures(results)
     fs.mkdirSync(path.dirname(listFile), { recursive: true })
-    fs.writeFileSync(listFile, formatList(names, HEADER(suite)))
+    fs.writeFileSync(listFile, formatList(names, [...HEADER(suite), `total-results: ${results.length}`]))
     console.log(`RATCHET ${suite}: wrote ${names.size} known failures to ${listFile}`)
     return
   }
 
   const known = readList(listFile)
+  const floor = readFloor(listFile)
   const r = compare(results, known)
   const c = r.counts
   console.log(`RATCHET ${suite}: ${c.pass} passed, ${c.fail + c.crash} failed (${c.crash} crashed), ${c.skip} skipped, ${known.size} known failures`)
   if (r.empty) {
     console.log(`RATCHET ${suite}: FAILED. The run produced no results, so the suite did not run.`)
+    process.exit(1)
+  }
+  // The list records how many results the run it came from had. A run far short of that did not cover the
+  // suite, and a test that never ran cannot fail.
+  if (floor && c.total < Math.floor(floor * 0.95)) {
+    console.log(`RATCHET ${suite}: FAILED. The run has ${c.total} results and the list was made from a run of ${floor}, so part of the suite did not run.`)
     process.exit(1)
   }
   if (r.nowPassing.length) {
@@ -79,4 +92,4 @@ function main() {
   console.log(`RATCHET ${suite}: ok`)
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main()
+if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main()

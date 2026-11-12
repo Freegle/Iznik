@@ -212,6 +212,11 @@ test('the command line: check passes, fails on a new failure, and update writes 
   r = run('check')
   assert.equal(r.status, 0)
   assert.match(r.stdout, /now passes: b/)
+  // A run far short of the run the list was made from did not cover the suite.
+  fs.writeFileSync(list, fs.readFileSync(list, 'utf8').replace(/total-results: \d+/, 'total-results: 100'))
+  r = run('check')
+  assert.equal(r.status, 1)
+  assert.match(r.stdout, /part of the suite did not run/)
   fs.writeFileSync(results, '')
   r = run('check')
   assert.equal(r.status, 1)

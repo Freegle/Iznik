@@ -14,7 +14,8 @@
 // Zero dependencies; pure Node.
 
 import { execSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 
 export const MIGRATIONS_DIR = 'iznik-batch/database/migrations/'
 
@@ -65,4 +66,4 @@ function main() {
   console.log(`PORTABLE-MIGRATIONS: ok (${files.length} new migration file(s) checked)`)
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main()
+if (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main()

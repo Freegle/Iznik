@@ -51,7 +51,7 @@ export default defineEventHandler(async () => {
     COMPOSE_PROJECT_NAME=${prefix} PG_DATABASE=iznik_batch_test PG_TEST_DATABASE=iznik_batch_test PG_REBUILD=1 PG_FIXTURES=0 /project/scripts/setup-pg-database.sh
     docker exec ${prefix}-batch php artisan view:clear 2>&1 || true
     docker exec ${prefix}-batch php artisan config:clear 2>&1 || true
-    node /project/tools/pg-ratchet/laravel-suite.mjs --out ${out} --phpunit-xml /project/iznik-batch/phpunit.xml --exec-json ${shq(exec)}
+    node /project/tools/pg-ratchet/laravel-suite.mjs --deadline-min 30 --out ${out} --phpunit-xml /project/iznik-batch/phpunit.xml --exec-json ${shq(exec)}
     node /project/tools/pg-ratchet/ratchet.mjs check --suite laravel --results ${out}/laravel-results.txt --list /project/tools/pg-ratchet/known-failures/laravel.txt
   `
   startPgSuite('laravel-pg', 'Laravel tests on PostgreSQL', script)

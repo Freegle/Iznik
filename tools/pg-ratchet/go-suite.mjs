@@ -10,8 +10,8 @@
 //
 //   - The big integration package (test/) is compiled once, and run in chunks of tests. A test that
 //     takes its process down is recorded as CRASH, and the tests after it run in a new process.
-//   - Every other package runs once through `go test -json`. A crash there is recorded against the
-//     tests that started and did not finish.
+//   - Every other package runs through `go test -json`, again after each crash with the crashed test
+//     skipped.
 //
 // Output: <out>/go-results.txt (PASS, FAIL, CRASH or SKIP, a tab, then "package:Test"), and
 // <out>/go-failures.log with the first lines of each failure. The exit code is 0 when every test
@@ -90,53 +90,64 @@ function shortName(modulePath, pkg) {
   return s
 }
 
-// Every package but the big one, through go test -json.
-async function runSmallPackages(pkgs, modulePath) {
-  if (pkgs.length === 0) return
-  const started = new Map() // "pkg:Test" -> true while unfinished
-  const output = new Map() // "pkg:Test" -> last lines
-  const pkgFailed = new Set()
-  const pkgSawTest = new Set()
-  const argv = ['test', '-json', '-count=1', '-p', '1', '-timeout', '20m', ...pkgs]
-  await stream(build(ROOT, ['go', ...argv]), (line) => {
-    let ev
-    try {
-      ev = JSON.parse(line)
-    } catch {
-      return
-    }
-    const pkg = ev.Package ? shortName(modulePath, ev.Package) : ''
-    if (ev.Test && !ev.Test.includes('/')) {
-      const key = `${pkg}:${ev.Test}`
-      pkgSawTest.add(pkg)
-      if (ev.Action === 'run') {
-        started.set(key, true)
-        output.set(key, [])
-      } else if (ev.Action === 'output') {
-        const o = output.get(key)
-        if (o) {
-          o.push(ev.Output.trimEnd())
-          if (o.length > 40) o.shift()
-        }
-      } else if (['pass', 'fail', 'skip'].includes(ev.Action)) {
-        started.delete(key)
-        record(key, ev.Action.toUpperCase())
-        if (ev.Action === 'fail') note(`--- ${key}\n${(output.get(key) || []).slice(-12).join('\n')}`)
+// Every package but the big one, through go test -json, one process per package. A test that takes the
+// process down is recorded as CRASH, and the package runs again without it (go test -skip), so the tests
+// after it still get a result. A package that fails with every test passing (a TestMain that exits
+// non-zero, a build error) is recorded as CRASH too, so it cannot pass unseen.
+async function runPackage(pkg, modulePath) {
+  const short = shortName(modulePath, pkg)
+  const skip = []
+  let badTest = false
+  let pkgFailed = false
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const started = new Map() // test -> last output lines, while unfinished
+    pkgFailed = false
+    const argv = ['test', '-json', '-count=1', '-timeout', '20m']
+    if (skip.length) argv.push('-skip', `^(${skip.join('|')})$`)
+    argv.push(pkg)
+    await stream(build(ROOT, ['go', ...argv]), (line) => {
+      let ev
+      try {
+        ev = JSON.parse(line)
+      } catch {
+        return
       }
-    } else if (!ev.Test && ev.Action === 'fail' && pkg) {
-      pkgFailed.add(pkg)
+      if (ev.Test && !ev.Test.includes('/')) {
+        const key = `${short}:${ev.Test}`
+        if (ev.Action === 'run') {
+          started.set(ev.Test, [])
+        } else if (ev.Action === 'output') {
+          const o = started.get(ev.Test)
+          if (o) {
+            o.push(ev.Output.trimEnd())
+            if (o.length > 40) o.shift()
+          }
+        } else if (['pass', 'fail', 'skip'].includes(ev.Action)) {
+          const o = started.get(ev.Test) || []
+          started.delete(ev.Test)
+          record(key, ev.Action.toUpperCase())
+          if (ev.Action === 'fail') {
+            badTest = true
+            note(`--- ${key}\n${o.slice(-12).join('\n')}`)
+          }
+        }
+      } else if (!ev.Test && ev.Action === 'fail') {
+        pkgFailed = true
+      }
+    }, { timeoutMs: 25 * 60000 })
+    if (started.size === 0) break
+    for (const [t, o] of started) {
+      record(`${short}:${t}`, 'CRASH')
+      badTest = true
+      skip.push(t)
+      note(`--- ${short}:${t} did not finish: ${o.slice(-12).join('\n')}`)
     }
-  }, { timeoutMs: 40 * 60000 })
-  for (const key of started.keys()) {
-    record(key, 'CRASH')
-    note(`--- ${key} did not finish: ${(output.get(key) || []).slice(-12).join('\n')}`)
   }
-  // A package that failed and ran no test at all failed to build or to start.
-  for (const pkg of pkgFailed) {
-    if (!pkgSawTest.has(pkg)) {
-      record(`${pkg}:[package did not run]`, 'CRASH')
-    }
-  }
+  if (pkgFailed && !badTest) record(`${short}:[package failed]`, 'CRASH')
+}
+
+async function runSmallPackages(pkgs, modulePath) {
+  for (const pkg of pkgs) await runPackage(pkg, modulePath)
 }
 
 // The big package: compile once, run in chunks, restart after a crash.
