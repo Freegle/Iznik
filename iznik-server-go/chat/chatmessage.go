@@ -1802,11 +1802,10 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	ctx, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
-	// The queue is oldest first and its context is the last id returned, so the next page is what comes after it.
-	ctxq := ""
-	if ctx > 0 {
-		ctxq = " AND cm.id > " + strconv.FormatUint(ctx, 10)
-	}
+	// The queue is oldest first and its context is the last row returned, so the next page is what comes after it. With
+	// wider review the queue lists the moderator's own communities first and the others after, each by id, so the
+	// context says which of the two the last row was in (contextwider) as well as its id.
+	ctxWider := c.QueryBool("contextwider", false)
 
 	// Find messages pending review where either participant is in the mod's groups,
 	// or the chat is a User2Mod chat for one of the mod's groups.
@@ -1837,6 +1836,20 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	// Check if this user participates in wider chat review.
 	widerReview := user.HasWiderReview(myid)
+
+	// The conditions that move each part of the queue past the context. A cursor in the own communities leaves the
+	// others whole, and one in the others leaves nothing of the own communities.
+	baseCtx, widerCtx := "", ""
+	if ctx > 0 {
+		after := " AND cm.id > " + strconv.FormatUint(ctx, 10)
+
+		if widerReview && ctxWider {
+			baseCtx = " AND 1 = 0"
+			widerCtx = after
+		} else {
+			baseCtx = after
+		}
+	}
 
 	// Base query: messages from mod's own groups.
 	//
@@ -1872,7 +1885,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		"LEFT JOIN chat_images ci ON ci.chatmsgid = cm.id " +
 		"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
 		"LEFT JOIN chat_messages_byemail cme ON cme.chatmsgid = cm.id " +
-		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + ctxq +
+		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + baseCtx +
 		" AND (" +
 		// User2Mod: group is one of mod's groups
 		"  (cr.chattype = ? AND cr.groupid IN (?))" +
@@ -1915,7 +1928,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"WHERE JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 " +
 			"AND cmh.id IS NULL " +
 			"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') " +
-			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq
+			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + widerCtx
 
 		// Top-level UNION wrapped as a derived table with a trailing GROUP
 		// BY/ORDER BY/LIMIT that applies to the combined result, not either
@@ -2166,6 +2179,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	newCtx := fiber.Map{}
 	if len(msgs) > 0 {
 		newCtx["id"] = msgs[len(msgs)-1].ID
+		newCtx["wider"] = msgs[len(msgs)-1].Widerchatreview > 0
 	}
 
 	return c.JSON(fiber.Map{
