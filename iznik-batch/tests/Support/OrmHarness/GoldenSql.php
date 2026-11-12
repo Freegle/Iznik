@@ -95,6 +95,11 @@ final class GoldenSql
      */
     public static function assert(string $siteId, callable $build): void
     {
+        self::onMySql(fn () => self::doAssert($siteId, $build));
+    }
+
+    private static function doAssert(string $siteId, callable $build): void
+    {
         $query = self::normaliseBuiltQuery($siteId, $build());
         self::compareAndAssert($siteId, $query->toSql(), $query->getBindings());
     }
@@ -111,6 +116,11 @@ final class GoldenSql
      * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array}  $build
      */
     public static function assertInsertOrIgnore(string $siteId, callable $build): void
+    {
+        self::onMySql(fn () => self::doAssertInsertOrIgnore($siteId, $build));
+    }
+
+    private static function doAssertInsertOrIgnore(string $siteId, callable $build): void
     {
         [$built, $values] = $build();
         $query = self::normaliseBuiltQuery($siteId, $built);
@@ -129,6 +139,11 @@ final class GoldenSql
      * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array,2:array,3:array}  $build
      */
     public static function assertUpsert(string $siteId, callable $build): void
+    {
+        self::onMySql(fn () => self::doAssertUpsert($siteId, $build));
+    }
+
+    private static function doAssertUpsert(string $siteId, callable $build): void
     {
         [$built, $rows, $uniqueBy, $update] = $build();
         $query = self::normaliseBuiltQuery($siteId, $built);
@@ -164,6 +179,11 @@ final class GoldenSql
      */
     public static function assertCount(string $siteId, callable $build): void
     {
+        self::onMySql(fn () => self::doAssertCount($siteId, $build));
+    }
+
+    private static function doAssertCount(string $siteId, callable $build): void
+    {
         $query = self::normaliseBuiltQuery($siteId, $build())->clone();
         $query->aggregate = ['function' => 'count', 'columns' => ['*']];
 
@@ -179,6 +199,11 @@ final class GoldenSql
      * @param  callable(): mixed  $run
      */
     public static function assertExecuted(string $siteId, callable $run): void
+    {
+        self::onMySql(fn () => self::doAssertExecuted($siteId, $run));
+    }
+
+    private static function doAssertExecuted(string $siteId, callable $run): void
     {
         // The query log in pretend mode holds the statement with its values already substituted,
         // so the placeholders and the bindings are read from the event instead.
@@ -223,6 +248,11 @@ final class GoldenSql
      */
     public static function assertExists(string $siteId, callable $build): void
     {
+        self::onMySql(fn () => self::doAssertExists($siteId, $build));
+    }
+
+    private static function doAssertExists(string $siteId, callable $build): void
+    {
         $query = self::normaliseBuiltQuery($siteId, $build());
         $sql = $query->getGrammar()->compileExists($query);
 
@@ -243,6 +273,11 @@ final class GoldenSql
      * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array}  $build
      */
     public static function assertUpdate(string $siteId, callable $build): void
+    {
+        self::onMySql(fn () => self::doAssertUpdate($siteId, $build));
+    }
+
+    private static function doAssertUpdate(string $siteId, callable $build): void
     {
         [$built, $values] = $build();
         $query = self::normaliseBuiltQuery($siteId, $built);
@@ -291,6 +326,11 @@ final class GoldenSql
      */
     public static function assertInsert(string $siteId, callable $build): void
     {
+        self::onMySql(fn () => self::doAssertInsert($siteId, $build));
+    }
+
+    private static function doAssertInsert(string $siteId, callable $build): void
+    {
         [$built, $values] = $build();
         $query = self::normaliseBuiltQuery($siteId, $built);
         $grammar = $query->getGrammar();
@@ -315,6 +355,11 @@ final class GoldenSql
      */
     public static function assertDelete(string $siteId, callable $build): void
     {
+        self::onMySql(fn () => self::doAssertDelete($siteId, $build));
+    }
+
+    private static function doAssertDelete(string $siteId, callable $build): void
+    {
         $query = self::normaliseBuiltQuery($siteId, $build());
         $grammar = $query->getGrammar();
 
@@ -324,6 +369,29 @@ final class GoldenSql
         $bindings = $query->cleanBindings($grammar->prepareBindingsForDelete($query->getRawBindings()));
 
         self::compareAndAssert($siteId, $sql, $bindings);
+    }
+
+    /**
+     * Runs $run with a MySQL rendering connection as the default when the suite runs on another engine. The golden text is the MySQL statement, so the statement
+     * under test is rendered by the MySQL grammar whichever engine the suite runs on. Nothing is sent: every
+     * layer-1 check only renders (or runs in pretend mode).
+     */
+    private static function onMySql(callable $run): void
+    {
+        $previous = DB::getDefaultConnection();
+        if (DB::connection()->getDriverName() === 'mysql') {
+            $run();
+
+            return;
+        }
+
+        MySqlRenderingConnection::register();
+        DB::setDefaultConnection(MySqlRenderingConnection::NAME);
+        try {
+            $run();
+        } finally {
+            DB::setDefaultConnection($previous);
+        }
     }
 
     private static function normaliseBuiltQuery(string $siteId, mixed $built): QueryBuilder

@@ -8,6 +8,12 @@ use Tests\TestCase;
 
 class MessagesEmbeddingsSchemaTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->requiresMySql('reads the column definition from MySQL information_schema');
+    }
+
     public function test_table_exists(): void
     {
         $this->assertTrue(Schema::hasTable('messages_embeddings'));

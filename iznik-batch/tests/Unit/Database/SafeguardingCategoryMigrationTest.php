@@ -7,6 +7,12 @@ use Tests\TestCase;
 
 class SafeguardingCategoryMigrationTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->requiresMySql('checks rows a MySQL migration seeds; the PostgreSQL baseline holds no migration data');
+    }
+
     private const KEYWORDS = [
         'refuge', 'refuges', 'domestic violence', 'domestic abuse', 'dv', 'fleeing',
         'escaping abuse', 'escaped abuse', "women's aid", 'womens aid', 'safe house',

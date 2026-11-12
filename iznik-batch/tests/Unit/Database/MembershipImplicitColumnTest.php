@@ -8,6 +8,12 @@ use Tests\TestCase;
 
 class MembershipImplicitColumnTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->requiresMySql('reads the column definition from MySQL information_schema');
+    }
+
     private function migration(): object
     {
         return require base_path('database/migrations/2026_10_28_000001_add_implicit_to_memberships.php');
