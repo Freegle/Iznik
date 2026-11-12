@@ -3284,34 +3284,59 @@ func handleUserUnsubscribe(c *fiber.Ctx, myid uint64, req UserPostRequest) error
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// MayMergeAccounts reports whether myid may merge the two accounts, or offer to. Admin and Support
-// always may. A moderator may merge two ordinary members they moderate. A moderator merge is for
-// two duplicates of one member: a moderator is always a member of their own community, so they pass
-// the moderation test for their own account, and the merge keeps the higher system role and moves
-// logins, emails and memberships across. Without the further rules a moderator could absorb another
-// member's emails and logins, or the powers of an account whose system role is Moderator, Support
-// or Admin.
+// systemRoleRank orders the system roles so a merge can be checked against the caller's own.
+func systemRoleRank(role string) int {
+	switch role {
+	case utils.SYSTEMROLE_ADMIN:
+		return 3
+	case utils.SYSTEMROLE_SUPPORT:
+		return 2
+	case utils.SYSTEMROLE_MODERATOR:
+		return 1
+	}
+
+	return 0
+}
+
+// MayMergeAccounts reports whether myid may merge the two accounts, or offer to. Admin may merge any
+// two accounts. Everyone else is held to their own system role: the merge keeps the higher system role,
+// so neither account may hold a higher system role than the person merging, which means a merge never
+// raises anyone above the person doing it. Support may therefore merge anything except an Admin
+// account, and a moderator cannot absorb a Support or Admin account, as source or as target. A
+// moderator must also moderate both accounts, and either may be their own. Two Moderator accounts may
+// be merged.
 func MayMergeAccounts(myid, id1, id2 uint64) bool {
-	if auth.IsAdminOrSupport(myid) {
+	var mine string
+	database.DBConn.Table("users").Where("id = ?", myid).Limit(1).Pluck("systemrole", &mine)
+
+	if mine == utils.SYSTEMROLE_ADMIN {
 		return true
 	}
 
-	if id1 == myid || id2 == myid || !(IsModOfUser(myid, id1) && IsModOfUser(myid, id2)) {
+	var theirs []string
+	database.DBConn.Table("users").Where("id IN (?, ?)", id1, id2).Pluck("systemrole", &theirs)
+
+	if len(theirs) != 2 {
 		return false
 	}
 
-	var plain int64
-	database.DBConn.Table("users").
-		Where("id IN (?, ?) AND systemrole = ?", id1, id2, utils.SYSTEMROLE_USER).
-		Count(&plain)
+	for _, r := range theirs {
+		if systemRoleRank(r) > systemRoleRank(mine) {
+			return false
+		}
+	}
 
-	return plain == 2
+	if mine == utils.SYSTEMROLE_SUPPORT {
+		return true
+	}
+
+	return IsModOfUser(myid, id1) && IsModOfUser(myid, id2)
 }
 
 // handleMerge merges user id1 (discard) into user id2 (keep).
 // UI text: "merge FROM the first user INTO the second user" → id1=discard, id2=keep.
-// Admin/Support can always merge. A moderator can merge two ordinary members they moderate, and
-// never their own account or one whose system role is Moderator, Support or Admin.
+// Admin/Support can always merge. A moderator can merge two accounts they moderate, including their
+// own, as long as neither holds a higher system role than the moderator does.
 func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// Early gate: must be at least a moderator of some group (or admin/support) to call this
 	// endpoint. This prevents unauthenticated/regular users from probing email existence.

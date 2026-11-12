@@ -44,8 +44,9 @@ From here you can:
   added this way: you are told so, and nothing happens. They join communities through TrashNothing.
 - **Ban** a member by id, with a reason.
 - **Merge** two accounts that are the same person (irreversible; you choose which email
-  survives). You can merge two ordinary members of your communities. You cannot merge your own
-  account, or an account held by a moderator, Support or Admin: ask Support to do that.
+  survives). You can merge two members of your communities, and one of them can be your own
+  account. You cannot merge an account that has a higher system role than you: ask Support to
+  do that.
 - Change a member's **role** (Member, Moderator, Owner).
 
 ### How far a search reaches
@@ -179,10 +180,13 @@ flagged for **worry words** (money, phone numbers, email addresses, bad language
 community's "quicker chat review" setting. You can approve a message, or add a moderator
 note that both people in the chat can see. "Delete All" clears the queue.
 
-You can act only on messages the queue shows you: chats with your community's moderators, and
-chats where the person receiving the message is a member of a community you moderate. A
-message that appears only because of wider review can be approved but not held, deleted or
-changed, and you cannot act on a chat you are in yourself. Anything else is refused.
+You can act on messages in chats with your community's moderators, and in chats where the
+person receiving the message is a member of a community you moderate. If the person receiving
+the message is not in any community, the message is yours to review when the person sending it
+is in one of your communities. This includes a backup moderator of the community. A message that appears only because of wider review can be approved
+but not held, deleted or changed, and you cannot act on a chat you are in yourself. Messages in a chat you are in do not appear in
+your own queue or in your review count, though other moderators of the community still see them. A moderator
+with no connection to the community cannot act on its messages.
 
 Some chats are held because a post has not yet rippled out to the member who replied.
 Those release automatically; you do not need to do anything. See

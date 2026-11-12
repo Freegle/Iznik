@@ -968,6 +968,37 @@ func TestModerationRefusedForChatOutsideModsQueue(t *testing.T) {
 	}
 }
 
+// A backup moderator (membership settings active:0) is still a moderator of the community, so they may act
+// on that community's review messages. A moderator with no tie to the community still may not.
+func TestModerationAllowedForBackupModerator(t *testing.T) {
+	for _, action := range []string{"Approve", "Reject", "Hold", "Release", "Redact"} {
+		action := action
+		t.Run(action, func(t *testing.T) {
+			db := database.DBConn
+			prefix := uniquePrefix("ModBackup" + action)
+
+			group := CreateTestGroup(t, prefix)
+			backup := CreateTestUser(t, prefix+"_backup", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, backup, group, utils.ROLE_MODERATOR)
+			db.Exec("UPDATE memberships SET settings = '{\"active\":0}' WHERE userid = ? AND groupid = ?", backup, group)
+			user1 := CreateTestUser(t, prefix+"_user1", utils.SYSTEMROLE_USER)
+			user2 := CreateTestUser(t, prefix+"_user2", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, user1, group, utils.ROLE_MEMBER)
+			CreateTestMembership(t, user2, group, utils.ROLE_MEMBER)
+
+			chatID := CreateTestChatRoom(t, user1, &user2, nil, "User2User")
+			msgID := holdChatMessageForReview(t, chatID, user1)
+
+			_, token := CreateTestSession(t, backup)
+			resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+				"id":     msgID,
+				"action": action,
+			}, token)
+			assert.Equal(t, http.StatusOK, resp.StatusCode, "a backup moderator of the community may act")
+		})
+	}
+}
+
 // holdChatMessageForReview inserts a message waiting for review in the chat and returns its id.
 func holdChatMessageForReview(t *testing.T, chatID, senderID uint64) uint64 {
 	t.Helper()

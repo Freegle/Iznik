@@ -4,9 +4,9 @@ namespace App\Services;
 
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
+use App\Models\ChatRoster;
 use App\Models\User;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -22,8 +22,10 @@ use Illuminate\Support\Facades\DB;
  * notification to the expectee.
  *
  * A message is eligible for EXPECTED_CHASEUP_DAYS days and the command runs daily, so each
- * message is chased once: a send is remembered in the cache for as long as the message can
- * stay eligible. A message that arrives later in the same chat is chased in its own right.
+ * message is chased once: a send is recorded in chat_chaseup_expected_sent (the cache is cleared on
+ * every deploy, so it cannot hold this). The record is written before the mail is spooled, so two
+ * runs at once cannot both send. A message that arrives later in the same chat is chased in its own
+ * right. Records older than the eligibility window are deleted at the end of a real run.
  */
 class ChatChaseupExpectedService
 {
@@ -33,8 +35,8 @@ class ChatChaseupExpectedService
     /** Minutes of expectee inactivity before chasing — V1 EXPECTED_GRACE = 24 * 60. */
     public const EXPECTED_GRACE_MINUTES = 24 * 60;
 
-    /** Cache key prefix for a message that has been chased. */
-    private const CHASED_KEY_PREFIX = 'chaseup-expected:';
+    /** Chased records are kept this many days: a little longer than a message stays eligible. */
+    private const SENT_RETENTION_DAYS = self::EXPECTED_CHASEUP_DAYS + 2;
 
     public function __construct(
         private readonly ChatNotificationService $chatNotificationService
@@ -42,9 +44,10 @@ class ChatChaseupExpectedService
     }
 
     /**
-     * @return int Number of chase-up emails sent.
+     * @param  int|null  $limit  Send at most this many in one run, oldest messages first. Null is no cap.
+     * @return int Number of chase-up emails sent (or, on a dry run, that would be sent).
      */
-    public function chaseupExpected(bool $dryRun = false): int
+    public function chaseupExpected(bool $dryRun = false, ?int $limit = null): int
     {
         // V1: strtotime("Midnight 5 days ago") — midnight of the day 5 days back.
         $oldest = Carbon::today()->subDays(self::EXPECTED_CHASEUP_DAYS)->toDateTimeString();
@@ -63,6 +66,9 @@ class ChatChaseupExpectedService
             // V1 parity: `chat_roster.status != 'Blocked'`. In SQL this also
             // excludes rows with no roster status (NULL), matching the legacy V1 PHP implementation.
             ->where('chat_roster.status', '!=', ChatRoom::STATUS_BLOCKED)
+            // A member who closed the chat is not notified of it by the normal notifier either.
+            ->where('chat_roster.status', '!=', ChatRoster::STATUS_CLOSED)
+            ->whereNull('users.deleted')
             // keep-raw: TIMESTAMPDIFF over two COLUMNS (not NOW()) has no builder
             // equivalent - the now()->subX() rewrite only works when one side is
             // the current timestamp.
@@ -87,6 +93,7 @@ class ChatChaseupExpectedService
             ->orderBy('chat_messages.id', 'desc')
             ->get([
                 'chat_messages.id as chatmsgid',
+                'chat_messages.date',
                 'chat_messages.chatid',
                 'users_expected.expectee',
             ]);
@@ -94,17 +101,29 @@ class ChatChaseupExpectedService
         // V1 groups by (expectee, chatid) so each waiting user gets at most one
         // email per chat. We keep the most recent qualifying message per pair.
         $seen = [];
-        $chased = 0;
-
+        $latest = [];
         foreach ($rows as $row) {
             $key = $row->expectee . ':' . $row->chatid;
             if (isset($seen[$key])) {
                 continue;
             }
             $seen[$key] = true;
+            $latest[] = $row;
+        }
+
+        // Oldest first, so a capped run works through the backlog from the front.
+        usort($latest, fn ($a, $b) => [$a->date, $a->chatmsgid] <=> [$b->date, $b->chatmsgid]);
+
+        $alreadyChased = $this->alreadyChased($latest);
+        $chased = 0;
+
+        foreach ($latest as $row) {
+            if ($limit !== null && $chased >= $limit) {
+                break;
+            }
 
             // Already chased on an earlier run; the message stays eligible for days.
-            if (Cache::has(self::CHASED_KEY_PREFIX . $row->chatmsgid)) {
+            if (isset($alreadyChased[$row->chatmsgid . ':' . $row->expectee])) {
                 continue;
             }
 
@@ -149,17 +168,57 @@ class ChatChaseupExpectedService
             }
 
             if (! $dryRun) {
-                $this->chatNotificationService->sendChaseupExpected($recipient, $sender, $chatRoom, $message);
-                Cache::put(
-                    self::CHASED_KEY_PREFIX . $row->chatmsgid,
-                    true,
-                    now()->addDays(self::EXPECTED_CHASEUP_DAYS + 1)
-                );
+                // Record first: a unique key makes this the lock, so a concurrent run that lost the
+                // race skips the message. If spooling fails the record is removed so it is retried.
+                $recorded = DB::table('chat_chaseup_expected_sent')->insertOrIgnore([
+                    'chatmsgid' => $row->chatmsgid,
+                    'userid' => $row->expectee,
+                    'sent' => now(),
+                ]);
+                if (! $recorded) {
+                    continue;
+                }
+
+                try {
+                    $this->chatNotificationService->sendChaseupExpected($recipient, $sender, $chatRoom, $message);
+                } catch (\Throwable $e) {
+                    DB::table('chat_chaseup_expected_sent')
+                        ->where('chatmsgid', $row->chatmsgid)
+                        ->where('userid', $row->expectee)
+                        ->delete();
+
+                    throw $e;
+                }
             }
 
             $chased++;
         }
 
+        if (! $dryRun) {
+            DB::table('chat_chaseup_expected_sent')
+                ->where('sent', '<', now()->subDays(self::SENT_RETENTION_DAYS))
+                ->delete();
+        }
+
         return $chased;
+    }
+
+    /**
+     * Which of these (message, recipient) pairs have already been chased.
+     *
+     * @param  array<int, object>  $rows
+     * @return array<string, true> keyed "chatmsgid:userid"
+     */
+    private function alreadyChased(array $rows): array
+    {
+        $found = [];
+
+        foreach (array_chunk(array_column($rows, 'chatmsgid'), 1000) as $ids) {
+            foreach (DB::table('chat_chaseup_expected_sent')->whereIn('chatmsgid', $ids)->get(['chatmsgid', 'userid']) as $r) {
+                $found[$r->chatmsgid . ':' . $r->userid] = true;
+            }
+        }
+
+        return $found;
     }
 }

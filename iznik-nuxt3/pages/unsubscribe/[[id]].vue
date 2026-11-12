@@ -382,7 +382,25 @@ function openContactSupport() {
 
 // Route parameters
 const userid = parseInt(route.params.id)
-const confirmed = route.query.confirm
+
+// The emailed link carries ?u=&k=&confirm=1. This page is prerendered (the /unsubscribe**
+// route rule), and on a prerendered page route.query is empty when the page mounts: the router
+// syncs to the real URL later, and replaces the location during hydration. app.vue and
+// donate.vue therefore read the query from window.__initSearch, which an inline head script
+// captures before any of that happens (nuxt.config.ts), and this page must too: with
+// route.query alone the link was never recognised. route.query is the fallback for a render
+// that has no such script (server render, dev).
+function linkQuery() {
+  const params = new URLSearchParams(
+    window.__initSearch || window.location.search || ''
+  )
+
+  return {
+    u: params.get('u') || route.query.u,
+    k: params.get('k') || route.query.k,
+    confirm: params.get('confirm') || route.query.confirm,
+  }
+}
 
 // Computed properties
 const groupCount = computed(() => {
@@ -478,11 +496,9 @@ async function emailConfirm(callback) {
 const LOGIN_WAIT_MS = 10000
 
 function loginPending() {
-  return !!(
-    (route.query.u && route.query.k) ||
-    authStore.auth?.jwt ||
-    authStore.auth?.persistent
-  )
+  const { u, k } = linkQuery()
+
+  return !!((u && k) || authStore.auth?.jwt || authStore.auth?.persistent)
 }
 
 function waitForMember() {
@@ -509,11 +525,14 @@ function waitForMember() {
 
 // Lifecycle hooks
 onMounted(async () => {
-  if (confirmed) {
+  if (linkQuery().confirm) {
     const id = await waitForMember()
 
     if (userid === id) {
-      forget()
+      // Arriving by the link is not consent. Anyone can have the site send this link to another
+      // person's address, and a mail scanner that runs JavaScript opens it, so the account is
+      // deleted only when the member clicks Delete in the confirmation.
+      showConfirmModal.value = true
     } else if (id) {
       wrongUser.value = true
     } else {

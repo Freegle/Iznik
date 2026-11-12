@@ -412,7 +412,7 @@ func GetChatMessages(c *fiber.Ctx) error {
 	modAccess := false
 
 	if !isParticipant {
-		if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
+		if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
 			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
 		}
 		modAccess = true
@@ -734,7 +734,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		var room roomBasic
 		db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", id).Scan(&room)
 
-		if room.ID == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
+		if room.ID == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
 			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
 		}
 	}
@@ -1509,8 +1509,7 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 // Review queue helpers
 // =============================================================================
 
-// moderationAccess decides whether a moderator may act on a chat message, using the groups and chats the review
-// queue (getReviewQueue) lists: a User2Mod chat of one of their active groups, or a User2User chat whose recipient is on one of
+// moderationAccess decides whether a moderator may act on a chat message: a User2Mod chat of one of their groups, or a User2User chat whose recipient is on one of
 // their groups (or has no groups and the sender is on one of theirs). A moderator who does wider chat review may
 // also Approve, the only action that review offers, for a recipient on a widerchatreview group. A moderator who is
 // one of the two people in the chat never acts on it. It returns 0 when allowed, otherwise the HTTP status to
@@ -1538,8 +1537,13 @@ func moderationAccess(db *gorm.DB, myid uint64, msgID uint64, action string) int
 		return fiber.StatusForbidden
 	}
 
-	// The queue lists only the communities a moderator is active on, so a backup moderator acts on none.
-	modGroups := user.GetActiveModGroupIDs(myid)
+	// A backup moderator (membership settings active:0) is still a moderator of the community, so
+	// their groups count as well as an active moderator's. Someone with no moderator role on any
+	// community has none, and is refused.
+	var modGroups []uint64
+	db.Table("memberships").Select("groupid").
+		Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&modGroups)
 
 	if len(modGroups) == 0 {
 		return fiber.StatusForbidden
@@ -1608,11 +1612,9 @@ func mod2ModAllowed(myid uint64, chattype string, groupid uint64) bool {
 }
 
 // canSeeChatRoom checks if a user can view a chat room.
-// Allows: direct participants, moderators of the chat's group, and, for User2User chats only,
-// moderators of any group where either participant is a member (for review). A User2Mod or
-// Mod2Mod room belongs to its own group, so a moderator of another group the member shares gets
-// no access to it.
-func canSeeChatRoom(myid uint64, user1, user2, groupid uint64, chattype string) bool {
+// Allows: direct participants, moderators of the chat's group, and moderators of any group
+// where either participant is a member (for review).
+func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
 	if user1 == myid || user2 == myid {
 		return true
 	}
@@ -1637,12 +1639,7 @@ func canSeeChatRoom(myid uint64, user1, user2, groupid uint64, chattype string) 
 		}
 	}
 
-	// Fallback: check if mod of any group where either participant is a member. Only a chat
-	// between two members is reviewed this way.
-	if chattype != utils.CHAT_TYPE_USER2USER {
-		return false
-	}
-
+	// Fallback: check if mod of any group where either participant is a member.
 	var modCount int64
 	result := db.Table("memberships m1").
 		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
@@ -1675,7 +1672,7 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Chat not found"})
 	}
 
-	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) {
+	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Permission denied"})
 	}
 
@@ -1823,6 +1820,11 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	// Check if this user participates in wider chat review.
 	widerReview := user.HasWiderReview(myid)
 
+	// A moderator never acts on a chat they are one of the two people in (moderationAccess refuses
+	// it), so those chats are left out of their own queue. user2 is NULL in a User2Mod chat.
+	notMine := " AND COALESCE(cr.user1, 0) <> " + strconv.FormatUint(myid, 10) +
+		" AND COALESCE(cr.user2, 0) <> " + strconv.FormatUint(myid, 10)
+
 	// Base query: messages from mod's own groups.
 	//
 	// The four "IN (?)" group-id lists below are bound to groupIDs (a
@@ -1857,7 +1859,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		"LEFT JOIN chat_images ci ON ci.chatmsgid = cm.id " +
 		"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
 		"LEFT JOIN chat_messages_byemail cme ON cme.chatmsgid = cm.id " +
-		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + ctxq +
+		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + ctxq + notMine +
 		" AND (" +
 		// User2Mod: group is one of mod's groups
 		"  (cr.chattype = ? AND cr.groupid IN (?))" +
@@ -1900,7 +1902,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"WHERE JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 " +
 			"AND cmh.id IS NULL " +
 			"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') " +
-			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq
+			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq + notMine
 
 		// Top-level UNION wrapped as a derived table with a trailing GROUP
 		// BY/ORDER BY/LIMIT that applies to the combined result, not either
