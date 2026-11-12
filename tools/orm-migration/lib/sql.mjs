@@ -48,7 +48,6 @@ export const MYSQLISMS = [
   ['force-index', /\b(?:force|use|ignore)\s+index\b/i],
   ['straight-join', /\bstraight_join\b/i],
   ['spatial', /\b(?:st_[a-z_0-9]+|mbr[a-z_]*|geomfromtext|astext|point|linestring|polygon)\s*\(/i],
-  ['last-insert-id', /\blast_insert_id\s*\(/i],
   ['group-concat', /\bgroup_concat\s*\(/i],
   ['unix-timestamp', /\b(?:unix_timestamp|from_unixtime)\s*\(/i],
   ['limit-offset-comma', /\blimit\s+(?:\?|\d+)\s*,\s*(?:\?|\d+)/i],
@@ -67,7 +66,62 @@ export const MYSQLISMS = [
   ['delete-join', /\bdelete\s+(?!from\b)[`\w.]+(?:\s*,\s*[`\w.]+)*\s+from\b/i],
   ['database-function', /\b(?:database|schema)\s*\(\s*\)/i],
   ['concat-ws-or-field', /\b(?:field|elt|find_in_set)\s*\(/i],
+  // VALUES(col) inside ON DUPLICATE KEY UPDATE names the row that failed to insert.
+  // PostgreSQL spells it EXCLUDED.col.
+  ['values-function', /\bvalues\s*\(\s*`?[a-z_]\w*`?\s*\)/i],
+  // CAST(x AS SIGNED) and UNSIGNED are not PostgreSQL types.
+  ['cast-signed', /\bcast\s*\([^)]*\bas\s+(?:un)?signed\b/i],
+  // LEAST and GREATEST return NULL on MySQL when any argument is NULL, and ignore
+  // NULL on PostgreSQL: a silent change of result.
+  ['least-greatest', /\b(?:least|greatest)\s*\(/i],
+  // PostgreSQL has no SUBSTRING_INDEX, LOCATE or INSTR.
+  ['string-functions', /\b(?:substring_index|locate|instr)\s*\(/i],
+  // LENGTH counts bytes on MySQL and characters on PostgreSQL.
+  ['length-function', /\blength\s*\(/i],
+  // CONCAT returns NULL on MySQL when any argument is NULL; PostgreSQL's ignores NULL.
+  ['concat-function', /\bconcat\s*\(/i],
+  // A comparison or null test in a select list is an integer on MySQL and a boolean on PostgreSQL.
+  ['boolean-projection', /\bis\s+(?:not\s+)?null\s+as\s+[a-z_]\w*/i],
+  // PostgreSQL has no sql.Result.LastInsertId; it needs RETURNING.
+  ['last-insert-id', /\blast_insert_id\s*\(|\blastinsertid\b/i],
+  // GORM clauses that only MySQL accepts as written. INSERT IGNORE and REPLACE need a
+  // different statement; an upsert needs a conflict target on PostgreSQL.
+  ['gorm-insert-modifier', /\bclause\.Insert\s*\{[^}]*\bModifier\b/i],
+  ['gorm-on-conflict', /\bclause\.OnConflict\s*\{/i],
 ];
+
+// Text outside any parentheses, so a clause inside a subquery is not mistaken for
+// one of the statement itself.
+export function topLevelText(text) {
+  let top = '';
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      if (depth > 0) depth--;
+    } else if (depth === 0) top += ch;
+  }
+  return top;
+}
+
+// Features that need the statement's structure rather than a pattern.
+function structuralMysqlisms(sql) {
+  const out = [];
+  const top = topLevelText(sql);
+  // PostgreSQL rejects ORDER BY and LIMIT on UPDATE and DELETE.
+  if (/^[\s(]*(?:update|delete)\b/i.test(top) && /\b(?:order\s+by|limit)\b/i.test(top)) out.push('update-delete-order-limit');
+  // PostgreSQL needs a conflict target to do an update on conflict.
+  if (/\bclause\.OnConflict\s*\{/.test(sql) && /\b(?:DoUpdates|UpdateAll)\b/.test(sql) && !/\b(?:Columns|OnConstraint)\s*:/.test(sql)) {
+    out.push('on-conflict-no-target');
+  }
+  // PostgreSQL does not let HAVING name a select-list alias.
+  const having = /\bhaving\b([\s\S]*)$/i.exec(top);
+  if (having) {
+    const aliases = [...sql.matchAll(/\bas\s+`?([a-z_]\w*)`?/gi)].map((m) => m[1]);
+    if (aliases.some((a) => new RegExp(`(?<![\\w.])${a}\\b(?!\\s*\\()`, 'i').test(having[1]))) out.push('having-alias');
+  }
+  return out;
+}
 
 const JOIN_RE = /\bjoin\b/i;
 const UNION_RE = /\bunion\b/i;
@@ -81,6 +135,7 @@ export function mysqlismsOf(sql) {
   for (const [name, re] of MYSQLISMS) {
     if (re.test(sql)) out.push(name);
   }
+  out.push(...structuralMysqlisms(sql));
   return out.sort();
 }
 
@@ -147,6 +202,14 @@ export function classify(site) {
     return site;
   }
   site.tables = tablesOf(sql);
+  if (site.surface === 'clause' || site.surface === 'result') {
+    // A GORM clause or a driver result call is not text, but it decides what SQL is
+    // sent, and PostgreSQL needs it written differently.
+    site.kind = site.surface === 'clause' ? 'CLAUSE' : 'RESULT';
+    site.complexity = 'complex';
+    site.wave = 3;
+    return site;
+  }
   if (site.surface === 'expression' || site.surface === 'fragment') {
     // A fragment is a piece of a statement. It cannot be a whole-statement
     // conversion, so its kind says which piece it is.

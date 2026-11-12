@@ -7,7 +7,7 @@
 import {
   normaliseSql, classify, statementKind, isPortableExpression, LEADING_KEYWORD, AMBIGUOUS_LEADING_KEYWORD,
 } from './sql.mjs';
-import { keepRawNear } from './go-scan.mjs';
+import { keepRawAt } from './go-scan.mjs';
 
 // Whole-statement methods on the DB facade or a connection.
 const CONNECTION_METHODS = new Set([
@@ -359,6 +359,24 @@ export function scanPhpSource(src, rel) {
     const prev = toks[i - 1];
     if (!prev || prev.t !== 'op') continue;
 
+    // PDO::lastInsertId() needs a sequence name on PostgreSQL.
+    if ((prev.v === '->' || prev.v === '?->') && t.v === 'lastInsertId') {
+      const fn = innermost(funcs, i);
+      const cls = innermost(classes, i);
+      const site = {
+        file: rel, line: t.line, class: cls ? cls.name : '', function: fn ? fn.name : '', receiver: '', method: 'lastInsertId',
+        surface: 'result', sqlSource: 'literal', dynamic: false, args: 0, goldenSql: 'PDO::lastInsertId()',
+      };
+      classify(site);
+      const kr = keepRawAt(lines, t.line);
+      if (kr !== null) {
+        site.annotation = kr.reason;
+        site.annotationLine = kr.line;
+      }
+      sites.push(site);
+      continue;
+    }
+
     let surface = null;
     let receiver = '';
     if (prev.v === '::' && /^\\?(?:Illuminate\\Support\\Facades\\)?DB$/.test(toks[i - 2] ? toks[i - 2].v : '')) {
@@ -439,10 +457,14 @@ export function scanPhpSource(src, rel) {
     if (surface === 'fragment') site.kind = fragmentKind(t.v);
     if (surface === 'expression') site.kind = 'EXPRESSION';
     classify(site);
-    if (isPortableExpression(site)) continue;
+    const kr = keepRawAt(lines, t.line);
+    if (kr !== null) {
+      site.annotation = kr.reason;
+      site.annotationLine = kr.line;
+    }
+    // A portable expression is not a site unless a keep-raw marker says it is raw SQL.
+    if (kr === null && isPortableExpression(site)) continue;
     if (surface === 'statement' && source !== 'variable') site.kind = statementKind(sql);
-    const kr = keepRawNear(lines, t.line);
-    if (kr !== null) site.annotation = kr;
     sites.push(site);
   }
   return sites;

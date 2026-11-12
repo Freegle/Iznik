@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { scanGoSource, collectConsts, tokeniseGo } from './go-scan.mjs';
+import { scanGoSource, collectConsts, tokeniseGo, KEEP_RAW_RE } from './go-scan.mjs';
 import { scanPhpSource } from './php-scan.mjs';
 
 // Production code is scanned in these trees. Each entry says which scanner
@@ -48,12 +48,13 @@ const HEX_ID = /['"`]([0-9a-f]{12})['"`]/g;
 
 /**
  * Scans the repository.
- * @returns {{sites: object[], testFixtures: object, testIds: Set<string>}}
+ * @returns {{sites: object[], testFixtures: object, testIds: Set<string>, orphanAnnotations: object[]}}
  */
 export function scanRepo(repoRoot) {
   const sites = [];
   const testFiles = {};
   const testIds = new Set();
+  const orphanAnnotations = [];
 
   for (const tree of TREES) {
     const ext = tree.lang === 'go' ? '.go' : '.php';
@@ -91,6 +92,13 @@ export function scanRepo(repoRoot) {
         if (found.length) testFiles[rel] = found.length;
         continue;
       }
+      // A keep-raw marker that no site picked up: the code under it is not something
+      // the scanner treats as raw SQL, so the marker is not in the manifest.
+      const used = new Set(found.filter((s) => s.annotationLine).map((s) => s.annotationLine));
+      src.split('\n').forEach((text, idx) => {
+        const m = KEEP_RAW_RE.exec(text);
+        if (m && !used.has(idx + 1)) orphanAnnotations.push({ file: rel, line: idx + 1, reason: m[1].trim().slice(0, 100) });
+      });
       const seen = new Map();
       for (const s of found) {
         const key = `${s.file}\0${s.goldenSql}`;
@@ -104,7 +112,7 @@ export function scanRepo(repoRoot) {
 
   sites.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
   const total = Object.values(testFiles).reduce((a, b) => a + b, 0);
-  return { sites, testFixtures: { total, files: testFiles }, testIds };
+  return { sites, testFixtures: { total, files: testFiles }, testIds, orphanAnnotations };
 }
 
 // ------------------------------------------------------------------- rules
@@ -183,6 +191,7 @@ export function reconcile(scan, previous, rules) {
     }
     const site = { ...s };
     delete site.annotation;
+    delete site.annotationLine;
     const rule = ruleFor(s, rules);
     if (rule) {
       site.status = rule.status || 'keep-raw';
@@ -375,7 +384,13 @@ export function checkManifest(scan, committed, rules, { baseManifest = null } = 
       failures.push(`baseline rose from ${baseManifest.ratchet.baseline} on the base branch to ${baseline}. New raw SQL needs a "keep-raw:" reason, not a higher baseline.`);
     }
   }
-  // (h) a retired entry carries a reason; surface the ones the tool wrote itself.
+  // (h) keep-raw markers that no site picked up are not inventoried.
+  if (scan.orphanAnnotations && scan.orphanAnnotations.length) {
+    warnings.push(
+      `${scan.orphanAnnotations.length} keep-raw markers sit on code the extractor does not treat as raw SQL, so they are not in the manifest (list them with: extract.mjs orphans).`,
+    );
+  }
+  // (i) a retired entry carries a reason; surface the ones the tool wrote itself.
   const autoRetired = committed.sites.filter((s) => s.status === 'retired' && /^No longer in the code/.test(s.reason || ''));
   if (autoRetired.length) warnings.push(`${autoRetired.length} retired entries have the generic reason; replace it where the removal was deliberate.`);
 

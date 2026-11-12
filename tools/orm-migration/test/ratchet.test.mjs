@@ -357,3 +357,30 @@ test('buildManifest on its own reports status counts and a baseline equal to ope
   assert.equal(manifest.ratchet.baseline, 2);
   assert.deepEqual(manifest.counts, { raw: 2 });
 });
+
+test('a keep-raw marker that no site picks up is reported and does not fail the check', () => {
+  const dir = makeRepo({
+    'iznik-server-go/user/note.go': `package user
+// keep-raw: this sits on code that is not SQL
+const columns = "a, b"
+`,
+  });
+  assert.equal(run(dir, 'update').code, 0);
+  const r = run(dir, 'check');
+  assert.equal(r.code, 0);
+  assert.match(r.out, /1 keep-raw markers sit on code/);
+  assert.match(run(dir, 'orphans').out, /note\.go:2/);
+});
+
+test('an upsert clause is a site that raises the count when added without a marker', () => {
+  const dir = makeRepo();
+  assert.equal(run(dir, 'update').code, 0);
+  write(dir, 'iznik-server-go/user/up.go', `package user
+func Up(db *gorm.DB) {
+	db.Clauses(clause.Insert{Modifier: "IGNORE"}).Create(&u)
+}
+`);
+  const r = run(dir, 'check');
+  assert.equal(r.code, 1);
+  assert.match(r.err, /\[clause\]/);
+});

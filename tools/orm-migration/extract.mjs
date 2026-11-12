@@ -6,6 +6,7 @@
 //   node tools/orm-migration/extract.mjs check [--base REF]
 //   node tools/orm-migration/extract.mjs summary
 //   node tools/orm-migration/extract.mjs list [--status raw] [--file TEXT]
+//   node tools/orm-migration/extract.mjs orphans
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -94,9 +95,15 @@ export function main(argv, out = console) {
     return 0;
   }
 
+  if (cmd === 'orphans') {
+    for (const o of scan.orphanAnnotations) out.log(`${o.file}:${o.line}  ${o.reason}`);
+    out.log(`${scan.orphanAnnotations.length} keep-raw markers have no site`);
+    return 0;
+  }
+
   if (cmd === 'summary') {
     const { manifest } = buildManifest(scan, committed, rules);
-    out.log(JSON.stringify({ counts: manifest.counts, baseline: manifest.ratchet.baseline, testFixtures: manifest.testFixtures.total }, null, 2));
+    out.log(JSON.stringify({ counts: manifest.counts, baseline: manifest.ratchet.baseline, testFixtures: manifest.testFixtures.total, keepRawMarkersWithoutSite: scan.orphanAnnotations.length }, null, 2));
     return 0;
   }
 

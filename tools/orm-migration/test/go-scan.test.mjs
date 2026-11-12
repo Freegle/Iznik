@@ -178,7 +178,7 @@ test('dialect features and complexity are recorded', () => {
 func f() {
 	db.Exec("INSERT INTO t (a, b) VALUES (?, ?) ON DUPLICATE KEY UPDATE b = VALUES(b)", 1, 2)
 }`);
-  assert.deepEqual(s.mysqlisms, ['on-duplicate-key']);
+  assert.deepEqual(s.mysqlisms, ['on-duplicate-key', 'values-function']);
   assert.equal(s.complexity, 'complex');
   assert.equal(s.wave, 3);
 });
@@ -222,4 +222,61 @@ func f() {
   assert.deepEqual(sites.map((s) => s.kind), ['WHERE', 'ORDER', 'JOIN', 'SELECT-LIST']);
   assert.ok(sites.every((s) => s.surface === 'fragment'));
   assert.ok(sites[0].mysqlisms.includes('json-functions'));
+});
+
+test('a VALUES(col) expression inside an upsert is a site', () => {
+  const sites = scan(`package x
+func f() {
+	db.Clauses(clause.OnConflict{DoUpdates: clause.Assignments(map[string]interface{}{
+		"count": gorm.Expr("count + VALUES(count)"),
+	})}).Create(&row)
+}`);
+  assert.deepEqual(sites.map((s) => s.surface), ['clause', 'expression']);
+  assert.deepEqual(sites[1].mysqlisms, ['values-function']);
+  assert.ok(sites[0].mysqlisms.includes('gorm-on-conflict') && sites[0].mysqlisms.includes('on-conflict-no-target'));
+});
+
+test('clause.Insert is a site only with a modifier, and a target-less upsert says so', () => {
+  const sites = scan(`package x
+func f() {
+	db.Clauses(clause.Insert{Modifier: "IGNORE"}).Create(&a)
+	db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).Create(&b)
+}`);
+  assert.deepEqual(sites.map((s) => s.method), ['Insert', 'OnConflict']);
+  assert.ok(sites[0].mysqlisms.includes('gorm-insert-modifier'));
+  assert.ok(!sites[1].mysqlisms.includes('on-conflict-no-target'));
+});
+
+test('a query held in a variable is a site on any receiver named for a database', () => {
+  const sites = scan(`package x
+func f() {
+	rows, _ := mysqlDB.Query(query)
+	rows, _ = groupsDB.Query(reachSelect("WHERE a = ?"), 1)
+	c.Query("uid")
+}`);
+  assert.equal(sites.length, 2);
+  assert.ok(sites.every((s) => s.sqlSource === 'variable'));
+});
+
+test('LastInsertId is a site', () => {
+  const [s] = scan(`package x
+func f() {
+	id, _ := res.LastInsertId()
+}`);
+  assert.equal(s.surface, 'result');
+  assert.deepEqual(s.mysqlisms, ['last-insert-id']);
+});
+
+test('a portable expression with a keep-raw marker is a site, and the marker line is recorded', () => {
+  const sites = scan(`package x
+func f() {
+	// keep-raw: a judgement that this is SQL
+	x := gorm.Expr("NOW()")
+}`);
+  assert.equal(sites.length, 1);
+  assert.equal(sites[0].annotationLine, 3);
+  assert.equal(scan(`package x
+func f() {
+	x := gorm.Expr("NOW()")
+}`).length, 0);
 });

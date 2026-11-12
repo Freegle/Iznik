@@ -48,3 +48,35 @@ test('tables, kind and top-level clauses', () => {
   assert.equal(suppliesOwnFrom('SELECT a FROM t'), true);
   assert.equal(suppliesOwnFrom('EXISTS(SELECT 1 FROM t)'), false);
 });
+
+test('structural and silent-change features are flagged', () => {
+  const cases = {
+    'UPDATE t SET a = 1 ORDER BY id LIMIT 5': 'update-delete-order-limit',
+    'DELETE FROM t WHERE a = 1 LIMIT 100': 'update-delete-order-limit',
+    'SELECT x, COUNT(*) AS n FROM t GROUP BY x HAVING n > 1': 'having-alias',
+    'SELECT CAST(a AS SIGNED) FROM t': 'cast-signed',
+    'SELECT LEAST(a, b) FROM t': 'least-greatest',
+    "SELECT SUBSTRING_INDEX(email, '@', -1) FROM t": 'string-functions',
+    'SELECT LOCATE(? , name) FROM t': 'string-functions',
+    'SELECT LENGTH(domain) FROM t': 'length-function',
+    "SELECT CONCAT(a, b) FROM t": 'concat-function',
+    'SELECT heldby IS NOT NULL AS held FROM t': 'boolean-projection',
+    'count + VALUES(count)': 'values-function',
+    'PDO::lastInsertId()': 'last-insert-id',
+  };
+  for (const [sql, feature] of Object.entries(cases)) {
+    assert.ok(mysqlismsOf(sql).includes(feature), `${feature} in ${sql}`);
+  }
+});
+
+test('the structural features do not fire on portable SQL', () => {
+  for (const sql of [
+    'UPDATE t SET a = (SELECT b FROM u ORDER BY id LIMIT 1) WHERE id = ?',
+    'SELECT x, COUNT(*) AS n FROM t GROUP BY x HAVING COUNT(*) > 1',
+    'SELECT JSON_LENGTH(a), CONCAT_WS(",", a, b) FROM t',
+    'INSERT INTO t (a) VALUES (?)',
+  ]) {
+    const hit = mysqlismsOf(sql).filter((m) => ['update-delete-order-limit', 'having-alias', 'length-function', 'concat-function', 'values-function'].includes(m));
+    assert.deepEqual(hit, [], sql);
+  }
+});

@@ -132,3 +132,25 @@ test('inline HTML outside php tags is not scanned', () => {
   assert.equal(sites[0].goldenSql, 'SELECT 2');
   assert.equal(sites[0].line, 2);
 });
+
+test('lastInsertId and a VALUES(col) expression are sites', () => {
+  const sites = scan(`class Foo {
+    public function run() {
+        $id = DB::getPdo()->lastInsertId();
+        $e = DB::raw('count + VALUES(count)');
+    }
+}`);
+  assert.deepEqual(sites.map((s) => s.surface), ['result', 'expression']);
+});
+
+test('a portable DB::raw with a keep-raw marker is a site', () => {
+  const sites = scan(`class Foo {
+    public function run() {
+        // keep-raw: a human says this is SQL
+        $e = DB::raw('COUNT(*) AS n');
+    }
+}`);
+  assert.equal(sites.length, 1);
+  assert.equal(sites[0].annotationLine, 5);
+  assert.equal(scan("class Foo { function run() { $e = DB::raw('COUNT(*) AS n'); } }").length, 0);
+});

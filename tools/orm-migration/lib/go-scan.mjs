@@ -39,11 +39,14 @@ const CHAIN_FRAGMENT_METHODS = new Map([
 // would flood the manifest.
 const DB_HANDLES = new Set(['db', 'tx', 'sqlDB', 'gdb', 'stmt', 'conn', 'dbConn', 'DBConn', 'q']);
 
+// A handle is also any name ending in "db" (mysqlDB, groupsDB, readDB): the spatial
+// and routing loaders name their connections for the database they open.
 export function isSqlHandle(method, receiver) {
   if (method === 'Raw') return true;
   const last = receiver.split('.').pop();
   if (DB_HANDLES.has(last)) return true;
-  return ['db', 'dbconn', 'sqldb', 'tx'].includes(last.toLowerCase());
+  const lower = last.toLowerCase();
+  return lower === 'tx' || lower.endsWith('db');
 }
 
 // ---------------------------------------------------------------- tokeniser
@@ -484,9 +487,16 @@ function sourceLines(src) {
 // the line, or null. Mirrors .claude/check-raw-sql.sh: the line itself or the
 // 25 lines above it.
 export const KEEP_RAW_WINDOW = 25;
-const KEEP_RAW_RE = /(?:\/\/|#|\*)\s*keep-raw:\s*(.*)$/i;
+export const KEEP_RAW_RE = /(?:\/\/|#|\*)\s*keep-raw:\s*(.*)$/i;
 
 export function keepRawNear(lines, lineNo) {
+  const found = keepRawAt(lines, lineNo);
+  return found ? found.reason : null;
+}
+
+// As keepRawNear, and says which line the marker is on, so a marker that no site
+// uses can be reported.
+export function keepRawAt(lines, lineNo) {
   const first = Math.max(1, lineNo - KEEP_RAW_WINDOW);
   for (let n = lineNo; n >= first; n--) {
     const m = KEEP_RAW_RE.exec(lines[n - 1] || '');
@@ -496,7 +506,7 @@ export function keepRawNear(lines, lineNo) {
     for (let k = n + 1; k <= lineNo && /^\s*(?:\/\/|#|\*)\s?(?!keep-raw:)\S/.test(lines[k - 1] || ''); k++) {
       reason += ' ' + lines[k - 1].replace(/^\s*(?:\/\/|#|\*)\s?/, '').trim();
     }
-    return reason.replace(/\s+/g, ' ').trim();
+    return { reason: reason.replace(/\s+/g, ' ').trim(), line: n };
   }
   return null;
 }
@@ -516,13 +526,57 @@ export function scanGoSource(src, rel, opts = {}) {
 
   const enclosing = (idx) => funcs.find((f) => idx >= f.start && idx <= f.end);
 
+  const annotate = (site, line) => {
+    const kr = keepRawAt(lines, line);
+    if (kr !== null) {
+      site.annotation = kr.reason;
+      site.annotationLine = kr.line;
+    }
+  };
+
   for (let i = 0; i < toks.length; i++) {
     const t = toks[i];
     if (t.t !== 'id') continue;
     const next = toks[i + 1];
+
+    // clause.OnConflict{...} and clause.Insert{Modifier: ...}: GORM builds the SQL,
+    // and each needs rewriting for PostgreSQL.
+    if (
+      t.v === 'clause' && next && next.t === 'op' && next.v === '.' && toks[i + 2] && toks[i + 2].t === 'id' &&
+      ['OnConflict', 'Insert'].includes(toks[i + 2].v) && toks[i + 3] && toks[i + 3].t === 'op' && toks[i + 3].v === '{'
+    ) {
+      const close = matching(toks, i + 3);
+      const inner = toks.slice(i + 4, close).map((x) => (x.t === 'str' ? JSON.stringify(x.v) : x.v)).join(' ');
+      const text = normaliseSql(`clause.${toks[i + 2].v} { ${inner} }`);
+      if (toks[i + 2].v === 'Insert' && !/\bModifier\b/.test(text)) continue;
+      const fn = enclosing(i);
+      const site = {
+        file: rel, line: t.line, function: fn ? fn.name : '', receiver: 'clause', method: toks[i + 2].v,
+        surface: 'clause', sqlSource: 'literal', dynamic: false, args: 0, goldenSql: text,
+      };
+      classify(site);
+      annotate(site, t.line);
+      sites.push(site);
+      // Keep scanning inside the literal: its values are often gorm.Expr sites.
+      continue;
+    }
+
     if (!next || next.t !== 'op' || next.v !== '(') continue;
     const prev = toks[i - 1];
     const dotted = prev && prev.t === 'op' && prev.v === '.';
+
+    // sql.Result.LastInsertId(): PostgreSQL drivers do not provide it.
+    if (dotted && t.v === 'LastInsertId') {
+      const fn = enclosing(i);
+      const site = {
+        file: rel, line: t.line, function: fn ? fn.name : '', receiver: receiverBefore(toks, i - 1), method: 'LastInsertId',
+        surface: 'result', sqlSource: 'literal', dynamic: false, args: 0, goldenSql: 'sql.Result.LastInsertId()',
+      };
+      classify(site);
+      annotate(site, t.line);
+      sites.push(site);
+      continue;
+    }
 
     let argIdx;
     let receiver = '';
@@ -607,9 +661,10 @@ export function scanGoSource(src, rel, opts = {}) {
     };
     if (surface === 'fragment') site.kind = CHAIN_FRAGMENT_METHODS.get(t.v);
     classify(site);
-    if (isPortableExpression(site) || (isFragment && site.mysqlisms.every((m) => m === 'backticks'))) continue;
-    const kr = keepRawNear(lines, t.line);
-    if (kr !== null) site.annotation = kr;
+    annotate(site, t.line);
+    // A portable expression or fragment is not a site unless someone wrote a
+    // keep-raw marker for it: that is a human saying it is raw SQL.
+    if (site.annotation === undefined && (isPortableExpression(site) || (isFragment && site.mysqlisms.every((m) => m === 'backticks')))) continue;
     sites.push(site);
   }
   return sites;
