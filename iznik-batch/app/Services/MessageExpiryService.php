@@ -102,7 +102,7 @@ class MessageExpiryService
         $ids = Message::query()
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
-            ->whereRaw('messages.deadline < CURDATE()')
+            ->whereRaw('messages.deadline < CURRENT_DATE')
             ->whereNull('messages.deleted')
             // A post with no live approved posting is not on the site, so it cannot
             // expire off it. A retracted rippled copy keeps collection = Approved and

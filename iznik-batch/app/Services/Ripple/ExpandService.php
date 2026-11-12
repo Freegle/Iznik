@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use Illuminate\Database\Query\Expression as Raw;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\AnyValue;
 use App\Database\Expressions\Arithmetic;
@@ -120,10 +121,10 @@ class ExpandService
     private function recordEvent(string $event, int $by = 1): void
     {
         try {
-            DB::statement(
-                'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
-                . 'ON DUPLICATE KEY UPDATE count = count + ?',
-                [$event, $by, $by]
+            DB::table('rippling_event_metrics')->upsert(
+                [['day' => new Raw('CURRENT_DATE'), 'event' => $event, 'count' => $by]],
+                ['day', 'event'],
+                ['count' => new Arithmetic('rippling_event_metrics.count', '+', $by)]
             );
         } catch (\Throwable $e) {
             // best-effort; never affect the expander

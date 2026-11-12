@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Now;
 use DOMDocument;
 use DOMXPath;
 use Carbon\Carbon;
@@ -163,22 +164,13 @@ class NewsfeedLinkPreviewService
 
             $data = $this->parseHtml($response->body());
 
-            // keep-raw: LAST_INSERT_ID(id) readback on an upsert - no builder form returns the existing row's id this way.
-            DB::statement(
-                "INSERT INTO link_previews(url, title, description, image) VALUES (?,?,?,?)
-                 ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), title=?, description=?, image=?, retrieved=NOW()",
-                [
-                    $url,
-                    $data['title'],
-                    $data['description'],
-                    $data['image'],
-                    $data['title'],
-                    $data['description'],
-                    $data['image'],
-                ]
+            DB::table('link_previews')->upsert(
+                [['url' => $url, 'title' => $data['title'], 'description' => $data['description'], 'image' => $data['image']]],
+                ['url'],
+                ['title' => $data['title'], 'description' => $data['description'], 'image' => $data['image'], 'retrieved' => new Now()]
             );
 
-            return (int) DB::getPdo()->lastInsertId();
+            return (int) DB::table('link_previews')->where('url', $url)->value('id');
         } catch (\Throwable $e) {
             // \Throwable, not \Exception: the parser throws \Error subclasses
             // (ValueError above being the proven case) and an unmarked row
@@ -189,14 +181,13 @@ class NewsfeedLinkPreviewService
 
     protected function upsertInvalid(string $url): int
     {
-        // keep-raw: LAST_INSERT_ID(id) readback on an upsert - no builder form returns the existing row's id this way.
-        DB::statement(
-            "INSERT INTO link_previews(url, invalid) VALUES (?,1)
-             ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), retrieved=NOW()",
-            [$url]
+        DB::table('link_previews')->upsert(
+            [['url' => $url, 'invalid' => 1]],
+            ['url'],
+            ['retrieved' => new Now()]
         );
 
-        return (int) DB::getPdo()->lastInsertId();
+        return (int) DB::table('link_previews')->where('url', $url)->value('id');
     }
 
     protected function parseHtml(string $html): array
