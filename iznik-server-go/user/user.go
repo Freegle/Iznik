@@ -2974,6 +2974,11 @@ func PatchUser(c *fiber.Ctx) error {
 			if !auth.IsAdminOrSupport(myid) {
 				return fiber.NewError(fiber.StatusForbidden, "Not authorized to set password for another user")
 			}
+			// A new password is a way to log in as that account, so it follows the impersonation
+			// rule: Admin may change anyone's, Support only an account with no system role.
+			if !auth.IsAdmin(myid) && auth.IsSystemMod(req.ID) {
+				return fiber.NewError(fiber.StatusForbidden, "Only Admin can set the password of a moderator, Support or Admin account")
+			}
 			targetID = req.ID
 		}
 
