@@ -212,6 +212,45 @@ class ChaseupExpectedCommandTest extends TestCase
         Mail::assertSentCount(1);
     }
 
+    public function test_skips_message_rejected_in_chat_review(): void
+    {
+        Mail::fake();
+
+        $this->makeExpectedScenario(['reviewrejected' => 1]);
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 0 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_message_still_held_for_review(): void
+    {
+        Mail::fake();
+
+        $this->makeExpectedScenario(['reviewrequired' => 1]);
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 0 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_deleted_message(): void
+    {
+        Mail::fake();
+
+        $this->makeExpectedScenario(['deleted' => 1]);
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 0 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
     public function test_dry_run_sends_nothing(): void
     {
         Mail::fake();
