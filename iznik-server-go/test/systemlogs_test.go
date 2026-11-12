@@ -135,6 +135,36 @@ func TestSystemLogs_ModeratorCanViewGroupMember(t *testing.T) {
 	}
 }
 
+// A moderator may only see logs about members of groups they moderate. A filter that picks log
+// lines by something other than userid or groupid must not let them read other communities.
+func TestSystemLogs_ModeratorCannotReadUnscopedFilters(t *testing.T) {
+	prefix := uniquePrefix("syslogs_unscoped")
+	groupID := CreateTestGroup(t, prefix)
+	modUserID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modUserID, groupID, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modUserID)
+
+	// A member of a different group, which this moderator does not moderate.
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
+	otherUserID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherUserID, otherGroupID, utils.ROLE_MEMBER)
+
+	filters := map[string]string{
+		"email": "someone-else@example.invalid",
+		"ip":    "192.0.2.1",
+		"msgid": "1",
+	}
+
+	for name, filter := range filters {
+		t.Run(name, func(t *testing.T) {
+			code, ok := testSystemLogsRequest(t, fmt.Sprintf("/api/modtools/systemlogs?jwt=%s&%s=%s", modToken, name, filter))
+			if ok {
+				assert.Equal(t, 403, code, "Moderator must not read logs selected by "+name+" without a userid or groupid they moderate")
+			}
+		})
+	}
+}
+
 func TestSystemLogs_SupportBypassesGroupCheck(t *testing.T) {
 	prefix := uniquePrefix("syslogs_supbypass")
 	supportUserID := CreateTestUser(t, prefix+"_sup", utils.SYSTEMROLE_SUPPORT)
