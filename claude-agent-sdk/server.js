@@ -489,23 +489,36 @@ app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), as
 })
 
 // ---------------------------------------------------------------------------
-// The member-answer coder and the regroup call. Asked by the batch (ux:prompt analyse and
-// ux:prompt regroup, on request) from the docker network, never by a browser, so they are
+// The member-answer coder, the regroup call and the idea generator. Asked by the batch (ux:prompt analyse,
+// ux:prompt regroup on request, and ux:ideas-refresh daily) from the docker network, never by a browser, so they are
 // deliberately NOT under /api/ai-support, the only prefix the load balancer forwards
 // (docs/ops/production.md). The guard also refuses anything that is not from a private address,
 // that carries a forwarding header, or that lacks the shared secret in X-Freegle-Internal-Secret
 // (env UX_INTERNAL_SECRET; unset refuses everyone). One run at a time across every /internal
 // route: a second request while one is running is answered 429 straight away, and a run stops if
-// its caller disconnects. See ux-themes.js, ux-groups.js, ux-internal.js,
+// its caller disconnects. See ux-themes.js, ux-groups.js, ux-ideas.js, ux-internal.js,
 // docs/developers/reference/ux-member-surveys.md and docs/developers/reference/ai-support-helper.md.
 // ---------------------------------------------------------------------------
 const { internalHandler, internalGuard } = require('./ux-internal')
 const { cleanThemesRequest, generateThemes } = require('./ux-themes')
 const { cleanGroupsRequest, generateGroups } = require('./ux-groups')
+const { cleanRequest, generateIdeas } = require('./ux-ideas')
 
 // Refuse before reading the body, so a caller without the secret cannot make this parse 2MB.
 const internalGate = (req, res, next) => (internalGuard(req).ok ? next() : res.status(403).json({ error: 'FORBIDDEN' }))
 const internalJson = express.json({ limit: '2mb' })
+
+app.post(
+  '/internal/ux-ideas',
+  internalGate,
+  internalJson,
+  internalHandler({
+    tag: 'UxIdeas',
+    clean: cleanRequest,
+    run: (request, { signal }) => generateIdeas({ ...request, codebaseDir: CODEBASE_DIR, signal }),
+    summary: (result, request) => `flow=${request.flow} ideas=${result.ideas.length} problems=${result.problems.length}`,
+  })
+)
 
 app.post(
   '/internal/ux-themes',

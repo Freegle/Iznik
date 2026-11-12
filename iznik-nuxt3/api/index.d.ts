@@ -61,6 +61,7 @@ import TrystAPI from './TrystAPI.js'
 import UserAPI from './UserAPI.js'
 import UserSearchAPI from './UserSearchAPI.js'
 import UxAPI from './UxAPI.js'
+import UxIdeasAPI from './UxIdeasAPI.js'
 import UxExperimentsAPI from './UxExperimentsAPI.js'
 import UxSurveysAPI from './UxSurveysAPI.js'
 import VisualiseAPI from './VisualiseAPI.js'
@@ -118,6 +119,7 @@ interface API {
   user: UserAPI;
   usersearch: UserSearchAPI;
   ux: UxAPI;
+  uxideas: UxIdeasAPI;
   uxexperiments: UxExperimentsAPI;
   uxsurveys: UxSurveysAPI;
   visualise: VisualiseAPI;

@@ -75,6 +75,7 @@ describe('useUxSections', () => {
   })
 
   it('hosts the reply confirmation detail on an experiment, gives a place it does not know an empty list', () => {
+    expect(Object.keys(HOSTED).sort()).toEqual(['experiment', 'problem'])
     expect(HOSTED.experiment).toContain(ModSysAdminUxReplyConfirmDetail)
     expect(hostedFor('experiment')).toContain(ModSysAdminUxReplyConfirmDetail)
     expect(hostedFor('nothing')).toEqual([])

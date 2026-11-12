@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxPromptService.php
@@ -344,6 +344,8 @@ not dismiss the problem: it stays open and stays on the tab.
 - *Not shown as HTML.* Answers are shown by interpolation, never `v-html`.
 - *Scrubbed, imperfectly.* Pattern scrubbing cannot find a name or a street, which is why the text is coded
   with no tools and why a title is read by a person before it reaches other members.
+  `UxScrub` also cleans volunteers' forum reports before the idea generator reads them, as words, so a name
+  in a report is not removed (see [ux-ideas.md](ux-ideas.md)).
 - *Temporary.* The hourly tick (`ux:prompts-tick`) blanks the free text of any answer, and the comment on
   any answer, **90 days after it was written** (the answer becomes `{"text": null, "removed": true}`),
   keeping the counts and the picks. A quoted span in `ux_problems.evidence` is dropped once its answer is

@@ -2099,6 +2099,37 @@ return [
             'holdout_revert_looks' => (int) EnvSetting::env('UX_EXPERIMENTS_HOLDOUT_REVERT_LOOKS', 2),
         ],
 
+        // Idea generation (ux:ideas-refresh, ux:ideas-sync, ux:idea): the batch gathers the figures
+        // and what has been tried, the support helper container asks Claude for ideas, the batch
+        // files them as ux_ideas. See docs/developers/reference/ux-ideas.md.
+        'ideas' => [
+            // UX_HELPER_URL is the address of the helper for every part that calls it.
+            'helper_url' => EnvSetting::env('UX_IDEAS_HELPER_URL', EnvSetting::env('UX_HELPER_URL', 'http://ai-support-helper:3000')),
+            // A generation call reads code and thinks for minutes, so the wait is long. It must
+            // be LONGER than the helper's own limit (15 minutes, UX_IDEAS_TIMEOUT_MS in
+            // claude-agent-sdk/ux-ideas.js): if the batch gave up first, the helper would carry on
+            // spending the subscription on an answer nobody was waiting for and the next funnel
+            // would queue behind it.
+            'timeout' => (int) EnvSetting::env('UX_IDEAS_TIMEOUT', 960),
+            // Shared secret the helper's /internal/ux-ideas requires in the X-Freegle-Internal-Secret
+            // header, on top of its private-address check. Unset, the helper refuses everything and
+            // the batch does not try.
+            'internal_secret' => EnvSetting::env('UX_INTERNAL_SECRET', ''),
+            // Reports given to the generator as evidence of problems. Discourse is read when its
+            // API key is set; the GitHub repository's open issues are read from the public API
+            // (blank turns that off).
+            'discourse_categories' => EnvSetting::env('UX_IDEAS_DISCOURSE_CATEGORIES', 'tech-modtools,development,bug-reports'),
+            'reports_days' => (int) EnvSetting::env('UX_IDEAS_REPORTS_DAYS', 60),
+            'github_repo' => EnvSetting::env('UX_IDEAS_GITHUB_REPO', 'Freegle/Iznik'),
+            // A funnel with fewer open ideas than this is topped up by the daily run.
+            'min_open' => (int) EnvSetting::env('UX_IDEAS_MIN_OPEN', 3),
+            // How many ideas to ask for in one call.
+            'count' => (int) EnvSetting::env('UX_IDEAS_COUNT', 12),
+            // The most times an idea is tried in all. An inconclusive test sends it back to waiting
+            // until it has had this many tries, so 2 means one retry.
+            'max_attempts' => (int) EnvSetting::env('UX_IDEAS_MAX_ATTEMPTS', 2),
+        ],
+
         // The run length of an experiment decided on the server (mail, push, server code), per
         // channel. ceiling_hours is the longest run (max_hours) a start is allowed. intake_hours is how
         // long arms are served by default, and the rest of the run is the window members have to

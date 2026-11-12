@@ -3,6 +3,8 @@
 // component here and adding one entry; nothing scans for files.
 import ModSysAdminUxOverview from '~/modtools/components/ModSysAdminUxOverview.vue'
 import ModSysAdminUxFunnels from '~/modtools/components/ModSysAdminUxFunnels.vue'
+import ModSysAdminUxIdeas from '~/modtools/components/ModSysAdminUxIdeas.vue'
+import ModSysAdminUxProblemIdeas from '~/modtools/components/ModSysAdminUxProblemIdeas.vue'
 import ModSysAdminUxExperiments from '~/modtools/components/ModSysAdminUxExperiments.vue'
 import ModSysAdminUxExperimentsBadge from '~/modtools/components/ModSysAdminUxExperimentsBadge.vue'
 import ModSysAdminUxSurveys from '~/modtools/components/ModSysAdminUxSurveys.vue'
@@ -72,6 +74,17 @@ export const SECTIONS = [
     params: ['view', 'group', 'problem', 'q', 'question'],
   },
   {
+    // What the idea generator has proposed, ranked. It loads its own data from its own store.
+    key: 'ideas',
+    label: 'Ideas',
+    order: 50,
+    component: ModSysAdminUxIdeas,
+    funnelLink: { label: 'Ideas' },
+    filters: [],
+    slots: [],
+    params: ['idea', 'istatus', 'itype'],
+  },
+  {
     key: 'pages',
     label: 'Pages and features',
     order: 90,
@@ -85,7 +98,7 @@ export const SECTIONS = [
 // Components that other parts of the tab add to a place that draws them without knowing them. The details of
 // every experiment draw the ones under `experiment`, so each draws nothing unless the experiment is its own.
 export const HOSTED = {
-  problem: [],
+  problem: [ModSysAdminUxProblemIdeas],
   experiment: [ModSysAdminUxReplyConfirmDetail, ModSysAdminUxInterestedDetail],
 }
 

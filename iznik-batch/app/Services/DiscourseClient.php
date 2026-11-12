@@ -169,6 +169,34 @@ class DiscourseClient
     }
 
     /**
+     * The newest topics in a category, as [id, title, created_at], newest first. An unknown
+     * category gives an empty list.
+     *
+     * @return array<int, array{id: int, title: string, created_at: string}>
+     */
+    public function recentTopics(string $categorySlug): array
+    {
+        $data = $this->send('GET', $this->baseUrl.'/c/'.rawurlencode($categorySlug).'/l/latest.json', [], notFoundIsNull: true);
+        $out = [];
+        foreach (($data['topic_list']['topics'] ?? []) as $t) {
+            if (isset($t['id'], $t['title'], $t['created_at'])) {
+                $out[] = ['id' => (int) $t['id'], 'title' => (string) $t['title'], 'created_at' => (string) $t['created_at']];
+            }
+        }
+
+        return $out;
+    }
+
+    /** The text of a topic's first post with the markup removed, or '' when it has none. */
+    public function firstPostText(int $topicId): string
+    {
+        $data = $this->send('GET', $this->baseUrl."/t/{$topicId}.json", [], notFoundIsNull: true);
+        $cooked = (string) ($data['post_stream']['posts'][0]['cooked'] ?? '');
+
+        return trim(preg_replace('/\s+/u', ' ', html_entity_decode(strip_tags($cooked), ENT_QUOTES | ENT_HTML5, 'UTF-8')) ?? '');
+    }
+
+    /**
      * Look a category up by slug, or null when it does not exist yet.
      *
      * @return array<string, mixed>|null

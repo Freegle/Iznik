@@ -60,6 +60,7 @@ import TrystAPI from './TrystAPI.js'
 import UserAPI from './UserAPI.js'
 import UserSearchAPI from './UserSearchAPI.js'
 import UxAPI from './UxAPI.js'
+import UxIdeasAPI from './UxIdeasAPI.js'
 import UxExperimentsAPI from './UxExperimentsAPI.js'
 import UxSurveysAPI from './UxSurveysAPI.js'
 import VisualiseAPI from './VisualiseAPI.js'
@@ -120,6 +121,7 @@ export default (config) => {
     user: new UserAPI(options),
     usersearch: new UserSearchAPI(options),
     ux: new UxAPI(options),
+    uxideas: new UxIdeasAPI(options),
     uxexperiments: new UxExperimentsAPI(options),
     uxsurveys: new UxSurveysAPI(options),
     visualise: new VisualiseAPI(options),
