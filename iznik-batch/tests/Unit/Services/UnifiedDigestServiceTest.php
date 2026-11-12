@@ -1384,6 +1384,87 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+    public function test_a_post_already_sent_is_not_offered_again_when_its_arrival_has_a_fraction_of_a_second(): void
+    {
+        // messages_groups.arrival keeps microseconds, users_digests.lastmsgdate keeps whole
+        // seconds. If the cursor is the arrival cut down to the second, the newest post
+        // sorts after its own cursor and the next day's window offers it again.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: FractionZq (TestLocation)',
+        ]);
+
+        // Set the fraction in SQL: the model formats dates to whole seconds on the way in.
+        $arrival = now()->subHour()->format('Y-m-d H:i:s') . '.400000';
+        DB::table('messages_groups')->where('msgid', $message->id)->update(['arrival' => $arrival]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $tracker = $this->digestTrackerFor($recipient);
+        $this->assertNotNull($tracker->lastmsgdate, 'the first run sent the post and set a cursor');
+
+        // The next day, with nothing new posted.
+        $offered = $this->service
+            ->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY)
+            ->pluck('id')
+            ->all();
+
+        $this->assertNotContains(
+            $message->id,
+            $offered,
+            'a post already mailed was offered again because the stored cursor is earlier than its arrival'
+        );
+    }
+
+    public function test_a_carried_post_with_an_older_copy_on_another_group_is_still_offered(): void
+    {
+        // A carried post is older than the cursor by construction, so a copy of it that
+        // arrived before the cursor looks like "already sent" to the cross-digest check. The
+        // cap left the item out, so nothing of it was sent: it has to be offered again.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $other = $this->createTestGroup();
+        $this->createMembership($recipient, $other, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($poster, $other);
+
+        $arrival = now()->subHours(3);
+        $carried = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: CarriedCopyZq (TestLocation)',
+            'textbody' => 'A carried item.',
+            'arrival' => $arrival,
+        ]);
+        // The same item, hand cross-posted to the member's other group.
+        $this->createTestMessage($poster, $other, [
+            'subject' => 'OFFER: CarriedCopyZq (TestLocation)',
+            'textbody' => 'A carried item.',
+            'arrival' => $arrival,
+        ]);
+
+        $this->trackerWithCarryover($recipient, [$carried->id], now()->subHours(2));
+
+        // Something new, so the digest goes out whatever happens to the carried post.
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: FreshOtherZq (TestLocation)',
+            'arrival' => now()->subHour(),
+        ]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $shown = array_map(
+            fn ($p) => (int) $p['msgid'],
+            $this->lastDailyDigest()->mailDescriptor()['posts']
+        );
+        $this->assertContains(
+            (int) $carried->id,
+            $shown,
+            'a carried post was dropped as already covered because a copy of it sits behind the cursor'
+        );
+    }
+
     /**
      * A daily tracker with a carryover list and a cursor, as a run that hit the cap leaves it.
      *
@@ -1798,6 +1879,56 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertContains($covered->id, $ids, 'reach-covered rippling post is included for the daily member');
         $this->assertNotContains($faraway->id, $ids, 'rippling post whose reach does not cover the member is excluded');
+    }
+
+    public function test_daily_digest_still_sends_a_reach_gated_post_once_its_reach_grows_over_the_member(): void
+    {
+        // A post the reach does not yet cover is held back from the daily digest, to be
+        // included once the reach covers the member. A later post that IS sent in the same
+        // run must not move the cursor past it: the cursor advances over what was sent, not
+        // over what was newer. Daily members have no reach mailer to fall back on.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        // Post A arrives first. Its reach is far to the east, so it does not cover the member.
+        $gated = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Gated post Zq (TestLocation)',
+            'arrival' => now()->subHours(3),
+        ]);
+        $this->seedReach($gated->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
+
+        // Post B arrives later and has no reach row, so the first digest sends it.
+        $ungated = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Ungated post Zq (TestLocation)',
+            'arrival' => now()->subHours(2),
+        ]);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $first = array_map(
+            fn ($p) => (int) $p['msgid'],
+            $this->lastDailyDigest()->mailDescriptor()['posts']
+        );
+        $this->assertSame([(int) $ungated->id], $first, 'only the ungated post is sent on the first day');
+
+        // The reach grows over the member. The next day's digest must now include post A.
+        $grown = 'POLYGON((-0.2 51.4,5.2 51.4,5.2 51.6,-0.2 51.6,-0.2 51.4))';
+        DB::table('rippling_reach')->where('msgid', $gated->id)->update([
+            'polygon_cells' => $this->reachCellsFor($grown),
+        ]);
+        DB::statement('UPDATE rippling_reach SET outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
+            [$grown, $gated->id]);
+        $this->reachArrivalBox = $this->wktBounds($grown);
+        $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $second = array_map(
+            fn ($p) => (int) $p['msgid'],
+            $this->lastDailyDigest()->mailDescriptor()['posts']
+        );
+
+        $this->assertContains((int) $gated->id, $second,
+            'a post held back by the reach gate is sent once its reach covers the member');
     }
 
     /**
@@ -4936,5 +5067,146 @@ class UnifiedDigestServiceTest extends TestCase
         $this->service->sendReachDigests(null, false, $mine, 2);
         $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
         $this->assertTrue($this->ledgered($msgid, $member->id));
+    }
+
+    /**
+     * Make the next reach evaluation fail the way a database or routing error does, and return
+     * a callable that puts the real service back.
+     */
+    private function breakReachEvaluation(): callable
+    {
+        $real = app(\App\Services\Ripple\ReachService::class);
+        $broken = \Mockery::mock(\App\Services\Ripple\ReachService::class);
+        $broken->shouldReceive('currentBudgetSecs')->andThrow(new \RuntimeException('simulated lock wait timeout'));
+        $this->app->instance(\App\Services\Ripple\ReachService::class, $broken);
+
+        return fn () => $this->app->instance(\App\Services\Ripple\ReachService::class, $real);
+    }
+
+    /**
+     * A post whose mail check fails must be looked at again. The pass moves its mark only when
+     * no post failed; if it moves anyway, the post's updated_at is behind the mark next time
+     * and a newly reached member is never mailed.
+     */
+    public function test_reach_pass_does_not_move_its_mark_when_a_post_fails_and_mails_the_member_next_pass(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        $markBefore = DB::table('config')->where('key', $markKey)->value('value');
+
+        $restore = $this->breakReachEvaluation();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame($markBefore, DB::table('config')->where('key', $markKey)->value('value'), 'a pass with a failed post leaves the mark where it was');
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'precondition: the failed pass mailed nobody');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the next pass re-examines the failed post and mails the member');
+    }
+
+    /**
+     * A queued member is dequeued once evaluated. A member whose evaluation failed has not been
+     * evaluated, so the row stays and the next pass mails them.
+     */
+    public function test_drain_keeps_the_queue_row_when_the_member_evaluation_fails(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $restore = $this->breakReachEvaluation();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame(1, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the queue row survives a failed evaluation');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the retried member is mailed');
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
+    }
+
+    /**
+     * The routing server being down does not throw: reachArrivalBatch logs it and returns null.
+     * A pass that reads that as "nobody is reached" moves its mark and the post is never looked
+     * at again, which is the same lost mail as an exception.
+     */
+    private function breakRouting(): callable
+    {
+        $real = app(\App\Services\Ripple\ReachService::class);
+        $this->partialMock(\App\Services\Ripple\ReachService::class, function ($mock) {
+            $mock->shouldReceive('reachArrivalBatch')->andReturn(null);
+        });
+
+        return fn () => $this->app->instance(\App\Services\Ripple\ReachService::class, $real);
+    }
+
+    public function test_reach_pass_does_not_move_its_mark_when_routing_cannot_answer_and_mails_the_member_next_pass(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        $markBefore = DB::table('config')->where('key', $markKey)->value('value');
+
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame($markBefore, DB::table('config')->where('key', $markKey)->value('value'), 'a pass routing could not answer leaves the mark where it was');
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'precondition: the pass mailed nobody');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the next pass, with routing back, mails the member');
+    }
+
+    public function test_drain_keeps_the_queue_row_when_routing_cannot_answer(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame(1, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the queue row survives a routing outage');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the retried member is mailed');
+    }
+
+    /**
+     * A post that fails on every pass must not hold the mark for ever: each pass would re-read a
+     * window that only grows, which is the load the mark exists to remove.
+     */
+    public function test_a_failing_post_cannot_hold_the_mark_back_for_more_than_six_hours(): void
+    {
+        [$msgid] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        DB::table('config')->where('key', $markKey)->update(['value' => now()->subHours(10)->toDateTimeString()]);
+
+        $restore = $this->breakReachEvaluation();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $mark = \Illuminate\Support\Carbon::parse(DB::table('config')->where('key', $markKey)->value('value'));
+        $this->assertTrue($mark->gt(now()->subHours(7)), 'the mark has moved up to the six hour bound');
+        $this->assertTrue($mark->lt(now()->subHours(5)), 'but no further than the bound, so the failed post is still re-read');
     }
 }

@@ -371,11 +371,15 @@ class ChatNotificationService
                 // For Mod2Mod, the sender is always the message author.
                 // For User2User/User2Mod:
                 //   - If this is a copy-to-self (recipient is the message author), use the message author.
+                //   - For a User2Mod moderator recipient, use the message author: the chat's other
+                //     user is the member, but the author may be another moderator.
                 //   - Otherwise, use the "other" user in the chat.
                 if ($chatType === ChatRoom::TYPE_MOD2MOD) {
                     $sendingFrom = $message->user;
                 } elseif ($message->userid === $sendingTo->id) {
                     // Copy-to-self: recipient is the message author, so sender should be themselves.
+                    $sendingFrom = $message->user;
+                } elseif ($chatType === ChatRoom::TYPE_USER2MOD && $sendingTo->id !== $chatRoom->user1) {
                     $sendingFrom = $message->user;
                 } elseif ($message->type === ChatMessage::TYPE_PROMPT
                     && ! in_array($message->userid, [$chatRoom->user1, $chatRoom->user2], true)) {
@@ -734,14 +738,14 @@ class ChatNotificationService
      * is refusing our mail.
      *
      * Asked by the caller rather than swallowed here, because
-     * ChatChaseupExpectedService marks the expectation as chased once this
-     * returns - and a chase-up we never sent must not count as one we did, or
-     * the member is recorded as having been reminded when they were not.
+     * ChatChaseupExpectedService remembers the message as chased once it sends -
+     * and a chase-up we never sent must not count as one we did, or the member
+     * is recorded as having been reminded when they were not.
      */
     public function chaseupSuppressed(User $sendingTo, ?int $mailKey = null): bool
     {
         // $mailKey is the chat message being chased. Like the notification path
-        // above, this skips WITHOUT marking the expectation as chased, so the
+        // above, this skips WITHOUT remembering the message as chased, so the
         // same expectation comes round on every run; without an identity the
         // held-mail counter recorded each pass as another withheld mail.
         return app(\App\Services\Mail\MailSuppressionService::class)

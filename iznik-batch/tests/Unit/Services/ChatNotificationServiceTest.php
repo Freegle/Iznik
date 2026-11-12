@@ -739,6 +739,54 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertFalse($present(), 'another message\'s approval does not admit this one');
     }
 
+    public function test_reply_approved_after_a_later_reply_was_mailed_is_still_mailed(): void
+    {
+        // The same sender writes a reply that is held for review and then a second reply that is not. The second is
+        // mailed, which moves the recipient's lastmsgemailed past the held reply. When a moderator approves the held
+        // reply it is admitted to the selection by its approval row, and the recipient must still be mailed it: the
+        // approval log says it is now deliverable and it has not been mailed.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $sender->id, 'lastmsgemailed' => null]);
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $recipient->id, 'lastmsgemailed' => null]);
+
+        $held = $this->createTestChatMessage($room, $sender, ['date' => now()->subDays(3), 'reviewrequired' => 1, 'message' => 'Held reply']);
+        $later = $this->createTestChatMessage($room, $sender, ['date' => now()->subMinutes(5), 'message' => 'Second reply']);
+        $this->assertGreaterThan($held->id, $later->id);
+
+        // The second reply is mailed while the first is still held.
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals(
+            $later->id,
+            (int) ChatRoster::where('chatid', $room->id)->where('userid', $recipient->id)->value('lastmsgemailed')
+        );
+
+        // A moderator approves the held reply, as approveChatMessage in the Go API records it.
+        DB::table('chat_messages')->where('id', $held->id)->update(['reviewrequired' => 0, 'reviewedby' => $recipient->id]);
+        DB::table('logs')->insert([
+            'timestamp' => now()->subMinutes(1),
+            'type' => 'Chat',
+            'subtype' => 'Approved',
+            'user' => $sender->id,
+            'byuser' => $recipient->id,
+            'text' => "Chat message {$held->id} approved",
+        ]);
+
+        $this->assertEquals(
+            1,
+            $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id),
+            'The approved reply is mailed to the recipient even though a later reply was mailed first'
+        );
+
+        $mailedIds = Mail::sent(ChatNotification::class)
+            ->filter(fn ($mail) => $mail->recipient->id === $recipient->id)
+            ->map(fn ($mail) => (int) $mail->message->id)
+            ->all();
+        $this->assertContains((int) $held->id, $mailedIds);
+    }
+
     public function test_notify_by_email_skips_deleted_messages(): void
     {
         $sender = $this->createTestUser();
@@ -1453,6 +1501,62 @@ class ChatNotificationServiceTest extends TestCase
         if ($modARoster) {
             $this->assertNull($modARoster->lastmsgemailed, 'Mod A (sender) should NOT have been notified');
         }
+    }
+
+    public function test_notify_by_email_user2mod_mod_message_to_other_mod_is_from_the_author_not_the_member(): void
+    {
+        $member = $this->createTestUser(['fullname' => 'Alice Member']);
+        $group = $this->createTestGroup();
+
+        $modA = $this->createTestUser(['fullname' => 'Mod A (author)']);
+        $modB = $this->createTestUser(['fullname' => 'Mod B (recipient)']);
+
+        foreach ([$modA, $modB] as $mod) {
+            Membership::create([
+                'userid' => $mod->id,
+                'groupid' => $group->id,
+                'role' => Membership::ROLE_MODERATOR,
+                'added' => now(),
+                'settings' => null,
+            ]);
+        }
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id,
+            'groupid' => $group->id,
+            'created' => now(),
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $member->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        $this->createTestChatMessage($room, $modA, [
+            'date' => now()->subMinutes(5),
+            'message' => 'Hello from Mod A',
+        ]);
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id);
+
+        // Mod B reads Mod A's words, so the mail is from the author and from the volunteers, not from the member.
+        Mail::assertSent(ChatNotification::class, function ($mail) use ($modA, $modB, $member) {
+            if ($mail->recipient->id !== $modB->id) {
+                return false;
+            }
+
+            $this->assertSame($modA->id, $mail->sender->id, 'Sender is the message author, not the member');
+            $this->assertNotSame($member->id, $mail->sender->id);
+
+            $fromName = $mail->envelope()->from->name;
+            $this->assertStringNotContainsString('via', $fromName);
+            $this->assertStringContainsString('Volunteers', $fromName);
+
+            return true;
+        });
     }
 
     public function test_notify_by_email_user2mod_active_mod_reply_notifies_other_active_not_backup(): void
