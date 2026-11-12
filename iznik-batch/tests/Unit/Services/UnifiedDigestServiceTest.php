@@ -5159,4 +5159,15 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertTrue($mark->gt(now()->subHours(7)), 'the mark has moved up to the six hour bound');
         $this->assertTrue($mark->lt(now()->subHours(5)), 'but no further than the bound, so the failed post is still re-read');
     }
+
+    public function test_reach_mail_goes_to_an_immediate_member_inactive_for_120_days(): void
+    {
+        // The cursor immediate path and the daily path mail anyone active within 182.5 days, so the
+        // reach mail (which delivers rippled posts instead of the cursor path) must too.
+        [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+        $member->lastaccess = now()->subDays(120);
+        $member->save();
+
+        $this->assertSame(1, $this->service->mailNewlyReachedForPost($message->id));
+    }
 }
