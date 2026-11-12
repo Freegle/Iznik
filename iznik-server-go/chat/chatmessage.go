@@ -2276,7 +2276,9 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	// identical twin in autoApproveModmails (7631a317a13b).
 	if result := db.Table("chat_messages").Where("id = ?", msgID).
 		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid}); result.Error != nil {
+		// Nothing below may run: the approval log row is what tells the mailer the reply was approved.
 		stdlog.Printf("Failed to approve chat message %d: %v", msgID, result.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to approve message")
 	}
 
 	// A reply that waited for its sender's answer (the car seat question) and was then held for review has its question
