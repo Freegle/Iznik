@@ -115,17 +115,12 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 	// is what makes a partition cutover atomic: the moment a node boots the
 	// new artifacts, every staged post switches with it, and nothing was
 	// mutated to get there. An engine with no fingerprint (nil) never matches.
-	args = append(args, liveReachPartFP())
+	args = append(args, fpArg(liveReachPartFP()))
 	for i, id := range ids {
 		ph[i] = "?"
 		args = append(args, id)
 	}
-	rows, err := db.Query(
-		"SELECT rr.msgid, COALESCE(IF(rr.reach_labels_next_fp = ?, rr.reach_labels_next, NULL), rr.reach_labels), "+
-			"rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, rr.origin_union_secs, "+
-			"(SELECT mg.groupid FROM messages_groups mg WHERE mg.msgid = rr.msgid AND mg.deleted = 0 ORDER BY mg.arrival ASC LIMIT 1) "+
-			"FROM rippling_reach rr WHERE rr.msgid IN ("+
-			strings.Join(ph, ",")+")", args...)
+	rows, err := db.Query(sqlEvalRows(strings.Join(ph, ",")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +576,7 @@ func groupAreaRings(gid int64) [][][2]float64 {
 		var rings [][][2]float64
 		if db := groupsDB; db != nil {
 			var wkt sql.NullString
-			if err := db.QueryRow("SELECT ST_AsText(polyindex) FROM `groups` WHERE id = ? AND polyindex IS NOT NULL AND ST_GeometryType(polyindex) <> 'POINT'", gid).Scan(&wkt); err == nil && wkt.Valid {
+			if err := db.QueryRow(sqlGroupAreaWKT(), gid).Scan(&wkt); err == nil && wkt.Valid {
 				if r, err := wktAreaRings(wkt.String); err == nil {
 					rings = r
 				}
@@ -642,18 +637,18 @@ var leafRowLoader = func(leaf int32) ([]uint64, error) {
 	if db == nil {
 		return nil, errNoEvalDB
 	}
-	q := "SELECT msgid FROM rippling_reach_leaves WHERE leaf = ?"
+	q := sqlLeafPosts
 	args := []interface{}{leaf}
 	if live := reachEngine(); live != nil {
 		if prev := reachPrevEngine(); prev != nil {
-			q += " AND (fp IS NULL OR fp IN (?, ?))"
-			args = append(args, live.partFP, prev.partFP)
+			q += sqlLeafFPFilter2
+			args = append(args, fpArg(live.partFP), fpArg(prev.partFP))
 		} else {
-			q += " AND (fp IS NULL OR fp = ?)"
-			args = append(args, live.partFP)
+			q += sqlLeafFPFilter
+			args = append(args, fpArg(live.partFP))
 		}
 	}
-	rows, err := db.Query(q, args...)
+	rows, err := db.Query(portableSQL(q), args...)
 	if err != nil {
 		return nil, err
 	}

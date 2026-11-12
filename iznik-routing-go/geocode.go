@@ -18,12 +18,7 @@ func resolvePlace(db *sql.DB, lat, lng float64) (postcode, place string) {
 	if db == nil {
 		return "", ""
 	}
-	row := db.QueryRow(`
-		SELECT p.name AS postcode, COALESCE(a.name,'') AS place
-		FROM locations p LEFT JOIN locations a ON a.id = p.areaid
-		WHERE p.type='Postcode' AND p.lat BETWEEN ?-0.1 AND ?+0.1 AND p.lng BETWEEN ?-0.15 AND ?+0.15
-		ORDER BY ST_Distance_Sphere(POINT(p.lng,p.lat), POINT(?,?)) LIMIT 1
-	`, lat, lat, lng, lng, lng, lat)
+	row := db.QueryRow(sqlNearestPostcode(), lat, lat, lng, lng, lng, lat)
 	if err := row.Scan(&postcode, &place); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("resolvePlace: query failed: %v", err)

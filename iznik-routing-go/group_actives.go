@@ -80,10 +80,7 @@ func activesCacheSet(groupID int64, resp groupActivesResponse) {
 func queryActiveMembers(db *sql.DB, groupID int64) (int, error) {
 	var count int
 	err := db.QueryRow(
-		`SELECT COUNT(*) FROM memberships m
-		 INNER JOIN users u ON u.id = m.userid
-		 WHERE m.groupid = ? AND m.collection = 'Approved'
-		   AND u.lastaccess >= NOW() - INTERVAL 90 DAY`,
+		sqlGroupActiveMembers(),
 		groupID,
 	).Scan(&count)
 	return count, err
