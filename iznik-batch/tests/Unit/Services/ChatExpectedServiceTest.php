@@ -6,6 +6,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Services\ChatExpectedService;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ChatExpectedServiceTest extends TestCase
@@ -173,6 +174,45 @@ class ChatExpectedServiceTest extends TestCase
         $row = DB::table('users_expected')->where('chatmsgid', $msg->id)->first();
         $this->assertNotNull($row);
         $this->assertEquals(-1, $row->value);
+    }
+
+    /**
+     * A reply counts as received only when the other member could see it. One held for review, rejected or not
+     * yet processed is invisible to them, and replyreceived is never reset, so counting it clears the waiting
+     * state for good.
+     *
+     * @return array<string, array{0: array<string, int>}>
+     */
+    public static function invisibleReplies(): array
+    {
+        return [
+            'held for review' => [['reviewrequired' => 1]],
+            'rejected' => [['reviewrejected' => 1]],
+            'not processed' => [['processingsuccessful' => 0]],
+        ];
+    }
+
+    #[DataProvider('invisibleReplies')]
+    public function test_update_expected_does_not_count_a_reply_the_other_member_cannot_see(array $reply): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        $this->createTestChatMessage($room, $user2, array_merge(['date' => now()->subDays(1)], $reply));
+
+        $stats = $this->service->updateExpected(full: true);
+
+        $this->assertEquals(1, $stats['waiting']);
+        $this->assertEquals(0, $stats['received']);
+        $this->assertEquals(0, $msg->fresh()->replyreceived, 'an invisible reply is not a reply received');
+        $this->assertEquals(-1, DB::table('users_expected')->where('chatmsgid', $msg->id)->value('value'));
     }
 
     // -------------------------------------------------------------------------
