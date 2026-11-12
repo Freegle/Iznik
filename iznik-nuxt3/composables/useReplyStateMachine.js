@@ -968,6 +968,8 @@ export function useReplyStateMachine(messageId, options = {}) {
       if (!emailValid.value) {
         log('Email not valid, focusing email field')
         emailValidatorRef.value?.focus?.()
+        // Nothing is being sent, so the reply must not stay committed for the next page load.
+        disarmFailedReply()
         transitionTo(ReplyState.COMPOSING, {
           event: ReplyEvent.VALIDATION_FAILED,
           field: 'email',
