@@ -997,4 +997,43 @@ class MessageExpiryServiceTest extends TestCase
             'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
         ]);
     }
+
+    public function test_age_expiry_does_not_overwrite_a_post_completed_or_promised_since_the_list_was_built(): void
+    {
+        $user = $this->createTestUser();
+        $other = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $taken = $this->createTestMessage($user, $group);
+        MessageOutcome::create([
+            'msgid' => $taken->id,
+            'outcome' => MessageOutcome::OUTCOME_TAKEN,
+            'timestamp' => now(),
+        ]);
+
+        $promised = $this->createTestMessage($user, $group);
+        DB::table('messages_promises')->insert([
+            'msgid' => $promised->id,
+            'userid' => $other->id,
+            'promisedat' => now(),
+        ]);
+
+        // processExpiredFromSpatialIndex builds its id list once and then calls this per id, so a
+        // post can become Taken or Promised in between.
+        $method = new \ReflectionMethod($this->service, 'processMessageExpiry');
+        $method->setAccessible(true);
+        $method->invoke($this->service, $taken->id);
+        $method->invoke($this->service, $promised->id);
+
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $taken->id,
+            'outcome' => MessageOutcome::OUTCOME_TAKEN,
+        ]);
+        $this->assertDatabaseMissing('messages_outcomes', [
+            'msgid' => $taken->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+        ]);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $promised->id]);
+    }
 }
