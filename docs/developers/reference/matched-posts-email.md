@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-26
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
@@ -81,8 +81,9 @@ This is a **separate** mail from the daily digest's relevance ranking
 
 - apiv2 vector endpoint: `FEATURE_MATCHED_POSTS=off` (returns empty, no deploy).
 - Laravel send: `FREEGLE_MATCHED_ENABLED=false` (config `freegle.matched.enabled`).
-- Per-member opt-out: apiv2 `GET|POST /user/relevantoff?u=&k=` sets
-  `relevantallowed=0`, key-authenticated by the user's `users_logins` Link key
+- Per-member opt-out: apiv2 `POST /user/relevantoff?u=&k=` sets
+  `relevantallowed=0`; a `GET` only shows a confirm page whose form POSTs back, because link
+  scanners follow footer links. It is key-authenticated by the user's `users_logins` Link key
   (minted by `LoginLinkService`). The matched email points both its
   RFC 8058 `List-Unsubscribe` header (one-click) and a visible footer link at it,
   so a member can stop just these emails without unsubscribing the whole account.
