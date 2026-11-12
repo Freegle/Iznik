@@ -234,4 +234,4 @@ QUERY: SELECT locations.id,
 		   AND locations.type = 'Postcode'
 		   AND locations.name = ?
 		 LIMIT 1
-ARGS: [SW1A 2AA]
+ARGS: [ZZ1 2AA]

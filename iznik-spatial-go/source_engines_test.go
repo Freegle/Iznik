@@ -286,17 +286,22 @@ const (
 	wktBalham   = "POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))"           // 0.01 square degrees
 	wktSW12     = "POLYGON((-0.105 51.495, -0.095 51.495, -0.095 51.505, -0.105 51.505, -0.105 51.495))" // 1e-4
 	wktDistrict = "POLYGON((-0.305 51.395, -0.295 51.395, -0.295 51.405, -0.305 51.405, -0.305 51.395))"
-	wktExcluded = "POLYGON((0.05 51.45, 0.15 51.45, 0.15 51.55, 0.05 51.55, 0.05 51.45))"
-	wktHuge     = "POLYGON((1 52, 2 52, 2 53, 1 53, 1 52))" // 1 square degree: over the area cap
-	wktGroupA   = "POLYGON((-0.2 51.4, 0 51.4, 0 51.6, -0.2 51.6, -0.2 51.4))"
-	wktGroupB   = "POLYGON((0.1 51.4, 0.3 51.4, 0.3 51.6, 0.1 51.6, 0.1 51.4))"
-	wktJob1     = "POLYGON((-1.60 53.78, -1.50 53.78, -1.50 53.82, -1.60 53.82, -1.60 53.78))"
-	wktJob2     = "POLYGON((-1.10 53.94, -1.00 53.94, -1.00 53.98, -1.10 53.98, -1.10 53.94))"
-	wktRingA    = "POLYGON((0 0, 0.003 0, 0.003 0.003, 0 0.003, 0 0))"
-	wktRingB    = "POLYGON((0.01 0.01, 0.013 0.01, 0.013 0.013, 0.01 0.013, 0.01 0.01))"
-	wktReachA   = "POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))"
-	wktReachB   = "POLYGON((0.02 0.02, 0.03 0.02, 0.03 0.03, 0.02 0.03, 0.02 0.02))"
-	wktReachC   = "POLYGON((0.04 0.04, 0.05 0.04, 0.05 0.05, 0.04 0.05, 0.04 0.04))"
+	// Postcode geometries are polygons: the loaders take a centroid, and MySQL's ST_Centroid is
+	// defined for polygons. The override's centroid is (-0.20, 51.55).
+	wktOtherPostcode    = "POLYGON((-0.505 51.595, -0.495 51.595, -0.495 51.605, -0.505 51.605, -0.505 51.595))"
+	wktOverride         = "POLYGON((-0.205 51.545, -0.195 51.545, -0.195 51.555, -0.205 51.555, -0.205 51.545))"
+	wktExcludedPostcode = "POLYGON((-2.245 53.475, -2.235 53.475, -2.235 53.485, -2.245 53.485, -2.245 53.475))"
+	wktExcluded         = "POLYGON((0.05 51.45, 0.15 51.45, 0.15 51.55, 0.05 51.55, 0.05 51.45))"
+	wktHuge             = "POLYGON((1 52, 2 52, 2 53, 1 53, 1 52))" // 1 square degree: over the area cap
+	wktGroupA           = "POLYGON((-0.2 51.4, 0 51.4, 0 51.6, -0.2 51.6, -0.2 51.4))"
+	wktGroupB           = "POLYGON((0.1 51.4, 0.3 51.4, 0.3 51.6, 0.1 51.6, 0.1 51.4))"
+	wktJob1             = "POLYGON((-1.60 53.78, -1.50 53.78, -1.50 53.82, -1.60 53.82, -1.60 53.78))"
+	wktJob2             = "POLYGON((-1.10 53.94, -1.00 53.94, -1.00 53.98, -1.10 53.98, -1.10 53.94))"
+	wktRingA            = "POLYGON((0 0, 0.003 0, 0.003 0.003, 0 0.003, 0 0))"
+	wktRingB            = "POLYGON((0.01 0.01, 0.013 0.01, 0.013 0.013, 0.01 0.013, 0.01 0.01))"
+	wktReachA           = "POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))"
+	wktReachB           = "POLYGON((0.02 0.02, 0.03 0.02, 0.03 0.03, 0.02 0.03, 0.02 0.02))"
+	wktReachC           = "POLYGON((0.04 0.04, 0.05 0.04, 0.05 0.05, 0.04 0.05, 0.04 0.04))"
 )
 
 func overflowJSON(t *testing.T, rings map[string]string) string {
@@ -329,20 +334,22 @@ func (e *engineDB) seed() {
 	t := e.t
 	t.Helper()
 
-	// locations: 1 area; 2 a postcode with a polygon; 3 a postcode with a point override; 4 a
-	// district (no space); 5 an excluded area; 6 an area over the size cap; 7 an excluded postcode.
+	// locations: 1 area; 2 a postcode with a polygon; 3 a postcode with a polygon override; 4 a
+	// district (no space); 5 an excluded area; 6 an area over the size cap; 7 an excluded postcode;
+	// 8 a place that is only a point.
 	loc := func(id int, name, typ, geometry, our, ts string) {
 		e.exec(fmt.Sprintf("INSERT INTO locations (id, name, type, geometry, ourgeometry, %s) VALUES (?, ?, ?, %s, %s, ?)",
 			e.dl.quote("timestamp"), geometry, our), id, name, typ, ts)
 	}
 	none := "NULL"
 	loc(1, "Balham", "Polygon", e.geom(wktBalham, false), none, tsNew)
-	loc(2, "SW12 8QN", "Postcode", e.geom(wktSW12, false), none, tsOld)
-	loc(3, "E1 6AN", "Postcode", e.geom("POINT(-0.50 51.60)", false), e.geom("POINT(-0.20 51.55)", false), tsNew)
-	loc(4, "SW12", "Postcode", e.geom(wktDistrict, false), none, tsOld)
+	loc(2, "ZZ12 3AB", "Postcode", e.geom(wktSW12, false), none, tsOld)
+	loc(3, "ZZ6 1AB", "Postcode", e.geom(wktOtherPostcode, false), e.geom(wktOverride, false), tsNew)
+	loc(4, "ZZ12", "Postcode", e.geom(wktDistrict, false), none, tsOld)
 	loc(5, "Excluded", "Polygon", e.geom(wktExcluded, false), none, tsNew)
 	loc(6, "Huge", "Polygon", e.geom(wktHuge, false), none, tsNew)
-	loc(7, "M1 1AA", "Postcode", e.geom("POINT(-2.24 53.48)", false), none, tsNew)
+	loc(7, "ZZ1 1AA", "Postcode", e.geom(wktExcludedPostcode, false), none, tsNew)
+	loc(8, "Pinpoint", "Polygon", e.geom("POINT(-0.60 51.70)", false), none, tsNew)
 	e.exec("INSERT INTO locations_excluded (locationid) VALUES (5)")
 	e.exec("INSERT INTO locations_excluded (locationid) VALUES (7)")
 
@@ -460,8 +467,8 @@ func TestSourceEngines_LocationsLoad(t *testing.T) {
 		idx := newTestIndex(t)
 		require.NoError(t, (&LocationsDataset{}).Load(e.db, idx))
 
-		// 3 is a point, 5 and 7 are excluded, 6 is over the area cap, 4 is a district but still a location.
-		assert.Equal(t, []int64{1, 2, 4}, indexIDs(t, idx))
+		// 8 is a point, 5 and 7 are excluded, 6 is over the area cap, 4 is a district but still a location.
+		assert.Equal(t, []int64{1, 2, 3, 4}, indexIDs(t, idx))
 
 		balham := itemOf(t, idx, 1)
 		assert.InDelta(t, 0.01, balham.Area, 1e-9)
@@ -492,14 +499,14 @@ func TestSourceEngines_LocationsDelta(t *testing.T) {
 
 		require.NoError(t, (&LocationsDataset{}).ApplyDelta(e.db, idx, horizon))
 
-		// Only 1 is new, polygonal, in range and not excluded.
-		assert.Equal(t, []int64{1}, indexIDs(t, idx))
+		// Only 1 and 3 are new, polygonal, in range and not excluded.
+		assert.Equal(t, []int64{1, 3}, indexIDs(t, idx))
 
 		// A change after the horizon is picked up, one before it is not.
 		e.exec(fmt.Sprintf("UPDATE locations SET name = ?, %s = ? WHERE id = 1", e.dl.quote("timestamp")), "Balham Common", tsLater)
-		e.exec(fmt.Sprintf("UPDATE locations SET name = ?, %s = ? WHERE id = 2", e.dl.quote("timestamp")), "SW12 8QN edited", tsOld)
+		e.exec(fmt.Sprintf("UPDATE locations SET name = ?, %s = ? WHERE id = 2", e.dl.quote("timestamp")), "ZZ12 3AB edited", tsOld)
 		require.NoError(t, (&LocationsDataset{}).ApplyDelta(e.db, idx, horizon))
-		assert.Equal(t, []int64{1}, indexIDs(t, idx))
+		assert.Equal(t, []int64{1, 3}, indexIDs(t, idx))
 		assert.Equal(t, "Balham Common", itemOf(t, idx, 1).Extra["name"])
 	})
 }
@@ -542,22 +549,22 @@ func TestSourceEngines_PostcodeLookup(t *testing.T) {
 		placesDB = e.db
 		t.Cleanup(func() { placesDB = saved })
 
-		f := lookupPostcode("SW12 8QN")
+		f := lookupPostcode("ZZ12 3AB")
 		require.NotNil(t, f)
 		assert.InDelta(t, -0.10, f.Geometry.Coordinates[0], 1e-9)
 		assert.InDelta(t, 51.50, f.Geometry.Coordinates[1], 1e-9)
-		assert.Equal(t, "SW12 8QN", f.Properties.Name)
+		assert.Equal(t, "ZZ12 3AB", f.Properties.Name)
 		assert.EqualValues(t, 2, f.Properties.OsmID)
 
 		// Postcodes match without regard to case, on both engines.
-		assert.NotNil(t, lookupPostcode("sw12 8qn"))
+		assert.NotNil(t, lookupPostcode("zz12 3ab"))
 
 		// The override geometry is the one used.
-		f = lookupPostcode("E1 6AN")
+		f = lookupPostcode("ZZ6 1AB")
 		require.NotNil(t, f)
 		assert.InDelta(t, -0.20, f.Geometry.Coordinates[0], 1e-9)
 
-		assert.Nil(t, lookupPostcode("M1 1AA"), "an excluded postcode is not offered")
+		assert.Nil(t, lookupPostcode("ZZ1 1AA"), "an excluded postcode is not offered")
 		assert.Nil(t, lookupPostcode("ZZ99 9ZZ"))
 	})
 }

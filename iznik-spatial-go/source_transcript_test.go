@@ -131,7 +131,7 @@ func recordSourceQueries(t *testing.T) string {
 	rec.add("-- postcode lookup", nil)
 	saved := placesDB
 	placesDB = db
-	lookupPostcode("SW1A 2AA")
+	lookupPostcode("ZZ1 2AA")
 	placesDB = saved
 
 	return strings.Join(rec.lines, "\n")
