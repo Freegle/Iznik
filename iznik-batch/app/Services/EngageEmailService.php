@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Sql;
 use App\Mail\Engage\EngageMail;
 use App\Models\Group;
 use App\Models\User;
@@ -109,7 +110,7 @@ class EngageEmailService
                 ->join('groups', 'groups.id', '=', 'memberships.groupid')
                 ->where('memberships.userid', $userId)
                 ->where('groups.type', Group::TYPE_FREEGLE)
-                ->selectRaw('MAX(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(memberships.settings, "$.engagement")), 1)) AS enabled')
+                ->selectRaw("MAX(COALESCE(".Sql::jsonText('memberships.settings', '$.engagement').", '1')) AS enabled")
                 ->value('enabled');
 
             if ($engagementEnabled === '0' || $engagementEnabled === 0) {

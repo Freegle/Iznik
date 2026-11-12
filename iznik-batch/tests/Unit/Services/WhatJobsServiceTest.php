@@ -891,6 +891,8 @@ class WhatJobsServiceTest extends TestCase
      */
     public function test_the_replacement_jobs_table_gets_the_visible_cpc_index(): void
     {
+        $this->requiresMySql('exercises SHOW INDEX and CREATE TABLE ... LIKE, which are MySQL statements');
+
         $svc = new WhatJobsService();
         $columns = fn () => collect(DB::select('SHOW INDEX FROM jobs_new WHERE Key_name = ?', ['visible_cpc']))
             ->sortBy('Seq_in_index')
@@ -926,6 +928,8 @@ class WhatJobsServiceTest extends TestCase
      */
     public function test_adding_visible_cpc_twice_is_harmless(): void
     {
+        $this->requiresMySql('exercises SHOW INDEX and CREATE TABLE ... LIKE, which are MySQL statements');
+
         $svc = new WhatJobsService();
 
         try {

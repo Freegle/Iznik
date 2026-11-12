@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands\Queue;
 
+use App\Database\Expressions\DateAdd;
+use App\Database\Expressions\Now;
 use App\Services\AutoSplit\Crops;
 use App\Support\ClearanceSql;
 use App\Console\Commands\Mail\SendAdminCommand;
@@ -2173,7 +2175,7 @@ class ProcessBackgroundTasksCommand extends Command
                 'retries' => $retries + 1,
                 'alerted' => $alerted,
             ]),
-            'created_at' => DB::raw('DATE_ADD(NOW(), INTERVAL ' . (int) $delay . ' SECOND)'),
+            'created_at' => new DateAdd(new Now(), (int) $delay, 'SECOND'),
         ]);
     }
 
