@@ -2488,6 +2488,68 @@ func TestPostUserMergeByModeratorForbiddenForOutsideUser(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+// postMergeAs calls POST /api/user action=Merge with the given token and returns the status code.
+func postMergeAs(t *testing.T, token string, id1, id2 uint64) int {
+	payload := map[string]interface{}{"action": "Merge", "id1": id1, "id2": id2}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+func TestPostUserMergeByModeratorCannotTakeOverHigherSystemRole(t *testing.T) {
+	// A moderator merges ordinary members they moderate. They cannot merge an Admin or
+	// Support account into their own, which would hand them that account's system role.
+	for _, role := range []string{utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT} {
+		t.Run(role, func(t *testing.T) {
+			prefix := uniquePrefix("mergemodesc" + role)
+			db := database.DBConn
+
+			modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+			_, modToken := CreateTestSession(t, modID)
+			groupID := CreateTestGroup(t, prefix)
+			CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+
+			higherID := CreateTestUser(t, prefix+"_higher", role)
+			CreateTestMembership(t, higherID, groupID, utils.ROLE_MEMBER)
+
+			assert.Equal(t, fiber.StatusForbidden, postMergeAs(t, modToken, higherID, modID))
+
+			var modRole string
+			db.Raw("SELECT systemrole FROM users WHERE id = ?", modID).Scan(&modRole)
+			assert.Equal(t, utils.SYSTEMROLE_MODERATOR, modRole, "the moderator must not gain the merged account's system role")
+
+			var cnt int64
+			db.Raw("SELECT COUNT(*) FROM users WHERE id = ?", higherID).Scan(&cnt)
+			assert.Equal(t, int64(1), cnt, "the Admin or Support account must not be deleted")
+		})
+	}
+}
+
+func TestPostUserMergeByModeratorCannotMergeAMemberIntoThemselves(t *testing.T) {
+	// The moderator check passes when the target is the moderator, since they moderate their own
+	// group. A moderator merging a member into their own account would take over the member's
+	// emails and logins, so a moderator merge never involves the caller.
+	prefix := uniquePrefix("mergemodself")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+
+	assert.Equal(t, fiber.StatusForbidden, postMergeAs(t, modToken, memberID, modID))
+
+	var cnt int64
+	db.Raw("SELECT COUNT(*) FROM users WHERE id = ?", memberID).Scan(&cnt)
+	assert.Equal(t, int64(1), cnt, "the member's account must not be merged into the moderator's")
+}
+
 // Tests for the support tools endpoints (GET /api/user/:id/*).
 // All endpoints require the caller to be a moderator of a group the target belongs to.
 
