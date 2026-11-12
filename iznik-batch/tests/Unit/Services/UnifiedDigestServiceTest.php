@@ -5306,4 +5306,14 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(2, $stats['users_processed'], 'one member\'s bad data must not end the run for the rest');
         $this->assertGreaterThanOrEqual(1, $stats['emails_sent'], 'the member with good data still gets their digest');
     }
+
+    public function test_reach_mail_skips_a_trashnothing_member(): void
+    {
+        // The daily path leaves out members with a tnuserid: they are a partner's members.
+        [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+        $member->tnuserid = 987654;
+        $member->save();
+
+        $this->assertSame(0, $this->service->mailNewlyReachedForPost($message->id));
+    }
 }
