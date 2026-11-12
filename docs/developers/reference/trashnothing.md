@@ -977,8 +977,10 @@ The same match is used when the `fd_user_id` is out of date: the account it name
 away, holds a different TN user id because `tn:split-shared-account` moved the member out of it, or
 holds none because a partner call moved the member's address off it. The account holding the
 change's TN user id is the member, whatever account TN names. In that last case the account named
-is left alone and reported (Loki `tn-sync`/`user-change-skip`, reason `tn-user-id-held-elsewhere`):
-it may be the member's old account, and a removal does not reach it.
+is left alone and logged (Loki `tn-sync`/`user-change-skip`, reason `tn-user-id-held-elsewhere`):
+it may be the member's old account, and a removal does not reach it. Sentry hears that the member
+was removed from the holder and the named account left only once the removal has been applied to
+the holder.
 
 When the account TN names holds a different TN user id and no account holds the change's, the
 change belongs to another TN member sharing that account, and is skipped (reason

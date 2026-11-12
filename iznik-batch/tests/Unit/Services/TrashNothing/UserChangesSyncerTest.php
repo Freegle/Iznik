@@ -1044,6 +1044,44 @@ class UserChangesSyncerTest extends TestCase
         $this->assertStringContainsString("removed from user {$holder->id}", $sentry->calls[0]);
     }
 
+    /** A removal skipped on the holder must not also be reported as having gone ahead on it. */
+    public function test_a_removal_skipped_on_the_holder_is_not_reported_as_applied(): void
+    {
+        $sentry = $this->recordSentry();
+        $named = $this->tnUserWithId(null);
+        $holder = $this->tnUserWithId(99130044);
+        UserEmail::create(['userid' => $holder->id, 'email' => $this->username('second') . '-g1' . self::TN_DOMAIN, 'preferred' => 0]);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130044,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Test Member', $holder->fresh()->fullname);
+        $this->assertCount(1, $this->skipEvents('tn-two-usernames'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString("not applied to user {$holder->id}", $sentry->calls[0]);
+    }
+
+    /** A dry run removes nothing, so it must not report a removal as having gone ahead. */
+    public function test_a_dry_run_does_not_report_a_removal_from_the_holder(): void
+    {
+        $sentry = $this->recordSentry();
+        $named = $this->tnUserWithId(null);
+        $this->tnUserWithId(99130045);
+
+        $this->syncChanges([[
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130045,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]], dryRun: true);
+
+        $this->assertSame([], $sentry->calls);
+    }
+
     /** A held-elsewhere report must not use up the day's report of a real skip for the same account and id. */
     public function test_a_held_elsewhere_report_does_not_hide_a_real_skip_of_the_same_removal(): void
     {

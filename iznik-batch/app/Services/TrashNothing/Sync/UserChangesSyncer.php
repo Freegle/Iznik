@@ -77,7 +77,8 @@ class UserChangesSyncer
                 }
 
                 try {
-                    $user = $this->resolveMember($change);
+                    $match = TnMemberMatch::find((int) ($change['fd_user_id'] ?? 0), (int) ($change['tn_user_id'] ?? 0));
+                    $user = $this->resolveMember($change, $match);
                     if ($user === null) {
                         continue;
                     }
@@ -92,6 +93,11 @@ class UserChangesSyncer
                         Log::info('TN-SYNC-TRACE [USER-CHANGE] fd_user_id=' . $user->id . ' action=account-removed');
                         $user->forget('TN account removed', $this->dryRun);
                         $this->loki->logEvent('tn-sync', 'user-forget', ['user_id' => $user->id]);
+
+                        // Only now the removal has been applied: before, it could still be skipped or fail.
+                        if ($match->heldElsewhere()) {
+                            $this->reportNamedAccountLeft($change, $match);
+                        }
                         continue;
                     }
 
@@ -357,8 +363,9 @@ class UserChangesSyncer
      *
      * The account holding TN's id is the member, whatever account TN names. A partner call that
      * moves an address off an account with no id leaves things this way, until TN learns the new
-     * account. The account named is not changed, and is reported: it may be the member's old one,
-     * and a removal does not reach it.
+     * account. The account named is not changed, and is logged here: it may be the member's old
+     * one, and a removal does not reach it. sync() reports that once the removal has been applied
+     * to the holder, because it can still be skipped there.
      *
      * Only a TN account is changed. When TN names one holding a different TN user id and no account
      * holds this one, the change is about another TN member sharing that account, and applying it
@@ -367,14 +374,13 @@ class UserChangesSyncer
      * two TN usernames, as the id could be either member's, and not a deleted one, which would
      * keep the unique id from any other account until it is forgotten.
      */
-    private function resolveMember(array $change): ?User
+    private function resolveMember(array $change, TnMemberMatch $match): ?User
     {
         $tnId  = (int) ($change['tn_user_id'] ?? 0);
-        $match = TnMemberMatch::find((int) ($change['fd_user_id'] ?? 0), $tnId);
         $named = $match->named;
 
         if ($match->heldElsewhere()) {
-            $this->skipChange('tn-user-id-held-elsewhere', $change, $named->id, $match->holder->id);
+            $this->traceSkip('tn-user-id-held-elsewhere', $change, $named->id, $match->holder->id);
         }
 
         $user = $match->account();
@@ -561,6 +567,18 @@ class UserChangesSyncer
      */
     private function skipChange(string $reason, array $change, int $userId, int $other): void
     {
+        $this->traceSkip($reason, $change, $userId, $other);
+
+        if (!empty($change['account_removed'])) {
+            $tnId = (int) ($change['tn_user_id'] ?? 0);
+            $this->reportRemoval("{$reason}:{$userId}:{$tnId}",
+                "TN member {$tnId} has left, but their removal was not applied to user {$userId} ({$reason}, {$other})");
+        }
+    }
+
+    /** Log that a change was not applied to this account, without reporting it. */
+    private function traceSkip(string $reason, array $change, int $userId, int $other): void
+    {
         $tnId = (int) ($change['tn_user_id'] ?? 0);
 
         Log::warning("TN sync: change for TN user {$tnId} not applied to FD #{$userId} ({$reason}, {$other})");
@@ -571,14 +589,27 @@ class UserChangesSyncer
             'tn_user_id' => $tnId,
             'other'      => $other,
         ]);
+    }
 
-        // Keyed by reason too: a held-elsewhere report must not use up a real skip's for the day.
-        if (!$this->dryRun && !empty($change['account_removed']) && Cache::add("tn-sync:removal-skipped:{$reason}:{$userId}:{$tnId}", true, now()->addDay()) && app()->bound('sentry')) {
-            // Held elsewhere, the removal is not skipped: it goes ahead on the holder. Only the
-            // account TN named is left, and it may be the member's old one.
-            $message = $reason === 'tn-user-id-held-elsewhere'
-                ? "TN member {$tnId} has left and was removed from user {$other}, which holds their TN id; user {$userId}, which TN named, was left alone and may be their old account"
-                : "TN member {$tnId} has left, but their removal was not applied to user {$userId} ({$reason}, {$other})";
+    /**
+     * A removal has been applied to the account holding the member's TN id. The account TN named
+     * was left alone, and it may be the member's old one, so a person should look at it.
+     */
+    private function reportNamedAccountLeft(array $change, TnMemberMatch $match): void
+    {
+        $tnId = (int) ($change['tn_user_id'] ?? 0);
+
+        $this->reportRemoval("tn-user-id-held-elsewhere:{$match->named->id}:{$tnId}",
+            "TN member {$tnId} has left and was removed from user {$match->holder->id}, which holds their TN id; user {$match->named->id}, which TN named, was left alone and may be their old account");
+    }
+
+    /**
+     * Tell Sentry about a removal, once a day per key. Keyed by reason too: a held-elsewhere report
+     * must not use up a real skip's for the day. A dry run applies nothing, so it reports nothing.
+     */
+    private function reportRemoval(string $key, string $message): void
+    {
+        if (!$this->dryRun && Cache::add("tn-sync:removal-skipped:{$key}", true, now()->addDay()) && app()->bound('sentry')) {
             app('sentry')->captureMessage($message);
         }
     }
