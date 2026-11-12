@@ -2029,6 +2029,11 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		if !auth.IsAdminOrSupport(myid) {
 			return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 		}
+		// An address is a way to reset the password and log in as the account, so it follows the
+		// impersonation rule: Admin may change anyone's, Support only an account with no system role.
+		if !auth.IsAdmin(myid) && auth.IsSystemMod(targetID) {
+			return fiber.NewError(fiber.StatusForbidden, "Only Admin can add an email to a moderator, Support or Admin account")
+		}
 	}
 
 	// Check if email already exists in the table.
@@ -2064,6 +2069,11 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 			// Email is used by a different user.
 			if !auth.IsAdminOrSupport(myid) {
 				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 3, "status": "Email already used"})
+			}
+			// Taking an address off a moderator, Support or Admin account is the same as adding one
+			// to it: only Admin may.
+			if !auth.IsAdmin(myid) && auth.IsSystemMod(*existingUID) {
+				return fiber.NewError(fiber.StatusForbidden, "Only Admin can take an email from a moderator, Support or Admin account")
 			}
 		}
 
