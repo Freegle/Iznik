@@ -44,7 +44,7 @@ class ReviewPendingCommandTest extends TestCase
             ->assertExitCode(0);
 
         $rejected = DB::table('chat_messages')
-            ->where('reviewrequired', 1)
+            ->where('reviewrequired', 0)
             ->where('reviewrejected', 1)
             ->count();
         $this->assertEquals(1, $rejected);

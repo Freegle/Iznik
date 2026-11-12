@@ -777,6 +777,17 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// An Address message is what GET /address/{id} accepts as proof that the address was shared, so
+	// it may only name an address the sender owns.
+	if payload.Addressid != nil {
+		var owned int64
+		db.Table("users_addresses").Where("id = ? AND userid = ?", *payload.Addressid, myid).Count(&owned)
+
+		if owned == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "Not your address")
+		}
+	}
+
 	if payload.Imageid != nil {
 		if err := checkChatImageUnused(db, *payload.Imageid); err != nil {
 			return err
@@ -957,10 +968,21 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 	// We can see this chat room.  Create a chat message, but flagged as needing processing.  That means it
 	// will only show up to the user who sent it until it is fully processed.
+	//
+	// The request body is bound straight into the row, so every flag the server owns is cleared here: a
+	// sender must not be able to skip processing, the spam review or the confirm-reply hold, suppress the
+	// notification email, or choose the row id.
+	payload.ID = 0
 	payload.Userid = myid
 	payload.Chatid = id
 	payload.Type = chattype
 	payload.Processingrequired = true
+	payload.Processingsuccessful = false
+	payload.Reviewrequired = false
+	payload.Reviewrejected = false
+	payload.Mailedtoall = false
+	payload.Seenbyall = false
+	payload.Replyreceived = false
 	payload.Date = time.Now()
 	// The image claim shares a transaction with the insert, so a send that loses the race for
 	// the image leaves no message behind.
@@ -1440,6 +1462,11 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator")
 	}
 
+	// A moderator acts only on messages in their own review queue.
+	if status := moderationAccess(db, myid, req.ID, req.Action); status != 0 {
+		return fiber.NewError(status, "Not allowed to moderate this chat message")
+	}
+
 	// Section 11.3 of the lockdown plan: chatmessages moderation Approve stays
 	// allowed (there is no subject/body field to carry a composed message, so it is
 	// inherently the basic button); ApproveAllFuture changes the member's moderation
@@ -1481,6 +1508,89 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 // =============================================================================
 // Review queue helpers
 // =============================================================================
+
+// moderationAccess decides whether a moderator may act on a chat message, using the same scope as the review
+// queue (getReviewQueue): a User2Mod chat of one of their groups, or a User2User chat whose recipient is on one of
+// their groups (or has no groups and the sender is on one of theirs). A moderator who does wider chat review may
+// also Approve, the only action that review offers, for a recipient on a widerchatreview group. A moderator who is
+// one of the two people in the chat never acts on it. It returns 0 when allowed, otherwise the HTTP status to
+// refuse with: 404 when the message does not exist, 403 when it is outside the moderator's queue.
+func moderationAccess(db *gorm.DB, myid uint64, msgID uint64, action string) int {
+	var room struct {
+		ID       uint64
+		Userid   uint64
+		User1    uint64
+		User2    uint64
+		Groupid  uint64
+		Chattype string
+	}
+	db.Table("chat_messages cm").
+		Select("cr.id, cm.userid, cr.user1, cr.user2, COALESCE(cr.groupid, 0) AS groupid, cr.chattype").
+		Joins("INNER JOIN chat_rooms cr ON cr.id = cm.chatid").
+		Where("cm.id = ?", msgID).
+		Scan(&room)
+
+	if room.ID == 0 {
+		return fiber.StatusNotFound
+	}
+
+	if myid == room.User1 || myid == room.User2 {
+		return fiber.StatusForbidden
+	}
+
+	var modGroups []uint64
+	db.Table("memberships").Select("groupid").
+		Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&modGroups)
+
+	if len(modGroups) == 0 {
+		return fiber.StatusForbidden
+	}
+
+	switch room.Chattype {
+	case utils.CHAT_TYPE_USER2MOD:
+		for _, g := range modGroups {
+			if g == room.Groupid {
+				return 0
+			}
+		}
+
+	case utils.CHAT_TYPE_USER2USER:
+		recipient := room.User1
+		if room.Userid == room.User1 {
+			recipient = room.User2
+		}
+
+		var onModsGroups int64
+		db.Table("memberships").Where("userid = ? AND groupid IN ?", recipient, modGroups).Count(&onModsGroups)
+		if onModsGroups > 0 {
+			return 0
+		}
+
+		var recipientGroups int64
+		db.Table("memberships").Where("userid = ?", recipient).Count(&recipientGroups)
+		if recipientGroups == 0 {
+			var senderOnModsGroups int64
+			db.Table("memberships").Where("userid = ? AND groupid IN ?", room.Userid, modGroups).Count(&senderOnModsGroups)
+			if senderOnModsGroups > 0 {
+				return 0
+			}
+		}
+
+		if action == "Approve" && user.HasWiderReview(myid) {
+			var wider int64
+			db.Table("memberships m").
+				Joins("INNER JOIN `groups` g ON g.id = m.groupid AND g.type = ?", utils.GROUP_TYPE_FREEGLE).
+				Where("m.userid = ? AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1", recipient).
+				Count(&wider)
+			if wider > 0 {
+				return 0
+			}
+		}
+	}
+
+	return fiber.StatusForbidden
+}
 
 // mod2ModAllowed applies the extra Mod2Mod rule on top of canSeeChatRoom: the room is for the
 // group's active moderators, so a backup moderator (membership settings active:0) is left out,
@@ -2248,25 +2358,45 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	// Auto-approve any ModMail messages after this one
 	autoApproveModmails(db, myid, msg.Chatid, msgID)
 
-	// Find and reject all identical pending messages from last 24 hours (spam flood prevention)
-	cutoff := time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
-
+	// Find and reject all identical pending messages from last 24 hours (spam flood prevention).
+	// Only a message with text has an identity to match on: an image-only message has empty text, which
+	// every other image-only message shares. A twin another moderator is holding is theirs to decide, so
+	// it is left pending and held, and so is a twin outside the queue this moderator may act on.
 	type dupMsg struct {
 		ID     uint64
 		Chatid uint64
+		Userid uint64
 	}
 	var dups []dupMsg
-	db.Table("chat_messages").Select("id, chatid").Where("date >= ? AND reviewrequired = 1 AND message = ? AND id != ?",
-		cutoff, msg.Message, msgID).Scan(&dups)
+	if msg.Message != "" {
+		cutoff := time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
+		db.Table("chat_messages").Select("id, chatid, userid").
+			Where("date >= ? AND reviewrequired = 1 AND message = ? AND id != ?", cutoff, msg.Message, msgID).
+			Where("id NOT IN (SELECT msgid FROM chat_messages_held WHERE userid != ?)", myid).
+			Scan(&dups)
+	}
 
 	// Track affected chat IDs for count updates
 	affectedChats := map[uint64]bool{msg.Chatid: true}
 
 	for _, dup := range dups {
+		if moderationAccess(db, myid, dup.ID, "Reject") != 0 {
+			continue
+		}
+
 		// Converted together with its
 		// identical twin above (09878cd3c660).
 		db.Table("chat_messages").Where("id = ?", dup.ID).
 			Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid, "reviewrejected": gorm.Expr("1")})
+		db.Table("chat_messages_held").Where("msgid = ?", dup.ID).Delete(nil)
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"),
+			"type":      log.LOG_TYPE_CHAT,
+			"subtype":   log.LOG_SUBTYPE_REJECTED,
+			"user":      dup.Userid,
+			"byuser":    myid,
+			"text":      fmt.Sprintf("Chat message %d rejected as a duplicate of %d", dup.ID, msgID),
+		})
 		affectedChats[dup.Chatid] = true
 	}
 

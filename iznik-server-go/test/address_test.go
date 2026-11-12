@@ -434,3 +434,38 @@ func TestAddressIncludesBuildingNumber(t *testing.T) {
 		assert.Equal(t, "66", single.Buildingnumber)
 	}
 }
+
+// An Address chat message is the proof that its sender shared the address, and GET /address/{id}
+// honours it. So a member must only be able to send an Address message for an address they own.
+// Otherwise sending one for somebody else's address, in a chat they are already in, unlocks it.
+func TestAddressChatMessageForAnotherMembersAddress(t *testing.T) {
+	prefix := uniquePrefix("addr_chat_other")
+	db := database.DBConn
+
+	ownerID, _ := CreateFullTestUser(t, prefix+"_owner")
+	var ownerAddressID uint64
+	db.Raw("SELECT id FROM users_addresses WHERE userid = ? LIMIT 1", ownerID).Scan(&ownerAddressID)
+	assert.NotZero(t, ownerAddressID, "Owner needs an address")
+	idstr := strconv.FormatUint(ownerAddressID, 10)
+
+	senderID := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	_, senderToken := CreateTestSession(t, senderID)
+	chatID := CreateTestChatRoom(t, senderID, &otherID, nil, "User2User")
+
+	// The sender names an address that belongs to somebody else.
+	body, _ := json2.Marshal(map[string]interface{}{"addressid": ownerAddressID})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, senderToken), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode, "Should not be able to send someone else's address in a chat")
+
+	var sent int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE chatid = ? AND type = ? AND message = ?",
+		chatID, utils.CHAT_MESSAGE_ADDRESS, idstr).Scan(&sent)
+	assert.Equal(t, int64(0), sent, "No Address message should be stored for an address the sender does not own")
+
+	// And that must not have unlocked the address.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/address/"+idstr+"?jwt="+senderToken, nil))
+	assert.Equal(t, 404, resp.StatusCode, "Sender should not be able to read another member's address")
+}

@@ -320,8 +320,11 @@ class ChatProcessService
         // 410m away, on the poster's own community, banned only on a community the post had
         // rippled into and that neither of them was conversing on).
 
-        $review = 0;
-        $reviewreason = null;
+        // A message that arrived already held (IncomingMailService flags spam, content and
+        // hold-chain hits on the way in) stays held with its reason. The checks below can add a
+        // hold; none of them clears one.
+        $review = (int) $message->reviewrequired === 1 ? 1 : 0;
+        $reviewreason = $review ? $message->reportreason : null;
         $spam = 0;
 
         // Someone on the spammer list reaches nobody, whatever kind of chat this is.

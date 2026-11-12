@@ -64,6 +64,7 @@ class ChatReviewPendingService
             ->where('reviewrequired', 1)
             ->whereNull('reviewedby')
             ->update([
+                'reviewrequired' => 0,
                 'reviewedby'     => $systemUserId,
                 'reviewrejected' => 1,
             ]);
