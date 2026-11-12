@@ -1135,6 +1135,49 @@ class UserChangesSyncerTest extends TestCase
         $this->assertSame('Deleted User #' . $user->id, $user->fresh()->fullname);
     }
 
+    /**
+     * The account holding the TN id has a Freegle preferred address, so leaving TN does not forget
+     * it. The id still says it is the member, so the removal not applied is reported, not dropped.
+     */
+    public function test_a_removal_for_a_freegle_account_holding_the_tn_id_is_reported(): void
+    {
+        $sentry = $this->recordSentry();
+        $user = $this->tnUser('Holder', [[$this->username('freegler') . '@example.com', 1]]);
+        $user->tnuserid = 99130048;
+        $user->save();
+
+        $this->syncChanges([[
+            'fd_user_id'      => $user->id,
+            'tn_user_id'      => 99130048,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Holder', $user->fresh()->fullname);
+        $this->assertCount(1, $this->skipEvents('tn-user-id-holder-not-a-tn-account'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString("not applied to user {$user->id}", $sentry->calls[0]);
+    }
+
+    /** The same when TN gives no Freegle id: the TN id alone says which account it is. */
+    public function test_a_removal_without_our_id_for_a_freegle_account_holding_the_tn_id_is_reported(): void
+    {
+        $sentry = $this->recordSentry();
+        $user = $this->tnUser('Holder', [[$this->username('freegler') . '@example.com', 1]]);
+        $user->tnuserid = 99130049;
+        $user->save();
+
+        $this->syncChanges([[
+            'tn_user_id'      => 99130049,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Holder', $user->fresh()->fullname);
+        $this->assertCount(1, $this->skipEvents('tn-user-id-holder-not-a-tn-account'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+    }
+
     /** A dry run removes nothing, so it must not report a removal as having gone ahead. */
     public function test_a_dry_run_does_not_report_a_removal_from_the_holder(): void
     {

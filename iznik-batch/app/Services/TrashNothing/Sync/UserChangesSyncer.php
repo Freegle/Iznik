@@ -414,8 +414,10 @@ class UserChangesSyncer
 
         $user = $match->account();
         if ($user === null || !$this->isTnAccount($user)) {
-            if ($match->heldElsewhere()) {
-                $this->skipChange('tn-user-id-holder-not-a-tn-account', $change, $match->holder->id, $named->id);
+            if ($match->holder !== null) {
+                // The account meant is the holder, and only a TN account is changed. The id says it
+                // is the member, so a removal left undone here is reported, not dropped.
+                $this->skipChange('tn-user-id-holder-not-a-tn-account', $change, $match->holder->id, $named?->id ?? 0);
             } elseif ($named !== null && $this->isTnAccount($named)) {
                 $this->skipChange('tn-user-id-mismatch', $change, $named->id, (int) $named->tnuserid);
             }
