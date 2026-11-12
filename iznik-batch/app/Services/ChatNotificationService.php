@@ -341,6 +341,16 @@ class ChatNotificationService
                     continue;
                 }
 
+                // A late mail: the recipient's mark is already past this message, so the ordinary claim below cannot
+                // take it. It is owed only if no notification for it was ever built for this recipient. It is asked
+                // before the lockdown and suppression checks, so that a message already mailed is not counted as
+                // held or owed to a recipient who has it. A recipient who is not mailed at all, or is held, has
+                // nothing claimed and is looked at again on the next pass.
+                $late = (bool) ($roster->lateMail ?? false);
+                if ($late && ! $this->lateMailOwed($message, (int) $sendingTo->id)) {
+                    continue;
+                }
+
                 // Lockdown holds `email` (plan 2026-09-27-lockdown-switch.md, section 11.7):
                 // deliberately AFTER the preference check above, for the same reason as the
                 // suppression check below - a member who has chat notifications off was never
@@ -381,15 +391,6 @@ class ChatNotificationService
                 // for one member in 106 minutes on 2026-08-20.
                 if (app(\App\Services\Mail\MailSuppressionService::class)
                     ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat', (int) $message->id)) {
-                    continue;
-                }
-
-                // A late mail: the recipient's mark is already past this message, so the ordinary claim below cannot
-                // take it. It is owed only if no notification for it was ever built for this recipient. This is
-                // after the checks above for the same reason as they are: a recipient who is not mailed, or is held,
-                // has nothing to be late for, and is looked at again on the next pass.
-                $late = (bool) ($roster->lateMail ?? false);
-                if ($late && ! $this->lateMailOwed($message, (int) $sendingTo->id)) {
                     continue;
                 }
 
@@ -662,7 +663,6 @@ class ChatNotificationService
         $mailed = DB::table('email_tracking')
             ->where('userid', $userId)
             ->where('email_type', 'ChatNotification')
-            ->where('created_at', '>=', ($message->date ?? now()->subDays(30))->copy()->subDay())
             ->where('metadata->chat_id', (int) $message->chatid)
             ->where('metadata->message_id', (int) $message->id)
             ->exists();
@@ -675,6 +675,29 @@ class ChatNotificationService
         }
 
         return ! $mailed;
+    }
+
+    /**
+     * Whether any recipient is still owed a late mail of a release-admitted message.
+     */
+    protected function lateMailStillOwed(ChatMessage $message): bool
+    {
+        if (! isset($this->releaseAdmitted[(int) $message->id])) {
+            return false;
+        }
+
+        $marked = ChatRoster::where('chatid', $message->chatid)
+            ->where('userid', '<>', $message->userid)
+            ->where('lastmsgemailed', '>', $message->id)
+            ->pluck('userid');
+
+        foreach ($marked as $userId) {
+            if ($this->lateMailOwed($message, (int) $userId)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -885,7 +908,9 @@ class ChatNotificationService
             })
             ->count();
 
-        if ($notMailedCount === 0) {
+        // A recipient who is owed a late mail has a mark above the message, so the count above misses them. While one
+        // is still owed the flag stays 0, or the message would not be selected again and their mail would be lost.
+        if ($notMailedCount === 0 && ! $this->lateMailStillOwed($message)) {
             $message->update(['mailedtoall' => 1]);
         }
     }

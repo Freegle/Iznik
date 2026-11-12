@@ -1144,6 +1144,38 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_MOD2MOD, $room->id));
     }
 
+    public function test_a_late_reply_stays_selectable_while_a_recipient_owed_it_is_held_back(): void
+    {
+        // With the sender's own mark advanced, as processing does, every roster mark is above the late message, so
+        // the mailedtoall count is 0. The flag must still stay 0 while the late mail is owed, or a recipient held
+        // back by a suppression loses it for good.
+        [$sender, $recipient, $room, $held, $later] = $this->heldReplyThenMailedReply();
+        ChatRoster::where('chatid', $room->id)->where('userid', $sender->id)->update(['lastmsgemailed' => $later->id]);
+
+        DB::table('mail_suppressions')->insert([
+            'scope' => 'address',
+            'value' => strtolower($recipient->email_preferred),
+            'reason' => '421 4.7.0 temporarily deferred',
+            'provider' => 'TestProvider',
+            'deferred_since' => now(),
+            'first_seen' => now(),
+            'last_seen' => now(),
+            'message_count' => 1,
+        ]);
+        app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
+        $this->approveChatMessage($held, $sender, $recipient);
+
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals(0, (int) DB::table('chat_messages')->where('id', $held->id)->value('mailedtoall'));
+
+        DB::table('mail_suppressions')->update(['released_at' => now()]);
+        app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
+
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals(1, (int) DB::table('chat_messages')->where('id', $held->id)->value('mailedtoall'));
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+    }
+
     public function test_notify_by_email_skips_deleted_messages(): void
     {
         $sender = $this->createTestUser();

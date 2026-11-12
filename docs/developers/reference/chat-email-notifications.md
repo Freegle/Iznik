@@ -59,7 +59,9 @@ The late mail is claimed by inserting `(chatmsgid, userid)` into `chat_late_mail
 unique key. Only the run whose insert succeeds builds the mail, so two runs or two processes
 never both send it, and a crash after the claim loses that one mail rather than sending it twice.
 The recipient's mark is **not** moved back, which would replay every later message. The claim row
-is also what stops the next pass sending it again.
+is also what stops the next pass sending it again. While a recipient is still owed a late mail the message's
+`mailedtoall` flag is left at 0, so the message is selected again and a recipient who was held back for a
+moment still gets it.
 
 A late mail goes to whoever is owed it among: the other member of a member chat, the member and
 the moderators of a member-to-volunteers chat, and every volunteer in a volunteer chat except the
