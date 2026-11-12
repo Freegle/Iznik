@@ -531,7 +531,7 @@ class PurgeService
                 ->whereNotNull('message')
                 ->whereRaw('LENGTH(message) > 0')
                 ->limit($this->chunkSize)
-                ->update(['message' => null]));
+                ->update(['message' => '']));
 
             $total += $updated;
 

@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\DateSub;
+use App\Database\Expressions\Now;
 use App\Helpers\MailHelper;
 use App\Mail\Message\AutoRepostWarning;
 use App\Mail\Traits\FeatureFlags;
@@ -314,10 +316,8 @@ class AutoRepostService
             foreach ($bands as $type => $band) {
                 $outer->orWhere(function ($q) use ($type, $band) {
                     $q->where('messages.type', $type)
-                        // keep-raw: an interval expression against NOW() with a bound
-                        // parameter; the query builder has no interval helper.
-                        ->whereRaw('messages_groups.arrival <= DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['earliest']])
-                        ->whereRaw('messages_groups.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['latest']]);
+                        ->where('messages_groups.arrival', '<=', new DateSub(new Now(), (int) $band['earliest'], 'HOUR'))
+                        ->where('messages_groups.arrival', '>', new DateSub(new Now(), (int) $band['latest'], 'HOUR'));
                 });
             }
         });

@@ -93,4 +93,10 @@ final class Sql
             ? "INTERVAL '".$amount.' '.strtolower($unit)."'"
             : 'INTERVAL '.$amount.' '.strtoupper($unit);
     }
+
+    /** The current database (MySQL schema()) or schema (PostgreSQL current_schema()) for information_schema filters. */
+    public static function currentSchema(): string
+    {
+        return DB::getQueryGrammar() instanceof PostgresGrammar ? 'current_schema()' : 'schema()';
+    }
 }
