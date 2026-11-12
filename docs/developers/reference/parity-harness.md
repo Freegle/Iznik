@@ -109,7 +109,7 @@ The result is normalised before comparing. Integer widths and floats with no fra
 string, text is exact (a case difference is a difference), and a number is not the text of that number.
 Rows are compared as a set unless the golden SQL has an `ORDER BY`; override with `Ordered()` or
 `Unordered()` in Go, `ordered:` in Laravel. A write site returns the rows it left behind, read back in the
-same call.
+same call, into a struct and not a map: MySQL's text protocol hands a map every column as bytes.
 
 It fails on a difference and also on:
 

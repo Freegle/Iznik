@@ -12,6 +12,14 @@ import (
 // Skipped when an engine is not there. Ids start at parity.ID(1000) so these tests keep clear of
 // the other packages' fixtures.
 
+type loggedJoin struct {
+	Type    string
+	Subtype string
+	Groupid uint64
+	User    uint64
+	Byuser  uint64
+}
+
 func parityGroup(n int) parity.Row {
 	return parity.Row{"id": parity.ID(n), "polyindex": parity.Geometry("POINT(-3.2 55.9)")}
 }
@@ -65,12 +73,15 @@ func TestParityResult_LogGroupJoined(t *testing.T) {
 
 		// Select with plain names on a table without a model writes them as they are, so a bare
 		// user would read as PostgreSQL's current_user and answer "root". clause.Column quotes.
+		//
+		// Rows are read into a struct and not a map: MySQL's text protocol hands a map every column as
+		// bytes, and a struct is scanned to the same types on both engines.
 		cols := []clause.Column{{Name: "type"}, {Name: "subtype"}, {Name: "groupid"}, {Name: "user"}, {Name: "byuser"}}
-		var rows []map[string]any
+		var rows []loggedJoin
 		db.Table("logs").Clauses(clause.Select{Columns: cols}).
 			Where(map[string]any{"user": parity.ID(1001)}).Find(&rows)
 		return rows
-	}, parity.Expect([]map[string]any{{
-		"type": "Group", "subtype": "Joined", "groupid": parity.ID(1100), "user": parity.ID(1001), "byuser": parity.ID(1001),
+	}, parity.Expect([]loggedJoin{{
+		Type: "Group", Subtype: "Joined", Groupid: parity.ID(1100), User: parity.ID(1001), Byuser: parity.ID(1001),
 	}}))
 }
