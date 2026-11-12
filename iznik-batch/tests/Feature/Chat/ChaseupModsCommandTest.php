@@ -502,4 +502,27 @@ class ChaseupModsCommandTest extends TestCase
             return !str_contains($mail->textSummary, 'rejected spam text');
         });
     }
+
+    public function test_mods_are_chased_once_about_a_member_message_not_on_every_daily_run(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($member, $group, ['role' => Membership::ROLE_MEMBER]);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $room = $this->createTestChatRoom($member, $member, [
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'groupid' => $group->id,
+        ]);
+        $this->createTestChatMessage($room, $member, ['date' => now()->subSeconds(600000)]);
+        $this->createTestChatMessage($room, $member, ['date' => now()->subHours(1)]);
+
+        $this->artisan('chats:chaseup-mods')->assertExitCode(0);
+        $this->artisan('chats:chaseup-mods')->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
 }
