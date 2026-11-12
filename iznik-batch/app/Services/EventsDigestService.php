@@ -219,7 +219,8 @@ class EventsDigestService
         $eventsById = [];
         foreach ($rawEvents as $event) {
             $start = Carbon::parse($event->start)->setTimezone('Europe/London')->format('D, jS F g:ia');
-            $end = ($event->end && $event->end !== '0000-00-00 00:00:00')
+            // No end time is a zero date: 0000-00-00 on MySQL, the epoch on PostgreSQL, which has no zero date.
+            $end = ($event->end && ! str_starts_with($event->end, '0000-00-00') && ! str_starts_with($event->end, '1970-01-01'))
                 ? Carbon::parse($event->end)->setTimezone('Europe/London')->format('g:ia')
                 : null;
 

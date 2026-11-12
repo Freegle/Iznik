@@ -2,6 +2,10 @@
 
 namespace App\Models;
 
+use App\Database\Sql;
+use App\Database\Expressions\Value;
+use App\Database\Expressions\DateAdd;
+use App\Database\Expressions\Coalesce;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -201,12 +205,13 @@ class ChatMessage extends Model implements Auditable
      */
     public static function heldByQuestionSql(string $m, bool $openOnly = false): string
     {
+        $questionEnd = Sql::expr(new DateAdd(new Coalesce('cpr.answered_at', 'cpr.expires_at', Value::of('9999-01-01 00:00:00')), 2, 'SECOND'));
         $state = $openOnly ? 'cpr.answered_at IS NULL' : "(cpr.answered_at IS NULL OR cpr.answer <> 'yes')";
 
         return "(EXISTS (SELECT 1 FROM chat_prompts cpr WHERE cpr.heldchatmsgid = $m.id AND cpr.kind = 'confirm_reply' AND $state)"
             ." OR EXISTS (SELECT 1 FROM chat_prompts cpr INNER JOIN chat_messages cph ON cph.id = cpr.heldchatmsgid"
             ." WHERE cpr.userid = $m.userid AND cpr.kind = 'confirm_reply' AND cph.chatid = $m.chatid AND cph.id < $m.id AND $state"
-            ." AND $m.date <= COALESCE(cpr.answered_at, cpr.expires_at, '9999-01-01 00:00:00') + INTERVAL 2 SECOND))";
+            ." AND $m.date <= $questionEnd))";
     }
 
     /**

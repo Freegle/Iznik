@@ -642,7 +642,8 @@ class EventsDigestCommandTest extends TestCase
         DB::table('communityevents_dates')->insert([
             'eventid' => $eventId,
             'start'   => now()->addDays(7),
-            'end'     => '0000-00-00 00:00:00',  // sentinel for "no end time" — column is NOT NULL
+            // Sentinel for "no end time" - the column is NOT NULL. PostgreSQL has no zero date, so it is the epoch there.
+            'end'     => DB::connection()->getDriverName() === 'pgsql' ? '1970-01-01 00:00:00' : '0000-00-00 00:00:00',
         ]);
 
         $this->artisan('mail:events-digest')->assertExitCode(0);
