@@ -2029,6 +2029,11 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		if !auth.IsAdminOrSupport(myid) {
 			return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 		}
+		// An address is a way to reset the password and log in as the account, so it follows the
+		// impersonation rule: Admin may change anyone's, Support only an account with no system role.
+		if !auth.IsAdmin(myid) && auth.IsSystemMod(targetID) {
+			return fiber.NewError(fiber.StatusForbidden, "Only Admin can add an email to a moderator, Support or Admin account")
+		}
 	}
 
 	// Check if email already exists in the table.
@@ -2064,6 +2069,11 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 			// Email is used by a different user.
 			if !auth.IsAdminOrSupport(myid) {
 				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 3, "status": "Email already used"})
+			}
+			// Taking an address off a moderator, Support or Admin account is the same as adding one
+			// to it: only Admin may.
+			if !auth.IsAdmin(myid) && auth.IsSystemMod(*existingUID) {
+				return fiber.NewError(fiber.StatusForbidden, "Only Admin can take an email from a moderator, Support or Admin account")
 			}
 		}
 
@@ -2811,8 +2821,14 @@ func PatchUser(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
+	// newsfeedmodstatus is set by moderators about a member. A member cannot set
+	// their own, or a suppression could be undone with one request.
+	if req.Newsfeedmodstatus != nil && (req.ID == 0 || req.ID == myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Not authorized to set newsfeedmodstatus")
+	}
+
 	// Handle newsfeedmodstatus for another user (mod action).
-	if req.Newsfeedmodstatus != nil && req.ID > 0 && req.ID != myid {
+	if req.Newsfeedmodstatus != nil {
 		// Verify caller is admin/support or mod of a shared group.
 		if !auth.IsAdminOrSupport(myid) {
 			// Check if they share a group where the caller is a mod.
@@ -2833,6 +2849,14 @@ func PatchUser(c *fiber.Ctx) error {
 
 		if lockdown.GateMod(c, myid) {
 			return nil
+		}
+
+		// newsfeedmodstatus is an ENUM; an unrecognised value would be coerced to
+		// '' by MySQL in non-strict mode.
+		switch *req.Newsfeedmodstatus {
+		case utils.NEWSFEEDMODSTATUS_UNMODERATED, utils.NEWSFEEDMODSTATUS_MODERATED, utils.NEWSFEEDMODSTATUS_SUPPRESSED:
+		default:
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid newsfeedmodstatus")
 		}
 
 		db.Table("users").Where("id = ?", req.ID).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
@@ -2867,6 +2891,19 @@ func PatchUser(c *fiber.Ctx) error {
 	// TestPatchUserSettingsNonModCannotUpdateOther). This is a deliberate safe
 	// default, not the cause of the 9923 "settings won't stick" report (that was a
 	// frontend value-reading bug, fixed separately).
+
+	// Setting the password of another user is checked before anything is written, so a refused
+	// request leaves the account untouched. It needs admin/support. A new password is a way to
+	// log in as that account, so it follows the impersonation rule: Admin may change anyone's,
+	// Support only an account with no system role.
+	if req.Password != nil && *req.Password != "" && req.ID > 0 && req.ID != myid {
+		if !auth.IsAdminOrSupport(myid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not authorized to set password for another user")
+		}
+		if !auth.IsAdmin(myid) && auth.IsSystemMod(req.ID) {
+			return fiber.NewError(fiber.StatusForbidden, "Only Admin can set the password of a moderator, Support or Admin account")
+		}
+	}
 
 	// Self-only updates always target the logged-in user.
 	if req.Displayname != nil {
@@ -2946,11 +2983,6 @@ func PatchUser(c *fiber.Ctx) error {
 		SaveAboutMe(db, myid, *req.Aboutme)
 	}
 
-	if req.Newsfeedmodstatus != nil {
-		// Self-update (no req.ID or req.ID == myid).
-		db.Table("users").Where("id = ?", myid).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
-	}
-
 	if req.Email != nil && *req.Email != "" {
 		// Queue email verification rather than adding directly.
 		// New addresses must be verified before being linked to the account.
@@ -2970,10 +3002,7 @@ func PatchUser(c *fiber.Ctx) error {
 	if req.Password != nil && *req.Password != "" {
 		targetID := myid
 		if req.ID > 0 && req.ID != myid {
-			// Setting password for another user requires admin/support.
-			if !auth.IsAdminOrSupport(myid) {
-				return fiber.NewError(fiber.StatusForbidden, "Not authorized to set password for another user")
-			}
+			// Permission was checked before any write, above.
 			targetID = req.ID
 		}
 
@@ -3256,25 +3285,33 @@ func handleUserUnsubscribe(c *fiber.Ctx, myid uint64, req UserPostRequest) error
 }
 
 // MayMergeAccounts reports whether myid may merge the two accounts, or offer to. Admin and Support
-// always may. A moderator must moderate both accounts. A moderator merge is for two duplicates of
-// one member: a moderator is always a member of their own community, so they pass the moderation
-// test for their own account, and without the further rules they could absorb another member's
-// emails and logins, or an Admin or Support account's role.
+// always may. A moderator may merge two ordinary members they moderate. A moderator merge is for
+// two duplicates of one member: a moderator is always a member of their own community, so they pass
+// the moderation test for their own account, and the merge keeps the higher system role and moves
+// logins, emails and memberships across. Without the further rules a moderator could absorb another
+// member's emails and logins, or the powers of an account whose system role is Moderator, Support
+// or Admin.
 func MayMergeAccounts(myid, id1, id2 uint64) bool {
 	if auth.IsAdminOrSupport(myid) {
 		return true
 	}
 
-	if !(IsModOfUser(myid, id1) && IsModOfUser(myid, id2)) {
+	if id1 == myid || id2 == myid || !(IsModOfUser(myid, id1) && IsModOfUser(myid, id2)) {
 		return false
 	}
 
-	return id1 != myid && id2 != myid && !auth.IsAdminOrSupport(id1) && !auth.IsAdminOrSupport(id2)
+	var plain int64
+	database.DBConn.Table("users").
+		Where("id IN (?, ?) AND systemrole = ?", id1, id2, utils.SYSTEMROLE_USER).
+		Count(&plain)
+
+	return plain == 2
 }
 
 // handleMerge merges user id1 (discard) into user id2 (keep).
 // UI text: "merge FROM the first user INTO the second user" → id1=discard, id2=keep.
-// Admin/Support can always merge. Moderators can merge if they moderate both users (V1 parity).
+// Admin/Support can always merge. A moderator can merge two ordinary members they moderate, and
+// never their own account or one whose system role is Moderator, Support or Admin.
 func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// Early gate: must be at least a moderator of some group (or admin/support) to call this
 	// endpoint. This prevents unauthenticated/regular users from probing email existence.

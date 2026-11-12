@@ -22,10 +22,11 @@ account being kept, then deletes the discarded one. It happens in four ways:
 | The member, by accepting a merge offer on the `/merge` page, where they choose which account to keep | `PostMerge` in `iznik-server-go/merge/merge.go` (`POST /api/merge`, action `Accept`; `user1` is kept, `user2` is merged into it) | the kept account |
 | The TrashNothing sync, when it finds a member's twin accounts | `HealTNDivergence` in `iznik-server-go/user/partner.go` | the kept account |
 
-Admin and Support may merge any two accounts. A moderator may merge two accounts only when they
-moderate both, neither is their own account, and neither is an Admin or Support account. A moderator
-shares a community with themselves, so without the second and third rules they could absorb another
-member's emails and logins, or an Admin's system role, into their own account.
+Support and Admin can merge any two accounts. A moderator can merge two ordinary members of
+communities they moderate, and nothing else: never their own account, and never an account whose
+system role is Moderator, Support or Admin. A merge keeps the higher system role and moves logins,
+emails and memberships across, and a moderator shares a community with themselves, so anything
+wider would hand the moderator another account's emails, logins or powers.
 The same rules apply when a moderator offers a merge (`CreateMerge`, `PUT /api/merge`), because
 accepting the offer merges the accounts. `MayMergeAccounts` in `iznik-server-go/user/user.go`
 holds them for both paths.

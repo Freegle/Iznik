@@ -3967,17 +3967,53 @@ func TestPutMessageExistingEmailNoJWT(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, 401, resp.StatusCode)
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, float64(0), result["ret"])
 
 	// CRITICAL: The response must NOT contain a JWT or persistent session.
 	_, hasJWT := result["jwt"]
 	assert.False(t, hasJWT, "Response must not contain JWT for existing user email")
 	_, hasPersistent := result["persistent"]
 	assert.False(t, hasPersistent, "Response must not contain persistent session for existing user email")
+}
+
+// An unauthenticated PUT /message that names an existing member's email must be
+// refused: knowing an email address is not a login. No post may be made for that
+// member, whether the caller asks for a draft or a direct submission.
+func TestPutMessageExistingEmailLoggedOutPostsNothing(t *testing.T) {
+	prefix := uniquePrefix("msgmod_noimpersonate")
+	db := database.DBConn
+
+	email := prefix + "@test.com"
+	existingUID := CreateTestUserWithEmail(t, prefix+"_existing", email)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, existingUID, groupID, utils.ROLE_MEMBER)
+
+	for _, collection := range []string{"Pending", "Draft"} {
+		body := map[string]interface{}{
+			"type":       "Offer",
+			"item":       "Impersonated sofa",
+			"email":      email,
+			"groupid":    groupID,
+			"collection": collection,
+		}
+		bodyBytes, _ := json.Marshal(body)
+		req := httptest.NewRequest("PUT", "/api/message", bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 401, resp.StatusCode, "logged-out PUT with an existing email must be refused (%s)", collection)
+	}
+
+	var msgCount int64
+	db.Table("messages").Where("fromuser = ?", existingUID).Count(&msgCount)
+	assert.Equal(t, int64(0), msgCount, "no message may be created for the existing member")
+
+	var groupCount int64
+	db.Table("messages_groups").Where("groupid = ?", groupID).Count(&groupCount)
+	assert.Equal(t, int64(0), groupCount, "nothing may be posted to the group on the member's behalf")
 }
 
 func TestPutMessageNewEmailGetsJWT(t *testing.T) {

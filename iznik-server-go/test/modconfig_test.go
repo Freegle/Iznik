@@ -400,3 +400,51 @@ func TestModConfigReturnsAndCopiesStdmsgReplybody(t *testing.T) {
 	db.Raw("SELECT COALESCE(replybody, '') FROM mod_stdmsgs WHERE configid = ?", newID).Scan(&copied)
 	assert.Equal(t, "We added a note.", copied, "copying a config keeps the message to the poster")
 }
+
+// createTestDefaultModConfig makes an unprotected default config, which every moderator can see.
+func createTestDefaultModConfig(t *testing.T, name string, createdby uint64) uint64 {
+	cfgID := createTestModConfig(t, name, createdby)
+	database.DBConn.Exec("UPDATE mod_configs SET `default` = 1, protected = 0 WHERE id = ?", cfgID)
+	t.Cleanup(func() {
+		database.DBConn.Exec("DELETE FROM mod_configs WHERE id = ?", cfgID)
+	})
+	return cfgID
+}
+
+func TestPatchModConfigNotMod(t *testing.T) {
+	prefix := uniquePrefix("ModCfgPatchNM")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	cfgID := createTestDefaultModConfig(t, prefix+"_cfg", ownerID)
+
+	// A member who moderates nothing.
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, userID)
+
+	body := fmt.Sprintf(`{"id":%d,"ccrejectaddr":"someone@example.invalid"}`, cfgID)
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/modtools/modconfig?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var ccrejectaddr string
+	database.DBConn.Raw("SELECT ccrejectaddr FROM mod_configs WHERE id = ?", cfgID).Scan(&ccrejectaddr)
+	assert.Equal(t, "", ccrejectaddr, "A member who is not a moderator must not change a config")
+}
+
+func TestDeleteModConfigNotMod(t *testing.T) {
+	prefix := uniquePrefix("ModCfgDelNM")
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	cfgID := createTestDefaultModConfig(t, prefix+"_cfg", ownerID)
+
+	// A member who moderates nothing.
+	userID := CreateTestUser(t, prefix+"_user", utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, userID)
+
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/modconfig?id=%d&jwt=%s", cfgID, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var count int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM mod_configs WHERE id = ?", cfgID).Scan(&count)
+	assert.Equal(t, int64(1), count, "A member who is not a moderator must not delete a config")
+}

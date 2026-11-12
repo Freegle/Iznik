@@ -835,6 +835,71 @@ func TestPostUserAddEmailSupportForOtherUser(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+// addEmailAs calls POST /api/user AddEmail to put email on targetID and returns the status code.
+func addEmailAs(t *testing.T, token string, targetID uint64, email string) int {
+	payload := map[string]interface{}{"action": "AddEmail", "id": targetID, "email": email}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+func TestPostUserAddEmailSupportCannotTouchSystemRoleAccount(t *testing.T) {
+	// An address on an account is a way to reset its password and log in as it, so Support may
+	// not add one to an Admin, Support or Moderator account, nor take one away from such an
+	// account by reassigning it. Admin may do both.
+	db := database.DBConn
+
+	for _, role := range []string{utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_MODERATOR} {
+		t.Run("support adds to "+role, func(t *testing.T) {
+			prefix := uniquePrefix("emailsysadd" + role)
+			supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+			_, supportToken := CreateTestSession(t, supportID)
+			targetID := CreateTestUser(t, prefix+"_target", role)
+
+			newEmail := prefix + "_new@test.com"
+			assert.Equal(t, fiber.StatusForbidden, addEmailAs(t, supportToken, targetID, newEmail))
+
+			var count int64
+			db.Raw("SELECT COUNT(*) FROM users_emails WHERE email = ?", newEmail).Scan(&count)
+			assert.Equal(t, int64(0), count, "Support must not have added an address to the %s account", role)
+		})
+
+		t.Run("support takes from "+role, func(t *testing.T) {
+			prefix := uniquePrefix("emailsystake" + role)
+			supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+			_, supportToken := CreateTestSession(t, supportID)
+			ownerID := CreateTestUser(t, prefix+"_owner", role)
+			memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+
+			ownedEmail := prefix + "_owned@test.com"
+			db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", ownerID, ownedEmail)
+
+			assert.Equal(t, fiber.StatusForbidden, addEmailAs(t, supportToken, memberID, ownedEmail))
+
+			var owner uint64
+			db.Raw("SELECT userid FROM users_emails WHERE email = ?", ownedEmail).Scan(&owner)
+			assert.Equal(t, ownerID, owner, "Support must not have moved the address off the %s account", role)
+		})
+	}
+
+	t.Run("admin adds to Moderator", func(t *testing.T) {
+		prefix := uniquePrefix("emailadminadd")
+		adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+		_, adminToken := CreateTestSession(t, adminID)
+		targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_MODERATOR)
+
+		newEmail := prefix + "_new@test.com"
+		assert.Equal(t, fiber.StatusOK, addEmailAs(t, adminToken, targetID, newEmail))
+
+		var count int64
+		db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND email = ?", targetID, newEmail).Scan(&count)
+		assert.Equal(t, int64(1), count)
+	})
+}
+
 func TestPostUserAddEmailOrphanedRow(t *testing.T) {
 	// If an orphaned email row exists (userid IS NULL), adding should succeed by updating it.
 	db := database.DBConn
@@ -1550,6 +1615,62 @@ func TestPatchUserMuteChitchat(t *testing.T) {
 	assert.Equal(t, "Suppressed", modstatus)
 }
 
+// newsfeedmodstatus is set by moderators. A member whose posts are suppressed
+// must not be able to lift that by patching their own row.
+func TestPatchUserNewsfeedmodstatusMemberCannotSetOwn(t *testing.T) {
+	prefix := uniquePrefix("patchnfself")
+	db := database.DBConn
+
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, memberID)
+	db.Exec("UPDATE users SET newsfeedmodstatus = 'Suppressed' WHERE id = ?", memberID)
+
+	// Once with no id, once with their own id: both reach the self-update path.
+	for _, payload := range []map[string]interface{}{
+		{"newsfeedmodstatus": "Unmoderated"},
+		{"id": memberID, "newsfeedmodstatus": "Unmoderated"},
+	} {
+		s, _ := json.Marshal(payload)
+		request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+		request.Header.Set("Content-Type", "application/json")
+		_, err := getApp().Test(request)
+		assert.NoError(t, err)
+
+		var modstatus string
+		db.Raw("SELECT COALESCE(newsfeedmodstatus, '') FROM users WHERE id = ?", memberID).Scan(&modstatus)
+		assert.Equal(t, "Suppressed", modstatus, "a member must not be able to change their own newsfeedmodstatus")
+	}
+}
+
+// An unrecognised value would be coerced to an empty string by MySQL, which is neither
+// Moderated nor Suppressed, so it is refused.
+func TestPatchUserNewsfeedmodstatusRejectsInvalidValue(t *testing.T) {
+	prefix := uniquePrefix("patchnfbad")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
+	_, modToken := CreateTestSession(t, modID)
+	db.Exec("UPDATE users SET newsfeedmodstatus = 'Suppressed' WHERE id = ?", targetID)
+
+	s, _ := json.Marshal(map[string]interface{}{
+		"id":                targetID,
+		"newsfeedmodstatus": "bogus",
+	})
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	var modstatus string
+	db.Raw("SELECT COALESCE(newsfeedmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&modstatus)
+	assert.Equal(t, "Suppressed", modstatus)
+}
+
 // TestPatchUserChatmodstatusFully is the regression test for the field being
 // absent from UserPatchRequest: BodyParser dropped it, so PATCH returned 200
 // and left the column untouched. Asserting the DB value, not the status code,
@@ -1733,6 +1854,52 @@ func TestPatchUserPasswordByNonAdmin(t *testing.T) {
 	resp, err := getApp().Test(request)
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode)
+}
+
+// patchPasswordAs calls PATCH /api/user to set targetID's password and returns the status code.
+func patchPasswordAs(t *testing.T, token string, targetID uint64, password string) int {
+	payload := map[string]interface{}{"id": targetID, "password": password}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+func TestPatchUserPasswordSupportCannotChangeSystemRoleAccount(t *testing.T) {
+	// Support may set an ordinary member's password but not an Admin, Support or Moderator's:
+	// a new password is a way to log in as that account, and Support may only impersonate
+	// non-mods. Admin may change anyone's.
+	db := database.DBConn
+
+	for _, role := range []string{utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_MODERATOR} {
+		t.Run("support on "+role, func(t *testing.T) {
+			prefix := uniquePrefix("patchpwsys" + role)
+			supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+			_, supportToken := CreateTestSession(t, supportID)
+			targetID := CreateTestUser(t, prefix+"_target", role)
+
+			assert.Equal(t, fiber.StatusForbidden, patchPasswordAs(t, supportToken, targetID, "takeover123"))
+
+			var logins int64
+			db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = ?", targetID, utils.LOGIN_TYPE_NATIVE).Scan(&logins)
+			assert.Equal(t, int64(0), logins, "Support must not have set a password on the %s account", role)
+		})
+	}
+
+	t.Run("admin on Moderator", func(t *testing.T) {
+		prefix := uniquePrefix("patchpwadmin")
+		adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+		_, adminToken := CreateTestSession(t, adminID)
+		targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_MODERATOR)
+
+		assert.Equal(t, fiber.StatusOK, patchPasswordAs(t, adminToken, targetID, "adminset123"))
+
+		var logins int64
+		db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = ?", targetID, utils.LOGIN_TYPE_NATIVE).Scan(&logins)
+		assert.Equal(t, int64(1), logins)
+	})
 }
 
 // TestPatchUserSettingsModOnMember verifies that when a mod sends PATCH /user
@@ -2534,6 +2701,68 @@ func TestPostUserMergeByModeratorCannotTakeOnAnAdminsRole(t *testing.T) {
 	assert.Equal(t, utils.SYSTEMROLE_USER, role, "the moderator's system role must not change")
 	db.Raw("SELECT systemrole FROM users WHERE id = ?", memberID).Scan(&role)
 	assert.Equal(t, utils.SYSTEMROLE_USER, role, "the member's system role must not change")
+}
+
+// postMergeAs calls POST /api/user action=Merge with the given token and returns the status code.
+func postMergeAs(t *testing.T, token string, id1, id2 uint64) int {
+	payload := map[string]interface{}{"action": "Merge", "id1": id1, "id2": id2}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+func TestPostUserMergeByModeratorCannotTakeOverHigherSystemRole(t *testing.T) {
+	// A moderator merges ordinary members they moderate. They cannot merge an Admin or
+	// Support account into their own, which would hand them that account's system role.
+	for _, role := range []string{utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT} {
+		t.Run(role, func(t *testing.T) {
+			prefix := uniquePrefix("mergemodesc" + role)
+			db := database.DBConn
+
+			modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+			_, modToken := CreateTestSession(t, modID)
+			groupID := CreateTestGroup(t, prefix)
+			CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+
+			higherID := CreateTestUser(t, prefix+"_higher", role)
+			CreateTestMembership(t, higherID, groupID, utils.ROLE_MEMBER)
+
+			assert.Equal(t, fiber.StatusForbidden, postMergeAs(t, modToken, higherID, modID))
+
+			var modRole string
+			db.Raw("SELECT systemrole FROM users WHERE id = ?", modID).Scan(&modRole)
+			assert.Equal(t, utils.SYSTEMROLE_MODERATOR, modRole, "the moderator must not gain the merged account's system role")
+
+			var cnt int64
+			db.Raw("SELECT COUNT(*) FROM users WHERE id = ?", higherID).Scan(&cnt)
+			assert.Equal(t, int64(1), cnt, "the Admin or Support account must not be deleted")
+		})
+	}
+}
+
+func TestPostUserMergeByModeratorCannotMergeAMemberIntoThemselves(t *testing.T) {
+	// The moderator check passes when the target is the moderator, since they moderate their own
+	// group. A moderator merging a member into their own account would take over the member's
+	// emails and logins, so a moderator merge never involves the caller.
+	prefix := uniquePrefix("mergemodself")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
+
+	assert.Equal(t, fiber.StatusForbidden, postMergeAs(t, modToken, memberID, modID))
+
+	var cnt int64
+	db.Raw("SELECT COUNT(*) FROM users WHERE id = ?", memberID).Scan(&cnt)
+	assert.Equal(t, int64(1), cnt, "the member's account must not be merged into the moderator's")
 }
 
 // Tests for the support tools endpoints (GET /api/user/:id/*).
