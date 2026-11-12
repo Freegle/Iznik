@@ -2666,14 +2666,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return err
 	}
 
-	// On several communities at once, act only on the copies still waiting for a
-	// moderator. A copy approved meanwhile by somebody else must not get a second
-	// approval logged and pushed to its moderators.
-	if multi {
-		authorizedGroups = copiesAwaitingModeration(db, req.ID, authorizedGroups)
-		if len(authorizedGroups) == 0 {
-			return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not approved"})
-		}
+	// Act only on the copies still waiting for a moderator, on one community or several. A
+	// copy approved meanwhile by somebody else must not get a second approval logged and
+	// pushed to its moderators or a second email sent to the poster, and a copy that was
+	// rejected or that the poster withdrew must not be put live by a stale click.
+	authorizedGroups = copiesAwaitingModeration(db, req.ID, authorizedGroups)
+	if len(authorizedGroups) == 0 {
+		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not approved"})
 	}
 
 	// A copy that rippled in cannot be approved while the post's home community is
@@ -2800,12 +2799,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 // where it is how the post first went live). A copy held by somebody else is simply not
 // touched, and, unlike the rest of the approval, its hold is not released afterwards.
 //
-// Guards against double-approve by requiring collection != Approved. heldByOther lists the
+// Guards against double-approve by requiring collection != Approved, and never touches a copy
+// the poster withdrew (deleted = 1). heldByOther lists the
 // groups still Pending under another moderator's hold; approvable is everything else asked
 // for.
 func ApprovePendingCopies(db *gorm.DB, msgid uint64, myid uint64, groups []uint64) (approvable []uint64, heldByOther []uint64) {
 	if result := db.Table("messages_groups").
-		Where("msgid = ? AND groupid IN ? AND collection != ? AND (heldby IS NULL OR heldby = ?)", msgid, groups, utils.COLLECTION_APPROVED, myid).
+		Where("msgid = ? AND groupid IN ? AND collection != ? AND deleted = 0 AND (heldby IS NULL OR heldby = ?)", msgid, groups, utils.COLLECTION_APPROVED, myid).
 		Updates(map[string]interface{}{
 			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
 			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
