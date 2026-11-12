@@ -412,7 +412,7 @@ func GetChatMessages(c *fiber.Ctx) error {
 	modAccess := false
 
 	if !isParticipant {
-		if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
+		if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
 			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
 		}
 		modAccess = true
@@ -734,7 +734,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		var room roomBasic
 		db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", id).Scan(&room)
 
-		if room.ID == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
+		if room.ID == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
 			return fiber.NewError(fiber.StatusNotFound, "Invalid chat id")
 		}
 	}
@@ -1500,9 +1500,11 @@ func mod2ModAllowed(myid uint64, chattype string, groupid uint64) bool {
 }
 
 // canSeeChatRoom checks if a user can view a chat room.
-// Allows: direct participants, moderators of the chat's group, and moderators of any group
-// where either participant is a member (for User2User chats during review).
-func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
+// Allows: direct participants, moderators of the chat's group, and, for User2User chats only,
+// moderators of any group where either participant is a member (for review). A User2Mod or
+// Mod2Mod room belongs to its own group, so a moderator of another group the member shares gets
+// no access to it.
+func canSeeChatRoom(myid uint64, user1, user2, groupid uint64, chattype string) bool {
 	if user1 == myid || user2 == myid {
 		return true
 	}
@@ -1527,7 +1529,12 @@ func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
 		}
 	}
 
-	// Fallback: check if mod of any group where either participant is a member.
+	// Fallback: check if mod of any group where either participant is a member. Only a chat
+	// between two members is reviewed this way.
+	if chattype != utils.CHAT_TYPE_USER2USER {
+		return false
+	}
+
 	var modCount int64
 	result := db.Table("memberships m1").
 		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
@@ -1560,7 +1567,7 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Chat not found"})
 	}
 
-	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Permission denied"})
 	}
 

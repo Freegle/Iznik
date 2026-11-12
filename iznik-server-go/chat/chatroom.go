@@ -282,7 +282,7 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 		return chat, true
 	}
 
-	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
 		var chat ChatRoomListEntry
 		return chat, true
 	}
@@ -1809,7 +1809,7 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64,
 	// lives in ModTools on a member-to-mods chat, where the moderator is never a participant -
 	// a participants-only check refused every moderator with a 403 (Discourse 10199). Each
 	// referral spends a model pass, so a plain member may not open one.
-	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) {
 		return fiber.NewError(fiber.StatusForbidden, "You can't see this chat")
 	}
 	if !auth.IsSystemMod(myid) {
@@ -1909,8 +1909,8 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64,
 
 // CanSeeChatRoom is canSeeChatRoom for other packages (a support case may be read only by someone who
 // can still see its chat).
-func CanSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
-	return canSeeChatRoom(myid, user1, user2, groupid)
+func CanSeeChatRoom(myid uint64, user1, user2, groupid uint64, chattype string) bool {
+	return canSeeChatRoom(myid, user1, user2, groupid, chattype)
 }
 
 // handleReportNoGroup queues a report to the central spam team for a User2User

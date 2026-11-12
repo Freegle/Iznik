@@ -37,25 +37,25 @@ func TestChatRosterEntryTableName(t *testing.T) {
 
 func TestCanSeeChatRoomSameUser(t *testing.T) {
 	// User should be able to see their own chat room
-	result := canSeeChatRoom(1, 1, 2, 1)
+	result := canSeeChatRoom(1, 1, 2, 1, "User2User")
 	assert.True(t, result)
 }
 
 func TestCanSeeChatRoomOtherUser(t *testing.T) {
 	// User should not be able to see chat room they're not part of
-	result := canSeeChatRoom(1, 2, 3, 1)
+	result := canSeeChatRoom(1, 2, 3, 1, "User2User")
 	assert.False(t, result)
 }
 
 func TestCanSeeChatRoomSecondUser(t *testing.T) {
 	// Second user should be able to see chat room they're part of
-	result := canSeeChatRoom(2, 1, 2, 1)
+	result := canSeeChatRoom(2, 1, 2, 1, "User2User")
 	assert.True(t, result)
 }
 
 func TestCanSeeChatRoomZeroUser(t *testing.T) {
 	// User ID 0 means unauthenticated; cannot see any chat room
-	result := canSeeChatRoom(0, 1, 2, 1)
+	result := canSeeChatRoom(0, 1, 2, 1, "User2User")
 	assert.False(t, result)
 }
 
