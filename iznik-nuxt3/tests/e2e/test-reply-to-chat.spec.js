@@ -505,7 +505,7 @@ test.describe('Reply-to-Chat - standalone page CTA reachability', () => {
 
 /* A reply to an offer of a child car seat waits while Freegle asks the replier, in the
    chat, to check the seat and whether they still want it. Offer 990101 in
-   scripts/test-fixtures-extra.sql is a child car seat, so the question is always asked
+   scripts/fixtures/extra-steps.json is a child car seat, so the question is always asked
    here; no other test replies to it. */
 test.describe('Reply-to-Chat - still want it?', () => {
   test('asks the replier about a child car seat before the reply goes', async ({

@@ -2,9 +2,11 @@
 # Set up test databases via Laravel migrations (single source of truth) + captured fixtures.
 #
 # Laravel migrations in iznik-batch are the authoritative schema definition. Test fixture
-# DATA lives in scripts/test-fixtures.sql (captured once from the retired V1 seeders — see
-# scripts/regenerate-test-fixtures.sh). All DB operations run through the `percona`
-# container's mysql/mysqldump clients; the `batch` container runs the migrations.
+# DATA lives in scripts/fixtures/, in a format that belongs to no one engine (captured once
+# from the retired V1 seeders — see scripts/regenerate-test-fixtures.sh), and tools/fixtures/load.mjs
+# writes it as SQL for the engine asked for. All DB operations run through the `percona`
+# container's mysql/mysqldump clients; the `batch` container runs the migrations. The fixture
+# loader is Node: the host's, or a node container where the host has none.
 
 # Resolve the repo dir from the script location BEFORE any cd (robust on CI + local).
 REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
@@ -61,13 +63,25 @@ docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik \
   mysql -u root -piznik \
   -e \"SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''));\""
 
-# 2.5. Verify every table referenced in test-fixtures.sql still exists in the
+# 2.5. Verify every table the fixtures write to still exists in the
 # just-migrated schema. A migration that drops a table (e.g. drop_keyword_search_index)
-# without also removing its LOCK TABLES/INSERT block from test-fixtures.sql breaks
+# without also removing its file from scripts/fixtures/tables breaks
 # the fixture load below with a cryptic "ERROR 1146 ... doesn't exist" that aborts on
-# the FIRST stale table and hides any others. Catch ALL stale blocks here up front.
-echo "Checking test-fixtures.sql tables against migrated schema..."
-FIXTURE_TABLES=$(grep -oP "(?<=^LOCK TABLES \`)[^\`]+" "${REPO_DIR}/scripts/test-fixtures.sql" | sort -u)
+# the FIRST stale table and hides any others. Catch ALL stale tables here up front.
+# The fixture loader is Node 20 or later. Use the host's, or a throwaway node container where the host has
+# none or an older one.
+fixture_loader() {
+  if command -v node >/dev/null 2>&1 && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ] 2>/dev/null; then
+    node "${REPO_DIR}/tools/fixtures/load.mjs" "$@"
+  else
+    docker run --rm -v "${REPO_DIR}:/repo:ro" node:22-slim node /repo/tools/fixtures/load.mjs "$@"
+  fi
+}
+echo "Checking the fixture tables against migrated schema..."
+if ! FIXTURE_TABLES=$(fixture_loader --engine mysql --list-tables); then
+  echo "ERROR: could not read the fixtures in scripts/fixtures"
+  exit 1
+fi
 STALE_TABLES=""
 for table in $FIXTURE_TABLES; do
   exists=$(docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik -N -B -e \"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='iznik' AND table_name='${table}'\"")
@@ -76,8 +90,8 @@ for table in $FIXTURE_TABLES; do
   fi
 done
 if [ -n "$STALE_TABLES" ]; then
-  echo "ERROR: scripts/test-fixtures.sql references tables that no longer exist in the migrated schema:${STALE_TABLES}"
-  echo "A migration dropped these tables. Remove their LOCK TABLES/INSERT blocks from scripts/test-fixtures.sql."
+  echo "ERROR: scripts/fixtures references tables that no longer exist in the migrated schema:${STALE_TABLES}"
+  echo "A migration dropped these tables. Remove their files from scripts/fixtures/tables and any step in scripts/fixtures/*-steps.json that writes to them."
   exit 1
 fi
 echo "Fixture tables OK"
@@ -86,16 +100,26 @@ echo "Fixture tables OK"
 # Fixtures are idempotent (INSERT IGNORE, explicit ids) so this is safe on a fresh or
 # already-populated iznik. Used by the running dev/prod stack + Playwright E2E; the Go
 # suite runs against the schema-only iznik_go_test clone below and self-seeds its own data.
-echo "Loading test fixtures into iznik (scripts/test-fixtures.sql)..."
-docker cp "${REPO_DIR}/scripts/test-fixtures.sql" "${PREFIX}-percona:/tmp/test-fixtures.sql"
+echo "Loading test fixtures into iznik (scripts/fixtures)..."
+FIXTURE_SQL=$(mktemp)
+trap 'rm -f "$FIXTURE_SQL"' EXIT
+if ! fixture_loader --engine mysql --part captured > "$FIXTURE_SQL"; then
+  echo "Writing the fixture SQL FAILED: aborting test database setup"
+  exit 1
+fi
+docker cp "$FIXTURE_SQL" "${PREFIX}-percona:/tmp/test-fixtures.sql"
 if ! docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"; then
   echo "Fixture load FAILED — aborting test database setup"
   exit 1
 fi
 echo "Fixtures loaded"
 
-# Hand-written additions that survive regenerating test-fixtures.sql (see its header).
-docker cp "${REPO_DIR}/scripts/test-fixtures-extra.sql" "${PREFIX}-percona:/tmp/test-fixtures-extra.sql"
+# Hand-written additions that survive regenerating the captured tables (scripts/fixtures/extra-steps.json).
+if ! fixture_loader --engine mysql --part extra > "$FIXTURE_SQL"; then
+  echo "Writing the extra fixture SQL FAILED: aborting test database setup"
+  exit 1
+fi
+docker cp "$FIXTURE_SQL" "${PREFIX}-percona:/tmp/test-fixtures-extra.sql"
 if ! docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures-extra.sql"; then
   echo "Extra fixture load FAILED: aborting test database setup"
   exit 1
@@ -103,8 +127,8 @@ fi
 
 # 3a. Roll the fixture posts forward so they are recent.
 #
-# test-fixtures.sql is a mysqldump, so every message carries the ABSOLUTE date it
-# had when the dump was taken. The browse/explore feed only returns posts from the
+# The fixtures are captured data, so every message carries the ABSOLUTE date it
+# had when it was captured. The browse/explore feed only returns posts from the
 # last 31 days (group/groupMessages.go: `then := now.AddDate(0, 0, -31)`), so the
 # seeded posts silently drop out of the feed 31 days after the dump was captured —
 # and every test that browses for a pre-seeded post starts failing, on every branch

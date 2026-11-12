@@ -1,0 +1,25 @@
+{
+  "pgsql": [
+    {
+      "table": "isochrones",
+      "column": "source",
+      "from": "",
+      "to": null,
+      "reason": "MySQL stored an empty string where the value was not in the ENUM. PostgreSQL refuses it. The column is nullable, and NULL still matches no real source."
+    },
+    {
+      "table": "messages_history",
+      "column": "source",
+      "from": "",
+      "to": null,
+      "reason": "MySQL stored an empty string where the value was not in the ENUM. PostgreSQL refuses it. The column is nullable."
+    },
+    {
+      "table": "messages_attachments",
+      "column": "contenttype",
+      "from": null,
+      "to": "",
+      "reason": "The rows carry NULL for a NOT NULL column. MySQL, running non-strict, stored an empty string instead. PostgreSQL refuses NULL."
+    }
+  ]
+}

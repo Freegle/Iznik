@@ -1,0 +1,87 @@
+[
+{
+  "op": "insert",
+  "table": "users",
+  "mode": "ignore",
+  "columns": ["id","firstname","lastname","fullname","added","systemrole"],
+  "rows": [
+    [990001,"Freegle",null,"Freegle",{"now":0},"User"]
+  ]
+},
+{
+  "op": "insert",
+  "table": "users_emails",
+  "mode": "ignore",
+  "columns": ["userid","email","preferred","added"],
+  "rows": [
+    [990001,"freegle@ilovefreegle.org",1,{"now":0}]
+  ]
+},
+{
+  "op": "insert",
+  "table": "messages",
+  "mode": "upsert",
+  "key": ["id"],
+  "update": ["subject","message","textbody"],
+  "columns": ["id","arrival","date","source","fromip","message","fromuser","fromname","fromaddr","subject","type","textbody","lat","lng","locationid","availableinitially","availablenow","deliverypossible"],
+  "rows": [
+    [990101,"2026-07-09 10:02:15","2035-08-25 13:14:51","Email","","Child car seat, group 1. Some wear on the straps.",93,"Test User","pw_replytochat_mod@test.com","OFFER: Child car seat (EX1 1SR)","Offer","Child car seat, group 1. Some wear on the straps.",50.7236,-3.5275,1687427,1,1,0]
+  ]
+},
+{
+  "op": "insert",
+  "table": "messages_groups",
+  "mode": "ignore",
+  "columns": ["msgid","groupid","arrival","collection","autoreposts"],
+  "rows": [
+    [990101,61,"2026-07-09 10:02:15","Approved",0]
+  ]
+},
+{
+  "op": "insert",
+  "table": "messages_spatial",
+  "mode": "ignore",
+  "columns": ["msgid","point","successful","groupid","arrival","msgtype"],
+  "rows": [
+    [990101,{"geom":"3857:0101000000b81e85eb51380cc05bb1bfec9e5c4940"},1,61,"2026-07-09 10:02:15","Offer"]
+  ]
+},
+{
+  "op": "insert",
+  "table": "config",
+  "mode": "upsert",
+  "key": ["key"],
+  "update": ["value"],
+  "columns": ["key","value"],
+  "rows": [
+    ["ux_server_arms","1"]
+  ]
+},
+{
+  "op": "insert",
+  "table": "config",
+  "mode": "upsert",
+  "key": ["key"],
+  "update": ["value"],
+  "columns": ["key","value"],
+  "rows": [
+    ["ux_experiments","{\"interested-button\":{\"arms\":{\"button\":[0,99]},\"adopted\":true}}"]
+  ]
+},
+{
+  "op": "delete",
+  "table": "ux_experiments",
+  "where": {"name":"confirm-reply","title":"Fixture: ask every replier"}
+},
+{
+  "op": "insert",
+  "table": "ux_experiments",
+  "mode": "upsert",
+  "key": ["name"],
+  "update": ["arms","status","started_at","ends_at","decided_at","decision","result","design","updated_at"],
+  "columns": ["flow","name","title","hypothesis","change_description","expected","arms","status","started_at","ends_at","decided_at","decision","result","design","created_at","updated_at"],
+  "rows": [
+    ["reply","interested-button","Fixture: offer the button to everyone","Fixture for the Playwright case.","Everyone is offered the button.","Everyone is offered the button.","{\"control\":[1,0],\"button\":[0,99]}","running",{"now":0},{"now":{"days":14}},null,null,null,"{\"channel\":\"server\",\"source\":\"interested_reply\",\"window_hours\":168,\"intake_hours\":336,\"max_hours\":336,\"fixed_split\":true,\"slot\":\"server:interested-button\"}",{"now":0},{"now":0}]
+  ]
+}
+]

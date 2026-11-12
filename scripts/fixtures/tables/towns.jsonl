@@ -1,0 +1,2 @@
+{"table":"towns","columns":["id","name","lat","lng","position","comment"],"geom":["position"]}
+[1,"Edinburgh",55.95,-3.2,"3857:01010000009a999999999909c09a99999999f94b40",null]

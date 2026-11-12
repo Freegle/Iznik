@@ -1,0 +1,3 @@
+{"table":"spam_whitelist_links","columns":["id","userid","domain","date","count"]}
+[1,null,"users.ilovefreegle.org","2026-07-09 10:01:23",3]
+[2,null,"freegle.in","2026-07-09 10:01:23",3]

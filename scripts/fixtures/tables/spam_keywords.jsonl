@@ -1,0 +1,5 @@
+{"table":"spam_keywords","columns":["id","word","exclude","action","type"]}
+[8,"viagra",null,"Spam","Literal"]
+[76,"weight loss",null,"Spam","Literal"]
+[77,"spamspamspam",null,"Review","Literal"]
+[272,"(?<!\\bwater\\W)\\bbutt\\b(?!\\s+rd)",null,"Review","Regex"]

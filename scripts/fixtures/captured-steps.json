@@ -1,0 +1,42 @@
+[
+{
+  "op": "insert",
+  "table": "users",
+  "mode": "plain",
+  "unless": {"table":"users_emails","where":{"email":"plainmod@test.com"}},
+  "columns": ["yahooUserId","firstname","lastname","fullname","systemrole","added","lastaccess","settings","gotrealemail","yahooid","licenses","newslettersallowed","relevantallowed","onholidaytill","marketingconsent","publishconsent","lastlocation","lastrelevantcheck","lastidlechaseup","bouncing","permissions","invitesleft","source","chatmodstatus","deleted","inventedname","newsfeedmodstatus","replyambit","engagement","trustlevel","lastupdated","tnuserid","ljuserid","forgotten"],
+  "rows": [
+    [null,"Plain","Moderator","Plain Moderator","Moderator","2026-07-09 10:02:21","2026-07-09 10:02:21",null,0,null,0,1,1,null,0,0,null,null,null,0,null,10,null,"Moderated",null,0,"Unmoderated",0,null,null,"2026-07-09 10:02:22",null,null,null]
+  ]
+},
+{
+  "op": "insert",
+  "table": "users_emails",
+  "mode": "plain",
+  "unless": {"table":"users_emails","where":{"email":"plainmod@test.com"}},
+  "columns": ["userid","email","preferred","added","validatekey","validated","canon","backwards","bounced","viewed","validatetime"],
+  "rows": [
+    [{"lastId":"users"},"plainmod@test.com",1,"2026-07-09 10:02:21",null,null,"plainmod@testcom","moctset@domnialp",null,null,"2026-07-09 10:02:21"]
+  ]
+},
+{
+  "op": "insert",
+  "table": "memberships",
+  "mode": "plain",
+  "unless": {"table":"memberships","where":{"userid":{"lookup":{"table":"users_emails","column":"userid","where":{"email":"plainmod@test.com"}}},"groupid":1}},
+  "columns": ["userid","groupid","role","collection","configid","added","settings","syncdelete","heldby","emailfrequency","eventsallowed","volunteeringallowed","rippled","ourPostingStatus","reviewrequestedat","reviewreason","reviewedat"],
+  "rows": [
+    [{"lookup":{"table":"users_emails","column":"userid","where":{"email":"plainmod@test.com"}}},1,"Moderator","Approved",null,"2026-07-09 10:02:21",null,0,null,24,1,1,0,"DEFAULT",null,null,null]
+  ]
+},
+{
+  "op": "insert",
+  "table": "users_logins",
+  "mode": "plain",
+  "unless": {"table":"users_logins","where":{"userid":{"lookup":{"table":"users_emails","column":"userid","where":{"email":"plainmod@test.com"}}},"type":"Native"}},
+  "columns": ["userid","type","uid","credentials","added","lastaccess","credentials2","credentialsrotated","salt"],
+  "rows": [
+    [{"lookup":{"table":"users_emails","column":"userid","where":{"email":"plainmod@test.com"}}},"Native",{"lookup":{"table":"users_emails","column":"userid","where":{"email":"plainmod@test.com"},"text":true}},"ed8b449ff4866d664a287bfe372f8ecc7594f8ec","2026-07-09 10:02:21","2026-07-09 10:02:21",null,null,"zzzz"]
+  ]
+}
+]
