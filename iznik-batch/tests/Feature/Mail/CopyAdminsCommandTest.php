@@ -316,4 +316,34 @@ class CopyAdminsCommandTest extends TestCase
         $copy = DB::table('admins')->where('parentid', $suggestedId)->where('groupid', $group->id)->first();
         $this->assertNull($copy->modguidance);
     }
+
+    /**
+     * Test: an ADMIN sent on behalf of someone else keeps volunteercredits = 0 on every copy, so the
+     * local volunteers are not named and it does not come from the community.
+     */
+    public function test_volunteercredits_off_is_carried_to_copies(): void
+    {
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        $suggestedId = DB::table('admins')->insertGetId([
+            'groupid' => null,
+            'subject' => 'On behalf of a partner',
+            'text' => 'Partner body text',
+            'pending' => 0,
+            'essential' => false,
+            'activeonly' => true,
+            'volunteercredits' => 0,
+            'created' => now(),
+        ]);
+
+        $this->artisan('mail:admin:copy')->assertSuccessful();
+
+        $copies = DB::table('admins')->where('parentid', $suggestedId)->get();
+        $this->assertGreaterThanOrEqual(2, $copies->count());
+
+        foreach ($copies as $copy) {
+            $this->assertEquals(0, $copy->volunteercredits, 'a copy must keep the suggested ADMIN\'s volunteercredits setting');
+        }
+    }
 }
