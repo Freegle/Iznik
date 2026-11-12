@@ -3298,23 +3298,20 @@ func systemRoleRank(role string) int {
 	return 0
 }
 
-// MayMergeAccounts reports whether myid may merge the two accounts, or offer to. Admin and Support
-// always may. A moderator may merge two accounts they moderate, and either may be their own. The
-// merge keeps the higher system role, so neither account may hold a higher system role than the
-// moderator already does: a merge never raises anyone above the person doing it, and a moderator
-// cannot absorb a Support or Admin account, as source or as target. Two Moderator accounts may be
-// merged.
+// MayMergeAccounts reports whether myid may merge the two accounts, or offer to. Admin may merge any
+// two accounts. Everyone else is held to their own system role: the merge keeps the higher system role,
+// so neither account may hold a higher system role than the person merging, which means a merge never
+// raises anyone above the person doing it. Support may therefore merge anything except an Admin
+// account, and a moderator cannot absorb a Support or Admin account, as source or as target. A
+// moderator must also moderate both accounts, and either may be their own. Two Moderator accounts may
+// be merged.
 func MayMergeAccounts(myid, id1, id2 uint64) bool {
-	if auth.IsAdminOrSupport(myid) {
-		return true
-	}
-
-	if !(IsModOfUser(myid, id1) && IsModOfUser(myid, id2)) {
-		return false
-	}
-
 	var mine string
 	database.DBConn.Table("users").Where("id = ?", myid).Limit(1).Pluck("systemrole", &mine)
+
+	if mine == utils.SYSTEMROLE_ADMIN {
+		return true
+	}
 
 	var theirs []string
 	database.DBConn.Table("users").Where("id IN (?, ?)", id1, id2).Pluck("systemrole", &theirs)
@@ -3329,7 +3326,11 @@ func MayMergeAccounts(myid, id1, id2 uint64) bool {
 		}
 	}
 
-	return true
+	if mine == utils.SYSTEMROLE_SUPPORT {
+		return true
+	}
+
+	return IsModOfUser(myid, id1) && IsModOfUser(myid, id2)
 }
 
 // handleMerge merges user id1 (discard) into user id2 (keep).

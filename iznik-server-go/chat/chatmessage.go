@@ -1820,6 +1820,11 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	// Check if this user participates in wider chat review.
 	widerReview := user.HasWiderReview(myid)
 
+	// A moderator never acts on a chat they are one of the two people in (moderationAccess refuses
+	// it), so those chats are left out of their own queue. user2 is NULL in a User2Mod chat.
+	notMine := " AND COALESCE(cr.user1, 0) <> " + strconv.FormatUint(myid, 10) +
+		" AND COALESCE(cr.user2, 0) <> " + strconv.FormatUint(myid, 10)
+
 	// Base query: messages from mod's own groups.
 	//
 	// The four "IN (?)" group-id lists below are bound to groupIDs (a
@@ -1854,7 +1859,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		"LEFT JOIN chat_images ci ON ci.chatmsgid = cm.id " +
 		"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
 		"LEFT JOIN chat_messages_byemail cme ON cme.chatmsgid = cm.id " +
-		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + ctxq +
+		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + ctxq + notMine +
 		" AND (" +
 		// User2Mod: group is one of mod's groups
 		"  (cr.chattype = ? AND cr.groupid IN (?))" +
@@ -1897,7 +1902,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"WHERE JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 " +
 			"AND cmh.id IS NULL " +
 			"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') " +
-			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq
+			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq + notMine
 
 		// Top-level UNION wrapped as a derived table with a trailing GROUP
 		// BY/ORDER BY/LIMIT that applies to the combined result, not either
