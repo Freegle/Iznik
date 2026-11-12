@@ -79,7 +79,7 @@ class TnMergeCrosspostsCommandTest extends TestCase
         // (messages_spatial - what the browse feed reads).
         DB::table('messages_history')->insert([
             'groupid' => $groupB->id,
-            'source' => 'Email',
+            'source' => 'Platform',
             'fromuser' => $user->id,
             'subject' => 'OFFER: Singular Merge Fixture (London)',
             'msgid' => $copy,
