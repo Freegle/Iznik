@@ -705,14 +705,14 @@ class ChatNotificationService
      * is refusing our mail.
      *
      * Asked by the caller rather than swallowed here, because
-     * ChatChaseupExpectedService marks the expectation as chased once this
-     * returns - and a chase-up we never sent must not count as one we did, or
-     * the member is recorded as having been reminded when they were not.
+     * ChatChaseupExpectedService remembers the message as chased once it sends -
+     * and a chase-up we never sent must not count as one we did, or the member
+     * is recorded as having been reminded when they were not.
      */
     public function chaseupSuppressed(User $sendingTo, ?int $mailKey = null): bool
     {
         // $mailKey is the chat message being chased. Like the notification path
-        // above, this skips WITHOUT marking the expectation as chased, so the
+        // above, this skips WITHOUT remembering the message as chased, so the
         // same expectation comes round on every run; without an identity the
         // held-mail counter recorded each pass as another withheld mail.
         return app(\App\Services\Mail\MailSuppressionService::class)

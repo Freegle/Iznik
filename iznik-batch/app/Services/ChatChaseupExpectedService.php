@@ -6,6 +6,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -19,6 +20,10 @@ use Illuminate\Support\Facades\DB;
  * idle for at least EXPECTED_GRACE_MINUTES (TIMESTAMPDIFF against lastaccess),
  * the chat is User2User and not blocked, we send a "WAITING FOR REPLY:" chat
  * notification to the expectee.
+ *
+ * A message is eligible for EXPECTED_CHASEUP_DAYS days and the command runs daily, so each
+ * message is chased once: a send is remembered in the cache for as long as the message can
+ * stay eligible. A message that arrives later in the same chat is chased in its own right.
  */
 class ChatChaseupExpectedService
 {
@@ -27,6 +32,9 @@ class ChatChaseupExpectedService
 
     /** Minutes of expectee inactivity before chasing — V1 EXPECTED_GRACE = 24 * 60. */
     public const EXPECTED_GRACE_MINUTES = 24 * 60;
+
+    /** Cache key prefix for a message that has been chased. */
+    private const CHASED_KEY_PREFIX = 'chaseup-expected:';
 
     public function __construct(
         private readonly ChatNotificationService $chatNotificationService
@@ -64,6 +72,8 @@ class ChatChaseupExpectedService
             // delivery gates of ChatNotificationService::getUnmailedMessages. A
             // message held, rejected, deleted or still processing keeps
             // replyexpected=1, but the expectee was never allowed to see it.
+            // processingsuccessful has no confirm_reply exception: that question is
+            // for the replier alone, and the expectee here is the other party.
             ->where('chat_messages.deleted', 0)
             ->where('chat_messages.reviewrequired', 0)
             ->where('chat_messages.reviewrejected', 0)
@@ -92,6 +102,11 @@ class ChatChaseupExpectedService
                 continue;
             }
             $seen[$key] = true;
+
+            // Already chased on an earlier run; the message stays eligible for days.
+            if (Cache::has(self::CHASED_KEY_PREFIX . $row->chatmsgid)) {
+                continue;
+            }
 
             $recipient = User::find($row->expectee);
             if (! $recipient || ! $recipient->email_preferred) {
@@ -135,6 +150,11 @@ class ChatChaseupExpectedService
 
             if (! $dryRun) {
                 $this->chatNotificationService->sendChaseupExpected($recipient, $sender, $chatRoom, $message);
+                Cache::put(
+                    self::CHASED_KEY_PREFIX . $row->chatmsgid,
+                    true,
+                    now()->addDays(self::EXPECTED_CHASEUP_DAYS + 1)
+                );
             }
 
             $chased++;
