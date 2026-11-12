@@ -33,7 +33,8 @@ var fiberLambda *fiberadapter.FiberLambda
 
 // skipCompression is true for the routes the compress middleware must not touch.
 func skipCompression(path string) bool {
-	return strings.HasPrefix(path, "/api/modtools/user/") && strings.HasSuffix(path, "/dump")
+	return (strings.HasPrefix(path, "/api/modtools/user/") || strings.HasPrefix(path, "/apiv2/modtools/user/")) &&
+		strings.HasSuffix(path, "/dump")
 }
 
 func main() {
