@@ -5,12 +5,16 @@ namespace Tests\Unit\Database;
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\DateAdd;
 use App\Database\Expressions\DateSub;
+use App\Database\Expressions\GroupConcat;
 use App\Database\Expressions\InsertedValue;
+use App\Database\Expressions\LPad;
 use App\Database\Expressions\Now;
 use App\Database\Expressions\Rand;
 use App\Database\JsonTable;
 use App\Database\ReplaceInto;
 use App\Database\Sql;
+use App\Database\UpsertReturningId;
+use App\Database\Expressions\Value;
 use Illuminate\Database\Grammar;
 use Illuminate\Database\Query\Grammars\MySqlGrammar;
 use Illuminate\Database\Query\Grammars\PostgresGrammar;
@@ -143,5 +147,45 @@ class DialectBuildingBlocksTest extends TestCase
         $this->assertStringNotContainsString('2020-01-09', (string) $rows[0]->end);
 
         DB::table('stats')->where('date', $date)->delete();
+    }
+
+    public function test_group_concat_renders_per_engine(): void
+    {
+        $e = new GroupConcat('name', ', ', 'name');
+
+        $this->assertSame("GROUP_CONCAT(`name` ORDER BY `name` SEPARATOR ', ')", $e->getValue($this->mysql));
+        $this->assertSame("STRING_AGG(CAST(\"name\" AS text), ', ' ORDER BY \"name\")", $e->getValue($this->pg));
+    }
+
+    public function test_group_concat_joins_values_in_order(): void
+    {
+        $gid = $this->createTestGroup()->id;
+        $row = DB::table('groups')
+            ->where('id', $gid)
+            ->select(new \App\Database\Expressions\Alias(new GroupConcat(new \App\Database\Expressions\Concat('nameshort', Value::of('-'), 'type'), ', ', 'nameshort'), 'joined'))
+            ->first();
+
+        $group = DB::table('groups')->where('id', $gid)->first();
+        $this->assertSame($group->nameshort.'-'.$group->type, $row->joined);
+    }
+
+    public function test_lpad_casts_a_number_for_postgresql(): void
+    {
+        $this->assertSame("LPAD(`m`, 2, '0')", (new LPad('m', 2, Value::of('0')))->getValue($this->mysql));
+        $this->assertSame("LPAD(CAST(\"m\" AS text), 2, '0')", (new LPad('m', 2, Value::of('0')))->getValue($this->pg));
+    }
+
+    public function test_upsert_returning_id_gives_the_same_id_for_the_same_key(): void
+    {
+        $name = 'upsert-id-'.uniqid();
+
+        $first = UpsertReturningId::id('items', ['name' => $name], ['name'], ['name' => $name]);
+        $again = UpsertReturningId::id('items', ['name' => $name], ['name'], ['name' => $name]);
+
+        $this->assertGreaterThan(0, $first);
+        $this->assertSame($first, $again);
+        $this->assertSame(1, DB::table('items')->where('name', $name)->count());
+
+        DB::table('items')->where('id', $first)->delete();
     }
 }
