@@ -1321,6 +1321,9 @@ describe('handleJoinGroup (via submit with logged-in user)', () => {
     expect(mockReplyMsgId).toBeNull()
     expect(mockReplyMessage).toBeNull()
     expect(mockReplyingAt).toBeNull()
+    // The text is kept as a draft so the member can retry.
+    expect(mockDraftMsgId).toBe(MSG_ID)
+    expect(mockDraftMessage).toBe('My reply')
   })
 
   it('triggers auth error flow when message fetch returns 401', async () => {
@@ -2404,9 +2407,10 @@ describe('helpers and lifecycle', () => {
     result.startTyping()
     result.replyText.value = 'Hello'
     result.collectText.value = 'Weekends'
-    // Make the send fail so the saved reply is not cleared on COMPLETED.
-    mockReplyToPostFn.mockResolvedValue(false)
-    await result.submit()
+    // Leave the send pending so the saved reply is neither cleared on
+    // COMPLETED nor moved to the draft on ERROR.
+    mockReplyToPostFn.mockReturnValue(new Promise(() => {}))
+    result.submit()
     await flushPromises()
     expect(mockReplyMsgId).toBe(MSG_ID)
     expect(mockReplyMessage).toBe(
@@ -2425,8 +2429,8 @@ describe('helpers and lifecycle', () => {
     result.replyText.value = 'Hello'
     const image = { id: 321, paththumb: 'https://example.com/t.jpg' }
     result.replyImage.value = image
-    mockReplyToPostFn.mockResolvedValue(false)
-    await result.submit()
+    mockReplyToPostFn.mockReturnValue(new Promise(() => {}))
+    result.submit()
     await flushPromises()
     expect(mockReplyImage).toEqual(image)
   })
