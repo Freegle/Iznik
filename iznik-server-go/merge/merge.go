@@ -297,6 +297,21 @@ func PostMerge(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Accept":
+		// The member chose which account to keep: user1 is kept and user2 is merged into it.
+		// MergeUsersTx takes the account to discard first.
+		if req.User1 == 0 || req.User2 == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "Missing parameters")
+		}
+
+		// A TrashNothing member is never merged with a Freegle account (.claude/rules/conventions.md).
+		if user.IsTrashNothingAccount(db, req.User1) != user.IsTrashNothingAccount(db, req.User2) {
+			return fiber.NewError(fiber.StatusBadRequest, "You can't merge a TrashNothing member with a Freegle account.")
+		}
+
+		if err := user.MergeUsersTx(db, req.User2, req.User1, req.User1); err != nil {
+			return err
+		}
+
 		db.Table("merges").Where("id = ?", req.ID).Update("accepted", gorm.Expr("NOW()"))
 	case "Reject":
 		db.Table("merges").Where("id = ?", req.ID).Update("rejected", gorm.Expr("NOW()"))

@@ -3328,7 +3328,7 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
 	// with a Freegle account, whoever asks (.claude/rules/conventions.md). ModTools refuses this
 	// too, but only by looking at the email typed in, so a merge by id went straight through.
-	if isTrashNothingAccount(db, uint64(req.ID1)) != isTrashNothingAccount(db, uint64(req.ID2)) {
+	if IsTrashNothingAccount(db, uint64(req.ID1)) != IsTrashNothingAccount(db, uint64(req.ID2)) {
 		return fiber.NewError(fiber.StatusBadRequest, "You can't merge a TrashNothing member with a Freegle account. Add a note to each to say they are the same person.")
 	}
 
@@ -3368,8 +3368,9 @@ func userOptedOutOfMerge(db *gorm.DB, id uint64) bool {
 // the merge log entries.
 //
 // This is the only account merge. The moderator merge (handleMerge), the
-// email-verify merge (session.PatchSession, when a member confirms an address
-// that belongs to another of their accounts) and the TN divergence heal
+// accepted merge offer (merge.PostMerge), the email-verify merge (session.PatchSession,
+// when a member confirms an address that belongs to another of their accounts) and the
+// TN divergence heal
 // (HealTNDivergence) all come through here, so they move the same tables and
 // leave the same log rows. Do not add a cut-down copy for a new caller: the
 // email-verify path had one until October 2026, and it stranded chat rooms
@@ -4185,7 +4186,7 @@ func MergedMembershipFlags(a, b MembershipFlags) MembershipFlags {
 }
 
 // TrashNothingSQL is a SQL condition that is true when the users row aliased as alias is a
-// TrashNothing member, by the same definition as isTrashNothingAccount.
+// TrashNothing member, by the same definition as IsTrashNothingAccount.
 func TrashNothingSQL(alias string) string {
 	return "(" + alias + ".tnuserid IS NOT NULL OR EXISTS (SELECT 1 FROM users_emails tne WHERE tne.userid = " +
 		alias + ".id AND tne.preferred = 1 AND tne.email LIKE '%@user.trashnothing.com'))"
@@ -4198,11 +4199,11 @@ func MergeableSidesSQL(a, b string) string {
 	return "(" + TrashNothingSQL(a) + " = " + TrashNothingSQL(b) + ")"
 }
 
-// isTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
+// IsTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
 // tnuserid, or with a TrashNothing address as their preferred email. A non-preferred
 // TrashNothing address does not count, since volunteers may also use TrashNothing. Same
 // definition as the membership package's, which this package cannot import.
-func isTrashNothingAccount(db *gorm.DB, userid uint64) bool {
+func IsTrashNothingAccount(db *gorm.DB, userid uint64) bool {
 	var stamped int64
 	db.Table("users").Where("id = ? AND tnuserid IS NOT NULL", userid).Count(&stamped)
 	if stamped > 0 {
