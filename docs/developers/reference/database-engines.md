@@ -290,7 +290,10 @@ SPATIAL_TEST_ENGINES=postgres go test ./...    # or mysql
 ```
 
 The suite runs in the `spatial-knn` container, which reaches both databases on the compose network. The
-R-tree stores bounding boxes as 32-bit floats rounded outward, so the box assertions allow 1e-4.
+status API's spatial test endpoint refuses to start unless `percona`, `postgres` and `spatial-knn` are up and
+healthy, and says which is missing. The service itself waits for `postgres` to be healthy when that container is
+part of the stack, so a PostgreSQL-sourced service does not build its first indexes before the database is ready.
+The R-tree stores bounding boxes as 32-bit floats rounded outward, so the box assertions allow 1e-4.
 
 ### Limits
 
@@ -298,6 +301,10 @@ R-tree stores bounding boxes as 32-bit floats rounded outward, so the box assert
   source, so this holds; the engine tests reset it for each scratch database.
 - MySQL compares a `timestamp` column in the session's time zone. The delta tests assume a server and session on
   UTC, as the stack's containers are.
+- Only the postcode loader guards against empty geometries. The messages and newsfeed loaders read `ST_X` and
+  `ST_Y` of stored points without a guard, as they always did. Data converted from MySQL holds no empty points.
+- The production nodes build the service natively with `go build`, so a node needs to reach a Go module proxy
+  the first time it builds after `pgx` was added.
 - Production stays on MySQL. Pointing a live service at PostgreSQL also needs the data loaded there, which the
   migration tooling (a later step in the plan) does.
 
