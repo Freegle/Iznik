@@ -37,7 +37,7 @@ class LockdownService
      * ticked over at all since the press (no lockdown_acks row yet).
      */
     public const ACK_LOOPS = [
-        'chat-process', 'content-check', 'auto-approve', 'mail-spool',
+        'chat-process', 'content-check', 'auto-approve', 'auto-approve-clean', 'automod', 'mail-spool',
         'mail-loops', 'background-tasks', 'push', 'tick',
     ];
 
@@ -251,7 +251,8 @@ class LockdownService
      * 11.6: "a write per state change, not per item") - cheap enough to call from inside a
      * per-item gate check without an extra query on every item.
      *
-     * $loop is one of the names in the plan: chat-process, content-check, auto-approve,
+     * $loop is one of ACK_LOOPS: chat-process, content-check, auto-approve (the 48h sweep),
+     * auto-approve-clean (the post-moderation publish cron), automod (the chart's reviews),
      * mail-spool, mail-loops, background-tasks, push, tick.
      */
     public function ack(string $loop): void

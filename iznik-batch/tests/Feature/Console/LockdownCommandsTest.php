@@ -490,13 +490,14 @@ class LockdownCommandsTest extends TestCase
     {
         Mail::fake();
         $this->lockdown->press(null, 'test reason');
-        // One loop has caught up to the current state (out of the 8 named in the plan);
-        // the rest have never acked at all.
+        // One loop has caught up to the current state; the rest have never acked at all. The
+        // total is every loop LockdownService names, so adding one (as the clean path and the
+        // automod loop were) does not need this figure chasing.
         $this->lockdown->ack('push');
         $this->lockdown->count('leaked:push');
 
         $this->artisan('lockdown:report')
-            ->expectsOutputToContain('Acks: 1/8 loops caught up. Leaked since press: 1.')
+            ->expectsOutputToContain('Acks: 1/' . count(LockdownService::ACK_LOOPS) . ' loops caught up. Leaked since press: 1.')
             ->assertSuccessful();
     }
 

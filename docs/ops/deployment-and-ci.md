@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-11
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -40,6 +40,8 @@ flowchart LR
    is allowed.
    The `check-ux-cleanups` job fails a UX cleanup note (`iznik-batch/config/ux_cleanups.php`) that is
    malformed or names an experiment switch that still exists.
+   The `test-automod` job runs the automod service's own tests (`npm ci` then `npm test` in
+   `automod/`), which pin the flowchart, its recorded version and the facts the batch sends.
    Four checks run as **background steps** so they overlap the container build and the
    parallel suites instead of sitting on the critical path: `monitor-fsm` (vitest, which also
    needs python3 and make, started before the build), `eslint .` over `iznik-nuxt3` (in the

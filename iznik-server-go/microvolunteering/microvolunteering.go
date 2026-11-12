@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,6 +82,10 @@ const (
 	EEELabelQuorum      = 3
 )
 
+// ApproverMinMembershipDays is how long a member must have belonged to a community before
+// their Approve vote counts towards marking a self-published post as checked.
+const ApproverMinMembershipDays = 7
+
 // EEE label vocabularies — kept here so the server rejects invalid client
 // submissions and the Vue component / sync command have a single source of
 // truth via a comment.
@@ -97,6 +102,15 @@ var (
 func isValidEEECondition(v string) bool { return validEEEConditions[v] }
 func isValidEEEWeight(v string) bool    { return validEEEWeights[v] }
 func isValidEEESize(v string) bool      { return validEEESizes[v] }
+
+// earnedReachEnabled reports whether the earned-reach review gate is on (env
+// RIPPLE_EARNED_REACH_ENABLED). When off, the approved-message reviewer pool is
+// unrestricted - byte-for-byte the pre-gate query. Kept local to avoid an import
+// cycle with the message package; reads the same env var ExpandService reads, the way the
+// batch reads every post-moderation switch (EnvSetting::flag): on for "true" or "1" only.
+func earnedReachEnabled() bool {
+	return utils.EnvSwitch("RIPPLE_EARNED_REACH_ENABLED")
+}
 
 // CoinFlip picks between AI image review and approved message review when both
 // are available. Overridable from tests so both branches can be exercised
@@ -239,16 +253,36 @@ func GetChallenge(c *fiber.Ctx) error {
 	wantCheckMessage := contains(challengeTypes, ChallengeCheckMessage) && len(groupIDs) > 0
 	wantAIImage := contains(challengeTypes, ChallengeAIImageReview)
 
+	// Reviewer location for the earned-reach reviewer-pool bound (only fetched when the gate is
+	// on). Prefer settings.mylocation, fall back to lastlocation; both are WGS84 degrees. nil when
+	// neither is set - getApprovedMessageChallenge then treats it (and a disabled gate) as fail-open.
+	var reviewerLat, reviewerLng *float64
+	if wantCheckMessage && earnedReachEnabled() {
+		type locResult struct {
+			Lat *float64
+			Lng *float64
+		}
+		var rl locResult
+		db.Table("users u").
+			Select("COALESCE(NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lat')) AS DECIMAL(11,7)), 0), l.lat) AS lat, "+
+				"COALESCE(NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lng')) AS DECIMAL(11,7)), 0), l.lng) AS lng").
+			Joins("LEFT JOIN locations l ON l.id = u.lastlocation").
+			Where("u.id = ?", userID).
+			Scan(&rl)
+		reviewerLat = rl.Lat
+		reviewerLng = rl.Lng
+	}
+
 	if wantCheckMessage && wantAIImage {
 		if CoinFlip() == 0 {
 			if challenge := getAIImageReviewChallenge(db, userID); challenge != nil {
 				return c.JSON(challenge)
 			}
-			if challenge := getApprovedMessageChallenge(db, userID, groupIDs); challenge != nil {
+			if challenge := getApprovedMessageChallenge(db, userID, groupIDs, reviewerLat, reviewerLng); challenge != nil {
 				return c.JSON(challenge)
 			}
 		} else {
-			if challenge := getApprovedMessageChallenge(db, userID, groupIDs); challenge != nil {
+			if challenge := getApprovedMessageChallenge(db, userID, groupIDs, reviewerLat, reviewerLng); challenge != nil {
 				return c.JSON(challenge)
 			}
 			if challenge := getAIImageReviewChallenge(db, userID); challenge != nil {
@@ -256,7 +290,7 @@ func GetChallenge(c *fiber.Ctx) error {
 			}
 		}
 	} else if wantCheckMessage {
-		if challenge := getApprovedMessageChallenge(db, userID, groupIDs); challenge != nil {
+		if challenge := getApprovedMessageChallenge(db, userID, groupIDs, reviewerLat, reviewerLng); challenge != nil {
 			return c.JSON(challenge)
 		}
 	} else if wantAIImage {
@@ -341,14 +375,28 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 	pendingWhereSQL := "messages_groups.groupid IN (?) AND messages_groups.deleted = 0 AND DATE(messages.arrival) = CURDATE() AND fromuser != ? " +
 		"AND microvolunteering = 1 AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
-		"AND collection = ? AND autoreposts = 0"
+		"AND messages_groups.collection = ? AND messages_groups.autoreposts = 0"
+	// On a community in the post-moderation trial, posts from members with no posting status
+	// publish by themselves after the auto-approve wait, so a human look matters most there:
+	// offer those first, oldest first within each group, then the posts a moderator will deal
+	// with anyway. Elsewhere nothing publishes by itself and the queue is oldest first as it
+	// always was.
+	order := "messages_groups.arrival ASC"
+	if trial := utils.AutoapproveTrialGroups(groupIDs); len(trial) > 0 {
+		ids := make([]string, len(trial))
+		for i, gid := range trial {
+			ids[i] = strconv.FormatUint(gid, 10)
+		}
+		order = "(poster.ourPostingStatus IS NULL AND messages_groups.groupid IN (" + strings.Join(ids, ",") + ")) DESC, " + order
+	}
 	err := db.Table("messages_groups").
 		Select("messages_groups.msgid").
 		Joins("INNER JOIN messages ON messages.id = messages_groups.msgid").
 		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
 		Joins("LEFT JOIN microactions ON microactions.msgid = messages_groups.msgid AND microactions.userid = ?", userID).
+		Joins("LEFT JOIN memberships poster ON poster.userid = messages.fromuser AND poster.groupid = messages_groups.groupid").
 		Where(pendingWhereSQL, groupIDs, userID, utils.COLLECTION_PENDING).
-		Order("messages_groups.arrival ASC").Limit(1).Scan(&msg).Error
+		Order(order).Limit(1).Scan(&msg).Error
 
 	if err == nil && msg.Msgid > 0 {
 		return &Challenge{
@@ -360,8 +408,13 @@ func getPendingMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *
 	return nil
 }
 
-// getApprovedMessageChallenge returns an approved message for any user to review
-func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) *Challenge {
+// getApprovedMessageChallenge returns an approved message for any user to review.
+// When the earned-reach gate is on and reviewerLat/reviewerLng are non-nil, candidates are
+// restricted to posts whose rippling_reach max_drive_min covers the reviewer (straight-line
+// distance <= max_drive_min * 1400 m, ~84 km/h - a generous upper bound, always wider than the
+// real isochrone), and results are ordered nearest-first. Posts with no reach row or no computed
+// max_drive_min are included regardless (fail-open) and sort last.
+func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64, reviewerLat, reviewerLng *float64) *Challenge {
 	if len(groupIDs) == 0 {
 		return nil
 	}
@@ -386,7 +439,9 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 		"AND microvolunteering = 1 AND messages_outcomes.id IS NULL AND messages.deleted IS NULL AND microactions.id IS NULL " +
 		"AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.approvedmessages') = 1) " +
 		"AND collection = ? AND autoreposts = 0"
-	err := db.Table("messages_spatial").
+	whereArgs := []interface{}{groupIDs, userID, utils.COLLECTION_APPROVED}
+
+	query := db.Table("messages_spatial").
 		Select("messages_spatial.msgid, "+
 			"(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid) AS reviewcount, "+
 			"(SELECT COUNT(*) AS count FROM microactions WHERE msgid = messages_spatial.msgid AND result = ?) AS approvalcount",
@@ -395,10 +450,32 @@ func getApprovedMessageChallenge(db *gorm.DB, userID uint64, groupIDs []uint64) 
 		Joins("INNER JOIN messages ON messages.id = messages_spatial.msgid").
 		Joins("INNER JOIN `groups` ON groups.id = messages_groups.groupid").
 		Joins("LEFT JOIN microactions ON microactions.msgid = messages_spatial.msgid AND microactions.userid = ?", userID).
-		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_spatial.msgid").
-		Where(approvedWhereSQL, groupIDs, userID, utils.COLLECTION_APPROVED).
+		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages_spatial.msgid")
+
+	orderExpr := "messages_groups.arrival ASC"
+
+	// Earned-reach gate: restrict candidates to posts whose rippling_reach max_drive_min
+	// covers the reviewer (straight-line distance <= max_drive_min * 1400 m, ~84 km/h - a
+	// generous upper bound, always wider than the real isochrone), nearest-first. Posts with
+	// no reach row or no computed max_drive_min are included regardless (fail-open) and sort
+	// last. rr.lat/rr.lng are WGS84 degrees (NOT the SRID-3857 polygon); ST_Distance_Sphere
+	// takes (lng, lat). reviewerLat/Lng are already-parsed float64s (not user strings), so
+	// embedding them via fmt.Sprintf below is injection-safe - GORM's Order() has no bind-arg
+	// form, unlike Where()/Having().
+	if earnedReachEnabled() && reviewerLat != nil && reviewerLng != nil {
+		query = query.Joins("LEFT JOIN rippling_reach rr ON rr.msgid = messages_spatial.msgid")
+		approvedWhereSQL += " AND (rr.msgid IS NULL OR rr.max_drive_min IS NULL " +
+			"OR ST_Distance_Sphere(POINT(?, ?), POINT(rr.lng, rr.lat)) <= rr.max_drive_min * 1400)"
+		whereArgs = append(whereArgs, *reviewerLng, *reviewerLat)
+		orderExpr = fmt.Sprintf(
+			"COALESCE(ST_Distance_Sphere(POINT(%f, %f), POINT(rr.lng, rr.lat)), 9999999) ASC, messages_groups.arrival ASC",
+			*reviewerLng, *reviewerLat)
+	}
+
+	err := query.
+		Where(approvedWhereSQL, whereArgs...).
 		Having("approvalcount < ? AND reviewcount < ?", ApprovalQuorum, DissentingQuorum).
-		Order("messages_groups.arrival ASC").Limit(1).Scan(&msg).Error
+		Order(orderExpr).Limit(1).Scan(&msg).Error
 
 	if err == nil && msg.Msgid > 0 {
 		return &Challenge{
@@ -678,6 +755,12 @@ func PostResponse(c *fiber.Ctx) error {
 				"score_negative": gorm.Expr("0"),
 			})
 
+			if response == "Approve" {
+				markCheckedByMicrovolunteers(db, req.Msgid)
+			} else {
+				reopenMicrovolunteerCheck(db, req.Msgid)
+			}
+
 			// If rejection, check if we have quorum to act.
 			if response == "Reject" {
 				if distinctRejectCount(db, req.Msgid) >= int64(ApprovalQuorum) {
@@ -898,6 +981,78 @@ func ModFeedback(c *fiber.Ctx) error {
 	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// markCheckedByMicrovolunteers treats a post as looked at by a human once ApprovalQuorum
+// different members other than the poster have approved it and nobody has rejected it.
+// It stamps checkedat on the post's own rows that published without a moderator, leaving
+// checkedby empty: that is how a microvolunteer check is told apart from a moderator's.
+// The stamp does the same three things a moderator's check does: the post leaves the
+// Checked queue, the hold on spreading is lifted, and the first reply mail may go out.
+//
+// Only on communities in the post-moderation trial: that is where the Checked queue exists and
+// where a stamp means anything. Everywhere else a copy with no approver is a trusted member's
+// post or a 48-hour fallback approval, and stamping it would count in the moderation stats as a
+// human review of a post nobody reviewed.
+//
+// Only a live copy is stamped (collection Approved). A copy that is Pending, or in Spam, is
+// waiting for a moderator, and a stamp on it would lift the hold on a post a moderator has pulled
+// back and send it into the Approved list already stamped.
+//
+// Only votes from members who could have been offered the post count, on the offer rules of the
+// review challenge: an Approved member, for at least ApproverMinMembershipDays, of one of the
+// trial communities the post is on, which has microvolunteering on for approved posts, with a
+// trust level other than Declined or Excluded; the vote cast on the day the post arrived; and the
+// copy on that community not an autorepost. Votes cast before the poster last edited the post
+// are about different text and do not count.
+func markCheckedByMicrovolunteers(db *gorm.DB, msgid uint64) {
+	var direct []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND collection = ? AND rippled_in = 0 AND approvedby IS NULL AND checkedat IS NULL AND deleted = 0", msgid, utils.COLLECTION_APPROVED).
+		Scan(&direct)
+	trial := utils.AutoapproveTrialGroups(direct)
+	if len(trial) == 0 {
+		return
+	}
+
+	var approvers int64
+	db.Table("microactions ma").
+		Select("COUNT(DISTINCT ma.userid)").
+		Joins("INNER JOIN messages m ON m.id = ma.msgid").
+		Joins("INNER JOIN users u ON u.id = ma.userid").
+		Joins("INNER JOIN memberships mem ON mem.userid = ma.userid AND mem.groupid IN ? AND mem.collection = ? "+
+			"AND mem.added < NOW() - INTERVAL ? DAY", trial, utils.COLLECTION_APPROVED, ApproverMinMembershipDays).
+		Joins("INNER JOIN messages_groups mg ON mg.msgid = ma.msgid AND mg.groupid = mem.groupid AND mg.autoreposts = 0 AND mg.deleted = 0").
+		Joins("INNER JOIN `groups` g ON g.id = mem.groupid AND g.microvolunteering = 1 "+
+			"AND (g.microvolunteeringoptions IS NULL OR JSON_EXTRACT(g.microvolunteeringoptions, '$.approvedmessages') = 1)").
+		Where("ma.msgid = ? AND ma.actiontype = ? AND ma.result = 'Approve' AND ma.userid != COALESCE(m.fromuser, 0) "+
+			"AND COALESCE(u.trustlevel, ?) NOT IN (?, ?) AND (m.editedat IS NULL OR ma.timestamp > m.editedat) "+
+			"AND DATE(ma.timestamp) = DATE(m.arrival)",
+			msgid, ChallengeCheckMessage, TrustBasic, TrustDeclined, TrustExcluded).
+		Scan(&approvers)
+	if approvers < int64(ApprovalQuorum) {
+		return
+	}
+
+	var rejections int64
+	db.Table("microactions").
+		Where("msgid = ? AND actiontype = ? AND result = 'Reject'", msgid, ChallengeCheckMessage).
+		Count(&rejections)
+	if rejections > 0 {
+		return
+	}
+
+	db.Table("messages_groups").
+		Where("msgid = ? AND groupid IN ? AND collection = ? AND rippled_in = 0 AND approvedby IS NULL AND checkedat IS NULL AND deleted = 0", msgid, trial, utils.COLLECTION_APPROVED).
+		Update("checkedat", gorm.Expr("NOW()"))
+}
+
+// reopenMicrovolunteerCheck undoes a microvolunteer check when someone rejects the post,
+// so a moderator sees it again. A moderator's own check (checkedby set) is left alone.
+func reopenMicrovolunteerCheck(db *gorm.DB, msgid uint64) {
+	db.Table("messages_groups").
+		Where("msgid = ? AND rippled_in = 0 AND checkedby IS NULL AND checkedat IS NOT NULL AND deleted = 0", msgid).
+		Update("checkedat", gorm.Expr("NULL"))
 }
 
 // SendForReviewAllGroups moves a message back to Pending on ALL the groups it is

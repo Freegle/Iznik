@@ -1,6 +1,7 @@
 <template>
   <client-only>
     <ScrollToTop :prepend="groupName" />
+    <ModHelpApproved :groupid="Number(groupid) || 0" />
     <div class="d-flex justify-content-between flex-wrap">
       <ModGroupSelect
         v-model="chosengroupid"

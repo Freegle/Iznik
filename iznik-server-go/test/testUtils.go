@@ -86,6 +86,16 @@ func findLogByMsg(db *gorm.DB, logType string, subtype string, msgID uint64) *Lo
 // FACTORY FUNCTIONS - Create isolated test data for each test
 // =============================================================================
 
+// clearPostModerationEnv switches the post-moderation settings off for one test, so what it
+// asserts does not depend on the environment the suite runs in. A test that wants a community in
+// the trial sets FREEGLE_AUTOAPPROVE_TRIAL_GROUPS itself afterwards.
+func clearPostModerationEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "")
+	t.Setenv("FREEGLE_AUTOAPPROVE_TRIAL_GROUPS", "")
+	t.Setenv("FREEGLE_AUTOMOD_SHADOW_GROUPS", "")
+}
+
 // uniquePrefix generates a unique prefix for test data to avoid collisions
 func uniquePrefix(testName string) string {
 	return fmt.Sprintf("%s_%d", testName, time.Now().UnixNano())

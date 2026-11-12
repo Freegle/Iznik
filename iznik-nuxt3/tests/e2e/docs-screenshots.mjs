@@ -22,6 +22,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { mkdir } from 'node:fs/promises'
+import { VIEWPORTS, viewportFor, skipReason } from './docs-screenshots-plan.mjs'
 
 // Resolve Playwright via CJS require (honours NODE_PATH and finds it whether it
 // is installed locally or globally), which ESM bare-import resolution does not.
@@ -45,14 +46,18 @@ const cfg = {
   memberPassword: process.env.DOCS_MEMBER_PASSWORD || 'freegle',
   modEmail: process.env.DOCS_MOD_EMAIL || 'testmod@test.com',
   modPassword: process.env.DOCS_MOD_PASSWORD || 'freegle',
-  // Freegle is mobile-first, so docs use a phone viewport.
-  viewport: { width: 390, height: 844 },
+  // Each shot sets its own viewport (viewportFor): a phone for the member guide, a desktop for
+  // ModTools. This is only what the browser opens at.
+  viewport: VIEWPORTS.member,
   navTimeout: 45000,
 }
 
 /**
  * The manifest. Each entry maps one screenshot to one place in the docs.
  * auth: 'none' logged out, 'member' logged in as a freegler, 'mod' logged in to ModTools.
+ * trialOnly: the page shows something that exists only for a moderator with a community in the
+ * post-moderation trial (a countdown, the Check queue, automated review's decisions). It is
+ * taken only for such a moderator; for any other the committed image is kept (see skipReason).
  * Add a shot here rather than capturing images by hand.
  */
 const SHOTS = [
@@ -122,11 +127,48 @@ const SHOTS = [
     path: '/',
   },
   {
+    // The Pending queue on a community in the trial: the help box, and automated review's
+    // line on a post it is holding.
     audience: 'moderators',
     name: 'pending',
     auth: 'mod',
     app: 'mod',
     path: '/messages/pending',
+    trialOnly: true,
+  },
+  {
+    // Post-moderation oversight: the Check queue, posts that published
+    // themselves and are waiting for a look.
+    audience: 'moderators',
+    name: 'check',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/check',
+    trialOnly: true,
+  },
+  {
+    // Automated review's decision on a Pending post: the one-line reason.
+    audience: 'moderators',
+    name: 'automod-line',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/pending',
+    clip: '.automod-line:has-text("holding")',
+    trialOnly: true,
+  },
+  {
+    // "Why?" opened: each question the flowchart asked, its answer and evidence.
+    audience: 'moderators',
+    name: 'automod-why',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/pending',
+    // A held post, so the modal shows the question that held it.
+    click: '.automod-line:has-text("holding") .automod-line__why',
+    // Tall enough for the whole path, which is longer than a desktop screen.
+    viewport: { width: 1100, height: 1500 },
+    clip: '.modal.show .modal-dialog',
+    trialOnly: true,
   },
   {
     audience: 'moderators',
@@ -206,23 +248,63 @@ async function loginMod(page) {
   await fillLogin(page, cfg.modEmail, cfg.modPassword)
 }
 
+// ModTools shows Check in its menu exactly when the session has a community in the trial, so
+// this asks the app rather than guessing from the configuration of the stack it is running
+// against.
+async function moderatorHasTrialCommunity(page) {
+  await page.setViewportSize(VIEWPORTS.mod)
+  await page.goto(cfg.modBase + '/', {
+    waitUntil: 'networkidle',
+    timeout: cfg.navTimeout,
+  })
+  await page.waitForTimeout(1500)
+  return (await page.locator('.leftmenu a[href="/messages/check"]').count()) > 0
+}
+
 async function capture(context, shot) {
   const base = shot.app === 'mod' ? cfg.modBase : cfg.memberBase
   const outDir = resolve(DOCS_ROOT, shot.audience, 'assets')
   await mkdir(outDir, { recursive: true })
   const page = context.page
+  await page.setViewportSize(viewportFor(shot))
   await page.goto(base + shot.path, {
     waitUntil: 'networkidle',
     timeout: cfg.navTimeout,
   })
   // Settle animations and lazy content.
   await page.waitForTimeout(1500)
-  await page.screenshot({
+  // shot.click opens something first (a modal); shot.clip captures just that element
+  // rather than the whole page.
+  if (shot.click) {
+    // The list can re-render under the click (the work poll refreshes it), so retry until
+    // what the click should open has appeared.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await page.locator(shot.click).first().click()
+      try {
+        await page
+          .locator(shot.clip)
+          .first()
+          .waitFor({ state: 'visible', timeout: 5000 })
+        break
+      } catch {
+        await page.waitForTimeout(1000)
+      }
+    }
+  }
+  const opts = {
     path: resolve(outDir, shot.name + '.png'),
     animations: 'disabled',
     caret: 'hide',
     mask: MASK.map((sel) => page.locator(sel)),
-  })
+  }
+  if (shot.clip) {
+    const el = page.locator(shot.clip).first()
+    await el.waitFor({ state: 'visible', timeout: 15000 })
+    await el.scrollIntoViewIfNeeded()
+    const box = await el.boundingBox()
+    opts.clip = { x: box.x, y: box.y, width: box.width, height: box.height }
+  }
+  await page.screenshot(opts)
   console.log(`  captured ${shot.audience}/${shot.name}.png  (${shot.path})`)
 }
 
@@ -267,6 +349,10 @@ async function run() {
           modCtx = await browser.newContext(ctxOpts)
           modCtx.page = await modCtx.newPage()
           await loginMod(modCtx.page)
+          modCtx.inTrial = await moderatorHasTrialCommunity(modCtx.page)
+          console.log(
+            `  moderator ${modCtx.inTrial ? 'has' : 'has no'} community in the post-moderation trial`
+          )
         }
         ctx = modCtx
       } else {
@@ -274,7 +360,12 @@ async function run() {
         ctx = await browser.newContext(ctxOpts)
         ctx.page = await ctx.newPage()
       }
-      await capture(ctx, shot)
+      const reason = skipReason(shot, ctx)
+      if (reason) {
+        console.log(`  skipped ${shot.audience}/${shot.name}: ${reason}`)
+      } else {
+        await capture(ctx, shot)
+      }
       if (shot.auth === 'none') await ctx.close()
     } catch (err) {
       failures++

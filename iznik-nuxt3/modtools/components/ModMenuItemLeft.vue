@@ -1,7 +1,10 @@
 <template>
   <div :class="getClass">
-    <!-- eslint-disable-next-line -->
-    <span v-if="indent" class="ps-3" /><nuxt-link :to="link" @mousedown.native="click">{{ name }}</nuxt-link>
+    <span v-if="indent" class="ps-3" /><span
+      v-if="sub"
+      class="menu-elbow"
+      aria-hidden="true"
+    /><nuxt-link :to="link" @mousedown="click">{{ name }}</nuxt-link>
     <b-badge v-if="count && getCount(count)" :variant="countVariant">
       {{ getCount(count) }}
     </b-badge>
@@ -49,6 +52,13 @@ const props = defineProps({
     default: 0,
   },
   indent: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  // A sub-item of the entry above it: drawn one step further in, with a small
+  // elbow line joining it to its parent (Check sits under Approved this way).
+  sub: {
     type: Boolean,
     required: false,
     default: false,
@@ -116,5 +126,23 @@ function click(e) {
   a {
     color: $color-white;
   }
+}
+
+/* The elbow that links a sub-item to the entry above it: a short vertical
+   stroke down from the parent's row turning into a horizontal one towards
+   the link, like the last branch of a tree. */
+.menu-elbow {
+  display: inline-block;
+  width: 0.6em;
+  height: 0.7em;
+  margin-left: 0.75em;
+  margin-right: 0.35em;
+  border-left: 1px solid $color-gray--normal;
+  border-bottom: 1px solid $color-gray--normal;
+  vertical-align: 0.15em;
+}
+
+.active .menu-elbow {
+  border-color: $color-white;
 }
 </style>

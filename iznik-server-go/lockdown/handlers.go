@@ -359,7 +359,7 @@ func heldCounts(incidentID uint64) fiber.Map {
 // ackLoops are the batch loops that call LockdownService::ack() (plan 11.6). Named here so a
 // loop that has never acted since the press still appears, listed as not caught up.
 var ackLoops = []string{
-	"chat-process", "content-check", "auto-approve", "mail-spool",
+	"chat-process", "content-check", "auto-approve", "auto-approve-clean", "automod", "mail-spool",
 	"mail-loops", "background-tasks", "push", "tick",
 }
 

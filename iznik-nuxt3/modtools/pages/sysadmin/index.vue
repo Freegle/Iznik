@@ -192,6 +192,22 @@
             :key="'supportai-' + supportAIBump"
           />
         </b-tab>
+
+        <!-- Moderation Tab -->
+        <b-tab @click="onModerationTab">
+          <template #title>
+            <h2 class="ms-2 me-2">Moderation</h2>
+          </template>
+          <ModSysAdminModerationStats
+            v-if="showModeration"
+            :key="'moderation-' + moderationBump"
+          />
+          <ModSysAdminAutomod
+            v-if="showModeration"
+            :key="'automod-' + moderationBump"
+            class="mt-4"
+          />
+        </b-tab>
       </b-tabs>
     </div>
     <NoticeMessage v-else variant="warning">
@@ -244,6 +260,8 @@ const showUx = ref(false)
 const uxBump = ref(0)
 const showSupportAI = ref(false)
 const supportAIBump = ref(0)
+const showModeration = ref(false)
+const moderationBump = ref(0)
 // A link to the PAF update (?tab=paf, or the old ?tab=addresses) opens it on the Housekeeping tab.
 const openPaf = ref(false)
 
@@ -268,6 +286,7 @@ const topTabMap = {
   ux: 3,
   rippling: 4,
   aihelper: 5,
+  moderation: 6,
   paf: 0,
   addresses: 0,
 }
@@ -339,6 +358,11 @@ function onSupportAITab() {
   supportAIBump.value = Date.now()
 }
 
+function onModerationTab() {
+  showModeration.value = true
+  moderationBump.value = Date.now()
+}
+
 onMounted(() => {
   const tab = route.query.tab
   if (tab && topTabMap[tab] !== undefined) {
@@ -370,6 +394,7 @@ onMounted(() => {
       onReengageTab()
     } else if (tab === 'rippling') onRipplingTab()
     else if (tab === 'aihelper') onSupportAITab()
+    else if (tab === 'moderation') onModerationTab()
     else if (tab === 'paf' || tab === 'addresses') {
       onHousekeepingTab()
       openPaf.value = true
