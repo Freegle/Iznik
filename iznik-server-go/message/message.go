@@ -3459,12 +3459,14 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// A hold is a pending-queue concept, so only Pending copies take one. A copy that is
+	// A hold is a pending-queue concept, so only copies waiting for a moderator (Pending, or
+	// flagged as spam) take one. A copy that is
 	// already Approved would otherwise show "Held by" on a live post. Back to pending sets
 	// its hold itself, before flipping the copy.
 	var pendingGroups []uint64
 	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, authorizedGroups, utils.COLLECTION_PENDING).
+		Where("msgid = ? AND groupid IN ? AND collection IN ?", req.ID, authorizedGroups,
+			[]string{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}).
 		Scan(&pendingGroups)
 	authorizedGroups = pendingGroups
 
