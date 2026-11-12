@@ -1668,4 +1668,30 @@ class UnifiedDigestTest extends TestCase
         $this->assertTrue(mb_check_encoding($subject, 'UTF-8'), 'the subject must stay valid UTF-8');
         $this->assertStringContainsString('Set of wooden chairs É...', $subject, 'the name is cut at 22 characters, not 22 bytes');
     }
+
+    private function spooledDailyDigestOfOnlyTheRecipientsOwnPost(): array
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $own = $this->createTestMessage($user, $group, [
+            'subject' => 'OFFER: My own lamp (London)',
+        ]);
+        $posts = collect([['message' => $own, 'postedToGroups' => [$group->id]]]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        return $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+    }
+
+    public function test_html_has_no_reply_button_on_the_recipients_own_post_in_either_copy(): void
+    {
+        $html = $this->spooledDailyDigestOfOnlyTheRecipientsOwnPost()['html'] ?? '';
+
+        $this->assertStringContainsString('My own lamp', $html, 'the card rendered');
+        // The in-column copy and the full-width copy for phones both omit it: you cannot reply to
+        // your own post. Nothing else in a digest of one own post is a Reply button.
+        $this->assertStringNotContainsString('>Reply</a>', $html);
+    }
 }
