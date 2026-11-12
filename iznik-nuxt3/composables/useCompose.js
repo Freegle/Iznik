@@ -380,6 +380,13 @@ export async function freegleIt(type, router, options = {}) {
       type,
     })
 
+    // An empty result means nothing was posted: another submit is already running (and will
+    // navigate itself) or there was no draft. Don't count a conversion or leave the form.
+    if (!results.length) {
+      submitting.value = false
+      return
+    }
+
     // The params we pass from the results may crucially include new user information,
     // and depending on timing this may not appear in the first result, so look for one of those first.
     const params = {
