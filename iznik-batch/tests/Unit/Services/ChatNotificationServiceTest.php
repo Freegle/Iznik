@@ -150,6 +150,45 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertCount(1, $toRecipient);
     }
 
+    public function test_notify_by_email_mails_a_genuine_repeat_sent_minutes_later(): void
+    {
+        // Only rows seconds apart are one send. A member who sends the same short reply
+        // ("Yes") twice, minutes apart, has sent two messages and the recipient is told of both.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $sender->id,
+            'lastmsgemailed' => null,
+        ]);
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $recipient->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Yes',
+            'date' => now()->subMinutes(20),
+        ]);
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Yes',
+            'date' => now()->subMinutes(10),
+        ]);
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        $toRecipient = Mail::sent(ChatNotification::class)->filter(
+            fn (ChatNotification $mail) => $mail->hasTo($recipient->email_preferred)
+        );
+        $this->assertCount(2, $toRecipient);
+    }
+
     public function test_notify_by_email_with_specific_chat(): void
     {
         $sender = $this->createTestUser();
