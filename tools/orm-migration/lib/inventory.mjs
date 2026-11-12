@@ -18,8 +18,11 @@ export const TREES = [
 
 const SKIP_DIRS = new Set(['vendor', 'node_modules', '.git', 'storage', '.idea']);
 
+// The parity harness package is test support: it writes the SQL of fixtures, and no request reaches it.
+const TEST_SUPPORT_DIRS = ['iznik-server-go/parity/'];
+
 export function isTestPath(rel, lang) {
-  if (lang === 'go') return rel.endsWith('_test.go') || /(^|\/)test\//.test(rel);
+  if (lang === 'go') return rel.endsWith('_test.go') || /(^|\/)test\//.test(rel) || TEST_SUPPORT_DIRS.some((d) => rel.startsWith(d));
   return /^iznik-batch\/tests\//.test(rel);
 }
 
@@ -140,6 +143,8 @@ function ruleFor(site, rules) {
 
 // -------------------------------------------------------------------- merge
 
+const AUTO_RETIRED = /^No longer in the code/;
+
 const CARRIED_FIELDS = ['porting', 'category', 'hot', 'approvedDiff'];
 
 function locationKey(s) {
@@ -221,8 +226,11 @@ export function reconcile(scan, previous, rules) {
   for (const p of prevSites) {
     if (currentIds.has(p.id) || claimed.has(p.id)) continue;
     const gone = { ...p, presentInCode: false };
-    if (p.status === 'converted' || p.status === 'retired') {
+    if (p.status === 'converted') {
       // keep as recorded
+    } else if (p.status === 'retired' && !(AUTO_RETIRED.test(p.reason || '') && scan.testIds.has(p.id))) {
+      // keep as recorded, unless the tool retired it itself and a parity test now names it: the id
+      // moved when an identical statement before it was converted, and the test came after
     } else if (scan.testIds.has(p.id)) {
       gone.status = 'converted';
       delete gone.reason;

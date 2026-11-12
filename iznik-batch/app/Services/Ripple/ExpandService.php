@@ -1955,6 +1955,25 @@ class ExpandService
     }
 
     /**
+     * The member's join and leave log rows, oldest first. The statement is built and run here, not
+     * inline, so the parity test runs the same method and sees the statement that is sent.
+     *
+     * @internal
+     *
+     * @return \Illuminate\Support\Collection<int, \stdClass>
+     */
+    public static function optOutLogRows(int $userid): \Illuminate\Support\Collection
+    {
+        return DB::table('logs')
+            ->select('groupid', 'subtype', 'text')
+            ->where('user', $userid)
+            ->where('type', 'Group')
+            ->whereIn('subtype', ['Joined', 'Left'])
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
      * The groups this member has opted out of rippling by leaving a ripple-join.
      *
      * "Most recent join wins": a group blocks rippling only when the member's LATEST
@@ -1979,12 +1998,7 @@ class ExpandService
 
         // Ordered by id, so the stream replays the member's history oldest-first and the last
         // verdict written for a group is the one that stands.
-        foreach (DB::select(
-            "SELECT groupid, subtype, text FROM logs
-             WHERE user = ? AND type = 'Group' AND subtype IN ('Joined', 'Left')
-             ORDER BY id",
-            [$userid]
-        ) as $l) {
+        foreach (self::optOutLogRows($userid) as $l) {
             if ($l->subtype === 'Joined') {
                 $latestJoinText[$l->groupid] = $l->text;
                 // Any later join (manual or rippled) supersedes an earlier block:
@@ -2276,6 +2290,23 @@ class ExpandService
     }
 
     /**
+     * The poster's first membership anywhere, organic ones before ripple-created ones and the newest
+     * first, with the settings a rippled-into membership copies. The statement is built and run
+     * here, not inline, so the parity test runs the same method and sees the statement that is sent.
+     *
+     * @internal
+     */
+    public static function organicMembership(int $userid): ?\stdClass
+    {
+        return DB::table('memberships')
+            ->select('emailfrequency', 'eventsallowed', 'volunteeringallowed')
+            ->where('userid', $userid)
+            ->orderBy('rippled')
+            ->orderByDesc('added')
+            ->first();
+    }
+
+    /**
      * Best-effort: computes and stores the "quicker to get to" moderator note for a freshly
      * rippled-in (msgid,groupid) pair. Silently no-ops (leaves the columns NULL) when the
      * routing/KNN calls fail, the group is unreachable within the routing horizon, or
@@ -2332,13 +2363,7 @@ class ExpandService
             // previous ripple's guess - otherwise a wrong default propagates itself forward every time
             // another post ripples.
             if (!$home) {
-                $home = DB::selectOne(
-                    'SELECT emailfrequency, eventsallowed, volunteeringallowed
-                     FROM memberships WHERE userid = ?
-                     ORDER BY rippled ASC, added DESC
-                     LIMIT 1',
-                    [$posterId]
-                );
+                $home = self::organicMembership((int) $posterId);
             }
             // Email frequency: preserve the poster's setting, but DOWNGRADE ONLY immediate (-1) to
             // daily (24). A rippled-into group is a lower-priority, unrequested membership, so we never

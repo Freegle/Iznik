@@ -137,8 +137,7 @@ func SubmitMessage(c *fiber.Ctx) error {
 		"added_origin": addedorigin.ForInsert("message.SubmitMessage", myid, req.Groupid, addedorigin.Posted),
 	})
 	if joinRes.RowsAffected > 0 {
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
-			flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, req.Groupid, myid, myid)
+		logGroupJoined(db, req.Groupid, myid)
 	}
 
 	// Prohibited posters cannot post here.
@@ -353,4 +352,17 @@ func groupSettingTruthy(settingsJSON *string, key string) bool {
 	default:
 		return false
 	}
+}
+
+// logGroupJoined records that the member joined the community by posting to it. It sends the one
+// INSERT and nothing else: GORM's default transaction would add a BEGIN and a COMMIT around it.
+func logGroupJoined(db *gorm.DB, groupid uint64, uid uint64) *gorm.DB {
+	return db.Session(&gorm.Session{SkipDefaultTransaction: true}).Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      flog.LOG_TYPE_GROUP,
+		"subtype":   flog.LOG_SUBTYPE_JOINED,
+		"groupid":   groupid,
+		"user":      uid,
+		"byuser":    uid,
+	})
 }

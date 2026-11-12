@@ -132,4 +132,6 @@ change tests, remember to update the orb too. The operational view of CI is in
 `manifest.json`, and the `check-raw-sql-ratchet` job fails a branch that adds one the manifest does
 not know or raises the count of `raw` sites. Its self-tests run with
 `node --test tools/orm-migration/test/*.test.mjs`. The README there says what counts as a site and
-what the scanner does not see.
+what the scanner does not see. A site that is converted needs a parity test naming its id: see
+[the parity harness](reference/parity-harness.md), which also says how the golden stores that `extract.mjs update`
+writes into `iznik-server-go/parity/` and `iznik-batch/tests/fixtures/orm-parity/` are kept in step.

@@ -11,7 +11,7 @@ namespace Tests\Support\OrmHarness;
  * and alias names.
  *
  * PORT, NOT A REIMPLEMENTATION FROM SCRATCH: this is a line-by-line port of
- * iznik-server-go/ormharness/canonical.go's Canonical() (Layer 1's
+ * iznik-server-go/parity/canonical.go's Canonical() (Layer 1's
  * canonicaliser for the Go side), following the team lead's explicit
  * instruction not to write a second, independently-designed canonicaliser -
  * two independent normalisers drift, and the day they disagree is the day
@@ -21,7 +21,7 @@ namespace Tests\Support\OrmHarness;
  * compiling the Go canonicaliser into a small CLI and having PHPUnit shell
  * out to it - was considered and rejected as impractical, not merely
  * inconvenient:
- *   - iznik-server-go/ormharness (where Canonical() lives) is gorm-coupled;
+ *   - iznik-server-go/parity (where Canonical() lives) is gorm-coupled;
  *     a CLI wrapper importing it would still need to compile that whole
  *     package (gorm.io/gorm, gorm.io/driver/mysql, iznik-server-go/database),
  *     and would need to live under iznik-server-go/ - a directory explicitly
@@ -376,9 +376,14 @@ final class Canonical
     }
 
     /**
-     * Rewrites table/join aliases and explicit "AS" aliases to positional
+     * Rewrites table aliases (including derived-table aliases) to positional
      * names a1, a2, ... in order of first appearance, so "users u" and
-     * "users AS u1" compare equal. Heuristic over the token stream, not a
+     * "users AS u1" compare equal. A select-list alias ("COUNT(*) AS cnt") is
+     * an output column name that the code reading the result depends on, so it
+     * stays literal and only the AS keyword is dropped. An AS alias counts as a
+     * table alias when it follows a derived table in FROM or JOIN, or when the
+     * name is used as a qualifier ("name.column") anywhere in the statement.
+     * Heuristic over the token stream, not a
      * scoped SQL parser - identical caveat to canonical.go's renameAliases:
      * assumes an alias is not reused for a second, unrelated binding within
      * one statement (e.g. across UNION branches), which if it ever happens
@@ -401,6 +406,7 @@ final class Canonical
             $canon[$key] = 'a'.(count($canon) + 1);
         };
 
+        $qualifiers = self::qualifierNames($tokens);
         $funcStack = [];
         $count = count($tokens);
         $i = 0;
@@ -455,7 +461,9 @@ final class Canonical
                 // there introduces a target type, not an alias.
                 $top = count($funcStack) > 0 ? $funcStack[count($funcStack) - 1] : '';
                 if ($top !== 'CAST' && $top !== 'CONVERT' && $i + 1 < $count && $tokens[$i + 1]['kind'] === self::TOKEN_IDENT) {
-                    $register($tokens[$i + 1]['text']);
+                    if (isset($qualifiers[strtolower($tokens[$i + 1]['text'])]) || self::followsDerivedTable($tokens, $i)) {
+                        $register($tokens[$i + 1]['text']);
+                    }
                     $drop[$i] = true;
                 }
                 $i++;
@@ -465,7 +473,7 @@ final class Canonical
             $i++;
         }
 
-        if (count($canon) === 0) {
+        if (count($canon) === 0 && count($drop) === 0) {
             return $tokens;
         }
 
@@ -482,6 +490,58 @@ final class Canonical
         }
 
         return $out;
+    }
+
+    /**
+     * Lower-cased identifiers used as the qualifier of a column reference
+     * ("name.column"), which marks them as table aliases.
+     *
+     * @param  list<array{kind:string,text:string,quoted:bool}>  $tokens
+     * @return array<string,true>
+     */
+    private static function qualifierNames(array $tokens): array
+    {
+        $out = [];
+        $count = count($tokens);
+        for ($i = 0; $i + 1 < $count; $i++) {
+            if ($tokens[$i]['kind'] === self::TOKEN_IDENT && $tokens[$i + 1]['kind'] === self::TOKEN_PUNCT
+                && $tokens[$i + 1]['text'] === '.') {
+                $out[strtolower($tokens[$i]['text'])] = true;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * True when the AS at index $as comes straight after a parenthesised
+     * subquery that sits directly after FROM or JOIN, so the alias names a
+     * derived table rather than a select-list expression.
+     *
+     * @param  list<array{kind:string,text:string,quoted:bool}>  $tokens
+     */
+    private static function followsDerivedTable(array $tokens, int $as): bool
+    {
+        if ($as === 0 || $tokens[$as - 1]['kind'] !== self::TOKEN_PUNCT || $tokens[$as - 1]['text'] !== ')') {
+            return false;
+        }
+        $depth = 0;
+        for ($j = $as - 1; $j >= 0; $j--) {
+            if ($tokens[$j]['kind'] !== self::TOKEN_PUNCT) {
+                continue;
+            }
+            if ($tokens[$j]['text'] === ')') {
+                $depth++;
+            } elseif ($tokens[$j]['text'] === '(') {
+                $depth--;
+                if ($depth === 0) {
+                    return $j > 0 && $tokens[$j - 1]['kind'] === self::TOKEN_KEYWORD
+                        && ($tokens[$j - 1]['text'] === 'from' || $tokens[$j - 1]['text'] === 'join');
+                }
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -132,6 +132,19 @@ func testTokenValid(token string, myid uint64, content emailContent) bool {
 	return hmac.Equal([]byte(parts[1]), []byte(signContent(myid, content, expiry)))
 }
 
+// uneditedCopiesQuery joins each admin to the one it was copied from and keeps the copies that
+// still match it on every editable field, before its terminal call.
+func uneditedCopiesQuery(db *gorm.DB, ids []uint64) *gorm.DB {
+	return db.Table("admins AS c").
+		Select("c.id").
+		Joins("JOIN admins p ON p.id = c.parentid").
+		Where("c.id IN (?) AND c.subject = p.subject AND c.text = p.text "+
+			"AND COALESCE(c.mjml, '') = COALESCE(p.mjml, '') "+
+			"AND COALESCE(c.ctatext, '') = COALESCE(p.ctatext, '') "+
+			"AND COALESCE(c.ctalink, '') = COALESCE(p.ctalink, '') "+
+			"AND c.essential = p.essential AND COALESCE(c.template, '') = COALESCE(p.template, '')", ids)
+}
+
 // uneditedCopies returns which of these admins are copies of a suggested ADMIN still exactly as
 // suggested. Those were seen by whoever suggested them, so a local moderator may approve one
 // without sending a test; any edit means a test is needed.
@@ -142,12 +155,7 @@ func uneditedCopies(db *gorm.DB, ids []uint64) map[uint64]bool {
 	}
 
 	var rows []uint64
-	db.Raw("SELECT c.id FROM admins c JOIN admins p ON p.id = c.parentid "+
-		"WHERE c.id IN (?) AND c.subject = p.subject AND c.text = p.text "+
-		"AND COALESCE(c.mjml, '') = COALESCE(p.mjml, '') "+
-		"AND COALESCE(c.ctatext, '') = COALESCE(p.ctatext, '') "+
-		"AND COALESCE(c.ctalink, '') = COALESCE(p.ctalink, '') "+
-		"AND c.essential = p.essential AND COALESCE(c.template, '') = COALESCE(p.template, '')", ids).Scan(&rows)
+	uneditedCopiesQuery(db, ids).Scan(&rows)
 	for _, id := range rows {
 		out[id] = true
 	}

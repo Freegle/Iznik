@@ -50,7 +50,7 @@ that loads into either engine: see [Test fixtures](test-fixtures.md). Both paths
 
 - `PG_ENGINE` unset: build if the container is running. A failure is a loud warning and MySQL is still
   ready, so the MySQL path cannot be broken by the second engine.
-- `PG_ENGINE=1`: build, and fail the script if it cannot. The PostgreSQL CI job will set this.
+- `PG_ENGINE=1`: build, and fail the script if it cannot. The CircleCI executors set this.
 - `PG_ENGINE=0`: skip.
 
 `setup-pg-database.sh` takes `PG_FIXTURES=0` to leave `iznik` empty, and `PG_FIXTURE_ORPHANS=1` to list any
@@ -342,6 +342,12 @@ fc := &failoverConnector{
 }
 return postgres.New(postgres.Config{Conn: sql.OpenDB(fc)}), fc, nil
 ```
+
+## Proving a site works on both
+
+[The parity harness](parity-harness.md) is how a converted raw SQL site is shown to send the same SQL on MySQL and give
+the same rows on both engines, on a small fixture. It needs the second engine's database built by
+`scripts/setup-pg-database.sh`.
 
 ## Not yet done
 
