@@ -5281,4 +5281,29 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertSame(['Daily Sponsor'], $names);
     }
+
+    public function test_daily_run_carries_on_past_a_member_whose_digest_throws_an_error(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $badGroup = $this->createTestGroup();
+        $goodGroup = $this->createTestGroup();
+
+        // Created first, so it is reached first. An approved Offer with no subject on this member's
+        // community makes building their digest throw a TypeError, which is an Error and not an
+        // Exception.
+        $broken = $this->createTestUser(['settings' => ['simplemail' => User::SIMPLE_MAIL_BASIC], 'lastaccess' => now()]);
+        $this->createMembership($broken, $badGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createTestMessage($poster, $badGroup, ['subject' => null, 'arrival' => now()->subHours(1)]);
+
+        $fine = $this->createTestUser(['settings' => ['simplemail' => User::SIMPLE_MAIL_BASIC], 'lastaccess' => now()]);
+        $this->createMembership($fine, $goodGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createTestMessage($poster, $goodGroup, ['subject' => 'OFFER: Good item (TestLocation)', 'arrival' => now()->subHours(1)]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+
+        $this->assertEquals(2, $stats['users_processed'], 'one member\'s bad data must not end the run for the rest');
+        $this->assertGreaterThanOrEqual(1, $stats['emails_sent'], 'the member with good data still gets their digest');
+    }
 }
