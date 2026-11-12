@@ -103,6 +103,10 @@ func GetJWTFromRequest(c *fiber.Ctx) (uint64, uint64, float64) {
 
 		token, err := jwt.Parse(string(tokenString), func(token *jwt.Token) (interface{}, error) {
 			key := os.Getenv("JWT_SECRET")
+			if key == "" {
+				// No secret is configured: a token signed with an empty key proves nothing.
+				return nil, errors.New("no JWT secret configured")
+			}
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, errors.New("unexpected signing method")
 			}
