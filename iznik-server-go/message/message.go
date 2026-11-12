@@ -5677,6 +5677,12 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 			}
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
 		}
+		// SECURITY: an empty JWT means the email belongs to an EXISTING account
+		// while the caller is not logged in. Knowing an email is not a login, so
+		// refuse rather than post, or attach a draft, as that member.
+		if jwtString == "" {
+			return fiber.NewError(fiber.StatusUnauthorized, "Please log in to post with this email")
+		}
 	}
 
 	if myid == 0 {

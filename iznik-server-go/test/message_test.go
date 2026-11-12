@@ -3903,11 +3903,10 @@ func TestPutMessageExistingEmailNoJWT(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, 401, resp.StatusCode)
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, float64(0), result["ret"])
 
 	// CRITICAL: The response must NOT contain a JWT or persistent session.
 	_, hasJWT := result["jwt"]
