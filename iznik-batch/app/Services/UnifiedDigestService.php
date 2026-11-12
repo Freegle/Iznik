@@ -2137,7 +2137,8 @@ class UnifiedDigestService
             $deduplicatedPosts,
             $digestTracker->lastmsgdate,
             $this->digestGroupIdsForUser($user, $mode),
-            array_map('intval', $digestTracker->carryover ?? [])
+            array_map('intval', $digestTracker->carryover ?? []),
+            array_map('intval', $digestTracker->held_back ?? [])
         );
 
         if ($deduplicatedPosts->isEmpty() && $pinnedCards->isEmpty()) {
@@ -2330,7 +2331,7 @@ class UnifiedDigestService
      *
      * @return array{posts: Collection, held: int[], examined: ?array{id: int, arrival: mixed}}
      */
-    protected function loadPostsForUser(User $user, UserDigest $tracker, string $mode): array
+    public function loadPostsForUser(User $user, UserDigest $tracker, string $mode): array
     {
         $none = ['posts' => collect(), 'held' => [], 'examined' => null];
         $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
@@ -2517,9 +2518,12 @@ class UnifiedDigestService
         if ($heldBack !== []) {
             $posts = $armFor()
                 ->whereIn('messages.id', $heldBack)
-                ->where('messages_groups.arrival', '>=', now()->subDays(self::HELD_BACK_MAX_AGE_DAYS))
                 ->limit(self::DIGEST_LOAD_CAP)
                 ->get()
+                // Age is judged here, not in SQL: a range on arrival beside the id list would
+                // let the planner pick the group index for this arm.
+                ->filter(fn ($post) => $post->arrival !== null
+                    && \Illuminate\Support\Carbon::parse($post->arrival) >= now()->subDays(self::HELD_BACK_MAX_AGE_DAYS))
                 ->concat($posts);
         }
 
@@ -3414,7 +3418,8 @@ class UnifiedDigestService
     public function itemsCoveredBeforeCursor(
         array $msgids,
         \DateTimeInterface|string|null $cursorMsgdate,
-        array $groupIds
+        array $groupIds,
+        array $notSentMsgids = []
     ): array
     {
         if ($cursorMsgdate === null || empty($msgids) || empty($groupIds)) {
@@ -3425,11 +3430,14 @@ class UnifiedDigestService
 
         $siblings = $this->itemSiblingMsgids($msgids);
         $inBatch = array_flip(array_map('intval', $msgids));
+        // Copies the cursor passed without sending them (held back by the reach gate) are not
+        // evidence that the item went out.
+        $notSent = array_flip(array_map('intval', $notSentMsgids));
 
         $olderCopies = [];
         foreach ($siblings as $msgid => $copies) {
             foreach ($copies as $copy) {
-                if ($copy !== $msgid && !isset($inBatch[$copy])) {
+                if ($copy !== $msgid && !isset($inBatch[$copy]) && !isset($notSent[$copy])) {
                     $olderCopies[$copy] = true;
                 }
             }
@@ -3469,12 +3477,15 @@ class UnifiedDigestService
      * @param Collection $cards Entries of ['message' => Message, 'postedToGroups' => int[]]
      * @param int[] $keepMsgids Messages never dropped here: carried over because the cap left
      *     them out, so they were not sent whatever a copy behind the cursor suggests.
+     * @param int[] $notSentMsgids Messages the cursor passed without sending (held back by the
+     *     reach gate): a copy of an item that is one of these does not count as having sent it.
      */
     public function dropCardsAlreadyCovered(
         Collection $cards,
         \DateTimeInterface|string|null $cursorMsgdate,
         array $groupIds,
-        array $keepMsgids = []
+        array $keepMsgids = [],
+        array $notSentMsgids = []
     ): Collection
     {
         if ($cards->isEmpty()) {
@@ -3484,7 +3495,8 @@ class UnifiedDigestService
         $covered = $this->itemsCoveredBeforeCursor(
             $cards->map(fn ($card) => (int) $card['message']->id)->all(),
             $cursorMsgdate,
-            $groupIds
+            $groupIds,
+            $notSentMsgids
         );
 
         if (empty($covered)) {

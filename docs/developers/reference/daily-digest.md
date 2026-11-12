@@ -73,9 +73,10 @@ three days old is not news. The bound also keeps the list, and so the cost of th
 arm, small.
 
 The list is replaced whole on every write, so an id cannot be sent twice: it is in the list only
-while it has not been sent. A held-back post is not exempt from the "already covered by an older
-copy" check (`dropCardsAlreadyCovered`), so a copy of an item that was sent on another post is not
-sent again. A carried post is exempt, because nothing of it was sent.
+while it has not been sent. A held-back post is not exempt from the "already covered by an older copy" check
+(`dropCardsAlreadyCovered`), so a copy of an item that really was sent is not sent again. The
+check ignores copies that are themselves in `held_back`, because the cursor passed those without
+sending them. A carried post is exempt, because nothing of it was sent.
 
 ## The cursor and the size of the window
 
@@ -90,7 +91,16 @@ A run that examined only held-back posts moves the cursor and the list and sends
 ## Not covered here
 
 The daily-posts push moves its own cursor (`mode = 'push'`) and does not keep a held-back list,
-so a post the gate holds back from a member's push is not pushed later.
+so a post the gate holds back from a member's push is not pushed later. It does move its cursor
+over a window that was all held back, so the load cap cannot trap it.
+
+Three days is shorter than the old behaviour for the newest posts: a held-back post at the end of
+a window used to be re-examined until a later post passed, so a 120 or 168 hour reach step could
+still mail it. After three days it is dropped.
+
+A member with nothing but held-back posts is not stamped `lastsent`, so each scheduler tick
+re-examines them (three primary-key queries). The same was true before for a member whose posts
+were all held back.
 `test_a_reach_gated_post_is_sent_once_and_only_once_after_its_reach_grows` and the other held-back
 tests in `UnifiedDigestServiceTest` pin the daily behaviour above.
 

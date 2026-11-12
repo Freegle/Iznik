@@ -16,7 +16,7 @@ SET @exists := (
     WHERE table_schema = DATABASE() AND table_name = 'users_digests' AND column_name = 'held_back'
 );
 SET @sql := IF(@exists = 0,
-    "ALTER TABLE users_digests ADD COLUMN held_back JSON NULL COMMENT 'msgids the reach gate held back that the cursor passed; re-offered until sent or too old' AFTER carryover, ALGORITHM=INSTANT",
+    "ALTER TABLE users_digests ADD COLUMN held_back JSON NULL COMMENT 'msgids the reach gate held back that the cursor passed; re-offered until sent or too old', ALGORITHM=INSTANT",
     'SELECT 1');
 PREPARE stmt FROM @sql;
 EXECUTE stmt;

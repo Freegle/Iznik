@@ -23,7 +23,7 @@ return new class extends Migration
         }
 
         Schema::table('users_digests', function (Blueprint $table) {
-            $table->json('held_back')->nullable()->after('carryover')
+            $table->json('held_back')->nullable()
                 ->comment('msgids the reach gate held back that the cursor passed; re-offered until sent or too old');
         });
     }
