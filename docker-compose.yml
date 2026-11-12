@@ -95,7 +95,10 @@ services:
       - database
     networks:
       - default
-    image: postgis/postgis:13-3.1
+    # PostgreSQL 18 with PostGIS 3.6. This is the second engine the code is being made to run on; the
+    # stack still runs on percona. scripts/setup-test-database.sh builds the PostgreSQL schema here only
+    # when PG_ENGINE=1 is set (see docs/developers/reference/database-engines.md).
+    image: postgis/postgis:18-3.6
     restart: "no"
     environment:
       POSTGRES_DB: iznik
