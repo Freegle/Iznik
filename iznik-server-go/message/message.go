@@ -6795,11 +6795,14 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// that rippled into a neighbouring group and is sitting in its veto window is not
 	// that: the post is live at home, so withdrawing it is a real outcome, and the
 	// rippled copy is retired below like Taken and Received do. Rows already soft-deleted
-	// do not count either (Discourse 10102).
+	// do not count either (Discourse 10102). A post that is Approved on another community
+	// is live, so it takes the outcome path below, which retires the Pending copies and keeps
+	// the post and its outcome.
 	if req.Outcome == utils.OUTCOME_WITHDRAWN {
-		var pendingCount int64
+		var pendingCount, liveElsewhere int64
 		db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0 AND rippled_in = 0", req.ID, utils.COLLECTION_PENDING).Count(&pendingCount)
-		if pendingCount > 0 {
+		db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_APPROVED).Count(&liveElsewhere)
+		if pendingCount > 0 && liveElsewhere == 0 {
 			// Capture the groups the post is actively pending on *before* the
 			// soft-delete, so we can write a per-group audit log below.
 			var pendingGroups []uint64
