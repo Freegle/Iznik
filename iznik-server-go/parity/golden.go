@@ -51,7 +51,7 @@ type Build func(tx *gorm.DB) *gorm.DB
 // recorded one.
 //
 //	parity.AssertGoldenSQL(t, "a1b2c3d4e5f6", func(tx *gorm.DB) *gorm.DB {
-//		return myGroupIDsQuery(tx, 5, &ids)
+//		return myGroupIDsQuery(tx, 5).Find(&ids)
 //	})
 //
 // Use the same function the production code calls, so the test proves the code that runs and not a

@@ -11,7 +11,7 @@ namespace Tests\Support\OrmHarness;
  * and alias names.
  *
  * PORT, NOT A REIMPLEMENTATION FROM SCRATCH: this is a line-by-line port of
- * iznik-server-go/ormharness/canonical.go's Canonical() (Layer 1's
+ * iznik-server-go/parity/canonical.go's Canonical() (Layer 1's
  * canonicaliser for the Go side), following the team lead's explicit
  * instruction not to write a second, independently-designed canonicaliser -
  * two independent normalisers drift, and the day they disagree is the day
@@ -21,7 +21,7 @@ namespace Tests\Support\OrmHarness;
  * compiling the Go canonicaliser into a small CLI and having PHPUnit shell
  * out to it - was considered and rejected as impractical, not merely
  * inconvenient:
- *   - iznik-server-go/ormharness (where Canonical() lives) is gorm-coupled;
+ *   - iznik-server-go/parity (where Canonical() lives) is gorm-coupled;
  *     a CLI wrapper importing it would still need to compile that whole
  *     package (gorm.io/gorm, gorm.io/driver/mysql, iznik-server-go/database),
  *     and would need to live under iznik-server-go/ - a directory explicitly

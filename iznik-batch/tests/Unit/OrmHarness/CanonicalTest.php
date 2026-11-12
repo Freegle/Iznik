@@ -17,7 +17,7 @@ use Tests\Support\OrmHarness\Canonical;
  * shared cross-language corpus, sourced from tools/orm-migration/canonical-corpus.json
  * (edit THAT file, not this directory's copy - see CORPUS_PATH below and
  * tools/orm-migration/check-canonical-corpus-sync.sh), which is itself
- * derived from iznik-server-go/ormharness/canonical_test.go. See
+ * derived from iznik-server-go/parity/canonical_test.go. See
  * Canonical.php's header for why - two independently-maintained
  * canonicalisers drift, and this corpus is what turns that drift into a
  * failing test on both sides instead of a silent divergence. Do not add a
@@ -33,10 +33,10 @@ class CanonicalTest extends TestCase
     // tools/orm-migration/), so a path escaping upward out of iznik-batch
     // would not exist at test-run time inside the container, the same
     // container-isolation problem golden.go's manifest embedding and this
-    // repo's canonical_corpus_test.go (iznik-server-go/ormharness) both
+    // repo's canonical_corpus_test.go (iznik-server-go/parity) both
     // hit for the identical reason. tools/orm-migration/canonical-corpus.json
     // remains the file to actually EDIT; this copy and
-    // iznik-server-go/ormharness/canonical-corpus.json are kept
+    // iznik-server-go/parity/canonical-corpus.json are kept
     // byte-identical to it by tools/orm-migration/check-canonical-corpus-sync.sh,
     // wired into the harness.
     private const CORPUS_PATH = __DIR__.'/../../Support/OrmHarness/canonical-corpus.json';

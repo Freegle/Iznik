@@ -175,11 +175,10 @@ func TestResolveLimitOffset(t *testing.T) {
 }
 
 func TestNormaliseDuplicateKeyUpdate(t *testing.T) {
-	// An upsert carries two ordered lists, and normaliseColumnOrder used to
-	// normalise only the INSERT column list, copying the ON DUPLICATE KEY
-	// UPDATE tail through untouched. GORM sorts clause.Assignments(map) keys
-	// exactly as it sorts Updates(map), so every multi-assignment upsert failed
-	// on text that described the same statement. Eleven wave 3 sites at once.
+	// An upsert carries two ordered lists, the INSERT column list and the ON
+	// DUPLICATE KEY UPDATE tail, and normaliseColumnOrder orders both. GORM sorts
+	// clause.Assignments(map) keys exactly as it sorts Updates(map), so a rendered
+	// multi-assignment upsert tail is alphabetical where the golden is not.
 	golden := "insert into chat_roster(chatid, userid, status, lastip, date) values (?, ?, ?, ?, now()) on duplicate key update status = ?, lastip = ?, date = now()"
 	render := "insert into chat_roster(chatid, date, lastip, status, userid) values (?, now(), ?, ?, ?) on duplicate key update date = now(), lastip = ?, status = ?"
 

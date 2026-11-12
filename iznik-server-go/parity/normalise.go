@@ -32,8 +32,7 @@ func collapseInLists(sql string) string {
 // and the VALUES list are then scanned with a paren matcher rather than a
 // regexp, because both routinely contain nested parentheses - "values (now(),
 // ?, ?)" and "json_object('chatid', ?, 'userid', ?)" are ordinary here - and a
-// character-class like [^()]* silently fails to match those, which is exactly
-// how six INSERT conversions slipped past this normalisation.
+// character-class like [^()]* silently fails to match those.
 //
 // The table name is matched with [^\s(]+ rather than \S+ for the same reason:
 // the codebase writes "insert into logs(timestamp, ...)" with no space, and a
@@ -97,18 +96,16 @@ func matchParen(s string, open int) int {
 func normaliseColumnOrder(sql string) string {
 	trimmed := strings.TrimSpace(sql)
 
-	// An upsert has TWO ordered lists, and for a long time this function only
-	// normalised one of them. The INSERT branch below rebuilds the column and
-	// value lists but copies everything after the closing parenthesis through
-	// verbatim, which is where ON DUPLICATE KEY UPDATE lives. GORM sorts the
-	// keys of clause.Assignments(map) exactly as it sorts Updates(map), so the
-	// upsert tail came out alphabetical while the golden kept the order the
-	// original was written in, and every multi-assignment upsert failed on
-	// text that described the same statement.
+	// An upsert has TWO ordered lists: the INSERT column list and the ON DUPLICATE
+	// KEY UPDATE tail. The INSERT branch below rebuilds the column and value lists
+	// but copies everything after the closing parenthesis through verbatim, which
+	// is where the tail lives. GORM sorts the keys of clause.Assignments(map)
+	// exactly as it sorts Updates(map), so a rendered tail is alphabetical while
+	// the golden keeps the order the original was written in.
 	//
-	// Normalising the tail first means the INSERT branch carries the fixed
-	// version through in its verbatim copy, and a statement with an upsert tail
-	// but no reorderable column list still gets handled.
+	// Normalising the tail first means the INSERT branch carries the normalised
+	// tail through in its verbatim copy, and a statement with an upsert tail but no
+	// reorderable column list is still handled.
 	trimmed = normaliseDuplicateKeyUpdate(trimmed)
 
 	if loc := insertPrefixPattern.FindStringIndex(trimmed); loc != nil {
