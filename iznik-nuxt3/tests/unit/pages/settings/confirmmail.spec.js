@@ -28,14 +28,13 @@ vi.mock('~/composables/useMe', () => ({
   }),
 }))
 
-vi.mock('~/components/ExternalLink', () => ({
-  default: { template: '<a><slot /></a>', props: ['href'] },
-}))
-
 function mountPage() {
   return mount(ConfirmMailPage, {
     global: {
       stubs: {
+        // The page loads ExternalLink lazily; a stub keeps that import from still being in
+        // flight when the test ends.
+        ExternalLink: { template: '<a><slot /></a>', props: ['href'] },
         'client-only': { template: '<div><slot /></div>' },
         'b-row': { template: '<div><slot /></div>' },
         'b-col': { template: '<div><slot /></div>' },
@@ -82,6 +81,13 @@ describe('pages/settings/confirmmail/[key].vue', () => {
 
     const wrapper = mountPage()
     await flushPromises()
+
+    // The lazily loaded support link must have rendered before the test ends.
+    await vi.dynamicImportSettled()
+    await flushPromises()
+    expect(wrapper.find('.modal a').text()).toContain(
+      'support@ilovefreegle.org'
+    )
 
     expect(wrapper.text()).toContain('Verification Failed')
     expect(wrapper.text()).not.toContain('Verification Succeeded')
