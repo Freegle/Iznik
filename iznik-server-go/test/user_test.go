@@ -1735,6 +1735,52 @@ func TestPatchUserPasswordByNonAdmin(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 }
 
+// patchPasswordAs calls PATCH /api/user to set targetID's password and returns the status code.
+func patchPasswordAs(t *testing.T, token string, targetID uint64, password string) int {
+	payload := map[string]interface{}{"id": targetID, "password": password}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+func TestPatchUserPasswordSupportCannotChangeSystemRoleAccount(t *testing.T) {
+	// Support may set an ordinary member's password but not an Admin, Support or Moderator's:
+	// a new password is a way to log in as that account, and Support may only impersonate
+	// non-mods. Admin may change anyone's.
+	db := database.DBConn
+
+	for _, role := range []string{utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_MODERATOR} {
+		t.Run("support on "+role, func(t *testing.T) {
+			prefix := uniquePrefix("patchpwsys" + role)
+			supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+			_, supportToken := CreateTestSession(t, supportID)
+			targetID := CreateTestUser(t, prefix+"_target", role)
+
+			assert.Equal(t, fiber.StatusForbidden, patchPasswordAs(t, supportToken, targetID, "takeover123"))
+
+			var logins int64
+			db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = ?", targetID, utils.LOGIN_TYPE_NATIVE).Scan(&logins)
+			assert.Equal(t, int64(0), logins, "Support must not have set a password on the %s account", role)
+		})
+	}
+
+	t.Run("admin on Moderator", func(t *testing.T) {
+		prefix := uniquePrefix("patchpwadmin")
+		adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+		_, adminToken := CreateTestSession(t, adminID)
+		targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_MODERATOR)
+
+		assert.Equal(t, fiber.StatusOK, patchPasswordAs(t, adminToken, targetID, "adminset123"))
+
+		var logins int64
+		db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = ?", targetID, utils.LOGIN_TYPE_NATIVE).Scan(&logins)
+		assert.Equal(t, int64(1), logins)
+	})
+}
+
 // TestPatchUserSettingsModOnMember verifies that when a mod sends PATCH /user
 // with { id: memberID, settings: {...} }, the settings are applied to the
 // member — not to the mod. This was the root cause of mods getting their
