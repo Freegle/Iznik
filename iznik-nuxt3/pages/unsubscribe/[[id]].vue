@@ -472,12 +472,49 @@ async function emailConfirm(callback) {
   callback()
 }
 
+// The emailed link logs the member in from its u and k (in app.vue), and a stored session
+// loads its user, both after this page has mounted. So "no member yet" is not "the link was
+// already used" while one of those is still on its way: wait for the member, up to a limit.
+const LOGIN_WAIT_MS = 10000
+
+function loginPending() {
+  return !!(
+    (route.query.u && route.query.k) ||
+    authStore.auth?.jwt ||
+    authStore.auth?.persistent
+  )
+}
+
+function waitForMember() {
+  return new Promise((resolve) => {
+    if (myid.value || !loginPending()) {
+      resolve(myid.value)
+      return
+    }
+
+    const timer = setTimeout(() => {
+      stop()
+      resolve(null)
+    }, LOGIN_WAIT_MS)
+
+    const stop = watch(myid, (id) => {
+      if (id) {
+        clearTimeout(timer)
+        stop()
+        resolve(id)
+      }
+    })
+  })
+}
+
 // Lifecycle hooks
-onMounted(() => {
+onMounted(async () => {
   if (confirmed) {
-    if (userid === myid.value) {
+    const id = await waitForMember()
+
+    if (userid === id) {
       forget()
-    } else if (myid.value) {
+    } else if (id) {
       wrongUser.value = true
     } else {
       // Almost always this means they've clicked on the same link twice. Tell them we've removed the account
