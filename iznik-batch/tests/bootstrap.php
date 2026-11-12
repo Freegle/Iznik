@@ -32,6 +32,15 @@ if (file_exists($configCachePath)) {
 
 require __DIR__.'/../vendor/autoload.php';
 
+if (getenv('TEST_DB_ENGINE') === 'pgsql') {
+    // The MySQL path below runs an Artisan command, and Symfony's console records the terminal size in LINES and
+    // COLUMNS when it does. Without that, the first test to run a command would be reported as leaving them set.
+    // Done here so a process that skips the setup below has them too.
+    $terminal = new \Symfony\Component\Console\Terminal();
+    putenv('LINES='.$terminal->getHeight());
+    putenv('COLUMNS='.$terminal->getWidth());
+}
+
 if (! $runSetup) {
     // Child process: autoloader is all that's needed. setUp() creates the app.
     return;
@@ -55,12 +64,6 @@ if (getenv('TEST_DB_ENGINE') === 'pgsql') {
     }
     echo "Using the PostgreSQL schema in ".env('PGSQL_DATABASE', 'iznik_batch_test').".\n";
     file_put_contents($migrationLockFile, json_encode(['pid' => getmypid(), 'time' => time()]));
-
-    // The MySQL path below runs an Artisan command, and Symfony's console records the terminal size in LINES and
-    // COLUMNS when it does. Without that, the first test to run a command would be reported as leaving them set.
-    $terminal = new \Symfony\Component\Console\Terminal();
-    putenv('LINES='.$terminal->getHeight());
-    putenv('COLUMNS='.$terminal->getWidth());
 
     return;
 }
