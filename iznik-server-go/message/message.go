@@ -4627,6 +4627,16 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		return fiber.NewError(fiber.StatusForbidden, "This post can't be edited - the poster didn't choose this community")
 	}
 
+	// A change of type is between Offer and Wanted. A post that already has another type
+	// (an Admin message) may be sent back with the type it has.
+	if req.Type != nil {
+		var currentType string
+		db.Table("messages").Select("type").Where("id = ?", req.ID).Scan(&currentType)
+		if *req.Type != currentType && *req.Type != utils.OFFER && *req.Type != utils.WANTED {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid type")
+		}
+	}
+
 	// Only an OFFER is ever split. A split post changed to a WANTED, by its poster or a
 	// moderator, is first put back as it was written, so a WANTED never has an item list,
 	// Mark TAKEN on its items, or "Which would you like?" in its reply box. Any item list
@@ -4686,6 +4696,8 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	if req.Type != nil {
 		// also update messages_groups.msgtype.
 		db.Table("messages_groups").Where("msgid = ?", req.ID).Update("msgtype", *req.Type)
+		// Browse and the map read the type from messages_spatial.
+		db.Table("messages_spatial").Where("msgid = ?", req.ID).Update("msgtype", *req.Type)
 	}
 	// Master's availablenow/deadline SET entries are not repeated here: this
 	// branch assembles the whole SET list in
