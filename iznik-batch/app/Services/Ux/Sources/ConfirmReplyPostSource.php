@@ -46,7 +46,7 @@ class ConfirmReplyPostSource extends ExposureSource
     private const HANDED_OVER = '(EXISTS (SELECT 1 FROM messages_promises p WHERE p.msgid = c.subject_id AND p.userid = d.userid'
         .' AND p.promisedat < c.exposed_at + INTERVAL :window HOUR)'
         .' OR EXISTS (SELECT 1 FROM messages_by b WHERE b.msgid = c.subject_id AND b.userid = d.userid'
-        .' AND b.`timestamp` < c.exposed_at + INTERVAL :window HOUR))';
+        .' AND b.timestamp < c.exposed_at + INTERVAL :window HOUR))';
 
     /**
      * The values of design.primary. Read by UxExperimentService::normaliseDesign, so a value that is not here is
@@ -128,7 +128,7 @@ class ConfirmReplyPostSource extends ExposureSource
     {
         return [
             'not_taken' => "NOT EXISTS (SELECT 1 FROM messages_outcomes o WHERE o.msgid = c.subject_id AND o.outcome = 'Taken'"
-                .' AND o.`timestamp` < c.exposed_at + INTERVAL :window HOUR)',
+                .' AND o.timestamp < c.exposed_at + INTERVAL :window HOUR)',
         ];
     }
 
@@ -154,9 +154,9 @@ class ConfirmReplyPostSource extends ExposureSource
             $rows = DB::select(
                 "SELECT COUNT(*) AS posts, COUNT(DISTINCT t.fromuser) AS posters,
                         COALESCE(SUM(NOT EXISTS (SELECT 1 FROM chat_messages d WHERE d.refmsgid = t.id AND d.type = 'Interested' AND d.userid <> t.fromuser
-                            AND d.processingrequired = 0 AND d.processingsuccessful = 1 AND d.date < t.first + INTERVAL $window HOUR
-                            AND NOT EXISTS (SELECT 1 FROM messages_promises p WHERE p.msgid = t.id AND p.userid = d.userid AND p.promisedat < t.first + INTERVAL $window HOUR)
-                            AND NOT EXISTS (SELECT 1 FROM messages_by b WHERE b.msgid = t.id AND b.userid = d.userid AND b.`timestamp` < t.first + INTERVAL $window HOUR))), 0) AS clean
+                            AND d.processingrequired = 0 AND d.processingsuccessful = 1 AND d.date < t.first + INTERVAL '$window' HOUR
+                            AND NOT EXISTS (SELECT 1 FROM messages_promises p WHERE p.msgid = t.id AND p.userid = d.userid AND p.promisedat < t.first + INTERVAL '$window' HOUR)
+                            AND NOT EXISTS (SELECT 1 FROM messages_by b WHERE b.msgid = t.id AND b.userid = d.userid AND b.timestamp < t.first + INTERVAL '$window' HOUR))), 0) AS clean
                  FROM (SELECT STRAIGHT_JOIN m.id, m.fromuser, MIN(cm.date) AS first
                        FROM messages_eee e
                        JOIN messages m ON m.id = e.msgid AND m.type = 'Offer' AND m.fromuser IS NOT NULL

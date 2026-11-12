@@ -392,7 +392,7 @@ class UxArmTest extends TestCase
         $this->publish([self::NAME => $this->running()]);
         $reads = [];
         DB::listen(function ($q) use (&$reads) {
-            if (str_contains($q->sql, '`config`')) {
+            if (preg_match('/[`"]config[`"]/', $q->sql)) {
                 $reads[] = $q->sql;
             }
         });
@@ -402,7 +402,7 @@ class UxArmTest extends TestCase
         UxArm::for(1, self::NAME);
 
         $this->assertCount(1, $reads);
-        $this->assertStringContainsString('`key` in (?, ?)', $reads[0]);
+        $this->assertMatchesRegularExpression('/[`"]key[`"] in \(\?, \?\)/', $reads[0]);
     }
 
     public function test_a_read_error_is_control_and_logged_and_is_not_asked_again_for_a_minute(): void

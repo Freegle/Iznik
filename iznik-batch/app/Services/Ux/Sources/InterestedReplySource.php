@@ -36,7 +36,7 @@ class InterestedReplySource extends ExposureSource
     private const HANDED_OVER = '(EXISTS (SELECT 1 FROM messages_promises p WHERE p.userid = c.userid'
         .' AND p.promisedat >= c.exposed_at AND p.promisedat < c.exposed_at + INTERVAL :window HOUR)'
         .' OR EXISTS (SELECT 1 FROM messages_by b WHERE b.userid = c.userid'
-        .' AND b.`timestamp` >= c.exposed_at AND b.`timestamp` < c.exposed_at + INTERVAL :window HOUR))';
+        .' AND b.timestamp >= c.exposed_at AND b.timestamp < c.exposed_at + INTERVAL :window HOUR))';
 
     public function types(): array
     {

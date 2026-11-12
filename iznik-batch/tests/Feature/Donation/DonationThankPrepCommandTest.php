@@ -40,9 +40,10 @@ class DonationThankPrepCommandTest extends TestCase
      */
     private function setLastSentId(int $id): void
     {
-        DB::statement(
-            "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
-            ['donation_thank_prep_last_id', (string) $id, (string) $id]
+        DB::table('config')->upsert(
+            [['key' => 'donation_thank_prep_last_id', 'value' => (string) $id]],
+            ['key'],
+            ['value']
         );
     }
 
