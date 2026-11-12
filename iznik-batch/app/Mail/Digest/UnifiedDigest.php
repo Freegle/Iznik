@@ -886,12 +886,13 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, Describes
             $decodedSubject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $itemName = $this->extractItemName($decodedSubject);
 
-            // Truncate individual item names to 25 chars.
-            if (strlen($itemName) > 25) {
-                $itemName = substr($itemName, 0, 22) . '...';
+            // Truncate individual item names to 25 characters. Counted and cut by character, not
+            // byte, so an accented letter or emoji is never split.
+            if (mb_strlen($itemName, 'UTF-8') > 25) {
+                $itemName = mb_substr($itemName, 0, 22, 'UTF-8') . '...';
             }
 
-            $newLength = $totalLength + strlen($itemName) + ($totalLength > 0 ? 2 : 0);
+            $newLength = $totalLength + mb_strlen($itemName, 'UTF-8') + ($totalLength > 0 ? 2 : 0);
 
             if ($newLength > $maxLength) {
                 break;
