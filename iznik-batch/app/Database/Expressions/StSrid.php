@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -24,11 +25,15 @@ use Illuminate\Database\Grammar;
  * DB::raw() until this library grows an StPoint) embed as-is. $srid, when
  * given, follows the same rule - an int literal is unambiguous.
  *
+ * On PostgreSQL the 1-arg getter is ST_SRID(geom) and the 2-arg setter is ST_SetSRID(geom, srid), which
+ * likewise relabels without moving a coordinate.
+ *
  * NOT BOUND - literal operands are rendered via Grammar::escape() (see
  * Value's docblock). Column identifiers go through Grammar::wrap().
  */
 final class StSrid implements ExpressionContract
 {
+    use PostgresDialect;
     use RendersOperands;
 
     public function __construct(
@@ -39,6 +44,11 @@ final class StSrid implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar) && $this->srid !== null) {
+            return 'ST_SetSRID('.$this->renderOperand($this->geom, $grammar).', '
+                .$this->renderOperand($this->srid, $grammar).')';
+        }
+
         $sql = 'ST_SRID('.$this->renderOperand($this->geom, $grammar);
 
         if ($this->srid !== null) {

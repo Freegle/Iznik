@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -19,11 +20,15 @@ use Illuminate\Database\Grammar;
  * (e.g. `jt.lng`), Value::of()/nested Expressions embed as-is, other scalars
  * are literals.
  *
+ * On PostgreSQL it renders ST_MakePoint(x, y): a PostGIS geometry with SRID 0, which StSrid then labels
+ * with ST_SetSRID, the same two-step shape as MySQL. (PostgreSQL's own POINT() is a different type.)
+ *
  * NOT BOUND - literal operands are rendered via Grammar::escape() (see
  * Value's docblock). Column identifiers go through Grammar::wrap().
  */
 final class Point implements ExpressionContract
 {
+    use PostgresDialect;
     use RendersOperands;
 
     public function __construct(
@@ -34,6 +39,13 @@ final class Point implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            return 'ST_MakePoint('
+                .$this->renderOperand($this->x, $grammar).', '
+                .$this->renderOperand($this->y, $grammar)
+                .')';
+        }
+
         return 'POINT('
             .$this->renderOperand($this->x, $grammar).', '
             .$this->renderOperand($this->y, $grammar)

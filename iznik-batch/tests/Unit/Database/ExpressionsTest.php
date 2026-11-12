@@ -96,6 +96,18 @@ class ExpressionsTest extends TestCase
         return DB::selectOne("SELECT {$sql} AS result")->result;
     }
 
+    /** A spatial predicate answers 1 or 0 on MySQL and true or false on PostgreSQL. */
+    private function flag(bool $value): bool|int
+    {
+        return DB::connection()->getDriverName() === 'pgsql' ? $value : (int) $value;
+    }
+
+    /** A NULL geometry operand: PostgreSQL needs it typed to pick a function overload. */
+    private function nullGeometry(): mixed
+    {
+        return DB::connection()->getDriverName() === 'pgsql' ? DB::raw('CAST(NULL AS geometry)') : Value::of(null);
+    }
+
     // ------------------------------------------------------------------
     // Value
     // ------------------------------------------------------------------
@@ -713,7 +725,7 @@ class ExpressionsTest extends TestCase
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
         $sql = (new StContains($poly, $point))->getValue($this->liveGrammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stcontains_semantics_point_outside_polygon_is_false(): void
@@ -721,7 +733,7 @@ class ExpressionsTest extends TestCase
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(50 50)'), 3857);
         $sql = (new StContains($poly, $point))->getValue($this->liveGrammar);
-        $this->assertSame(0, $this->evaluate($sql));
+        $this->assertSame($this->flag(false), $this->evaluate($sql));
     }
 
     public function test_stcontains_semantics_null_operand_is_null(): void
@@ -739,8 +751,9 @@ class ExpressionsTest extends TestCase
         // same expression in a SELECT list and an ORDER BY CASE WHEN.
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
-        $sql = (new Coalesce(new StContains($poly, $point), Value::of(0)))->getValue($this->grammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $pg = DB::connection()->getDriverName() === 'pgsql';
+        $sql = (new Coalesce(new StContains($poly, $point), Value::of($pg ? false : 0)))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stwithin_renders_both_operands(): void
@@ -765,7 +778,7 @@ class ExpressionsTest extends TestCase
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
         $sql = (new StWithin($point, $poly))->getValue($this->liveGrammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stwithin_semantics_outside_is_false(): void
@@ -773,7 +786,7 @@ class ExpressionsTest extends TestCase
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(50 50)'), 3857);
         $sql = (new StWithin($point, $poly))->getValue($this->liveGrammar);
-        $this->assertSame(0, $this->evaluate($sql));
+        $this->assertSame($this->flag(false), $this->evaluate($sql));
     }
 
     public function test_stwithin_semantics_shrunk_buffer_is_within_original(): void
@@ -783,7 +796,7 @@ class ExpressionsTest extends TestCase
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $shrunk = new StBuffer($poly, -1);
         $sql = (new StWithin($shrunk, $poly))->getValue($this->liveGrammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stintersects_renders_both_operands(): void
@@ -808,7 +821,7 @@ class ExpressionsTest extends TestCase
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
         $sql = (new StIntersects($poly, $point))->getValue($this->liveGrammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stintersects_semantics_disjoint_geometries_is_false(): void
@@ -816,7 +829,7 @@ class ExpressionsTest extends TestCase
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(50 50)'), 3857);
         $sql = (new StIntersects($poly, $point))->getValue($this->liveGrammar);
-        $this->assertSame(0, $this->evaluate($sql));
+        $this->assertSame($this->flag(false), $this->evaluate($sql));
     }
 
     public function test_stintersects_semantics_null_operand_is_null(): void
@@ -933,7 +946,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stsrid_semantics_null_operand_is_null(): void
     {
-        $sql = (new StSrid(Value::of(null)))->getValue($this->liveGrammar);
+        $sql = (new StSrid($this->nullGeometry()))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -978,7 +991,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stgeometrytype_semantics_null_operand_is_null(): void
     {
-        $sql = (new StGeometryType(Value::of(null)))->getValue($this->liveGrammar);
+        $sql = (new StGeometryType($this->nullGeometry()))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1089,7 +1102,7 @@ class ExpressionsTest extends TestCase
     public function test_stdistancesphere_semantics_null_operand_is_null(): void
     {
         $a = new StGeomFromText(Value::of('POINT(0 0)'), 4326);
-        $sql = (new StDistanceSphere(Value::of(null), $a))->getValue($this->liveGrammar);
+        $sql = (new StDistanceSphere($this->nullGeometry(), $a))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1118,7 +1131,11 @@ class ExpressionsTest extends TestCase
     {
         $geom = new StGeomFromText(Value::of('LINESTRING(0 0, 10 10)'), 3857);
         $sql = (new StAsText(new StEnvelope($geom)))->getValue($this->liveGrammar);
-        $this->assertSame('POLYGON((0 0,10 0,10 10,0 10,0 0))', $this->evaluate($sql));
+        // The ring starts at the same corner on both engines but runs the other way round on PostgreSQL.
+        $this->assertSame(
+            DB::connection()->getDriverName() === 'pgsql' ? 'POLYGON((0 0,0 10,10 10,10 0,0 0))' : 'POLYGON((0 0,10 0,10 10,0 10,0 0))',
+            $this->evaluate($sql)
+        );
     }
 
     public function test_stenvelope_semantics_single_point_is_unchanged(): void
@@ -1166,7 +1183,7 @@ class ExpressionsTest extends TestCase
     {
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $sql = (new StContains(new StBuffer($poly, 1), $poly))->getValue($this->liveGrammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stbuffer_semantics_zero_distance_repair_idiom_preserves_area(): void

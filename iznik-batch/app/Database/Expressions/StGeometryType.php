@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -16,11 +17,15 @@ use Illuminate\Database\Grammar;
  * Operand rendering (see RendersOperands): a bare string is a column name,
  * Value::of()/nested Expressions embed as-is.
  *
+ * On PostgreSQL ST_GeometryType answers 'ST_Point'; GeometryType() answers 'POINT' as MySQL does, so that is
+ * what it renders there.
+ *
  * NOT BOUND - a literal operand is rendered via Grammar::escape() (see
  * Value's docblock). Column identifiers go through Grammar::wrap().
  */
 final class StGeometryType implements ExpressionContract
 {
+    use PostgresDialect;
     use RendersOperands;
 
     public function __construct(private readonly mixed $geom)
@@ -29,6 +34,10 @@ final class StGeometryType implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            return 'GeometryType('.$this->renderOperand($this->geom, $grammar).')';
+        }
+
         return 'ST_GeometryType('.$this->renderOperand($this->geom, $grammar).')';
     }
 }
