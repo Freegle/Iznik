@@ -279,14 +279,15 @@ func PostMerge(c *fiber.Ctx) error {
 
 	// Validate merge exists and uid matches.
 	type MergeRow struct {
-		ID    uint64 `json:"id"`
-		User1 uint64 `json:"user1"`
-		User2 uint64 `json:"user2"`
-		UID   string `json:"uid"`
+		ID       uint64     `json:"id"`
+		User1    uint64     `json:"user1"`
+		User2    uint64     `json:"user2"`
+		UID      string     `json:"uid"`
+		Accepted *time.Time `json:"accepted"`
 	}
 
 	var m MergeRow
-	db.Table("merges").Select("id, user1, user2, uid").Where("id = ? AND uid = ?", req.ID, req.UID).Scan(&m)
+	db.Table("merges").Select("id, user1, user2, uid, accepted").Where("id = ? AND uid = ?", req.ID, req.UID).Scan(&m)
 
 	if m.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
@@ -307,6 +308,11 @@ func PostMerge(c *fiber.Ctx) error {
 		// MergeUsersTx takes the account to discard first.
 		if req.User1 == 0 || req.User2 == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "Missing parameters")
+		}
+
+		// An offer is accepted once; the link in the email must not merge again.
+		if m.Accepted != nil {
+			return fiber.NewError(fiber.StatusConflict, "This merge has already been accepted")
 		}
 
 		// A TrashNothing member is never merged with a Freegle account (.claude/rules/conventions.md).

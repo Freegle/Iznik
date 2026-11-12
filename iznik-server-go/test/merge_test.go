@@ -221,6 +221,9 @@ func TestPostMergeAcceptMergesTheAccounts(t *testing.T) {
 
 	assert.NotNil(t, findLog(db, "User", "Merged", offered1), "a Merged log row for the discarded account")
 	assert.NotNil(t, findLog(db, "User", "Merged", offered2), "a Merged log row for the kept account")
+
+	// The link in the email cannot be used a second time.
+	assert.Equal(t, 409, postMergeAction(t, mergeID, uid, offered1, offered2, "Accept"))
 }
 
 // A TrashNothing member is never merged with a Freegle account, so accepting such an offer is

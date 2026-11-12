@@ -494,6 +494,34 @@ func setupWiderReviewData(t *testing.T) (modToken string, modID, group1ID, group
 	return
 }
 
+// A moderator who does wider chat review sees another community's message in the queue and may approve it,
+// the only action that review offers. They may not delete or hold it.
+func TestWiderReviewModeratorMayOnlyApprove(t *testing.T) {
+	db := database.DBConn
+	modToken, _, _, _, msgID := setupWiderReviewData(t)
+
+	for _, action := range []string{"Reject", "Hold", "Redact"} {
+		resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+			"id":     msgID,
+			"action": action,
+		}, modToken)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, action+" is not offered by wider review")
+	}
+
+	var reviewRequired int
+	db.Raw("SELECT reviewrequired FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRequired)
+	assert.Equal(t, 1, reviewRequired, "the message must still be waiting for review")
+
+	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Approve",
+	}, modToken)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	db.Raw("SELECT reviewrequired FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRequired)
+	assert.Equal(t, 0, reviewRequired, "wider review may approve the message")
+}
+
 func TestWiderReviewEligibility(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("WiderElig")
