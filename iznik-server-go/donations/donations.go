@@ -238,19 +238,9 @@ func AddDonation(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Permission check: need GiftAid permission for non-zero amounts.
-	if req.Amount > 0 {
-		var permissions *string
-		db.Table("users").Select("permissions").Where("id = ?", myid).Scan(&permissions)
-
-		hasGiftAid := false
-		if permissions != nil {
-			hasGiftAid = strings.Contains(strings.ToLower(*permissions), "giftaid")
-		}
-
-		if !hasGiftAid {
-			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
-		}
+	// Permission check: need GiftAid permission for non-zero amounts, negative ones included.
+	if req.Amount != 0 && !auth.HasPermission(myid, auth.PERM_GIFTAID) {
+		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 	}
 
 	// Look up the target user's name and preferred email. A NULL `fullname` is
