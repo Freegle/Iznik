@@ -73,6 +73,9 @@ V1: `ChatRoom::chaseupExpected()` (`include/chat/ChatRoom.php:2381`).
 | 9 | Skip when the message is the recipient's own (`$justmine`) | Match | |
 | 10 | Email = standard user2user chat notification with subject prefixed `WAITING FOR REPLY:` | Match | Reuses `ChatNotification` (template, previous-message context, threading, unsubscribe) via new `waitingForReply` flag + `ChatNotificationService::sendChaseupExpected()`. |
 | 11 | LoveJunk users → API call instead of email; `recordSend()` | **Deferred** | LJ chat routing is handled by the existing LoveJunk integration path, not this chase-up. |
+| 12 | Delivery gates | **Stricter than V1** | The chase-up shows the message to the expectee, so it must pass the gates of `ChatNotificationService::getUnmailedMessages`: not deleted, not held for review, not rejected, processing finished and successful, and not held by rippling (`rippling_held_replies` not released). A held or rejected message keeps `replyexpected=1`, and V1 chased it anyway. Unlike `getUnmailedMessages`, an open `confirm_reply` question is not admitted: it is for the replier alone and the expectee is the other party. |
+| 13 | V1 chases on every cron run while a message is in the 5-day window | **Stricter than V1** | Each message is chased once. `ChatChaseupExpectedService` remembers a send in the cache for 6 days (the 5-day window plus a day), keyed by chat message. A later message in the same chat is chased in its own right. The first run after go-live chases whatever the 5-day window holds. |
+| 14 | Schedule | Match | Daily at 06:00 in `routes/console.php`, as the V1 cron. It is live. |
 
 Tests: `tests/Feature/Chat/ChaseupExpectedCommandTest.php`.
 

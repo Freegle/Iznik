@@ -160,6 +160,46 @@ class ChatProcessServiceTest extends TestCase
     }
 
     /**
+     * A message that arrived by email already held for review (spam check, content check or the
+     * hold on a held predecessor) must stay held when it is processed. Processing starts from the
+     * flag the row arrived with and only adds to it, so the message is not delivered and no push
+     * is queued. A chat with the volunteers has no checks of its own here, so without this the
+     * flag was cleared.
+     */
+    public function test_a_message_held_on_arrival_stays_held_after_processing(): void
+    {
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $room = $this->createTestChatRoom($member, $member, [
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user2' => null,
+            'groupid' => $group->id,
+        ]);
+
+        $msg = $this->createTestChatMessage($room, $member, [
+            'reviewrequired' => 1,
+            'reportreason' => 'Spam',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 0,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired, 'the hold set on arrival must survive processing');
+        $this->assertEquals('Spam', $updated->reportreason);
+        $this->assertEquals(0, $updated->processingrequired);
+
+        $pushed = DB::table('background_tasks')
+            ->where('task_type', 'push_notify_chat_message')
+            ->pluck('data')
+            ->map(fn ($data) => json_decode($data, true)['message_id'] ?? null)
+            ->all();
+        $this->assertNotContains($msg->id, $pushed, 'a held message must not be pushed to the recipient');
+    }
+
+    /**
      * A ban is not the spammer list. Someone banned from the group must still be able to
      * write to its volunteers, because that is the route for appealing the ban
      * (Edward's decision on Discourse 10149).

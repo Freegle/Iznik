@@ -2029,6 +2029,11 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		if !auth.IsAdminOrSupport(myid) {
 			return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 		}
+		// An address is a way to reset the password and log in as the account, so it follows the
+		// impersonation rule: Admin may change anyone's, Support only an account with no system role.
+		if !auth.IsAdmin(myid) && auth.IsSystemMod(targetID) {
+			return fiber.NewError(fiber.StatusForbidden, "Only Admin can add an email to a moderator, Support or Admin account")
+		}
 	}
 
 	// Check if email already exists in the table.
@@ -2064,6 +2069,11 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 			// Email is used by a different user.
 			if !auth.IsAdminOrSupport(myid) {
 				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 3, "status": "Email already used"})
+			}
+			// Taking an address off a moderator, Support or Admin account is the same as adding one
+			// to it: only Admin may.
+			if !auth.IsAdmin(myid) && auth.IsSystemMod(*existingUID) {
+				return fiber.NewError(fiber.StatusForbidden, "Only Admin can take an email from a moderator, Support or Admin account")
 			}
 		}
 
@@ -2811,8 +2821,14 @@ func PatchUser(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
+	// newsfeedmodstatus is set by moderators about a member. A member cannot set
+	// their own, or a suppression could be undone with one request.
+	if req.Newsfeedmodstatus != nil && (req.ID == 0 || req.ID == myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Not authorized to set newsfeedmodstatus")
+	}
+
 	// Handle newsfeedmodstatus for another user (mod action).
-	if req.Newsfeedmodstatus != nil && req.ID > 0 && req.ID != myid {
+	if req.Newsfeedmodstatus != nil {
 		// Verify caller is admin/support or mod of a shared group.
 		if !auth.IsAdminOrSupport(myid) {
 			// Check if they share a group where the caller is a mod.
@@ -2833,6 +2849,14 @@ func PatchUser(c *fiber.Ctx) error {
 
 		if lockdown.GateMod(c, myid) {
 			return nil
+		}
+
+		// newsfeedmodstatus is an ENUM; an unrecognised value would be coerced to
+		// '' by MySQL in non-strict mode.
+		switch *req.Newsfeedmodstatus {
+		case utils.NEWSFEEDMODSTATUS_UNMODERATED, utils.NEWSFEEDMODSTATUS_MODERATED, utils.NEWSFEEDMODSTATUS_SUPPRESSED:
+		default:
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid newsfeedmodstatus")
 		}
 
 		db.Table("users").Where("id = ?", req.ID).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
@@ -2867,6 +2891,19 @@ func PatchUser(c *fiber.Ctx) error {
 	// TestPatchUserSettingsNonModCannotUpdateOther). This is a deliberate safe
 	// default, not the cause of the 9923 "settings won't stick" report (that was a
 	// frontend value-reading bug, fixed separately).
+
+	// Setting the password of another user is checked before anything is written, so a refused
+	// request leaves the account untouched. It needs admin/support. A new password is a way to
+	// log in as that account, so it follows the impersonation rule: Admin may change anyone's,
+	// Support only an account with no system role.
+	if req.Password != nil && *req.Password != "" && req.ID > 0 && req.ID != myid {
+		if !auth.IsAdminOrSupport(myid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not authorized to set password for another user")
+		}
+		if !auth.IsAdmin(myid) && auth.IsSystemMod(req.ID) {
+			return fiber.NewError(fiber.StatusForbidden, "Only Admin can set the password of a moderator, Support or Admin account")
+		}
+	}
 
 	// Self-only updates always target the logged-in user.
 	if req.Displayname != nil {
@@ -2946,11 +2983,6 @@ func PatchUser(c *fiber.Ctx) error {
 		SaveAboutMe(db, myid, *req.Aboutme)
 	}
 
-	if req.Newsfeedmodstatus != nil {
-		// Self-update (no req.ID or req.ID == myid).
-		db.Table("users").Where("id = ?", myid).Update("newsfeedmodstatus", *req.Newsfeedmodstatus)
-	}
-
 	if req.Email != nil && *req.Email != "" {
 		// Queue email verification rather than adding directly.
 		// New addresses must be verified before being linked to the account.
@@ -2970,10 +3002,7 @@ func PatchUser(c *fiber.Ctx) error {
 	if req.Password != nil && *req.Password != "" {
 		targetID := myid
 		if req.ID > 0 && req.ID != myid {
-			// Setting password for another user requires admin/support.
-			if !auth.IsAdminOrSupport(myid) {
-				return fiber.NewError(fiber.StatusForbidden, "Not authorized to set password for another user")
-			}
+			// Permission was checked before any write, above.
 			targetID = req.ID
 		}
 
@@ -3255,9 +3284,59 @@ func handleUserUnsubscribe(c *fiber.Ctx, myid uint64, req UserPostRequest) error
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// systemRoleRank orders the system roles so a merge can be checked against the caller's own.
+func systemRoleRank(role string) int {
+	switch role {
+	case utils.SYSTEMROLE_ADMIN:
+		return 3
+	case utils.SYSTEMROLE_SUPPORT:
+		return 2
+	case utils.SYSTEMROLE_MODERATOR:
+		return 1
+	}
+
+	return 0
+}
+
+// MayMergeAccounts reports whether myid may merge the two accounts, or offer to. Admin may merge any
+// two accounts. Everyone else is held to their own system role: the merge keeps the higher system role,
+// so neither account may hold a higher system role than the person merging, which means a merge never
+// raises anyone above the person doing it. Support may therefore merge anything except an Admin
+// account, and a moderator cannot absorb a Support or Admin account, as source or as target. A
+// moderator must also moderate both accounts, and either may be their own. Two Moderator accounts may
+// be merged.
+func MayMergeAccounts(myid, id1, id2 uint64) bool {
+	var mine string
+	database.DBConn.Table("users").Where("id = ?", myid).Limit(1).Pluck("systemrole", &mine)
+
+	if mine == utils.SYSTEMROLE_ADMIN {
+		return true
+	}
+
+	var theirs []string
+	database.DBConn.Table("users").Where("id IN (?, ?)", id1, id2).Pluck("systemrole", &theirs)
+
+	if len(theirs) != 2 {
+		return false
+	}
+
+	for _, r := range theirs {
+		if systemRoleRank(r) > systemRoleRank(mine) {
+			return false
+		}
+	}
+
+	if mine == utils.SYSTEMROLE_SUPPORT {
+		return true
+	}
+
+	return IsModOfUser(myid, id1) && IsModOfUser(myid, id2)
+}
+
 // handleMerge merges user id1 (discard) into user id2 (keep).
 // UI text: "merge FROM the first user INTO the second user" → id1=discard, id2=keep.
-// Admin/Support can always merge. Moderators can merge if they moderate both users (V1 parity).
+// Admin/Support can always merge. A moderator can merge two accounts they moderate, including their
+// own, as long as neither holds a higher system role than the moderator does.
 func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	// Early gate: must be at least a moderator of some group (or admin/support) to call this
 	// endpoint. This prevents unauthenticated/regular users from probing email existence.
@@ -3310,15 +3389,14 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Cannot merge a user with themselves")
 	}
 
-	// Full permission check: admin/support can always merge; moderators must moderate both users.
-	if !auth.IsAdminOrSupport(myid) && !(IsModOfUser(myid, uint64(req.ID1)) && IsModOfUser(myid, uint64(req.ID2))) {
+	if !MayMergeAccounts(myid, uint64(req.ID1), uint64(req.ID2)) {
 		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
 	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
 	// with a Freegle account, whoever asks (.claude/rules/conventions.md). ModTools refuses this
 	// too, but only by looking at the email typed in, so a merge by id went straight through.
-	if isTrashNothingAccount(db, uint64(req.ID1)) != isTrashNothingAccount(db, uint64(req.ID2)) {
+	if IsTrashNothingAccount(db, uint64(req.ID1)) != IsTrashNothingAccount(db, uint64(req.ID2)) {
 		return fiber.NewError(fiber.StatusBadRequest, "You can't merge a TrashNothing member with a Freegle account. Add a note to each to say they are the same person.")
 	}
 
@@ -3358,8 +3436,9 @@ func userOptedOutOfMerge(db *gorm.DB, id uint64) bool {
 // the merge log entries.
 //
 // This is the only account merge. The moderator merge (handleMerge), the
-// email-verify merge (session.PatchSession, when a member confirms an address
-// that belongs to another of their accounts) and the TN divergence heal
+// accepted merge offer (merge.PostMerge), the email-verify merge (session.PatchSession,
+// when a member confirms an address that belongs to another of their accounts) and the
+// TN divergence heal
 // (HealTNDivergence) all come through here, so they move the same tables and
 // leave the same log rows. Do not add a cut-down copy for a new caller: the
 // email-verify path had one until October 2026, and it stranded chat rooms
@@ -4175,7 +4254,7 @@ func MergedMembershipFlags(a, b MembershipFlags) MembershipFlags {
 }
 
 // TrashNothingSQL is a SQL condition that is true when the users row aliased as alias is a
-// TrashNothing member, by the same definition as isTrashNothingAccount.
+// TrashNothing member, by the same definition as IsTrashNothingAccount.
 func TrashNothingSQL(alias string) string {
 	return "(" + alias + ".tnuserid IS NOT NULL OR EXISTS (SELECT 1 FROM users_emails tne WHERE tne.userid = " +
 		alias + ".id AND tne.preferred = 1 AND tne.email LIKE '%@user.trashnothing.com'))"
@@ -4188,11 +4267,11 @@ func MergeableSidesSQL(a, b string) string {
 	return "(" + TrashNothingSQL(a) + " = " + TrashNothingSQL(b) + ")"
 }
 
-// isTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
+// IsTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a
 // tnuserid, or with a TrashNothing address as their preferred email. A non-preferred
 // TrashNothing address does not count, since volunteers may also use TrashNothing. Same
 // definition as the membership package's, which this package cannot import.
-func isTrashNothingAccount(db *gorm.DB, userid uint64) bool {
+func IsTrashNothingAccount(db *gorm.DB, userid uint64) bool {
 	var stamped int64
 	db.Table("users").Where("id = ? AND tnuserid IS NOT NULL", userid).Count(&stamped)
 	if stamped > 0 {

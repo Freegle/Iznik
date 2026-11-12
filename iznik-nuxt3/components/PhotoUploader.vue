@@ -341,7 +341,6 @@ const pendingPhoto = ref(null)
 // its upload assigns the id. Null, or a photo since removed, means the main photo.
 const selectedKey = ref(null)
 const photoKey = (p) => p?.tempId ?? p?.id
-let uploadInstance = null
 let tempIdCounter = 0
 
 const selectedIndex = computed(() => {
@@ -513,11 +512,9 @@ async function uploadPhoto(photo, webPath) {
     const file = await response.blob()
 
     await new Promise((resolve, reject) => {
-      if (uploadInstance) {
-        uploadInstance.abort()
-      }
-
-      uploadInstance = new tus.Upload(file, {
+      // One tus upload per photo: sharing an instance would abort another
+      // photo's upload, and tus abort() fires no callback to settle it.
+      const upload = new tus.Upload(file, {
         endpoint: runtimeConfig.public.TUS_UPLOADER,
         retryDelays: [0, 3000, 5000, 10000, 20000],
         onError: (error) => {
@@ -531,7 +528,7 @@ async function uploadPhoto(photo, webPath) {
           photo.progress = progress
         },
         onSuccess: () => {
-          let uid = uploadInstance.url
+          let uid = upload.url
           uid = 'freegletusd-' + uid.substring(uid.lastIndexOf('/') + 1)
 
           action('photo bytes uploaded', {
@@ -546,11 +543,11 @@ async function uploadPhoto(photo, webPath) {
         },
       })
 
-      uploadInstance.findPreviousUploads().then((previousUploads) => {
+      upload.findPreviousUploads().then((previousUploads) => {
         if (previousUploads.length) {
-          uploadInstance.resumeFromPreviousUpload(previousUploads[0])
+          upload.resumeFromPreviousUpload(previousUploads[0])
         }
-        uploadInstance.start()
+        upload.start()
       })
     })
   } catch (e) {

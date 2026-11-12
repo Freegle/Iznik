@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/ask/**
@@ -63,7 +63,9 @@ If nobody is offering what you need, post a WANTED and let it find you.
 2. Describe what you are looking for, and add a photo if it helps. On a phone you do not need a
    photo to carry on: below the **Add Photos** button is a small **Skip** link or, for some members
    while a change is being tried, an outlined **No photo? Carry on** button. Both take you to the
-   details screen.
+   details screen. If you add a photo, **Next** stays greyed out until the photo has finished
+   uploading. On the details screen, with no photo of your own, the description needs at least 3
+   characters, and the screen says so before you move on.
 3. Enter your postcode. As with an OFFER, Freegle works out your local community for you.
 4. Confirm your email if you are not logged in, then click **Freegle it!**
 

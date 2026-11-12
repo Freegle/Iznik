@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-11
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useMe.js
@@ -43,6 +43,10 @@ first line and postcode of their home address, and a declaration from them.
 The Stripe webhook handles **`charge.succeeded` only**. That is deliberate and worth
 knowing: other Stripe event types are ignored, so if a donation is missing from the
 database, check which event Stripe actually sent before looking for a bug in our code.
+
+When `STRIPE_WEBHOOK_SECRET` (live) or `STRIPE_WEBHOOK_SECRET_TEST` (test) is set, the webhook
+checks the `Stripe-Signature` header and refuses an event with a missing or wrong signature.
+With neither set it accepts every event, as it did before the setting existed.
 
 PayPal resends an IPN until it gets a 200. The handler acknowledges a `txn_id` that is
 already in `users_donations` without touching it, so a resend never records a donation twice.

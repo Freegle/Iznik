@@ -841,6 +841,15 @@ Schedule::command('chats:chaseup-mods')
     ->appendOutputTo(cronLog('chats:chaseup-mods'))
     ->runInBackground();
 
+// Email users who are expected to reply in a User2User chat but have not (WAITING FOR REPLY).
+// V1: cron/chat_chaseup_expected.php (daily 06:00)
+// Capped at 500 a run, oldest first, so a backlog drains over days rather than going out at once.
+Schedule::command('chats:chaseup-expected', ['--limit=500'])
+    ->dailyAt('06:00')
+    ->withoutOverlapping(360)
+    ->appendOutputTo(cronLog('chats:chaseup-expected'))
+    ->runInBackground();
+
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php (every 5 minutes)
 Schedule::command('chats:process-spam')

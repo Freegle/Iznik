@@ -1043,18 +1043,32 @@ class ReachService
         return ['verdicts' => $out, 'discovered' => $discovered];
     }
 
+    /** Whether the last reachArrivalBatch() failure is one that asking again may fix. */
+    private bool $arrivalFailureRetryable = true;
+
+    public function lastArrivalFailureRetryable(): bool
+    {
+        return $this->arrivalFailureRetryable;
+    }
+
     /**
      * Evaluate a stored label blob at many member points in one routing call
      * (POST /v1/reach-arrival): returns per-point ['arrival' => ?float,
      * 'in' => bool] at budget $tSecs (0 < t <= the label's own budget).
-     * Null on any failure - callers fall back to their cell tests.
+     * Null on any failure - callers fall back to their cell tests. After a null,
+     * lastArrivalFailureRetryable() says whether asking again may help.
      *
      * @param  array<int, array{0: float, 1: float}>  $points  [lat, lng]
      * @return ?array<int, array{arrival: ?float, in: bool}>
      */
     public function reachArrivalBatch(string $labelBytes, float $tSecs, array $points): ?array
     {
+        // A null that none of the branches below classify is treated as worth asking again.
+        $this->arrivalFailureRetryable = true;
+
         if ($labelBytes === '' || $points === []) {
+            $this->arrivalFailureRetryable = false;
+
             return null;
         }
         $out = [];
@@ -1070,6 +1084,7 @@ class ReachService
                 ]);
             } catch (\Throwable $e) {
                 Log::warning("ripple: reach-arrival fetch failed: {$e->getMessage()}");
+                $this->arrivalFailureRetryable = true;
 
                 return null;
             }
@@ -1077,11 +1092,17 @@ class ReachService
                 if (!in_array($response->status(), [503, 404], true)) {
                     Log::warning("ripple: reach-arrival HTTP {$response->status()}");
                 }
+                // A server error, "not ready" or "slow down" may clear; a 4xx that rejects the request will not.
+                $this->arrivalFailureRetryable = $response->status() >= 500
+                    || in_array($response->status(), [404, 408, 429], true);
 
                 return null;
             }
             $results = $response->json('results');
             if (!is_array($results) || count($results) !== count($chunk)) {
+                // A malformed answer will be malformed again.
+                $this->arrivalFailureRetryable = false;
+
                 return null;
             }
             $keys = array_keys($chunk);

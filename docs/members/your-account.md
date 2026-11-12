@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-11
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
@@ -136,8 +136,9 @@ community statistics and so you always have a record of what you gave or receive
 - **Duplicate accounts**: if Freegle spots two accounts that look like the same person, it
   offers to **merge** them (`/merge`), and you choose which email to keep.
 - **Deactivate or delete**: you can permanently delete your account from **Unsubscribe**
-  (`/unsubscribe`). This is permanent. If you are logged out, enter your email and confirm
-  from the link we send you.
+  (`/unsubscribe`). This is permanent. If you are logged out, enter your email and open
+  the link we send you. The link logs you in and then asks "Permanently delete your account?".
+  Nothing is deleted until you click **Delete** there.
 - **If you stop using Freegle**: after six months without a visit your account goes
   dormant and we stop emailing you. We do not remove member data for inactivity, so your
   posting history stays intact and you can pick up where you left off just by logging back
