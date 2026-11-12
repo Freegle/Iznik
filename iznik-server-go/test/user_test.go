@@ -1550,6 +1550,62 @@ func TestPatchUserMuteChitchat(t *testing.T) {
 	assert.Equal(t, "Suppressed", modstatus)
 }
 
+// newsfeedmodstatus is set by moderators. A member whose posts are suppressed
+// must not be able to lift that by patching their own row.
+func TestPatchUserNewsfeedmodstatusMemberCannotSetOwn(t *testing.T) {
+	prefix := uniquePrefix("patchnfself")
+	db := database.DBConn
+
+	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, memberID)
+	db.Exec("UPDATE users SET newsfeedmodstatus = 'Suppressed' WHERE id = ?", memberID)
+
+	// Once with no id, once with their own id: both reach the self-update path.
+	for _, payload := range []map[string]interface{}{
+		{"newsfeedmodstatus": "Unmoderated"},
+		{"id": memberID, "newsfeedmodstatus": "Unmoderated"},
+	} {
+		s, _ := json.Marshal(payload)
+		request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+		request.Header.Set("Content-Type", "application/json")
+		_, err := getApp().Test(request)
+		assert.NoError(t, err)
+
+		var modstatus string
+		db.Raw("SELECT COALESCE(newsfeedmodstatus, '') FROM users WHERE id = ?", memberID).Scan(&modstatus)
+		assert.Equal(t, "Suppressed", modstatus, "a member must not be able to change their own newsfeedmodstatus")
+	}
+}
+
+// An unrecognised value would be coerced to '' by MySQL, which is neither
+// Moderated nor Suppressed, so it is refused.
+func TestPatchUserNewsfeedmodstatusRejectsInvalidValue(t *testing.T) {
+	prefix := uniquePrefix("patchnfbad")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
+	_, modToken := CreateTestSession(t, modID)
+	db.Exec("UPDATE users SET newsfeedmodstatus = 'Suppressed' WHERE id = ?", targetID)
+
+	s, _ := json.Marshal(map[string]interface{}{
+		"id":                targetID,
+		"newsfeedmodstatus": "bogus",
+	})
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	var modstatus string
+	db.Raw("SELECT COALESCE(newsfeedmodstatus, '') FROM users WHERE id = ?", targetID).Scan(&modstatus)
+	assert.Equal(t, "Suppressed", modstatus)
+}
+
 // TestPatchUserChatmodstatusFully is the regression test for the field being
 // absent from UserPatchRequest: BodyParser dropped it, so PATCH returned 200
 // and left the column untouched. Asserting the DB value, not the status code,
