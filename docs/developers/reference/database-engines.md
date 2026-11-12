@@ -40,7 +40,7 @@ then calls `scripts/setup-pg-database.sh`, which builds two PostgreSQL databases
 
 - `PG_ENGINE` unset: build if the container is running. A failure is a loud warning and MySQL is still
   ready, so the MySQL path cannot be broken by the second engine.
-- `PG_ENGINE=1`: build, and fail the script if it cannot. The PostgreSQL CI job will set this.
+- `PG_ENGINE=1`: build, and fail the script if it cannot. The CircleCI executors set this.
 - `PG_ENGINE=0`: skip.
 
 ```bash

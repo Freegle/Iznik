@@ -15,6 +15,9 @@ executors:
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle
+      # Both engines are in the CI stack, so a parity test that cannot reach PostgreSQL
+      # must fail, not skip. scripts/setup-test-database.sh and the parity harness both read it.
+      PG_ENGINE: "1"
       # Boot the routing (spatial) container on the small committed Bristol extract —
       # no 2.5GB UK graph in CI. Must be executor-level (not a per-step export) so it
       # reaches the `docker-compose up` step, which runs in a different shell.
@@ -36,6 +39,9 @@ executors:
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
+      # Both engines are in the CI stack, so a parity test that cannot reach PostgreSQL
+      # must fail, not skip. scripts/setup-test-database.sh and the parity harness both read it.
+      PG_ENGINE: "1"
       SELF_HOSTED_RUNNER: "true"
       # Boot spatial on the committed Bristol extract (see machine-executor note).
       OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
@@ -74,6 +80,9 @@ executors:
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
+      # Both engines are in the CI stack, so a parity test that cannot reach PostgreSQL
+      # must fail, not skip. scripts/setup-test-database.sh and the parity harness both read it.
+      PG_ENGINE: "1"
       SELF_HOSTED_RUNNER: "true"
       # Boot spatial on the committed Bristol extract (see machine-executor note).
       OSM_PBF_PATH: /app/testdata/bristol.osm.pbf

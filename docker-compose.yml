@@ -851,6 +851,8 @@ services:
       - PGSQL_PORT=${PGSQL_PORT:-5432}
       - PGSQL_USERNAME=${PGSQL_USERNAME:-root}
       - PGSQL_PASSWORD=${PGSQL_PASSWORD:-iznik}
+      # 1 makes a parity test fail, not skip, when PostgreSQL is unreachable. CI sets it.
+      - PG_ENGINE=${PG_ENGINE:-}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd:8080/tus
       # In dev, uploaded photos live in the local tusd, not the production
@@ -1774,6 +1776,8 @@ services:
       - PGSQL_DATABASE=iznik
       - PGSQL_USERNAME=root
       - PGSQL_PASSWORD=iznik
+      # 1 makes a parity test fail, not skip, when PostgreSQL is unreachable. CI sets it.
+      - PG_ENGINE=${PG_ENGINE:-}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - CACHE_STORE=redis
