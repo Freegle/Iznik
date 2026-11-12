@@ -113,6 +113,12 @@ class RewindChatEmailedCommand extends Command
         // member => notifications we could not deliver, summed across chats.
         $owed = [];
 
+        // When each earliest missed message was written, read in chunks rather than one query a row.
+        $messageDates = [];
+        foreach (array_chunk($rows->pluck('firstmsg')->map(fn ($id) => (int) $id)->filter()->unique()->all(), 1000) as $ids) {
+            $messageDates += DB::table('chat_messages')->whereIn('id', $ids)->pluck('date', 'id')->all();
+        }
+
         foreach ($rows as $row) {
             $chatid = (int) $row->chatid;
             $firstmsg = (int) $row->firstmsg;
@@ -134,7 +140,7 @@ class RewindChatEmailedCommand extends Command
 
             // The catch-up counts from the debt's firstat, so that must be when
             // the earliest missed message was written, not when we recorded it.
-            $missedAt = (string) (DB::table('chat_messages')->where('id', $firstmsg)->value('date') ?? $start);
+            $missedAt = (string) ($messageDates[$firstmsg] ?? $start);
             if (! isset($owed[$uid]['since']) || strcmp($missedAt, $owed[$uid]['since']) < 0) {
                 $owed[$uid]['since'] = $missedAt;
             }
