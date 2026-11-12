@@ -678,8 +678,10 @@ func TestMergeRefusesTwoDifferentTrashNothingMembers(t *testing.T) {
 	assert.Equal(t, uint64(991002), tnA, "both ids kept")
 }
 
-// Twin repair stays possible: one account stamped, its twin not, both TrashNothing.
-func TestMergeAllowsTrashNothingTwinWithoutStamp(t *testing.T) {
+// TrashNothing accounts are never merged with each other either, even a stamped account and a twin
+// holding the same username: only a TN id says who a TN member is, and the twin has none. The twin
+// loses the address to the member TN names, and keeps its posts and chats.
+func TestMergeRefusesTrashNothingTwinWithoutStamp(t *testing.T) {
 	prefix := uniquePrefix("merge_tn_twin")
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
@@ -687,19 +689,46 @@ func TestMergeAllowsTrashNothingTwinWithoutStamp(t *testing.T) {
 	stamped := CreateTestUser(t, prefix+"_s", utils.SYSTEMROLE_USER)
 	twin := CreateTestUser(t, prefix+"_t", utils.SYSTEMROLE_USER)
 	stampTN(stamped, 991004)
-	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", twin)
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid IN (?, ?)", stamped, twin)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", stamped, prefix+"-g1@user.trashnothing.com")
 	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", twin, prefix+"-g2@user.trashnothing.com")
 
-	assert.Equal(t, 200, mergeUsers(t, adminToken, twin, stamped))
-	assert.False(t, userExists(twin))
+	assert.Equal(t, 400, mergeUsers(t, adminToken, twin, stamped))
+	assert.True(t, userExists(twin))
+	assert.True(t, userExists(stamped))
+
+	assert.Error(t, user.MergeUsersTx(db, twin, stamped, stamped), "no caller can do it")
+	assert.True(t, userExists(twin))
+}
+
+// The email-verify merge calls MergeUsersTx directly, without the moderator handler's checks, so
+// the refusal has to be in MergeUsersTx or confirming an address merges a TrashNothing account.
+func TestMergeUsersTxRefusesATrashNothingAccountWithAFreegleAccount(t *testing.T) {
+	prefix := uniquePrefix("merge_tx_tn")
+	db := database.DBConn
+
+	fd := CreateTestUser(t, prefix+"_fd", utils.SYSTEMROLE_USER)
+	stamped := CreateTestUser(t, prefix+"_s", utils.SYSTEMROLE_USER)
+	unstamped := CreateTestUser(t, prefix+"_u", utils.SYSTEMROLE_USER)
+	stampTN(stamped, 991008)
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", unstamped)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", unstamped, prefix+"-g3@user.trashnothing.com")
+
+	assert.Error(t, user.MergeUsersTx(db, stamped, fd, fd), "a stamped TN account into a Freegle account")
+	assert.Error(t, user.MergeUsersTx(db, fd, stamped, stamped), "a Freegle account into a stamped TN account")
+	assert.Error(t, user.MergeUsersTx(db, unstamped, fd, fd), "a TN account known by its preferred address")
+	assert.True(t, userExists(fd))
+	assert.True(t, userExists(stamped))
+	assert.True(t, userExists(unstamped))
 
 	var tn uint64
 	db.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", stamped).Scan(&tn)
-	assert.Equal(t, uint64(991004), tn)
+	assert.Equal(t, uint64(991008), tn, "the TN id stays where it was")
 }
 
 // TN does not promise usernames are unique, but two different ones with nothing to prove they are
-// one member may be two people, and a merge cannot be undone.
+// one member may be two people, and a merge cannot be undone. Neither account is a TrashNothing
+// account here (no TN id, no preferred TN address), so it is the username check that refuses.
 func TestMergeRefusesTwoTrashNothingUsernames(t *testing.T) {
 	prefix := uniquePrefix("merge_tn_two")
 	db := database.DBConn
@@ -707,10 +736,8 @@ func TestMergeRefusesTwoTrashNothingUsernames(t *testing.T) {
 
 	a := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
 	b := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
-	stampTN(a, 991006)
-	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid IN (?, ?)", a, b)
-	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", a, "one"+prefix+"-g1@user.trashnothing.com")
-	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", b, "two"+prefix+"-g2@user.trashnothing.com")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", a, "one"+prefix+"-g1@user.trashnothing.com")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", b, "two"+prefix+"-g2@user.trashnothing.com")
 
 	assert.Equal(t, 400, mergeUsers(t, adminToken, b, a))
 	assert.True(t, userExists(a))
@@ -721,18 +748,17 @@ func TestMergeRefusesTwoTrashNothingUsernames(t *testing.T) {
 	assert.True(t, userExists(b))
 }
 
-// One username on both accounts is the twin a merge is there to repair.
-func TestMergeAllowsOneTrashNothingUsernameOnBoth(t *testing.T) {
+// Two Freegle accounts that each hold an address of the same TN username, not as their preferred
+// address, are not TrashNothing accounts and hold no different usernames, so nothing refuses them.
+func TestMergeAllowsOneTrashNothingUsernameOnTwoFreegleAccounts(t *testing.T) {
 	prefix := uniquePrefix("merge_tn_one")
 	db := database.DBConn
 	_, adminToken := mergeAdminSetup(t, prefix)
 
 	a := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
 	b := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
-	stampTN(a, 991007)
-	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid IN (?, ?)", a, b)
-	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", a, prefix+"-g1@user.trashnothing.com")
-	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 1)", b, prefix+"-g2@user.trashnothing.com")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", a, prefix+"-g1@user.trashnothing.com")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", b, prefix+"-g2@user.trashnothing.com")
 
 	assert.Equal(t, 200, mergeUsers(t, adminToken, b, a))
 	assert.False(t, userExists(b))

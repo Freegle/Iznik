@@ -986,7 +986,7 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	// Table() passes its name argument through verbatim (no quoting) once it
 	// contains a space, so a parenthesized UNION subquery can be given as the
 	// "table name" with its own bind args in Table()'s variadic args.
-	// A pair across the TrashNothing line is left out: the merge would be refused, so the
+	// A pair with a TrashNothing account is left out: the merge would be refused, so the
 	// prompt only invites a moderator to try something that cannot work (Discourse 10238).
 	mergeable := user.MergeableSidesSQL("u1", "u2")
 	db.Table("(SELECT users_related.id, user1, user2, reason FROM users_related "+

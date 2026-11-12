@@ -1582,7 +1582,7 @@ func GetSession(c *fiber.Ctx) error {
 				// contains a space, so a parenthesized UNION subquery can be given as the
 				// "table name" with its own bind args in Table()'s variadic args.
 				// Counted on the same terms as the Related Members list, which leaves out a
-				// pair across the TrashNothing line because the merge would be refused.
+				// pair with a TrashNothing account because the merge would be refused.
 				mergeable := user.MergeableSidesSQL("u1", "u2")
 				db.Table("(SELECT ur.user1 FROM users_related ur "+
 					"INNER JOIN memberships m ON m.userid = ur.user1 "+
