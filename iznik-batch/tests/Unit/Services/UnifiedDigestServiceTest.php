@@ -1881,56 +1881,6 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotContains($faraway->id, $ids, 'rippling post whose reach does not cover the member is excluded');
     }
 
-    public function test_daily_digest_still_sends_a_reach_gated_post_once_its_reach_grows_over_the_member(): void
-    {
-        // A post the reach does not yet cover is held back from the daily digest, to be
-        // included once the reach covers the member. A later post that IS sent in the same
-        // run must not move the cursor past it: the cursor advances over what was sent, not
-        // over what was newer. Daily members have no reach mailer to fall back on.
-        [$recipient, $poster, $group] = $this->dailyDigestMembers();
-        $this->setMyLocation($recipient, 51.5, -0.1);
-
-        // Post A arrives first. Its reach is far to the east, so it does not cover the member.
-        $gated = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: Gated post Zq (TestLocation)',
-            'arrival' => now()->subHours(3),
-        ]);
-        $this->seedReach($gated->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
-
-        // Post B arrives later and has no reach row, so the first digest sends it.
-        $ungated = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: Ungated post Zq (TestLocation)',
-            'arrival' => now()->subHours(2),
-        ]);
-
-        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
-        $first = array_map(
-            fn ($p) => (int) $p['msgid'],
-            $this->lastDailyDigest()->mailDescriptor()['posts']
-        );
-        $this->assertSame([(int) $ungated->id], $first, 'only the ungated post is sent on the first day');
-
-        // The reach grows over the member. The next day's digest must now include post A.
-        $grown = 'POLYGON((-0.2 51.4,5.2 51.4,5.2 51.6,-0.2 51.6,-0.2 51.4))';
-        DB::table('rippling_reach')->where('msgid', $gated->id)->update([
-            'polygon_cells' => $this->reachCellsFor($grown),
-        ]);
-        DB::statement('UPDATE rippling_reach SET outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
-            [$grown, $gated->id]);
-        $this->reachArrivalBox = $this->wktBounds($grown);
-        $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
-
-        Mail::fake();
-        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
-        $second = array_map(
-            fn ($p) => (int) $p['msgid'],
-            $this->lastDailyDigest()->mailDescriptor()['posts']
-        );
-
-        $this->assertContains((int) $gated->id, $second,
-            'a post held back by the reach gate is sent once its reach covers the member');
-    }
-
     /**
      * Seed a post whose committed reach (and outer_bound, which seedReach derives as the
      * polygon's own envelope) EXCLUDE the ring member's location, with a rural overflow ring

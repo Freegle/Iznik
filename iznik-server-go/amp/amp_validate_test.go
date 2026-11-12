@@ -66,7 +66,7 @@ func pastExp() string {
 
 // validToken computes the correct HMAC for the given uid/resID/exp with AMP_SECRET="test-secret".
 func validToken(uid, resID, exp string) string {
-	return computeHMAC("amp"+uid+resID+exp, "test-secret")
+	return computeHMAC(TokenMessage(uid, resID, exp), "test-secret")
 }
 
 func TestValidateToken_MissingAllParams(t *testing.T) {
@@ -422,7 +422,7 @@ func TestPostDigestReplyShared_WrongHMAC_Returns400(t *testing.T) {
 
 // validateBodyToken with a correctly-computed HMAC reaches the user-existence
 // DB query, which can't run without a live DB. The wrong-HMAC test above
-// exercises the HMAC comparison itself ("amp"+uid+mid+exp via computeHMAC).
+// exercises the HMAC comparison itself (TokenMessage via computeHMAC).
 func TestValidateBodyToken_CorrectHMACRequiresDB(t *testing.T) {
 	t.Skip("user-existence check needs live DB — covered by integration tests")
 }
@@ -483,7 +483,7 @@ func TestValidateToken_TableDriven(t *testing.T) {
 		},
 		{
 			name:   "correct HMAC format but wrong value",
-			pathID: "42", query: "rt=" + computeHMAC("amp"+"7"+"42"+exp, "wrong-secret") + "&uid=7&exp=" + exp,
+			pathID: "42", query: "rt=" + computeHMAC(TokenMessage("7", "42", exp), "wrong-secret") + "&uid=7&exp=" + exp,
 		},
 	}
 

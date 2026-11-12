@@ -166,8 +166,10 @@ trait AmpEmail
         $expiryHours = config('freegle.amp.token_expiry_hours', 168); // 7 days default
         $expiry = time() + ($expiryHours * 3600);
 
-        // Format: "amp" + user_id + resource_id + expiry
-        $message = 'amp' . $userId . $resourceId . $expiry;
+        // Format: "amp:" + user_id + ":" + resource_id + ":" + expiry. The separators keep the
+        // pair unambiguous: without them 12 and 3 sign the same string as 1 and 23. The Go API
+        // rebuilds the same string (amp.TokenMessage).
+        $message = 'amp:' . $userId . ':' . $resourceId . ':' . $expiry;
         $token = hash_hmac('sha256', $message, $secret);
 
         return [

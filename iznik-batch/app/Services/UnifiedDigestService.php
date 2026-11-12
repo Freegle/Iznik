@@ -2423,7 +2423,10 @@ class UnifiedDigestService
         // index, and the carryover is a primary-key lookup of at most DIGEST_POST_CAP ids.
         $window = $armFor();
         if ($tracker->lastmsgdate) {
-            $window->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
+            // messages_groups.arrival keeps microseconds but the cursor is stored in whole
+            // seconds, cut down from the newest arrival sent. Windowing on "after the cursor"
+            // would offer that newest post again, so the window starts at the next whole second.
+            $window->where('messages_groups.arrival', '>=', $tracker->lastmsgdate->copy()->addSecond());
         } else {
             $window->where('messages_groups.arrival', '>=', now()->subDay());
         }

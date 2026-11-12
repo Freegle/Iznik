@@ -96,6 +96,13 @@ func computeHMAC(message, secret string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// TokenMessage is the string an AMP token signs: "amp:" + user id + ":" + resource id + ":" + expiry.
+// The separators keep each (user, resource) pair unambiguous, and it is the same string
+// AmpEmail::generateToken signs in the batch.
+func TokenMessage(uid, resourceID, exp string) string {
+	return "amp:" + uid + ":" + resourceID + ":" + exp
+}
+
 // ValidateToken validates HMAC-based tokens for AMP operations (read and write).
 // Tokens are reusable within their expiry period.
 // Returns (userID, resourceID, error). On failure, returns (0, 0, nil) for graceful fallback.
@@ -116,13 +123,13 @@ func ValidateToken(c *fiber.Ctx) (uint64, uint64, error) {
 		return 0, 0, nil
 	}
 
-	// Validate HMAC: "amp" + user_id + resource_id + expiry
+	// Validate HMAC over TokenMessage: user_id, resource_id, expiry
 	secret := getAMPSecret()
 	if secret == "" {
 		return 0, 0, nil
 	}
 
-	message := "amp" + uid + resID + exp
+	message := TokenMessage(uid, resID, exp)
 	expectedMAC := computeHMAC(message, secret)
 
 	// Constant-time comparison to prevent timing attacks
@@ -547,7 +554,7 @@ func PostDigestReply(c *fiber.Ctx) error {
 // single <amp-form> in the digest template can submit a reply to ANY post by
 // binding mid/rt/exp from the tapped card's state — there's no per-post form.
 //
-// It validates the SAME HMAC as ValidateToken ("amp" + uid + mid + exp) using
+// It validates the SAME HMAC as ValidateToken (TokenMessage of uid, mid, exp) using
 // the body values, then runs the identical reply logic via processDigestReply.
 //
 // @Summary Post reply from AMP digest email (shared form)
@@ -593,7 +600,7 @@ func PostDigestReplyShared(c *fiber.Ctx) error {
 
 // validateBodyToken is the body-based equivalent of ValidateToken: it reads
 // rt/uid/exp/mid from the FORM BODY and validates the same HMAC
-// ("amp" + uid + mid + exp). Returns (userID, messageID) or (0, 0) on any
+// (TokenMessage of uid, mid, exp). Returns (userID, messageID) or (0, 0) on any
 // failure, mirroring ValidateToken's graceful-zero behaviour.
 func validateBodyToken(c *fiber.Ctx) (uint64, uint64) {
 	token := c.FormValue("rt")
@@ -615,7 +622,7 @@ func validateBodyToken(c *fiber.Ctx) (uint64, uint64) {
 		return 0, 0
 	}
 
-	message := "amp" + uid + mid + exp
+	message := TokenMessage(uid, mid, exp)
 	expectedMAC := computeHMAC(message, secret)
 	if subtle.ConstantTimeCompare([]byte(token), []byte(expectedMAC)) != 1 {
 		return 0, 0
