@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
@@ -341,7 +342,8 @@ class RestoreUserCommand extends Command
 
         // On duplicate, only remap user-ID columns (and keep id stable via LAST_INSERT_ID).
         // This matches V1: "$key = $luid, id = LAST_INSERT_ID(id)".
-        $updateClauses = ['`id` = LAST_INSERT_ID(`id`)'];
+        // A table with no id column (users_banned) has nothing to keep stable.
+        $updateClauses = Schema::hasColumn($table, 'id') ? ['`id` = LAST_INSERT_ID(`id`)'] : [];
         foreach ($userIdCols as $col) {
             $updateClauses[] = "`$col` = VALUES(`$col`)";
         }
