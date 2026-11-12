@@ -15,7 +15,7 @@ use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
 use App\Mail\Session\ForgotPasswordMail;
 use App\Mail\Session\LoginLinkMail;
-use App\Mail\Session\MergeOfferMail;
+use App\Services\Merge\MergeOfferMailer;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
@@ -1284,33 +1284,7 @@ class ProcessBackgroundTasksCommand extends Command
             return;
         }
 
-        $mergeUrl = config('freegle.sites.user') . '/merge?id=' . $mergeId . '&uid=' . $uid;
-        $name1 = $u1->fullname ?: 'Freegle User';
-        $name2 = $u2->fullname ?: 'Freegle User';
-        $email1 = $this->obfuscateEmail($u1->email_preferred ?? '');
-        $email2 = $this->obfuscateEmail($u2->email_preferred ?? '');
-
-        // Send to both users.
-        foreach ([$u1, $u2] as $recipient) {
-            $recipientEmail = $recipient->email_preferred;
-
-            if (! $recipientEmail) {
-                continue;
-            }
-
-            $mail = new MergeOfferMail(
-                recipientUserId: $recipient->id,
-                recipientName: $recipient->fullname ?: 'Freegle User',
-                recipientEmail: $recipientEmail,
-                name1: $name1,
-                email1: $email1,
-                name2: $name2,
-                email2: $email2,
-                mergeUrl: $mergeUrl,
-            );
-
-            $spooler->spool($mail, $recipientEmail);
-        }
+        app(MergeOfferMailer::class)->send($mergeId, $uid, $u1, $u2, $spooler);
 
         Log::info('Sent merge offer emails', [
             'merge_id' => $mergeId,
@@ -2180,21 +2154,6 @@ class ProcessBackgroundTasksCommand extends Command
     /**
      * Obfuscate an email address for display (e.g. "j***@example.com").
      */
-    private function obfuscateEmail(string $email): string
-    {
-        if (! $email || ! str_contains($email, '@')) {
-            return $email;
-        }
-
-        [$local, $domain] = explode('@', $email, 2);
-
-        if (strlen($local) <= 1) {
-            return '*@' . $domain;
-        }
-
-        return $local[0] . str_repeat('*', strlen($local) - 1) . '@' . $domain;
-    }
-
     /**
      * Remap postcodes to their nearest area after a location geometry change.
      */

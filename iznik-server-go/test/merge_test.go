@@ -500,3 +500,20 @@ func TestPostMergeRejectAfterAcceptIsRefused(t *testing.T) {
 	database.DBConn.Raw("SELECT rejected FROM merges WHERE id = ?", mergeID).Scan(&rejected)
 	assert.Nil(t, rejected)
 }
+
+// If one account of the offer has already gone, accepting is refused and the offer stays open.
+func TestPostMergeAcceptRefusesWhenAnAccountHasGone(t *testing.T) {
+	prefix := uniquePrefix("MergeAccGone")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	missing := uint64(4000000000)
+
+	mergeID, uid := createTestMerge(t, user1ID, missing, modID)
+
+	assert.Equal(t, 404, postMergeAction(t, mergeID, uid, user1ID, missing, "Accept"))
+	assert.True(t, userExists(user1ID))
+
+	var accepted *string
+	database.DBConn.Raw("SELECT accepted FROM merges WHERE id = ?", mergeID).Scan(&accepted)
+	assert.Nil(t, accepted)
+}

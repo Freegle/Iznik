@@ -314,6 +314,13 @@ func PostMerge(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "Missing parameters")
 		}
 
+		// Either account may already have gone, for instance merged by a moderator.
+		var present int64
+		db.Table("users").Where("id IN (?, ?)", uint64(req.User1), uint64(req.User2)).Count(&present)
+		if present != 2 {
+			return fiber.NewError(fiber.StatusNotFound, "One of those accounts no longer exists")
+		}
+
 		// An offer is accepted once; the link in the email must not merge again.
 		if m.Accepted != nil {
 			return fiber.NewError(fiber.StatusConflict, "This merge has already been accepted")
