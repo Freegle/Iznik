@@ -122,6 +122,11 @@ func (c *pgTranslatingConnector) columns(table string) []string {
 	return c.cols[strings.ToLower(table)]
 }
 
+func (c *pgTranslatingConnector) uniques(table string) [][]string {
+	c.load()
+	return c.idx[strings.ToLower(table)]
+}
+
 func (c *pgTranslatingConnector) unique(table string, cols []string) []string {
 	if table == "" || len(cols) == 0 {
 		return nil
@@ -212,7 +217,11 @@ func (p *pgTranslatingConn) QueryContext(ctx context.Context, q string, args []d
 	if st.jsonArgs {
 		st.sql = typeJSONParams(st.sql, args)
 	}
-	return p.Conn.(driver.QueryerContext).QueryContext(ctx, st.sql, args)
+	rows, err := p.Conn.(driver.QueryerContext).QueryContext(ctx, st.sql, args)
+	if err != nil {
+		return nil, err
+	}
+	return pgRows{rows}, nil
 }
 
 func (p *pgTranslatingConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {

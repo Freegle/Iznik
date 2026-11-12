@@ -172,10 +172,10 @@ func clauseEnd(p selectParts, start int, later ...int) int {
 }
 
 type selItem struct {
-	expr  []tok
-	alias string // lower case, or ""
-	asTok int    // index in expr of AS, or -1
-	raw   []tok  // the item as written, with its alias
+	expr     []tok
+	alias    string // lower case, or ""
+	asTok    int    // index in expr of AS, or -1
+	raw      []tok  // the item as written, with its alias
 	aliasTok *tok
 }
 

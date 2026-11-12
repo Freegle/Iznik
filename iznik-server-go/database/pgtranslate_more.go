@@ -9,6 +9,8 @@ import (
 type catalog interface {
 	// unique returns the columns of the unique index an INSERT of cols can conflict on, or nil.
 	unique(table string, cols []string) []string
+	// uniques returns every unique index of the table, as column lists.
+	uniques(table string) [][]string
 	// columns returns the table's column names, or nil when the table is not known.
 	columns(table string) []string
 }
@@ -495,6 +497,11 @@ func translateStatement(ts []tok, cat catalog) ([]tok, bool) {
 		return ts, false
 	}
 
+	// UPDATE IGNORE t SET c = v WHERE w: rows whose new key would collide are left alone.
+	if isKw(ts[first], "UPDATE") {
+		return translateUpdateIgnore(ts, first, cat)
+	}
+
 	replace := isKw(ts[first], "REPLACE")
 	if !isKw(ts[first], "INSERT") && !replace {
 		return ts, false
@@ -799,4 +806,79 @@ func wrapJSONBranches(ts []tok, changed bool) ([]tok, bool) {
 		}
 	}
 	return ts, changed
+}
+
+func translateUpdateIgnore(ts []tok, first int, cat catalog) ([]tok, bool) {
+	ig := nextSig(ts, first+1)
+	if ig < 0 || !isKw(ts[ig], "IGNORE") {
+		return ts, false
+	}
+	tbl := nextSig(ts, ig+1)
+	set := nextSig(ts, tbl+1)
+	if tbl < 0 || set < 0 || !isKw(ts[set], "SET") {
+		return ts, false
+	}
+	table := identName(ts[tbl])
+	where := topKw(ts, set+1, "WHERE")
+	var assigns, cond []tok
+	if where >= 0 {
+		assigns, cond = ts[set+1:where], trimToks(ts[where+1:])
+	} else {
+		assigns = ts[set+1:]
+	}
+	newVal := map[string][]tok{}
+	for _, a := range splitArgs(assigns) {
+		a = trimToks(a)
+		if len(a) < 3 || !isP(a[1], "=") {
+			return ts, false
+		}
+		val := trimToks(a[2:])
+		if hasIdentifier(val) {
+			return ts, false
+		}
+		newVal[strings.ToLower(identName(a[0]))] = val
+	}
+	var guards []tok
+	for _, ix := range cat.uniques(table) {
+		touched := false
+		for _, c := range ix {
+			if _, ok := newVal[strings.ToLower(c)]; ok {
+				touched = true
+			}
+		}
+		if !touched {
+			continue
+		}
+		var conds []tok
+		for _, c := range ix {
+			if len(conds) > 0 {
+				conds = append(conds, sp(), word("AND"), sp())
+			}
+			col := tok{tkQuote, `"` + c + `"`}
+			conds = append(conds, word("ig_x"), punct("."), col, sp(), punct("="), sp())
+			if v, ok := newVal[strings.ToLower(c)]; ok {
+				conds = append(conds, punct("("))
+				conds = append(conds, v...)
+				conds = append(conds, punct(")"))
+			} else {
+				conds = append(conds, tok{tkQuote, `"` + table + `"`}, punct("."), col)
+			}
+		}
+		if len(guards) > 0 {
+			guards = append(guards, sp(), word("AND"), sp())
+		}
+		guards = concatToks(guards, []tok{word("NOT"), sp(), word("EXISTS"), sp(), punct("("), word("SELECT"), sp(), word("1"), sp(), word("FROM"), sp(), tok{tkQuote, `"` + table + `"`}, sp(), word("ig_x"), sp(), word("WHERE"), sp()}, conds, []tok{punct(")")})
+	}
+	out := concatToks([]tok{word("UPDATE"), sp(), ts[tbl], sp(), word("SET"), sp()}, trimToks(assigns))
+	if len(guards) > 0 || len(cond) > 0 {
+		out = append(out, sp(), word("WHERE"), sp())
+		if len(cond) > 0 {
+			out = concatToks(out, []tok{punct("(")}, cond, []tok{punct(")")})
+			if len(guards) > 0 {
+				out = append(out, sp(), word("AND"), sp())
+			}
+		}
+		out = append(out, guards...)
+	}
+	return out, true
 }

@@ -77,8 +77,8 @@ func newPostgresFailoverDialector(replicaDSN, sourceDSN string) gorm.Dialector {
 		panic("database: failed to parse source DSN for failover: " + err.Error())
 	}
 	fc := &pgFailoverConnector{
-		primary:    stdlib.GetConnector(*rc),
-		fallback:   stdlib.GetConnector(*sc),
+		primary:    stdlib.GetConnector(*rc, stdlib.OptionAfterConnect(registerLenientTypes)),
+		fallback:   stdlib.GetConnector(*sc, stdlib.OptionAfterConnect(registerLenientTypes)),
 		retryAfter: 30 * time.Second,
 	}
 	return postgres.New(postgres.Config{Conn: sql.OpenDB(newPgTranslatingConnector(fc))})
@@ -176,5 +176,5 @@ func newPostgresDialector(dsn string) gorm.Dialector {
 	if err != nil {
 		panic("database: failed to parse DSN: " + err.Error())
 	}
-	return postgres.New(postgres.Config{Conn: sql.OpenDB(newPgTranslatingConnector(stdlib.GetConnector(*cfg)))})
+	return postgres.New(postgres.Config{Conn: sql.OpenDB(newPgTranslatingConnector(stdlib.GetConnector(*cfg, stdlib.OptionAfterConnect(registerLenientTypes))))})
 }

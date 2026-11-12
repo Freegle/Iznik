@@ -10,6 +10,13 @@ type fakeCatalog struct {
 	uniq map[string][]string
 }
 
+func (f fakeCatalog) uniques(table string) [][]string {
+	if u := f.uniq[table]; u != nil {
+		return [][]string{u}
+	}
+	return nil
+}
+
 func (f fakeCatalog) columns(table string) []string { return f.cols[table] }
 func (f fakeCatalog) unique_(table string) []string { return f.uniq[table] }
 
@@ -95,6 +102,8 @@ func TestTranslatePostgres(t *testing.T) {
 		{"json set pairs", "UPDATE u SET s = JSON_SET(s, '$.a', 'x', '$.b', 2)", "UPDATE u SET s = json_set(json_set(s, '$.a', 'x'::text), '$.b', 2)"},
 		{"srid literal", "ST_GeomFromText('POINT(1 2)', 3857)", "ST_GeomFromText('POINT(1 2)', 4326)"},
 		{"coalesce bool", "COALESCE(JSON_EXTRACT(s, '$.a') = 1, 0)", "COALESCE(JSON_EXTRACT(s, '$.a') = 1, false)"},
+		{"update ignore", `UPDATE IGNORE "users_emails" SET "email"=$1 WHERE userid = $2`,
+			`UPDATE "users_emails" SET "email"=$1 WHERE (userid = $2) AND NOT EXISTS (SELECT 1 FROM "users_emails" ig_x WHERE ig_x."email" = ($1))`},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {
