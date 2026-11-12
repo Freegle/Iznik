@@ -104,8 +104,8 @@ func TestCreateMerge(t *testing.T) {
 }
 
 // A merge offer, once accepted, merges the two accounts, so offering one follows the moderator
-// merge rules: the moderator must moderate both accounts, neither may be their own, and neither
-// may be an Admin or Support account.
+// merge rules: the moderator must moderate both accounts, either may be their own, and neither may
+// be an Admin or Support account.
 func TestCreateMergeByModeratorFollowsTheModeratorMergeRules(t *testing.T) {
 	prefix := uniquePrefix("MergeCrtRules")
 	db := database.DBConn
@@ -133,8 +133,6 @@ func TestCreateMergeByModeratorFollowsTheModeratorMergeRules(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	assert.Equal(t, 403, offer(memberA, modID), "the moderator's own account")
-	assert.Equal(t, 403, offer(modID, memberA), "the moderator's own account, either way round")
 	assert.Equal(t, 403, offer(memberA, adminID), "an Admin account")
 	assert.Equal(t, 403, offer(adminID, memberA), "an Admin account, either way round")
 	assert.Equal(t, 403, offer(memberA, outsider), "an account the moderator does not moderate")
@@ -144,6 +142,8 @@ func TestCreateMergeByModeratorFollowsTheModeratorMergeRules(t *testing.T) {
 	assert.Equal(t, int64(0), offers, "a refused offer leaves no merge row to accept")
 
 	assert.Equal(t, 200, offer(memberA, memberB), "two members of the moderator's community")
+	assert.Equal(t, 200, offer(memberA, modID), "the moderator's own account with a member")
+	assert.Equal(t, 200, offer(modID, memberB), "the moderator's own account, either way round")
 }
 
 func TestCreateMergeNotMod(t *testing.T) {

@@ -2656,9 +2656,8 @@ func TestPostUserMergeByModeratorForbiddenForOutsideUser(t *testing.T) {
 }
 
 func TestPostUserMergeByModeratorCannotTakeOnAnAdminsRole(t *testing.T) {
-	// A moderator merge is for two duplicates of one member. The moderator is a member of their own
-	// community, so they must not be able to name themselves as the kept account, and a merge by a
-	// moderator must never hand an Admin or Support account's role to the survivor.
+	// A merge keeps the higher system role, so a moderator must never hand an Admin or Support
+	// account's role to the survivor, whether that is their own account or anyone else's.
 	prefix := uniquePrefix("mergemodadmin")
 	db := database.DBConn
 
@@ -2685,10 +2684,11 @@ func TestPostUserMergeByModeratorCannotTakeOnAnAdminsRole(t *testing.T) {
 
 	// The moderator absorbs the admin into their own account.
 	assert.Equal(t, fiber.StatusForbidden, post(adminID, modID))
-	// The moderator absorbs an ordinary member into their own account.
-	assert.Equal(t, fiber.StatusForbidden, post(memberID, modID))
 	// The moderator folds the admin into an ordinary member.
 	assert.Equal(t, fiber.StatusForbidden, post(adminID, memberID))
+
+	// The moderator is not the one absorbed either.
+	assert.Equal(t, fiber.StatusForbidden, post(modID, adminID))
 
 	for _, id := range []uint64{adminID, memberID, modID} {
 		var cnt int64
@@ -2743,10 +2743,10 @@ func TestPostUserMergeByModeratorCannotTakeOverHigherSystemRole(t *testing.T) {
 	}
 }
 
-func TestPostUserMergeByModeratorCannotMergeAMemberIntoThemselves(t *testing.T) {
-	// The moderator check passes when the target is the moderator, since they moderate their own
-	// group. A moderator merging a member into their own account would take over the member's
-	// emails and logins, so a moderator merge never involves the caller.
+func TestPostUserMergeByModeratorMayMergeTheirOwnAccountWithAMember(t *testing.T) {
+	// A moderator may merge their own account with another account they moderate, for example a
+	// second account of their own. Neither account holds a higher system role than the moderator,
+	// so nobody gains a role.
 	prefix := uniquePrefix("mergemodself")
 	db := database.DBConn
 
@@ -2758,11 +2758,56 @@ func TestPostUserMergeByModeratorCannotMergeAMemberIntoThemselves(t *testing.T) 
 	memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
 	CreateTestMembership(t, memberID, groupID, utils.ROLE_MEMBER)
 
-	assert.Equal(t, fiber.StatusForbidden, postMergeAs(t, modToken, memberID, modID))
+	assert.Equal(t, fiber.StatusOK, postMergeAs(t, modToken, memberID, modID))
 
 	var cnt int64
 	db.Raw("SELECT COUNT(*) FROM users WHERE id = ?", memberID).Scan(&cnt)
-	assert.Equal(t, int64(1), cnt, "the member's account must not be merged into the moderator's")
+	assert.Equal(t, int64(0), cnt, "the member account is merged into the moderator's")
+
+	var role string
+	db.Raw("SELECT systemrole FROM users WHERE id = ?", modID).Scan(&role)
+	assert.Equal(t, utils.SYSTEMROLE_MODERATOR, role, "the moderator's system role is unchanged")
+}
+
+func TestPostUserMergeByModeratorMayMergeTwoModeratorAccounts(t *testing.T) {
+	prefix := uniquePrefix("mergemodmod")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+
+	otherModID := CreateTestUser(t, prefix+"_mod2", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, otherModID, groupID, utils.ROLE_MODERATOR)
+
+	assert.Equal(t, fiber.StatusOK, postMergeAs(t, modToken, otherModID, modID))
+
+	var cnt int64
+	db.Raw("SELECT COUNT(*) FROM users WHERE id = ?", otherModID).Scan(&cnt)
+	assert.Equal(t, int64(0), cnt, "the second Moderator account is merged")
+}
+
+func TestPostUserMergeByModeratorCannotRaiseTheirOwnSystemRole(t *testing.T) {
+	// A community moderator whose system role is User must not merge their account with one whose
+	// system role is Moderator: the survivor would hold a higher role than the moderator did.
+	prefix := uniquePrefix("mergemodraise")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	_, modToken := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+
+	higherID := CreateTestUser(t, prefix+"_higher", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, higherID, groupID, utils.ROLE_MEMBER)
+
+	assert.Equal(t, fiber.StatusForbidden, postMergeAs(t, modToken, higherID, modID))
+	assert.Equal(t, fiber.StatusForbidden, postMergeAs(t, modToken, modID, higherID))
+
+	var role string
+	db.Raw("SELECT systemrole FROM users WHERE id = ?", modID).Scan(&role)
+	assert.Equal(t, utils.SYSTEMROLE_USER, role)
 }
 
 // Tests for the support tools endpoints (GET /api/user/:id/*).
