@@ -968,10 +968,21 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 	// We can see this chat room.  Create a chat message, but flagged as needing processing.  That means it
 	// will only show up to the user who sent it until it is fully processed.
+	//
+	// The request body is bound straight into the row, so every flag the server owns is cleared here: a
+	// sender must not be able to skip processing, the spam review or the confirm-reply hold, suppress the
+	// notification email, or choose the row id.
+	payload.ID = 0
 	payload.Userid = myid
 	payload.Chatid = id
 	payload.Type = chattype
 	payload.Processingrequired = true
+	payload.Processingsuccessful = false
+	payload.Reviewrequired = false
+	payload.Reviewrejected = false
+	payload.Mailedtoall = false
+	payload.Seenbyall = false
+	payload.Replyreceived = false
 	payload.Date = time.Now()
 	// The image claim shares a transaction with the insert, so a send that loses the race for
 	// the image leaves no message behind.
