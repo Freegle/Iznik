@@ -55,7 +55,7 @@ func (s *datasetState) swapIndex(newIdx *Index) {
 // withIndex would reject the seed with errIndexNotReady. Lazily create an empty
 // in-memory index here: upsert populates it immediately, so KNN never sees a
 // 0-row index by this path, and the production guards that refuse to SERVE an
-// empty index built from MySQL (rebuild/startupLoad) are untouched. In-memory
+// empty index built from the source database (rebuild/startupLoad) are untouched. In-memory
 // keeps it off disk, so it can't be adopted by a later startupLoad and can't
 // race a rebuild's file rename.
 func (s *datasetState) ensureIndex() error {
@@ -245,7 +245,7 @@ func (srv *server) rebuildAll() {
 	}
 }
 
-// startupLoad opens existing indexes or builds them from MySQL.
+// startupLoad opens existing indexes or builds them from the source database.
 func (srv *server) startupLoad(forceRebuild bool) {
 	for name, state := range srv.datasets {
 		if forceRebuild {
@@ -261,7 +261,7 @@ func (srv *server) startupLoad(forceRebuild bool) {
 			// An on-disk index can open cleanly yet be empty — e.g. a previous
 			// build was interrupted or produced 0 rows. Adopting it would report
 			// ready with count 0 and silently serve wrong results, so verify it
-			// has rows; if not, discard it and rebuild from MySQL.
+			// has rows; if not, discard it and rebuild from the source database.
 			if n, cErr := existing.CountRows(); cErr == nil && n > 0 {
 				state.idx = existing
 				// Resume deltas from the index's own persisted sync point (zero
@@ -361,7 +361,7 @@ func (srv *server) idxPath(name string) string {
 	// the duplicate WhatJobs postings — Discourse 9363). A pre-company on-disk index
 	// would be adopted at startup and dedup on (", title) — collapsing distinct
 	// employers — until the next nightly/swap rebuild. Bumping the filename means a
-	// deploy can't find the old index and rebuilds once from MySQL with `company`.
+	// deploy can't find the old index and rebuilds once from the source database with `company`.
 	if name == "jobs" {
 		return srv.idxDir + "/" + name + ".v2.db"
 	}

@@ -25,7 +25,7 @@ func (d *LocationsDataset) Name() string { return "locations" }
 func (d *LocationsDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *LocationsDataset) DeltaInterval() time.Duration   { return 15 * time.Minute }
 
-// Load populates idx from MySQL with all eligible locations (areas and postcodes).
+// Load populates idx from the source database with all eligible locations (areas and postcodes).
 func (d *LocationsDataset) Load(srcDB *sql.DB, idx *Index) error {
 	return loadLocations(srcDB, idx, "")
 }
@@ -93,7 +93,7 @@ func (d *LocationsDataset) Within(idx *Index, params QueryParams) ([]int64, erro
 	return ids, nil
 }
 
-// loadLocations loads locations from MySQL into the index.
+// loadLocations loads locations from the source database into the index.
 // extraWhere is an optional SQL snippet appended to the WHERE clause.
 func loadLocations(srcDB *sql.DB, idx *Index, extraWhere string) error {
 	query := `

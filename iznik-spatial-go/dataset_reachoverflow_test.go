@@ -88,7 +88,7 @@ func TestOverflowLaneOrder_IsByCode(t *testing.T) {
 // dataset's load and delta on all four instances the moment the Stage 3 drop
 // ran (2026-08-26).
 func TestOverflowSelect_BindsLanesInOrderAndNamesNoDroppedColumn(t *testing.T) {
-	cols, args := overflowSelect()
+	cols, args := overflowSelectFor(mysqlDialect{})
 	lanes := overflowLaneOrder()
 
 	if len(args) != len(lanes) {

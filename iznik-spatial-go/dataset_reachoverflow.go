@@ -103,17 +103,13 @@ func overflowLaneOrder() []string {
 	return paths
 }
 
-// overflowSelect builds the SELECT list that pulls every lane's cells in one
+// overflowSelectFor builds the SELECT list that pulls every lane's cells in one
 // pass over the row. Reading the whole overflow_cells column instead would
 // move the same bytes and then re-walk the JSON in Go; asking the database for each
 // path costs one keyed extraction per lane and returns NULL for the lanes a
 // post does not carry (most of them).
-func overflowSelect() (cols string, args []interface{}) {
-	return overflowSelectFor(mysqlDialect{})
-}
-
-// overflowSelectFor is overflowSelect in the given engine's spelling. The paths are bound
-// parameters, in lane order, on both engines.
+//
+// The paths are bound parameters, in lane order, on both engines.
 func overflowSelectFor(dl sourceDialect) (cols string, args []interface{}) {
 	var parts []string
 	for _, path := range overflowLaneOrder() {
@@ -136,7 +132,7 @@ func newOverflowRowScan(laneCount int) overflowRowScan {
 	}
 }
 
-// scanDest is the destination list matching overflowSelect's column order:
+// scanDest is the destination list matching overflowSelectFor's column order:
 // the caller's own leading columns, then all lanes' cells.
 func (r *overflowRowScan) scanDest(leading ...interface{}) []interface{} {
 	dest := make([]interface{}, 0, len(leading)+len(r.cells))
