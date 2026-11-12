@@ -444,7 +444,7 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
     })
 
     it('tracks a Find conversion for a Wanted post', async () => {
-      mockComposeStore.submit.mockResolvedValue([])
+      mockComposeStore.submit.mockResolvedValue([{ id: 2, groupid: 5 }])
       mockComposeStore.messages = [{ id: 1, type: 'Wanted' }]
       mod.setup('Wanted')
 
