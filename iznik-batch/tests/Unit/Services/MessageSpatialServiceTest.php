@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Database\Spatial;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\MessageSpatialService;
@@ -628,7 +629,7 @@ class MessageSpatialServiceTest extends TestCase
             'the spatial row is flagged successful'
         );
         $row = DB::selectOne(
-            'SELECT ST_GeometryType(outer_bound) AS outer_type, inner_bound IS NULL AS inner_null
+            'SELECT ' . Spatial::geometryType('outer_bound') . ' AS outer_type, inner_bound IS NULL AS inner_null
                FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
@@ -654,7 +655,7 @@ class MessageSpatialServiceTest extends TestCase
         $this->service->updateSpatialIndex();
         $this->assertSame(
             'POINT',
-            DB::selectOne('SELECT ST_GeometryType(outer_bound) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t
+            DB::selectOne('SELECT ' . Spatial::geometryType('outer_bound') . ' AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t
         );
 
         // …then reopened.
@@ -667,7 +668,7 @@ class MessageSpatialServiceTest extends TestCase
             'the spatial row is back in the browsable set'
         );
         $check = DB::selectOne(
-            'SELECT ST_GeometryType(outer_bound) AS outer_type,
+            'SELECT ' . Spatial::geometryType('outer_bound') . ' AS outer_type,
                     ST_Contains(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS o,
                     (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, ' . config('freegle.srid') . '), inner_bound)) AS i
                FROM rippling_reach WHERE msgid = ?',
@@ -1190,12 +1191,15 @@ class MessageSpatialServiceTest extends TestCase
             $sql,
             'the reconciler must rank memberships per msgid with ROW_NUMBER'
         );
-        $this->assertMatchesRegularExpression(
-            '/force\s+index\s*\(\s*`?arrival`?\s*\)/i',
-            $sql,
-            'the ranked derived table must drive from the arrival index; ROW_NUMBER alone barely '
-                . 'moves the query (32.43s against 37.10s)'
-        );
+        // The hint is MySQL only; PostgreSQL plans the query itself.
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            $this->assertMatchesRegularExpression(
+                '/force\s+index\s*\(\s*`?arrival`?\s*\)/i',
+                $sql,
+                'the ranked derived table must drive from the arrival index; ROW_NUMBER alone barely '
+                    . 'moves the query (32.43s against 37.10s)'
+            );
+        }
         $this->assertDoesNotMatchRegularExpression(
             '/not\s+exists\s*\(\s*select\s+`?better`?/i',
             $sql,
