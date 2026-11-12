@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
@@ -50,8 +50,9 @@ Everything runs in one transaction. In order:
    one: messages, references to the room, roster rows and the latest-message time move, then the
    spare room is deleted. The rest are handed to the kept account. Roster rows follow.
 6. **Sessions and logins** move, so the member stays signed in.
-7. **Name, system role, join date, TrashNothing id.** Blank fields on the kept account are filled
-   from the discarded one. The higher system role and the older join date win.
+7. **Name, system role, join date.** Blank fields on the kept account are filled from the
+   discarded one. The higher system role and the older join date win. A TrashNothing id never
+   moves, because an account holding one is never merged (see Refusals).
 8. **About forty other tables** that reference a user: addresses, donations, images, stories,
    ratings, notifications, volunteering, events and so on. The list is in `MergeUsersTx`; the
    V1 comment there says how it was found. One of them, `ux_experiment_exposures` (which experiment
@@ -72,14 +73,22 @@ the foreign key.
 
 ## Refusals
 
-A TrashNothing account is never merged with a Freegle account, and two accounts carrying two
-different TrashNothing ids are two different people. `handleMerge` and `MergeUsersTx` refuse
-both. See `.claude/rules/conventions.md`.
+A TrashNothing account (one holding a TrashNothing id, or with a TrashNothing address as its
+preferred email) is never merged, with another TrashNothing account or with a Freegle account.
+`MergeUsersTx` refuses it, so the moderator merge and the email-verify merge both do. That includes
+a member who renamed on TrashNothing and so has two accounts: only a TrashNothing id says who
+someone is, and `users.tnuserid` is unique, so no two accounts can hold the same one. Their
+TrashNothing address goes to the account holding the id TrashNothing names for it, and the other
+account keeps its posts and chats (`moveTNAlias`, see "Database Linking" in `trashnothing.md`). See
+`.claude/rules/conventions.md`.
 
-Two accounts holding two different TrashNothing usernames may be two people as well, and a merge
-cannot be undone, so `MergeUsersTx` refuses that too. Nothing merges automatically on a partner
-call: only a TrashNothing id says who someone is, so `HealTNDivergence` moves the one address
-instead (see "Database Linking" in `trashnothing.md`).
+An account that is not a TrashNothing account can still hold a TrashNothing address that is not its
+preferred one. Two accounts holding two different TrashNothing usernames may be two people, and a
+merge cannot be undone, so `MergeUsersTx` refuses that too.
+
+The Related Members list and its count leave out a pair with a TrashNothing account in it
+(`MergeableSidesSQL`), and `users:detect-related` does not link one, since the merge would be
+refused.
 
 A member can set `canmerge` to false in their settings. If either account has, the merge is
 refused.
@@ -108,13 +117,13 @@ column by column:
 - **Chat rooms.** PHP has the logic Go had before October 2026: a room between the two accounts
   is left as a chat with oneself, messages that refer to a folded room are not updated, and the
   other person's roster row is lost when rooms are folded.
-- **Refusals.** Both refuse two different TrashNothing ids, two different TrashNothing usernames
-  and either account's settings saying `canmerge` is false. PHP reports the first two, and goes
-  ahead when forced. Go alone refuses a TrashNothing and Freegle mix, in `handleMerge`.
+- **Refusals.** Both refuse a TrashNothing account, two different TrashNothing usernames and
+  either account's settings saying `canmerge` is false. PHP reports the first two as a
+  `TnUserIdMergeConflict`. Forcing a PHP merge passes `canmerge` and nothing else.
 - **Log text.** PHP appends the reason in brackets.
 
 Everything else is the same: one transaction, deletion of the discarded account after commit,
-highest role and oldest join date, system role, join date, TrashNothing id, bans, the best Gift
+highest role and oldest join date, system role, join date, bans, the best Gift
 Aid declaration, the two log rows.
 
 ## A moderator's Discourse account

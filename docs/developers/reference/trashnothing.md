@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-11
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -83,9 +83,12 @@ on Subscribe mail needs checking on production: it was measured on posts only.
 holding it (`FindTNCandidates`). If an address it gave is on another account, `HealTNDivergence`
 moves that one address to the member and reports the move to Sentry. The other account is never
 merged and never given the id, because nothing proves it is this member's, whatever it holds.
-Posts and chats already filed stay where they are. The accounts stay separate: `handleMerge` refuses
-a TrashNothing account and one left with no TrashNothing address, so a moderator often cannot join
-them either.
+Posts and chats already filed stay where they are. The move goes ahead when the other account
+holds another TN user id too, because the address is the member's TN names for it, but the
+report says so: TN has given the username to someone else, or one of the ids is wrong, and that
+member has lost an address TN gave them before (`moveTNAlias`). The accounts stay separate:
+`MergeUsersTx` refuses any merge with a TrashNothing account in it, with another TrashNothing
+account or with a Freegle account, so neither a moderator nor an email confirmation joins them.
 
 When we have not met the `tnuserid`, a join or a message action on a known address gives the member
 their own account and moves the address to it, and a leave answers 404.
@@ -178,9 +181,8 @@ hand in November 2026 were made that way). Only the same TN user id would prove 
 one member, and `users.tnuserid` is unique, so no two accounts can hold the same one. So every
 group is left alone and logged (`TN-SYNC-TRACE [MERGE-SKIP]`, Loki `tn-sync`/`user-merge-skip`)
 with its reason: `tnuserid-conflict` when the accounts hold different TN user ids, and
-`tnuserid-unproven` when fewer than two do. `User::merge` still refuses a merge of two different
-TN user ids and reports a `TnUserIdMergeConflict` to Sentry; passing `$forceMerge` proceeds but
-still reports it.
+`tnuserid-unproven` when fewer than two do. `User::merge` refuses any merge with a TrashNothing
+account in it, forced or not, and reports a `TnUserIdMergeConflict` to Sentry.
 
 The three helpers for reading an address are `User::tnUsernameFromEmail()` (bare or alias,
 lowercased, `NULL` for a non-TN address), `User::tnEmailForUsername()` and
@@ -493,7 +495,9 @@ into a Freegle user:
    post goes Pending as an unmapped user. An account holding that username is never linked,
    however closely it matches, because only a TN id says who someone is. If an account holds
    the bare address it moves here, deleted or not, since TN has just said this id has this username, and the move
-   is reported to Sentry.
+   is reported to Sentry. The address is taken from whichever account holds it at the moment of the
+   move, which may not be the one checked first, and the report flags that account's TN id when
+   it holds another (`User::takeTnAddress`).
 
 It writes user data only. The one membership the post needs is written by ingestion, as for
 any poster. When no user can be had the post is skipped with a `routing_reason`:

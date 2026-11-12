@@ -87,6 +87,16 @@ is a partner's member, not a volunteer. It must not hold Owner or Moderator on a
 When a volunteer has both a Freegle account and a TrashNothing account, do not merge them.
 They stay separate; remove the role from the TrashNothing one instead.
 
+Two TrashNothing accounts are not merged either, even a member's who renamed on TrashNothing, or
+a stamped account and a twin holding the same username. `users.tnuserid` is unique, so no two
+accounts can hold the same id, and nothing else proves two accounts are one member. The
+TrashNothing address goes to the account holding the id TrashNothing names for it, and the other
+keeps its posts and chats. `MergeUsersTx` and `User::merge` refuse any merge with a TrashNothing
+account in it, forced or not, and the Related Members list leaves such a pair out.
+
+That address move goes ahead even off an account holding another TN id: TrashNothing's word on
+whose address it is stands. Do not refuse it; it is reported, and the report flags that case.
+
 ## Only a TN user id says who a TrashNothing member is
 
 `users.tnuserid` is the only source of truth. A username or an address never decides who someone

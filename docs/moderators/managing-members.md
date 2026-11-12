@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -44,7 +44,8 @@ From here you can:
   added this way: you are told so, and nothing happens. They join communities through TrashNothing.
 - **Ban** a member by id, with a reason.
 - **Merge** two accounts that are the same person (irreversible; you choose which email
-  survives).
+  survives). A TrashNothing account can't be merged, with another TrashNothing account or with a
+  Freegle one, so the Related Members list never suggests it. Add a note to each account instead.
 - Change a member's **role** (Member, Moderator, Owner).
 
 ### How far a search reaches
