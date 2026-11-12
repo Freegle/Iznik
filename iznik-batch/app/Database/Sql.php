@@ -189,4 +189,15 @@ final class Sql
             ->get()
             ->all();
     }
+
+    /**
+     * Runs work that may fail on bad data and whose failure the caller handles. Inside an open transaction it runs
+     * in a savepoint, because PostgreSQL aborts the whole transaction on any error (MySQL carries on), so the
+     * caller's fallback could not otherwise run another statement. With no transaction open it runs as it is, so
+     * nothing changes for a single autocommit statement.
+     */
+    public static function attempt(\Closure $work): mixed
+    {
+        return DB::transactionLevel() > 0 ? DB::transaction($work) : $work();
+    }
 }

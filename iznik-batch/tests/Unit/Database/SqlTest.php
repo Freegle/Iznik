@@ -92,4 +92,16 @@ class SqlTest extends TestCase
             $this->assertNotSame('', $ref->COLUMN_NAME);
         }
     }
+
+    public function test_attempt_leaves_the_transaction_usable_after_a_failed_statement(): void
+    {
+        try {
+            Sql::attempt(fn () => DB::select('SELECT ST_GeomFromText(?, 4326)', ['not geometry']));
+            $this->fail('the bad statement should have thrown');
+        } catch (\Throwable $e) {
+            // expected
+        }
+
+        $this->assertSame(1, (int) DB::selectOne('SELECT 1 AS one')->one);
+    }
 }

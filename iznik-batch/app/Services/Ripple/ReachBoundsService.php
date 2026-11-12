@@ -87,14 +87,17 @@ class ReachBoundsService
 
         $stored = false;
         try {
-            DB::update(
-                'UPDATE rippling_reach
-                    SET outer_bound = ST_GeomFromText(?, ' . config('freegle.srid') . '), '
-                    . ($innerWkt !== null ? 'inner_bound = ST_GeomFromText(?, ' . config('freegle.srid') . '), ' : 'inner_bound = NULL, ') .
-                    'updated_at = updated_at
-                  WHERE msgid = ?',
-                $innerWkt !== null ? [$outerWkt, $innerWkt, $msgid] : [$outerWkt, $msgid]
-            );
+            // Bad geometry fails here and the fallback below carries on; see Sql::attempt.
+            Sql::attempt(function () use ($outerWkt, $innerWkt, $msgid) {
+                DB::update(
+                    'UPDATE rippling_reach
+                        SET outer_bound = ST_GeomFromText(?, ' . config('freegle.srid') . '), '
+                        . ($innerWkt !== null ? 'inner_bound = ST_GeomFromText(?, ' . config('freegle.srid') . '), ' : 'inner_bound = NULL, ') .
+                        'updated_at = updated_at
+                      WHERE msgid = ?',
+                    $innerWkt !== null ? [$outerWkt, $innerWkt, $msgid] : [$outerWkt, $msgid]
+                );
+            });
             $stored = true;
         } catch (\Throwable) {
             // Unusable provided geometry — derive from the polygon instead.
@@ -352,7 +355,7 @@ class ReachBoundsService
         try {
             DB::update(
                 'UPDATE rippling_reach rr
-                    SET rr.outer_bound = COALESCE(
+                    SET outer_bound = COALESCE(
                         (SELECT ST_Union(rr.outer_bound, g.polyindex)
                            FROM messages_groups mg
                            JOIN ' . Sql::table('groups') . ' g ON g.id = mg.groupid
@@ -362,7 +365,7 @@ class ReachBoundsService
                           ORDER BY mg.arrival ASC
                           LIMIT 1),
                         rr.outer_bound),
-                        rr.updated_at = rr.updated_at
+                        updated_at = updated_at
                   WHERE rr.msgid = ?',
                 [$msgid]
             );
