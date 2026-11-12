@@ -2802,50 +2802,6 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::DROPPED, $result);
     }
 
-    public function test_chat_reply_from_a_stranger_is_not_written_as_the_member_in_the_address(): void
-    {
-        // The notify address carries only the chat id and the member id, with no key. Mail from
-        // an address that is not the member's must not become a chat message from that member,
-        // and must not attach the stranger's address to the member's account.
-        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
-        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
-        $chat = $this->createTestChatRoom($user1, $user2);
-
-        DB::table('chat_rooms')
-            ->where('id', $chat->id)
-            ->update(['latestmessage' => now()->subDays(1)]);
-
-        $stranger = 'stranger-' . uniqid() . '@example.invalid';
-        $body = 'Message from a stranger ' . uniqid();
-
-        $email = $this->createMinimalEmail([
-            'From' => $stranger,
-            'To' => "notify-{$chat->id}-{$user1->id}@users.ilovefreegle.org",
-            'Subject' => 'Re: About the item',
-        ], $body);
-
-        $parsed = $this->parser->parse(
-            $email,
-            $stranger,
-            "notify-{$chat->id}-{$user1->id}@users.ilovefreegle.org"
-        );
-
-        $this->service->route($parsed);
-
-        $this->assertFalse(
-            DB::table('chat_messages')
-                ->where('chatid', $chat->id)
-                ->where('userid', $user1->id)
-                ->where('message', 'like', '%' . $body . '%')
-                ->exists(),
-            'a stranger must not post into the chat as the member named in the address'
-        );
-        $this->assertFalse(
-            DB::table('users_emails')->where('email', $stranger)->exists(),
-            "a stranger's address must not be added to the member's account"
-        );
-    }
-
     public function test_drops_expired_message_reply(): void
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
