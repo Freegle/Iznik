@@ -744,6 +744,406 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertFalse($present(), 'another message\'s approval does not admit this one');
     }
 
+    public function test_reply_approved_after_a_later_reply_was_mailed_is_still_mailed(): void
+    {
+        // The same sender writes a reply that is held for review and then a second reply that is not. The second is
+        // mailed, which moves the recipient's lastmsgemailed past the held reply. When a moderator approves the held
+        // reply it is admitted to the selection by its approval row, and the recipient must still be mailed it: the
+        // approval log says it is now deliverable and it has not been mailed.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $sender->id, 'lastmsgemailed' => null]);
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $recipient->id, 'lastmsgemailed' => null]);
+
+        $held = $this->createTestChatMessage($room, $sender, ['date' => now()->subDays(3), 'reviewrequired' => 1, 'message' => 'Held reply']);
+        $later = $this->createTestChatMessage($room, $sender, ['date' => now()->subMinutes(5), 'message' => 'Second reply']);
+        $this->assertGreaterThan($held->id, $later->id);
+
+        // The second reply is mailed while the first is still held.
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals(
+            $later->id,
+            (int) ChatRoster::where('chatid', $room->id)->where('userid', $recipient->id)->value('lastmsgemailed')
+        );
+
+        // A moderator approves the held reply, as approveChatMessage in the Go API records it.
+        DB::table('chat_messages')->where('id', $held->id)->update(['reviewrequired' => 0, 'reviewedby' => $recipient->id]);
+        DB::table('logs')->insert([
+            'timestamp' => now()->subMinutes(1),
+            'type' => 'Chat',
+            'subtype' => 'Approved',
+            'user' => $sender->id,
+            'byuser' => $recipient->id,
+            'text' => "Chat message {$held->id} approved",
+        ]);
+
+        $this->assertEquals(
+            1,
+            $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id),
+            'The approved reply is mailed to the recipient even though a later reply was mailed first'
+        );
+
+        $mailedIds = Mail::sent(ChatNotification::class)
+            ->filter(fn ($mail) => $mail->recipient->id === $recipient->id)
+            ->map(fn ($mail) => (int) $mail->message->id)
+            ->all();
+        $this->assertContains((int) $held->id, $mailedIds);
+    }
+
+    /**
+     * The ids of the messages a ChatNotification was built for, for one recipient, in the order they were mailed.
+     *
+     * @return array<int, int>
+     */
+    private function mailedIdsTo(User $recipient): array
+    {
+        return Mail::sent(ChatNotification::class)
+            ->filter(fn ($mail) => (int) $mail->recipient->id === (int) $recipient->id)
+            ->map(fn ($mail) => (int) $mail->message->id)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Record a moderator's approval of a chat message as approveChatMessage in the Go API does.
+     */
+    private function approveChatMessage(ChatMessage $message, User $sender, User $approver, int $minutesAgo = 1): void
+    {
+        DB::table('chat_messages')->where('id', $message->id)->update(['reviewrequired' => 0, 'reviewedby' => $approver->id]);
+        DB::table('logs')->insert([
+            'timestamp' => now()->subMinutes($minutesAgo),
+            'type' => 'Chat',
+            'subtype' => 'Approved',
+            'user' => $sender->id,
+            'byuser' => $approver->id,
+            'text' => "Chat message {$message->id} approved",
+        ]);
+    }
+
+    /**
+     * A chat where a reply is held for review and a later reply from the same sender is mailed first. The sender's own
+     * roster row is left with no mark, so the message's mailedtoall flag stays 0 the whole time: the exactly-once
+     * guarantee has to come from the late claim and the record of the mail, not from that flag.
+     *
+     * @return array{0: User, 1: User, 2: ChatRoom, 3: ChatMessage, 4: ChatMessage}
+     */
+    private function heldReplyThenMailedReply(array $senderAttributes = []): array
+    {
+        $sender = $this->createTestUser($senderAttributes);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $sender->id, 'lastmsgemailed' => null]);
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $recipient->id, 'lastmsgemailed' => null]);
+
+        $held = $this->createTestChatMessage($room, $sender, ['date' => now()->subDays(3), 'reviewrequired' => 1, 'message' => 'Held reply']);
+        $later = $this->createTestChatMessage($room, $sender, ['date' => now()->subMinutes(5), 'message' => 'Second reply']);
+
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals([(int) $later->id], $this->mailedIdsTo($recipient));
+
+        return [$sender, $recipient, $room, $held, $later];
+    }
+
+    public function test_a_late_approved_reply_is_mailed_once_across_runs_and_the_mark_stays_put(): void
+    {
+        [$sender, $recipient, $room, $held, $later] = $this->heldReplyThenMailedReply();
+
+        $this->approveChatMessage($held, $sender, $recipient);
+
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals([(int) $later->id, (int) $held->id], $this->mailedIdsTo($recipient));
+
+        // The mark is not moved back to the late message, or the next message would replay everything after it.
+        $this->assertEquals(
+            $later->id,
+            (int) ChatRoster::where('chatid', $room->id)->where('userid', $recipient->id)->value('lastmsgemailed')
+        );
+        $this->assertEquals(1, DB::table('chat_late_mails')->where('chatmsgid', $held->id)->where('userid', $recipient->id)->count());
+
+        // Two more runs while the approval is still inside the look-back mail nothing again.
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+
+        // A new service, as a second process or the next run of the loop has, finds the same.
+        $this->assertEquals(0, (new ChatNotificationService())->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals([(int) $later->id, (int) $held->id], $this->mailedIdsTo($recipient));
+
+        // A message after the late one is mailed once, and the late one is not repeated with it.
+        $third = $this->createTestChatMessage($room, $sender, ['date' => now()->subMinutes(2), 'message' => 'Third reply']);
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals([(int) $later->id, (int) $held->id, (int) $third->id], $this->mailedIdsTo($recipient));
+    }
+
+    public function test_a_second_process_cannot_claim_a_late_mail_that_is_already_claimed(): void
+    {
+        [$sender, $recipient, $room, $held] = $this->heldReplyThenMailedReply();
+
+        $this->approveChatMessage($held, $sender, $recipient);
+
+        // Another run has claimed the late mail but has not built it yet, so there is no mail record for it.
+        DB::table('chat_late_mails')->insert(['chatmsgid' => $held->id, 'userid' => $recipient->id]);
+
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertNotContains((int) $held->id, $this->mailedIdsTo($recipient));
+    }
+
+    public function test_a_reply_mailed_after_its_approval_is_not_mailed_again_when_a_later_reply_follows(): void
+    {
+        // The ordinary case after an approval: the reply is mailed once, and the recipient's mark then moves on past
+        // it. The approval is still inside the look-back and the message's mailedtoall is still 0 (the sender's own
+        // roster row has no mark here), so only the record of the mail stops the late path sending it a second time.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $sender->id, 'lastmsgemailed' => null]);
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $recipient->id, 'lastmsgemailed' => null]);
+
+        $held = $this->createTestChatMessage($room, $sender, ['date' => now()->subDays(3), 'reviewrequired' => 1, 'message' => 'Held reply']);
+        $this->approveChatMessage($held, $sender, $recipient);
+
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id), 'mailed once, in the ordinary way');
+        $this->assertEquals(
+            $held->id,
+            (int) ChatRoster::where('chatid', $room->id)->where('userid', $recipient->id)->value('lastmsgemailed')
+        );
+
+        // The mark is equal to the message, which is what the ordinary claim leaves: nothing is late.
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+
+        $next = $this->createTestChatMessage($room, $sender, ['date' => now()->subMinutes(3), 'message' => 'Next reply']);
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id), 'the held reply is not mailed again');
+
+        $this->assertEquals([(int) $held->id, (int) $next->id], $this->mailedIdsTo($recipient));
+        $this->assertEquals(0, DB::table('chat_late_mails')->where('chatmsgid', $held->id)->count());
+    }
+
+    public function test_a_late_reply_is_not_mailed_to_its_own_author(): void
+    {
+        // The author's roster row is advanced past their own messages when they are sent, and an author who has
+        // asked for a copy of their own messages is mailed one only in the ordinary way, never late.
+        $sender = $this->createTestUser(['settings' => ['notifications' => ['email' => true, 'emailmine' => true, 'push' => false]]]);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $sender->id, 'lastmsgemailed' => null]);
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $recipient->id, 'lastmsgemailed' => null]);
+
+        $held = $this->createTestChatMessage($room, $sender, ['date' => now()->subDays(3), 'reviewrequired' => 1, 'message' => 'Held reply']);
+        $later = $this->createTestChatMessage($room, $sender, ['date' => now()->subMinutes(5), 'message' => 'Second reply']);
+        ChatRoster::where('chatid', $room->id)->where('userid', $sender->id)->update(['lastmsgemailed' => $later->id, 'lastmsgseen' => $later->id]);
+
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+
+        $this->approveChatMessage($held, $sender, $recipient);
+
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals([], $this->mailedIdsTo($sender), 'the author is not mailed their own late reply');
+        $this->assertEquals([(int) $later->id, (int) $held->id], $this->mailedIdsTo($recipient));
+    }
+
+    public function test_a_message_the_mark_skipped_on_purpose_is_not_replayed(): void
+    {
+        // A recipient's mark can be moved past messages with nothing mailed for them: they replied by email, or a
+        // moderator mailed them directly. With no release event for the message nothing is late, whatever its flags.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $sender->id, 'lastmsgemailed' => null]);
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $recipient->id, 'lastmsgemailed' => null]);
+
+        $skipped = $this->createTestChatMessage($room, $sender, ['date' => now()->subMinutes(10), 'message' => 'First reply']);
+        $last = $this->createTestChatMessage($room, $sender, ['date' => now()->subMinutes(9), 'message' => 'Second reply']);
+        ChatRoster::where('chatid', $room->id)->where('userid', $recipient->id)->update(['lastmsgemailed' => $last->id]);
+
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals([], $this->mailedIdsTo($recipient));
+        $this->assertEquals(0, DB::table('chat_late_mails')->where('chatmsgid', $skipped->id)->count());
+    }
+
+    public function test_a_late_reply_is_not_mailed_to_a_recipient_whose_provider_is_refusing_mail_and_is_when_it_stops(): void
+    {
+        [$sender, $recipient, $room, $held, $later] = $this->heldReplyThenMailedReply();
+
+        DB::table('mail_suppressions')->insert([
+            'scope' => 'address',
+            'value' => strtolower($recipient->email_preferred),
+            'reason' => '421 4.7.0 temporarily deferred',
+            'provider' => 'TestProvider',
+            'deferred_since' => now(),
+            'first_seen' => now(),
+            'last_seen' => now(),
+            'message_count' => 1,
+        ]);
+        app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
+
+        $this->approveChatMessage($held, $sender, $recipient);
+
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals(0, DB::table('chat_late_mails')->where('chatmsgid', $held->id)->count(), 'a held recipient is not claimed');
+        $this->assertEquals([(int) $later->id], $this->mailedIdsTo($recipient));
+
+        // The suppression ends inside the look-back: the late reply is still owed, once.
+        DB::table('mail_suppressions')->update(['released_at' => now()]);
+        app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
+
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals([(int) $later->id, (int) $held->id], $this->mailedIdsTo($recipient));
+    }
+
+    public function test_a_rewound_mark_still_replays_in_the_ordinary_way_after_a_late_mail(): void
+    {
+        // RewindChatEmailedCommand moves a recipient's mark back below mail that could not be delivered, so that it
+        // is mailed again. That is the ordinary path and the late claim neither blocks nor repeats it.
+        [$sender, $recipient, $room, $held, $later] = $this->heldReplyThenMailedReply();
+        $this->approveChatMessage($held, $sender, $recipient);
+        $this->assertEquals(1, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+
+        ChatRoster::where('chatid', $room->id)->where('userid', $recipient->id)->update(['lastmsgemailed' => $held->id - 1]);
+
+        $this->assertEquals(2, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals(
+            [(int) $later->id, (int) $held->id, (int) $held->id, (int) $later->id],
+            $this->mailedIdsTo($recipient)
+        );
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+    }
+
+    public function test_an_approval_older_than_the_look_back_is_not_mailed_late(): void
+    {
+        [$sender, $recipient, $room, $held, $later] = $this->heldReplyThenMailedReply();
+
+        $this->approveChatMessage($held, $sender, $recipient, 60 * 48);
+
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals([(int) $later->id], $this->mailedIdsTo($recipient));
+        $this->assertEquals(0, DB::table('chat_late_mails')->count());
+    }
+
+    public function test_no_late_mail_is_sent_when_mail_tracking_is_off(): void
+    {
+        // The record of a mail is its tracking row. Without tracking there is no way to tell a message that was
+        // mailed from one that was not, so nothing is sent late rather than guessed at.
+        config(['freegle.mail.tracking_enabled' => false]);
+
+        [$sender, $recipient, $room, $held, $later] = $this->heldReplyThenMailedReply();
+        $this->approveChatMessage($held, $sender, $recipient);
+
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id));
+        $this->assertEquals([(int) $later->id], $this->mailedIdsTo($recipient));
+        $this->assertEquals(0, DB::table('chat_late_mails')->count());
+    }
+
+    public function test_a_reply_released_from_a_rippling_hold_after_a_later_reply_was_mailed_to_several_moderators(): void
+    {
+        // A member-to-volunteers chat: the member's reply is held, a second is mailed to both moderators, and the held
+        // one is released. Each moderator is mailed it once. A moderator who joined after the first run has no mark
+        // and gets it in the ordinary way. Nobody is mailed twice.
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($member, $group);
+        $modA = $this->createTestUser();
+        $modB = $this->createTestUser();
+        $modC = $this->createTestUser();
+
+        foreach ([$modA, $modB] as $mod) {
+            Membership::create(['userid' => $mod->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MODERATOR, 'added' => now()]);
+        }
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id,
+            'groupid' => $group->id,
+            'created' => now(),
+            'latestmessage' => now(),
+        ]);
+        ChatRoster::create(['chatid' => $room->id, 'userid' => $member->id, 'lastmsgemailed' => null]);
+
+        $held = $this->createTestChatMessage($room, $member, ['date' => now()->subHours(3), 'message' => 'Held reply']);
+        $hold = (int) DB::table('rippling_held_replies')->insertGetId([
+            'chatid' => $room->id,
+            'chatmsgid' => $held->id,
+            'msgid' => $post->id,
+            'replieruserid' => $member->id,
+            'lat' => 51.5,
+            'lng' => -0.1,
+            'status' => 'held',
+            'created_at' => now()->subHours(3),
+        ]);
+        $later = $this->createTestChatMessage($room, $member, ['date' => now()->subMinutes(5), 'message' => 'Second reply']);
+
+        $this->assertEquals(2, $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id));
+        $this->assertEquals([(int) $later->id], $this->mailedIdsTo($modA));
+        $this->assertEquals([(int) $later->id], $this->mailedIdsTo($modB));
+
+        Membership::create(['userid' => $modC->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MODERATOR, 'added' => now()]);
+        DB::table('rippling_held_replies')->where('id', $hold)->update(['status' => 'released', 'releasedat' => now()->subMinute()]);
+
+        // Mod A and Mod B late for the held reply; Mod C ordinary for the held reply and then for the second one.
+        $this->assertEquals(4, $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id));
+        $this->assertEquals([(int) $later->id, (int) $held->id], $this->mailedIdsTo($modA));
+        $this->assertEquals([(int) $later->id, (int) $held->id], $this->mailedIdsTo($modB));
+        $this->assertEquals([(int) $held->id, (int) $later->id], $this->mailedIdsTo($modC));
+        $this->assertEquals([], $this->mailedIdsTo($member));
+
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id));
+        $this->assertEquals(2, DB::table('chat_late_mails')->where('chatmsgid', $held->id)->count());
+    }
+
+    public function test_a_reply_released_from_a_rippling_hold_is_mailed_late_in_a_volunteer_chat(): void
+    {
+        // A chat among volunteers: the other two moderators were mailed a later message while the first was held.
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($this->createTestUser(), $group);
+        $author = $this->createTestUser();
+        $modA = $this->createTestUser();
+        $modB = $this->createTestUser();
+
+        foreach ([$author, $modA, $modB] as $mod) {
+            Membership::create(['userid' => $mod->id, 'groupid' => $group->id, 'role' => Membership::ROLE_MODERATOR, 'added' => now()]);
+        }
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_MOD2MOD,
+            'groupid' => $group->id,
+            'created' => now(),
+            'latestmessage' => now(),
+        ]);
+
+        foreach ([$author, $modA, $modB] as $mod) {
+            ChatRoster::create(['chatid' => $room->id, 'userid' => $mod->id, 'lastmsgemailed' => null]);
+        }
+
+        $held = $this->createTestChatMessage($room, $author, ['date' => now()->subHours(3), 'message' => 'Held note']);
+        $hold = (int) DB::table('rippling_held_replies')->insertGetId([
+            'chatid' => $room->id,
+            'chatmsgid' => $held->id,
+            'msgid' => $post->id,
+            'replieruserid' => $author->id,
+            'lat' => 51.5,
+            'lng' => -0.1,
+            'status' => 'held',
+            'created_at' => now()->subHours(3),
+        ]);
+        $later = $this->createTestChatMessage($room, $author, ['date' => now()->subMinutes(5), 'message' => 'Second note']);
+
+        $this->assertEquals(2, $this->service->notifyByEmail(ChatRoom::TYPE_MOD2MOD, $room->id));
+
+        DB::table('rippling_held_replies')->where('id', $hold)->update(['status' => 'released', 'releasedat' => now()->subMinute()]);
+
+        $this->assertEquals(2, $this->service->notifyByEmail(ChatRoom::TYPE_MOD2MOD, $room->id));
+        $this->assertEquals([(int) $later->id, (int) $held->id], $this->mailedIdsTo($modA));
+        $this->assertEquals([(int) $later->id, (int) $held->id], $this->mailedIdsTo($modB));
+        $this->assertEquals([], $this->mailedIdsTo($author));
+        $this->assertEquals(0, $this->service->notifyByEmail(ChatRoom::TYPE_MOD2MOD, $room->id));
+    }
+
     public function test_notify_by_email_skips_deleted_messages(): void
     {
         $sender = $this->createTestUser();
