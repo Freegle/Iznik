@@ -835,6 +835,71 @@ func TestPostUserAddEmailSupportForOtherUser(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+// addEmailAs calls POST /api/user AddEmail to put email on targetID and returns the status code.
+func addEmailAs(t *testing.T, token string, targetID uint64, email string) int {
+	payload := map[string]interface{}{"action": "AddEmail", "id": targetID, "email": email}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+func TestPostUserAddEmailSupportCannotTouchSystemRoleAccount(t *testing.T) {
+	// An address on an account is a way to reset its password and log in as it, so Support may
+	// not add one to an Admin, Support or Moderator account, nor take one away from such an
+	// account by reassigning it. Admin may do both.
+	db := database.DBConn
+
+	for _, role := range []string{utils.SYSTEMROLE_ADMIN, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_MODERATOR} {
+		t.Run("support adds to "+role, func(t *testing.T) {
+			prefix := uniquePrefix("emailsysadd" + role)
+			supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+			_, supportToken := CreateTestSession(t, supportID)
+			targetID := CreateTestUser(t, prefix+"_target", role)
+
+			newEmail := prefix + "_new@test.com"
+			assert.Equal(t, fiber.StatusForbidden, addEmailAs(t, supportToken, targetID, newEmail))
+
+			var count int64
+			db.Raw("SELECT COUNT(*) FROM users_emails WHERE email = ?", newEmail).Scan(&count)
+			assert.Equal(t, int64(0), count, "Support must not have added an address to the %s account", role)
+		})
+
+		t.Run("support takes from "+role, func(t *testing.T) {
+			prefix := uniquePrefix("emailsystake" + role)
+			supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+			_, supportToken := CreateTestSession(t, supportID)
+			ownerID := CreateTestUser(t, prefix+"_owner", role)
+			memberID := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+
+			ownedEmail := prefix + "_owned@test.com"
+			db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", ownerID, ownedEmail)
+
+			assert.Equal(t, fiber.StatusForbidden, addEmailAs(t, supportToken, memberID, ownedEmail))
+
+			var owner uint64
+			db.Raw("SELECT userid FROM users_emails WHERE email = ?", ownedEmail).Scan(&owner)
+			assert.Equal(t, ownerID, owner, "Support must not have moved the address off the %s account", role)
+		})
+	}
+
+	t.Run("admin adds to Moderator", func(t *testing.T) {
+		prefix := uniquePrefix("emailadminadd")
+		adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+		_, adminToken := CreateTestSession(t, adminID)
+		targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_MODERATOR)
+
+		newEmail := prefix + "_new@test.com"
+		assert.Equal(t, fiber.StatusOK, addEmailAs(t, adminToken, targetID, newEmail))
+
+		var count int64
+		db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND email = ?", targetID, newEmail).Scan(&count)
+		assert.Equal(t, int64(1), count)
+	})
+}
+
 func TestPostUserAddEmailOrphanedRow(t *testing.T) {
 	// If an orphaned email row exists (userid IS NULL), adding should succeed by updating it.
 	db := database.DBConn
