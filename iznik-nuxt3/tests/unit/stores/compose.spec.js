@@ -144,6 +144,23 @@ describe('compose store', () => {
       expect(store.postcode).toBeNull()
       logSpy.mockRestore()
     })
+
+    it('empties the stored postcode when it is cleared', () => {
+      const store = useComposeStore()
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      store.setPostcode({
+        id: 1,
+        name: 'AB1 2CD',
+        groupsnear: [{ id: 5, nameshort: 'Test', namedisplay: 'Test Freegle' }],
+      })
+      expect(store.postcodeValid).toBeTruthy()
+
+      store.setPostcode(null)
+
+      expect(store.postcode).toBeNull()
+      expect(store.postcodeValid).toBeFalsy()
+      logSpy.mockRestore()
+    })
   })
 
   describe('createDraft — bulk offer (clearance)', () => {
@@ -653,6 +670,35 @@ describe('compose store', () => {
         }),
         expect.any(Function)
       )
+    })
+
+    // A draft restored from the browser can hold a decimal quantity, which the
+    // API rejects with a 400 (SR-UZFMH), so the single call sends a whole number.
+    it.each([
+      [2.5, 3],
+      [3.2, 3],
+      [0, 1],
+      [-4, 1],
+      [NaN, 1],
+      ['4', 4],
+    ])('submitSingle sends availablenow %s as %s', async (given, expected) => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 1, groupid: 10 })
+
+      await store.submitSingle(
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          availablenow: given,
+          attachments: [],
+        },
+        'test@example.com'
+      )
+
+      expect(mockMessageSubmit.mock.calls[0][0].availablenow).toBe(expected)
     })
 
     it('suppresses the AI illustration when a real photo is present', async () => {

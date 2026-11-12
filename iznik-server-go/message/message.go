@@ -6926,6 +6926,15 @@ func canModifyMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	return modCount > 0
 }
 
+// clearIntendedTaken drops an intended Taken outcome once the member has saved takers with
+// some items left. The chase-up email link records the intent when the page opens so that a
+// member who walks away is assumed to have finished; a member who saves a partial take has
+// finished, and the post stays up, so the batch must not close it as Taken later. Saving
+// with none left goes on to handleOutcome, which clears the row itself.
+func clearIntendedTaken(db *gorm.DB, msgid uint64) {
+	db.Table("messages_outcomes_intended").Where("msgid = ? AND outcome = ?", msgid, utils.OUTCOME_TAKEN).Delete(nil)
+}
+
 // handleAddBy records who is taking items from a message.
 // If userid is omitted or null, records as userid=0 meaning "someone else" (not a known Freegle user).
 func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
@@ -6989,6 +6998,17 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 			Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
 	}
 
+	// When a counted take leaves nothing, the member goes on to mark the post Taken, and
+	// that call clears the intent. Until it succeeds the intent stays, so a failure there
+	// still leaves the chase-up batch able to close the post as the member meant.
+	var left int64 = 1
+	if counted {
+		db.Table("messages").Select("COALESCE(availablenow, 1)").Where("id = ?", req.ID).Scan(&left)
+	}
+	if left > 0 {
+		clearIntendedTaken(db, req.ID)
+	}
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
@@ -7023,6 +7043,8 @@ func handleRemoveBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 			Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", entryCount))
 		db.Table("messages_by").Where("id = ?", entryID).Delete(nil)
 	}
+
+	clearIntendedTaken(db, req.ID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

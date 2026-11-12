@@ -822,6 +822,26 @@ export function useReplyStateMachine(messageId, options = {}) {
     if (newState === ReplyState.COMPLETED) {
       clearPersistedState()
     }
+
+    // A reply the member saw fail is not to be sent later without them
+    // pressing Send.
+    if (newState === ReplyState.ERROR) {
+      disarmFailedReply()
+    }
+  }
+
+  // Move a failed reply from the pending-send fields (which useReplyToPost
+  // sends on the next page load) into the composing draft, so the text is
+  // kept for a retry but is never sent unprompted.
+  function disarmFailedReply() {
+    if (draftTimer) clearTimeout(draftTimer)
+    persistDraftNow()
+    replyStore.replyMsgId = null
+    replyStore.replyMessage = null
+    replyStore.replyingAt = null
+    replyStore.replySource = null
+    replyStore.replyImage = null
+    replyStore.machineState = null
   }
 
   // Main entry point: user clicks Send

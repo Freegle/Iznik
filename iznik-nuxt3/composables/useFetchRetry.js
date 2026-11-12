@@ -8,6 +8,16 @@ class FetchError extends Error {
   }
 }
 
+// PUT /message/submit creates and posts a message in one call. The server has no way to
+// recognise a repeat, so a retry after a lost reply would make a second post. Such a request is
+// only retried when the server cannot have acted on it (rate limited).
+function isCreateRequest(input, init) {
+  const method = (init?.method || 'GET').toUpperCase()
+  const url = typeof input === 'string' ? input : input?.url || ''
+
+  return method === 'PUT' && /\/message\/submit(\?|$)/.test(url)
+}
+
 export function fetchRetry(fetch) {
   const retryDelay = function (attempt, error, response) {
     if (response?.status === 504) {
@@ -32,7 +42,7 @@ export function fetchRetry(fetch) {
     return attempt * 1000
   }
 
-  const retryOn = async function (attempt, error, response) {
+  const retryOn = async function (attempt, error, response, repeatable = true) {
     let miscStore = null
 
     if (import.meta.client) {
@@ -62,7 +72,18 @@ export function fetchRetry(fetch) {
     //
     // So wait only on the paths that are about to try again, never before
     // reading a reply we already hold.
-    const waitThenRetry = async function (why) {
+    const waitThenRetry = async function (why, safeToRepeat = repeatable) {
+      if (!safeToRepeat) {
+        console.log('Not repeating a create request:', why)
+        return [
+          false,
+          false,
+          null,
+          error ||
+            new FetchError('Request failed with ' + response?.status, response),
+        ]
+      }
+
       console.log(why)
       if (miscStore) {
         await miscStore.waitForOnline()
@@ -121,7 +142,7 @@ export function fetchRetry(fetch) {
     // resilience, but as deliberate policy.  Persistent 429s (real abuse) still fail via
     // the overall attempt cap.
     if (response?.status === 429) {
-      return await waitThenRetry('Rate limited - retry with backoff')
+      return await waitThenRetry('Rate limited - retry with backoff', true)
     }
 
     // Retry on network errors or server errors (5xx).  Don't retry client errors (4xx) - these are legitimate
@@ -177,6 +198,8 @@ export function fetchRetry(fetch) {
 
   return function (input, init) {
     return new Promise(function (resolve, reject) {
+      const repeatable = !isCreateRequest(input, init)
+
       const wrappedFetch = async function (attempt) {
         let response = null
         let error = null
@@ -195,7 +218,8 @@ export function fetchRetry(fetch) {
         ;[doRetry, success, data, error] = await retryOn(
           attempt,
           error,
-          response
+          response,
+          repeatable
         )
 
         if (success) {

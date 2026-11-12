@@ -106,6 +106,8 @@ const handleButtonClick = async (event) => {
   await openChat(null, null, null, openInNewTab)
 }
 
+// Resolves false when no chat could be opened, so nothing was sent; callers that hold a reply
+// must keep it in that case.
 const openChat = async (
   event,
   firstmessage,
@@ -132,7 +134,7 @@ const openChat = async (
 
     if (!chatid && miscStore.modtools && chatuserid > 0) {
       refused.value = true
-      return
+      return false
     }
 
     if (openInNewTab && typeof window !== 'undefined' && window.open) {
@@ -242,8 +244,14 @@ const openChat = async (
         userid: props.userid,
         message_id: firstmsgid,
       })
+      return false
     }
+  } else {
+    // There is nobody to open a chat to, so nothing was sent.
+    return false
   }
+
+  return true
 }
 
 // Expose the openChat method so it can be called from parent components

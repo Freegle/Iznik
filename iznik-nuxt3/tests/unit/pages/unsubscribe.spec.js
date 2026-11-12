@@ -14,12 +14,14 @@ import { ROLE_MEMBER, ROLE_OWNER } from '~/constants'
 //   - the Contact-us modal not auto-opening on load -> useOurModal.spec.js
 
 const leaveGroup = vi.hoisted(() => vi.fn())
+const forget = vi.hoisted(() => vi.fn())
+const routerPush = vi.hoisted(() => vi.fn())
 const pickState = vi.hoisted(() => ({ id: null }))
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
     unsubscribe: vi.fn(),
-    forget: vi.fn(),
+    forget,
     leaveGroup,
     loggedInEver: false,
     forceLogin: false,
@@ -32,12 +34,14 @@ const meState = vi.hoisted(() => ({
   myid: null,
   myGroups: [],
   loggedIn: false,
+  // When set, useMe hands out this ref so a test can populate the member after mount.
+  myidRef: null,
 }))
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: ref(meState.me),
-    myid: ref(meState.myid),
+    myid: meState.myidRef ?? ref(meState.myid),
     myGroups: ref(meState.myGroups),
     myGroup: (id) =>
       meState.myGroups.find((g) => parseInt(g.id) === id) || null,
@@ -118,6 +122,7 @@ describe('pages/unsubscribe/[[id]].vue', () => {
     meState.myid = null
     meState.myGroups = []
     meState.loggedIn = false
+    meState.myidRef = null
   })
 
   it('only offers plain memberships to leave, never a moderator role', async () => {
@@ -219,6 +224,46 @@ describe('pages/unsubscribe/[[id]].vue', () => {
       await flushPromises()
 
       expect(wrapper.text()).toContain(MSG)
+    })
+  })
+
+  // The emailed delete-account link logs the member in from its u and k, but that login
+  // finishes after this page has mounted. Seeing no member yet must not be read as "the
+  // link was already used": the account would be reported removed and left in place.
+  describe('the emailed delete-account link', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      forget.mockResolvedValue(undefined)
+      globalThis.__testUseRoute = () => ({
+        params: { id: '42' },
+        query: { u: '42', k: 'made-up-key', confirm: '1' },
+      })
+      globalThis.__testUseRouter = () => ({
+        push: routerPush,
+        replace: () => {},
+        currentRoute: { value: { path: '/' } },
+      })
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('deletes the account once the login from the link completes', async () => {
+      const myidRef = ref(null)
+      meState.myidRef = myidRef
+
+      mountPage()
+      await flushPromises()
+
+      // Login not finished: nothing deleted, and not yet told it is already gone.
+      expect(forget).not.toHaveBeenCalled()
+      expect(routerPush).not.toHaveBeenCalledWith('/unsubscribe/unsubscribed')
+
+      myidRef.value = 42
+      await flushPromises()
+
+      expect(forget).toHaveBeenCalledTimes(1)
     })
   })
 })

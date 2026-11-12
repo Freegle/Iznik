@@ -117,6 +117,30 @@ describe('pages/ask/mobile/photos.vue', () => {
     expect(mockRouterPush).toHaveBeenCalledWith('/ask/mobile/details')
   })
 
+  // A photo still uploading is in the list before it has an id. If Next is tappable then, leaving the
+  // page unmounts the uploader and strands the photo as failed, and the details step counts it as a
+  // real photo, so the description is not asked for. Next shows but stays disabled until uploads finish.
+  describe('Next button upload gating', () => {
+    it('does not show Next when there are no photos', () => {
+      const wrapper = mountPage()
+      expect(wrapper.find('.b-btn').exists()).toBe(false)
+    })
+
+    it('disables Next while a photo is still uploading', () => {
+      setPhotos([{ tempId: 'temp-1', uploading: true, progress: 30 }])
+      const wrapper = mountPage()
+      const next = wrapper.find('.b-btn')
+      expect(next.exists()).toBe(true)
+      expect(next.attributes('disabled')).toBeDefined()
+    })
+
+    it('enables Next once every photo has finished uploading', () => {
+      setPhotos([{ id: 1, ouruid: 'abc', uploading: false }])
+      const wrapper = mountPage()
+      expect(wrapper.find('.b-btn').attributes('disabled')).toBeUndefined()
+    })
+  })
+
   describe('ask-photos-carry-on experiment', () => {
     it('reads the arm for the ask flow by its switch name, once the page is on screen', async () => {
       mountPage()
