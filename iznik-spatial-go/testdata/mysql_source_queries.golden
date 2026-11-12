@@ -1,0 +1,237 @@
+QUERY: -- locations Load
+ARGS: []
+
+QUERY: 
+		SELECT
+			locations.id,
+			locations.name,
+			locations.type,
+			ST_Area(COALESCE(ourgeometry, geometry))  AS area,
+			ST_AsWKB(COALESCE(ourgeometry, geometry)) AS wkb
+		FROM locations
+		LEFT JOIN locations_excluded le ON locations.id = le.locationid
+		WHERE le.locationid IS NULL
+		  AND COALESCE(ourgeometry, geometry) IS NOT NULL
+		  AND ST_Dimension(COALESCE(ourgeometry, geometry)) = 2
+		  AND ST_Area(COALESCE(ourgeometry, geometry)) BETWEEN ? AND ?
+	
+ARGS: [1e-05 | 0.15]
+
+QUERY: -- locations ApplyDelta
+ARGS: []
+
+QUERY: SELECT locationid FROM locations_excluded
+ARGS: []
+
+QUERY: 
+		SELECT
+			locations.id,
+			locations.name,
+			locations.type,
+			ST_Area(COALESCE(ourgeometry, geometry))  AS area,
+			ST_AsWKB(COALESCE(ourgeometry, geometry)) AS wkb
+		FROM locations
+		LEFT JOIN locations_excluded le ON locations.id = le.locationid
+		WHERE le.locationid IS NULL
+		  AND COALESCE(ourgeometry, geometry) IS NOT NULL
+		  AND ST_Dimension(COALESCE(ourgeometry, geometry)) = 2
+		  AND ST_Area(COALESCE(ourgeometry, geometry)) BETWEEN ? AND ?
+	 AND locations.timestamp > '2026-11-12 10:00:00'
+ARGS: [1e-05 | 0.15]
+
+QUERY: -- messages Load
+ARGS: []
+
+QUERY: 
+		SELECT ms.msgid,
+		       ST_X(ms.point) AS lng,
+		       ST_Y(ms.point) AS lat,
+		       COALESCE(ms.msgtype, '') AS msgtype, ms.groupid,
+		       CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END AS promised
+		FROM messages_spatial ms
+		LEFT JOIN messages_promises mp ON mp.msgid = ms.msgid
+		WHERE ms.successful = 0
+	
+ARGS: []
+
+QUERY: -- messages ApplyDelta
+ARGS: []
+
+QUERY: 
+		SELECT ms.msgid,
+		       ST_X(ms.point) AS lng,
+		       ST_Y(ms.point) AS lat,
+		       COALESCE(ms.msgtype, '') AS msgtype, ms.groupid,
+		       CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END AS promised,
+		       ms.successful
+		FROM messages_spatial ms
+		LEFT JOIN messages_promises mp ON mp.msgid = ms.msgid
+		WHERE ms.modified > ?
+	
+ARGS: [2026-11-12 10:00:00 +0000 UTC]
+
+QUERY: -- newsfeed Load
+ARGS: []
+
+QUERY: 
+		SELECT id, ST_X(position) AS lng, ST_Y(position) AS lat, COALESCE(type, '') AS type, COALESCE(userid, 0) AS userid
+		FROM newsfeed
+		WHERE deleted IS NULL
+		  AND replyto IS NULL
+		  AND position IS NOT NULL
+	
+ARGS: []
+
+QUERY: -- newsfeed ApplyDelta
+ARGS: []
+
+QUERY: 
+		SELECT id, ST_X(position) AS lng, ST_Y(position) AS lat,
+		       COALESCE(type, '') AS type, COALESCE(userid, 0) AS userid, deleted
+		FROM newsfeed
+		WHERE modified > ?
+	
+ARGS: [2026-11-12 10:00:00 +0000 UTC]
+
+QUERY: -- userapproxlocs Load
+ARGS: []
+
+QUERY: SELECT userid, lng, lat FROM users_approxlocs WHERE lng IS NOT NULL AND lat IS NOT NULL
+ARGS: []
+
+QUERY: -- userapproxlocs ApplyDelta
+ARGS: []
+
+QUERY: -- groups Load
+ARGS: []
+
+QUERY: 
+		SELECT id, ST_AsWKB(polyindex) AS wkb, nameshort
+		FROM `groups`
+		WHERE publish = 1 AND listable = 1
+		  AND polyindex IS NOT NULL
+	
+ARGS: []
+
+QUERY: -- groups ApplyDelta
+ARGS: []
+
+QUERY: -- jobs Load
+ARGS: []
+
+QUERY: 
+		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, COALESCE(company, '') AS company, COALESCE(bodyhash, '') AS bodyhash
+		FROM jobs
+		WHERE visible = 1 AND cpc >= 0.08 AND geometry IS NOT NULL
+	
+ARGS: []
+
+QUERY: -- jobs ApplyDelta
+ARGS: []
+
+QUERY: 
+		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, visible, COALESCE(company, '') AS company, COALESCE(bodyhash, '') AS bodyhash
+		FROM jobs
+		WHERE seenat > ?
+	
+ARGS: [2026-11-12 10:00:00 +0000 UTC]
+
+QUERY: -- jobs CheckDrift and NoteReconciled
+ARGS: []
+
+QUERY: SELECT CAST(MAX(seenat) AS CHAR) FROM jobs
+ARGS: []
+
+QUERY: SELECT COUNT(*) FROM jobs WHERE visible = 1 AND cpc >= 0.08
+ARGS: []
+
+QUERY: SELECT CAST(MAX(seenat) AS CHAR) FROM jobs
+ARGS: []
+
+QUERY: -- postcodes Load
+ARGS: []
+
+QUERY: 
+		SELECT locations.id,
+		       ST_X(ST_Centroid(COALESCE(ourgeometry, geometry))) AS lng,
+		       ST_Y(ST_Centroid(COALESCE(ourgeometry, geometry))) AS lat
+		FROM locations
+		LEFT JOIN locations_excluded le ON locations.id = le.locationid
+		WHERE le.locationid IS NULL
+		  AND locations.type = 'Postcode'
+		  AND LOCATE(' ', locations.name) > 0
+		  AND COALESCE(ourgeometry, geometry) IS NOT NULL
+	
+ARGS: []
+
+QUERY: -- postcodes ApplyDelta
+ARGS: []
+
+QUERY: 
+		SELECT locations.id,
+		       ST_X(ST_Centroid(COALESCE(ourgeometry, geometry))) AS lng,
+		       ST_Y(ST_Centroid(COALESCE(ourgeometry, geometry))) AS lat
+		FROM locations
+		LEFT JOIN locations_excluded le ON locations.id = le.locationid
+		WHERE le.locationid IS NULL
+		  AND locations.type = 'Postcode'
+		  AND LOCATE(' ', locations.name) > 0
+		  AND COALESCE(ourgeometry, geometry) IS NOT NULL
+	 AND locations.timestamp > '2026-11-12 10:00:00'
+ARGS: []
+
+QUERY: -- reach Load
+ARGS: []
+
+QUERY: SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'polygon_cells'
+ARGS: []
+
+QUERY: SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'origin_union_secs'
+ARGS: []
+
+QUERY: SELECT rr.msgid, rr.status, rr.polygon_cells, (rr.reach_labels IS NOT NULL AND (rr.polygon_cells IS NULL OR rr.origin_union_secs IS NOT NULL)) AS retired FROM rippling_reach rr WHERE rr.status != 'held'
+ARGS: []
+
+QUERY: -- reach ApplyDelta
+ARGS: []
+
+QUERY: SELECT rr.msgid, rr.status, rr.polygon_cells, (rr.reach_labels IS NOT NULL AND (rr.polygon_cells IS NULL OR rr.origin_union_secs IS NOT NULL)) AS retired FROM rippling_reach rr WHERE rr.updated_at > ?
+ARGS: [2026-11-12 10:00:00 +0000 UTC]
+
+QUERY: SELECT msgid FROM rippling_reach WHERE status != 'held'
+		AND NOT (reach_labels IS NOT NULL AND polygon_cells IS NULL)
+ARGS: []
+
+QUERY: SELECT rr.msgid, rr.status, rr.polygon_cells, (rr.reach_labels IS NOT NULL AND (rr.polygon_cells IS NULL OR rr.origin_union_secs IS NOT NULL)) AS retired FROM rippling_reach rr WHERE rr.msgid = ?
+ARGS: [7]
+
+QUERY: -- reachoverflow Load
+ARGS: []
+
+QUERY: SELECT msgid, JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)) FROM rippling_reach WHERE has_overflow = 1 AND status != 'held'
+ARGS: [$.rural.dense | $.rural.medium | $.rural.sparse | $.fairness."1" | $.fairness."2" | $.fairness."3" | $.fairness."4" | $.cluster.w1 | $.cluster.w2 | $.cluster.w3]
+
+QUERY: -- reachoverflow ApplyDelta
+ARGS: []
+
+QUERY: SELECT msgid, status, JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)) FROM rippling_reach WHERE has_overflow = 1 AND updated_at > ?
+ARGS: [$.rural.dense | $.rural.medium | $.rural.sparse | $.fairness."1" | $.fairness."2" | $.fairness."3" | $.fairness."4" | $.cluster.w1 | $.cluster.w2 | $.cluster.w3 | 2026-11-12 10:00:00 +0000 UTC]
+
+QUERY: SELECT msgid FROM rippling_reach WHERE has_overflow = 1
+ARGS: []
+
+QUERY: -- postcode lookup
+ARGS: []
+
+QUERY: SELECT locations.id,
+		        ST_Y(ST_Centroid(COALESCE(ourgeometry, geometry))),
+		        ST_X(ST_Centroid(COALESCE(ourgeometry, geometry)))
+		 FROM locations
+		 LEFT JOIN locations_excluded le ON locations.id = le.locationid
+		 WHERE le.locationid IS NULL
+		   AND locations.type = 'Postcode'
+		   AND locations.name = ?
+		 LIMIT 1
+ARGS: [SW1A 2AA]
