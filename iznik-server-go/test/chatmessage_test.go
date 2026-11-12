@@ -811,3 +811,63 @@ func TestHoldAgainBySameModIsAllowed(t *testing.T) {
 	db.Raw("SELECT userid FROM chat_messages_held WHERE msgid = ?", msgID).Scan(&holder)
 	assert.Equal(t, mod2ID, holder)
 }
+
+// A moderator acts only on review messages in their own queue. A pending message in a chat between members of a
+// group they do not moderate is not theirs to approve, reject, hold, release or redact.
+func TestModerationRefusedForChatOutsideModsQueue(t *testing.T) {
+	for _, action := range []string{"Approve", "ApproveAllFuture", "Reject", "Hold", "Release", "Redact"} {
+		action := action
+		t.Run(action, func(t *testing.T) {
+			db := database.DBConn
+			prefix := uniquePrefix("ModOutside" + action)
+
+			// Group A has our moderator. Group B has the two chatting members and its own moderator.
+			groupA := CreateTestGroup(t, prefix+"_a")
+			groupB := CreateTestGroup(t, prefix+"_b")
+			modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, modA, groupA, utils.ROLE_MODERATOR)
+			modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, modB, groupB, utils.ROLE_MODERATOR)
+			user1 := CreateTestUser(t, prefix+"_user1", utils.SYSTEMROLE_USER)
+			user2 := CreateTestUser(t, prefix+"_user2", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, user1, groupB, utils.ROLE_MEMBER)
+			CreateTestMembership(t, user2, groupB, utils.ROLE_MEMBER)
+
+			chatID := CreateTestChatRoom(t, user1, &user2, nil, "User2User")
+			db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) "+
+				"VALUES (?, ?, 'Outside the queue (outside-test@example.invalid)', NOW(), 1, 1)", chatID, user1)
+			var msgID uint64
+			db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID).Scan(&msgID)
+			assert.NotZero(t, msgID)
+
+			_, modAToken := CreateTestSession(t, modA)
+			resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+				"id":     msgID,
+				"action": action,
+			}, modAToken)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode, "a moderator of another group must be refused")
+
+			var row struct {
+				Reviewrequired int
+				Reviewrejected int
+				Message        string
+			}
+			db.Raw("SELECT reviewrequired, reviewrejected, message FROM chat_messages WHERE id = ?", msgID).Scan(&row)
+			assert.Equal(t, 1, row.Reviewrequired, "the message must still be waiting for review")
+			assert.Equal(t, 0, row.Reviewrejected)
+			assert.Contains(t, row.Message, "outside-test@example.invalid", "the text must not be redacted")
+
+			var held int64
+			db.Table("chat_messages_held").Where("msgid = ?", msgID).Count(&held)
+			assert.Equal(t, int64(0), held, "no hold may be placed")
+
+			// Their own moderator can still act.
+			_, modBToken := CreateTestSession(t, modB)
+			resp = postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+				"id":     msgID,
+				"action": "Hold",
+			}, modBToken)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+		})
+	}
+}
