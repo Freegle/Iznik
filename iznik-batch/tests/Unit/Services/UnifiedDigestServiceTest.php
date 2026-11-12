@@ -1384,6 +1384,40 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+    public function test_a_post_already_sent_is_not_offered_again_when_its_arrival_has_a_fraction_of_a_second(): void
+    {
+        // messages_groups.arrival keeps microseconds, users_digests.lastmsgdate keeps whole
+        // seconds. If the cursor is the arrival cut down to the second, the newest post
+        // sorts after its own cursor and the next day's window offers it again.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: FractionZq (TestLocation)',
+        ]);
+
+        // Set the fraction in SQL: the model formats dates to whole seconds on the way in.
+        $arrival = now()->subHour()->format('Y-m-d H:i:s') . '.400000';
+        DB::table('messages_groups')->where('msgid', $message->id)->update(['arrival' => $arrival]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $tracker = $this->digestTrackerFor($recipient);
+        $this->assertNotNull($tracker->lastmsgdate, 'the first run sent the post and set a cursor');
+
+        // The next day, with nothing new posted.
+        $offered = $this->service
+            ->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY)
+            ->pluck('id')
+            ->all();
+
+        $this->assertNotContains(
+            $message->id,
+            $offered,
+            'a post already mailed was offered again because the stored cursor is earlier than its arrival'
+        );
+    }
+
     /**
      * A daily tracker with a carryover list and a cursor, as a run that hit the cap leaves it.
      *
