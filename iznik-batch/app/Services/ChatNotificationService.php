@@ -34,6 +34,11 @@ class ChatNotificationService
     private const EMAIL_TYPE_MOD2MOD = 'ChatNotificationMod2Mod';
 
     /**
+     * Identical rows from one sender no more than this many seconds apart are one send.
+     */
+    private const DUPLICATE_ROW_SECONDS = 5;
+
+    /**
      * Default delay in seconds before notifying about a message.
      * This allows users to type multiple messages before notification.
      */
@@ -244,28 +249,40 @@ class ChatNotificationService
             ->with(['chatRoom', 'user', 'refMessage'])
             ->get();
 
-        $kept = $rows
-            // Collapse duplicate rows created for a single send. A single chat
-            // send occasionally inserts two (or more) identical chat_messages
-            // rows ~1s apart (double-submit / retry with no dedup guard at
-            // insert). Because we email once per row, each duplicate would send
-            // its own notification — the "two copies of one message, seconds
-            // apart" reports. V1's chatdups cron (now cleanup:chat-duplicates)
-            // deletes them keyed on chatid+message+refmsgid, but it runs only
-            // every 2h whereas this notifier runs within ~30s of a send, so it
-            // always loses the race. Dedup here on the same key, keeping the
-            // lowest id (the query is ordered id asc, so unique keeps the first
-            // occurrence — the row whose notification advances the roster).
-            ->unique(function (ChatMessage $message) {
-                return implode('|', [
-                    $message->chatid,
-                    $message->userid,
-                    $message->type,
-                    md5((string) $message->message),
-                    $message->refmsgid ?? '',
-                ]);
-            })
-            ->values();
+        // Collapse duplicate rows created for a single send. A single chat
+        // send occasionally inserts two (or more) identical chat_messages
+        // rows ~1s apart (double-submit / retry with no dedup guard at
+        // insert). Because we email once per row, each duplicate would send
+        // its own notification - the "two copies of one message, seconds
+        // apart" reports. V1's chatdups cron (now cleanup:chat-duplicates)
+        // deletes them keyed on chatid+message+refmsgid, but it runs only
+        // every 2h whereas this notifier runs within ~30s of a send, so it
+        // always loses the race. Dedup here on the same key, keeping the
+        // lowest id (the query is ordered id asc, so the first occurrence is
+        // kept - the row whose notification advances the roster). Only rows
+        // within a few seconds of the kept row are one send: the same reply
+        // sent minutes later is a new message and keeps its own email.
+        $keptByKey = [];
+        $kept = $rows->filter(function (ChatMessage $message) use (&$keptByKey) {
+            $key = implode('|', [
+                $message->chatid,
+                $message->userid,
+                $message->type,
+                md5((string) $message->message),
+                $message->refmsgid ?? '',
+            ]);
+
+            $previous = $keptByKey[$key] ?? null;
+
+            if ($previous !== null && $message->date !== null && $previous->date !== null
+                && abs($message->date->getTimestamp() - $previous->date->getTimestamp()) <= self::DUPLICATE_ROW_SECONDS) {
+                return false;
+            }
+
+            $keptByKey[$key] = $message;
+
+            return true;
+        })->values();
 
         // The collapsed rows are left unmailed in the database, so the next pass would select the first of them
         // again and mail it as a new message. Mark them done: the kept row's notification stands for the send.
