@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -15,11 +16,14 @@ use Illuminate\Database\Grammar;
  * Operand rendering (see RendersOperands): a bare string is a column name,
  * Value::of()/nested Expressions embed as-is.
  *
+ * On PostgreSQL it renders ST_DistanceSphere(g1, g2) (PostGIS, geometry points in lon/lat, metres).
+ *
  * NOT BOUND - a literal operand is rendered via Grammar::escape() (see
  * Value's docblock). Column identifiers go through Grammar::wrap().
  */
 final class StDistanceSphere implements ExpressionContract
 {
+    use PostgresDialect;
     use RendersOperands;
 
     public function __construct(
@@ -30,7 +34,9 @@ final class StDistanceSphere implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
-        return 'ST_Distance_Sphere('
+        $name = $this->isPostgres($grammar) ? 'ST_DistanceSphere(' : 'ST_Distance_Sphere(';
+
+        return $name
             .$this->renderOperand($this->g1, $grammar).', '
             .$this->renderOperand($this->g2, $grammar)
             .')';
