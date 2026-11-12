@@ -463,6 +463,11 @@ class User extends Model implements Auditable
      *
      * The address may have moved or gone since the caller looked. It is taken from whoever holds it
      * now, or added when nobody does, so this member is never left without it.
+     *
+     * The account it is taken from may hold another TN id. TN's word on whose address it is still
+     * stands, so it moves, but the report says so: either TN has given the username to someone
+     * else, or one of the ids is wrong, and the other member has lost an address TN gave them
+     * before. It is that account's id that is read, not the one the caller checked.
      */
     public function takeTnAddress(string $email, int $fromUserId): void
     {
@@ -479,6 +484,7 @@ class User extends Model implements Auditable
         }
 
         $fromUserId = (int) $row->userid;
+        $fromTnId = (int) DB::table('users')->where('id', $fromUserId)->value('tnuserid');
 
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$fromUserId} set=userid={$this->id}");
 
@@ -500,8 +506,24 @@ class User extends Model implements Auditable
         }, 'TN address move: the address and the preferred flag of the account it left go together');
 
         if (app()->bound('sentry')) {
-            app('sentry')->captureMessage("TN address moved from user {$fromUserId} to user {$this->id}, the member Trash Nothing named");
+            app('sentry')->captureMessage(self::tnAddressMoveReport($fromUserId, $fromTnId, (int) $this->id, (int) $this->tnuserid));
         }
+    }
+
+    /**
+     * The report of a moved TN address, flagging a move off an account that holds another TN id.
+     * It names ids, never the address. tnAliasMoveReport in iznik-server-go/user/partner.go words
+     * it the same.
+     */
+    private static function tnAddressMoveReport(int $from, int $fromTnId, int $to, int $toTnId): string
+    {
+        if ($fromTnId !== 0 && $fromTnId !== $toTnId) {
+            return "TN address moved from user {$from}, which holds another TN user id ({$fromTnId}), to user {$to}"
+                . " (TN user id {$toTnId}), the member Trash Nothing named: TN has given the username to someone"
+                . ' else, or one of the ids is wrong';
+        }
+
+        return "TN address moved from user {$from} to user {$to}, the member Trash Nothing named";
     }
 
     /**

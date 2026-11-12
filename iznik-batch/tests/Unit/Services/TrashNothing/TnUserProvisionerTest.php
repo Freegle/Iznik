@@ -264,6 +264,7 @@ class TnUserProvisionerTest extends TestCase
 
         $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
         $this->assertStringContainsString("user {$existing->id}", $sentry->calls[0][0]);
+        $this->assertStringNotContainsString('another TN user id', $sentry->calls[0][0], 'the account it left holds no TN id');
         $this->assertStringNotContainsString($username, $sentry->calls[0][0], 'a report names ids, never an address');
     }
 
@@ -282,16 +283,29 @@ class TnUserProvisionerTest extends TestCase
         $this->assertSame($taker->id, (int) UserEmail::where('email', $bare)->value('userid'));
     }
 
+    /**
+     * The address has moved to a third account since the caller looked, and that account is another
+     * TN member's. TN's id still says whose it is, so it moves, and the report names the account it
+     * really came from and flags its TN id, as the one the caller checked could not.
+     */
     public function test_taking_an_address_that_has_moved_takes_it_from_its_holder_now(): void
     {
+        $sentry = $this->recordSentry();
+        $holderTnId = $this->tnId();
         $bare   = $this->uniqueUsername('moved') . '@user.trashnothing.com';
         $from   = $this->createTestUser();
-        $holder = $this->createTestUser(['email_preferred' => $bare]);
-        $taker  = $this->createTestUser();
+        $holder = $this->createTestUser(['email_preferred' => $bare, 'tnuserid' => $holderTnId]);
+        $taker  = $this->createTestUser(['tnuserid' => $this->tnId()]);
 
         $taker->takeTnAddress($bare, $from->id);
 
         $this->assertSame($taker->id, (int) UserEmail::where('email', $bare)->value('userid'));
+        $this->assertSame($holderTnId, (int) $holder->fresh()->tnuserid, 'the other member keeps their id');
+
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString("from user {$holder->id}", $sentry->calls[0][0]);
+        $this->assertStringContainsString("another TN user id ({$holderTnId})", $sentry->calls[0][0]);
+        $this->assertStringNotContainsString("user {$from->id},", $sentry->calls[0][0]);
     }
 
     public function test_the_bare_address_moves_from_an_account_holding_another_tn_id(): void
@@ -301,12 +315,18 @@ class TnUserProvisionerTest extends TestCase
         $bare     = "{$username}@user.trashnothing.com";
         $holder   = $this->createTestUser(['email_preferred' => $bare, 'tnuserid' => $tnId + 1]);
         $this->tnUsers[$tnId] = [200, $this->tnUser($username)];
+        $sentry = $this->recordSentry();
 
         $user = $this->provisioner()->resolveOrCreate($tnId);
 
         $this->assertSame($tnId, (int) $user->fresh()->tnuserid);
         $this->assertSame($tnId + 1, (int) $holder->fresh()->tnuserid);
         $this->assertSame($user->id, (int) UserEmail::where('email', $bare)->value('userid'));
+
+        // The move is right, and it is flagged: the account it left is another TN member's.
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString('another TN user id (' . ($tnId + 1) . ')', $sentry->calls[0][0]);
+        $this->assertStringContainsString("TN user id {$tnId}", $sentry->calls[0][0]);
     }
 
     /**
