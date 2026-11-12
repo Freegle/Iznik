@@ -1238,7 +1238,7 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 		Select("fromuser, groupid").
 		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
 		Joins("INNER JOIN users ON users.id = messages.fromuser").
-		Where("messages.id = ? AND users.deleted IS NULL", payload.Refmsgid).
+		Where("messages.id = ? AND messages.deleted IS NULL AND users.deleted IS NULL", payload.Refmsgid).
 		Scan(&m)
 
 	if m.Fromuser == 0 {
@@ -1347,6 +1347,12 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	if createErr != nil || newid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+	}
+
+	// A poster who closed the chat sees the reply, as for any other message. Blocked chats are left as they are.
+	if result := db.Table("chat_roster").Where("chatid = ? AND status = ?", chat.ID, utils.CHAT_STATUS_CLOSED).
+		Update("status", utils.CHAT_STATUS_OFFLINE); result.Error != nil {
+		stdlog.Printf("Failed to reopen closed chat roster for chat %d: %v", chat.ID, result.Error)
 	}
 
 	var ret ChatMessageLovejunkResponse
