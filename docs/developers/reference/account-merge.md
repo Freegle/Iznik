@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
@@ -25,6 +25,11 @@ argument is the account to discard and its second the account to keep. V1 had a 
 `User::merge()`, and `MergeUsersTx` is its port. **Do not write a second merge path.** The Go
 API had a cut-down one for the email-verify case until October 2026, and it is how chats went
 missing (see below).
+
+Support and Admin can merge any two accounts. A moderator can merge two ordinary members of
+communities they moderate, and nothing else: never their own account, and never an account whose
+system role is Moderator, Support or Admin. A merge keeps the higher system role and moves logins,
+emails and memberships across, so either would hand the moderator that account's powers.
 
 ## What a merge does
 

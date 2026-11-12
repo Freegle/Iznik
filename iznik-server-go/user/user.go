@@ -3315,6 +3315,24 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
+	// A moderator's merge is a clean-up of ordinary members. It never involves the moderator's
+	// own account, and never an account with a system role: the merge keeps the higher system
+	// role and moves logins, emails and memberships across, so either would hand the moderator
+	// that account's powers. IsModOfUser cannot catch this, since a moderator moderates their
+	// own group and so passes it for themselves.
+	if !auth.IsAdminOrSupport(myid) {
+		if uint64(req.ID1) == myid || uint64(req.ID2) == myid {
+			return fiber.NewError(fiber.StatusForbidden, "A moderator cannot merge their own account")
+		}
+		var plain int64
+		db.Table("users").
+			Where("id IN (?, ?) AND systemrole = ?", uint64(req.ID1), uint64(req.ID2), utils.SYSTEMROLE_USER).
+			Count(&plain)
+		if plain != 2 {
+			return fiber.NewError(fiber.StatusForbidden, "Only Support and Admin can merge a moderator, Support or Admin account")
+		}
+	}
+
 	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
 	// with a Freegle account, whoever asks (.claude/rules/conventions.md). ModTools refuses this
 	// too, but only by looking at the email typed in, so a merge by id went straight through.
