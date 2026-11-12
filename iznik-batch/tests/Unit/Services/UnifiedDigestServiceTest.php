@@ -2042,6 +2042,35 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertSame([(int) $gated->id], $this->nextDailyRun($recipient));
     }
 
+public function test_a_held_copy_of_an_item_does_not_stop_another_copy_being_sent_when_it_is_admitted(): void
+    {
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+        $far = 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))';
+
+        $first = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Same item Zq (TestLocation)',
+            'arrival' => now()->subHours(4),
+        ]);
+        $this->seedReach($first->id, $far);
+        $second = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Same item Zq (TestLocation)',
+            'arrival' => now()->subHours(3),
+        ]);
+        $this->seedReach($second->id, $far);
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Something else Zq (TestLocation)',
+            'arrival' => now()->subHours(2),
+        ]);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        // Only the first copy's reach grows over the member. The second copy is still held, and
+        // it sits behind the cursor, but nothing of it was sent, so it is no reason to drop the first.
+        $this->growReachOverMember($first->id);
+        $this->assertSame([(int) $first->id], $this->nextDailyRun($recipient));
+    }
+
     public function test_a_post_whose_reach_was_frozen_is_sent_after_the_freeze_is_lifted(): void
     {
         [$recipient, $poster, $group] = $this->dailyDigestMembers();
