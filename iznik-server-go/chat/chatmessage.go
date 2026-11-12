@@ -2078,6 +2078,36 @@ func fetchReviewMessage(db *gorm.DB, msgID uint64) *reviewMessage {
 	return &msg
 }
 
+// modMayActOnChatMessage reports whether a moderator may act on a chat message in the review
+// queue. It is the rule getReviewQueue applies to what it lists: a User2Mod chat for one of the
+// moderator's communities, a User2User chat whose recipient is on one of them, or a User2User
+// chat whose recipient is on none and whose sender is on one. Wider review shows a moderator
+// other communities' messages without actions, so it grants none here.
+func modMayActOnChatMessage(db *gorm.DB, myid uint64, msgID uint64) bool {
+	var groupIDs []uint64
+	db.Table("memberships").Select("groupid").
+		Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&groupIDs)
+	if len(groupIDs) == 0 {
+		return false
+	}
+
+	recipient := "CASE WHEN chat_messages.userid = chat_rooms.user1 THEN chat_rooms.user2 ELSE chat_rooms.user1 END"
+	var found int64
+	db.Table("chat_messages").
+		Joins("INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid").
+		Where("chat_messages.id = ?", msgID).
+		Where("((chat_rooms.chattype = ? AND chat_rooms.groupid IN (?))"+
+			" OR (chat_rooms.chattype = ? AND EXISTS (SELECT 1 FROM memberships WHERE userid = "+recipient+" AND groupid IN (?)))"+
+			" OR (chat_rooms.chattype = ? AND NOT EXISTS (SELECT 1 FROM memberships WHERE userid = "+recipient+")"+
+			" AND EXISTS (SELECT 1 FROM memberships WHERE userid = chat_messages.userid AND groupid IN (?))))",
+			utils.CHAT_TYPE_USER2MOD, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs,
+			utils.CHAT_TYPE_USER2USER, groupIDs).
+		Count(&found)
+
+	return found > 0
+}
+
 // checkHoldConflict returns true if the message is held by a different moderator.
 func checkHoldConflict(msg *reviewMessage, myid uint64) bool {
 	if msg == nil {
@@ -2141,6 +2171,10 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 }
 
 func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, approveAllFuture bool) error {
+	if !modMayActOnChatMessage(db, myid, msgID) {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
+	}
+
 	msg := fetchReviewMessage(db, msgID)
 	if msg == nil {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
@@ -2212,6 +2246,10 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 }
 
 func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
+	if !modMayActOnChatMessage(db, myid, msgID) {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
+	}
+
 	msg := fetchReviewMessage(db, msgID)
 	if msg == nil {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
@@ -2285,6 +2323,10 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 }
 
 func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
+	if !modMayActOnChatMessage(db, myid, msgID) {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
+	}
+
 	// Verify the message exists and requires review
 	var reviewRequired int
 	db.Table("chat_messages").Select("reviewrequired").Where("id = ?", msgID).Scan(&reviewRequired)
@@ -2310,6 +2352,10 @@ func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error
 }
 
 func releaseChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
+	if !modMayActOnChatMessage(db, myid, msgID) {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
+	}
+
 	// Delete the hold record
 	// Converted together with its
 	// identical twins in approveChatMessage (2e5a6f9c7077) and
@@ -2468,6 +2514,10 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 }
 
 func redactChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
+	if !modMayActOnChatMessage(db, myid, msgID) {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
+	}
+
 	msg := fetchReviewMessage(db, msgID)
 	if msg == nil {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
