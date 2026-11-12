@@ -5133,4 +5133,80 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertTrue($this->ledgered($msgid, $member->id), 'the retried member is mailed');
         $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
     }
+
+    /**
+     * The routing server being down does not throw: reachArrivalBatch logs it and returns null.
+     * A pass that reads that as "nobody is reached" moves its mark and the post is never looked
+     * at again, which is the same lost mail as an exception.
+     */
+    private function breakRouting(): callable
+    {
+        $real = app(\App\Services\Ripple\ReachService::class);
+        $this->partialMock(\App\Services\Ripple\ReachService::class, function ($mock) {
+            $mock->shouldReceive('reachArrivalBatch')->andReturn(null);
+        });
+
+        return fn () => $this->app->instance(\App\Services\Ripple\ReachService::class, $real);
+    }
+
+    public function test_reach_pass_does_not_move_its_mark_when_routing_cannot_answer_and_mails_the_member_next_pass(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        $markBefore = DB::table('config')->where('key', $markKey)->value('value');
+
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame($markBefore, DB::table('config')->where('key', $markKey)->value('value'), 'a pass routing could not answer leaves the mark where it was');
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'precondition: the pass mailed nobody');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the next pass, with routing back, mails the member');
+    }
+
+    public function test_drain_keeps_the_queue_row_when_routing_cannot_answer(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame(1, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the queue row survives a routing outage');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the retried member is mailed');
+    }
+
+    /**
+     * A post that fails on every pass must not hold the mark for ever: each pass would re-read a
+     * window that only grows, which is the load the mark exists to remove.
+     */
+    public function test_a_failing_post_cannot_hold_the_mark_back_for_more_than_six_hours(): void
+    {
+        [$msgid] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        DB::table('config')->where('key', $markKey)->update(['value' => now()->subHours(10)->toDateTimeString()]);
+
+        $restore = $this->breakReachEvaluation();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $mark = \Illuminate\Support\Carbon::parse(DB::table('config')->where('key', $markKey)->value('value'));
+        $this->assertTrue($mark->gt(now()->subHours(7)), 'the mark has moved up to the six hour bound');
+        $this->assertTrue($mark->lt(now()->subHours(5)), 'but no further than the bound, so the failed post is still re-read');
+    }
 }
