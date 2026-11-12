@@ -6911,12 +6911,21 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		db.Table("messages_by").Create(map[string]interface{}{"userid": userid, "msgid": req.ID, "count": count})
 	}
 
-	clearIntendedTaken(db, req.ID)
-
 	if counted {
 		// Reduce available count.
 		db.Table("messages").Where("id = ?", req.ID).
 			Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
+	}
+
+	// When a counted take leaves nothing, the member goes on to mark the post Taken, and
+	// that call clears the intent. Until it succeeds the intent stays, so a failure there
+	// still leaves the chase-up batch able to close the post as the member meant.
+	var left int64 = 1
+	if counted {
+		db.Table("messages").Select("COALESCE(availablenow, 1)").Where("id = ?", req.ID).Scan(&left)
+	}
+	if left > 0 {
+		clearIntendedTaken(db, req.ID)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
