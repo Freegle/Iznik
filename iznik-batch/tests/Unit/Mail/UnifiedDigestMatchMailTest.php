@@ -118,4 +118,15 @@ class UnifiedDigestMatchMailTest extends TestCase
 
         $this->assertStringContainsString('open post', $body, 'the reason is rendered, not just computed');
     }
+
+    public function test_a_retried_match_mail_keeps_its_reason_and_its_own_subject(): void
+    {
+        [$mail, $recipient] = $this->digestFor('search');
+
+        $rebuilt = UnifiedDigest::rebuildFromDescriptor($mail->mailDescriptor());
+
+        $this->assertInstanceOf(UnifiedDigest::class, $rebuilt);
+        $this->assertNotNull($rebuilt->matchIntro(), 'the rebuilt mail still says why it was sent');
+        $this->assertSame('OFFER: Bookcase (Ealing)', $this->spoolAndLoad($rebuilt, $recipient)['subject']);
+    }
 }
