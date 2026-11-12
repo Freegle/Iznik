@@ -390,6 +390,9 @@ func TestModeratorCannotReplyToOrEditAnUnaddressedPost(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode, "a mod must not rewrite a post whose author never joined")
 
+	// Approve acts on a copy still waiting for a moderator.
+	database.DBConn.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", msg)
+
 	// Approve is still available: mods keep the queue actions, they just cannot talk to
 	// the poster or put words in their mouth.
 	status, _ = postMessageActionResult(t, modToken, map[string]interface{}{
