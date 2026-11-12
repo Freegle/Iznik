@@ -420,3 +420,66 @@ func TestStripeIPN_GiftAid_DuplicateInsertNoError(t *testing.T) {
 	db.Exec("DELETE FROM users_donations WHERE TransactionID IN (?, ?)", chargeID1, chargeID2)
 	db.Exec("DELETE FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", userID)
 }
+
+// postStripeEvent posts a body to the webhook with the given Stripe-Signature header (none when empty).
+func postStripeEvent(t *testing.T, body []byte, signature string) int {
+	req := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	if signature != "" {
+		req.Header.Set("Stripe-Signature", signature)
+	}
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+// A webhook that records money must only act on events Stripe sent. When a signing secret is
+// configured, an event with no Stripe-Signature header is refused and records nothing, even when it is
+// well formed and names a real member's address. With no secret configured the webhook accepts events
+// as before, so production keeps working until the secret is set.
+func TestStripeIPN_UnsignedEventIsRefused(t *testing.T) {
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "whsec_test_secret_not_real")
+	prefix := uniquePrefix("stripeunsigned")
+	db := database.DBConn
+
+	CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
+	email := prefix + "_donor@test.com"
+
+	chargeID := "ch_test_" + prefix
+	body := makeChargeEvent(chargeID, 50000, map[string]string{}, email, "One-time donation")
+
+	assert.Contains(t, []int{400, 401, 403}, postStripeEvent(t, body, ""), "an unsigned event must be refused")
+	assert.Contains(t, []int{400, 401, 403}, postStripeEvent(t, body, "t=1,v1=deadbeef"), "a wrongly signed event must be refused")
+
+	var donationCount int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&donationCount)
+	assert.Equal(t, int64(0), donationCount, "a refused event must not record a donation")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
+}
+
+func TestStripeIPN_SignedEventIsAcceptedWhenSecretIsSet(t *testing.T) {
+	secret := "whsec_test_secret_not_real"
+	t.Setenv("STRIPE_WEBHOOK_SECRET", secret)
+	prefix := uniquePrefix("stripesigned")
+	db := database.DBConn
+
+	CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
+	email := prefix + "_donor@test.com"
+
+	chargeID := "ch_test_" + prefix
+	body := makeChargeEvent(chargeID, 1000, map[string]string{}, email, "One-time donation")
+	signed := webhook.GenerateTestSignedPayload(&webhook.UnsignedPayload{Payload: body, Secret: secret})
+
+	assert.Equal(t, 200, postStripeEvent(t, body, signed.Header))
+
+	var donationCount int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&donationCount)
+	assert.Equal(t, int64(1), donationCount, "a signed event is recorded")
+
+	// A signature made with a different secret is refused.
+	other := webhook.GenerateTestSignedPayload(&webhook.UnsignedPayload{Payload: body, Secret: "whsec_other"})
+	assert.Contains(t, []int{400, 401, 403}, postStripeEvent(t, body, other.Header))
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
+}
