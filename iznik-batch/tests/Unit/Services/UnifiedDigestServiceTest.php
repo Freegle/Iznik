@@ -1932,6 +1932,141 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
+     * Grow a seeded post's reach so it covers the member at (51.5, -0.1), the way the engine does
+     * when a later step widens the reach: the cells, the outer bound and the faked reach-arrival
+     * answer all move together.
+     */
+    private function growReachOverMember(int $msgid): void
+    {
+        $grown = 'POLYGON((-0.2 51.4,5.2 51.4,5.2 51.6,-0.2 51.6,-0.2 51.4))';
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'polygon_cells' => $this->reachCellsFor($grown),
+        ]);
+        DB::statement('UPDATE rippling_reach SET outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
+            [$grown, $msgid]);
+        $this->reachArrivalBox = $this->wktBounds($grown);
+    }
+
+    /** Run the daily digest again as if a day had passed and return the msgids it carried. */
+    private function nextDailyRun(User $recipient): array
+    {
+        $this->digestTrackerFor($recipient)->update(['lastsent' => now()->subDay()]);
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $sent = Mail::sent(\App\Mail\Digest\UnifiedDigest::class)->last();
+
+        return $sent === null ? [] : array_map(
+            fn ($p) => (int) $p['msgid'],
+            $sent->mailDescriptor()['posts']
+        );
+    }
+
+    public function test_a_reach_gated_post_is_sent_once_and_only_once_after_its_reach_grows(): void
+    {
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $gated = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Gated once Zq (TestLocation)',
+            'arrival' => now()->subHours(3),
+        ]);
+        $this->seedReach($gated->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Ungated once Zq (TestLocation)',
+            'arrival' => now()->subHours(2),
+        ]);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertSame([(int) $gated->id], $this->digestTrackerFor($recipient)->held_back,
+            'the post the gate kept out is remembered when the cursor passes it');
+
+        // The reach still does not cover the member: nothing new, nothing sent, still remembered.
+        $this->assertSame([], $this->nextDailyRun($recipient));
+        $this->assertSame([(int) $gated->id], $this->digestTrackerFor($recipient)->held_back);
+
+        $this->growReachOverMember($gated->id);
+        $this->assertSame([(int) $gated->id], $this->nextDailyRun($recipient), 'sent once the reach covers the member');
+        $this->assertNull($this->digestTrackerFor($recipient)->held_back, 'and forgotten once sent');
+
+        $this->assertSame([], $this->nextDailyRun($recipient), 'never sent a second time');
+    }
+
+    public function test_a_post_held_back_for_longer_than_the_retention_age_is_not_sent_late(): void
+    {
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $gated = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Gated old Zq (TestLocation)',
+            'arrival' => now()->subHours(3),
+        ]);
+        $this->seedReach($gated->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Ungated old Zq (TestLocation)',
+            'arrival' => now()->subHours(2),
+        ]);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertSame([(int) $gated->id], $this->digestTrackerFor($recipient)->held_back);
+
+        // The reach reaches the member only after the retention age has gone by.
+        DB::table('messages_groups')->where('msgid', $gated->id)
+            ->update(['arrival' => now()->subDays(UnifiedDigestService::HELD_BACK_MAX_AGE_DAYS + 1)]);
+        $this->growReachOverMember($gated->id);
+
+        $this->assertNotContains((int) $gated->id, $this->nextDailyRun($recipient),
+            'a post older than the retention age is no longer news');
+    }
+
+    public function test_the_cursor_moves_over_posts_the_gate_holds_back_so_the_window_does_not_grow(): void
+    {
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $gated = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Only gated Zq (TestLocation)',
+            'arrival' => now()->subHours(3),
+        ]);
+        $this->seedReach($gated->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent']);
+
+        $tracker = $this->digestTrackerFor($recipient);
+        $this->assertEquals((int) $gated->id, (int) $tracker->lastmsgid,
+            'the cursor passes a post that only the gate kept out, so the scan window stays bounded');
+        $this->assertSame([(int) $gated->id], $tracker->held_back);
+
+        $this->growReachOverMember($gated->id);
+        $this->assertSame([(int) $gated->id], $this->nextDailyRun($recipient));
+    }
+
+    public function test_a_post_whose_reach_was_frozen_is_sent_after_the_freeze_is_lifted(): void
+    {
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $frozen = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Frozen Zq (TestLocation)',
+            'arrival' => now()->subHours(3),
+        ]);
+        $this->seedReach($frozen->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $frozen->id)->update(['status' => 'held']);
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Not frozen Zq (TestLocation)',
+            'arrival' => now()->subHours(2),
+        ]);
+
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertSame([(int) $frozen->id], $this->digestTrackerFor($recipient)->held_back);
+
+        DB::table('rippling_reach')->where('msgid', $frozen->id)->update(['status' => 'expanding']);
+        $this->assertSame([(int) $frozen->id], $this->nextDailyRun($recipient),
+            'a post that was under review is sent once a moderator approves it');
+    }
+
+    /**
      * Seed a post whose committed reach (and outer_bound, which seedReach derives as the
      * polygon's own envelope) EXCLUDE the ring member's location, with a rural overflow ring
      * — bbox included, as ReachService::parseOverflow would compute it — that DOES cover them.
