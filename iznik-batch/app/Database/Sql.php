@@ -2,6 +2,7 @@
 
 namespace App\Database;
 
+use App\Database\Expressions\DateSub;
 use App\Database\Expressions\JsonArrayHasValue;
 use App\Database\Expressions\JsonExtract;
 use App\Database\Expressions\JsonHasPath;
@@ -124,5 +125,11 @@ final class Sql
         $grammar = DB::getQueryGrammar();
 
         return $grammar instanceof PostgresGrammar ? $grammar->wrap($name) : $name;
+    }
+
+    /** NOW() minus an interval: DATE_SUB(NOW(), INTERVAL amount unit) on MySQL. $amount is SQL text (a number or `?`). */
+    public static function nowMinus(string $amount, string $unit): string
+    {
+        return self::render(new DateSub(DB::raw('NOW()'), DB::raw($amount), $unit));
     }
 }

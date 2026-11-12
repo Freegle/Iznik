@@ -2,6 +2,7 @@
 
 namespace App\Services\FirstReply;
 
+use App\Database\Sql;
 use App\Database\Expressions\JsonExtract;
 use App\Database\Expressions\JsonUnquote;
 use App\Database\Expressions\Value;
@@ -500,8 +501,8 @@ class MatchMailService
                     m.fromuser AS fromuser, m.subject AS subject
              FROM messages_spatial ms
              JOIN messages m ON m.id = ms.msgid
-             WHERE ms.arrival <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
-               AND ms.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)
+             WHERE ms.arrival <= " . Sql::nowMinus('?', 'MINUTE') . "
+               AND ms.arrival > " . Sql::nowMinus('?', 'HOUR') . "
                AND m.deleted IS NULL
                AND NOT EXISTS (
                      SELECT 1 FROM chat_messages cm
@@ -745,7 +746,7 @@ class MatchMailService
              JOIN rippling_reach rr ON rr.msgid = ?
              WHERE u.id IN (" . implode(',', array_fill(0, count($userIds), '?')) . ")
                AND u.deleted IS NULL
-               AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
+               AND (u.lastaccess IS NULL OR u.lastaccess > " . Sql::nowMinus('90', 'DAY') . ")
                AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id{$mailableSql})
                -- OUTSIDE the reach the post has right now, INSIDE the reach it
                -- will eventually have. Someone already inside the current
@@ -757,10 +758,10 @@ class MatchMailService
                AND rr.reach_labels IS NOT NULL
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
-                     WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
+                     WHERE fs.userid = u.id AND fs.sent_at > " . Sql::nowMinus('?', 'HOUR') . "
                    )
                AND (SELECT COUNT(*) FROM firstreply_scouts fs2
-                    WHERE fs2.userid = u.id AND fs2.sent_at > DATE_SUB(NOW(), INTERVAL 7 DAY)) < ?
+                    WHERE fs2.userid = u.id AND fs2.sent_at > " . Sql::nowMinus('7', 'DAY') . ") < ?
                AND NOT EXISTS (
                      SELECT 1 FROM rippling_reach_notified rn
                      WHERE rn.msgid = ? AND rn.userid = u.id
