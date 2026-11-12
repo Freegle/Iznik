@@ -2,6 +2,7 @@ package test
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -93,4 +94,29 @@ func TestLastaccessNotBumpedWhenFresh(t *testing.T) {
 
 	age := lastaccessAgeSecs(t, uid)
 	assert.GreaterOrEqual(t, age, int64(240), "fresh lastaccess must not be bumped (10-minute throttle)")
+}
+
+// A JWT whose session row is gone (logout, purge) must be refused before the handler runs.
+// Replacing the response with a 401 afterwards leaves the write committed.
+func TestStaleSessionJWTDoesNotRunAWrite(t *testing.T) {
+	prefix := uniquePrefix("stalewrite")
+	uid := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	sessionID, token := CreateTestSession(t, uid)
+	db := database.DBConn
+
+	var before string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", uid).Scan(&before)
+
+	// Log out: the session row is deleted but the JWT is still signed and unexpired.
+	db.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
+
+	body := strings.NewReader(`{"displayname":"Changed After Logout"}`)
+	req := httptest.NewRequest("PATCH", "/api/user?jwt="+token, body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+
+	var after string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", uid).Scan(&after)
+	assert.Equal(t, before, after, "the write must not be committed for a logged-out session")
 }
