@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands\Dedup;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Count;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -97,12 +99,15 @@ class TnMergeCrosspostsCommand extends Command
      */
     private function messageReferences(): array
     {
-        $database = DB::connection()->getDatabaseName();
+        // MySQL's schema is the database; PostgreSQL's is the schema the connection searches first.
+        $database = DB::connection()->getDriverName() === 'pgsql'
+            ? DB::selectOne('select current_schema() as name')->name
+            : DB::connection()->getDatabaseName();
 
-        $rows = DB::table('information_schema.COLUMNS')
-            ->select('TABLE_NAME as table_name', 'COLUMN_NAME as column_name')
-            ->where('TABLE_SCHEMA', $database)
-            ->where('COLUMN_NAME', 'msgid')
+        $rows = DB::table('information_schema.columns')
+            ->select('table_name as table_name', 'column_name as column_name')
+            ->where('table_schema', $database)
+            ->where('column_name', 'msgid')
             ->get();
 
         $references = [];
@@ -117,10 +122,10 @@ class TnMergeCrosspostsCommand extends Command
         }
 
         foreach (self::EXTRA_REFERENCES as $table => $column) {
-            $exists = DB::table('information_schema.COLUMNS')
-                ->where('TABLE_SCHEMA', $database)
-                ->where('TABLE_NAME', $table)
-                ->where('COLUMN_NAME', $column)
+            $exists = DB::table('information_schema.columns')
+                ->where('table_schema', $database)
+                ->where('table_name', $table)
+                ->where('column_name', $column)
                 ->exists();
 
             if ($exists) {
@@ -144,7 +149,7 @@ class TnMergeCrosspostsCommand extends Command
             ->where('tnpostid', '!=', '')
             ->whereNull('deleted')
             ->groupBy('tnpostid')
-            ->having('copies', '>', 1);
+            ->having(new Comparison(new Count(), '>', 1));
 
         if ($days > 0) {
             // Only what can still be seen. A post outside the recent window is not in
