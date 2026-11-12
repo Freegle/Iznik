@@ -1158,6 +1158,10 @@ Keying on the post id alone was tried and reverted (`423c6b0e6`): because a repo
 fresh id, the digest listed the same item once per posting - "Small lamp" four times,
 27 such items in four days (Discourse 9808/#233).
 
+Across digests, a post whose item already went out in an earlier digest is dropped. A post the
+digest cap left out is carried over to the next digest and is never dropped this way: nothing
+of it was sent, and a copy behind the cursor is not evidence that it was.
+
 The same key now decides the immediate mails too, over a seven-day window
 (`UnifiedDigestService::ITEM_DEDUP_DAYS`). Past that, a member re-offering the same thing is
 news again and gets a fresh mail.
