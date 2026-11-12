@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -31,6 +32,7 @@ use InvalidArgumentException;
 final class Collate implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(
         private readonly mixed $operand,
@@ -43,6 +45,13 @@ final class Collate implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            // MySQL's _ci collations compare without regard to case; _bin collations compare bytes.
+            $operand = $this->renderOperand($this->operand, $grammar);
+
+            return str_ends_with($this->collation, '_ci') ? 'LOWER('.$operand.')' : $operand.' COLLATE "C"';
+        }
+
         return $this->renderOperand($this->operand, $grammar).' COLLATE '.$this->collation;
     }
 }

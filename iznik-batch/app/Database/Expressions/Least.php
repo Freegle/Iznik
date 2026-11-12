@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -22,6 +23,7 @@ use InvalidArgumentException;
 final class Least implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     /** @var array<int, mixed> */
     private readonly array $operands;
@@ -41,6 +43,10 @@ final class Least implements ExpressionContract
             fn (mixed $operand) => $this->renderOperand($operand, $grammar),
             $this->operands
         );
+
+        if ($this->isPostgres($grammar)) {
+            return '(CASE WHEN num_nulls('.implode(', ', $rendered).') > 0 THEN NULL ELSE LEAST('.implode(', ', $rendered).') END)';
+        }
 
         return 'LEAST('.implode(', ', $rendered).')';
     }

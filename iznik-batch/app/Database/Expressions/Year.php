@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -19,6 +20,7 @@ use Illuminate\Database\Grammar;
 final class Year implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(private readonly mixed $operand)
     {
@@ -26,6 +28,10 @@ final class Year implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            return 'CAST(EXTRACT(YEAR FROM '.$this->renderOperand($this->operand, $grammar).') AS integer)';
+        }
+
         return 'YEAR('.$this->renderOperand($this->operand, $grammar).')';
     }
 }

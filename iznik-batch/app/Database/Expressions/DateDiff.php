@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -23,6 +24,7 @@ use Illuminate\Database\Grammar;
 final class DateDiff implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(
         private readonly mixed $expr1,
@@ -32,6 +34,12 @@ final class DateDiff implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            // Whole days between the dates, as MySQL's DATEDIFF(later, earlier).
+            return '(CAST('.$this->renderOperand($this->expr1, $grammar).' AS date) - CAST('
+                .$this->renderOperand($this->expr2, $grammar).' AS date))';
+        }
+
         return 'DATEDIFF('
             .$this->renderOperand($this->expr1, $grammar).', '
             .$this->renderOperand($this->expr2, $grammar)

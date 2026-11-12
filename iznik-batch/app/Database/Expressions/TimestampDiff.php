@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -27,6 +28,7 @@ use InvalidArgumentException;
 final class TimestampDiff implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public const array UNITS = [
         'MICROSECOND', 'SECOND', 'MINUTE', 'HOUR', 'DAY', 'WEEK', 'MONTH',
@@ -53,6 +55,18 @@ final class TimestampDiff implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            $seconds = 'EXTRACT(EPOCH FROM (CAST('.$this->renderOperand($this->end, $grammar).' AS timestamp) - CAST('
+                .$this->renderOperand($this->start, $grammar).' AS timestamp)))';
+            $divisor = match (strtoupper($this->unit)) {
+                'SECOND' => 1, 'MINUTE' => 60, 'HOUR' => 3600, 'DAY' => 86400, 'WEEK' => 604800,
+                default => throw new \LogicException('TimestampDiff unit '.$this->unit.' is not supported on PostgreSQL.'),
+            };
+
+            // MySQL truncates toward zero.
+            return 'CAST(TRUNC('.$seconds.($divisor === 1 ? '' : ' / '.$divisor).') AS bigint)';
+        }
+
         return 'TIMESTAMPDIFF('.$this->unit.', '
             .$this->renderOperand($this->start, $grammar).', '
             .$this->renderOperand($this->end, $grammar)

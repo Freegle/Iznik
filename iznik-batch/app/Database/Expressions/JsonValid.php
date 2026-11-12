@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\ConditionExpression;
 use Illuminate\Database\Grammar;
@@ -29,6 +30,7 @@ use Illuminate\Database\Grammar;
 final class JsonValid implements ConditionExpression
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(private readonly mixed $operand)
     {
@@ -36,6 +38,10 @@ final class JsonValid implements ConditionExpression
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            return '('.$this->renderOperand($this->operand, $grammar).' IS JSON)';
+        }
+
         return 'JSON_VALID('.$this->renderOperand($this->operand, $grammar).')';
     }
 }

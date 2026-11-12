@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -20,6 +21,7 @@ use Illuminate\Database\Grammar;
 final class Round implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(
         private readonly mixed $operand,
@@ -29,6 +31,12 @@ final class Round implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar) && $this->decimals !== null) {
+            // PostgreSQL has ROUND(numeric, integer) only.
+            return 'ROUND(CAST('.$this->renderOperand($this->operand, $grammar).' AS numeric), '
+                .$this->renderOperand($this->decimals, $grammar).')';
+        }
+
         $sql = 'ROUND('.$this->renderOperand($this->operand, $grammar);
 
         if ($this->decimals !== null) {
