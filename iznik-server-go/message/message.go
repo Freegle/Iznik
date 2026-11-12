@@ -3881,7 +3881,20 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	//   - no groupid (the owner withdrawing their own message): ALL groups
 	//     the message is on — a withdrawal is global to the poster.
 	var groupids []uint64
-	if req.Groupid != nil && *req.Groupid > 0 {
+	if !isOwner {
+		// A moderator acts only on communities they moderate.
+		var onMessage []uint64
+		db.Table("messages_groups").Select("groupid").Where("msgid = ?", req.ID).Scan(&onMessage)
+		var reqGroupid uint64
+		if req.Groupid != nil {
+			reqGroupid = *req.Groupid
+		}
+		authorized, err := resolveAuthorizedGroups(myid, reqGroupid, onMessage)
+		if err != nil {
+			return err
+		}
+		groupids = authorized
+	} else if req.Groupid != nil && *req.Groupid > 0 {
 		groupids = []uint64{*req.Groupid}
 	} else {
 		db.Table("messages_groups").Select("groupid").Where("msgid = ?", req.ID).Scan(&groupids)
