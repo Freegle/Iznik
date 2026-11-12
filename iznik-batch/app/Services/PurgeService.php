@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Count;
 use App\Models\ChatImage;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
@@ -1272,7 +1274,7 @@ class PurgeService
             ->select('chatid', 'message', 'refmsgid', DB::raw('COUNT(*) as count'))
             ->where('date', '>=', $cutoff)
             ->groupBy('chatid', 'message', 'refmsgid')
-            ->having('count', '>', 1)
+            ->having(new Comparison(new Count(), '>', 1))
             ->get();
 
         foreach ($duplicateChats as $chat) {

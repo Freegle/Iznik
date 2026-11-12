@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Log;
 
 class MicroVolunteeringScoreService
 {
+    private const SCORE_SQL = '100.0 * SUM(score_positive) / NULLIF(SUM(score_positive) + SUM(score_negative), 0)';
+
     private const TRUST_BASIC = 'Basic';
     private const TRUST_MODERATE = 'Moderate';
     private const PROMOTE_THRESHOLD = 90;
@@ -104,15 +106,11 @@ class MicroVolunteeringScoreService
             ->join('users', 'users.id', '=', 'microactions.userid')
             ->where('users.trustlevel', self::TRUST_BASIC)
             ->groupBy('microactions.userid')
-            // keep-raw: 100 * SUM(score_positive) / (SUM(score_positive) + SUM(score_negative))
-            // is arithmetic combining two aggregates, projected as an ALIAS ("score") in a
-            // multi-row SELECT list under GROUP BY. No query-builder method projects an
-            // arithmetic expression over aggregates as a select column, so this stays raw.
-            ->selectRaw('microactions.userid, 100 * SUM(score_positive) / (SUM(score_positive) + SUM(score_negative)) AS score')
-            // HAVING on the "score" alias converts cleanly: MySQL resolves an unqualified
-            // HAVING identifier against the SELECT list alias, so the query builder's
-            // backtick-quoted `score` >= ? is identical to the raw "score >= ?" it replaces.
-            ->having('score', '>=', self::PROMOTE_THRESHOLD)
+            // 100 * SUM(score_positive) / (SUM(score_positive) + SUM(score_negative)): arithmetic over two aggregates.
+            // 100.0 keeps the division fractional and NULLIF turns a zero total into NULL (not an error), as MySQL does.
+            ->selectRaw('microactions.userid, '.self::SCORE_SQL.' AS score')
+            // HAVING repeats the expression: PostgreSQL does not resolve a SELECT alias in HAVING.
+            ->havingRaw(self::SCORE_SQL.' >= ?', [self::PROMOTE_THRESHOLD])
             ->pluck('microactions.userid');
 
         foreach ($users as $userId) {
