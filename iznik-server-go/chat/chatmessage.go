@@ -1322,6 +1322,7 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	cm.Date = time.Now()
 	cm.Message = payload.Message
 	cm.Refmsgid = payload.Refmsgid
+	cm.Imageid = payload.Imageid
 
 	// As in CreateChatMessage, the image claim and the insert succeed or fail together.
 	createErr := db.Transaction(func(tx *gorm.DB) error {
