@@ -33,6 +33,7 @@ require (
 require (
 	github.com/oschwald/maxminddb-golang v1.13.1
 	golang.org/x/net v0.26.0
+	gorm.io/driver/postgres v1.5.11
 	gorm.io/plugin/dbresolver v1.6.2
 	modernc.org/sqlite v1.38.0
 )
@@ -45,10 +46,15 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikstmartin/go-testdb v0.0.0-20160219214506-8d10e4a1bae5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
+	github.com/jackc/pgx/v5 v5.5.5 // indirect
+	github.com/jackc/puddle/v2 v2.2.1 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/jmoiron/sqlx v1.4.0 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/kylelemons/go-gypsy v1.0.0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
@@ -57,7 +63,6 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/ory/dockertest v0.0.0-00010101000000-000000000000 // indirect
 	github.com/ory/dockertest/v3 v3.12.0 // indirect
-	github.com/peterstace/simplefeatures v0.59.0 // indirect
 	github.com/philhofer/fwd v1.1.2 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -67,6 +72,7 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
 	github.com/ziutek/mymysql v1.5.4 // indirect
+	golang.org/x/crypto v0.24.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/image v0.23.0 // indirect
 	golang.org/x/sync v0.15.0 // indirect
