@@ -218,6 +218,9 @@ var mixedCaseColumns = map[string]string{
 
 // translatePostgres rewrites MySQL-dialect SQL into PostgreSQL. It is pure and idempotent.
 func translatePostgres(sql string, cat catalog) string {
+	if strings.Contains(sql, "$$") {
+		return sql // a dollar-quoted body (CREATE FUNCTION, DO) is PostgreSQL already
+	}
 	ts := lexSQL(sql)
 	changed := false
 

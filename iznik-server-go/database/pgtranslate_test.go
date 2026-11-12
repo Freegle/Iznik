@@ -109,6 +109,9 @@ func TestTranslatePostgres(t *testing.T) {
 		{"exists item", "SELECT EXISTS(SELECT 1 FROM t) AS e, id FROM u", "SELECT (CASE WHEN EXISTS(SELECT 1 FROM t) THEN 1 ELSE 0 END) AS e, id FROM u"},
 		{"json compare literal", "WHERE JSON_EXTRACT(d, '$.a') = 'start'", "WHERE JSON_EXTRACT(d, '$.a') = 'start'::text"},
 		{"coalesce json negative", "COALESCE(JSON_EXTRACT(d, '$.a'), -1)", "COALESCE(JSON_EXTRACT(d, '$.a'), to_jsonb(-1))"},
+		{"round", "SELECT ROUND(ST_Y(p), 2) FROM t", "SELECT ROUND((ST_Y(p))::numeric, 2) FROM t"},
+		{"window kept", "SELECT a, row_number() OVER (ORDER BY b) AS rn FROM t GROUP BY a", "SELECT a, row_number() OVER (ORDER BY b) AS rn FROM t GROUP BY a"},
+		{"do block untouched", "DO $$ BEGIN IF user THEN END IF; END $$", "DO $$ BEGIN IF user THEN END IF; END $$"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {

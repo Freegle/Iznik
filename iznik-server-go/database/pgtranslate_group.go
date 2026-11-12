@@ -352,7 +352,7 @@ func fixOneSelect(ts []tok, s int) ([]tok, bool) {
 	}
 
 	ok := func(e []tok) bool {
-		if hasAggregate(e) || !hasIdentifier(e) {
+		if hasAggregate(e) || !hasIdentifier(e) || hasWindow(e) {
 			return true
 		}
 		k := normExpr(e)
@@ -506,4 +506,14 @@ func substituteAliases(cond []tok, items []selItem) []tok {
 // afterBy is the index just after the BY of the GROUP BY or ORDER BY whose first word is at i.
 func afterBy(ts []tok, i int) int {
 	return nextSig(ts, i+1) + 1
+}
+
+// hasWindow reports whether the expression holds a window function (OVER).
+func hasWindow(ts []tok) bool {
+	for _, t := range ts {
+		if isKw(t, "OVER") {
+			return true
+		}
+	}
+	return false
 }

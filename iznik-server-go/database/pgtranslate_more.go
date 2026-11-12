@@ -353,6 +353,32 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		changed = true
 	}
 
+	// ROUND(x, d) on a double: PostgreSQL rounds a numeric to a number of places.
+	for i := len(ts) - 1; i >= 0; i-- {
+		if !isKw(ts[i], "ROUND") {
+			continue
+		}
+		cl := callEnd(ts, i)
+		if cl < 0 {
+			continue
+		}
+		o := nextSig(ts, i+1)
+		args := splitArgs(ts[o+1 : cl])
+		if len(args) != 2 {
+			continue
+		}
+		a := trimToks(args[0])
+		if n := len(a); n > 2 && isP(a[n-1], ")") && isP(a[n-2], ":") {
+			continue
+		}
+		if hasCastNumeric(a) {
+			continue
+		}
+		rep := concatToks([]tok{word("ROUND"), punct("("), punct("(")}, a, []tok{punct(")"), punct(":"), punct(":"), word("numeric"), punct(","), sp()}, trimToks(args[1]), []tok{punct(")")})
+		ts = concatToks(ts[:i], rep, ts[cl+1:])
+		changed = true
+	}
+
 	// TIMESTAMPDIFF(UNIT, a, b) takes the unit as a bare word.
 	for i := 0; i < len(ts); i++ {
 		if !isKw(ts[i], "TIMESTAMPDIFF") {
@@ -960,4 +986,10 @@ func translateUpdateIgnore(ts []tok, first int, cat catalog) ([]tok, bool) {
 		out = append(out, guards...)
 	}
 	return out, true
+}
+
+// hasCastNumeric reports whether the expression already ends in a ::numeric cast.
+func hasCastNumeric(a []tok) bool {
+	n := len(a)
+	return n >= 4 && isKw(a[n-1], "numeric") && isP(a[n-2], ":") && isP(a[n-3], ":")
 }

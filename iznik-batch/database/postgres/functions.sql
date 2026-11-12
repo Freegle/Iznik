@@ -382,10 +382,6 @@ EXCEPTION WHEN others THEN
 END
 $$;
 
--- ROUND(x, d) on a double.
-CREATE OR REPLACE FUNCTION round(x double precision, d integer) RETURNS double precision
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT round(x::numeric, d)::double precision $$;
-
 -- SUM(condition) counts the rows where it holds, as in MySQL where a comparison is 0 or 1.
 CREATE OR REPLACE FUNCTION iznik_bool_sum_step(state bigint, b boolean) RETURNS bigint
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN b IS NULL THEN state WHEN b THEN COALESCE(state, 0) + 1 ELSE COALESCE(state, 0) END $$;

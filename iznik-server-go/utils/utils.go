@@ -5,9 +5,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"math"
+	"os"
 	"regexp"
 	"strconv"
-	"os"
 	"strings"
 
 	"github.com/tidwall/geodesic"
