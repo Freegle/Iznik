@@ -1,0 +1,3 @@
+{"table":"engage_mails","columns":["id","engagement","template","subject","text","shown","action","rate","suggest"]}
+[1,"AtRisk","inactive","We will stop sending you emails soon...","It looks like you have not been active on Freegle for a while.",249,14,5.62,1]
+[4,"Inactive","missing","We miss you!","We do not think you have freegled for a while. Can we tempt you back?",4681,63,1.35,1]

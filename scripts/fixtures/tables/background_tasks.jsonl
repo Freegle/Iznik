@@ -1,0 +1,4 @@
+{"table":"background_tasks","columns":["id","task_type","data","created_at","processed_at","failed_at","error_message","attempts"]}
+[1,"freebie_alerts_add","{\"msgid\": 3}","2026-07-09 10:02:00","2026-07-09 10:02:03",null,null,1]
+[2,"freebie_alerts_add","{\"msgid\": 4}","2026-07-09 10:02:00","2026-07-09 10:02:03",null,null,1]
+[3,"freebie_alerts_add","{\"msgid\": 117}","2026-07-09 10:02:00","2026-07-09 10:02:03",null,null,1]

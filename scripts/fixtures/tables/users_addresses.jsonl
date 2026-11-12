@@ -1,0 +1,6 @@
+{"table":"users_addresses","columns":["id","userid","pafid","to","instructions","lat","lng"]}
+[1,1,1,null,null,null,null]
+[2,2,2,null,null,null,null]
+[3,3,3,null,null,null,null]
+[4,4,4,null,null,null,null]
+[5,5,5,null,null,null,null]
