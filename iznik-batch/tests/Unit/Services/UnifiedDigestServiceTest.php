@@ -5068,4 +5068,69 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
         $this->assertTrue($this->ledgered($msgid, $member->id));
     }
+
+    /**
+     * Make the next reach evaluation fail the way a database or routing error does, and return
+     * a callable that puts the real service back.
+     */
+    private function breakReachEvaluation(): callable
+    {
+        $real = app(\App\Services\Ripple\ReachService::class);
+        $broken = \Mockery::mock(\App\Services\Ripple\ReachService::class);
+        $broken->shouldReceive('currentBudgetSecs')->andThrow(new \RuntimeException('simulated lock wait timeout'));
+        $this->app->instance(\App\Services\Ripple\ReachService::class, $broken);
+
+        return fn () => $this->app->instance(\App\Services\Ripple\ReachService::class, $real);
+    }
+
+    /**
+     * A post whose mail check fails must be looked at again. The pass moves its mark only when
+     * no post failed; if it moves anyway, the post's updated_at is behind the mark next time
+     * and a newly reached member is never mailed.
+     */
+    public function test_reach_pass_does_not_move_its_mark_when_a_post_fails_and_mails_the_member_next_pass(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        $markBefore = DB::table('config')->where('key', $markKey)->value('value');
+
+        $restore = $this->breakReachEvaluation();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame($markBefore, DB::table('config')->where('key', $markKey)->value('value'), 'a pass with a failed post leaves the mark where it was');
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'precondition: the failed pass mailed nobody');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the next pass re-examines the failed post and mails the member');
+    }
+
+    /**
+     * A queued member is dequeued once evaluated. A member whose evaluation failed has not been
+     * evaluated, so the row stays and the next pass mails them.
+     */
+    public function test_drain_keeps_the_queue_row_when_the_member_evaluation_fails(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $restore = $this->breakReachEvaluation();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame(1, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the queue row survives a failed evaluation');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the retried member is mailed');
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
+    }
 }
