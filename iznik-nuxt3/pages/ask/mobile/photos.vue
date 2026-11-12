@@ -20,7 +20,13 @@
       class="app-footer"
       :class="{ 'has-sticky-ad': stickyAdRendered }"
     >
-      <b-button variant="primary" size="lg" class="w-100" @click="goNext">
+      <b-button
+        variant="primary"
+        size="lg"
+        class="w-100"
+        :disabled="anyUploading"
+        @click="goNext"
+      >
         Next <v-icon icon="arrow-right" />
       </b-button>
     </div>
@@ -113,6 +119,11 @@ watch(() => attachments.value.length, readExperimentArm)
 
 // Track if we have photos (for showing Next button)
 const hasPhotos = computed(() => attachments.value.length > 0)
+
+// A photo still uploading has no id yet. Next stays disabled until every upload has finished, because
+// leaving the page unmounts the uploader and strands the photo as failed, which the details step then
+// counts as a real photo.
+const anyUploading = computed(() => attachments.value.some((a) => a.uploading))
 
 function onPhotoProcessed() {
   // Photo was added - hasPhotos will update automatically via computed
