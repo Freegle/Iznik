@@ -354,9 +354,10 @@ func groupSettingTruthy(settingsJSON *string, key string) bool {
 	}
 }
 
-// logGroupJoined records that the member joined the community by posting to it.
+// logGroupJoined records that the member joined the community by posting to it. It sends the one
+// INSERT and nothing else: GORM's default transaction would add a BEGIN and a COMMIT around it.
 func logGroupJoined(db *gorm.DB, groupid uint64, uid uint64) *gorm.DB {
-	return db.Table("logs").Create(map[string]interface{}{
+	return db.Session(&gorm.Session{SkipDefaultTransaction: true}).Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      flog.LOG_TYPE_GROUP,
 		"subtype":   flog.LOG_SUBTYPE_JOINED,

@@ -42,3 +42,10 @@ func TestParityDialect_PostgresForms(t *testing.T) {
 		"INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
 		func(tx *gorm.DB) *gorm.DB { return logGroupJoined(tx, 10, 5) })
 }
+
+// The raw statement was one Exec. The converted write must not add a BEGIN and a COMMIT.
+func TestParityNoTransaction_LogGroupJoined(t *testing.T) {
+	parity.AssertNoDefaultTransaction(t, func(tx *gorm.DB) *gorm.DB {
+		return logGroupJoined(tx, 10, 5)
+	})
+}

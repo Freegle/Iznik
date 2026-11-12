@@ -206,9 +206,10 @@ func applyUnsubscribe(db *gorm.DB, uid uint64, unsubType string) {
 }
 
 // stopDigestEmails turns off the digest on every membership that has one. The statement has the
-// same effect as one that wrote the 0 inline: the value is bound, not part of the text.
+// same effect as one that wrote the 0 inline: the value is bound, not part of the text. It sends the
+// one UPDATE and nothing else: GORM's default transaction would add a BEGIN and a COMMIT around it.
 func stopDigestEmails(db *gorm.DB, uid uint64) *gorm.DB {
-	return db.Table("memberships").Where("userid = ? AND emailfrequency != 0", uid).Update("emailfrequency", 0)
+	return db.Session(&gorm.Session{SkipDefaultTransaction: true}).Table("memberships").Where("userid = ? AND emailfrequency != 0", uid).Update("emailfrequency", 0)
 }
 
 func describeFor(unsubType string) string {

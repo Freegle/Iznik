@@ -213,3 +213,22 @@ func TestLookupSite_UsesTheGeneratedStore(t *testing.T) {
 		t.Fatalf("goldens.json holds %d sites, which is too few to be the generated store", len(sites))
 	}
 }
+
+func TestAssertNoDefaultTransaction_FailsOnADefaultTransactionAndPassesWithoutOne(t *testing.T) {
+	r := &recorder{}
+	AssertNoDefaultTransaction(r, func(tx *gorm.DB) *gorm.DB {
+		return tx.Table("memberships").Where("userid = ?", 5).Update("emailfrequency", 0)
+	})
+	if !r.failed || !strings.Contains(r.message, "transaction") {
+		t.Fatalf("a write with GORM's default transaction must fail; got %+v", r)
+	}
+
+	r = &recorder{}
+	AssertNoDefaultTransaction(r, func(tx *gorm.DB) *gorm.DB {
+		return tx.Session(&gorm.Session{SkipDefaultTransaction: true}).
+			Table("memberships").Where("userid = ?", 5).Update("emailfrequency", 0)
+	})
+	if r.failed {
+		t.Fatalf("a write without the default transaction must pass: %s", r.message)
+	}
+}

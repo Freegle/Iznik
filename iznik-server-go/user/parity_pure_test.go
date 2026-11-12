@@ -14,3 +14,10 @@ func TestParityGolden_StopDigestEmails(t *testing.T) {
 		return stopDigestEmails(tx, 5)
 	})
 }
+
+// The raw statement was one Exec. The converted write must not add a BEGIN and a COMMIT.
+func TestParityNoTransaction_StopDigestEmails(t *testing.T) {
+	parity.AssertNoDefaultTransaction(t, func(tx *gorm.DB) *gorm.DB {
+		return stopDigestEmails(tx, 5)
+	})
+}
