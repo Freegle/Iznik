@@ -389,6 +389,8 @@ export async function freegleIt(type, router, options = {}) {
       type,
     }
 
+    // From here the post exists and the draft is cleared, so nothing below may report a failure or
+    // keep the member on the form: a retry would post it twice.
     await Promise.all(
       results.map(async (res) => {
         console.log('Consider result', res, type)
@@ -403,25 +405,29 @@ export async function freegleIt(type, router, options = {}) {
           params.newuser = res.newuser
           params.newpassword = res.newpassword
 
-          // Make sure we're logged in, and so that we have permission to fetch messages
-          // below.
-          console.log('Login', composeStore.email)
-          await authStore.login({
-            email: composeStore.email,
-            password: params.newpassword,
-          })
-
-          // Save the postcode to the new user's settings, just like it would be if they had set it from the Settings page
-          if (composeStore.postcode?.id) {
-            console.log(
-              'Saving postcode to new user settings',
-              composeStore.postcode
-            )
-            const settings = authStore.user?.settings || {}
-            settings.mylocation = composeStore.postcode
-            await authStore.saveAndGet({
-              settings,
+          try {
+            // Make sure we're logged in, and so that we have permission to fetch messages
+            // below.
+            console.log('Login', composeStore.email)
+            await authStore.login({
+              email: composeStore.email,
+              password: params.newpassword,
             })
+
+            // Save the postcode to the new user's settings, just like it would be if they had set it from the Settings page
+            if (composeStore.postcode?.id) {
+              console.log(
+                'Saving postcode to new user settings',
+                composeStore.postcode
+              )
+              const settings = authStore.user?.settings || {}
+              settings.mylocation = composeStore.postcode
+              await authStore.saveAndGet({
+                settings,
+              })
+            }
+          } catch (e) {
+            console.log('New user setup after posting failed', e)
           }
         }
       })
@@ -443,7 +449,11 @@ export async function freegleIt(type, router, options = {}) {
         promises.push(messageStore.fetch(res.id))
       })
 
-      await Promise.all(promises)
+      try {
+        await Promise.all(promises)
+      } catch (e) {
+        console.log('Fetching the new posts failed', e)
+      }
     }
 
     // Debug: log results count
@@ -451,20 +461,21 @@ export async function freegleIt(type, router, options = {}) {
 
     // We pass the data in the history state to avoid it showing up in the URL.
     console.log('Navigate to myposts', params)
-    const navigationResult = await router.push({
-      name: 'myposts',
-      state: params,
-    })
+    try {
+      const navigationResult = await router.push({
+        name: 'myposts',
+        state: params,
+      })
 
-    // Check for navigation failure (Vue Router 4 returns NavigationFailure on failure)
-    if (navigationResult) {
-      console.log('Navigation failed:', navigationResult)
-      // Navigation was prevented - this is unexpected
-      throw new Error(
-        `Navigation failed: ${navigationResult.type || 'unknown'}`
-      )
+      // Vue Router 4 returns a NavigationFailure rather than throwing.
+      if (navigationResult) {
+        console.log('Navigation failed:', navigationResult)
+      } else {
+        console.log('Navigated successfully')
+      }
+    } catch (e) {
+      console.log('Navigation to myposts failed', e)
     }
-    console.log('Navigated successfully')
 
     // Experiment join-name-optional: a member who joined without a name is asked for one now.
     useAskName().maybeAskName('post')

@@ -525,7 +525,7 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
       )
     })
 
-    it('throws when router.push reports a navigation failure', async () => {
+    it('does not flag wentWrong when router.push reports a navigation failure', async () => {
       const failingRouter = {
         push: vi.fn().mockResolvedValue({ type: 4 }),
       }
@@ -535,9 +535,8 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
 
       await mod.freegleIt('Offer', failingRouter)
 
-      // The throw inside the try block is caught by the outer catch,
-      // which then classifies it as a generic failure.
-      expect(api.wentWrong.value).toBe(true)
+      // The post is already live, so a refused navigation must not invite a retry.
+      expect(api.wentWrong.value).toBe(false)
     })
   })
 })
