@@ -178,4 +178,14 @@ docker exec "${PREFIX}-percona" sh -c "\
       mysql -u root -piznik iznik_go_test"
 echo "iznik_go_test ready (schema cloned from migrated iznik)"
 
+# 5. Optional second engine. Off unless PG_ENGINE=1, so nothing above changes and CI is unaffected.
+# Builds the PostgreSQL databases from the generated baseline; see scripts/setup-pg-database.sh.
+if [ "${PG_ENGINE:-}" = "1" ]; then
+  echo "PG_ENGINE=1: building the PostgreSQL databases..."
+  if ! "${REPO_DIR}/scripts/setup-pg-database.sh"; then
+    echo "PostgreSQL database setup FAILED"
+    exit 1
+  fi
+fi
+
 echo "Test database and environment ready!"

@@ -237,3 +237,14 @@ test('every table in the committed baseline file loads from the same text the co
   assert.ok((text.match(/^CREATE TABLE /gm) || []).length > 250)
   assert.ok(!/`/.test(text.replace(/COMMENT ON[^\n]*/g, '')), 'no MySQL backticks outside comments')
 })
+
+test('setup-test-database.sh builds PostgreSQL only when PG_ENGINE=1, after the MySQL path', async () => {
+  const fs = await import('node:fs')
+  const text = fs.readFileSync(new URL('../../scripts/setup-test-database.sh', import.meta.url), 'utf8')
+  const mysqlEnd = text.indexOf('echo "iznik_go_test ready (schema cloned from migrated iznik)"')
+  const guard = text.indexOf('if [ "${PG_ENGINE:-}" = "1" ]; then')
+  assert.ok(mysqlEnd > 0 && guard > mysqlEnd, 'the PostgreSQL block comes after the MySQL path')
+  assert.equal(text.split('setup-pg-database.sh').length - 1, 2, 'one comment and one call')
+  // Nothing before the guard mentions PostgreSQL.
+  assert.ok(!/postgres|PG_/i.test(text.slice(0, mysqlEnd)))
+})

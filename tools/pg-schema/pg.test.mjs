@@ -149,3 +149,27 @@ test('the baseline is repeatable: loading it again into an empty database gives 
     psql('postgres', `DROP DATABASE IF EXISTS ${second} WITH (FORCE);`)
   }
 })
+
+test('setup-pg-database.sh builds both databases, leaves a built one alone, and rebuilds on request', { skip }, () => {
+  const script = path.join(here, '../../scripts/setup-pg-database.sh')
+  const a = `${DB}_s1`
+  const b = `${DB}_s2`
+  const run = (extra = {}) =>
+    spawnSync('bash', [script], { encoding: 'utf8', env: { ...process.env, PG_PSQL: `${PSQL}`, PG_DATABASE: a, PG_TEST_DATABASE: b, ...extra } })
+  try {
+    const tables = (fs.readFileSync(baselinePath, 'utf8').match(/^CREATE TABLE /gm) || []).length
+    let r = run()
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    assert.match(r.stdout, new RegExp(`PostgreSQL database ${a} ready \\(${tables} tables\\)`))
+    assert.match(r.stdout, new RegExp(`PostgreSQL database ${b} ready \\(${tables} tables\\)`))
+    r = run()
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    assert.match(r.stdout, new RegExp(`${a} already has ${tables} tables`))
+    psql(a, 'CREATE TABLE marker (x int)')
+    r = run({ PG_REBUILD: '1' })
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    assert.equal(psql(a, `SELECT count(*) FROM pg_class WHERE relname = 'marker'`), '0')
+  } finally {
+    psql('postgres', `DROP DATABASE IF EXISTS ${a} WITH (FORCE); DROP DATABASE IF EXISTS ${b} WITH (FORCE);`)
+  }
+})
