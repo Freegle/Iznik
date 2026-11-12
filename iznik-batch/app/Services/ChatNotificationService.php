@@ -98,7 +98,8 @@ class ChatNotificationService
             $chatId,
             $delay,
             $sinceHours,
-            $forceAll
+            $forceAll,
+            $dryRun
         );
 
         foreach ($messages as $message) {
@@ -120,7 +121,8 @@ class ChatNotificationService
         ?int $chatId,
         int $delay,
         int $sinceHours,
-        bool $forceAll
+        bool $forceAll,
+        bool $dryRun = false
     ): Collection {
         $startTime = now()->subHours($sinceHours);
         $endTime = now()->subSeconds($delay);
@@ -238,9 +240,11 @@ class ChatNotificationService
             $query->where('chat_rooms.id', $chatId);
         }
 
-        return $query->orderBy('chat_messages.id', 'asc')
+        $rows = $query->orderBy('chat_messages.id', 'asc')
             ->with(['chatRoom', 'user', 'refMessage'])
-            ->get()
+            ->get();
+
+        $kept = $rows
             // Collapse duplicate rows created for a single send. A single chat
             // send occasionally inserts two (or more) identical chat_messages
             // rows ~1s apart (double-submit / retry with no dedup guard at
@@ -262,6 +266,18 @@ class ChatNotificationService
                 ]);
             })
             ->values();
+
+        // The collapsed rows are left unmailed in the database, so the next pass would select the first of them
+        // again and mail it as a new message. Mark them done: the kept row's notification stands for the send.
+        if (! $dryRun) {
+            $collapsedIds = $rows->pluck('id')->diff($kept->pluck('id'))->values()->all();
+
+            if (! empty($collapsedIds)) {
+                DB::table('chat_messages')->whereIn('id', $collapsedIds)->update(['mailedtoall' => 1]);
+            }
+        }
+
+        return $kept;
     }
 
     /**
