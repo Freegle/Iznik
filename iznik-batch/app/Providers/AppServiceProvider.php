@@ -44,6 +44,10 @@ class AppServiceProvider extends ServiceProvider
             return new DeadlockRetryConnection($connection, $database, $prefix, $config);
         });
 
+        \Illuminate\Database\Connection::resolverFor('pgsql', function ($connection, $database, $prefix, $config) {
+            return new \App\Database\JsonTextPostgresConnection($connection, $database, $prefix, $config);
+        });
+
         // Past mail with the support and info mailboxes for the support case first pass. Unconfigured
         // until mailbox access is set up; bind another implementation here when it is.
         $this->app->bind(\App\Services\Support\MailboxHistory::class, \App\Services\Support\UnconfiguredMailboxHistory::class);
