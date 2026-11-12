@@ -192,3 +192,28 @@ BEGIN
   RETURN c;
 END
 $$;
+
+-- crc32(s): MySQL's built-in CRC32 (IEEE polynomial, the same checksum as PHP crc32() and Go crc32.ChecksumIEEE)
+-- of the UTF-8 bytes of a string, as an unsigned 32-bit number. PostgreSQL has no built-in. Used to bucket
+-- ids into experiment arms, which must agree between PHP, Go and SQL; NULL in, NULL out, as in MySQL.
+CREATE OR REPLACE FUNCTION crc32(s text) RETURNS bigint
+LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE AS $$
+DECLARE
+  b bytea := convert_to(s, 'UTF8');
+  crc bigint := 4294967295;
+  i integer;
+  j integer;
+BEGIN
+  FOR i IN 0 .. length(b) - 1 LOOP
+    crc := crc # get_byte(b, i);
+    FOR j IN 1 .. 8 LOOP
+      IF (crc & 1) = 1 THEN
+        crc := (crc >> 1) # 3988292384;
+      ELSE
+        crc := crc >> 1;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RETURN crc # 4294967295;
+END
+$$;

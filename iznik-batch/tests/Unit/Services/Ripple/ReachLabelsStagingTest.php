@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Database\Expressions\CastAs;
+use App\Database\Sql;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -62,7 +64,7 @@ class ReachLabelsStagingTest extends TestCase
 
         $this->assertSame(self::FP, ReachService::livePartitionFp());
         $this->assertSame(
-            'COALESCE(IF(rr.reach_labels_next_fp = '.self::FP.', rr.reach_labels_next, NULL), rr.reach_labels)',
+            'COALESCE(CASE WHEN rr.reach_labels_next_fp = '.self::FP.' THEN rr.reach_labels_next END, rr.reach_labels)',
             ReachService::liveLabelsSql('rr.')
         );
         $this->assertSame('staged', ReachService::pickLabels($this->row('live', 'staged', self::FP)));
@@ -94,20 +96,22 @@ class ReachLabelsStagingTest extends TestCase
         // The SQL and PHP forms must agree, or a digest could probe one blob
         // while the reply gate decodes another.
         $expr = ReachService::liveLabelsSql();
+        $fpBind = Sql::render(new CastAs(DB::raw('?'), 'SIGNED'));
+        $nullFp = Sql::render(new CastAs(DB::raw('NULL'), 'SIGNED'));
         $picked = DB::selectOne(
-            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, ? AS reach_labels_next_fp) AS t",
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, {$fpBind} AS reach_labels_next_fp) AS t",
             [self::FP]
         );
         $this->assertSame('staged', $picked->picked);
 
         $stale = DB::selectOne(
-            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, ? AS reach_labels_next_fp) AS t",
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, {$fpBind} AS reach_labels_next_fp) AS t",
             [42]
         );
         $this->assertSame('live', $stale->picked);
 
         $unstaged = DB::selectOne(
-            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, NULL AS reach_labels_next, NULL AS reach_labels_next_fp) AS t"
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, NULL AS reach_labels_next, {$nullFp} AS reach_labels_next_fp) AS t"
         );
         $this->assertSame('live', $unstaged->picked);
     }
