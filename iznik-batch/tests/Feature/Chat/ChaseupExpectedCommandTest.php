@@ -383,7 +383,8 @@ class ChaseupExpectedCommandTest extends TestCase
 
         [$expecter, $expectee, $room] = $this->makeExpectedScenario();
         $newer = $this->createTestChatMessage($room, $expecter, [
-            'date' => now()->subDays(2),
+            // Newer than the first message but still a day before the expectee's last visit.
+            'date' => now()->subDays(3)->addHours(2),
             'replyexpected' => 1,
             'replyreceived' => 0,
         ]);
@@ -436,9 +437,8 @@ class ChaseupExpectedCommandTest extends TestCase
     {
         Mail::fake();
 
-        [, $expecteeOld, , $oldMsg] = $this->makeExpectedScenario(['date' => now()->subDays(4)]);
-        [, , , $newMsg] = $this->makeExpectedScenario(['date' => now()->subDays(2)]);
-        DB::table('users')->where('id', $expecteeOld->id)->update(['lastaccess' => now()->subDay()]);
+        [, , , $oldMsg] = $this->makeExpectedScenario(['date' => now()->subDays(4)]);
+        [, , , $newMsg] = $this->makeExpectedScenario(['date' => now()->subDays(3)]);
 
         $this->artisan('chats:chaseup-expected', ['--limit' => 1])
             ->expectsOutputToContain('Chased up 1 message(s)')

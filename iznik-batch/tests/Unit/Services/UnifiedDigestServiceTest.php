@@ -5175,9 +5175,22 @@ class UnifiedDigestServiceTest extends TestCase
         $markKey = UnifiedDigestService::reachMailMarkKey(0);
         $this->assertSame(15, UnifiedDigestService::REACH_MARK_MAX_HOLD_MINUTES);
 
-        // Within the window: held, no error line.
-        $heldAt = now()->subMinutes(10)->toDateTimeString();
+        $holdKey = UnifiedDigestService::reachMailHoldKey(0);
+
+        // The first failing pass, even with a mark that is hours old: held, and the hold starts.
+        $heldAt = now()->subHours(3)->toDateTimeString();
         DB::table('config')->updateOrInsert(['key' => $markKey], ['value' => $heldAt]);
+        DB::table('config')->where('key', $holdKey)->delete();
+        \Illuminate\Support\Facades\Log::spy();
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+        $this->assertSame($heldAt, DB::table('config')->where('key', $markKey)->value('value'), 'held on the first failing pass');
+        $this->assertNotNull(DB::table('config')->where('key', $holdKey)->value('value'), 'and the hold is timed from now');
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('error');
+
+        // Failing for 10 minutes: still held, no error line.
+        DB::table('config')->where('key', $holdKey)->update(['value' => now()->subMinutes(10)->toDateTimeString()]);
         \Illuminate\Support\Facades\Log::spy();
         $restore = $this->breakRouting();
         $this->service->sendReachDigests(null, false, 0, 1);
@@ -5185,8 +5198,8 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertSame($heldAt, DB::table('config')->where('key', $markKey)->value('value'), 'held inside the window');
         \Illuminate\Support\Facades\Log::shouldNotHaveReceived('error');
 
-        // Past the window: the mark moves to this pass and one error is logged.
-        DB::table('config')->where('key', $markKey)->update(['value' => now()->subMinutes(20)->toDateTimeString()]);
+        // Failing for 20 minutes: the mark moves to this pass, one error is logged and the hold clears.
+        DB::table('config')->where('key', $holdKey)->update(['value' => now()->subMinutes(20)->toDateTimeString()]);
         \Illuminate\Support\Facades\Log::spy();
         $restore = $this->breakRouting();
         $this->service->sendReachDigests(null, false, 0, 1);
@@ -5194,6 +5207,7 @@ class UnifiedDigestServiceTest extends TestCase
         $mark = \Illuminate\Support\Carbon::parse(DB::table('config')->where('key', $markKey)->value('value'));
         $this->assertTrue($mark->gt(now()->subMinute()), 'the mark has moved on to this pass');
         \Illuminate\Support\Facades\Log::shouldHaveReceived('error')->once();
+        $this->assertNull(DB::table('config')->where('key', $holdKey)->value('value'), 'the hold is cleared');
     }
 
     /**

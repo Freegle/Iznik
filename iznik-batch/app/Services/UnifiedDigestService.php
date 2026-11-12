@@ -763,15 +763,24 @@ class UnifiedDigestService
         if (! $dryRun && empty($stats['stopped'])) {
             if ($stats['retryable'] === 0) {
                 $this->setReachMailMark($shard, $passStart);
-            } elseif ($mark->lt(now()->subMinutes(self::REACH_MARK_MAX_HOLD_MINUTES))) {
-                // Routing has been failing for longer than the hold allows. Let the mark move on
-                // so the re-read does not keep growing; this is the one error line for the outage.
-                Log::error('reach-mail: routing still failing after the hold window, giving up on the posts it failed for', [
-                    'shard' => $shard,
-                    'retryable_failures' => $stats['retryable'],
-                    'held_minutes' => self::REACH_MARK_MAX_HOLD_MINUTES,
-                ]);
-                $this->setReachMailMark($shard, $passStart);
+                $this->clearReachMailHold($shard);
+            } else {
+                // The hold is timed from the first pass that routing failed, not from the age of the
+                // mark, so a blip after a quiet spell is still given the full window.
+                $heldSince = $this->reachMailHoldSince($shard) ?? $passStart;
+                if ($heldSince->lt(now()->subMinutes(self::REACH_MARK_MAX_HOLD_MINUTES))) {
+                    // Routing has been failing for longer than the hold allows. Let the mark move on
+                    // so the re-read does not keep growing; this is the one error line for the outage.
+                    Log::error('reach-mail: routing still failing after the hold window, giving up on the posts it failed for', [
+                        'shard' => $shard,
+                        'retryable_failures' => $stats['retryable'],
+                        'held_minutes' => self::REACH_MARK_MAX_HOLD_MINUTES,
+                    ]);
+                    $this->setReachMailMark($shard, $passStart);
+                    $this->clearReachMailHold($shard);
+                } else {
+                    $this->setReachMailHoldSince($shard, $heldSince);
+                }
             }
         }
 
@@ -875,12 +884,38 @@ class UnifiedDigestService
      * Where shard N of the reach pass keeps its mark. Shards partition posts by MOD(msgid, N)
      * and run concurrently, so each has its own.
      */
-    /** The longest routing being unreachable may hold a shard's reach-mail mark back, in minutes. */
+    /** The longest a routing outage may hold a shard's reach-mail mark back, in minutes, timed from the first failing pass. */
     public const REACH_MARK_MAX_HOLD_MINUTES = 15;
 
     public static function reachMailMarkKey(int $shard): string
     {
         return "reach_mail_mark_shard{$shard}";
+    }
+
+    public static function reachMailHoldKey(int $shard): string
+    {
+        return "reach_mail_hold_since_shard{$shard}";
+    }
+
+    private function reachMailHoldSince(int $shard): ?\Illuminate\Support\Carbon
+    {
+        $raw = DB::table('config')->where('key', self::reachMailHoldKey($shard))->value('value');
+
+        return $raw ? \Illuminate\Support\Carbon::parse($raw) : null;
+    }
+
+    private function setReachMailHoldSince(int $shard, \Illuminate\Support\Carbon $at): void
+    {
+        DB::table('config')->upsert(
+            ['key' => self::reachMailHoldKey($shard), 'value' => $at->toDateTimeString()],
+            ['key'],
+            ['value']
+        );
+    }
+
+    private function clearReachMailHold(int $shard): void
+    {
+        DB::table('config')->where('key', self::reachMailHoldKey($shard))->delete();
     }
 
     private function reachMailMark(int $shard): ?\Illuminate\Support\Carbon
