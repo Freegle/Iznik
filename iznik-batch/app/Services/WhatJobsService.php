@@ -1657,8 +1657,9 @@ class WhatJobsService
      * is what lets sync() stream straight from XML into the DB without
      * holding ~180k job dicts in memory at once.
      */
-    public function insertJobs(iterable $jobs, int $srid = 3857): int
+    public function insertJobs(iterable $jobs, ?int $srid = null): int
     {
+        $srid ??= (int) config('freegle.srid');
         // Preserve existing auto-increment IDs so email links (e.g. /jobs/12345) don't break
         $existingIds = DB::table('jobs')->pluck('id', 'job_reference')->all();
 

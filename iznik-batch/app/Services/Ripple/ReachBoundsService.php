@@ -87,8 +87,8 @@ class ReachBoundsService
         try {
             DB::update(
                 'UPDATE rippling_reach
-                    SET outer_bound = ST_GeomFromText(?, 3857), '
-                    . ($innerWkt !== null ? 'inner_bound = ST_GeomFromText(?, 3857), ' : 'inner_bound = NULL, ') .
+                    SET outer_bound = ST_GeomFromText(?, ' . config('freegle.srid') . '), '
+                    . ($innerWkt !== null ? 'inner_bound = ST_GeomFromText(?, ' . config('freegle.srid') . '), ' : 'inner_bound = NULL, ') .
                     'updated_at = updated_at
                   WHERE msgid = ?',
                 $innerWkt !== null ? [$outerWkt, $innerWkt, $msgid] : [$outerWkt, $msgid]
@@ -160,7 +160,7 @@ class ReachBoundsService
             return null;
         }
 
-        return ['join' => '', 'expr' => 'ST_GeomFromText(?, 3857)', 'binds' => [$vec['wkt']]];
+        return ['join' => '', 'expr' => 'ST_GeomFromText(?, ' . config('freegle.srid') . ')', 'binds' => [$vec['wkt']]];
     }
 
     /**
@@ -294,7 +294,7 @@ class ReachBoundsService
         try {
             DB::update(
                 'UPDATE rippling_reach
-                    SET outer_bound = ST_SRID(POINT(lng, lat), 3857),
+                    SET outer_bound = ST_SRID(POINT(lng, lat), ' . config('freegle.srid') . '),
                         inner_bound = NULL,
                         updated_at = updated_at
                   WHERE msgid = ?',
@@ -390,7 +390,7 @@ class ReachBoundsService
             // keep-raw: ST_GeomFromText SET expression; updated_at preserved deliberately
             DB::update(
                 'UPDATE rippling_reach
-                    SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL,
+                    SET outer_bound = ST_GeomFromText(?, ' . config('freegle.srid') . '), inner_bound = NULL,
                         updated_at = updated_at
                   WHERE msgid = ?',
                 [$bbox, $msgid]

@@ -19,7 +19,11 @@ class MessageSpatialService
     // features (e.g. the matched-posts backfill) can bound themselves to the same
     // open-age window that governs messages_spatial membership.
     public const RECENT_DAYS = 31;
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
 
     /**
      * Ranking that decides which single membership represents a post in
@@ -286,7 +290,7 @@ class MessageSpatialService
                 DB::table('messages_spatial')->upsert(
                     [[
                         'msgid' => $msg->id,
-                        'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::SRID),
+                        'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::srid()),
                         'groupid' => $msg->groupid,
                         'msgtype' => $msg->msgtype,
                         'arrival' => $msg->arrival,
@@ -543,7 +547,7 @@ class MessageSpatialService
         DB::table('messages_spatial')->upsert(
             [[
                 'msgid' => $msg->id,
-                'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::SRID),
+                'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::srid()),
                 'groupid' => $msg->groupid,
                 'msgtype' => $msg->msgtype,
                 'arrival' => $msg->arrival,

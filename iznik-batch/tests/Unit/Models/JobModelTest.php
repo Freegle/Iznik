@@ -77,7 +77,7 @@ class JobModelTest extends TestCase
      */
     private function seedJob(array $attrs = [], float $lat = 51.5074, float $lng = -0.1278): int
     {
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         $attrs += [
             'location' => 'London',
             'company' => 'Test',

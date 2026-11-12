@@ -61,7 +61,7 @@ class EngagementServiceTest extends TestCase
 
         DB::statement(
             'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(?, ?), 3857), 0, 0, ?, ?, NOW())',
+             VALUES (?, ST_SRID(POINT(?, ?), ' . config('freegle.srid') . '), 0, 0, ?, ?, NOW())',
             [
                 $message->id, $group->lng, $group->lat, $group->id,
                 $attributes['type'] ?? Message::TYPE_OFFER,

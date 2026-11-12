@@ -39,7 +39,7 @@ class LoveJunkServiceTest extends TestCase
                 (nameshort, namefull, type, onlovejunk, onhere, publish, lat, lng, polyindex)
             VALUES
                 (?, 'Test LoveJunk Group', 'Freegle', ?, 1, 1, 51.5, -0.1,
-                 ST_GeomFromText('POLYGON((-1 51,-1 52,0 52,0 51,-1 51))',3857))
+                 ST_GeomFromText('POLYGON((-1 51,-1 52,0 52,0 51,-1 51))'," . config('freegle.srid') . "))
         ", [$nameshort, $onlovejunk]);
 
         return (int) DB::getPdo()->lastInsertId();

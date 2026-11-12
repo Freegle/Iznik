@@ -22,7 +22,11 @@ use Illuminate\Support\Facades\Http;
  */
 class ReachQueryService
 {
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
 
     /** The routing server put this location inside the post's reach. */
     public const VERDICT_IN = 'in';

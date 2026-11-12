@@ -367,7 +367,7 @@ class ChatReviewServiceTest extends TestCase
         // keys normally prevent this, so lift them for the insert only.
         [, $recipient] = $this->pendingMessage('-3 days');
         $goneId = (int) DB::table('groups')->max('id') + 100000;
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        \Tests\Support\ForeignKeyChecks::disable();
         try {
             DB::table('memberships')->insert([
                 'userid' => $recipient->id,
@@ -377,7 +377,7 @@ class ChatReviewServiceTest extends TestCase
                 'added' => now(),
             ]);
         } finally {
-            DB::statement('SET FOREIGN_KEY_CHECKS=1');
+            \Tests\Support\ForeignKeyChecks::enable();
         }
 
         $result = $this->service->processReview();

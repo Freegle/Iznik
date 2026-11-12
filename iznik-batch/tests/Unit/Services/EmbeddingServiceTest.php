@@ -173,7 +173,7 @@ class EmbeddingServiceTest extends TestCase
 
         DB::statement(
             'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
-             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
+             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [$message->id, $group->id, 'Offer', now(), sprintf('POINT(%F %F)', $group->lng, $group->lat)]
         );
 

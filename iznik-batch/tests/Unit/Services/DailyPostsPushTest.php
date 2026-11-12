@@ -644,7 +644,7 @@ class DailyPostsPushTest extends TestCase
         $msg = $this->createApprovedMessage($other, $group, 'OFFER: Far away item (Aberdeen)');
         DB::table('messages')->where('id', $msg->id)->update(['lat' => 57.15, 'lng' => -2.1]);
         DB::table('messages_spatial')->where('msgid', $msg->id)->update([
-            'point' => DB::raw("ST_SRID(POINT(-2.1, 57.15), 3857)"),
+            'point' => DB::raw("ST_SRID(POINT(-2.1, 57.15), " . config('freegle.srid') . ")"),
         ]);
         $this->createUserPushToken($user->id);
 

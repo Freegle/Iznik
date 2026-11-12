@@ -53,7 +53,7 @@ class EmbeddingCoverageMonitoringTest extends TestCase
 
         DB::statement(
             'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
-             VALUES (?, ?, ?, ?, ?, ?, ST_GeomFromText(?, 3857))',
+             VALUES (?, ?, ?, ?, ?, ?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [$message->id, $this->group->id, 'Offer', $successful, $promised, $arrival, 'POINT(0 0)']
         );
 

@@ -57,7 +57,7 @@ class CommunityNewsAreaServiceTest extends TestCase
             'lat' => $lat,
             'lng' => $lng,
             'population' => $population,
-            'position' => DB::raw('ST_SRID(POINT(' . $lng . ', ' . $lat . '), 3857)'),
+            'position' => DB::raw('ST_SRID(POINT(' . $lng . ', ' . $lat . '), ' . config('freegle.srid') . ')'),
         ]);
     }
 
@@ -66,7 +66,7 @@ class CommunityNewsAreaServiceTest extends TestCase
         return (int) DB::table('authorities')->insertGetId([
             'name' => $name,
             'area_code' => $code,
-            'polygon' => DB::raw("ST_GeomFromText('$wkt', 3857)"),
+            'polygon' => DB::raw("ST_GeomFromText('$wkt', " . config('freegle.srid') . ")"),
         ]);
     }
 

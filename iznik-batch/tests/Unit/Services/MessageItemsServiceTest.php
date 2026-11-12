@@ -48,7 +48,7 @@ class MessageItemsServiceTest extends TestCase
     {
         $msg = $this->createTestMessage($this->createTestUser(), $this->createTestGroup(), ['subject' => $subject]);
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, 'Offer', ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, 'Offer', ?)",
             [$msg->id, DB::table('messages_groups')->where('msgid', $msg->id)->value('groupid') ?? 0, now()]
         );
 

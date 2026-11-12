@@ -235,11 +235,11 @@ class VisualiseServiceTest extends TestCase
         $from = $this->locatedUser(51.5, -0.12);
         $missing = (int) DB::table('users')->max('id') + 1000000;
         // messages_by.userid has a foreign key; lift it to simulate a taker deleted since.
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        \Tests\Support\ForeignKeyChecks::disable();
         try {
             [$msgid] = $this->takenOffer($from->id, $missing);
         } finally {
-            DB::statement('SET FOREIGN_KEY_CHECKS=1');
+            \Tests\Support\ForeignKeyChecks::enable();
         }
 
         $this->assertSame(0, $this->service->scan('1 hour ago'));

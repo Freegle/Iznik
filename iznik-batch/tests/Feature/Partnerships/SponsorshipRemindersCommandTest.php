@@ -25,7 +25,7 @@ class SponsorshipRemindersCommandTest extends TestCase
 
         $this->authorityId = (int) DB::table('authorities')->insertGetId([
             'name' => 'Reminder Test Council ' . uniqid(),
-            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-1 10, 1 10, 1 12, -1 12, -1 10))', 3857)"),
+            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-1 10, 1 10, 1 12, -1 12, -1 10))', " . config('freegle.srid') . ")"),
         ]);
 
         // Other tests share this database; park anything already due so each test only sees
@@ -115,7 +115,7 @@ class SponsorshipRemindersCommandTest extends TestCase
         // A different council, or the later deal would count as renewing the first.
         $otherAuthority = (int) DB::table('authorities')->insertGetId([
             'name' => 'Other Reminder Council ' . uniqid(),
-            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-1 10, 1 10, 1 12, -1 12, -1 10))', 3857)"),
+            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-1 10, 1 10, 1 12, -1 12, -1 10))', " . config('freegle.srid') . ")"),
         ]);
         $this->partnership(40, ['status' => 'Overdue', 'authorityid' => $otherAuthority]);
 
@@ -225,7 +225,7 @@ class SponsorshipRemindersCommandTest extends TestCase
             'nameshort' => 'remindergrp' . uniqid(),
             'type' => 'Freegle',
             // groups.polyindex has no default, so a catchment has to be supplied.
-            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((-0.5 10.5, 0.5 10.5, 0.5 11.5, -0.5 11.5, -0.5 10.5))', 3857)"),
+            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((-0.5 10.5, 0.5 10.5, 0.5 11.5, -0.5 11.5, -0.5 10.5))', " . config('freegle.srid') . ")"),
         ]);
         DB::table('partnerships_groups')->insert([
             'partnershipid' => $id,
@@ -236,7 +236,7 @@ class SponsorshipRemindersCommandTest extends TestCase
         $removedId = (int) DB::table('groups')->insertGetId([
             'nameshort' => 'remindergrp' . uniqid(),
             'type' => 'Freegle',
-            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((-0.5 10.5, 0.5 10.5, 0.5 11.5, -0.5 11.5, -0.5 10.5))', 3857)"),
+            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((-0.5 10.5, 0.5 10.5, 0.5 11.5, -0.5 11.5, -0.5 10.5))', " . config('freegle.srid') . ")"),
         ]);
         DB::table('partnerships_groups')->insert([
             'partnershipid' => $id,

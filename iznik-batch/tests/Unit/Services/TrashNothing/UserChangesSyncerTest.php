@@ -437,7 +437,7 @@ class UserChangesSyncerTest extends TestCase
             'type'     => 'Postcode',
             'lat'      => $lat,
             'lng'      => $lng,
-            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, (int) config('freegle.srid', 3857))),
+            'geometry' => DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, (int) config('freegle.srid', config('freegle.srid')))),
         ]);
         $this->postcodeIdByLat[(string) $lat] = $id;
     }

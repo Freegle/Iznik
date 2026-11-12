@@ -131,12 +131,12 @@ trait SeedsReachCells
                 // keep-raw equivalent lives in tests: MBR test against every fixture group.
                 $rows = \Illuminate\Support\Facades\DB::select(
                     'SELECT id,
-                            MBRWithin(polyindex, ST_GeomFromText(?, 3857)) AS w
+                            MBRWithin(polyindex, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS w
                        FROM `groups`
                       WHERE polyindex IS NOT NULL
                         AND ST_GeometryType(polyindex) <> \'POINT\'
                         AND publish = 1
-                        AND MBRIntersects(polyindex, ST_GeomFromText(?, 3857))',
+                        AND MBRIntersects(polyindex, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
                     [$bbox, $bbox]
                 );
                 foreach ($rows as $row) {

@@ -103,11 +103,11 @@ class ExpandCommandTest extends TestCase
         $g1 = $this->createTestGroup();
         $g2 = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857) WHERE id = ?",
+            "UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', " . config('freegle.srid') . ") WHERE id = ?",
             [$g1->id]
         );
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((0.0 51.4,0.2 51.4,0.2 51.6,0.0 51.6,0.0 51.4))', 3857) WHERE id = ?",
+            "UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((0.0 51.4,0.2 51.4,0.2 51.6,0.0 51.6,0.0 51.4))', " . config('freegle.srid') . ") WHERE id = ?",
             [$g2->id]
         );
 

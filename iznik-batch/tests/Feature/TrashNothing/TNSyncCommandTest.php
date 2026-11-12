@@ -664,7 +664,7 @@ class TNSyncCommandTest extends TestCase
         $pcId = 99000201;
         $lat = 55.9533;
         $lng = -3.1883;
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::table('locations')->updateOrInsert(['id' => $pcId], [
             'name' => 'EH1 1AA',
             'type' => 'Postcode',
@@ -706,7 +706,7 @@ class TNSyncCommandTest extends TestCase
         $pcId = 99000203;
         $lat = 51.5502;
         $lng = 0.1350;
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::table('locations')->updateOrInsert(['id' => $pcId], [
             'name' => 'RM9 5ZZ',
             'type' => 'Postcode',
@@ -760,7 +760,7 @@ class TNSyncCommandTest extends TestCase
         $pcId = 99000202;
         $lat = 55.94439;
         $lng = -2.95412;
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::table('locations')->updateOrInsert(['id' => $pcId], [
             'name' => 'EH33 1LH',
             'type' => 'Postcode',

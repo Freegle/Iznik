@@ -95,7 +95,7 @@ class TnMergeCrosspostsCommandTest extends TestCase
         foreach ([$canonical, $copy] as $id) {
             DB::statement(
                 'INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival)
-                 VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), 0, ?, ?, ?)',
+                 VALUES (?, ST_SRID(POINT(-0.1, 51.5), ' . config('freegle.srid') . '), 0, ?, ?, ?)',
                 [$id, $id === $canonical ? $groupA->id : $groupB->id, 'Offer', now()]
             );
         }

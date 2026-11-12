@@ -98,10 +98,10 @@ class AlertNoMessagesCommandTest extends TestCase
             'type'      => Group::TYPE_FREEGLE,
             'onhere'    => 1,
             'publish'   => 1,
-            'region'    => 'Test',
+            'region'    => 'South East',
             'lat'       => 51.5,
             'lng'       => -0.1,
-            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
+            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . ")"),
         ]);
 
         $this->artisan('groups:alert-no-messages')

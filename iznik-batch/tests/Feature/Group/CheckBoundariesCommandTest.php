@@ -60,7 +60,7 @@ class CheckBoundariesCommandTest extends TestCase
         // Insert a test authority so the boundary query actually executes ST_Intersection.
         // Authority id=74579 is hardcoded in GroupBoundaryService (V1 behaviour).
         DB::statement(
-            "INSERT INTO authorities (id, name, polygon) VALUES (74579, 'Test Auth', ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 3857))"
+            "INSERT INTO authorities (id, name, polygon) VALUES (74579, 'Test Auth', ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', " . config('freegle.srid') . "))"
         );
 
         // Group with syntactically invalid WKT — ST_GeomFromText throws ER_GIS_INVALID_DATA.

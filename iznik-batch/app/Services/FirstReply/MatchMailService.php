@@ -74,7 +74,11 @@ use Illuminate\Support\Facades\Log;
  */
 class MatchMailService
 {
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
 
     /** `config` key overriding the safety ceiling on matches mailed per post. */
     public const CONFIG_MAX_PER_POST = 'firstreply_matchmail_max_per_post';
@@ -771,7 +775,7 @@ class MatchMailService
                -- engagement and non-essential admin mails honour.
                AND u.relevantallowed = 1",
             array_merge(
-                [self::SRID, self::SRID, $msgid],
+                [self::srid(), self::srid(), $msgid],
                 $userIds,
                 $unmailableParams,
                 [$cooldown, $weekCap, $msgid]

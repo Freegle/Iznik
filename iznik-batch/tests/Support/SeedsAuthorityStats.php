@@ -28,7 +28,7 @@ trait SeedsAuthorityStats
         // shared test DB, so the spatial overlap query only sees this scenario's
         // groups.
         $this->insertGeom(
-            'INSERT INTO authorities (id, name, polygon) VALUES (?, ?, ST_GeomFromText(?, 3857))',
+            'INSERT INTO authorities (id, name, polygon) VALUES (?, ?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [$this->authorityId, 'Test Authority (B)', 'POLYGON((-1 10, 1 10, 1 12, -1 12, -1 10))']
         );
 
@@ -112,7 +112,7 @@ trait SeedsAuthorityStats
             'id' => 900500, 'name' => 'AB1 2CD', 'type' => 'Postcode', 'lat' => 11, 'lng' => 0,
         ]);
         $this->insertGeom(
-            'INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, 3857))',
+            'INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [900500, 'POINT(0 11)']
         );
 
@@ -159,7 +159,7 @@ trait SeedsAuthorityStats
     {
         $this->insertGeom(
             'INSERT INTO `groups` (id, nameshort, namefull, type, publish, onmap, lat, lng, polyindex)
-             VALUES (?, ?, ?, ?, 1, 1, 11, 0, ST_GeomFromText(?, 3857))',
+             VALUES (?, ?, ?, ?, 1, 1, 11, 0, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [$id, $nameshort, $namefull, 'Freegle', $wkt]
         );
     }

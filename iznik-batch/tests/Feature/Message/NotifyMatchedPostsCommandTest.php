@@ -36,7 +36,7 @@ class NotifyMatchedPostsCommandTest extends TestCase
         $wanted = $this->createTestMessage($recipient, $group, ['type' => 'Wanted', 'subject' => 'WANTED: Drill (Leeds)', 'arrival' => now()]);
         DB::statement(
             'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
-             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
+             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [$wanted->id, $group->id, 'Wanted', now(), sprintf('POINT(%F %F)', $group->lng, $group->lat)]
         );
         DB::statement('INSERT INTO messages_embeddings (msgid, subject_embedding, model_version) VALUES (?, ?, ?)',

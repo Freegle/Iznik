@@ -244,7 +244,7 @@ class UserApproxLocServiceTest extends TestCase
             ->selectRaw('ST_SRID(position) AS srid, ST_X(position) AS x, ST_Y(position) AS y, lat, lng')
             ->first();
 
-        $this->assertEquals(3857, (int) $geom->srid);
+        $this->assertEquals(config('freegle.srid'), (int) $geom->srid);
         $this->assertEquals((float) $geom->lng, round((float) $geom->x, 4), 'ST_X must be lng');
         $this->assertEquals((float) $geom->lat, round((float) $geom->y, 4), 'ST_Y must be lat');
     }
@@ -314,7 +314,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $stale->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), 3857)"),
+            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), " . config('freegle.srid') . ")"),
             'timestamp' => now()->subDays(250),
         ]);
 
@@ -331,7 +331,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $fresh->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), 3857)"),
+            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), " . config('freegle.srid') . ")"),
             'timestamp' => now()->subDays(30),
         ]);
 
@@ -362,7 +362,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $stale->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), 3857)"),
+            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), " . config('freegle.srid') . ")"),
             'timestamp' => now()->subDays(250),
         ]);
 

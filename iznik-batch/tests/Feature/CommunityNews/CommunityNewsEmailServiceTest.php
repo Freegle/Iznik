@@ -49,7 +49,7 @@ class CommunityNewsEmailServiceTest extends TestCase
      */
     private function catchment($group, float $delta = 0.05): void
     {
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         $lat = (float) $group->lat;
         $lng = (float) $group->lng;
         $w = $lng - $delta;

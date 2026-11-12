@@ -333,7 +333,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
              VALUES (?, 51.5, -0.1, ?,
-                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', " . config('freegle.srid') . ")),
                 'held', NOW())
              ON DUPLICATE KEY UPDATE status = VALUES(status)",
             [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
@@ -371,7 +371,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
              VALUES (?, 51.5, -0.1, ?,
-                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', " . config('freegle.srid') . ")),
                 'expanding', NOW())
              ON DUPLICATE KEY UPDATE status = VALUES(status)",
             [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
@@ -409,7 +409,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
              VALUES (?, 51.5, -0.1, ?,
-                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', " . config('freegle.srid') . ")),
                 'expanding', NOW())
              ON DUPLICATE KEY UPDATE status = VALUES(status)",
             [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
@@ -450,7 +450,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
              VALUES (?, 51.5, 0.7, ?,
-                ST_Envelope(ST_GeomFromText('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))', 3857)),
+                ST_Envelope(ST_GeomFromText('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))', " . config('freegle.srid') . ")),
                 'expanding', NOW())
              ON DUPLICATE KEY UPDATE status = VALUES(status)",
             [$message->id, $this->reachCellsFor('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))')]
@@ -1654,7 +1654,7 @@ class UnifiedDigestServiceTest extends TestCase
         // The reach grows to cover B (the label now admits B's point; the
         // outer bound grows as every writer keeps it growing). The re-run
         // mails B and does NOT re-mail A (ledger dedup).
-        DB::statement('UPDATE rippling_reach SET outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
+        DB::statement('UPDATE rippling_reach SET outer_bound = ST_Envelope(ST_GeomFromText(?, ' . config('freegle.srid') . ')) WHERE msgid = ?',
             ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
         $this->reachArrivalBox = $this->wktBounds('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
         $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
@@ -1915,7 +1915,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::table('messages_outcomes')->insert(['msgid' => $taken->id, 'outcome' => Message::OUTCOME_TAKEN]);
         // Degraded bounds, as completion pruning writes them.
         DB::statement(
-            "UPDATE rippling_reach SET outer_bound = ST_SRID(POINT(-0.1, 51.5), 3857), inner_bound = NULL
+            "UPDATE rippling_reach SET outer_bound = ST_SRID(POINT(-0.1, 51.5), " . config('freegle.srid') . "), inner_bound = NULL
               WHERE msgid = ?",
             [$taken->id]
         );
@@ -1977,7 +1977,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, " . config('freegle.srid') . ")), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$msgid, $this->reachCellsFor($wkt), $wkt]
         );
         DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
@@ -2361,11 +2361,11 @@ class UnifiedDigestServiceTest extends TestCase
 
         $locA = DB::table('locations')->insertGetId([
             'name' => 'DedupTestLocA', 'type' => 'Postcode', 'lat' => 51.5, 'lng' => -0.1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
+            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . ")"),
         ]);
         $locB = DB::table('locations')->insertGetId([
             'name' => 'DedupTestLocB', 'type' => 'Postcode', 'lat' => 51.6, 'lng' => -0.2,
-            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.2 51.6)', 3857)"),
+            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.2 51.6)', " . config('freegle.srid') . ")"),
         ]);
 
         foreach ([$locA, $locB] as $locid) {
@@ -3600,7 +3600,7 @@ class UnifiedDigestServiceTest extends TestCase
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, " . config('freegle.srid') . ")), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
         DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);

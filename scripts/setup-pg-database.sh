@@ -9,7 +9,7 @@
 # The schema comes from iznik-batch/database/postgres/baseline.sql, which
 # tools/pg-schema/regenerate.sh produces from the migrated MySQL schema. The stored functions come
 # from iznik-batch/database/postgres/functions.sql, loaded in the same transaction. Two databases are built
-# from them: iznik (the dev database) and iznik_go_test (schema only, as on MySQL). The fixtures in
+# from them (and test-mode.sql, which gives the columns the implicit defaults of the non-strict MySQL test databases): iznik (the dev database) and iznik_go_test (schema only, as on MySQL). The fixtures in
 # scripts/fixtures are then loaded into iznik, as on MySQL, by tools/fixtures/load.mjs (Node, on the host or
 # in a container), and the fixture posts are rolled forward so they stay inside the feed's 31 day window.
 #
@@ -31,6 +31,7 @@
 REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 BASELINE="${PG_BASELINE:-${REPO_DIR}/iznik-batch/database/postgres/baseline.sql}"
 FUNCTIONS="${PG_FUNCTIONS:-${REPO_DIR}/iznik-batch/database/postgres/functions.sql}"
+TEST_MODE="${REPO_DIR}/iznik-batch/database/postgres/test-mode.sql"
 PREFIX="${COMPOSE_PROJECT_NAME:-freegle}"
 PG_CONTAINER="${PG_CONTAINER:-${PREFIX}-postgres}"
 PG_DATABASE="${PG_DATABASE:-iznik}"
@@ -52,6 +53,10 @@ if [ ! -f "$BASELINE" ]; then
 fi
 if [ ! -f "$FUNCTIONS" ]; then
   echo "Missing ${FUNCTIONS}."
+  exit 1
+fi
+if [ ! -f "$TEST_MODE" ]; then
+  echo "Missing ${TEST_MODE}."
   exit 1
 fi
 
@@ -79,7 +84,7 @@ build() {
   fi
   if [ "$tables" != "0" ] && [ "${PG_REBUILD:-}" != "1" ] && [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
     echo "PostgreSQL database ${db} already has ${tables} tables; set PG_REBUILD=1 to rebuild it"
-    if ! $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 < "$FUNCTIONS" >/dev/null; then
+    if ! { cat "$FUNCTIONS"; echo; cat "$TEST_MODE"; } | $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 >/dev/null; then
       echo "Loading the PostgreSQL stored functions into ${db} FAILED"
       return 1
     fi
@@ -92,7 +97,7 @@ build() {
     echo "Could not create PostgreSQL database ${db}"
     return 1
   fi
-  if ! { cat "$BASELINE"; echo; cat "$FUNCTIONS"; } | $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 >/dev/null; then
+  if ! { cat "$BASELINE"; echo; cat "$FUNCTIONS"; echo; cat "$TEST_MODE"; } | $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 >/dev/null; then
     echo "Loading the PostgreSQL baseline and functions into ${db} FAILED"
     return 1
   fi

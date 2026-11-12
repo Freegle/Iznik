@@ -18,7 +18,11 @@ use Illuminate\Support\Facades\Log;
 
 class GroupStatsService
 {
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
     private const STATS_TYPE_APPROVED_MESSAGE_COUNT = 'ApprovedMessageCount';
     private const STATS_TYPE_OUTCOMES = 'Outcomes';
     private const GROUP_TYPE_FREEGLE = 'Freegle';
@@ -97,7 +101,7 @@ class GroupStatsService
                     new Alias(
                         new StAsText(new StGeomFromText(
                             new Coalesce('poly', 'polyofficial', Value::of('POINT(0 0)')),
-                            self::SRID
+                            self::srid()
                         )),
                         'geomtext'
                     ),
@@ -107,7 +111,7 @@ class GroupStatsService
             if ($row && $row->current !== $row->geomtext) {
                 if (!$dryRun) {
                     DB::table('groups')->where('id', $group->id)->update([
-                        'polyindex' => new StGeomFromText(Value::of($row->geomtext), self::SRID),
+                        'polyindex' => new StGeomFromText(Value::of($row->geomtext), self::srid()),
                     ]);
                 }
                 $count++;

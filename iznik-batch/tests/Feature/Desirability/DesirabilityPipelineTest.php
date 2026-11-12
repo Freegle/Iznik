@@ -34,7 +34,7 @@ class DesirabilityPipelineTest extends TestCase
         $groupid = DB::table('groups')->insertGetId([
             'nameshort' => 'TestGroup'.$msgid,
             'type' => 'Freegle',
-            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
+            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . ")"),
         ]);
         DB::table('messages_groups')->insert([
             'msgid' => $msgid,
@@ -306,7 +306,7 @@ class DesirabilityPipelineTest extends TestCase
         ]);
         $groupid = DB::table('groups')->insertGetId([
             'nameshort' => 'TestGroupP'.$pending, 'type' => 'Freegle',
-            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
+            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . ")"),
         ]);
         DB::table('messages_groups')->insert([
             'msgid' => $pending, 'groupid' => $groupid, 'collection' => 'Pending',

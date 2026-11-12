@@ -21,7 +21,7 @@ class ChitchatBackfillLeavesTest extends TestCase
             'userid' => $user->id,
             'message' => 'leaf backfill test',
             'timestamp' => now(),
-            'position' => DB::raw("ST_GeomFromText('POINT(-3.1883 55.9533)', 3857)"),
+            'position' => DB::raw("ST_GeomFromText('POINT(-3.1883 55.9533)', " . config('freegle.srid') . ")"),
             'leaf' => $leaf,
         ]);
     }

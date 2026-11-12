@@ -39,7 +39,7 @@ class StoredFunctionsTest extends TestCase
      */
     private function srid(): int
     {
-        return DB::connection()->getDriverName() === 'pgsql' ? 4326 : 3857;
+        return DB::connection()->getDriverName() === 'pgsql' ? 4326 : config('freegle.srid');
     }
 
     private function one(string $sql, array $bindings = []): mixed

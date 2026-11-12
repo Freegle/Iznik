@@ -70,7 +70,11 @@ class ExpandService
         return $this->runDeadline !== null && now()->greaterThan($this->runDeadline);
     }
 
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
 
     /** Metres to blur a poster's origin before it drives the reach (matches Utils::BLUR_USER). */
     private const BLUR_USER = 400;
@@ -214,7 +218,7 @@ class ExpandService
      */
     private function boundsSetSql(string $storeWkt): array
     {
-        $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
+        $poly = 'ST_GeomFromText(?, ' . self::srid() . ')';
 
         return [
             ', outer_bound = ' . ReachBoundsService::outerExpr($poly)
@@ -234,7 +238,7 @@ class ExpandService
     private function boundsEnvelopeSql(string $storeWkt): array
     {
         return [
-            ', outer_bound = ST_Envelope(ST_GeomFromText(?, ' . self::SRID . ')), inner_bound = NULL',
+            ', outer_bound = ST_Envelope(ST_GeomFromText(?, ' . self::srid() . ')), inner_bound = NULL',
             [$storeWkt],
         ];
     }
@@ -245,7 +249,7 @@ class ExpandService
     /**
      * @param int|null    $onlyMsgid     Restrict the whole run to one message ID (controlled testing).
      * @param string|null $withinPolyWkt Restrict the whole run to posts whose origin point falls within
-     *                                   this WKT polygon (SRID self::SRID) — the area test (e.g. ripple
+     *                                   this WKT polygon (SRID self::srid()) — the area test (e.g. ripple
      *                                   the recent posts near Edinburgh). The go-live arrival cutoff
      *                                   still applies (an area scope filters where, not when).
      */
@@ -557,7 +561,7 @@ class ExpandService
             ->where('g.nameshort', 'NOT LIKE', '%playground%')
             ->whereNotNull('g.polyindex')
             ->where(new Comparison(new StGeometryType('g.polyindex'), '<>', Value::of('POINT')))
-            ->where(new StIntersects('g.polyindex', new StGeomFromText(Value::of($wkt), self::SRID)))
+            ->where(new StIntersects('g.polyindex', new StGeomFromText(Value::of($wkt), self::srid())))
             ->when(!empty($excluded), fn ($q) => $q->whereNotIn('g.id', $excluded))
             ->count();
     }
@@ -1257,7 +1261,7 @@ class ExpandService
             // cutoff still applies, so an area run ripples only the recent (post-cutoff) posts inside
             // the polygon rather than the whole historical backlog there.
             if ($withinPolyWkt !== null) {
-                $q->where(new StContains(new StGeomFromText(Value::of($withinPolyWkt), self::SRID), 'ms.point'));
+                $q->where(new StContains(new StGeomFromText(Value::of($withinPolyWkt), self::srid()), 'ms.point'));
             }
             if (!empty($enabledAt)) {
                 $q->where('ms.arrival', '>=', $enabledAt);
@@ -1536,7 +1540,7 @@ class ExpandService
                     // derivation - but on the SCRATCH WKT parameter, which is
                     // never stored.
                     $overflowCellsJson = $this->overflowCellsJson($schedule);
-                    $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
+                    $poly = 'ST_GeomFromText(?, ' . self::srid() . ')';
                     $initSql = function (string $outerExpr, string $innerExpr): string {
                         return 'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon_cells, outer_bound, inner_bound, arrival, mode, tick, total_ticks,
@@ -1649,7 +1653,7 @@ class ExpandService
             ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
             // keep-raw: ST_Contains/ST_GeomFromText are spatial functions the builder cannot render
             ->when($withinPolyWkt !== null, fn ($q) => $q->whereRaw(
-                'ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(lng, lat), ' . self::SRID . '))',
+                'ST_Contains(ST_GeomFromText(?, ' . self::srid() . '), ST_SRID(POINT(lng, lat), ' . self::srid() . '))',
                 [$withinPolyWkt]
             ))
             ->limit($limit)
@@ -2145,7 +2149,7 @@ class ExpandService
                    AND g.nameshort NOT LIKE '%playground%'" . $inOptOut . "
                    AND g.polyindex IS NOT NULL
                    AND ST_GeometryType(g.polyindex) <> 'POINT'
-                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))" . $reachableGate . "
+                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::srid() . "))" . $reachableGate . "
                    AND NOT EXISTS (
                        SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
                    )
@@ -2716,8 +2720,8 @@ class ExpandService
             // unchanged - the same outcome the exception path produced, minus
             // the exception.
             $result = $this->intersectionFraction(
-                new StGeomFromText(Value::of($wkt), self::SRID),
-                new StGeomFromText(Value::of($groupWkt), self::SRID)
+                new StGeomFromText(Value::of($wkt), self::srid()),
+                new StGeomFromText(Value::of($groupWkt), self::srid())
             );
 
             if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
@@ -2734,8 +2738,8 @@ class ExpandService
                 }
 
                 $result = $this->intersectionFraction(
-                    new StBuffer(new StGeomFromText(Value::of($wkt), self::SRID), 0),
-                    new StBuffer(new StGeomFromText(Value::of($groupWkt), self::SRID), 0)
+                    new StBuffer(new StGeomFromText(Value::of($wkt), self::srid()), 0),
+                    new StBuffer(new StGeomFromText(Value::of($groupWkt), self::srid()), 0)
                 );
 
                 if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
@@ -3174,7 +3178,7 @@ class ExpandService
                 return $wkt;
             }
             $result = DB::selectOne(
-                'SELECT ST_AsText(ST_Union(ST_GeomFromText(?, ' . self::SRID . '), ST_GeomFromText(?, ' . self::SRID . '))) AS u',
+                'SELECT ST_AsText(ST_Union(ST_GeomFromText(?, ' . self::srid() . '), ST_GeomFromText(?, ' . self::srid() . '))) AS u',
                 [$wkt, $groupRow->group_wkt]
             );
 

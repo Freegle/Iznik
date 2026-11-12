@@ -79,7 +79,7 @@ class MessageSpatialServiceTest extends TestCase
 
         // Put it in the spatial index.
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
@@ -158,7 +158,7 @@ class MessageSpatialServiceTest extends TestCase
         ]);
         // Already in the index, pointing at this now-removed group.
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(2)]
         );
 
@@ -207,7 +207,7 @@ class MessageSpatialServiceTest extends TestCase
         ]);
         // The post's single spatial row belongs to its approved origin group A.
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $groupA->id, Message::TYPE_OFFER, now()->subDays(2)]
         );
 
@@ -244,7 +244,7 @@ class MessageSpatialServiceTest extends TestCase
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
@@ -280,7 +280,7 @@ class MessageSpatialServiceTest extends TestCase
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(32)]
         );
 
@@ -313,7 +313,7 @@ class MessageSpatialServiceTest extends TestCase
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival, successful) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?, 0)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival, successful) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?, 0)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
@@ -353,7 +353,7 @@ class MessageSpatialServiceTest extends TestCase
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
@@ -394,7 +394,7 @@ class MessageSpatialServiceTest extends TestCase
         ]);
 
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
@@ -486,7 +486,7 @@ class MessageSpatialServiceTest extends TestCase
 
         // Seed the spatial row as if the group was previously Approved.
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
@@ -530,7 +530,7 @@ class MessageSpatialServiceTest extends TestCase
 
         // One spatial row (the one-row model).
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $groupA->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 
@@ -583,7 +583,7 @@ class MessageSpatialServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(2)]
         );
         DB::statement(
@@ -591,14 +591,14 @@ class MessageSpatialServiceTest extends TestCase
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1,
                      ?,
-                     ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)),
+                     ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', " . config('freegle.srid') . ")),
                      ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), now()->subDays(2)]
         );
         DB::statement(
             "UPDATE rippling_reach
-                SET outer_bound = ST_GeomFromText('POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))', 3857),
-                    inner_bound = ST_GeomFromText('POLYGON((-0.18 51.42,-0.02 51.42,-0.02 51.58,-0.18 51.58,-0.18 51.42))', 3857)
+                SET outer_bound = ST_GeomFromText('POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))', " . config('freegle.srid') . "),
+                    inner_bound = ST_GeomFromText('POLYGON((-0.18 51.42,-0.02 51.42,-0.02 51.58,-0.18 51.58,-0.18 51.42))', " . config('freegle.srid') . ")
               WHERE msgid = ?",
             [$message->id]
         );
@@ -668,8 +668,8 @@ class MessageSpatialServiceTest extends TestCase
         );
         $check = DB::selectOne(
             'SELECT ST_GeometryType(outer_bound) AS outer_type,
-                    ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o,
-                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, 3857), inner_bound)) AS i
+                    ST_Contains(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS o,
+                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, ' . config('freegle.srid') . '), inner_bound)) AS i
                FROM rippling_reach WHERE msgid = ?',
             ['POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', $msgid]
         );
@@ -714,7 +714,7 @@ class MessageSpatialServiceTest extends TestCase
         $mg = DB::table('messages_groups')->where('msgid', $msgid)->first(['groupid', 'arrival']);
         DB::statement(
             "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, NULL, ?)",
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, NULL, ?)",
             [$msgid, $mg->groupid, $mg->arrival]
         );
 
@@ -758,7 +758,7 @@ class MessageSpatialServiceTest extends TestCase
     {
         $mg = DB::table('messages_groups')->where('msgid', $msgid)->first(['groupid', 'arrival']);
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?)",
             [$msgid, $mg->groupid, Message::TYPE_OFFER, $mg->arrival]
         );
     }
@@ -1356,7 +1356,7 @@ class MessageSpatialServiceTest extends TestCase
             'arrival' => now()->subDays(5),
         ]);
         DB::statement(
-            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival, successful, promised) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?, 0, 0)",
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival, successful, promised) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . "), ?, ?, ?, 0, 0)",
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(5)]
         );
 

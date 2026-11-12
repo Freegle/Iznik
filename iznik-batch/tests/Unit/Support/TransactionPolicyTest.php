@@ -148,7 +148,7 @@ class TransactionPolicyTest extends TestCase
         $pdo->errorInfo = ['22S01', 3516, 'POLYGON/MULTIPOLYGON value is a geometry of unexpected type GEOMCOLLECTION in st_area.'];
         $e = new QueryException(
             'mysql',
-            'SELECT ST_Area(ST_Intersection(iso, grp)) FROM (SELECT ST_GeomFromText(?, 3857) AS iso, ST_GeomFromText(?, 3857) AS grp) t',
+            'SELECT ST_Area(ST_Intersection(iso, grp)) FROM (SELECT ST_GeomFromText(?, ' . config('freegle.srid') . ') AS iso, ST_GeomFromText(?, ' . config('freegle.srid') . ') AS grp) t',
             ['POLYGON((-121300.5 6712133.4,-121200.1 6712050.9,-121300.5 6712133.4))', 'POLYGON((0 0,1 0,1 1,0 1,0 0))'],
             $pdo
         );
@@ -162,7 +162,7 @@ class TransactionPolicyTest extends TestCase
         $pdo->errorInfo = ['HY000', 1713, 'Undo log record is too big.'];
         $e = new QueryException(
             'mysql',
-            'UPDATE rippling_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
+            'UPDATE rippling_reach SET polygon = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE msgid = ?',
             ['POLYGON((-121356.1 6712050.9,-121300.5 6712133.4,-121356.1 6712050.9))', 121159007],
             $pdo
         );

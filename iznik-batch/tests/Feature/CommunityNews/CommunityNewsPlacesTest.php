@@ -30,7 +30,7 @@ class CommunityNewsPlacesTest extends TestCase
 
     private function place(string $name, float $lat, float $lng, int $pop): void
     {
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::statement(
             'INSERT INTO places (name, lat, lng, population, position) VALUES (?, ?, ?, ?, ST_SRID(POINT(?, ?), ' . $srid . '))',
             [$name, $lat, $lng, $pop, $lng, $lat]
@@ -40,7 +40,7 @@ class CommunityNewsPlacesTest extends TestCase
     /** A square catchment around a point, as a real polygon. */
     private function boundary($group, float $lat, float $lng, float $half): void
     {
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         $wkt = sprintf(
             'POLYGON((%1$f %2$f, %3$f %2$f, %3$f %4$f, %1$f %4$f, %1$f %2$f))',
             $lng - $half, $lat - $half, $lng + $half, $lat + $half

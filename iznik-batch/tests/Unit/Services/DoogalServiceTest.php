@@ -22,7 +22,7 @@ class DoogalServiceTest extends TestCase
     {
         parent::setUp();
         $this->service = new DoogalService();
-        $this->srid = (int) config('freegle.srid', 3857);
+        $this->srid = (int) config('freegle.srid', config('freegle.srid'));
     }
 
     /** Write a Code-Point/Doogal style CSV (no header) and return its path. */

@@ -285,7 +285,7 @@ class TestMailCommandTest extends TestCase
             'timestamp' => now(),
             'deleted' => null,
             'replyto' => null,
-            'position' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'position' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
         ]);
 
         DB::table('users_notifications')->insert([

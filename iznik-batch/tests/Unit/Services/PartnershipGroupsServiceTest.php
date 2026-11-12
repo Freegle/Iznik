@@ -30,7 +30,7 @@ class PartnershipGroupsServiceTest extends TestCase
     {
         $authorityId = (int) DB::table('authorities')->insertGetId([
             'name' => 'Svc Test Authority ' . uniqid(),
-            'polygon' => DB::raw("ST_GeomFromText('POLYGON((50 50, 51 50, 51 51, 50 51, 50 50))', 3857)"),
+            'polygon' => DB::raw("ST_GeomFromText('POLYGON((50 50, 51 50, 51 51, 50 51, 50 50))', " . config('freegle.srid') . ")"),
         ]);
 
         return (int) DB::table('partnerships')->insertGetId($overrides + [
@@ -52,7 +52,7 @@ class PartnershipGroupsServiceTest extends TestCase
             'type' => 'Freegle',
             'publish' => 1,
             'onmap' => 1,
-            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((50 50, 51 50, 51 51, 50 51, 50 50))', 3857)"),
+            'polyindex' => DB::raw("ST_GeomFromText('POLYGON((50 50, 51 50, 51 51, 50 51, 50 50))', " . config('freegle.srid') . ")"),
         ]);
     }
 

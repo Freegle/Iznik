@@ -43,8 +43,8 @@ class ExpandGeometrySafetyTest extends TestCase
                     END AS frac,
                     ST_AsText(ST_Union(iso, grp)) AS u
              FROM (SELECT ST_Intersection(iso, grp) AS inter, iso, grp
-                   FROM (SELECT ST_GeomFromText(?, 3857) AS iso,
-                                ST_GeomFromText(?, 3857) AS grp) s) t',
+                   FROM (SELECT ST_GeomFromText(?, ' . config('freegle.srid') . ') AS iso,
+                                ST_GeomFromText(?, ' . config('freegle.srid') . ') AS grp) s) t',
             [$iso, $grp]
         );
 
@@ -64,8 +64,8 @@ class ExpandGeometrySafetyTest extends TestCase
                          THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
                     END AS frac
              FROM (SELECT ST_Intersection(iso, grp) AS inter, grp
-                   FROM (SELECT ST_GeomFromText(?, 3857) AS iso,
-                                ST_GeomFromText(?, 3857) AS grp) s) t',
+                   FROM (SELECT ST_GeomFromText(?, ' . config('freegle.srid') . ') AS iso,
+                                ST_GeomFromText(?, ' . config('freegle.srid') . ') AS grp) s) t',
             [$iso, $grp]
         );
 

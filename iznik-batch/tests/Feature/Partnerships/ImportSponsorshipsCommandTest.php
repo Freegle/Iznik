@@ -27,7 +27,7 @@ class ImportSponsorshipsCommandTest extends TestCase
         $this->authorityId = (int) DB::table('authorities')->insertGetId([
             'name' => $this->council,
             'area_code' => 'CTY',
-            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-41 10, -39 10, -39 12, -41 12, -41 10))', 3857)"),
+            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-41 10, -39 10, -39 12, -41 12, -41 10))', " . config('freegle.srid') . ")"),
         ]);
     }
 
@@ -38,7 +38,7 @@ class ImportSponsorshipsCommandTest extends TestCase
             'type' => 'Freegle',
             'publish' => 1,
             'onmap' => 1,
-            'polyindex' => DB::raw("ST_GeomFromText('" . $wkt . "', 3857)"),
+            'polyindex' => DB::raw("ST_GeomFromText('" . $wkt . "', " . config('freegle.srid') . ")"),
         ]);
     }
 

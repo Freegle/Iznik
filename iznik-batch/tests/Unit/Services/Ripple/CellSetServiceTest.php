@@ -402,7 +402,7 @@ class CellSetServiceTest extends TestCase
         // which includes it.
         foreach ([[-0.00075, -0.00045], [0.00075, 0.00075]] as [$lng, $lat]) {
             $row = \Illuminate\Support\Facades\DB::selectOne(
-                'SELECT ST_Contains(ST_GeomFromText(?, 3857), ST_SRID(POINT(?, ?), 3857)) AS c',
+                'SELECT ST_Contains(ST_GeomFromText(?, ' . config('freegle.srid') . '), ST_SRID(POINT(?, ?), ' . config('freegle.srid') . ')) AS c',
                 [$wkt, $lng, $lat]
             );
             $this->assertSame(1, (int) $row->c, sprintf('a covered cell centre %f,%f must be inside the bbox', $lng, $lat));

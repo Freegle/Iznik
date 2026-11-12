@@ -330,7 +330,7 @@ class CommunityNewsAreaService
 
             return (bool) DB::selectOne(
                 "SELECT id FROM authorities
-                 WHERE area_code IN ($marks) AND ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857))
+                 WHERE area_code IN ($marks) AND ST_Contains(polygon, ST_SRID(POINT(?, ?), " . config('freegle.srid') . "))
                  LIMIT 1",
                 [...$codes, $lng, $lat]
             );
@@ -347,7 +347,7 @@ class CommunityNewsAreaService
         $row = DB::selectOne(
             "SELECT name FROM authorities
              WHERE area_code = 'CUN' AND name <> 'United Kingdom'
-             AND ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857))
+             AND ST_Contains(polygon, ST_SRID(POINT(?, ?), " . config('freegle.srid') . "))
              LIMIT 1",
             [$lng, $lat]
         );

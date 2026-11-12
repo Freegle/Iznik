@@ -132,7 +132,7 @@ class AuthorityStatsServiceCoverageTest extends TestCase
     public function test_get_authority_with_no_overlapping_groups(): void
     {
         $this->insertGeom(
-            'INSERT INTO authorities (id, name, polygon) VALUES (?, ?, ST_GeomFromText(?, 3857))',
+            'INSERT INTO authorities (id, name, polygon) VALUES (?, ?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [900010, 'Lonely Authority', 'POLYGON((50 50, 51 50, 51 51, 50 51, 50 50))']
         );
 
@@ -376,13 +376,13 @@ class AuthorityStatsServiceCoverageTest extends TestCase
         // A second full postcode in the same outward code, and one in a different one.
         foreach ([[900501, 'AB1 2EF'], [900502, 'CD3 4GH']] as [$id, $name]) {
             DB::table('locations')->insert(['id' => $id, 'name' => $name, 'type' => 'Postcode', 'lat' => 11, 'lng' => 0]);
-            $this->insertGeom('INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, 3857))', [$id, 'POINT(0.1 11)']);
+            $this->insertGeom('INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ' . config('freegle.srid') . '))', [$id, 'POINT(0.1 11)']);
         }
         // A postcode district with no space, and a non-postcode location: both ignored.
         DB::table('locations')->insert(['id' => 900503, 'name' => 'NOSPACE', 'type' => 'Postcode', 'lat' => 11, 'lng' => 0]);
         DB::table('locations')->insert(['id' => 900504, 'name' => 'Some Road', 'type' => 'Road', 'lat' => 11, 'lng' => 0]);
         foreach ([900503, 900504] as $id) {
-            $this->insertGeom('INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, 3857))', [$id, 'POINT(0.2 11)']);
+            $this->insertGeom('INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ' . config('freegle.srid') . '))', [$id, 'POINT(0.2 11)']);
         }
         $this->message(900620, 'Offer', '2025-05-01 10:00:00', 900501);
         $this->message(900621, 'Wanted', '2025-05-02 10:00:00', 900502);
@@ -452,11 +452,11 @@ class AuthorityStatsServiceCoverageTest extends TestCase
     {
         $this->seedAuthorityScenario();
         $this->insertGeom(
-            'INSERT INTO authorities (id, name, polygon) VALUES (?, ?, ST_GeomFromText(?, 3857))',
+            'INSERT INTO authorities (id, name, polygon) VALUES (?, ?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [900011, 'Second Authority', 'POLYGON((20 20, 22 20, 22 22, 20 22, 20 20))']
         );
         DB::table('locations')->insert(['id' => 900505, 'name' => 'EF5 6IJ', 'type' => 'Postcode', 'lat' => 21, 'lng' => 21]);
-        $this->insertGeom('INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, 3857))', [900505, 'POINT(21 21)']);
+        $this->insertGeom('INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ' . config('freegle.srid') . '))', [900505, 'POINT(21 21)']);
         $this->message(900650, 'Offer', '2025-05-01 10:00:00', 900505);
 
         $one = $this->service->getByAuthority([$this->authorityId], '2025-04-01', '2025-06-30');
@@ -614,7 +614,7 @@ class AuthorityStatsServiceCoverageTest extends TestCase
     public function test_get_stories_does_not_count_a_point_at_zero_zero_even_inside_the_polygon(): void
     {
         $this->insertGeom(
-            'INSERT INTO authorities (id, name, polygon) VALUES (?, ?, ST_GeomFromText(?, 3857))',
+            'INSERT INTO authorities (id, name, polygon) VALUES (?, ?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [900012, 'Null Island Authority', 'POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))']
         );
         DB::table('users')->insert(['id' => 900450, 'settings' => json_encode(['mylocation' => ['lat' => 0, 'lng' => 0]])]);

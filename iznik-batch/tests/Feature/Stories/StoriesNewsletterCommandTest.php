@@ -21,11 +21,11 @@ class StoriesNewsletterCommandTest extends TestCase
         // Other tests' users/groups can slip through DatabaseTransactions isolation.
         // Delete inside the current transaction so leaked rows are hidden without
         // affecting other test classes (the DELETE is rolled back with this test's transaction).
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        \Tests\Support\ForeignKeyChecks::disable();
         foreach (['newsletters', 'users_stories_likes', 'users_stories_images', 'users_stories', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
             DB::table($table)->delete();
         }
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        \Tests\Support\ForeignKeyChecks::enable();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

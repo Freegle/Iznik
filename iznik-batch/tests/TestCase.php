@@ -415,7 +415,7 @@ abstract class TestCase extends BaseTestCase
             'nameshort' => 'TestGroup_'.$uniqueId,
             'namefull' => 'Test Freegle Group '.$uniqueId,
             'type' => Group::TYPE_FREEGLE,
-            'region' => 'TestRegion',
+            'region' => 'South East',
             'lat' => 51.5074,
             'lng' => -0.1278,
             'onhere' => 1,

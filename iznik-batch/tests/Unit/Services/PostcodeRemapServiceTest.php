@@ -121,7 +121,7 @@ class PostcodeRemapServiceTest extends TestCase
             'id'       => $id,
             'name'     => 'Seedville',
             'type'     => 'Polygon',
-            'geometry' => DB::raw("ST_GeomFromText('{$wkt}', 3857)"),
+            'geometry' => DB::raw("ST_GeomFromText('{$wkt}', " . config('freegle.srid') . ")"),
         ]);
 
         $this->service->remapPostcodes($id, $wkt);

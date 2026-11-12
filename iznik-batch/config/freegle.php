@@ -786,11 +786,13 @@ return [
     | Geospatial Settings
     |--------------------------------------------------------------------------
     |
-    | SRID 3857 is the Web Mercator projection used for geospatial data.
+    | Geometry columns are labelled SRID 3857 on MySQL, and 4326 on PostgreSQL where the
+    | same degree coordinates carry the correct label. The engine is the default
+    | connection, as in config/database.php.
     |
     */
 
-    'srid' => EnvSetting::env('FREEGLE_SRID', 3857),
+    'srid' => EnvSetting::env('FREEGLE_SRID', EnvSetting::env('DB_CONNECTION', 'mysql') === 'pgsql' ? 4326 : 3857),
 
     /*
     |--------------------------------------------------------------------------

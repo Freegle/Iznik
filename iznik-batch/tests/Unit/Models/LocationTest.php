@@ -35,7 +35,7 @@ class LocationTest extends TestCase
      */
     private function seedPostcode(int $id, string $name, float $lat, float $lng): void
     {
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::table('locations')->updateOrInsert(['id' => $id], [
             'name'     => $name,
             'type'     => 'Postcode',
@@ -113,7 +113,7 @@ class LocationTest extends TestCase
      */
     public function test_groups_near_returns_containing_group_over_closer_centroid(): void
     {
-        $srid = config('freegle.srid', 3857);
+        $srid = config('freegle.srid', config('freegle.srid'));
 
         // Event location: Bermondsey, SE1 (Southwark area)
         $eventLat = 51.490;
@@ -178,7 +178,7 @@ class LocationTest extends TestCase
      */
     public function test_describe_nearest_in_group_prefers_a_postcode_inside_the_group(): void
     {
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
 
         // Group polygon covering lng 2.95..3.05, lat 56.65..56.75 (empty North Sea,
         // so no real postcode out-competes the seeded sentinels).

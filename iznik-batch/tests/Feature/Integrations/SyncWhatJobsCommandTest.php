@@ -37,7 +37,7 @@ class SyncWhatJobsCommandTest extends TestCase
             }
             public function sync(bool $dryRun = false): array
             {
-                $srid = config('freegle.srid', 3857);
+                $srid = config('freegle.srid', config('freegle.srid'));
                 $geocodeCache = [];
                 // Match production sync(): feed1 → format 1, feed2 → format 2.
                 // parseFeed is now a generator; stream both feeds through
@@ -295,7 +295,7 @@ class SyncWhatJobsCommandTest extends TestCase
     public function test_sync_refuses_to_swap_when_zero_jobs_parsed(): void
     {
         // Pre-seed the live jobs table with rows that must not be wiped.
-        $srid = config('freegle.srid', 3857);
+        $srid = config('freegle.srid', config('freegle.srid'));
         $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
         $before = DB::table('jobs')->count();
         for ($i = 0; $i < 5; $i++) {
@@ -334,7 +334,7 @@ class SyncWhatJobsCommandTest extends TestCase
     public function test_sync_refuses_to_swap_when_parsed_far_below_existing(): void
     {
         // Seed enough rows that the existing-count threshold is met.
-        $srid = config('freegle.srid', 3857);
+        $srid = config('freegle.srid', config('freegle.srid'));
         $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
         $existing = WhatJobsService::SWAP_RATIO_MIN_EXISTING + 100;
         $before = DB::table('jobs')->count();
