@@ -1680,7 +1680,7 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Chat not found"})
 	}
 
-	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) {
+	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Permission denied"})
 	}
 
