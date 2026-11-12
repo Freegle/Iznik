@@ -1044,6 +1044,33 @@ class UserChangesSyncerTest extends TestCase
         $this->assertStringContainsString("removed from user {$holder->id}", $sentry->calls[0]);
     }
 
+    /**
+     * The holder has the member's TN id but a Freegle preferred address, so it is not a TN account
+     * and nothing is removed. The report must say so, not that the removal went ahead on it.
+     */
+    public function test_a_removal_whose_tn_id_a_non_tn_account_holds_is_reported_as_not_applied(): void
+    {
+        $sentry = $this->recordSentry();
+        $named = $this->tnUserWithId(null);
+        $holder = $this->tnUser('Holder', [[$this->username('holder') . '@example.com', 1]]);
+        $holder->tnuserid = 99130043;
+        $holder->save();
+
+        $this->syncChanges([[
+            'fd_user_id'      => $named->id,
+            'tn_user_id'      => 99130043,
+            'account_removed' => true,
+            'date'            => '2026-10-01T10:00:00',
+        ]]);
+
+        $this->assertSame('Holder', $holder->fresh()->fullname);
+        $this->assertSame('Test Member', $named->fresh()->fullname);
+        $this->assertCount(1, $this->skipEvents('tn-user-id-holder-not-a-tn-account'));
+        $this->assertCount(1, $sentry->calls, json_encode($sentry->calls));
+        $this->assertStringContainsString("not applied to user {$holder->id}", $sentry->calls[0]);
+        $this->assertStringNotContainsString('was removed', $sentry->calls[0]);
+    }
+
     /** A removal skipped on the holder must not also be reported as having gone ahead on it. */
     public function test_a_removal_skipped_on_the_holder_is_not_reported_as_applied(): void
     {

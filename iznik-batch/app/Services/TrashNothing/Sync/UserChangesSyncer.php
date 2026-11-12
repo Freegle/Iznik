@@ -367,7 +367,8 @@ class UserChangesSyncer
      * one, and a removal does not reach it. sync() reports that once the removal has been applied
      * to the holder, because it can still be skipped there.
      *
-     * Only a TN account is changed. When TN names one holding a different TN user id and no account
+     * Only a TN account is changed. When the holder is not one, neither account is, and that is
+     * skipped and reported. When TN names one holding a different TN user id and no account
      * holds this one, the change is about another TN member sharing that account, and applying it
      * would forget or rename the wrong person, so it is skipped and reported. An account with no
      * TN user id is given this one, since TN has just said which member it is. Not while it holds
@@ -385,7 +386,9 @@ class UserChangesSyncer
 
         $user = $match->account();
         if ($user === null || !$this->isTnAccount($user)) {
-            if ($named !== null && !$match->heldElsewhere() && $this->isTnAccount($named)) {
+            if ($match->heldElsewhere()) {
+                $this->skipChange('tn-user-id-holder-not-a-tn-account', $change, $match->holder->id, $named->id);
+            } elseif ($named !== null && $this->isTnAccount($named)) {
                 $this->skipChange('tn-user-id-mismatch', $change, $named->id, (int) $named->tnuserid);
             }
 

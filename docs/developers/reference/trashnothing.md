@@ -980,7 +980,9 @@ change's TN user id is the member, whatever account TN names. In that last case 
 is left alone and logged (Loki `tn-sync`/`user-change-skip`, reason `tn-user-id-held-elsewhere`):
 it may be the member's old account, and a removal does not reach it. Sentry hears that the member
 was removed from the holder and the named account left only once the removal has been applied to
-the holder.
+the holder. If the holder is not a TN account (it has a Freegle preferred address), neither account
+is changed, and that is a skip of its own (reason `tn-user-id-holder-not-a-tn-account`), reported as
+a removal not applied.
 
 When the account TN names holds a different TN user id and no account holds the change's, the
 change belongs to another TN member sharing that account, and is skipped (reason
