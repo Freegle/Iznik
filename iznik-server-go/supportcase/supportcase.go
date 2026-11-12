@@ -174,12 +174,13 @@ func loadCase(id, myid uint64, support bool) (*caseRow, error) {
 			return nil, notFound()
 		}
 		var room struct {
-			User1   uint64
-			User2   uint64
-			Groupid uint64
+			User1    uint64
+			User2    uint64
+			Groupid  uint64
+			Chattype string
 		}
 		res := database.DBConn.Clauses(dbresolver.Write).Table("chat_rooms").
-			Select("COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid").
+			Select("COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid, chattype").
 			Where("id = ?", *cr.Chatid).Scan(&room)
 		if res.Error != nil {
 			return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to load case")

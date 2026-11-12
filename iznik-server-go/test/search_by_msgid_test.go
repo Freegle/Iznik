@@ -11,6 +11,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
@@ -76,4 +77,26 @@ func TestSearchByMsgID_IgnoresAMembershipThatIsNotApproved(t *testing.T) {
 func TestSearchByMsgID_FindsNothingForAnIDThatIsNotThere(t *testing.T) {
 	db := database.DBConn
 	assert.Empty(t, message.SearchByMsgID(db, 999999999999, nil))
+}
+
+func TestSearchByMsgID_BlursThePostersLocation(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("searchByIDBlur")
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	const rawLat, rawLng = 53.0, -2.0
+	msgID := CreateTestMessage(t, userID, groupID, "OFFER: Wheelbarrow "+prefix, rawLat, rawLng)
+
+	results := message.SearchByMsgID(db, msgID, nil)
+
+	if assert.Len(t, results, 1) {
+		// Every other read surface blurs the poster's location to protect their anonymity.
+		wantLat, wantLng := roadblur.RoadBlur(rawLat, rawLng, utils.BLUR_USER)
+		assert.InDelta(t, wantLat, results[0].Lat, 0.0001, "the id search should return the blurred latitude")
+		assert.InDelta(t, wantLng, results[0].Lng, 0.0001, "the id search should return the blurred longitude")
+		assert.False(t, results[0].Lat == rawLat && results[0].Lng == rawLng,
+			"the id search must not return the poster's exact stored location")
+	}
 }

@@ -66,6 +66,40 @@ trait AmpEmail
     ];
 
     /**
+     * Pull out the parts of an AMP document that hold CSS: style blocks, inline
+     * style attributes and link tags. Member text is HTML-escaped, so it cannot
+     * form any of these.
+     */
+    protected function extractAmpCss(string $html): string
+    {
+        $css = [];
+
+        if (preg_match_all('/<style\b[^>]*>(.*?)<\/style>/is', $html, $m)) {
+            $css = array_merge($css, $m[1]);
+        }
+
+        // Walk each start tag with its quoted values kept whole, so a '>' inside an earlier
+        // attribute (an amp-bind expression, an on= handler) does not end the tag early.
+        if (preg_match_all('/<[a-z][^\s>\/]*(?:"[^"]*"|\'[^\']*\'|[^"\'>])*>/i', $html, $tags)) {
+            foreach ($tags[0] as $tag) {
+                if (preg_match_all('/\s([^\s=\/>"\']+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>"\']+))/', $tag, $attrs, PREG_SET_ORDER)) {
+                    foreach ($attrs as $attr) {
+                        if (strcasecmp($attr[1], 'style') === 0) {
+                            $css[] = $attr[2] . ($attr[3] ?? '') . ($attr[4] ?? '');
+                        }
+                    }
+                }
+            }
+        }
+
+        if (preg_match_all('/<link\b[^>]*>/i', $html, $m)) {
+            $css = array_merge($css, $m[0]);
+        }
+
+        return implode("\n", $css);
+    }
+
+    /**
      * Validate AMP HTML for forbidden CSS properties.
      *
      * Throws an exception if forbidden patterns are found. This catches
@@ -132,8 +166,10 @@ trait AmpEmail
         $expiryHours = config('freegle.amp.token_expiry_hours', 168); // 7 days default
         $expiry = time() + ($expiryHours * 3600);
 
-        // Format: "amp" + user_id + resource_id + expiry
-        $message = 'amp' . $userId . $resourceId . $expiry;
+        // Format: "amp:" + user_id + ":" + resource_id + ":" + expiry. The separators keep the
+        // pair unambiguous: without them 12 and 3 sign the same string as 1 and 23. The Go API
+        // rebuilds the same string (amp.TokenMessage).
+        $message = 'amp:' . $userId . ':' . $resourceId . ':' . $expiry;
         $token = hash_hmac('sha256', $message, $secret);
 
         return [
@@ -298,9 +334,9 @@ trait AmpEmail
             return;
         }
 
-        // Validate AMP HTML for forbidden CSS before using it.
-        // This will throw an exception during testing if problems are found.
-        $this->validateAmpCss($this->ampHtml);
+        // Validate only the CSS in the template, never member text. Words such as
+        // "Face mask: free" in a post must not stop the email being sent.
+        $this->validateAmpCss($this->extractAmpCss($this->ampHtml));
 
         $body = $message->getBody();
 

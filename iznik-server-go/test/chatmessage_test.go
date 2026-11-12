@@ -224,6 +224,74 @@ func TestRejectDuplicatesChatMessage(t *testing.T) {
 	assert.Equal(t, 1, reviewRejected, "duplicate message should also be rejected")
 }
 
+// The duplicate sweep must respect holds: a twin another moderator is holding is theirs to
+// decide, so a reject elsewhere leaves it pending and still held.
+func TestRejectDuplicatesSkipsTwinHeldByAnotherMod(t *testing.T) {
+	_, regularUserID, groupID, _, msgID, modToken := setupModerationData(t)
+	db := database.DBConn
+
+	otherUserID := CreateTestUser(t, uniquePrefix(t.Name())+"_other", utils.SYSTEMROLE_USER)
+	otherModID := CreateTestUser(t, uniquePrefix(t.Name())+"_othermod", utils.SYSTEMROLE_USER)
+	otherGroupID := CreateTestGroup(t, uniquePrefix(t.Name())+"_g2")
+	CreateTestMembership(t, otherUserID, otherGroupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherModID, otherGroupID, utils.ROLE_MODERATOR)
+	chatID2 := CreateTestChatRoom(t, otherUserID, nil, &otherGroupID, "User2Mod")
+	_ = groupID
+
+	db.Exec(
+		"INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) VALUES (?, ?, ?, NOW(), 1, 1)",
+		chatID2, regularUserID, "Test message needing review")
+	var heldMsgID uint64
+	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID2).Scan(&heldMsgID)
+	db.Exec("INSERT INTO chat_messages_held (msgid, userid) VALUES (?, ?)", heldMsgID, otherModID)
+
+	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Reject",
+	}, modToken)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var reviewRequired, reviewRejected int
+	db.Raw("SELECT reviewrequired, reviewrejected FROM chat_messages WHERE id = ?", heldMsgID).Row().Scan(&reviewRequired, &reviewRejected)
+	assert.Equal(t, 1, reviewRequired, "a twin held by another moderator must stay pending")
+	assert.Equal(t, 0, reviewRejected, "a twin held by another moderator must not be rejected")
+
+	var heldCount int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages_held WHERE msgid = ?", heldMsgID).Scan(&heldCount)
+	assert.Equal(t, int64(1), heldCount, "the other moderator's hold must be left in place")
+}
+
+// An image-only message has empty text, so matching on text alone would match every pending
+// image-only message in the last day. Rejecting one rejects only that one.
+func TestRejectEmptyTextMessageDoesNotRejectOtherEmptyMessages(t *testing.T) {
+	_, regularUserID, _, _, msgID, modToken := setupModerationData(t)
+	db := database.DBConn
+
+	db.Exec("UPDATE chat_messages SET message = '' WHERE id = ?", msgID)
+
+	otherUserID := CreateTestUser(t, uniquePrefix(t.Name())+"_other", utils.SYSTEMROLE_USER)
+	otherGroupID := CreateTestGroup(t, uniquePrefix(t.Name())+"_g2")
+	CreateTestMembership(t, otherUserID, otherGroupID, utils.ROLE_MEMBER)
+	chatID2 := CreateTestChatRoom(t, otherUserID, nil, &otherGroupID, "User2Mod")
+
+	db.Exec(
+		"INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) VALUES (?, ?, '', NOW(), 1, 1)",
+		chatID2, regularUserID)
+	var otherMsgID uint64
+	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID2).Scan(&otherMsgID)
+
+	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Reject",
+	}, modToken)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var reviewRequired, reviewRejected int
+	db.Raw("SELECT reviewrequired, reviewrejected FROM chat_messages WHERE id = ?", otherMsgID).Row().Scan(&reviewRequired, &reviewRejected)
+	assert.Equal(t, 1, reviewRequired, "another image-only message must stay pending")
+	assert.Equal(t, 0, reviewRejected, "another image-only message must not be rejected")
+}
+
 func TestHoldChatMessage(t *testing.T) {
 	modUserID, _, _, _, msgID, modToken := setupModerationData(t)
 	db := database.DBConn
@@ -424,6 +492,34 @@ func setupWiderReviewData(t *testing.T) (modToken string, modID, group1ID, group
 
 	_, modToken = CreateTestSession(t, modID)
 	return
+}
+
+// A moderator who does wider chat review sees another community's message in the queue and may approve it,
+// the only action that review offers. They may not delete or hold it.
+func TestWiderReviewModeratorMayOnlyApprove(t *testing.T) {
+	db := database.DBConn
+	modToken, _, _, _, msgID := setupWiderReviewData(t)
+
+	for _, action := range []string{"Reject", "Hold", "Redact"} {
+		resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+			"id":     msgID,
+			"action": action,
+		}, modToken)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, action+" is not offered by wider review")
+	}
+
+	var reviewRequired int
+	db.Raw("SELECT reviewrequired FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRequired)
+	assert.Equal(t, 1, reviewRequired, "the message must still be waiting for review")
+
+	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Approve",
+	}, modToken)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	db.Raw("SELECT reviewrequired FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRequired)
+	assert.Equal(t, 0, reviewRequired, "wider review may approve the message")
 }
 
 func TestWiderReviewEligibility(t *testing.T) {
@@ -810,4 +906,206 @@ func TestHoldAgainBySameModIsAllowed(t *testing.T) {
 	var holder uint64
 	db.Raw("SELECT userid FROM chat_messages_held WHERE msgid = ?", msgID).Scan(&holder)
 	assert.Equal(t, mod2ID, holder)
+}
+
+// A moderator acts only on review messages in their own queue. A pending message in a chat between members of a
+// group they do not moderate is not theirs to approve, reject, hold, release or redact.
+func TestModerationRefusedForChatOutsideModsQueue(t *testing.T) {
+	for _, action := range []string{"Approve", "ApproveAllFuture", "Reject", "Hold", "Release", "Redact"} {
+		action := action
+		t.Run(action, func(t *testing.T) {
+			db := database.DBConn
+			prefix := uniquePrefix("ModOutside" + action)
+
+			// Group A has our moderator. Group B has the two chatting members and its own moderator.
+			groupA := CreateTestGroup(t, prefix+"_a")
+			groupB := CreateTestGroup(t, prefix+"_b")
+			modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, modA, groupA, utils.ROLE_MODERATOR)
+			modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, modB, groupB, utils.ROLE_MODERATOR)
+			user1 := CreateTestUser(t, prefix+"_user1", utils.SYSTEMROLE_USER)
+			user2 := CreateTestUser(t, prefix+"_user2", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, user1, groupB, utils.ROLE_MEMBER)
+			CreateTestMembership(t, user2, groupB, utils.ROLE_MEMBER)
+
+			chatID := CreateTestChatRoom(t, user1, &user2, nil, "User2User")
+			db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) "+
+				"VALUES (?, ?, 'Outside the queue (outside-test@example.invalid)', NOW(), 1, 1)", chatID, user1)
+			var msgID uint64
+			db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID).Scan(&msgID)
+			assert.NotZero(t, msgID)
+
+			_, modAToken := CreateTestSession(t, modA)
+			resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+				"id":     msgID,
+				"action": action,
+			}, modAToken)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode, "a moderator of another group must be refused")
+
+			var row struct {
+				Reviewrequired int
+				Reviewrejected int
+				Message        string
+			}
+			db.Raw("SELECT reviewrequired, reviewrejected, message FROM chat_messages WHERE id = ?", msgID).Scan(&row)
+			assert.Equal(t, 1, row.Reviewrequired, "the message must still be waiting for review")
+			assert.Equal(t, 0, row.Reviewrejected)
+			assert.Contains(t, row.Message, "outside-test@example.invalid", "the text must not be redacted")
+
+			var held int64
+			db.Table("chat_messages_held").Where("msgid = ?", msgID).Count(&held)
+			assert.Equal(t, int64(0), held, "no hold may be placed")
+
+			// Their own moderator can still act.
+			_, modBToken := CreateTestSession(t, modB)
+			resp = postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+				"id":     msgID,
+				"action": "Hold",
+			}, modBToken)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+		})
+	}
+}
+
+// A backup moderator (membership settings active:0) is still a moderator of the community, so they may act
+// on that community's review messages. A moderator with no tie to the community still may not.
+func TestModerationAllowedForBackupModerator(t *testing.T) {
+	for _, action := range []string{"Approve", "Reject", "Hold", "Release", "Redact"} {
+		action := action
+		t.Run(action, func(t *testing.T) {
+			db := database.DBConn
+			prefix := uniquePrefix("ModBackup" + action)
+
+			group := CreateTestGroup(t, prefix)
+			backup := CreateTestUser(t, prefix+"_backup", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, backup, group, utils.ROLE_MODERATOR)
+			db.Exec("UPDATE memberships SET settings = '{\"active\":0}' WHERE userid = ? AND groupid = ?", backup, group)
+			user1 := CreateTestUser(t, prefix+"_user1", utils.SYSTEMROLE_USER)
+			user2 := CreateTestUser(t, prefix+"_user2", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, user1, group, utils.ROLE_MEMBER)
+			CreateTestMembership(t, user2, group, utils.ROLE_MEMBER)
+
+			chatID := CreateTestChatRoom(t, user1, &user2, nil, "User2User")
+			msgID := holdChatMessageForReview(t, chatID, user1)
+
+			_, token := CreateTestSession(t, backup)
+			resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+				"id":     msgID,
+				"action": action,
+			}, token)
+			assert.Equal(t, http.StatusOK, resp.StatusCode, "a backup moderator of the community may act")
+		})
+	}
+}
+
+// holdChatMessageForReview inserts a message waiting for review in the chat and returns its id.
+func holdChatMessageForReview(t *testing.T, chatID, senderID uint64) uint64 {
+	t.Helper()
+	db := database.DBConn
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) "+
+		"VALUES (?, ?, 'Held for review', NOW(), 1, 1)", chatID, senderID)
+	var msgID uint64
+	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID).Scan(&msgID)
+	assert.NotZero(t, msgID)
+	return msgID
+}
+
+// The review queue for a chat between two members holds the messages sent to a member of the moderator's
+// community. A moderator of only the sender's community does not see them there, and must not be able to act
+// on them.
+func TestModerationRefusedWhenOnlyTheSenderIsOnTheModsGroup(t *testing.T) {
+	for _, action := range []string{"Approve", "Reject", "Hold"} {
+		action := action
+		t.Run(action, func(t *testing.T) {
+			db := database.DBConn
+			prefix := uniquePrefix("ModSenderOnly" + action)
+
+			groupA := CreateTestGroup(t, prefix+"_a")
+			groupB := CreateTestGroup(t, prefix+"_b")
+			modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, modA, groupA, utils.ROLE_MODERATOR)
+			sender := CreateTestUser(t, prefix+"_sender", utils.SYSTEMROLE_USER)
+			recipient := CreateTestUser(t, prefix+"_recipient", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, sender, groupA, utils.ROLE_MEMBER)
+			CreateTestMembership(t, recipient, groupB, utils.ROLE_MEMBER)
+
+			chatID := CreateTestChatRoom(t, sender, &recipient, nil, "User2User")
+			msgID := holdChatMessageForReview(t, chatID, sender)
+
+			_, modAToken := CreateTestSession(t, modA)
+			resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+				"id":     msgID,
+				"action": action,
+			}, modAToken)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode, "a moderator of only the sender's group must be refused")
+
+			var reviewRequired int
+			db.Raw("SELECT reviewrequired FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRequired)
+			assert.Equal(t, 1, reviewRequired, "the message must still be waiting for review")
+		})
+	}
+}
+
+// A moderator who is one of the two people in a chat cannot act on a message held in it, whoever sent it.
+func TestModerationRefusedForAModeratorsOwnChat(t *testing.T) {
+	for _, action := range []string{"Approve", "Reject"} {
+		action := action
+		t.Run(action, func(t *testing.T) {
+			db := database.DBConn
+			prefix := uniquePrefix("ModOwnChat" + action)
+
+			groupA := CreateTestGroup(t, prefix+"_a")
+			modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, modA, groupA, utils.ROLE_MODERATOR)
+			member := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+			CreateTestMembership(t, member, groupA, utils.ROLE_MEMBER)
+
+			chatID := CreateTestChatRoom(t, modA, &member, nil, "User2User")
+			ownMsg := holdChatMessageForReview(t, chatID, modA)
+			theirMsg := holdChatMessageForReview(t, chatID, member)
+
+			_, modAToken := CreateTestSession(t, modA)
+			for _, msgID := range []uint64{ownMsg, theirMsg} {
+				resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+					"id":     msgID,
+					"action": action,
+				}, modAToken)
+				assert.Equal(t, http.StatusForbidden, resp.StatusCode, "a moderator must not act on a message in a chat they are in")
+
+				var reviewRequired int
+				db.Raw("SELECT reviewrequired FROM chat_messages WHERE id = ?", msgID).Scan(&reviewRequired)
+				assert.Equal(t, 1, reviewRequired, "the message must still be waiting for review")
+			}
+		})
+	}
+}
+
+// Rejecting a message also rejects identical pending messages, but only ones the moderator could reject
+// themselves. A twin in another community's queue is left alone.
+func TestRejectDuplicatesLeavesTwinOutsideModsQueue(t *testing.T) {
+	_, regularUserID, _, _, msgID, modToken := setupModerationData(t)
+	db := database.DBConn
+
+	otherGroupID := CreateTestGroup(t, uniquePrefix(t.Name())+"_g2")
+	otherUserID := CreateTestUser(t, uniquePrefix(t.Name())+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, otherUserID, otherGroupID, utils.ROLE_MEMBER)
+	chatID2 := CreateTestChatRoom(t, otherUserID, nil, &otherGroupID, "User2Mod")
+
+	db.Exec(
+		"INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) VALUES (?, ?, ?, NOW(), 1, 1)",
+		chatID2, regularUserID, "Test message needing review")
+	var twinID uint64
+	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID2).Scan(&twinID)
+
+	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Reject",
+	}, modToken)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var reviewRequired, reviewRejected int
+	db.Raw("SELECT reviewrequired, reviewrejected FROM chat_messages WHERE id = ?", twinID).Row().Scan(&reviewRequired, &reviewRejected)
+	assert.Equal(t, 1, reviewRequired, "a twin in another community's queue must stay pending")
+	assert.Equal(t, 0, reviewRejected, "a twin in another community's queue must not be rejected")
 }

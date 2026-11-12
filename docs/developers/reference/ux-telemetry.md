@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-11
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/composables/useFlowTelemetry.js
@@ -138,7 +138,7 @@ other also sends a `choice_switched` on `type` (`Offer`, `Wanted`). `flow_submit
 
 | Flow | Where | Steps |
 |---|---|---|
-| `reply` | `useReplyStateMachine.js` `transitionTo` | the machine states; `entry` is the reply source, or `restored` |
+| `reply` | `useReplyStateMachine.js` `transitionTo` | the machine states; `entry` is the reply source, or `restored`. A reply that ends in `ERROR` is kept as a draft and is not sent again on the next page load |
 | `login` | `LoginModal.vue` via `useLoginTelemetry.js` | `signup`, `signin`, `forgot`; `entry` is `forced` or `navbar` |
 | `chat_promise` | `PromiseModal.vue` | `choose`; `entry` is `chat` or `maybe` |
 | `chat_outcome` | `OutcomeModal.vue` | `choose`; `entry` is the outcome type |

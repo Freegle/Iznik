@@ -872,3 +872,36 @@ func TestMergeYahooidFillsBlankOnKeptAccount(t *testing.T) {
 	db.Raw("SELECT COALESCE(yahooid, '') FROM users WHERE id = ?", id2).Scan(&got)
 	assert.Equal(t, yahooid, got, "the kept account should take the discarded account's yahooid")
 }
+
+// Support may merge any accounts that do not hold a higher system role than Support. A merge keeps the
+// higher system role, so merging an Admin account into a Support one would make Support an Admin.
+func TestMergeSupportCannotInvolveAnAdminAccount(t *testing.T) {
+	prefix := uniquePrefix("merge_supcap")
+	db := database.DBConn
+
+	supportID := CreateTestUser(t, prefix+"_support", utils.SYSTEMROLE_SUPPORT)
+	_, supportToken := CreateTestSession(t, supportID)
+	adminAccount := CreateTestUser(t, prefix+"_adminacct", utils.SYSTEMROLE_ADMIN)
+	member := CreateTestUser(t, prefix+"_member", utils.SYSTEMROLE_USER)
+	otherSupport := CreateTestUser(t, prefix+"_support2", utils.SYSTEMROLE_SUPPORT)
+
+	assert.Equal(t, 403, mergeUsers(t, supportToken, adminAccount, supportID), "an Admin account into Support's own")
+	assert.Equal(t, 403, mergeUsers(t, supportToken, supportID, adminAccount), "Support's own into an Admin account")
+	assert.Equal(t, 403, mergeUsers(t, supportToken, adminAccount, member), "an Admin account into a member")
+
+	var stillAdmin int64
+	db.Raw("SELECT COUNT(*) FROM users WHERE id = ? AND systemrole = ?", adminAccount, utils.SYSTEMROLE_ADMIN).Scan(&stillAdmin)
+	assert.EqualValues(t, 1, stillAdmin, "the refused merge leaves the Admin account alone")
+	var supportRole string
+	db.Raw("SELECT systemrole FROM users WHERE id = ?", supportID).Scan(&supportRole)
+	assert.Equal(t, utils.SYSTEMROLE_SUPPORT, supportRole, "Support is not raised to Admin")
+
+	assert.Equal(t, 200, mergeUsers(t, supportToken, member, supportID), "an ordinary member into Support")
+	member2 := CreateTestUser(t, prefix+"_member2", utils.SYSTEMROLE_USER)
+	assert.Equal(t, 200, mergeUsers(t, supportToken, otherSupport, member2), "a Support account")
+
+	_, adminToken := mergeAdminSetup(t, prefix)
+	a2 := CreateTestUser(t, prefix+"_a2", utils.SYSTEMROLE_ADMIN)
+	m3 := CreateTestUser(t, prefix+"_m3", utils.SYSTEMROLE_USER)
+	assert.Equal(t, 200, mergeUsers(t, adminToken, a2, m3), "Admin may merge an Admin account")
+}

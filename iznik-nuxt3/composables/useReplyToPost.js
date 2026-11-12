@@ -76,7 +76,7 @@ export function useReplyToPost() {
         return null
       }
 
-      await chatButtonRef.openChat(
+      const opened = await chatButtonRef.openChat(
         null,
         replyToSend.value.replyMessage,
         replyToSend.value.replyMsgId,
@@ -85,6 +85,11 @@ export function useReplyToPost() {
         replyToSend.value.replySource,
         replyToSend.value.replyImageId
       )
+
+      // No chat means nothing was sent: keep the reply in the store rather than report it sent.
+      if (opened === false) {
+        return null
+      }
 
       // Clear the store of any message to avoid repeatedly sending it.
       replyStore.replyMsgId = null
