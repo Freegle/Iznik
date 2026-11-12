@@ -112,9 +112,16 @@ func dropScratch(admin *sql.DB) {
 	_, _ = admin.Exec("DROP DATABASE IF EXISTS " + scratchDatabase)
 }
 
+// unreachable remembers an engine that did not answer, so one missing database fails each test
+// at once and not after a minute apiece.
+var unreachable sync.Map // engine -> error
+
 // waitFor pings until the database answers, as the stack's own start-up does.
 func waitFor(t *testing.T, db *sql.DB, engine string) {
 	t.Helper()
+	if err, ok := unreachable.Load(engine); ok {
+		t.Fatalf("the %s source database is not reachable: %v", engine, err)
+	}
 	deadline := time.Now().Add(60 * time.Second)
 	var err error
 	for {
@@ -122,6 +129,7 @@ func waitFor(t *testing.T, db *sql.DB, engine string) {
 			return
 		}
 		if time.Now().After(deadline) {
+			unreachable.Store(engine, err)
 			t.Fatalf("the %s source database is not reachable: %v\n"+
 				"These tests need both engines; SPATIAL_TEST_ENGINES=<engine> runs one.", engine, err)
 		}
