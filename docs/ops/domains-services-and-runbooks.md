@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
@@ -37,6 +37,10 @@ operational facts (from their component READMEs and
 - They rebuild that graph on start, which takes several minutes, so a restart is not
   instant.
 - Rippling, the daily digest and browse depend on them being up.
+- The routing server reads the database through `MYSQL_*` settings. Production stays on MySQL. It can read
+  PostgreSQL instead when `DB_ENGINE=postgres` and the `PGSQL_*` settings are set; nothing on live uses
+  that, and an unrecognised `DB_ENGINE` makes it run without a database, not on the other engine (see
+  [../developers/reference/database-engines.md](../developers/reference/database-engines.md)).
 - On the database nodes monit starts the routing server as its own systemd unit with 4 GB of
   memory the kernel may not reclaim or swap, and `system.slice` carries the same 4 GB
   reservation (`systemctl set-property system.slice MemoryMin=4G`), without which the unit's

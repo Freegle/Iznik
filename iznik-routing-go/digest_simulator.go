@@ -157,12 +157,7 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 		// centroid.  Four matches the doc's "4.5 average" figure.
 		homeGroups := map[int64]struct{}{}
 		homeGroupList := []fiber.Map{}
-		grows, err := db.Query(`
-			SELECT id, nameshort, ST_AsGeoJSON(polyindex)
-			  FROM `+"`groups`"+`
-			 WHERE ST_Contains(polyindex, ST_GeomFromText(?, 3857))
-			 LIMIT 8
-		`, "POINT("+strconv.FormatFloat(lng, 'f', 8, 64)+" "+strconv.FormatFloat(lat, 'f', 8, 64)+")")
+		grows, err := db.Query(sqlDigestHomeGroups(), "POINT("+strconv.FormatFloat(lng, 'f', 8, 64)+" "+strconv.FormatFloat(lat, 'f', 8, 64)+")")
 		if err == nil {
 			for grows.Next() {
 				var id int64
@@ -188,55 +183,7 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 		// than a few hundred to fill a digest cap of 100.
 		const maxPool = 1000
 		windowStart := time.Now().Add(-time.Duration(windowH * float64(time.Hour)))
-		rows, err := db.Query(`
-			SELECT ms.msgid,
-			       ST_X(ms.point) AS lng,
-			       ST_Y(ms.point) AS lat,
-			       ms.msgtype,
-			       ms.arrival,
-			       ms.successful,
-			       ms.promised,
-			       COALESCE(ms.groupid, 0)            AS groupid,
-			       COALESCE(g.nameshort, '')          AS groupname,
-			       COALESCE(m.fromuser, 0)            AS fromuser,
-			       COALESCE(m.subject, '')            AS subject,
-			       (SELECT COALESCE(SUM(ml.count), 0)
-			          FROM messages_likes ml
-			         WHERE ml.msgid = ms.msgid
-			           AND ml.type = 'View')          AS views,
-			       (SELECT COUNT(*)
-			          FROM chat_messages cm
-			         WHERE cm.refmsgid = ms.msgid
-			           AND cm.type = 'Interested'
-			           AND cm.reviewrejected = 0
-			           AND cm.reviewrequired = 0)     AS replies,
-			       COALESCE(
-			         (SELECT a.id FROM messages_attachments a
-			           WHERE a.msgid = ms.msgid
-			           ORDER BY a.`+"`primary`"+` DESC, a.id ASC LIMIT 1),
-			         0)                               AS thumb_attachment_id,
-			       COALESCE(
-			         (SELECT a.externaluid FROM messages_attachments a
-			           WHERE a.msgid = ms.msgid AND a.externaluid IS NOT NULL
-			           ORDER BY a.`+"`primary`"+` DESC, a.id ASC LIMIT 1),
-			         '')                              AS thumb_externaluid,
-			       EXISTS(SELECT 1 FROM messages_outcomes mo
-			               WHERE mo.msgid = ms.msgid)        AS has_outcome,
-			       EXISTS(SELECT 1 FROM messages_outcomes mo
-			               WHERE mo.msgid = ms.msgid
-			                 AND mo.outcome IN ('Taken','Received')) AS has_success,
-			       COALESCE(m.tnpostid, 0)            AS tnpostid,
-			       COALESCE(m.locationid, 0)          AS locationid,
-			       COALESCE(m.textbody, '')           AS textbody
-			  FROM messages_spatial ms
-			  LEFT JOIN messages m ON m.id = ms.msgid
-			  LEFT JOIN `+"`groups`"+` g ON g.id = ms.groupid
-			 WHERE ms.arrival >= ?
-			   AND ms.msgtype IN ('Offer','Wanted')
-			   AND ST_Contains(ST_GeomFromText(?, 3857), ms.point)
-			 ORDER BY ms.arrival DESC
-			 LIMIT ?
-		`, windowStart, wkt, maxPool)
+		rows, err := db.Query(sqlDigestPool(), utcArg(windowStart), wkt, maxPool)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).
 				JSON(fiber.Map{"error": err.Error()})

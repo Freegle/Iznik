@@ -40,7 +40,7 @@ var originGroupForMsgidFn = func(msgid uint64) int64 {
 	}
 	var gid sql.NullInt64
 	_ = db.QueryRow(
-		"SELECT mg.groupid FROM messages_groups mg WHERE mg.msgid = ? AND mg.deleted = 0 ORDER BY mg.arrival ASC LIMIT 1",
+		sqlOriginGroup(),
 		msgid).Scan(&gid)
 	return gid.Int64
 }

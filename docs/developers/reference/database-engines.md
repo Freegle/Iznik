@@ -17,6 +17,14 @@ covers:
   - scripts/fixtures/**
   - iznik-server-go/database/database.go
   - iznik-server-go/database/failover.go
+  - iznik-routing-go/dbengine/*
+  - iznik-routing-go/dbsql.go
+  - iznik-routing-go/dbsql_test.go
+  - iznik-routing-go/dbengine_integration_test.go
+  - iznik-routing-go/internal/dbtest/*
+  - iznik-routing-go/cmd/rippleextract/*
+  - iznik-routing-go/scripts/pg-test-schema.mjs
+  - status-nuxt/server/api/tests/routing.post.ts
 ---
 
 # Database engines: MySQL and PostgreSQL
@@ -24,7 +32,8 @@ covers:
 Production runs on MySQL (Percona). The code is being made to run on PostgreSQL 18 with PostGIS as
 well, so that moving is an operations job and not a rewrite. Every change on the way leaves
 behaviour on MySQL exactly as it is. This page covers what exists for the second engine so far:
-the dev container, the schema baseline and its converter, the stored functions, and the routing spike. The plan is
+the dev container, the schema baseline and its converter, the stored functions, the routing spike, and the routing service
+(`iznik-routing-go`), which runs on either engine. The plan is
 `plans/token-burn/postgresql-migration.md`; the design is `plans/database-migration-evaluation-2026-07.md`.
 
 ## The dev container
@@ -349,9 +358,87 @@ return postgres.New(postgres.Config{Conn: sql.OpenDB(fc)}), fc, nil
 the same rows on both engines, on a small fixture. It needs the second engine's database built by
 `scripts/setup-pg-database.sh`.
 
+## The routing service on either engine
+
+`iznik-routing-go` reads the database through `database/sql`, not GORM. It runs on MySQL by default.
+Set `DB_ENGINE=postgres` and it runs on PostgreSQL through pgx, with no other code change.
+
+| Setting | MySQL (default) | PostgreSQL |
+|---|---|---|
+| `DB_ENGINE` | unset or `mysql` | `postgres` |
+| Host | `MYSQL_HOST` | `PGSQL_HOST` |
+| Port | `MYSQL_PORT` (3306) | `PGSQL_PORT` (5432) |
+| User | `MYSQL_USER` (iznik) | `PGSQL_USERNAME` (root) |
+| Password | `MYSQL_PASSWORD` | `PGSQL_PASSWORD` |
+| Database | `MYSQL_DBNAME` (iznik) | `PGSQL_DATABASE` (iznik) |
+| TLS | | `PGSQL_SSLMODE` (prefer) |
+
+The `PGSQL_*` names are the ones the Laravel `pgsql` connection reads. As before, an empty host means no
+database is configured and the service runs without one. A `DB_ENGINE` that is not `mysql` or `postgres`
+opens no database, and logs why; it never falls back to the other engine. The PostgreSQL session time zone
+is set to UTC in the DSN.
+
+The code is in two places. `iznik-routing-go/dbengine` picks the engine and builds the driver name and DSN.
+`iznik-routing-go/dbsql.go` holds every statement the service sends, written once with `?` placeholders
+and once more for PostgreSQL where the engines differ, so a call site passes the same arguments on
+either. `cmd/rippleextract` has its own three in `sql.go`. On MySQL each statement is exactly the
+text it was before: `dbsql_test.go` and `cmd/rippleextract/sql_test.go` hold each to a SHA-256 taken from the
+source before the change, so a MySQL statement cannot change without the test saying so.
+
+What differs, and why:
+
+- **Geometry.** MySQL columns are SRID 3857 and PostgreSQL columns are 4326, both holding degrees. A WKT
+  string or point built in the statement takes the column's SRID. `POINT(x, y)` is `ST_MakePoint`.
+  `ST_GeometryType` answers `POLYGON` on MySQL and `ST_Polygon` on PostGIS. `MBRContains` against a box is
+  `&&`, which the GiST index answers. `ST_Distance_Sphere` is `ST_DistanceSphere`. The two use slightly different earth radii (about 6370986 m and 6371008.77 m), so distances differ by a few parts in a million; the one use here, a nearest-first ordering, is not affected.
+- **Syntax.** `INTERVAL 90 DAY` is `INTERVAL '90 days'`, `IF()` is `CASE`, `STRAIGHT_JOIN` is dropped (the
+  PostgreSQL planner picks the order), `INSERT IGNORE` is `ON CONFLICT DO NOTHING` (both report only the rows
+  really inserted), and the `information_schema` check for the (msgid, leaf, fp) key is `pg_index`.
+- **Quoting.** `groups` and `primary` are backticked on MySQL and double-quoted on PostgreSQL.
+- **Text and numbers.** `messages.tnpostid` is text, so its default is `'0'`: `COALESCE` will not mix text and an
+  integer on PostgreSQL. A postcode compared with `REPLACE(...)` is cast to `citext`, or the comparison
+  would be case sensitive.
+- **The partition fingerprint.** It is the FNV-1a hash of the leaf assignment and uses all 64 bits. MySQL
+  stores it in `BIGINT UNSIGNED`. PostgreSQL has only signed `bigint`, so the converter turned the columns
+  into `bigint`, and half of all fingerprints are out of its range. The service sends the same bit pattern
+  as an `int64` on PostgreSQL (`dbengine.Engine.FingerprintArg`, used through `fpArg`). Every write and every
+  comparison goes through it, so equal fingerprints stay equal. Anything else that writes
+  `reach_labels_next_fp` or `rippling_reach_leaves.fp` on PostgreSQL must do the same, and a value read back
+  into `uint64` must be cast back. The Laravel side has not been ported yet.
+- **Times.** The baseline's time columns are `timestamptz`, so pgx sends an absolute instant and the zone of
+  the Go value does not matter. The service still sends UTC, and the connection sets the session zone to UTC.
+- **Single-precision floats.** `rippling_reach.max_drive_min` is `real`. pgx widens it to 12.300000190734863
+  where MySQL gives 12.3, so the PostgreSQL statements read it through a text cast.
+- **Sort order** of text follows the database collation. `/v1/groups/list` sorts by `nameshort`, a `citext`
+  column on PostgreSQL.
+
+### Testing it on both engines
+
+`iznik-routing-go/internal/dbtest` gives a test a scratch database of its own, on either engine, and drops it
+afterwards. `dbengine_integration_test.go` and `cmd/rippleextract/engine_test.go` load the same rows into
+both and expect the same answers from the service's own handlers, loaders and commands: the session check,
+nearby and listed groups, group areas, the postcode lookup, the active-member box query, the posts and
+digest handlers, the stored-label loaders, `labels-export` and `labels-apply` (including a second run and
+`--skip-staged`), the leaf key check and the fingerprint round trip.
+
+- Servers come from the same settings as above. Where one is missing the default is the compose service:
+  host `percona` or `postgres`, user `root`, password `iznik`.
+- On MySQL the scratch tables are `CREATE TABLE ... LIKE` copies of the tables in `MYSQL_DBNAME`. On PostgreSQL
+  they come from `internal/dbtest/pg_schema.sql`, which `node scripts/pg-test-schema.mjs` extracts from the
+  baseline. `--check` fails if it is stale, and `TestSchemaMatchesBaseline` does the same comparison table by
+  table when the baseline is beside the module.
+- A test skips when its server cannot be reached. `ROUTING_REQUIRE_DB=mysql`, `postgres` or `all` turns
+  that into a failure, so a CI job that is meant to run an engine cannot pass by skipping it. The status API's
+  routing suite (`status-nuxt/server/api/tests/routing.post.ts`) sets `all` when `CI` is set, and it copies
+  `dbengine/` and `internal/` into the routing container with the rest of the source. A local run skips an
+  engine whose server is down.
+- `ROUTING_TEST_DB_PREFIX` changes the name prefix of the scratch databases (`routing_go_test`).
+
+```bash
+cd iznik-routing-go
+PGSQL_HOST=localhost PGSQL_PORT=5432 ROUTING_REQUIRE_DB=postgres go test -run TestEngine_ ./...
+```
+
 ## Not yet done
 
-The Go and Laravel suites on PostgreSQL (the PHP suite builds `iznik_batch_test` with `migrate:fresh`, which
-runs the MySQL migrations, so it needs the baseline route first), a CI job that runs the converter and
-PostgreSQL tests (the functions test included) and `regenerate.sh --check` (it needs the orb changed), and the
-spatial benchmark are later steps in the plan. `StoredFunctionsTest.php` has only been run in its MySQL form, in CI.
+The Go API and Laravel suites on PostgreSQL are run by CI against a known-failures list (see CI below). Converting the failing sites, the PostgreSQL side of the Laravel code that writes the routing service's fingerprint columns, and the spatial benchmark are later steps in the plan.

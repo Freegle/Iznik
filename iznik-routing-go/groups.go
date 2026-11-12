@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/freegle/iznik-routing-go/dbengine"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -172,56 +171,64 @@ func configureGroupsPool(db *sql.DB) {
 	db.SetConnMaxLifetime(5 * time.Minute)
 }
 
-// groupsDSN builds the MySQL DSN from environment variables.
-func groupsDSN() string {
-	host := os.Getenv("MYSQL_HOST")
-	if host == "" {
-		return ""
+// groupsDBEngineWarn limits the "bad DB_ENGINE" message to once; groupsDSN runs on every request
+// while no connection is open.
+var groupsDBEngineWarn sync.Once
+
+// groupsSettings reads the connection settings for the configured engine. ok is false when no
+// database is configured (no host) or DB_ENGINE is not a known engine, so the service runs without
+// one, as it does when MYSQL_HOST is unset.
+func groupsSettings() (engine dbengine.Engine, s dbengine.Settings, ok bool) {
+	engine, err := dbengine.FromEnv()
+	if err != nil {
+		groupsDBEngineWarn.Do(func() { log.Printf("groups: %v; running without a database", err) })
+		return engine, s, false
 	}
-	port := os.Getenv("MYSQL_PORT")
-	if port == "" {
-		port = "3306"
-	}
-	user := os.Getenv("MYSQL_USER")
-	if user == "" {
-		user = "iznik"
-	}
-	pass := os.Getenv("MYSQL_PASSWORD")
-	dbname := os.Getenv("MYSQL_DBNAME")
-	if dbname == "" {
-		dbname = "iznik"
-	}
-	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, pass, host, port, dbname)
+	s = dbengine.SettingsFromEnv(engine, dbengine.Settings{})
+	return engine, s, s.Host != ""
 }
 
-// initGroupsDB attempts to connect to MySQL at startup.
+// groupsDSN builds the DSN for the configured engine from environment variables. Empty means no
+// database is configured.
+func groupsDSN() string {
+	engine, s, ok := groupsSettings()
+	if !ok {
+		return ""
+	}
+	return engine.DSN(s, dbengine.DSNOptions{ParseTime: true})
+}
+
+// openGroupsDB opens the pool for dsn on the configured engine.
+func openGroupsDB(dsn string) (*sql.DB, error) {
+	return sql.Open(dbengine.Current().Driver(), dsn)
+}
+
+// groupsTarget describes the configured database for a log line.
+func groupsTarget() string {
+	_, s, _ := groupsSettings()
+	return fmt.Sprintf("%s:%s/%s", s.Host, s.Port, s.Name)
+}
+
+// initGroupsDB attempts to connect to the database at startup.
 func initGroupsDB() {
 	dsn := groupsDSN()
 	if dsn == "" {
 		return
 	}
-	db, err := sql.Open("mysql", dsn)
+	label := dbengine.Current().Label()
+	db, err := openGroupsDB(dsn)
 	if err != nil {
-		log.Printf("groups: MySQL open error: %v", err)
+		log.Printf("groups: %s open error: %v", label, err)
 		return
 	}
 	if err := db.Ping(); err != nil {
-		log.Printf("groups: MySQL ping error: %v", err)
+		log.Printf("groups: %s ping error: %v", label, err)
 		db.Close()
 		return
 	}
 	configureGroupsPool(db)
 	groupsDB = db
-	host := os.Getenv("MYSQL_HOST")
-	port := os.Getenv("MYSQL_PORT")
-	if port == "" {
-		port = "3306"
-	}
-	dbname := os.Getenv("MYSQL_DBNAME")
-	if dbname == "" {
-		dbname = "iznik"
-	}
-	log.Printf("groups: MySQL connected (%s:%s/%s)", host, port, dbname)
+	log.Printf("groups: %s connected (%s)", label, groupsTarget())
 }
 
 // ensureGroupsDB returns the groups DB connection, reconnecting lazily if
@@ -248,35 +255,27 @@ func ensureGroupsDB() *sql.DB {
 	if dsn == "" {
 		return nil
 	}
-	db, err := sql.Open("mysql", dsn)
+	label := dbengine.Current().Label()
+	db, err := openGroupsDB(dsn)
 	if err != nil {
-		log.Printf("groups: MySQL reconnect open error: %v", err)
+		log.Printf("groups: %s reconnect open error: %v", label, err)
 		return nil
 	}
 	if err := db.Ping(); err != nil {
-		log.Printf("groups: MySQL reconnect ping error: %v", err)
+		log.Printf("groups: %s reconnect ping error: %v", label, err)
 		db.Close()
 		return nil
 	}
 	configureGroupsPool(db)
 	groupsDB = db
-	host := os.Getenv("MYSQL_HOST")
-	port := os.Getenv("MYSQL_PORT")
-	if port == "" {
-		port = "3306"
-	}
-	dbname := os.Getenv("MYSQL_DBNAME")
-	if dbname == "" {
-		dbname = "iznik"
-	}
-	log.Printf("groups: MySQL reconnected (%s:%s/%s)", host, port, dbname)
+	log.Printf("groups: %s reconnected (%s)", label, groupsTarget())
 	return groupsDB
 }
 
 // handleNearbyGroups returns a GeoJSON FeatureCollection of Freegle groups near
 // the given lat/lng. Each feature carries a "contains" boolean: true when the
 // offer point falls inside that group's polygon (i.e. the home group), false for
-// adjacent neighbours. Requires MySQL connection.
+// adjacent neighbours. Requires a database connection.
 //
 // polyindex is tagged SRID 3857 in the database but the coordinate values are
 // stored as WGS84 degrees (not Mercator meters). We pass degree values directly
@@ -305,26 +304,7 @@ func handleNearbyGroups() fiber.Handler {
 		boxLatMin := latF - 1.5
 		boxLatMax := latF + 1.5
 
-		rows, err := db.Query(`
-			SELECT id, nameshort, ST_AsText(polyindex) AS wkt,
-			       ST_Contains(polyindex,
-			           ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857)) AS contains_pt
-			FROM `+"`groups`"+`
-			WHERE publish = 1 AND listable = 1
-			  AND polyindex IS NOT NULL
-			  AND (
-			    ST_Contains(polyindex,
-			        ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857))
-			    OR (
-			      ST_X(ST_Centroid(polyindex)) BETWEEN ? AND ?
-			      AND ST_Y(ST_Centroid(polyindex)) BETWEEN ? AND ?
-			    )
-			  )
-			ORDER BY contains_pt DESC,
-			         ST_Distance(polyindex,
-			             ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857)) ASC
-			LIMIT 60
-		`,
+		rows, err := db.Query(sqlNearbyGroups(),
 			lngF, latF, // SELECT contains_pt  (WKT: POINT(lng lat))
 			lngF, latF, // WHERE ST_Contains
 			boxLngMin, boxLngMax, // centroid X = lng (degrees)
@@ -377,8 +357,7 @@ func groupSeedNodes(g *Graph, groupID int64) ([]NodeID, bool) {
 	}
 	var wkt string
 	var clat, clng float64
-	err := db.QueryRow("SELECT ST_AsText(polyindex), ST_Y(ST_Centroid(polyindex)), "+
-		"ST_X(ST_Centroid(polyindex)) FROM `groups` WHERE id = ?", groupID).Scan(&wkt, &clat, &clng)
+	err := db.QueryRow(sqlGroupBoundary(), groupID).Scan(&wkt, &clat, &clng)
 	if err != nil {
 		return nil, false
 	}
@@ -415,7 +394,7 @@ type groupListItem struct {
 }
 
 // handleGroupsList returns every publishable Freegle group (id, short name, polygon
-// centroid) for the catchment tab's group picker. Requires MySQL; returns [] without it.
+// centroid) for the catchment tab's group picker. Requires a database; returns [] without it.
 // polyindex stores degree values tagged SRID 3857, so ST_X/ST_Y give lng/lat directly.
 func handleGroupsList() fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -423,10 +402,7 @@ func handleGroupsList() fiber.Handler {
 		if db == nil {
 			return c.JSON([]groupListItem{})
 		}
-		rows, err := db.Query("SELECT id, nameshort, " +
-			"ST_Y(ST_Centroid(polyindex)) AS lat, ST_X(ST_Centroid(polyindex)) AS lng " +
-			"FROM `groups` WHERE publish = 1 AND listable = 1 AND polyindex IS NOT NULL " +
-			"ORDER BY nameshort")
+		rows, err := db.Query(sqlGroupsList())
 		if err != nil {
 			log.Printf("groups list query: %v", err)
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})

@@ -189,7 +189,7 @@ func reachExpectedPartFP() (uint64, bool) {
 	if dsn == "" {
 		return 0, false
 	}
-	db, err := sql.Open("mysql", dsn)
+	db, err := openGroupsDB(dsn)
 	if err != nil {
 		log.Printf("reach: cannot open db to read %s: %v", reachPartFPConfigKey, err)
 		return 0, false
@@ -201,7 +201,7 @@ func reachExpectedPartFP() (uint64, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var raw string
-	if err := db.QueryRowContext(ctx, "SELECT `value` FROM config WHERE `key` = ?", reachPartFPConfigKey).Scan(&raw); err != nil {
+	if err := db.QueryRowContext(ctx, sqlPartitionFingerprint(), reachPartFPConfigKey).Scan(&raw); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("reach: cannot read %s: %v", reachPartFPConfigKey, err)
 		}

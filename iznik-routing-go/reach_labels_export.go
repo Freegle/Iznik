@@ -214,7 +214,7 @@ func reachLabelsExportCmd(args []string) {
 // loadLabelExportRows reads the same population ripple:backfill-reach-labels
 // walks: every row with a budget. Read-only — this command never writes.
 func loadLabelExportRows(limit int) []labelExportRow {
-	q := "SELECT msgid, lat, lng, max_drive_min FROM rippling_reach WHERE max_drive_min > 0 ORDER BY msgid"
+	q := sqlLabelExportRows()
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
 	}

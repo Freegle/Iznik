@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-09-05
+last_reviewed: 2026-11-12
 covers:
   - iznik-routing-go/graph.go
   - iznik-routing-go/dijkstra.go
