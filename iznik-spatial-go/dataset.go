@@ -41,7 +41,8 @@ type Dataset interface {
 	// Name returns the dataset identifier used in URL paths (e.g. "locations").
 	Name() string
 
-	// Load populates idx from srcDB with a full table scan.
+	// Load populates idx from the source database with a full table scan. The source is MySQL or
+	// PostgreSQL; see source.go.
 	Load(srcDB *sql.DB, idx *Index) error
 
 	// ApplyDelta loads rows modified since `since` and updates idx.
@@ -56,7 +57,7 @@ type Dataset interface {
 	// Returns ErrTooManyResults if the result set exceeds maxWithinResults.
 	Within(idx *Index, params QueryParams) ([]int64, error)
 
-	// RebuildInterval is how often the dataset is fully rebuilt from MySQL.
+	// RebuildInterval is how often the dataset is fully rebuilt from the source database.
 	RebuildInterval() time.Duration
 
 	// DeltaInterval is how often ApplyDelta is called; 0 for rebuild-only datasets.

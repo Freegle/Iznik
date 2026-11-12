@@ -72,7 +72,7 @@ func (s *datasetState) ensureIndex() error {
 	return nil
 }
 
-// server manages all datasets and the MySQL connection.
+// server manages all datasets and the connection to the source database.
 type server struct {
 	datasets map[string]*datasetState
 	srcDB    *sql.DB

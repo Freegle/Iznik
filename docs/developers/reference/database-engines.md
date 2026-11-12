@@ -9,6 +9,8 @@ covers:
   - scripts/setup-test-database.sh
   - iznik-server-go/database/database.go
   - iznik-server-go/database/failover.go
+  - iznik-spatial-go/source*
+  - iznik-spatial-go/testdata/mysql_source_queries.golden
 ---
 
 # Database engines: MySQL and PostgreSQL
@@ -16,7 +18,7 @@ covers:
 Production runs on MySQL (Percona). The code is being made to run on PostgreSQL 18 with PostGIS as
 well, so that moving is an operations job and not a rewrite. Every change on the way leaves
 behaviour on MySQL exactly as it is. This page covers what exists for the second engine so far:
-the dev container, the schema baseline and its converter, and the routing spike. The plan is
+the dev container, the schema baseline and its converter, the routing spike and the spatial loaders. The plan is
 `plans/token-burn/postgresql-migration.md`; the design is `plans/database-migration-evaluation-2026-07.md`.
 
 ## The dev container
@@ -232,8 +234,75 @@ fc := &failoverConnector{
 return postgres.New(postgres.Config{Conn: sql.OpenDB(fc)}), fc, nil
 ```
 
+## The spatial loaders
+
+`iznik-spatial-go` keeps its indexes in SQLite R-trees, and that does not change. What changes is where the
+loaders read their rows from: the `Load`, `ApplyDelta` and `CheckDrift` of each dataset, and the postcode
+lookup behind `GET /api`. They read from the MySQL source by default and from PostgreSQL when told to.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SPATIAL_SOURCE_ENGINE` | `mysql` | `mysql` or `postgres`. Anything else stops the service at start. |
+| `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DBNAME` | as before | The MySQL source. |
+| `PGSQL_HOST`, `PGSQL_PORT`, `PGSQL_DATABASE`, `PGSQL_USERNAME`, `PGSQL_PASSWORD` | the compose service | The PostgreSQL source. The same names as the Laravel connection. |
+
+pgx reads the libpq variables as well (`PGSSLMODE` and so on). Every connection sets the session time zone to
+UTC, because the loaders compare `timestamptz` columns with UTC literals and parameters.
+
+The code is `iznik-spatial-go/source.go` (opening the source, choosing the dialect, `srcQuery`),
+`source_mysql.go` and `source_postgres.go`. A dataset builds each statement from a handful of per-engine
+spellings and runs it through `srcQuery`, which numbers the placeholders for PostgreSQL. The dialect follows
+the handle: `dialectOf` looks at the driver behind the `*sql.DB`, so a loader cannot be given a PostgreSQL
+handle and MySQL text. Any driver that is not pgx, including the SQLite fake the drift tests use, gets the
+MySQL spellings.
+
+| What | MySQL | PostgreSQL |
+|---|---|---|
+| Geometry as WKB | `ST_AsWKB(g)` | `ST_AsBinary(g)`. The column is SRID 4326 and the bytes carry no SRID, so the loaders read the same degrees. |
+| The `groups` table | `` `groups` `` | `"groups"` |
+| Position of a space in a name | `LOCATE(' ', name)` | `strpos(name, ' ')` |
+| Empty geometries in the postcode loader | none exist | `AND NOT ST_IsEmpty(...)`, because `ST_X` of an empty point is NULL and the loader scans a float. |
+| Does the `rippling_reach` grid column exist | `information_schema.columns` with `DATABASE()` | the same with `current_schema()` |
+| Latest `jobs.seenat`, compared as a string | `CAST(MAX(seenat) AS CHAR)` | `to_char(MAX(seenat), 'YYYY-MM-DD HH24:MI:SS')`, so whole seconds in a fixed form, as MySQL gives. |
+| One overflow lane's cells | `JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?))` | `jsonb_path_query_first(overflow_cells, ?::text::jsonpath) #>> '{}'` |
+| Placeholders | `?` | `$1`, `$2`, ... |
+
+The lane paths (`$.rural.dense`, `$.fairness."1"`) are the same strings on both engines: they are the contract
+with apiv2, and jsonpath takes them as written. Everything else the loaders send is portable SQL.
+
+The MySQL statements are the ones the loaders always sent. `source_transcript_test.go` runs every loader
+against a recording driver and compares each statement and argument list with
+`iznik-spatial-go/testdata/mysql_source_queries.golden`, which was taken from the code before the source became
+configurable. A change to MySQL's SQL shows up there as a diff. Regenerate the file with `UPDATE_GOLDEN=1` only
+when a MySQL query is meant to change.
+
+### Testing both engines
+
+`source_engines_test.go` runs each loader against a real scratch database on each engine, named
+`spatial_loader_test`, built and seeded afresh for every test and dropped when the run ends. The tables carry
+the columns the loaders read, in production's types: the PostgreSQL ones are copied from the baseline and cut
+down to those columns, the MySQL ones are the migrated schema's. The same rows go into both, and the expectations are written once,
+so a loader that gives a different index on one engine fails there. The tests read the `MYSQL_*` and `PGSQL_*`
+variables, wait up to a minute for each database, and fail when one is unreachable. To run one engine, name it:
+
+```bash
+SPATIAL_TEST_ENGINES=postgres go test ./...    # or mysql
+```
+
+The suite runs in the `spatial-knn` container, which reaches both databases on the compose network. The
+R-tree stores bounding boxes as 32-bit floats rounded outward, so the box assertions allow 1e-4.
+
+### Limits
+
+- The grid-column probe for `rippling_reach` runs once per process and describes one database. A process has one
+  source, so this holds; the engine tests reset it for each scratch database.
+- MySQL compares a `timestamp` column in the session's time zone. The delta tests assume a server and session on
+  UTC, as the stack's containers are.
+- Production stays on MySQL. Pointing a live service at PostgreSQL also needs the data loaded there, which the
+  migration tooling (a later step in the plan) does.
+
 ## Not yet done
 
-PostgreSQL fixtures, the Go and Laravel suites on PostgreSQL, the stored functions, a CI job that runs the
+PostgreSQL fixtures for the Go API and Laravel, the Go and Laravel suites on PostgreSQL, the stored functions, a CI job that runs the
 converter and PostgreSQL tests and `regenerate.sh --check` (it needs the orb changed), and the spatial
 benchmark are later steps in the plan.
