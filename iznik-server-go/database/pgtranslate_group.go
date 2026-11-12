@@ -232,6 +232,30 @@ func fixOneSelect(ts []tok, s int) ([]tok, bool) {
 	if len(items) == 0 {
 		return ts, false
 	}
+	// A select-list EXISTS(...) is 0 or 1 in MySQL, and sits in a UNION beside integer columns.
+	var rebuilt []tok
+	existsFound := false
+	for i, it := range items {
+		if i > 0 {
+			rebuilt = append(rebuilt, punct(","), sp())
+		}
+		e := it.expr
+		if len(e) > 2 && (isKw(e[0], "EXISTS") && callEnd(e, 0) == len(e)-1) {
+			rebuilt = append(rebuilt, punct("("), word("CASE"), sp(), word("WHEN"), sp())
+			rebuilt = append(rebuilt, e...)
+			rebuilt = append(rebuilt, sp(), word("THEN"), sp(), word("1"), sp(), word("ELSE"), sp(), word("0"), sp(), word("END"), punct(")"))
+			if it.asTok >= 0 {
+				rebuilt = append(rebuilt, sp(), word("AS"), sp(), *it.aliasTok)
+			}
+			existsFound = true
+			continue
+		}
+		rebuilt = append(rebuilt, it.raw...)
+	}
+	if existsFound {
+		rep := concatToks(ts[:p.selStart], []tok{sp()}, rebuilt, []tok{sp()}, ts[selEnd:])
+		return fixOneSelectAfter(rep, s)
+	}
 	for _, it := range items {
 		if len(it.expr) == 1 && isP(it.expr[0], "*") || (len(it.expr) == 3 && isP(it.expr[2], "*")) {
 			return ts, false

@@ -243,6 +243,52 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		changed = true
 	}
 
+	// a REGEXP 'p' and a NOT REGEXP 'p': case-insensitive, as MySQL's default collation is.
+	for i := 0; i < len(ts); i++ {
+		if !(isKw(ts[i], "REGEXP") || isKw(ts[i], "RLIKE")) {
+			continue
+		}
+		if p := prevSig(ts, i-1); p >= 0 && isKw(ts[p], "NOT") {
+			ts[p] = tok{tkSpace, ""}
+			ts[i] = tok{tkPunct, "!~*"}
+		} else {
+			ts[i] = tok{tkPunct, "~*"}
+		}
+		changed = true
+	}
+
+	// JSON_EXTRACT(...) = 'text': the literal is text, not JSON.
+	for i := 0; i < len(ts); i++ {
+		if !isKw(ts[i], "json_extract") {
+			continue
+		}
+		cl := callEnd(ts, i)
+		if cl < 0 {
+			continue
+		}
+		n := nextSig(ts, cl+1)
+		if n < 0 {
+			continue
+		}
+		op := n
+		if isP(ts[n], "<") || isP(ts[n], ">") || isP(ts[n], "!") {
+			if m := nextSig(ts, n+1); m >= 0 && (isP(ts[m], "=") || isP(ts[m], ">")) {
+				op = m
+			}
+		}
+		if !(isP(ts[op], "=") || isP(ts[op], ">") || isP(ts[op], "<")) && !isKw(ts[op], "LIKE") {
+			continue
+		}
+		v := nextSig(ts, op+1)
+		if v >= 0 && ts[v].k == tkStr {
+			if a := nextSig(ts, v+1); a >= 0 && isP(ts[a], ":") {
+				continue
+			}
+			ts = concatToks(ts[:v+1], []tok{punct(":"), punct(":"), word("text")}, ts[v+1:])
+			changed = true
+		}
+	}
+
 	// ST_SRID(g, n) sets the SRID in MySQL.
 	for i := len(ts) - 1; i >= 0; i-- {
 		if !isKw(ts[i], "ST_SRID") {
@@ -724,6 +770,12 @@ func wrapJSONBranches(ts []tok, changed bool) ([]tok, bool) {
 		seg = trimToks(seg)
 		if len(seg) == 1 && isNumberTok(seg[0]) {
 			return []tok{word("to_jsonb"), punct("("), seg[0], punct(")")}, true
+		}
+		if len(seg) == 2 && isP(seg[0], "-") && isNumberTok(seg[1]) {
+			return []tok{word("to_jsonb"), punct("("), seg[0], seg[1], punct(")")}, true
+		}
+		if len(seg) == 1 && seg[0].k == tkStr {
+			return []tok{word("to_jsonb"), punct("("), seg[0], punct(":"), punct(":"), word("text"), punct(")")}, true
 		}
 		return seg, false
 	}

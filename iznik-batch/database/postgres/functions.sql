@@ -599,3 +599,15 @@ BEGIN
   END IF;
 END
 $$;
+
+-- MySQL takes any number where a condition is wanted: WHERE flag AND other. A tinyint column (smallint here) is true unless it is 0.
+CREATE OR REPLACE FUNCTION iznik_smallint_to_bool(i smallint) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT i <> 0 $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_cast WHERE castsource = 'smallint'::regtype AND casttarget = 'boolean'::regtype) THEN
+    CREATE CAST (smallint AS boolean) WITH FUNCTION iznik_smallint_to_bool(smallint) AS IMPLICIT;
+  END IF;
+END
+$$;

@@ -33,6 +33,10 @@ covers:
   - tools/pg-ratchet/**
   - scripts/check-portable-migrations.mjs
   - iznik-server-go/database/postgres.go
+  - iznik-server-go/database/pgconn.go
+  - iznik-server-go/database/pgtranslate*.go
+  - iznik-server-go/database/pgtypes.go
+  - iznik-server-go/utils/utils.go
   - iznik-batch/tests/bootstrap.php
   - iznik-spatial-go/source*
   - iznik-spatial-go/testdata/mysql_source_queries.golden
@@ -701,6 +705,42 @@ cancellable-query handle, is nil on PostgreSQL. Any other value of `DB_ENGINE` s
 `// mysql-only: <reason>` comment, and the CI job `check-portable-migrations` checks the migrations the branch adds.
 The baseline is checked by `regenerate.sh --check` in the tooling run, so a migration that changes the schema
 fails CI until the baseline is regenerated.
+
+## The Go API's translation layer
+
+The Go API's SQL is written for MySQL, and most of it is raw. Until a site is rewritten with the query builder or
+a repository with a PostgreSQL form, the connection on `DB_ENGINE=postgres` makes one SQL text serve both engines.
+It is in `iznik-server-go/database` and does nothing on MySQL.
+
+- `pgtranslate*.go` rewrites each statement before it is sent, once per distinct text. It handles what has a
+  mechanical equivalent: backtick quoting, `IFNULL`, `IF()`, `INTERVAL n UNIT` and `DATE_ADD`/`DATE_SUB`,
+  `CAST AS UNSIGNED`, `INSERT IGNORE`, `REPLACE INTO`, `ON DUPLICATE KEY UPDATE` (the conflict target is the
+  unique index whose columns the INSERT names, read from `pg_catalog`), `UPDATE IGNORE`, multi-table `UPDATE`
+  and `DELETE` (inner joins), index hints, `GROUP_CONCAT`, `LIMIT a, b`, `REGEXP`, the spatial constructors
+  (`POINT`, `LINESTRING`, `POLYGON`, `MBRIntersects`, `ST_SRID(g, n)`) and the mixed-case column names. It is
+  pure, idempotent, and passes SQL that is already PostgreSQL through unchanged. `pgtranslate_test.go` is the
+  table of cases.
+- **GROUP BY as MySQL runs it.** MySQL is not run with ONLY_FULL_GROUP_BY. A select that names a column that is
+  neither grouped nor aggregated takes that column as `ANY_VALUE(column)`, which is "an arbitrary row's value",
+  the same meaning. `HAVING` with no `GROUP BY` becomes a `WHERE`, a select-list alias in `HAVING` is replaced by
+  what it names, `SELECT DISTINCT` with an `ORDER BY` on an unselected column becomes a `GROUP BY`, and a
+  select-list `EXISTS(...)` is 0 or 1.
+- `pgconn.go` wraps the pgx connection. An `INSERT` into a table with an `id` column goes out with
+  `RETURNING id` so that `LastInsertId()` works. Bound arguments of JSON constructors get the type of the Go value.
+- `pgtypes.go` gives the driver MySQL's leniency at the edge. A Go `bool` can be sent for a smallint and a number
+  for a text parameter. A boolean comes back as 1 or 0, and text comes back as bytes, as MySQL's driver returns
+  it, so `json.RawMessage` scans from a text column.
+- `utils.SRID` is 3857 on MySQL and 4326 on PostgreSQL, because the baseline relabels the spatial columns.
+- `functions.sql` holds the MySQL function names the code calls (`JSON_EXTRACT`, `JSON_SET`, `JSON_UNQUOTE`,
+  `DATE_FORMAT`, `DATEDIFF`, `TIMESTAMPDIFF`, `UNIX_TIMESTAMP`, `LOCATE`, `LAST_INSERT_ID` and others), the
+  comparison of a JSON value with a number or text as MySQL does it (JSON false is not equal to 0), `SUM` of a
+  condition, `boolean = integer`, and an implicit cast from smallint to boolean so that a tinyint column can be a
+  condition. It also gives each NOT NULL column that has no default its type's implicit default (`''`, `0`, the
+  first enum member), which is what MySQL, run non-strict as production is, does for a column an INSERT leaves out.
+
+This is a bridge. A site that is rewritten to a builder chain or a per-dialect repository no longer needs it, and
+the test for that site is the proof. What the layer cannot translate is left to fail, and its tests stay in the
+ratchet list: see the end of this page.
 
 ## Not yet done
 

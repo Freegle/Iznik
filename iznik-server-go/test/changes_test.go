@@ -181,8 +181,8 @@ func TestChangesMessageOutcome(t *testing.T) {
 	found := false
 	for _, m := range messages {
 		msg := m.(map[string]interface{})
-		if uint64(msg["id"].(float64)) == msgID {
-			assert.Equal(t, "Taken", msg["type"])
+		// A message can appear under several types, and a UNION has no order, so look for the outcome.
+		if uint64(msg["id"].(float64)) == msgID && msg["type"] == "Taken" {
 			found = true
 			break
 		}
