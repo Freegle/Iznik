@@ -1642,7 +1642,7 @@ func TestPatchUserNewsfeedmodstatusMemberCannotSetOwn(t *testing.T) {
 	}
 }
 
-// An unrecognised value would be coerced to '' by MySQL, which is neither
+// An unrecognised value would be coerced to an empty string by MySQL, which is neither
 // Moderated nor Suppressed, so it is refused.
 func TestPatchUserNewsfeedmodstatusRejectsInvalidValue(t *testing.T) {
 	prefix := uniquePrefix("patchnfbad")
