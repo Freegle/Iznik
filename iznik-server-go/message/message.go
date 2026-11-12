@@ -1661,7 +1661,9 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				} else {
 					tx = tx.Joins("LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id")
 				}
-				tx = tx.Where(whereTail, id, utils.OFFER, utils.WANTED)
+				// Pending, Rejected and Spam copies are moderation state, not public posts.
+				tx = tx.Where(whereTail, id, utils.OFFER, utils.WANTED).
+					Where("messages_groups.collection = ?", utils.COLLECTION_APPROVED)
 				if active {
 					tx = tx.Having("hasoutcome = 0")
 				}
