@@ -53,6 +53,19 @@ vi.mock('~/composables/useBuildHead', () => ({
   buildHead: vi.fn().mockReturnValue({}),
 }))
 
+// The page loads ConfirmModal with defineAsyncComponent, so it is mocked as a module. The
+// stand-in shows the page's title and has one button that confirms.
+vi.mock('~/components/ConfirmModal.vue', () => ({
+  __esModule: true,
+  default: {
+    name: 'ConfirmModal',
+    props: ['title', 'message'],
+    emits: ['confirm', 'hidden'],
+    template:
+      '<div class="confirm-modal"><span class="confirm-title">{{ title }}</span><button class="confirm-yes" @click="$emit(\'confirm\')" /></div>',
+  },
+}))
+
 vi.mock('~/components/EmailValidator.vue', () => ({
   default: {
     name: 'EmailValidator',
@@ -73,7 +86,6 @@ function mountPage() {
             '<button class="spin-btn" :data-label="label" @click="$emit(\'handle\', () => {})" />',
         },
         SupportLink: { template: '<span />' },
-        ConfirmModal: { template: '<div />' },
         ContactSupportModal: { template: '<div />' },
         ForgetFailModal: { template: '<div />' },
         GroupSelect: {
@@ -230,13 +242,24 @@ describe('pages/unsubscribe/[[id]].vue', () => {
   // The emailed delete-account link logs the member in from its u and k, but that login
   // finishes after this page has mounted. Seeing no member yet must not be read as "the
   // link was already used": the account would be reported removed and left in place.
+  //
+  // The page is prerendered, and on a prerendered page route.query is empty when the page
+  // mounts (app.vue and donate.vue read window.__initSearch for the same reason). So these
+  // tests give the router an EMPTY query and put the link's query in window.__initSearch,
+  // which is what production sees. A test that handed the page a populated route.query would
+  // pass here and do nothing in production.
+  //
+  // Arriving by the link never deletes by itself: anyone can make the site send the link to
+  // another person's address, and a mail scanner that runs JavaScript opens it. The member
+  // has to click Delete in the confirmation.
   describe('the emailed delete-account link', () => {
     beforeEach(() => {
       vi.useFakeTimers()
       forget.mockResolvedValue(undefined)
+      window.__initSearch = '?u=42&k=made-up-key&confirm=1'
       globalThis.__testUseRoute = () => ({
         params: { id: '42' },
-        query: { u: '42', k: 'made-up-key', confirm: '1' },
+        query: {},
       })
       globalThis.__testUseRouter = () => ({
         push: routerPush,
@@ -247,23 +270,79 @@ describe('pages/unsubscribe/[[id]].vue', () => {
 
     afterEach(() => {
       vi.useRealTimers()
+      delete window.__initSearch
     })
 
-    it('deletes the account once the login from the link completes', async () => {
+    it('asks first once the login from the link completes, and deletes nothing yet', async () => {
       const myidRef = ref(null)
       meState.myidRef = myidRef
 
-      mountPage()
+      const wrapper = mountPage()
       await flushPromises()
 
-      // Login not finished: nothing deleted, and not yet told it is already gone.
+      // Login not finished: nothing deleted, no question yet, and not told it is already gone.
       expect(forget).not.toHaveBeenCalled()
+      expect(wrapper.find('.confirm-modal').exists()).toBe(false)
       expect(routerPush).not.toHaveBeenCalledWith('/unsubscribe/unsubscribed')
 
       myidRef.value = 42
       await flushPromises()
 
+      expect(wrapper.find('.confirm-title').text()).toBe(
+        'Permanently delete your account?'
+      )
+      expect(forget).not.toHaveBeenCalled()
+    })
+
+    it('deletes the account only when the member confirms', async () => {
+      meState.myid = 42
+      meState.me = { id: 42 }
+
+      const wrapper = mountPage()
+      await flushPromises()
+      expect(forget).not.toHaveBeenCalled()
+
+      await wrapper.find('.confirm-yes').trigger('click')
+      await flushPromises()
+
       expect(forget).toHaveBeenCalledTimes(1)
+      expect(routerPush).toHaveBeenCalledWith('/unsubscribe/unsubscribed')
+    })
+
+    it('does nothing when logged in as someone else', async () => {
+      meState.myid = 7
+      meState.me = { id: 7 }
+
+      const wrapper = mountPage()
+      await flushPromises()
+
+      expect(wrapper.find('.confirm-modal').exists()).toBe(false)
+      expect(wrapper.text()).toContain("you're logged in as")
+      expect(forget).not.toHaveBeenCalled()
+    })
+
+    it('says the account is gone when the link was already used', async () => {
+      // No u and k left in the link and no stored session: nobody will log in.
+      window.__initSearch = '?confirm=1'
+
+      const wrapper = mountPage()
+      await flushPromises()
+
+      expect(routerPush).toHaveBeenCalledWith('/unsubscribe/unsubscribed')
+      expect(wrapper.find('.confirm-modal').exists()).toBe(false)
+      expect(forget).not.toHaveBeenCalled()
+    })
+
+    it('does not ask when the link has no confirm', async () => {
+      window.__initSearch = '?u=42&k=made-up-key'
+      meState.myid = 42
+      meState.me = { id: 42 }
+
+      const wrapper = mountPage()
+      await flushPromises()
+
+      expect(wrapper.find('.confirm-modal').exists()).toBe(false)
+      expect(forget).not.toHaveBeenCalled()
     })
   })
 })

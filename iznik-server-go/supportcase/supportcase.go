@@ -185,7 +185,7 @@ func loadCase(id, myid uint64, support bool) (*caseRow, error) {
 		if res.Error != nil {
 			return nil, fiber.NewError(fiber.StatusInternalServerError, "Failed to load case")
 		}
-		if res.RowsAffected == 0 || !chat.CanSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) {
+		if res.RowsAffected == 0 || !chat.CanSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
 			return nil, notFound()
 		}
 	}
