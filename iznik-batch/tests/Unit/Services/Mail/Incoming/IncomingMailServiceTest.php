@@ -3945,7 +3945,7 @@ class IncomingMailServiceTest extends TestCase
         $tracking = DB::table('email_tracking')
             ->where('email_type', 'ChatNotification')
             ->where('userid', $user1->id)
-            ->whereRaw("JSON_EXTRACT(metadata, '$.chat_id') = ?", [$chat->id])
+            ->where('metadata->chat_id', $chat->id)
             ->first();
 
         $this->assertNotNull($tracking->replied_at, 'replied_at should be set');
@@ -4820,6 +4820,7 @@ class IncomingMailServiceTest extends TestCase
         // Mark message as having outcome (TAKEN/RECEIVED)
         DB::table('messages_outcomes')->insert([
             'msgid' => $message->id,
+            'outcome' => 'Taken',
             'timestamp' => now(),
         ]);
 

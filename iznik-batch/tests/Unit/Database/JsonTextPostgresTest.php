@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Database;
 
+use App\Database\Expressions\JsonLength;
 use App\Database\Expressions\JsonNumber;
 use App\Database\Expressions\Value;
 use App\Database\JsonTextPostgresConnection;
@@ -60,6 +61,41 @@ class JsonTextPostgresTest extends TestCase
         $this->assertInstanceOf(JsonTextPostgresGrammar::class, DB::connection()->getQueryGrammar());
         $this->assertTrue(
             (bool) DB::table(DB::raw("(SELECT '{\"a\": {\"b\": true}}'::text AS settings) t"))->where('settings->a->b', true)->exists()
+        );
+    }
+
+    public function test_json_length_renders_json_length_on_mysql(): void
+    {
+        $e = new JsonLength('metadata', Value::of('$.ids'));
+
+        $this->assertSame("JSON_LENGTH(`metadata`, '\$.ids')", $e->getValue(new MySqlGrammar(DB::connection())));
+    }
+
+    public function test_json_length_counts_array_elements_and_object_members_on_postgresql(): void
+    {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            $this->markTestSkipped('The suite is not running on PostgreSQL.');
+        }
+
+        $doc = Value::of('{"a": [1, 2, 3], "o": {"x": 1, "y": 2}, "s": "text", "e": []}');
+        $length = fn (string $path) => DB::selectOne(
+            'SELECT '.(new JsonLength($doc, Value::of($path)))->getValue(DB::connection()->getQueryGrammar()).' AS result'
+        )->result;
+
+        $this->assertEquals(3, $length('$.a'));
+        $this->assertEquals(2, $length('$.o'));
+        $this->assertEquals(1, $length('$.s'));
+        $this->assertEquals(0, $length('$.e'));
+        $this->assertNull($length('$.missing'));
+    }
+
+    public function test_index_hints_render_nothing_on_postgresql(): void
+    {
+        $connection = new JsonTextPostgresConnection(fn () => null);
+
+        $this->assertSame(
+            'select * from "users" where "id" = ?',
+            $connection->table('users')->forceIndex('a')->ignoreIndex('b')->where('id', 1)->toSql()
         );
     }
 }
