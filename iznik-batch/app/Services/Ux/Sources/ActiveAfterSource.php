@@ -2,6 +2,11 @@
 
 namespace App\Services\Ux\Sources;
 
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\JsonUnquote;
+use App\Database\Expressions\JsonValid;
+use App\Database\Expressions\StartOfHour;
+use App\Database\Expressions\Value;
 use App\Services\Ux\ExposureSource;
 use Carbon\Carbon;
 
@@ -64,7 +69,7 @@ class ActiveAfterSource extends ExposureSource
 
     protected function converted(object $exp): string
     {
-        return "EXISTS (SELECT 1 FROM users_active ua WHERE ua.userid = c.userid AND ua.timestamp >= DATE_FORMAT(c.exposed_at, '%Y-%m-%d %H:00:00') AND ua.timestamp < c.exposed_at + INTERVAL :window HOUR)";
+        return "EXISTS (SELECT 1 FROM users_active ua WHERE ua.userid = c.userid AND ua.timestamp >= ".self::sql(new StartOfHour('c.exposed_at'))." AND ua.timestamp < c.exposed_at + INTERVAL :window HOUR)";
     }
 
     protected function bad(object $exp): array
@@ -75,7 +80,8 @@ class ActiveAfterSource extends ExposureSource
 
         // CASE, because the settings are JSON text and a row that is not valid JSON must count as "not off".
         return [
-            'push_opt_out' => "CASE WHEN JSON_VALID(u.settings) THEN JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.notifications.dailypostspush')) = 'false' ELSE 0 END",
+            'push_opt_out' => 'CASE WHEN '.self::sql(new JsonValid('u.settings')).' THEN '
+                .self::sql(new JsonUnquote(new JsonExtract('u.settings', Value::of('$.notifications.dailypostspush'))))." = 'false' ELSE FALSE END",
         ];
     }
 

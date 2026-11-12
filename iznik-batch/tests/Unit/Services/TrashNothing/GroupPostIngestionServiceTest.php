@@ -568,7 +568,7 @@ class GroupPostIngestionServiceTest extends TestCase
             'fromuser'  => $user->id,
             'subject'   => 'OFFER: Already ingested',
             'textbody'  => 'body',
-            'source'    => 'TN-API',
+            'source'    => Message::SOURCE_EMAIL,
             'tnpostid'  => $postId,
             'date'      => now(),
         ]);
@@ -1476,7 +1476,7 @@ class GroupPostIngestionServiceTest extends TestCase
             'fromuser' => $user->id,
             'subject' => 'OFFER: Already ingested',
             'textbody' => 'body',
-            'source' => 'TN-API',
+            'source'    => Message::SOURCE_EMAIL,
             'tnpostid' => $postId,
             'date' => now(),
         ]);
@@ -1604,7 +1604,7 @@ class GroupPostIngestionServiceTest extends TestCase
             'fromuser' => $user->id,
             'subject' => 'OFFER: Electric sander',
             'textbody' => 'body',
-            'source' => 'TN-API',
+            'source'    => Message::SOURCE_EMAIL,
             'tnpostid' => 'tn-ctx-orig-'.uniqid(),
             'date' => now()->subDays(2),
             'lat' => 55.9533,

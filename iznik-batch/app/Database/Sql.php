@@ -25,6 +25,18 @@ final class Sql
         return DB::getQueryGrammar()->wrapTable($table);
     }
 
+    /** Renders an expression for the default connection's grammar (same as render). */
+    public static function expr(ExpressionContract $expression): string
+    {
+        return self::render($expression);
+    }
+
+    /** A column name quoted with the connection's grammar: `name` on MySQL, "name" on PostgreSQL. */
+    public static function col(string $column): string
+    {
+        return DB::getQueryGrammar()->wrap($column);
+    }
+
     /** Renders an expression for the default connection's grammar. */
     public static function render(ExpressionContract $expression): string
     {

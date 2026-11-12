@@ -54,13 +54,9 @@ class ItemService
             $name = mb_substr($name, 0, self::MAX_ITEM_NAME_LENGTH);
         }
 
-        // keep-raw: LAST_INSERT_ID(id) readback on a case-insensitive-unique
-        // upsert - no builder form returns the existing row's id this way.
-        DB::statement(
-            'INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), name = ?',
-            [$name, $name]
-        );
-        $id = (int) DB::getPdo()->lastInsertId();
+        // The name is unique case-insensitively, so the lookup finds the existing row whatever its case.
+        DB::table('items')->upsert([['name' => $name]], ['name'], ['name' => $name]);
+        $id = (int) DB::table('items')->where('name', $name)->value('id');
         if ($id <= 0) {
             return null;
         }

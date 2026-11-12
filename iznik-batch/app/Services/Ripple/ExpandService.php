@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use Illuminate\Database\Query\Expression as Raw;
 use App\Database\Sql;
 use App\Database\Spatial;
 use App\Database\Expressions\Alias;
@@ -123,9 +124,9 @@ class ExpandService
     {
         try {
             DB::table('rippling_event_metrics')->upsert(
-                [['day' => now()->toDateString(), 'event' => $event, 'count' => $by]],
+                [['day' => new Raw('CURRENT_DATE'), 'event' => $event, 'count' => $by]],
                 ['day', 'event'],
-                ['count' => DB::raw('rippling_event_metrics.count + ' . (int) $by)]
+                ['count' => new Arithmetic('rippling_event_metrics.count', '+', $by)]
             );
         } catch (\Throwable $e) {
             // best-effort; never affect the expander

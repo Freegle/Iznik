@@ -2,6 +2,9 @@
 
 namespace App\Services\Ux\Sources;
 
+use App\Database\Expressions\FromUnixTime;
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\Value;
 use App\Services\Ux\ExposureSource;
 use Carbon\Carbon;
 
@@ -58,13 +61,15 @@ class HostingAdClickSource extends ExposureSource
 
     protected function converted(object $exp): string
     {
-        return "JSON_EXTRACT(c.detail, '$.clicked') IS NOT NULL"
-            ." AND FROM_UNIXTIME(JSON_EXTRACT(c.detail, '$.clicked')) < c.exposed_at + INTERVAL :window HOUR";
+        $clicked = self::sql(new JsonExtract('c.detail', Value::of('$.clicked')));
+
+        return $clicked.' IS NOT NULL'
+            .' AND '.self::sql(new FromUnixTime(new JsonExtract('c.detail', Value::of('$.clicked')))).' < c.exposed_at + INTERVAL :window HOUR';
     }
 
     protected function bad(object $exp): array
     {
-        return ['not_back' => 'u.lastaccess < c.exposed_at + INTERVAL 1 HOUR'];
+        return ['not_back' => "u.lastaccess < c.exposed_at + INTERVAL '1' HOUR"];
     }
 
     public function volume(object $exp, Carbon $now): ?array

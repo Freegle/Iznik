@@ -52,7 +52,8 @@ class NotificationExhortService
         //
         // A hint is only as good as the index name it quotes; ExhortUsersCommandTest asserts
         // that `users.deleted` still exists, so renaming it fails there rather than here.
-        $users = DB::table(DB::raw('users IGNORE INDEX (deleted)'))
+        $users = DB::table('users')
+            ->ignoreIndex('deleted')
             ->whereNull('deleted')
             ->where('lastaccess', '>=', $activeSinceTime)
             ->where('added', '<=', $joinedBeforeTime)

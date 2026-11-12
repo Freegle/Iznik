@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Database\Sql;
+use App\Database\Expressions\Rand;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -77,7 +79,7 @@ class ChatReviewService
         // form), and the JOIN condition needs a CASE WHEN to pick "the other
         // party" - neither has a builder method.
         $groups = DB::select(
-            "SELECT DISTINCT(memberships.groupid), COUNT(*) AS count
+            "SELECT memberships.groupid, COUNT(*) AS count
              FROM chat_messages
              INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid
              INNER JOIN users ON users.id = chat_messages.userid AND users.deleted IS NULL
@@ -91,8 +93,8 @@ class ChatReviewService
                AND reviewedby IS NULL
                AND reviewrejected = 0
                AND chat_messages_held.id IS NULL
-             GROUP BY groupid
-             ORDER BY RAND()",
+             GROUP BY memberships.groupid
+             ORDER BY " . Sql::expr(new Rand()),
             [$threshold]
         );
 

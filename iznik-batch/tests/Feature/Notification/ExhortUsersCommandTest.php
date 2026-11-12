@@ -294,6 +294,7 @@ class ExhortUsersCommandTest extends TestCase
      */
     public function test_active_user_scan_ignores_the_deleted_index(): void
     {
+        $this->requiresMySql('the index hint is a MySQL optimiser hint and PostgreSQL has no equivalent');
         $seen = [];
         DB::listen(function ($query) use (&$seen) {
             if (stripos($query->sql, 'lastaccess') !== false && stripos($query->sql, 'users') !== false) {
@@ -327,6 +328,7 @@ class ExhortUsersCommandTest extends TestCase
      */
     public function test_users_still_has_the_deleted_index_the_scan_hint_names(): void
     {
+        $this->requiresMySql('SHOW INDEX is MySQL syntax, and the index hint it protects is MySQL only');
         $names = array_map(
             static fn ($row) => $row->Key_name,
             DB::select('SHOW INDEX FROM users')

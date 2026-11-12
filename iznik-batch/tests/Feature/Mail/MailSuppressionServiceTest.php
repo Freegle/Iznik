@@ -165,7 +165,7 @@ class MailSuppressionServiceTest extends TestCase
         $row = $this->service->suppressionFor('someone@yahoo.co.uk');
 
         $this->assertSame('Yahoo', $row->provider);
-        $this->assertSame('2026-08-15 16:38:00', (string) $row->deferred_since);
+        $this->assertSame('2026-08-15 16:38:00', \Illuminate\Support\Carbon::parse($row->deferred_since)->format('Y-m-d H:i:s'));
     }
 
     public function test_tolerates_a_missing_or_malformed_address(): void
