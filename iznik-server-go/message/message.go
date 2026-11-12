@@ -7213,9 +7213,18 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
 	}
 
-	// Must be mod of the source group (i.e. a group the message is currently on).
-	if !isModForMessage(db, myid, req.ID) {
-		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+	// Must be mod of a community the post was posted to. A copy that merely rippled into
+	// a moderator's community gives them no standing over the post itself.
+	if !auth.IsAdminOrSupport(myid) {
+		var homeMod int64
+		db.Table("messages_groups mg").
+			Joins("JOIN memberships m ON m.groupid = mg.groupid").
+			Where("mg.msgid = ? AND mg.rippled_in = 0 AND m.userid = ? AND m.role IN (?, ?)",
+				req.ID, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+			Count(&homeMod)
+		if homeMod == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+		}
 	}
 
 	// Must also be mod of the target group.
