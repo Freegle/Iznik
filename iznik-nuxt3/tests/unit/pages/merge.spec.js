@@ -159,7 +159,7 @@ describe('pages/merge.vue', () => {
   })
 
   it('says so, and does not claim success, when the answer is refused', async () => {
-    mockReject.mockRejectedValue(new Error('refused'))
+    mockReject.mockRejectedValueOnce(new Error('refused'))
     const wrapper = await mountMergePage()
     await flushPromises()
 

@@ -65,7 +65,7 @@
             </option>
           </b-form-select>
           <SpinButton
-            v-if="preferred"
+            v-if="preferred && !mergeComplete"
             class="mt-2"
             variant="primary"
             size="lg"

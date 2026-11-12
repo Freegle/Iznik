@@ -331,6 +331,11 @@ func PostMerge(c *fiber.Ctx) error {
 
 		db.Table("merges").Where("id = ?", uint64(req.ID)).Update("accepted", gorm.Expr("NOW()"))
 	case "Reject":
+		// An offer that was accepted has merged the accounts; it cannot then be rejected.
+		if m.Accepted != nil {
+			return fiber.NewError(fiber.StatusConflict, "This merge has already been accepted")
+		}
+
 		db.Table("merges").Where("id = ?", uint64(req.ID)).Update("rejected", gorm.Expr("NOW()"))
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid action")

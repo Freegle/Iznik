@@ -455,11 +455,11 @@ func TestPostMergeAcceptRefusesTwoTrashNothingAccounts(t *testing.T) {
 	tn2 := CreateTestUser(t, prefix+"_tn2", utils.SYSTEMROLE_USER)
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
 	stampTN(tn1, 991091)
-	stampTN(tn2, 991091)
+	stampTN(tn2, 991092)
 
 	mergeID, uid := createTestMerge(t, tn1, tn2, modID)
 
-	assert.Equal(t, 400, postMergeFromPage(t, mergeID, uid, tn1, tn2, "Accept"))
+	assert.Equal(t, 400, postMergeAction(t, mergeID, uid, tn1, tn2, "Accept"))
 	assert.True(t, userExists(tn1))
 	assert.True(t, userExists(tn2))
 }
@@ -476,11 +476,27 @@ func TestPostMergeAcceptRefusesMemberWhoOptedOut(t *testing.T) {
 
 	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
 
-	assert.Equal(t, 400, postMergeFromPage(t, mergeID, uid, user1ID, user2ID, "Accept"))
+	assert.Equal(t, 400, postMergeAction(t, mergeID, uid, user1ID, user2ID, "Accept"))
 	assert.True(t, userExists(user1ID))
 	assert.True(t, userExists(user2ID))
 
 	var accepted *string
 	db.Raw("SELECT accepted FROM merges WHERE id = ?", mergeID).Scan(&accepted)
 	assert.Nil(t, accepted)
+}
+
+// An offer that has been accepted has merged the accounts, so it cannot then be rejected.
+func TestPostMergeRejectAfterAcceptIsRefused(t *testing.T) {
+	prefix := uniquePrefix("MergeRejAfter")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+
+	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
+	assert.Equal(t, 200, postMergeFromPage(t, mergeID, uid, user1ID, user2ID, "Accept"))
+	assert.Equal(t, 409, postMergeFromPage(t, mergeID, uid, user1ID, user2ID, "Reject"))
+
+	var rejected *string
+	database.DBConn.Raw("SELECT rejected FROM merges WHERE id = ?", mergeID).Scan(&rejected)
+	assert.Nil(t, rejected)
 }
