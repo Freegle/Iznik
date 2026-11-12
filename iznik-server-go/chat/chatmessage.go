@@ -1509,8 +1509,7 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 // Review queue helpers
 // =============================================================================
 
-// moderationAccess decides whether a moderator may act on a chat message, using the groups and chats the review
-// queue (getReviewQueue) lists: a User2Mod chat of one of their active groups, or a User2User chat whose recipient is on one of
+// moderationAccess decides whether a moderator may act on a chat message: a User2Mod chat of one of their groups, or a User2User chat whose recipient is on one of
 // their groups (or has no groups and the sender is on one of theirs). A moderator who does wider chat review may
 // also Approve, the only action that review offers, for a recipient on a widerchatreview group. A moderator who is
 // one of the two people in the chat never acts on it. It returns 0 when allowed, otherwise the HTTP status to
@@ -1538,8 +1537,13 @@ func moderationAccess(db *gorm.DB, myid uint64, msgID uint64, action string) int
 		return fiber.StatusForbidden
 	}
 
-	// The queue lists only the communities a moderator is active on, so a backup moderator acts on none.
-	modGroups := user.GetActiveModGroupIDs(myid)
+	// A backup moderator (membership settings active:0) is still a moderator of the community, so
+	// their groups count as well as an active moderator's. Someone with no moderator role on any
+	// community has none, and is refused.
+	var modGroups []uint64
+	db.Table("memberships").Select("groupid").
+		Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&modGroups)
 
 	if len(modGroups) == 0 {
 		return fiber.StatusForbidden
