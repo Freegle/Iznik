@@ -3167,7 +3167,7 @@ class IncomingMailService
             Log::info('TN-SYNC-TRACE [WRITE] table=messages_history op=insert set=msgid=' . $message->id . ',groupid=' . $group->id . ',fromuser=' . $user->id);
             DB::table('messages_history')->insert([
                 'groupid' => $group->id,
-                'source' => Message::SOURCE_EMAIL ?? 'Email',
+                'source' => Message::SOURCE_PLATFORM,
                 'fromuser' => $user->id,
                 'envelopefrom' => $email->envelopeFrom,
                 'envelopeto' => $email->envelopeTo,
@@ -3316,7 +3316,7 @@ class IncomingMailService
             // creating email wrote its own group's history row.
             $historyWritten = DB::table('messages_history')->insertOrIgnore([
                 'groupid' => $group->id,
-                'source' => Message::SOURCE_EMAIL ?? 'Email',
+                'source' => Message::SOURCE_PLATFORM,
                 'fromuser' => $user->id,
                 'envelopefrom' => $email->envelopeFrom,
                 'envelopeto' => $email->envelopeTo,

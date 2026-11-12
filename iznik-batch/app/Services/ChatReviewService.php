@@ -79,7 +79,7 @@ class ChatReviewService
         // form), and the JOIN condition needs a CASE WHEN to pick "the other
         // party" - neither has a builder method.
         $groups = DB::select(
-            "SELECT DISTINCT(memberships.groupid), COUNT(*) AS count
+            "SELECT memberships.groupid, COUNT(*) AS count
              FROM chat_messages
              INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid
              INNER JOIN users ON users.id = chat_messages.userid AND users.deleted IS NULL
