@@ -845,6 +845,12 @@ services:
       - MYSQL_PORT=3306
       - MYSQL_USER=root
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      # The second engine, for the parity harness's result tests (iznik-server-go/parity). The
+      # database defaults to iznik_go_test. Nothing in the API reads these yet.
+      - PGSQL_HOST=${PGSQL_HOST:-postgres}
+      - PGSQL_PORT=${PGSQL_PORT:-5432}
+      - PGSQL_USERNAME=${PGSQL_USERNAME:-root}
+      - PGSQL_PASSWORD=${PGSQL_PASSWORD:-iznik}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd:8080/tus
       # In dev, uploaded photos live in the local tusd, not the production

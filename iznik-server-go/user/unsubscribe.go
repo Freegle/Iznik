@@ -179,7 +179,7 @@ func applyUnsubscribe(db *gorm.DB, uid uint64, unsubType string) {
 	for _, one := range wanted {
 		switch one {
 		case UnsubDigest:
-			db.Exec("UPDATE memberships SET emailfrequency = 0 WHERE userid = ? AND emailfrequency != 0", uid)
+			stopDigestEmails(db, uid)
 		case UnsubEvents:
 			db.Exec("UPDATE memberships SET eventsallowed = 0 WHERE userid = ? AND eventsallowed != 0", uid)
 		case UnsubVolunteering:
@@ -203,6 +203,12 @@ func applyUnsubscribe(db *gorm.DB, uid uint64, unsubType string) {
 			db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.engagement', CAST('false' AS JSON)) WHERE id = ?", uid)
 		}
 	}
+}
+
+// stopDigestEmails turns off the digest on every membership that has one. The statement has the
+// same effect as one that wrote the 0 inline: the value is bound, not part of the text.
+func stopDigestEmails(db *gorm.DB, uid uint64) *gorm.DB {
+	return db.Table("memberships").Where("userid = ? AND emailfrequency != 0", uid).Update("emailfrequency", 0)
 }
 
 func describeFor(unsubType string) string {
