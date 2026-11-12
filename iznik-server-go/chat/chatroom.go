@@ -1620,15 +1620,15 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 
 // canUseChatRoomPresence says whether myid may change presence in the room (roster, typing). A
 // User2User chat is for its two members only, so a moderator cannot insert themselves into it. For
-// a modmail or mod-team chat the caller must be able to see the room (a participant, or a moderator
-// of the room's own community; Admin and Support see all) and, for a moderators' chat, be an
-// active moderator there. Without this any authenticated user could read or forge the roster of an
-// arbitrary modmail or mod-team chat, or hold back another chat's emails, by guessing its (small,
-// sequential) id.
+// a modmail or mod-team chat the caller must be a participant or a moderator of the room's own
+// community (Admin and Support count as moderators of every community) and, for a moderators' chat,
+// an active moderator there. A moderator of some other community the member also belongs to is not
+// enough. Without this any authenticated user could read or forge the roster of an arbitrary modmail
+// or mod-team chat, or hold back another chat's emails, by guessing its (small, sequential) id.
 func canUseChatRoomPresence(myid uint64, room ChatRoom) bool {
 	switch room.Chattype {
 	case utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_GROUP, utils.CHAT_TYPE_MOD2MOD:
-		return canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) &&
+		return (myid == room.User1 || myid == room.User2 || auth.IsModOfGroup(myid, room.Groupid)) &&
 			mod2ModAllowed(myid, room.Chattype, room.Groupid)
 	case utils.CHAT_TYPE_USER2USER:
 		return myid == room.User1 || myid == room.User2
