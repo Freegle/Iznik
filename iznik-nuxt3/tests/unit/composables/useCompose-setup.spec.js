@@ -489,6 +489,42 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
       )
     })
 
+    it('still navigates without the failure banner when saving the postcode to the new user fails', async () => {
+      const okRouter = { push: vi.fn().mockResolvedValue(undefined) }
+      mockComposeStore.submit.mockResolvedValue([
+        { id: 1, newuser: true, newpassword: 'pw' },
+      ])
+      mockComposeStore.postcode = { id: 9, name: 'X' }
+      mockAuthUser = { id: 1, settings: {} }
+      mockSaveAndGet.mockRejectedValueOnce(new Error('timeout'))
+      mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
+      const api = mod.setup('Offer')
+
+      await mod.freegleIt('Offer', okRouter)
+
+      // The post is already live and the draft cleared, so the member must not be told it failed.
+      expect(api.wentWrong.value).toBe(false)
+      expect(okRouter.push).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'myposts' })
+      )
+      expect(mockTrackConversion).toHaveBeenCalledWith('Give an Item')
+    })
+
+    it('still navigates without the failure banner when fetching the new post fails', async () => {
+      const okRouter = { push: vi.fn().mockResolvedValue(undefined) }
+      mockComposeStore.submit.mockResolvedValue([{ id: 1, groupid: 5 }])
+      mockMessageStore.fetch.mockRejectedValueOnce(new Error('timeout'))
+      mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
+      const api = mod.setup('Offer')
+
+      await mod.freegleIt('Offer', okRouter)
+
+      expect(api.wentWrong.value).toBe(false)
+      expect(okRouter.push).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'myposts' })
+      )
+    })
+
     it('throws when router.push reports a navigation failure', async () => {
       const failingRouter = {
         push: vi.fn().mockResolvedValue({ type: 4 }),
