@@ -2252,6 +2252,25 @@ func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
 	return groupid
 }
 
+// linkableAttachments returns, in the order given, those of the named photos that are unattached
+// or already on the post. A photo on another post is dropped.
+func linkableAttachments(db *gorm.DB, msgid uint64, named []uint64) []uint64 {
+	var ok []uint64
+	db.Table("messages_attachments").Select("id").
+		Where("id IN ? AND (msgid IS NULL OR msgid = ?)", named, msgid).Scan(&ok)
+	allowed := make(map[uint64]bool, len(ok))
+	for _, id := range ok {
+		allowed[id] = true
+	}
+	linkable := make([]uint64, 0, len(ok))
+	for _, id := range named {
+		if allowed[id] {
+			linkable = append(linkable, id)
+		}
+	}
+	return linkable
+}
+
 // getAllGroupsForMessage returns all groupids for a message.
 // Returns groups regardless of deleted state, so mods can still moderate and reject
 // messages even after the poster has deleted them.
@@ -4805,7 +4824,14 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// Update attachment ordering if provided.
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
 	// req.Attachments is [] (empty, non-nil) when all attachments are removed (#338).
-	if req.Attachments != nil {
+	//
+	// Only photos that are unattached or already on this post count: another post's photo is
+	// neither linked nor treated as kept. A list naming only such photos changes nothing.
+	attachmentsNamed := len(req.Attachments)
+	if attachmentsNamed > 0 {
+		req.Attachments = linkableAttachments(db, req.ID, req.Attachments)
+	}
+	if req.Attachments != nil && (attachmentsNamed == 0 || len(req.Attachments) > 0) {
 		recordAIDeletions(db, myid, req.ID, req.Attachments, req.BadAIImages)
 
 		if len(req.Attachments) > 0 {
@@ -4841,9 +4867,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 			for i, attid := range req.Attachments {
 				primary := i == 0
-				// Only unattached photos or ones already on this post may be linked, so a
-				// photo on another post is never moved.
-				db.Table("messages_attachments").Where("id = ? AND (msgid IS NULL OR msgid = ?)", attid, req.ID).
+				db.Table("messages_attachments").Where("id = ?", attid).
 					Updates(map[string]interface{}{"msgid": req.ID, "primary": primary})
 			}
 			// Delete any attachments not in the new list. The list never holds an
@@ -5257,6 +5281,19 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		}
 	}
 
+	// Nothing is changed for someone who may not edit every copy of the post, so the check runs
+	// before any copy is touched.
+	if req.Textbody != nil {
+		for _, msgID := range msgIDs {
+			actingid := actAsOwnerCandidate(db, myid, partnerCandidates, msgID)
+			var fromuser uint64
+			db.Table("messages").Select("fromuser").Where("id = ?", msgID).Scan(&fromuser)
+			if fromuser != actingid && !isModForMessage(db, actingid, msgID) {
+				return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
+			}
+		}
+	}
+
 	for _, msgID := range msgIDs {
 		req.ID = msgID
 		// A crossposted TN post's copies all belong to the same TN member, but
@@ -5282,13 +5319,6 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		// recordAIDeletions is called with an empty keep-list so any AI attachment is
 		// properly logged (microaction + messages_ai_declined) before deletion.
 		if req.Textbody != nil {
-			// Nothing is deleted for someone who may not edit this post.
-			var fromuser uint64
-			db.Table("messages").Select("fromuser").Where("id = ?", msgID).Scan(&fromuser)
-			if fromuser != actingid && !isModForMessage(db, actingid, msgID) {
-				return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
-			}
-
 			recordAIDeletions(db, actingid, msgID, []uint64{}, nil)
 			// Identical golden to
 			// 8ef16859487a (applyPatchMessageCore); converted together per gate (h).
@@ -5369,8 +5399,8 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 			return err
 		}
 
-		db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", msgid, modGroups).
-			Update("deleted", gorm.Expr("1"))
+		// Remove the copies, as the POST Delete action does.
+		db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", msgid, modGroups).Delete(nil)
 
 		// Pin to the write host: this gates the shared delete on rows just modified.
 		var remaining int64
@@ -5382,7 +5412,11 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 		db.Table("messages").Where("id = ?", msgid).Update("deleted", gorm.Expr("NOW()"))
 	}
 
-	// Write an audit-log entry against each community a moderator deleted the post from.
+	// Write an audit-log entry against each community a moderator deleted the post from. A post on
+	// no community (an admin deleting it) is logged with no community.
+	if isMod && len(modGroups) == 0 {
+		modGroups = []uint64{0}
+	}
 	for _, groupid := range modGroups {
 		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupid, fromuser, myid, msgid, 0, "")
 	}
