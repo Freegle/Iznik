@@ -41,7 +41,7 @@ END
 $$;
 
 -- GetMaxDimensionT is the same function. MySQL keeps a second copy that is not declared
--- DETERMINISTIC so that it can be used where a trigger needs it; PostgreSQL has no such rule.
+-- DETERMINISTIC; PostgreSQL has no such distinction, so this one just calls the first.
 CREATE OR REPLACE FUNCTION GetMaxDimensionT(g geometry) RETURNS double precision
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT GetMaxDimension(g) $$;
 
@@ -53,8 +53,8 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT GetMaxDimension(g) $$;
 -- It reproduces MySQL's arithmetic, including two things a caller can trip on:
 --  * The arguments are FLOAT in MySQL, so they are rounded to single precision here too, and the
 --    result is single precision (real).
---  * The inside of the ACOS can come out a hair over 1 for two identical points (about 3 in 100 of
---    them). MySQL's ACOS returns NULL outside -1..1, PostgreSQL's raises an error. This returns NULL,
+--  * The inside of the ACOS can come out a hair over 1 for two identical points (a few in 100 of
+--    them, depending on where the point is). MySQL's ACOS returns NULL outside -1..1, PostgreSQL's raises an error. This returns NULL,
 --    as MySQL does, so a caller sees the same thing on both. The callers that compare or order on the
 --    result treat NULL as "no distance"; they get it from MySQL already.
 -- The parameters are double precision so that a numeric column, a real column and a literal all
@@ -104,8 +104,9 @@ $$;
 -- MySQL compares the characters with the schema's collation (utf8mb4_0900_ai_ci), which ignores case
 -- and accents. lower and unaccent give the same for text in Latin script. Both are applied to the
 -- whole string first, so a letter that unaccent expands (ß to ss) changes the length here and does not
--- in MySQL. The strings are cut to 255 characters, the size of MySQL's VARCHAR(255) parameters and of
--- the longest string levenshtein_less_equal takes. NULL in gives NULL out; MySQL gives 0 or NULL
+-- in MySQL. The strings are cut to 255 characters before and again after that, because 255 is the
+-- size of MySQL's VARCHAR(255) parameters and the longest string levenshtein_less_equal takes, and
+-- unaccent can make a string longer. NULL in gives NULL out; MySQL gives 0 or NULL
 -- depending on which argument is NULL, and no caller passes one.
 CREATE OR REPLACE FUNCTION damlevlim(s1 text, s2 text, n integer) RETURNS integer
 LANGUAGE plpgsql STABLE PARALLEL SAFE AS $$
@@ -128,8 +129,8 @@ BEGIN
   IF s1 IS NULL OR s2 IS NULL THEN
     RETURN NULL;
   END IF;
-  a := unaccent(lower(left(s1, 255)));
-  b := unaccent(lower(left(s2, 255)));
+  a := left(unaccent(lower(left(s1, 255))), 255);
+  b := left(unaccent(lower(left(s2, 255))), 255);
   l1 := char_length(a);
   l2 := char_length(b);
   IF a = b THEN

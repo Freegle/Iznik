@@ -76,7 +76,7 @@ build() {
   fi
   if [ "$tables" != "0" ] && [ "${PG_REBUILD:-}" != "1" ] && [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
     echo "PostgreSQL database ${db} already has ${tables} tables; set PG_REBUILD=1 to rebuild it"
-    if ! $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 < "$FUNCTIONS" >/dev/null 2>&1; then
+    if ! $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 < "$FUNCTIONS" >/dev/null; then
       echo "Loading the PostgreSQL stored functions into ${db} FAILED"
       return 1
     fi

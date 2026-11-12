@@ -257,6 +257,16 @@ test('damlevlim below the limit is the exact edit distance', { skip }, () => {
   rows.forEach((c, i) => assert.equal(Number(out[i]), c.mysql, c.name))
 })
 
+test('damlevlim does not fail on a long string whose letters unaccent expands', { skip }, () => {
+  // unaccent turns one letter into two, so the cut to 255 characters has to come after it.
+  const out = column(`SELECT damlevlim(repeat('ß', 200), 'x', 3);
+    SELECT damlevlim('gmail.com', repeat('æ', 200) || 'x', 3);
+    SELECT damlevlim(repeat('ß', 600), repeat('ß', 600), 3);`)
+  assert.equal(out.length, 3)
+  out.forEach((v) => assert.ok(Number.isInteger(Number(v)), v))
+  assert.equal(Number(out[2]), 0)
+})
+
 test('the GET /domains query suggests what MySQL suggested', { skip }, () => {
   // The query as iznik-server-go/domain/domain.go builds it, bound the way pgx binds it.
   const bad = []

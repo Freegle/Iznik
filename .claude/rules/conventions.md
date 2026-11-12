@@ -172,7 +172,7 @@ splitter is switched on. See `docs/developers/reference/auto-split.md`.
 ## The stored `haversine()` is 69 miles to the degree, and NULL for some identical points
 
 It is not the 3959 mile distance the rest of the code uses: it runs about 0.15 per cent short, in single
-precision. Its COMMENT says "degrees" and it returns miles. For roughly 3.6 per cent of identical points
+precision. Its COMMENT says "degrees" and it returns miles. For a few per cent of identical points
 the argument of ACOS comes out a hair over 1 and the result is NULL, so a `haversine(...) < radius` test
 loses that row. Do not "fix" it on MySQL: the group lookups and orderings were tuned with it. PostgreSQL
 has the same function with the same answers (`functions.sql`) and a separate `haversine_miles` for new

@@ -208,14 +208,16 @@ PG_SCHEMA_PSQL="docker exec -i freegle-postgres psql -U root" node --test tools/
 
 Beyond the table, a sweep of 40,000 identical points and 40,000 random UK pairs gave identical `haversine`
 answers on both engines, to the bit, with 1,449 identical points giving NULL on each. A sweep of 1,500 random
-string pairs and limits gave the same `damlevlim` value on both.
+string pairs and limits gave the same `damlevlim` value on both. `tools/pg-schema/sweep-functions.mjs` repeats
+these sweeps (it needs `PG_SCHEMA_PSQL` and the percona container).
 
 ### What differs, on purpose
 
 - **GetMaxDimension of a geometry collection that holds a polygon.** MySQL refuses it (`ST_Area` rejects the type);
   PostGIS adds up the polygons. No stored geometry is a collection.
 - **damlevlim with an accent that `unaccent` expands**, such as `ß` to `ss`, changes the length in PostgreSQL and
-  does not in MySQL. Domains are ASCII or punycode, so no input in the table does this.
+  does not in MySQL. Domains are ASCII or punycode, so no input in the table does this. Strings are cut to 255 characters after `unaccent` as well as before, so a long
+  request value never reaches the 255 character limit of `levenshtein_less_equal`.
 - **damlevlim with NULL**: MySQL gives 0 or NULL depending on which argument is NULL; PostgreSQL gives NULL. No caller
   passes NULL.
 - **LENGTH(?) in the call site.** MySQL's `LENGTH` counts bytes and PostgreSQL's counts characters, so a typed domain
@@ -263,7 +265,7 @@ moving it would change which group a member is offered. On PostgreSQL there are 
 Two behaviours of `haversine()` are easy to trip on, and both are kept so that the engines agree:
 
 - **NULL for some identical points.** The argument of `ACOS` can come out a hair over 1, MySQL's `ACOS` then
-  returns NULL, and about 3.6 per cent of identical points do this. PostgreSQL's `acos` would raise an error, so the
+  returns NULL, and a few per cent of identical points do this (it depends on where the point is). PostgreSQL's `acos` would raise an error, so the
   function returns NULL. A `haversine(...) < radius` test loses such a row on both engines.
 - **NULL sorts differently.** `ORDER BY haversine(...) ASC` puts NULL first in MySQL and last in PostgreSQL. A caller
   that cares writes `NULLS FIRST` or a `COALESCE`, as the TrashNothing ordering already does.

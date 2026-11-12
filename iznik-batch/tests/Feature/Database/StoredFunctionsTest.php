@@ -75,7 +75,12 @@ class StoredFunctionsTest extends TestCase
                 continue;
             }
 
-            if ($this->relative((float) $got, (float) $case['mysql']) > 1e-6) {
+            // MySQL sends a FLOAT as six significant digits, and the table holds the exact single
+            // precision value, so MySQL can be out by up to 5e-6 of the answer. PostgreSQL sends a REAL
+            // with enough digits to be exact.
+            $tolerance = DB::connection()->getDriverName() === 'pgsql' ? 1e-6 : 1e-5;
+
+            if ($this->relative((float) $got, (float) $case['mysql']) > $tolerance) {
                 $bad[] = "{$case['name']}: recorded {$case['mysql']}, got {$got}";
             }
         }
@@ -137,9 +142,15 @@ class StoredFunctionsTest extends TestCase
             if (DB::connection()->getDriverName() === 'pgsql') {
                 $got = (float) $this->one('GetMaxDimension(ST_GeomFromText(?, ?))', [$case['wkt'], $this->srid()]);
                 $this->assertLessThan(1e-12, $this->relative($got, (float) $case['divergence']['pg']), $case['name']);
-            } else {
-                $this->expectException(QueryException::class);
+
+                continue;
+            }
+
+            try {
                 $this->one('GetMaxDimension(ST_GeomFromText(?, ?))', [$case['wkt'], $this->srid()]);
+                $this->fail("{$case['name']}: MySQL accepted a geometry collection with a polygon");
+            } catch (QueryException $e) {
+                $this->assertInstanceOf(QueryException::class, $e, $case['name']);
             }
         }
     }
