@@ -313,7 +313,7 @@ export const useComposeStore = defineStore('compose', {
         textbody: message.description || '',
         groupid: this.group,
         locationid: this.postcode.id,
-        availablenow: message.availablenow,
+        availablenow: wholeCount(message.availablenow),
         email,
         attachments,
       }
