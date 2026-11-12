@@ -8,7 +8,7 @@ use Tests\TestCase;
 
 /**
  * Wave 1, batch 2: Layer 1 parity for converted sites in the test-push command,
- * the purge service, the Doogal postcode importer and the authority stats.
+ * the purge service, the ONS postcode importer and the authority stats.
  */
 class Wave1Batch2Test extends TestCase
 {

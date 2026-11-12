@@ -1323,7 +1323,7 @@ class WhatJobsService
      * ambiguity for small/unusual UK place names.
      *
      * In development the table is empty (returns null). In production it is
-     * populated by the Doogal postcode cron, so this works transparently.
+     * populated by the ONS postcode cron, so this works transparently.
      */
     protected function geocodePostcode(string $outward): ?array
     {
