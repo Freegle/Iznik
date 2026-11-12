@@ -39,15 +39,21 @@
               <b-row>
                 <b-col>
                   <p>Sorry - we failed to verify your email address.</p>
-                  <p>
-                    <strong>Please try again.</strong> Resend verification mail
-                    to:
-                  </p>
-                  <b-form-input
-                    v-model="email"
-                    placeholder="Enter your email"
-                    class="mb-2"
-                  />
+                  <p v-if="failureReason">{{ failureReason }}</p>
+                  <template v-else>
+                    <p>
+                      <strong>Please try again.</strong> Resend verification
+                      mail to:
+                    </p>
+                    <b-form-input
+                      v-model="email"
+                      placeholder="Enter your email"
+                      class="mb-2"
+                    />
+                    <p v-if="resendRefused" class="text-danger">
+                      {{ resendRefused }}
+                    </p>
+                  </template>
                   <p>
                     <!-- eslint-disable-next-line -->
                   If you keep having trouble, please mail <ExternalLink href="mailto:support@ilovefreegle.org">support@ilovefreegle.org</ExternalLink>.
@@ -57,7 +63,12 @@
             </template>
             <template #footer>
               <b-button variant="white" @click="closed"> Cancel </b-button>
-              <b-button variant="primary" :disabled="!email" @click="resend">
+              <b-button
+                v-if="!failureReason"
+                variant="primary"
+                :disabled="!email"
+                @click="resend"
+              >
                 Resend verification mail
               </b-button>
             </template>
@@ -132,6 +143,11 @@ const succeeded = ref(false)
 const failed = ref(false)
 const resent = ref(false)
 const email = ref(null)
+// Why the key was refused, when the server says (a TrashNothing address, a 403). Resending
+// would be refused the same way, so it is not offered.
+const failureReason = ref(null)
+// Why a resend was refused, e.g. to a TrashNothing address (ret 12).
+const resendRefused = ref(null)
 
 // Methods
 const closed = () => {
@@ -140,6 +156,8 @@ const closed = () => {
 
 const resend = async () => {
   const data = await authStore.saveEmail(email.value)
+
+  resendRefused.value = data?.ret === 12 ? data.status : null
 
   if (data && (data.ret === 0 || data.ret === 10)) {
     resent.value = true
@@ -156,6 +174,8 @@ onMounted(async () => {
 
     succeeded.value = true
   } catch (e) {
+    failureReason.value =
+      e?.response?.status === 403 ? e.response.data?.message || null : null
     failed.value = true
   }
 })
