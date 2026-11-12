@@ -369,22 +369,22 @@ func Edit(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	db.Table("users_comments").Where("id = ?", req.ID).Updates(map[string]interface{}{
-		"user1":    req.User1,
-		"user2":    req.User2,
-		"user3":    req.User3,
-		"user4":    req.User4,
-		"user5":    req.User5,
-		"user6":    req.User6,
-		"user7":    req.User7,
-		"user8":    req.User8,
-		"user9":    req.User9,
-		"user10":   req.User10,
-		"user11":   req.User11,
+	// Only the note fields the request sends are changed: an absent field is left as it was.
+	updates := map[string]interface{}{
 		"flag":     gorm.Expr("COALESCE(?, flag)", req.Flag),
 		"byuserid": myid,
 		"reviewed": gorm.Expr("NOW()"),
-	})
+	}
+	for column, text := range map[string]*string{
+		"user1": req.User1, "user2": req.User2, "user3": req.User3, "user4": req.User4,
+		"user5": req.User5, "user6": req.User6, "user7": req.User7, "user8": req.User8,
+		"user9": req.User9, "user10": req.User10, "user11": req.User11,
+	} {
+		if text != nil {
+			updates[column] = *text
+		}
+	}
+	db.Table("users_comments").Where("id = ?", req.ID).Updates(updates)
 
 	// Flag user in other groups if flag is set to true
 	if req.Flag != nil && *req.Flag {
