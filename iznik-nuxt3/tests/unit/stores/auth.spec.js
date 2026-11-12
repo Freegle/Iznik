@@ -14,7 +14,7 @@ import { setActivePinia, createPinia } from 'pinia'
 // ~/stores/auth → tests/unit/mocks/auth-store.js (for component tests).
 // This test needs the real store implementation.
 import { useAuthStore } from '~/stores/auth.js'
-import { abortAllPendingRequests } from '~/api/BaseAPI'
+import { abortAllPendingRequests, exitLogoutMode } from '~/api/BaseAPI'
 import { flowCalls, resetFlowCalls } from '../helpers/flowTelemetryMock'
 import { ROLE_MEMBER, ROLE_OWNER } from '~/constants'
 
@@ -542,6 +542,14 @@ describe('auth store', () => {
       expect(store.auth.jwt).toBeNull()
       expect(store.loginCount).toBe(1)
       expect(store.loggedInEver).toBe(true)
+    })
+
+    it('leaves logout mode when the sign-out call fails, so later requests are not aborted', async () => {
+      mockLogout.mockRejectedValueOnce(new Error('network down'))
+
+      await expect(store.logout()).rejects.toThrow('network down')
+
+      expect(exitLogoutMode).toHaveBeenCalled()
     })
 
     it('clears the transferable session, so a device restore does not sign us back in', async () => {
