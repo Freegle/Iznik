@@ -282,18 +282,27 @@ class ChatSpamServiceTest extends TestCase
             ]);
         }
 
-        // 1 previously approved message (reviewedby is set, reviewrejected=0)
+        // 1 previously approved message (review cleared, reviewedby is set, reviewrejected=0)
         $reviewer = $this->createTestUser();
         $this->createTestChatMessage($room, $user, [
-            'reviewrequired'      => 1,
+            'reviewrequired'      => 0,
             'processingsuccessful' => 1,
             'reviewrejected'      => 0,
             'reviewedby'          => $reviewer->id,
         ]);
 
+        // 1 message held for review, which must be left alone.
+        $pending = $this->createTestChatMessage($room, $user, [
+            'reviewrequired'      => 1,
+            'processingrequired'  => 1,
+            'processingsuccessful' => 0,
+            'reviewrejected'      => 0,
+        ]);
+
         $count = $this->service->autoMarkSpam();
 
         $this->assertEquals(0, $count);
+        $this->assertEquals(1, $pending->fresh()->reviewrequired);
     }
 
     public function test_auto_mark_spam_skips_users_whose_messages_a_moderator_approved(): void
