@@ -6,6 +6,7 @@ use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Length;
 use App\Models\UserAddress;
 use App\Models\UxExperimentExposure;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -67,6 +68,23 @@ class UserDataExportService
         return $count;
     }
 
+    /**
+     * A timestamp column read from PostgreSQL carries its zone ("2026-10-20 10:05:00+00"); MySQL gives none.
+     * The export prints the plain form on both: the instant in the application's time zone, with any fraction.
+     */
+    private function plainTimestamps(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            return array_map(fn ($v) => $this->plainTimestamps($v), $value);
+        }
+
+        if (is_string($value) && preg_match('/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?[+-]\d\d(:?\d\d)?$/', $value, $m)) {
+            return Carbon::parse($value)->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s').($m[1] ?? '');
+        }
+
+        return $value;
+    }
+
     private function purgeOldExportData(): void
     {
         DB::table('users_exports')
@@ -88,7 +106,7 @@ class UserDataExportService
 
         $data = $this->assembleUserData($userId);
 
-        $json = json_encode($data, JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        $json = json_encode($this->plainTimestamps($data), JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_UNESCAPED_UNICODE);
         $compressed = gzdeflate($json);
 
         DB::table('users_exports')

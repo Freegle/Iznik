@@ -152,11 +152,7 @@ class GiftAidClaimServiceTest extends TestCase
         $giftaidId = DB::table('giftaid')->where('userid', $user->id)->value('id');
 
         // Create a claimable donation
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 10.00, 1, NULL, 'Stripe', NOW(), 'test@example.com')",
-            [$user->id]
-        );
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 10.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => now(), 'Payer' => 'test@example.com']);
 
         $rows = [];
         $result = $this->service->generateClaim(
@@ -196,11 +192,7 @@ class GiftAidClaimServiceTest extends TestCase
             [$user->id]
         );
 
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 25.00, 1, NULL, 'DonateWithPayPal', NOW(), 'jane@example.com')",
-            [$user->id]
-        );
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 25.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'DonateWithPayPal', 'timestamp' => now(), 'Payer' => 'jane@example.com']);
 
         $result = $this->service->generateClaim(dryRun: false);
 
@@ -228,11 +220,7 @@ class GiftAidClaimServiceTest extends TestCase
             [$user->id]
         );
 
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 5.00, 1, NULL, 'Stripe', NOW(), 'budi@example.com')",
-            [$user->id]
-        );
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 5.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => now(), 'Payer' => 'budi@example.com']);
 
         $rows = [];
         $this->service->generateClaim(
@@ -263,11 +251,7 @@ class GiftAidClaimServiceTest extends TestCase
             [$user->id]
         );
 
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 15.00, 1, NULL, 'Stripe', NOW(), 'ann@example.com')",
-            [$user->id]
-        );
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 15.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => now(), 'Payer' => 'ann@example.com']);
 
         $result = $this->service->generateClaim(dryRun: false);
 
@@ -297,16 +281,8 @@ class GiftAidClaimServiceTest extends TestCase
 
         // Two identical donations on same day — only one should appear in output
         $today = now()->format('Y-m-d H:i:s');
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 20.00, 1, NULL, 'Stripe', ?, 'tom@example.com')",
-            [$user->id, $today]
-        );
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 20.00, 1, NULL, 'Stripe', ?, 'tom@example.com')",
-            [$user->id, $today]
-        );
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 20.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => $today, 'Payer' => 'tom@example.com']);
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 20.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => $today, 'Payer' => 'tom@example.com']);
 
         $rows = [];
         $result = $this->service->generateClaim(
@@ -340,16 +316,8 @@ class GiftAidClaimServiceTest extends TestCase
         );
 
         // Two donations: one before the cutoff and one after.
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 11.00, 1, NULL, 'Stripe', '2026-03-31 23:30:00', 'eve@example.com')",
-            [$user->id]
-        );
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 22.00, 1, NULL, 'Stripe', '2026-04-01 00:30:00', 'eve@example.com')",
-            [$user->id]
-        );
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 11.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => '2026-03-31 23:30:00', 'Payer' => 'eve@example.com']);
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 22.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => '2026-04-01 00:30:00', 'Payer' => 'eve@example.com']);
 
         $rows = [];
         $result = $this->service->generateClaim(
@@ -383,11 +351,7 @@ class GiftAidClaimServiceTest extends TestCase
         );
 
         // Donation right at the very end of the cutoff day
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 7.00, 1, NULL, 'Stripe', '2026-03-31 23:59:59', 'ian@example.com')",
-            [$user->id]
-        );
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 7.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => '2026-03-31 23:59:59', 'Payer' => 'ian@example.com']);
 
         $rows = [];
         $result = $this->service->generateClaim(
@@ -424,16 +388,8 @@ class GiftAidClaimServiceTest extends TestCase
         );
 
         $today = now()->format('Y-m-d H:i:s');
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 8.00, 1, NULL, 'Stripe', ?, 'dee@example.com')",
-            [$user->id, $today]
-        );
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
-             VALUES (?, 8.00, 1, NULL, 'Stripe', ?, 'dee@example.com')",
-            [$user->id, $today]
-        );
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 8.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => $today, 'Payer' => 'dee@example.com']);
+        DB::table('users_donations')->insert(['userid' => $user->id, 'GrossAmount' => 8.00, 'giftaidconsent' => 1, 'giftaidclaimed' => null, 'source' => 'Stripe', 'timestamp' => $today, 'Payer' => 'dee@example.com']);
 
         $result = $this->service->generateClaim(dryRun: false);
 
@@ -465,11 +421,7 @@ class GiftAidClaimServiceTest extends TestCase
             [$user->id, $email]
         );
 
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, source, timestamp, Payer)
-             VALUES (NULL, 12.50, 0, 'Stripe', NOW(), ?)",
-            [$email]
-        );
+        DB::table('users_donations')->insert(['userid' => null, 'GrossAmount' => 12.50, 'giftaidconsent' => 0, 'source' => 'Stripe', 'timestamp' => now(), 'Payer' => $email]);
 
         $found = $this->service->correctUserIdInDonations();
 
@@ -480,7 +432,7 @@ class GiftAidClaimServiceTest extends TestCase
         $this->assertEquals($user->id, $linked);
 
         // Cleanup
-        DB::delete('DELETE FROM users_donations WHERE Payer = ?', [$email]);
+        DB::table('users_donations')->where('Payer', $email)->delete();
         DB::delete('DELETE FROM users_emails WHERE email = ?', [$email]);
     }
 
@@ -489,11 +441,7 @@ class GiftAidClaimServiceTest extends TestCase
         $user = $this->createTestUser();
 
         $email = 'no-match-' . $user->id . '@example.com';
-        DB::insert(
-            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, source, timestamp, Payer)
-             VALUES (NULL, 5.00, 0, 'Stripe', NOW(), ?)",
-            [$email]
-        );
+        DB::table('users_donations')->insert(['userid' => null, 'GrossAmount' => 5.00, 'giftaidconsent' => 0, 'source' => 'Stripe', 'timestamp' => now(), 'Payer' => $email]);
 
         $this->service->correctUserIdInDonations();
 
@@ -501,7 +449,7 @@ class GiftAidClaimServiceTest extends TestCase
         $this->assertNull($userid);
 
         // Cleanup
-        DB::delete('DELETE FROM users_donations WHERE Payer = ?', [$email]);
+        DB::table('users_donations')->where('Payer', $email)->delete();
     }
 
     // -------------------------------------------------------------------------
