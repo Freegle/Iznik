@@ -82,6 +82,16 @@ func handleChargeSucceeded(c *fiber.Ctx, event *stripe.Event) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
+	// Stripe delivers an event at least once and retries any non-200 answer. A charge already
+	// recorded is acknowledged, not inserted again: TransactionID is unique, so the insert would
+	// fail and the 500 would keep Stripe retrying for days.
+	var existing int64
+	gdb.Table("users_donations").Where("TransactionID = ?", charge.ID).Count(&existing)
+	if existing > 0 {
+		log.Printf("[StripeIPN] charge_id=%s already recorded, acknowledging", charge.ID)
+		return c.SendStatus(fiber.StatusOK)
+	}
+
 	// Try to identify the user.
 	userID, userName, userEmail := matchDonorUser(&charge)
 
