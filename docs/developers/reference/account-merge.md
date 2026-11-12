@@ -85,8 +85,11 @@ the foreign key.
 ## Refusals
 
 A TrashNothing account is never merged with a Freegle account, and two accounts carrying two
-different TrashNothing ids are two different people. `handleMerge` and `MergeUsersTx` refuse
-both. See `.claude/rules/conventions.md`.
+different TrashNothing ids are two different people. `handleMerge` refuses both. `MergeUsersTx`
+refuses two different TrashNothing ids, and refuses a TrashNothing account with an account that
+moderates a community, so no path can give a TrashNothing account a volunteer's role. The TN
+divergence heal still merges a stamped account with its unstamped twin. See
+`.claude/rules/conventions.md`.
 
 A member can set `canmerge` to false in their settings. If either account has, the merge is
 refused.
