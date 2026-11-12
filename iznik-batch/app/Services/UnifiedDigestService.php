@@ -361,6 +361,11 @@ class UnifiedDigestService
             ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->whereNull('users.deleted')
+            ->where('users.bouncing', 0)
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('users.settings->simplemail')
+                  ->orWhere('users.settings->simplemail', '!=', User::SIMPLE_MAIL_NONE);
+            })
             ->where(function ($q) {
                 $q->whereNull('users.lastaccess')
                   ->orWhere('users.lastaccess', '>', now()->subSeconds(365 * 12 * 3600));
@@ -1218,7 +1223,9 @@ class UnifiedDigestService
                          SELECT 1 FROM messages_outcomes mo
                          WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
-                   AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)$onlySql
+                   AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
+                   AND u.bouncing = 0
+                   AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.simplemail')), '') <> 'None'$onlySql
                    AND ($containSql$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n
@@ -1226,7 +1233,7 @@ class UnifiedDigestService
                        )",
                 array_merge(
                     $primaryParams,
-                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90)],
+                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subSeconds(365 * 12 * 3600)],
                     $onlyParams,
                     [$srid],
                     $overflowParams,
@@ -1438,6 +1445,11 @@ class UnifiedDigestService
         $mailed = [];
         foreach ($users as $user) {
             if (!$user->email_preferred) {
+                continue;
+            }
+            // A bouncing address, or a member who turned all our mail off, is not mailed, as in the
+            // daily digest.
+            if ($user->bouncing || $user->getSimpleMail() === User::SIMPLE_MAIL_NONE) {
                 continue;
             }
             if (isset($alreadyHadItem[(int) $user->id])) {
