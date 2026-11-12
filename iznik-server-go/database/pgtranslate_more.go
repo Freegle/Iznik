@@ -90,6 +90,52 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		}
 	}
 
+	// JSON_OBJECT(k, v, ...): PostgreSQL cannot type a bound key, so each key is cast to text.
+	for i := len(ts) - 1; i >= 0; i-- {
+		if !isKw(ts[i], "jsonb_build_object") {
+			continue
+		}
+		o := nextSig(ts, i+1)
+		if o < 0 || !isP(ts[o], "(") {
+			continue
+		}
+		cl := matchClose(ts, o)
+		if cl < 0 {
+			continue
+		}
+		args := splitArgs(ts[o+1 : cl])
+		var rep []tok
+		for j, a := range args {
+			if j > 0 {
+				rep = append(rep, punct(","))
+			}
+			a = trimToks(a)
+			if j%2 == 0 && len(a) == 1 && a[0].k == tkWord {
+				rep = append(rep, a...)
+				rep = append(rep, punct(":"), punct(":"), word("text"))
+			} else {
+				if j > 0 {
+					rep = append(rep, sp())
+				}
+				rep = append(rep, a...)
+			}
+		}
+		ts = concatToks(ts[:o+1], rep, ts[cl:])
+		changed = true
+	}
+
+	// CAST(x AS JSON).
+	for i := range ts {
+		if isKw(ts[i], "JSON") {
+			if p := prevSig(ts, i-1); p >= 0 && isKw(ts[p], "AS") {
+				ts[i].s = "jsonb"
+				changed = true
+			}
+		}
+	}
+
+	ts, changed = wrapJSONBranches(ts, changed)
+
 	// ST_SRID(g, n) sets the SRID in MySQL.
 	for i := len(ts) - 1; i >= 0; i-- {
 		if !isKw(ts[i], "ST_SRID") {
@@ -299,6 +345,11 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		}
 	}
 
+	if t, ok := translateJoinDML(ts); ok {
+		ts = t
+		changed = true
+	}
+
 	if cat != nil {
 		var c2 bool
 		ts, c2 = translateStatement(ts, cat)
@@ -329,6 +380,30 @@ func translateStatement(ts []tok, cat catalog) ([]tok, bool) {
 			return ts, false
 		}
 		if cat.columns(identName(ts[n])) != nil {
+			return []tok{word("SELECT"), sp(), word("1")}, true
+		}
+		return ts, false
+	}
+
+	// ALTER TABLE t ADD COLUMN c ...: nothing to do when the baseline already has the column.
+	if isKw(ts[first], "ALTER") {
+		t := nextSig(ts, first+1)
+		if t < 0 || !isKw(ts[t], "TABLE") {
+			return ts, false
+		}
+		n := nextSig(ts, t+1)
+		a := -1
+		if n >= 0 {
+			a = nextSig(ts, n+1)
+		}
+		if a < 0 || !isKw(ts[a], "ADD") {
+			return ts, false
+		}
+		c := nextSig(ts, a+1)
+		if c >= 0 && isKw(ts[c], "COLUMN") {
+			c = nextSig(ts, c+1)
+		}
+		if c >= 0 && isColumnOf(cat, identName(ts[n]), identName(ts[c])) {
 			return []tok{word("SELECT"), sp(), word("1")}, true
 		}
 		return ts, false
@@ -508,4 +583,134 @@ func qualifyUpdate(ts []tok, table string, cat catalog) []tok {
 		}
 	}
 	return out
+}
+
+// callEnd returns the index of the ')' that closes a call starting at ts[i] (a word followed by '('),
+// or -1.
+func callEnd(ts []tok, i int) int {
+	o := nextSig(ts, i+1)
+	if o < 0 || !isP(ts[o], "(") {
+		return -1
+	}
+	return matchClose(ts, o)
+}
+
+func isNumberTok(t tok) bool {
+	return t.k == tkWord && t.s != "" && t.s[0] >= '0' && t.s[0] <= '9'
+}
+
+// wrapJSONBranches handles a number next to a JSON_EXTRACT call as the alternatives of CASE or the
+// arguments of COALESCE. MySQL takes a number and a JSON value as the same kind; PostgreSQL will not
+// mix a number and jsonb, so the number is made a jsonb value.
+func wrapJSONBranches(ts []tok, changed bool) ([]tok, bool) {
+	wrap := func(seg []tok) ([]tok, bool) {
+		seg = trimToks(seg)
+		if len(seg) == 1 && isNumberTok(seg[0]) {
+			return []tok{word("to_jsonb"), punct("("), seg[0], punct(")")}, true
+		}
+		return seg, false
+	}
+	isJSONCall := func(seg []tok) bool {
+		seg = trimToks(seg)
+		return len(seg) > 2 && isKw(seg[0], "json_extract") && callEnd(seg, 0) == len(seg)-1
+	}
+	// CASE ... THEN x ... ELSE y END with simple results.
+	for i := 0; i < len(ts); i++ {
+		if !isKw(ts[i], "CASE") {
+			continue
+		}
+		depth := 0
+		end := -1
+		for j := i; j < len(ts); j++ {
+			if isP(ts[j], "(") {
+				depth++
+			} else if isP(ts[j], ")") {
+				depth--
+			} else if depth == 0 && isKw(ts[j], "END") {
+				end = j
+				break
+			}
+		}
+		if end < 0 {
+			continue
+		}
+		// result segments: after THEN up to the next WHEN/ELSE/END, and after ELSE up to END.
+		type seg struct{ from, to int }
+		var segs []seg
+		depth = 0
+		for j := i + 1; j < end; j++ {
+			if isP(ts[j], "(") {
+				depth++
+			} else if isP(ts[j], ")") {
+				depth--
+			} else if depth == 0 && (isKw(ts[j], "THEN") || isKw(ts[j], "ELSE")) {
+				k := j + 1
+				d2 := 0
+				for ; k < end; k++ {
+					if isP(ts[k], "(") {
+						d2++
+					} else if isP(ts[k], ")") {
+						d2--
+					} else if d2 == 0 && (isKw(ts[k], "WHEN") || isKw(ts[k], "ELSE")) {
+						break
+					}
+				}
+				segs = append(segs, seg{j + 1, k})
+			}
+		}
+		any := false
+		for _, sg := range segs {
+			if isJSONCall(ts[sg.from:sg.to]) {
+				any = true
+			}
+		}
+		if !any {
+			continue
+		}
+		for n := len(segs) - 1; n >= 0; n-- {
+			if rep, ok := wrap(ts[segs[n].from:segs[n].to]); ok {
+				ts = concatToks(ts[:segs[n].from], []tok{sp()}, rep, []tok{sp()}, ts[segs[n].to:])
+				changed = true
+			}
+		}
+	}
+	// COALESCE(a, b, ...).
+	for i := 0; i < len(ts); i++ {
+		if !isKw(ts[i], "COALESCE") {
+			continue
+		}
+		cl := callEnd(ts, i)
+		if cl < 0 {
+			continue
+		}
+		o := nextSig(ts, i+1)
+		args := splitArgs(ts[o+1 : cl])
+		any := false
+		for _, a := range args {
+			if isJSONCall(a) {
+				any = true
+			}
+		}
+		if !any {
+			continue
+		}
+		var rep []tok
+		did := false
+		for n, a := range args {
+			if n > 0 {
+				rep = append(rep, punct(","), sp())
+			}
+			if w, ok := wrap(a); ok {
+				rep = append(rep, w...)
+				did = true
+			} else {
+				rep = append(rep, trimToks(a)...)
+			}
+		}
+		if did {
+			ts = concatToks(ts[:o+1], rep, ts[cl:])
+			changed = true
+		}
+	}
+	return ts, changed
 }

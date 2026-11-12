@@ -351,3 +351,194 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT extract(hour FROM t AT TIME ZO
 -- DAYOFWEEK: 1 is Sunday, as in MySQL.
 CREATE OR REPLACE FUNCTION dayofweek(t timestamptz) RETURNS integer
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT extract(dow FROM t AT TIME ZONE 'UTC')::integer + 1 $$;
+
+-- JSON_VALID(text) and JSON_CONTAINS(doc, candidate).
+CREATE OR REPLACE FUNCTION json_valid(j text) RETURNS boolean
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+BEGIN
+  IF j IS NULL THEN
+    RETURN NULL;
+  END IF;
+  PERFORM j::jsonb;
+  RETURN true;
+EXCEPTION WHEN others THEN
+  RETURN false;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION json_contains(doc jsonb, candidate jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT doc @> candidate $$;
+
+CREATE OR REPLACE FUNCTION json_contains(doc jsonb, candidate json) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT doc @> candidate::jsonb $$;
+
+-- LAST_INSERT_ID(): the last identity value this session took, 0 when there is none yet.
+CREATE OR REPLACE FUNCTION last_insert_id() RETURNS bigint
+LANGUAGE plpgsql VOLATILE AS $$
+BEGIN
+  RETURN lastval();
+EXCEPTION WHEN others THEN
+  RETURN 0;
+END
+$$;
+
+-- ROUND(x, d) on a double.
+CREATE OR REPLACE FUNCTION round(x double precision, d integer) RETURNS double precision
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT round(x::numeric, d)::double precision $$;
+
+-- SUM(condition) counts the rows where it holds, as in MySQL where a comparison is 0 or 1.
+CREATE OR REPLACE FUNCTION iznik_bool_sum_step(state bigint, b boolean) RETURNS bigint
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN b IS NULL THEN state WHEN b THEN COALESCE(state, 0) + 1 ELSE COALESCE(state, 0) END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid
+                 WHERE p.proname = 'sum' AND p.proargtypes[0] = 'boolean'::regtype) THEN
+    CREATE AGGREGATE sum(boolean) (SFUNC = iznik_bool_sum_step, STYPE = bigint);
+  END IF;
+END
+$$;
+
+-- A JSON value compared with a number or text, as MySQL compares them: equal only when the JSON value is
+-- of that kind and has that value, so JSON false is not equal to 0.
+CREATE OR REPLACE FUNCTION iznik_json_eq_num(j jsonb, n numeric) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN j IS NULL OR n IS NULL THEN NULL
+  WHEN jsonb_typeof(j) = 'number' THEN (j #>> '{}')::numeric = n ELSE false END $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_ne_num(j jsonb, n numeric) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT NOT iznik_json_eq_num(j, n) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_lt_num(j jsonb, n numeric) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN j IS NULL OR n IS NULL THEN NULL
+  WHEN jsonb_typeof(j) = 'number' THEN (j #>> '{}')::numeric < n ELSE false END $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_le_num(j jsonb, n numeric) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN j IS NULL OR n IS NULL THEN NULL
+  WHEN jsonb_typeof(j) = 'number' THEN (j #>> '{}')::numeric <= n ELSE false END $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_gt_num(j jsonb, n numeric) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN j IS NULL OR n IS NULL THEN NULL
+  WHEN jsonb_typeof(j) = 'number' THEN (j #>> '{}')::numeric > n ELSE false END $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_ge_num(j jsonb, n numeric) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN j IS NULL OR n IS NULL THEN NULL
+  WHEN jsonb_typeof(j) = 'number' THEN (j #>> '{}')::numeric >= n ELSE false END $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_eq_text(j jsonb, s text) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN j IS NULL OR s IS NULL THEN NULL
+  WHEN jsonb_typeof(j) = 'string' THEN (j #>> '{}') = s ELSE false END $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_ne_text(j jsonb, s text) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT NOT iznik_json_eq_text(j, s) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_like(j jsonb, pattern text) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT (j #>> '{}') LIKE pattern $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_eq_integer(j jsonb, n integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_eq_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_ne_integer(j jsonb, n integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_ne_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_lt_integer(j jsonb, n integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_lt_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_le_integer(j jsonb, n integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_le_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_gt_integer(j jsonb, n integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_gt_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_ge_integer(j jsonb, n integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_ge_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_eq_bigint(j jsonb, n bigint) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_eq_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_ne_bigint(j jsonb, n bigint) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_ne_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_lt_bigint(j jsonb, n bigint) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_lt_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_le_bigint(j jsonb, n bigint) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_le_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_gt_bigint(j jsonb, n bigint) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_gt_num(j, n::numeric) $$;
+
+CREATE OR REPLACE FUNCTION iznik_json_ge_bigint(j jsonb, n bigint) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT iznik_json_ge_num(j, n::numeric) $$;
+
+-- The operators. A JSON value next to an integer, number or string in SQL written for MySQL.
+DO $$
+DECLARE
+  o record;
+BEGIN
+  FOR o IN SELECT * FROM (VALUES
+    ('=', 'integer', 'iznik_json_eq_integer'),
+    ('<>', 'integer', 'iznik_json_ne_integer'),
+    ('<', 'integer', 'iznik_json_lt_integer'),
+    ('<=', 'integer', 'iznik_json_le_integer'),
+    ('>', 'integer', 'iznik_json_gt_integer'),
+    ('>=', 'integer', 'iznik_json_ge_integer'),
+    ('=', 'bigint', 'iznik_json_eq_bigint'),
+    ('<>', 'bigint', 'iznik_json_ne_bigint'),
+    ('<', 'bigint', 'iznik_json_lt_bigint'),
+    ('<=', 'bigint', 'iznik_json_le_bigint'),
+    ('>', 'bigint', 'iznik_json_gt_bigint'),
+    ('>=', 'bigint', 'iznik_json_ge_bigint'),
+    ('=', 'numeric', 'iznik_json_eq_num'),
+    ('<>', 'numeric', 'iznik_json_ne_num'),
+    ('<', 'numeric', 'iznik_json_lt_num'),
+    ('<=', 'numeric', 'iznik_json_le_num'),
+    ('>', 'numeric', 'iznik_json_gt_num'),
+    ('>=', 'numeric', 'iznik_json_ge_num'),
+    ('=', 'text', 'iznik_json_eq_text'),
+    ('<>', 'text', 'iznik_json_ne_text'),
+    ('~~', 'text', 'iznik_json_like')
+  ) v(sym, rtype, fn) LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_operator p WHERE p.oprname = o.sym AND p.oprleft = 'jsonb'::regtype AND p.oprright = o.rtype::regtype) THEN
+      EXECUTE format('CREATE OPERATOR %s (LEFTARG = jsonb, RIGHTARG = %s, FUNCTION = %s)', o.sym, o.rtype, o.fn);
+    END IF;
+  END LOOP;
+END
+$$;
+
+-- MySQL, run non-strict as production is, gives a NOT NULL column that an INSERT leaves out its type's
+-- implicit default: '' for text, 0 for numbers, the first member for an enum. PostgreSQL refuses the row.
+-- Each such column gets that default here, so an INSERT that works on MySQL works on this schema too.
+-- Timestamp, date, json and geometry columns have no such default and are left alone.
+DO $$
+DECLARE
+  c record;
+  def text;
+BEGIN
+  FOR c IN
+    SELECT cl.relname AS tbl, a.attname AS col, t.typname AS typ, a.attidentity, a.attgenerated,
+           (SELECT pg_get_constraintdef(k.oid) FROM pg_constraint k
+             WHERE k.conrelid = cl.oid AND k.contype = 'c' AND k.conname = cl.relname || '_' || a.attname || '_check') AS chk
+      FROM pg_attribute a
+      JOIN pg_class cl ON cl.oid = a.attrelid AND cl.relkind = 'r' AND cl.relnamespace = 'public'::regnamespace
+      JOIN pg_type t ON t.oid = a.atttypid
+     WHERE a.attnum > 0 AND NOT a.attisdropped AND a.attnotnull AND a.attidentity = '' AND a.attgenerated = ''
+       AND NOT EXISTS (SELECT 1 FROM pg_attrdef d WHERE d.adrelid = a.attrelid AND d.adnum = a.attnum)
+  LOOP
+    def := NULL;
+    IF c.typ IN ('int2', 'int4', 'int8', 'numeric', 'float4', 'float8') THEN
+      def := '0';
+    ELSIF c.typ IN ('text', 'varchar', 'bpchar', 'citext') THEN
+      IF c.chk IS NOT NULL AND c.chk ~ '''' THEN
+        def := quote_literal((regexp_match(c.chk, '''([^'']*)'''))[1]);
+      ELSE
+        def := '''''';
+      END IF;
+    ELSIF c.typ = 'bytea' THEN
+      def := '''''';
+    END IF;
+    IF def IS NOT NULL THEN
+      EXECUTE format('ALTER TABLE %I ALTER COLUMN %I SET DEFAULT %s', c.tbl, c.col, def);
+    END IF;
+  END LOOP;
+END
+$$;

@@ -1,0 +1,114 @@
+package database
+
+import (
+	"strings"
+	"testing"
+)
+
+type fakeCatalog struct {
+	cols map[string][]string
+	uniq map[string][]string
+}
+
+func (f fakeCatalog) columns(table string) []string { return f.cols[table] }
+func (f fakeCatalog) unique_(table string) []string { return f.uniq[table] }
+
+func (f fakeCatalog) unique(table string, cols []string) []string {
+	u := f.unique_(table)
+	if u == nil {
+		return nil
+	}
+	have := map[string]bool{}
+	for _, c := range cols {
+		have[c] = true
+	}
+	for _, c := range u {
+		if !have[c] {
+			return nil
+		}
+	}
+	return u
+}
+
+var testCatalog = fakeCatalog{
+	cols: map[string][]string{
+		"messages_by":    {"id", "msgid", "userid", "count"},
+		"users_emails":   {"id", "userid", "email"},
+		"items":          {"id", "name"},
+		"rippling_reach": {"id", "max_polygon_cells"},
+	},
+	uniq: map[string][]string{
+		"messages_by":  {"msgid", "userid"},
+		"users_emails": {"email"},
+		"items":        {"name"},
+	},
+}
+
+func norm(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+func TestTranslatePostgres(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"backticks", "SELECT `groups`.id FROM `groups` WHERE `type` = 'a`b'", `SELECT "groups".id FROM "groups" WHERE "type" = 'a` + "`" + `b'`},
+		{"ifnull", "SELECT IFNULL(a, 0) FROM t", "SELECT COALESCE(a, 0) FROM t"},
+		{"date_sub literal", "WHERE x > DATE_SUB(NOW(), INTERVAL 10 MINUTE)", "WHERE x > (NOW() - INTERVAL '10 minute')"},
+		{"date_add param", "WHERE x < DATE_ADD(NOW(), INTERVAL $1 DAY)", "WHERE x < (NOW() + (($1) * INTERVAL '1 day'))"},
+		{"interval in sum", "SELECT NOW() - INTERVAL 31 DAY", "SELECT NOW() - INTERVAL '31 day'"},
+		{"cast unsigned", "SELECT CAST(x AS UNSIGNED) FROM t", "SELECT CAST(x AS bigint) FROM t"},
+		{"column unsigned", "ALTER TABLE rippling_reach ADD COLUMN z INT UNSIGNED NULL", "ALTER TABLE rippling_reach ADD COLUMN z INT NULL"},
+		{"column exists", "ALTER TABLE rippling_reach ADD COLUMN max_polygon_cells MEDIUMBLOB NULL", "SELECT 1"},
+		{"if", "SELECT IF(a > 1, 'x', 'y') FROM t", "SELECT (CASE WHEN a > 1 THEN 'x' ELSE 'y' END) FROM t"},
+		{"nested if", "SELECT IF(a, IF(b, 1, 2), 3)", "SELECT (CASE WHEN a THEN (CASE WHEN b THEN 1 ELSE 2 END) ELSE 3 END)"},
+		{"insert ignore", "INSERT IGNORE INTO items (name) VALUES ($1)", "INSERT INTO items (name) VALUES ($1) ON CONFLICT DO NOTHING"},
+		{"upsert", "INSERT INTO messages_by (msgid, userid, count) VALUES ($1, $2, 1) ON DUPLICATE KEY UPDATE count = count + VALUES(count)",
+			`INSERT INTO messages_by (msgid, userid, count) VALUES ($1, $2, 1) ON CONFLICT ("msgid","userid") DO UPDATE SET count = "messages_by"."count" + EXCLUDED.count`},
+		{"upsert last insert id", "INSERT INTO items (name) VALUES ($1) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
+			`INSERT INTO items (name) VALUES ($1) ON CONFLICT ("name") DO UPDATE SET id = "items".id`},
+		{"gorm upsert without target", `INSERT INTO "messages_by" ("count","msgid","userid") VALUES (2,65,278) ON CONFLICT DO UPDATE SET "count"=count + VALUES(count)`,
+			`INSERT INTO "messages_by" ("count","msgid","userid") VALUES (2,65,278) ON CONFLICT ("msgid","userid") DO UPDATE SET "count"="messages_by"."count" + EXCLUDED.count`},
+		{"replace", "REPLACE INTO users_emails (userid, email) VALUES ($1, $2)",
+			`INSERT INTO users_emails (userid, email) VALUES ($1, $2) ON CONFLICT ("email") DO UPDATE SET "userid" = EXCLUDED."userid"`},
+		{"group_concat", "SELECT GROUP_CONCAT(DISTINCT a ORDER BY a SEPARATOR '; ') FROM t", "SELECT string_agg(DISTINCT (a)::text, '; ' ORDER BY a) FROM t"},
+		{"limit offset", "SELECT 1 FROM t LIMIT 5, 10", "SELECT 1 FROM t LIMIT 10 OFFSET 5"},
+		{"reserved", "INSERT INTO logs (type, user, byuser) VALUES (1,2,3)", `INSERT INTO logs (type, "user", byuser) VALUES (1,2,3)`},
+		{"case end kept", "SELECT CASE WHEN a THEN 1 END FROM t", "SELECT CASE WHEN a THEN 1 END FROM t"},
+		{"force index", "SELECT * FROM logs FORCE INDEX (timestamp_2) WHERE a = 1", "SELECT * FROM logs  WHERE a = 1"},
+		{"spatial", "ST_Contains(g, ST_SRID(POINT($1, $2), $3))", "ST_Contains(g, ST_SetSRID(ST_MakePoint($1, $2), $3))"},
+		{"mbr", "MBRIntersects(polyindex, ST_SRID(POLYGON(LINESTRING(POINT(1, 2), POINT(3, 4))), 4326))",
+			"(polyindex && ST_SetSRID(ST_MakePolygon(ST_MakeLine(ARRAY[ST_MakePoint(1, 2), ST_MakePoint(3, 4)])), 4326))"},
+		{"update join", "UPDATE memberships m2 JOIN memberships m1 ON m1.userid = 1 AND m1.groupid = m2.groupid SET `m2`.`added` = LEAST(m2.added, m1.added) WHERE m2.userid = 2",
+			`UPDATE memberships m2 SET "added" = LEAST(m2.added, m1.added) FROM memberships m1 WHERE (m1.userid = 1 AND m1.groupid = m2.groupid) AND (m2.userid = 2)`},
+		{"delete join", "DELETE r FROM ux_prompt_responses r INNER JOIN ux_prompts p ON p.id = r.prompt_id WHERE p.question LIKE 'x%'",
+			`DELETE FROM ux_prompt_responses r USING ux_prompts p WHERE (p.id = r.prompt_id) AND (p.question LIKE 'x%')`},
+		{"json object keys", "SELECT JSON_OBJECT($1, 2, 'k', $3)", "SELECT jsonb_build_object($1::text, 2, 'k', $3)"},
+		{"json case", "CASE WHEN JSON_EXTRACT(s, '$.a') IS NULL THEN 1 ELSE JSON_EXTRACT(s, '$.a') END", "CASE WHEN JSON_EXTRACT(s, '$.a') IS NULL THEN to_jsonb(1) ELSE JSON_EXTRACT(s, '$.a') END"},
+		{"mixed case column", "SELECT Payer, ud.grossamount FROM users_donations ud", `SELECT "Payer", ud."GrossAmount" FROM users_donations ud`},
+		{"alias not touched", "SELECT x AS payer FROM t", "SELECT x AS payer FROM t"},
+		{"already postgres", `SELECT "a" FROM "t" WHERE x = $1 ON CONFLICT ("a") DO NOTHING`, `SELECT "a" FROM "t" WHERE x = $1 ON CONFLICT ("a") DO NOTHING`},
+		{"string with keywords untouched", "SELECT 'IFNULL(a) `x` INTERVAL 1 DAY'", "SELECT 'IFNULL(a) `x` INTERVAL 1 DAY'"},
+		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := translatePostgres(c.in, testCatalog)
+			if norm(got) != norm(c.want) {
+				t.Errorf("\n in: %s\ngot: %s\nwant: %s", c.in, got, c.want)
+			}
+			// Idempotent: translating the result again changes nothing.
+			if again := translatePostgres(got, testCatalog); norm(again) != norm(got) {
+				t.Errorf("not idempotent:\n  1: %s\n  2: %s", got, again)
+			}
+		})
+	}
+}
+
+func TestLexRoundTrips(t *testing.T) {
+	for _, s := range []string{
+		"SELECT 'it''s', \"q\", `b`, a -- c\n, /* x */ b FROM t WHERE a = ? AND b = $1",
+		"",
+		"x",
+	} {
+		if got := joinToks(lexSQL(s)); got != s {
+			t.Errorf("lex round trip %q -> %q", s, got)
+		}
+	}
+}

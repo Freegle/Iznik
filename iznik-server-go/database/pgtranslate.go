@@ -233,6 +233,11 @@ func translatePostgres(sql string, cat catalog) string {
 			changed = true
 		case tkQuote:
 			name := t.s[1 : len(t.s)-1]
+			if len(name) > 2 && name[0] == '`' && name[len(name)-1] == '`' {
+				name = name[1 : len(name)-1]
+				ts[i] = tok{tkQuote, `"` + name + `"`}
+				changed = true
+			}
 			if c, ok := mixedCaseColumns[name]; ok && c != name {
 				ts[i] = tok{tkQuote, `"` + c + `"`}
 				changed = true
@@ -272,8 +277,18 @@ func translatePostgres(sql string, cat catalog) string {
 			}
 			changed = true
 		case strings.EqualFold(t.s, "DATABASE") && callNext:
-			ts[i].s = "current_database"
+			ts[i].s = "current_schema"
 			changed = true
+		}
+	}
+
+	// A column type's UNSIGNED modifier (INT UNSIGNED) has no equivalent.
+	for i := 0; i < len(ts); i++ {
+		if isKw(ts[i], "UNSIGNED") {
+			if p := prevSig(ts, i-1); p >= 0 && !isKw(ts[p], "AS") {
+				ts[i] = tok{tkSpace, ""}
+				changed = true
+			}
 		}
 	}
 
