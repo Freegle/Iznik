@@ -754,8 +754,22 @@ class UnifiedDigestService
         // it is or the next real pass skips what it previewed; a pass stopped early or with a
         // failed post must too, so the next pass re-examines from the old mark. Re-examining is
         // free of side effects (the ledger dedupes); a post silently dropped is not.
-        if (! $dryRun && $stats['errors'] === 0 && empty($stats['stopped'])) {
-            $this->setReachMailMark($shard, $passStart);
+        if (! $dryRun && empty($stats['stopped'])) {
+            if ($stats['errors'] === 0) {
+                $this->setReachMailMark($shard, $passStart);
+            } else {
+                // A post or member that fails on every pass must not hold the mark for ever: each
+                // pass would re-read a window that only grows. Past the bound the mark moves up to
+                // it, so only what has been failing for longer than that is let go.
+                $bound = now()->subMinutes(self::REACH_MARK_MAX_HOLD_MINUTES);
+                if ($mark->lt($bound)) {
+                    Log::warning('reach-mail: mark held past its bound by failing posts, moving it up to the bound', [
+                        'shard' => $shard,
+                        'errors' => $stats['errors'],
+                    ]);
+                    $this->setReachMailMark($shard, $bound);
+                }
+            }
         }
 
         return $stats;
@@ -845,6 +859,9 @@ class UnifiedDigestService
      * Where shard N of the reach pass keeps its mark. Shards partition posts by MOD(msgid, N)
      * and run concurrently, so each has its own.
      */
+    /** The longest a failing post or member may hold a shard's reach-mail mark back, in minutes. */
+    public const REACH_MARK_MAX_HOLD_MINUTES = 360;
+
     public static function reachMailMarkKey(int $shard): string
     {
         return "reach_mail_mark_shard{$shard}";
@@ -1125,8 +1142,10 @@ class UnifiedDigestService
             // the stored OUTER BOUND (a superset), and exactness lives in
             // PHP: the post's stored LABEL is evaluated at every surviving
             // candidate's point in one routing call - the reach record, with
-            // no grid fallback. No label, or routing unreachable, means
-            // nobody is newly-reached this round; the next sweep re-asks.
+            // no grid fallback. No label means nobody is newly-reached. Routing
+            // unreachable fails the check for a caller that retries (the reach
+            // pass, the member queue), so it holds its mark or row and re-asks;
+            // for the best-effort callers it means nobody this round.
             // For a union-active post the origin group's whole area is
             // admitted, so that flag rides along per candidate.
             $reachSvc = app(\App\Services\Ripple\ReachService::class);
@@ -1232,6 +1251,12 @@ class UnifiedDigestService
                     }
                 }
                 $evals = $points !== [] ? $reachSvc->reachArrivalBatch((string) $probeLabels, $currentSecs, $points) : [];
+                // Routing could not answer (it returns null rather than throwing). Reading that as
+                // "nobody is reached" would let the pass move its mark past this post for good, so
+                // a caller that retries is told, and tries again.
+                if ($evals === null && $propagateFailure) {
+                    throw new \RuntimeException('reach-arrival could not evaluate the label for post ' . $msgid);
+                }
                 foreach ($points as $i => $p) {
                     $labelIn[$i] = (bool) (($evals[$i]['in'] ?? false));
                 }
