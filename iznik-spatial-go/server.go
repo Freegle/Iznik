@@ -75,14 +75,14 @@ func (s *datasetState) ensureIndex() error {
 // server manages all datasets and the MySQL connection.
 type server struct {
 	datasets map[string]*datasetState
-	mysqlDB  *sql.DB
+	srcDB    *sql.DB
 	idxDir   string
 }
 
-func newServer(mysqlDB *sql.DB, idxDir string, datasets []Dataset) *server {
+func newServer(srcDB *sql.DB, idxDir string, datasets []Dataset) *server {
 	srv := &server{
 		datasets: make(map[string]*datasetState, len(datasets)),
-		mysqlDB:  mysqlDB,
+		srcDB:    srcDB,
 		idxDir:   idxDir,
 	}
 	for _, ds := range datasets {
@@ -117,7 +117,7 @@ func (srv *server) rebuild(name string) error {
 		return fmt.Errorf("%s: create index: %w", name, err)
 	}
 
-	if err := state.ds.Load(srv.mysqlDB, newIdx); err != nil {
+	if err := state.ds.Load(srv.srcDB, newIdx); err != nil {
 		newIdx.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("%s: load: %w", name, err)
@@ -186,7 +186,7 @@ func (srv *server) rebuild(name string) error {
 	// datasets, record that baseline so the next CheckDrift compares against the
 	// freshly-built state rather than re-triggering on the change we just healed.
 	if dc, ok := state.ds.(DriftChecker); ok {
-		if err := dc.NoteReconciled(srv.mysqlDB); err != nil {
+		if err := dc.NoteReconciled(srv.srcDB); err != nil {
 			log.Printf("spatial-server: %s note-reconciled failed: %v", name, err)
 		}
 	}
@@ -215,7 +215,7 @@ func (srv *server) checkAndRebuildOnDrift(name string, state *datasetState) bool
 	var reason string
 	err := state.withIndex(func(idx *Index) error {
 		var e error
-		need, reason, e = dc.CheckDrift(srv.mysqlDB, idx)
+		need, reason, e = dc.CheckDrift(srv.srcDB, idx)
 		return e
 	})
 	switch {
@@ -333,7 +333,7 @@ func (srv *server) startScheduler() {
 				// 20:53, and the row stayed stale despite ticking deltas).
 				tickStart := time.Now()
 				err := s.withIndex(func(idx *Index) error {
-					if err := s.ds.ApplyDelta(srv.mysqlDB, idx, since); err != nil {
+					if err := s.ds.ApplyDelta(srv.srcDB, idx, since); err != nil {
 						return err
 					}
 					return idx.SetMetaTime("last_sync", tickStart)

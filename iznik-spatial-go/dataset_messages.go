@@ -16,14 +16,14 @@ func (d *MessagesDataset) RebuildInterval() time.Duration { return 24 * time.Hou
 func (d *MessagesDataset) DeltaInterval() time.Duration   { return 2 * time.Minute }
 
 // Load populates idx with all active (non-successful) messages from messages_spatial.
-func (d *MessagesDataset) Load(mysqlDB *sql.DB, idx *Index) error {
-	return loadMessages(mysqlDB, idx, "")
+func (d *MessagesDataset) Load(srcDB *sql.DB, idx *Index) error {
+	return loadMessages(srcDB, idx, "")
 }
 
 // ApplyDelta loads messages modified since `since`.
 // Rows with successful=1 are removed; new/modified rows are upserted.
-func (d *MessagesDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
-	rows, err := mysqlDB.Query(`
+func (d *MessagesDataset) ApplyDelta(srcDB *sql.DB, idx *Index, since time.Time) error {
+	rows, err := srcQuery(srcDB, `
 		SELECT ms.msgid,
 		       ST_X(ms.point) AS lng,
 		       ST_Y(ms.point) AS lat,
@@ -99,7 +99,7 @@ func (d *MessagesDataset) Within(idx *Index, params QueryParams) ([]int64, error
 	return ids, nil
 }
 
-func loadMessages(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
+func loadMessages(srcDB *sql.DB, idx *Index, extraWhere string) error {
 	query := `
 		SELECT ms.msgid,
 		       ST_X(ms.point) AS lng,
@@ -111,7 +111,7 @@ func loadMessages(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 		WHERE ms.successful = 0
 	` + extraWhere
 
-	rows, err := mysqlDB.Query(query)
+	rows, err := srcQuery(srcDB, query)
 	if err != nil {
 		return fmt.Errorf("messages load query: %w", err)
 	}

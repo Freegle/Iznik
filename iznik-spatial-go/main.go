@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 	"github.com/peterstace/simplefeatures/geom"
 
@@ -18,21 +16,14 @@ import (
 )
 
 func main() {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
-		getenv("MYSQL_USER", "iznik"),
-		getenv("MYSQL_PASSWORD", "iz"),
-		getenv("MYSQL_HOST", "localhost"),
-		getenv("MYSQL_PORT", "3306"),
-		getenv("MYSQL_DBNAME", "iznik"),
-	)
-
-	mysqlDB, err := sql.Open("mysql", dsn)
+	// The source the indexes are built from: MySQL unless SPATIAL_SOURCE_ENGINE=postgres.
+	srcDB, err := openSource(getenv)
 	if err != nil {
-		log.Fatalf("mysql open: %v", err)
+		log.Fatalf("source database: %v", err)
 	}
-	defer mysqlDB.Close()
+	defer srcDB.Close()
 
-	forceRebuild := flag.Bool("rebuild", false, "force a full index rebuild from MySQL on startup")
+	forceRebuild := flag.Bool("rebuild", false, "force a full index rebuild from the source database on startup")
 	flag.Parse()
 
 	idxDir := getenv("SPATIAL_INDEX_DIR", "/data")
@@ -49,7 +40,7 @@ func main() {
 		&ReachOverflowDataset{},
 	}
 
-	srv := newServer(mysqlDB, idxDir, allDatasets)
+	srv := newServer(srcDB, idxDir, allDatasets)
 	srv.startupLoad(*forceRebuild)
 	srv.startScheduler()
 
@@ -83,10 +74,7 @@ func buildPublicApp(srv *server) *fiber.App {
 	// Photon-compatible place search (file-backed; absent file = 503s, which
 	// is the normal state on instances without the artifact).
 	startPlaces()
-	// srv.mysqlDB, not mysqlDB: master added this call in main(), where the handle is a
-	// local; this branch extracted buildPublicApp(srv), so the handle reaches here on the
-	// server. The merge took both without conflict and would not compile.
-	registerPlacesRoutes(api, srv.mysqlDB)
+	registerPlacesRoutes(api, srv.srcDB)
 
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})

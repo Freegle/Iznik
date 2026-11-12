@@ -41,12 +41,12 @@ type Dataset interface {
 	// Name returns the dataset identifier used in URL paths (e.g. "locations").
 	Name() string
 
-	// Load populates idx from mysqlDB with a full table scan.
-	Load(mysqlDB *sql.DB, idx *Index) error
+	// Load populates idx from srcDB with a full table scan.
+	Load(srcDB *sql.DB, idx *Index) error
 
 	// ApplyDelta loads rows modified since `since` and updates idx.
 	// Returns ErrDeltaNotSupported for rebuild-only datasets.
-	ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error
+	ApplyDelta(srcDB *sql.DB, idx *Index, since time.Time) error
 
 	// Query returns the nearest items to (params.Lng, params.Lat), up to params.Limit.
 	// If params.Polygon is non-nil, only items within that polygon are returned.
@@ -96,12 +96,12 @@ type PointContainerFiltered interface {
 type DriftChecker interface {
 	// CheckDrift inspects the source DB and the live index and returns whether a
 	// full rebuild is warranted, plus a short human-readable reason for logs.
-	CheckDrift(mysqlDB *sql.DB, idx *Index) (need bool, reason string, err error)
+	CheckDrift(srcDB *sql.DB, idx *Index) (need bool, reason string, err error)
 
 	// NoteReconciled records that the index is now in sync with the source —
 	// called after a successful (re)build — so the next CheckDrift compares
 	// against this fresh baseline rather than re-triggering on the same change.
-	NoteReconciled(mysqlDB *sql.DB) error
+	NoteReconciled(srcDB *sql.DB) error
 }
 
 // Item is the generic unit stored in the spatial index.
