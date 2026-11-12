@@ -136,8 +136,10 @@ class UpdateSpatialDataCommand extends Command
 
         $this->line('  Merging ' . count($inputs) . ' extracts with osmium...');
         $tmpMerged = "{$mergedPath}.tmp";
+        // osmium picks the output format from the file name, and ".tmp" names none,
+        // so say it: without -f the merge fails with "Could not detect file format".
         $result = Process::timeout(1800)->run(array_merge(
-            ['osmium', 'merge', '--overwrite', '-o', $tmpMerged],
+            ['osmium', 'merge', '--overwrite', '-f', 'pbf', '-o', $tmpMerged],
             $inputs,
         ));
         if (!$result->successful()) {
