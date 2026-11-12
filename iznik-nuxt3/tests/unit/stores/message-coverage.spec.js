@@ -1189,3 +1189,51 @@ describe('message store - a forced refetch while an earlier fetch of the same id
     expect(store.list[5].subject).toBe('after the action')
   })
 })
+
+describe('message store - a post deleted since it was cached', () => {
+  const apiError = (status) =>
+    new APIError(
+      {
+        request: { path: '/message/9' },
+        response: { status, data: { error: status } },
+      },
+      `API Error GET /message/9 -> status: ${status}`
+    )
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('is removed from the cache when the refetch answers 404', async () => {
+    const store = freshStore()
+    store.list[9] = { id: 9, subject: 'Gone', addedToCache: 1 }
+    mockFetch.mockRejectedValueOnce(apiError(404))
+
+    const pending = store.fetch(9, true)
+    await vi.advanceTimersByTimeAsync(50)
+    await pending
+
+    expect(store.list[9]).toBeUndefined()
+  })
+
+  it('is removed from the cache when a batch reply leaves it out', async () => {
+    const store = freshStore()
+    store.list[9] = { id: 9, subject: 'Gone', addedToCache: 1 }
+    store.list[10] = { id: 10, subject: 'Still here', addedToCache: 1 }
+    mockFetch.mockResolvedValueOnce([{ id: 10, subject: 'Still here' }])
+
+    const a = store.fetch(9, true)
+    const b = store.fetch(10, true)
+    await vi.advanceTimersByTimeAsync(50)
+    await Promise.all([a, b])
+
+    expect(store.list[9]).toBeUndefined()
+    expect(store.list[10].subject).toBe('Still here')
+  })
+})
