@@ -5212,4 +5212,73 @@ class UnifiedDigestServiceTest extends TestCase
         // The poster and the ordinary member only.
         $this->assertEquals(2, $stats['emails_sent']);
     }
+
+    /**
+     * A daily member with one community on a daily cadence and another set to a different frequency:
+     * the pinned post on the other community must not be pulled into the daily digest.
+     *
+     */
+    private function assertPinnedPostOnOtherCommunityNotInDailyDigest(int $otherFrequency): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $dailyGroup = $this->createTestGroup();
+        $otherGroup = $this->createTestGroup();
+        $this->createMembership($recipient, $dailyGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $otherGroup, ['emailfrequency' => $otherFrequency]);
+
+        // Nothing new on the daily community; an open pinned post on the other one only.
+        $pinned = $this->createTestMessage($poster, $otherGroup, [
+            'subject' => 'OFFER: pinned clearance (TestLocation)',
+            'arrival' => now()->subDays(10),
+        ]);
+        DB::table('messages_pinned')->insert(['msgid' => $pinned->id]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(0, $stats['emails_sent'], 'a pinned post on a community that is not on a daily cadence must not make a daily digest');
+    }
+
+    public function test_daily_digest_ignores_a_pinned_post_on_a_community_set_to_no_emails(): void
+    {
+        $this->assertPinnedPostOnOtherCommunityNotInDailyDigest(Membership::EMAIL_FREQUENCY_NEVER);
+    }
+
+    public function test_daily_digest_ignores_a_pinned_post_on_an_immediate_community(): void
+    {
+        $this->assertPinnedPostOnOtherCommunityNotInDailyDigest(Membership::EMAIL_FREQUENCY_IMMEDIATE);
+    }
+
+    public function test_daily_sponsors_come_only_from_communities_on_a_daily_cadence(): void
+    {
+        $recipient = $this->createTestUser();
+        $dailyGroup = $this->createTestGroup();
+        $neverGroup = $this->createTestGroup();
+        $this->createMembership($recipient, $dailyGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $neverGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_NEVER]);
+
+        foreach ([[$dailyGroup, 'Daily Sponsor'], [$neverGroup, 'Never Sponsor']] as [$group, $name]) {
+            DB::table('groups_sponsorship')->insert([
+                'groupid' => $group->id,
+                'name' => $name,
+                'startdate' => now()->subDay(),
+                'enddate' => now()->addMonth(),
+                'contactname' => 'Contact',
+                'contactemail' => 'sponsor@example.com',
+                'amount' => 100,
+                'visible' => TRUE,
+            ]);
+        }
+
+        $names = $this->service->getSponsorsForUser($recipient)->pluck('name')->all();
+
+        $this->assertSame(['Daily Sponsor'], $names);
+    }
 }
