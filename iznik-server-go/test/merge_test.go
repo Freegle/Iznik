@@ -87,6 +87,8 @@ func TestCreateMerge(t *testing.T) {
 
 	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	body := fmt.Sprintf(`{"user1":%d,"user2":%d,"email":false}`, user1ID, user2ID)
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/merge?jwt=%s", token), strings.NewReader(body))
@@ -99,6 +101,49 @@ func TestCreateMerge(t *testing.T) {
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Greater(t, result["id"].(float64), float64(0))
 	assert.NotEmpty(t, result["uid"])
+}
+
+// A merge offer, once accepted, merges the two accounts, so offering one follows the moderator
+// merge rules: the moderator must moderate both accounts, neither may be their own, and neither
+// may be an Admin or Support account.
+func TestCreateMergeByModeratorFollowsTheModeratorMergeRules(t *testing.T) {
+	prefix := uniquePrefix("MergeCrtRules")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	_, token := CreateTestSession(t, modID)
+
+	memberA := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	memberB := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	outsider := CreateTestUser(t, prefix+"_out", utils.SYSTEMROLE_USER)
+	for _, id := range []uint64{memberA, memberB, adminID} {
+		CreateTestMembership(t, id, groupID, utils.ROLE_MEMBER)
+	}
+	CreateTestMembership(t, outsider, otherGroupID, utils.ROLE_MEMBER)
+
+	offer := func(u1, u2 uint64) int {
+		body := fmt.Sprintf(`{"user1":%d,"user2":%d,"email":false}`, u1, u2)
+		req := httptest.NewRequest("PUT", fmt.Sprintf("/api/merge?jwt=%s", token), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		return resp.StatusCode
+	}
+
+	assert.Equal(t, 403, offer(memberA, modID), "the moderator's own account")
+	assert.Equal(t, 403, offer(modID, memberA), "the moderator's own account, either way round")
+	assert.Equal(t, 403, offer(memberA, adminID), "an Admin account")
+	assert.Equal(t, 403, offer(adminID, memberA), "an Admin account, either way round")
+	assert.Equal(t, 403, offer(memberA, outsider), "an account the moderator does not moderate")
+
+	var offers int64
+	db.Raw("SELECT COUNT(*) FROM merges WHERE offeredby = ?", modID).Scan(&offers)
+	assert.Equal(t, int64(0), offers, "a refused offer leaves no merge row to accept")
+
+	assert.Equal(t, 200, offer(memberA, memberB), "two members of the moderator's community")
 }
 
 func TestCreateMergeNotMod(t *testing.T) {
