@@ -159,3 +159,32 @@ test('the parity package is test support, so its fixture SQL is not a production
   assert.ok(!m.sites.some((s) => s.file.startsWith('iznik-server-go/parity/')));
   assert.ok(m.testFixtures.files['iznik-server-go/parity/fixture.go'] >= 1);
 });
+
+test('an entry the tool retired itself becomes converted once a test names it', () => {
+  const dir = makeRepo();
+  run(dir, 'update');
+  const id = Object.keys(readStore(dir, STORES[0]).sites)[0];
+  fs.writeFileSync(path.join(dir, 'iznik-server-go/user/user.go'), 'package user\nfunc Load(db *gorm.DB) { db.Table("users").Take(&u) }\n');
+  run(dir, 'update');
+  const status = () => JSON.parse(fs.readFileSync(path.join(dir, 'tools/orm-migration/manifest.json'), 'utf8')).sites.find((x) => x.id === id);
+  assert.equal(status().status, 'retired');
+
+  fs.writeFileSync(path.join(dir, 'iznik-server-go/user/user_pure_test.go'), `package user\nfunc TestLoad(t *testing.T) { parity.AssertGoldenSQL(t, "${id}", nil) }\n`);
+  run(dir, 'update');
+  assert.equal(status().status, 'converted');
+  assert.equal(status().reason, undefined);
+  assert.equal(run(dir, 'check').code, 0);
+});
+
+test('a retired entry with a written reason stays retired even when a test names it', () => {
+  const dir = makeRepo();
+  run(dir, 'update');
+  const id = Object.keys(readStore(dir, STORES[0]).sites)[0];
+  fs.writeFileSync(path.join(dir, 'iznik-server-go/user/user.go'), 'package user\nfunc Load(db *gorm.DB) { db.Table("users").Take(&u) }\n');
+  run(dir, 'update');
+  const mp = path.join(dir, 'tools/orm-migration/manifest.json');
+  fs.writeFileSync(mp, fs.readFileSync(mp, 'utf8').replace(/"reason":"No longer in the code[^"]*"/, '"reason":"Deleted on purpose."'));
+  fs.writeFileSync(path.join(dir, 'iznik-server-go/user/user_pure_test.go'), `package user\nfunc TestLoad(t *testing.T) { parity.AssertGoldenSQL(t, "${id}", nil) }\n`);
+  run(dir, 'update');
+  assert.equal(JSON.parse(fs.readFileSync(mp, 'utf8')).sites.find((x) => x.id === id).status, 'retired');
+});

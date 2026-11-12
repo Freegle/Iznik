@@ -155,6 +155,22 @@ final class GoldenSql
     }
 
     /**
+     * Layer 1 for a site converted to ->count(). $build returns the query carrying table, joins
+     * and WHERE, un-executed. The aggregate is set on a copy, which is what ->count() does before
+     * it runs, so the statement compared is the one ->count() sends. The alias differs from a
+     * hand-written one (Laravel calls it "aggregate"), and the canonicaliser renames aliases.
+     *
+     * @param  callable(): QueryBuilder|EloquentBuilder  $build
+     */
+    public static function assertCount(string $siteId, callable $build): void
+    {
+        $query = self::normaliseBuiltQuery($siteId, $build())->clone();
+        $query->aggregate = ['function' => 'count', 'columns' => ['*']];
+
+        self::compareAndAssert($siteId, $query->toSql(), $query->getBindings());
+    }
+
+    /**
      * Layer 1 for a site converted to ->exists(). $build returns the query
      * carrying table and WHERE, un-executed.
      *
