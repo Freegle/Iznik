@@ -132,4 +132,61 @@ final class Sql
     {
         return self::render(new DateSub(DB::raw('NOW()'), DB::raw($amount), $unit));
     }
+
+    /**
+     * A FROM source that turns a JSON array of flat objects into rows: JSON_TABLE(payload, '$[*]' COLUMNS (...)) on
+     * MySQL, jsonb_to_recordset(payload) on PostgreSQL. $payload is SQL text (usually `?`); $columns maps each
+     * column (also the key in the objects) to a MySQL type name, one of BIGINT, DOUBLE, INT or VARCHAR(n).
+     *
+     * @param  array<string, string>  $columns
+     */
+    public static function jsonRows(string $payload, array $columns, string $alias): string
+    {
+        $types = ['BIGINT' => 'bigint', 'INT' => 'integer', 'DOUBLE' => 'double precision'];
+
+        if (DB::getQueryGrammar() instanceof PostgresGrammar) {
+            $defs = [];
+            foreach ($columns as $name => $type) {
+                $defs[] = $name.' '.($types[strtoupper($type)] ?? strtolower($type));
+            }
+
+            return 'jsonb_to_recordset(CAST('.$payload.' AS jsonb)) AS '.$alias.'('.implode(', ', $defs).')';
+        }
+
+        $defs = [];
+        foreach ($columns as $name => $type) {
+            $defs[] = $name.' '.$type." PATH '\$.".$name."'";
+        }
+
+        return 'JSON_TABLE('.$payload.", '\$[*]' COLUMNS (".implode(', ', $defs).')) AS '.$alias;
+    }
+
+    /**
+     * The (table, column) pairs of foreign keys that reference the given table, for the current schema. MySQL
+     * reads KEY_COLUMN_USAGE; PostgreSQL reads pg_constraint.
+     *
+     * @return array<int, object{TABLE_NAME: string, COLUMN_NAME: string}>
+     */
+    public static function foreignKeysReferencing(string $table): array
+    {
+        if (DB::getQueryGrammar() instanceof PostgresGrammar) {
+            return DB::select(
+                'SELECT cl.relname AS "TABLE_NAME", a.attname AS "COLUMN_NAME"
+                   FROM pg_constraint c
+                   JOIN pg_class cl ON cl.oid = c.conrelid
+                   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                  WHERE c.contype = \'f\' AND c.confrelid = CAST(current_schema() || \'.\' || ? AS regclass)
+                    AND c.conrelid <> c.confrelid',
+                [$table]
+            );
+        }
+
+        return DB::table('INFORMATION_SCHEMA.KEY_COLUMN_USAGE')
+            ->select('TABLE_NAME', 'COLUMN_NAME')
+            ->where('REFERENCED_TABLE_NAME', $table)
+            ->where('TABLE_NAME', '!=', $table)
+            ->where('TABLE_SCHEMA', DB::getDatabaseName())
+            ->get()
+            ->all();
+    }
 }

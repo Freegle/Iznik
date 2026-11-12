@@ -73,4 +73,23 @@ class SqlTest extends TestCase
     {
         $this->assertSame(DB::connection()->getDriverName() === 'pgsql' ? '"ourPostingStatus"' : 'ourPostingStatus', Sql::column('ourPostingStatus'));
     }
+
+    public function test_json_rows_renders_for_the_connections_dialect(): void
+    {
+        $expected = DB::connection()->getDriverName() === 'pgsql'
+            ? 'jsonb_to_recordset(CAST(? AS jsonb)) AS jt(userid bigint, lat double precision)'
+            : "JSON_TABLE(?, '$[*]' COLUMNS (userid BIGINT PATH '$.userid', lat DOUBLE PATH '$.lat')) AS jt";
+
+        $this->assertSame($expected, Sql::jsonRows('?', ['userid' => 'BIGINT', 'lat' => 'DOUBLE'], 'jt'));
+    }
+
+    public function test_foreign_keys_referencing_a_table_are_listed(): void
+    {
+        $refs = Sql::foreignKeysReferencing('groups');
+
+        foreach ($refs as $ref) {
+            $this->assertNotSame('groups', $ref->TABLE_NAME, 'the table itself is not listed');
+            $this->assertNotSame('', $ref->COLUMN_NAME);
+        }
+    }
 }
