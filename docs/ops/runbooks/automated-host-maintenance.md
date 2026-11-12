@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-07
+last_reviewed: 2026-11-12
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
@@ -142,8 +142,9 @@ around a reboot. No step lets writes or reads fail while the node is down.
 7. Reboot and wait for a new boot id.
 8. Wait for Synced at full cluster size. One retry of `systemctl start mysql` is allowed
    for the two cases the runbook names: the five-minute reboot gate, and the IST handshake
-   that fails with "wrong seqno". A full state transfer is left to run. The other node
-   must stay Synced throughout.
+   that fails with "wrong seqno". The retry waits until the node has been up five and a
+   half minutes: a "wrong seqno" failure leaves `seqno: -1`, which the gate refuses before
+   then. A full state transfer is left to run. The other node must stay Synced throughout.
 9. Start monit and monitor every service but the API explicitly. Start the spatial and
    routing servers if they are not running: monit checks them only through their ports,
    so it neither starts them when monitored again nor restarts routing for 15 minutes.
