@@ -318,6 +318,42 @@ class ChatExpectedServiceTest extends TestCase
         $this->assertEquals(1, DB::table('users_expected')->where('chatmsgid', $msg->id)->value('value'));
     }
 
+    /**
+     * A reply is counted only when the other member can see it, and it is processed a minute after it is written, with
+     * no new message and no release to mark the moment. The next incremental run must still pick it up.
+     */
+    public function test_a_reply_processed_after_a_run_is_counted_by_the_next_incremental_run(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'date'          => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+
+        // The reply is written but not yet processed, so it is invisible when the first run looks.
+        $reply = $this->createTestChatMessage($room, $user2, [
+            'date'                 => now()->subMinutes(10),
+            'processingrequired'   => 1,
+            'processingsuccessful' => 0,
+        ]);
+
+        $first = $this->service->updateExpected();
+        $this->assertEquals(1, $first['waiting']);
+
+        // Processing makes it visible. Nothing else changes.
+        DB::table('chat_messages')->where('id', $reply->id)->update(['processingrequired' => 0, 'processingsuccessful' => 1]);
+
+        $second = $this->service->updateExpected();
+
+        $this->assertFalse($second['full']);
+        $this->assertEquals(1, $second['received'], 'the reply that has since become visible is counted');
+        $this->assertEquals(1, $msg->fresh()->replyreceived);
+    }
+
     public function test_full_run_rechecks_everything_regardless_of_activity(): void
     {
         $user1 = $this->createTestUser();
