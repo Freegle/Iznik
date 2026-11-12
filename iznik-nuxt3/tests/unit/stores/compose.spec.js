@@ -144,6 +144,23 @@ describe('compose store', () => {
       expect(store.postcode).toBeNull()
       logSpy.mockRestore()
     })
+
+    it('empties the stored postcode when it is cleared', () => {
+      const store = useComposeStore()
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      store.setPostcode({
+        id: 1,
+        name: 'AB1 2CD',
+        groupsnear: [{ id: 5, nameshort: 'Test', namedisplay: 'Test Freegle' }],
+      })
+      expect(store.postcodeValid).toBeTruthy()
+
+      store.setPostcode(null)
+
+      expect(store.postcode).toBeNull()
+      expect(store.postcodeValid).toBeFalsy()
+      logSpy.mockRestore()
+    })
   })
 
   describe('createDraft — bulk offer (clearance)', () => {
