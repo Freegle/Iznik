@@ -89,7 +89,7 @@ func queryActiveMembers(db *sql.DB, groupID int64) (int, error) {
 // handleGroupActives handles GET /v1/group-actives?groupid=N, returning
 // {groupid, actives, nstar} — the 90-day-active member count for a group and the Stage-A
 // audience target derived from it. Cached in-process per groupid for ~1h. Returns 503 when no
-// MySQL is configured/reachable (matches digest_simulator.go's precedent for this package).
+// database is configured/reachable (matches digest_simulator.go's precedent for this package).
 func handleGroupActives() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		gid, err := strconv.ParseInt(c.Query("groupid"), 10, 64)

@@ -11,7 +11,7 @@ import (
 // containing place's locations.id (the same join the retired V1 PHP server's
 // Location::closestPostcode() used to use), so a single query resolves both in one round trip.
 //
-// Best-effort: on any error, no row, or a nil db (e.g. no MySQL configured), returns ("", "") —
+// Best-effort: on any error, no row, or a nil db (e.g. no database configured), returns ("", "") —
 // callers must treat both as optional and degrade gracefully; the group-extent response is still
 // returned, the postcode/place fields are simply omitted.
 func resolvePlace(db *sql.DB, lat, lng float64) (postcode, place string) {

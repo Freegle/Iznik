@@ -90,7 +90,7 @@ func handlePostsForMember(g *Graph, spatialURL string) fiber.Handler {
 		// The messages_spatial.point column declares SRID 3857 even though
 		// the values are stored as lng/lat degrees (legacy Iznik
 		// mislabel); we have to tag our polygon as 3857 too or MySQL
-		// refuses the ST_Contains.  The LIMIT is a safety belt; in dense
+		// refuses the ST_Contains (PostgreSQL columns are 4326: see dbsql.go).  The LIMIT is a safety belt; in dense
 		// cities a 30-min reach can contain thousands of posts and we
 		// don't need to ship them all to the browser for a visualisation.
 		const maxPosts = 500

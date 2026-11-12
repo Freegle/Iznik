@@ -100,7 +100,7 @@ type evalRow struct {
 }
 
 // evalRowLoader fetches candidate rows; a var so tests can inject rows
-// without a database. The default reads the same MySQL the spatial loaders
+// without a database. The default reads the same database the spatial loaders
 // use; nil db means "unavailable".
 var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 	db := groupsDB

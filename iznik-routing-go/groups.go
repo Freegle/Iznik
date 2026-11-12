@@ -275,7 +275,7 @@ func ensureGroupsDB() *sql.DB {
 // handleNearbyGroups returns a GeoJSON FeatureCollection of Freegle groups near
 // the given lat/lng. Each feature carries a "contains" boolean: true when the
 // offer point falls inside that group's polygon (i.e. the home group), false for
-// adjacent neighbours. Requires MySQL connection.
+// adjacent neighbours. Requires a database connection.
 //
 // polyindex is tagged SRID 3857 in the database but the coordinate values are
 // stored as WGS84 degrees (not Mercator meters). We pass degree values directly
@@ -394,7 +394,7 @@ type groupListItem struct {
 }
 
 // handleGroupsList returns every publishable Freegle group (id, short name, polygon
-// centroid) for the catchment tab's group picker. Requires MySQL; returns [] without it.
+// centroid) for the catchment tab's group picker. Requires a database; returns [] without it.
 // polyindex stores degree values tagged SRID 3857, so ST_X/ST_Y give lng/lat directly.
 func handleGroupsList() fiber.Handler {
 	return func(c *fiber.Ctx) error {

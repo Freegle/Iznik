@@ -1,6 +1,6 @@
 // rippleextract — Layer-1 simulator data extractor (Go version).
 //
-// Pulls historical (post, replier) records from MySQL directly, no iznik
+// Pulls historical (post, replier) records from the database directly, no iznik
 // framework dependencies, so it can run anywhere with DB access (e.g. inside
 // the iznik-routing-go container which already has the database settings
 // in env).

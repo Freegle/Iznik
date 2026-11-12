@@ -21,7 +21,8 @@ package main
 // (msgid, leaf, fp). Under the original (msgid, leaf) key an INSERT IGNORE of
 // a new-partition row colliding with an old one is silently dropped and the
 // post goes undiscoverable after the switch - so the command checks the key
-// shape from information_schema and refuses a table without it. The leaf
+// shape from the catalogue (information_schema on MySQL, pg_index on PostgreSQL)
+// and refuses a table without it. The leaf
 // loader already filters by fp, so the old rows are invisible to the new
 // engine and vice versa; nothing else needs to change.
 //

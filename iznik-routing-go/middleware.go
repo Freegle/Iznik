@@ -10,7 +10,7 @@ import (
 )
 
 // jwtAuthMiddleware validates the JWT from ?jwt= or Authorization header.
-// Checks the session exists in MySQL. Returns 401 on failure.
+// Checks the session exists in the database. Returns 401 on failure.
 func jwtAuthMiddleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		tokenString := c.Query("jwt")
