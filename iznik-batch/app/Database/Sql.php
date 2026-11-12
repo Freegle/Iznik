@@ -35,6 +35,19 @@ final class Sql
         return strtoupper($kind).' INDEX ('.$index.') ';
     }
 
+    /**
+     * A constant interval for date arithmetic written as `x + INTERVAL 2 SECOND`: that spelling on MySQL,
+     * INTERVAL '2 second' on PostgreSQL.
+     */
+    public static function interval(int $amount, string $unit): string
+    {
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            return "INTERVAL '".$amount.' '.strtolower($unit)."'";
+        }
+
+        return 'INTERVAL '.$amount.' '.strtoupper($unit);
+    }
+
     public static function col(string $column): string
     {
         return DB::getQueryGrammar()->wrap($column);

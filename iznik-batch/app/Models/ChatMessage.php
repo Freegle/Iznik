@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Database\Sql;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -206,7 +207,7 @@ class ChatMessage extends Model implements Auditable
         return "(EXISTS (SELECT 1 FROM chat_prompts cpr WHERE cpr.heldchatmsgid = $m.id AND cpr.kind = 'confirm_reply' AND $state)"
             ." OR EXISTS (SELECT 1 FROM chat_prompts cpr INNER JOIN chat_messages cph ON cph.id = cpr.heldchatmsgid"
             ." WHERE cpr.userid = $m.userid AND cpr.kind = 'confirm_reply' AND cph.chatid = $m.chatid AND cph.id < $m.id AND $state"
-            ." AND $m.date <= COALESCE(cpr.answered_at, cpr.expires_at, '9999-01-01 00:00:00') + INTERVAL 2 SECOND))";
+            ." AND $m.date <= COALESCE(cpr.answered_at, cpr.expires_at, '9999-01-01 00:00:00') + ".Sql::interval(2, 'SECOND').'))';
     }
 
     /**
