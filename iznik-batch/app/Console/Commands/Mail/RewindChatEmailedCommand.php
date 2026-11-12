@@ -28,8 +28,9 @@ use Symfony\Component\Console\Attribute\AsCommand;
  * defaults to --since=4), and a queue that reached maximal_queue_lifetime is
  * five days deep, so every one of these messages has aged out of it and will
  * never be picked up again. The deferral catch-up has no such window - it
- * counts anything newer than lastmsgemailed - but it only runs for members who
- * are owed something. The debt row is what makes it run, and on release they
+ * counts unread messages dated from the debt row's firstat, which is set to the
+ * earliest missed message - but it only runs for members who are owed
+ * something. The debt row is what makes it run, and on release they
  * get one "you have unread messages" summary rather than a replay.
  *
  * Only ever moves the marker BACKWARDS. A chat whose marker is already behind
@@ -131,6 +132,13 @@ class RewindChatEmailedCommand extends Command
             $owed[$uid]['count'] = ($owed[$uid]['count'] ?? 0) + (int) $row->notifications;
             $owed[$uid]['domain'] = strtolower((string) $row->domain);
 
+            // The catch-up counts from the debt's firstat, so that must be when
+            // the earliest missed message was written, not when we recorded it.
+            $missedAt = (string) (DB::table('chat_messages')->where('id', $firstmsg)->value('date') ?? $start);
+            if (! isset($owed[$uid]['since']) || strcmp($missedAt, $owed[$uid]['since']) < 0) {
+                $owed[$uid]['since'] = $missedAt;
+            }
+
             // Rewind ONLY. A marker already at or behind the target means the
             // member is still due this message by the ordinary route, and
             // moving it would be the very data loss this command exists to
@@ -192,7 +200,7 @@ class RewindChatEmailedCommand extends Command
      * already has a live chat debt is already covered, and overwriting their
      * row would reset counters the catch-up is still accruing.
      *
-     * @param  array<int, array{count:int, domain:string}>  $owed
+     * @param  array<int, array{count:int, domain:string, since:string}>  $owed
      */
     private function recordChatDebt(array $owed, $suppressionByDomain, bool $dryRun): int
     {
@@ -212,7 +220,7 @@ class RewindChatEmailedCommand extends Command
                 'emailtype' => 'chat',
                 'suppressionid' => $suppressionId,
                 'count' => $info['count'],
-                'firstat' => now(),
+                'firstat' => $info['since'],
                 'lastat' => now(),
             ];
         }
