@@ -1214,6 +1214,18 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
+	// A refused reply changes nothing, so the message and the photo are checked before the membership, the chat and
+	// the roster rows are written.
+	if payload.Message == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Message must be non-empty")
+	}
+
+	if payload.Imageid != nil {
+		if err := checkChatImageUnused(db, *payload.Imageid); err != nil {
+			return err
+		}
+	}
+
 	// Find the user who sent the message we are replying to.
 	type msgInfo struct {
 		Fromuser uint64
@@ -1301,16 +1313,6 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 		chattype = utils.CHAT_MESSAGE_INTERESTED
 	} else {
 		chattype = utils.CHAT_MESSAGE_DEFAULT
-	}
-
-	if payload.Message == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "Message must be non-empty")
-	}
-
-	if payload.Imageid != nil {
-		if err := checkChatImageUnused(db, *payload.Imageid); err != nil {
-			return err
-		}
 	}
 
 	// Create a chat message, but flagged as needing processing.
