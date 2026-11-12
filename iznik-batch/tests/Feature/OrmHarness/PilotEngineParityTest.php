@@ -78,7 +78,8 @@ class PilotEngineParityTest extends TestCase
 
     /**
      * Two logs name a message that does not exist, one inside the window and one outside it, and one
-     * names a message that does.
+     * names a message that does. The window is in 2003, where no other test writes a log: the site counts
+     * every such log in the table, so a window other tests use would count their rows too.
      */
     public function test_orphaned_message_log_count(): void
     {
@@ -87,15 +88,15 @@ class PilotEngineParityTest extends TestCase
             EngineParity::table('users', [['id' => $uid]]),
             EngineParity::table('messages', [['id' => $this->fid(40), 'fromuser' => $uid, 'message' => 'x']]),
             EngineParity::table('logs', [
-                $this->logRow(50, ['type' => 'Message', 'subtype' => 'Received', 'msgid' => $this->fid(41), 'timestamp' => '2026-01-10 09:00:00']),
-                $this->logRow(51, ['type' => 'Message', 'subtype' => 'Received', 'msgid' => $this->fid(42), 'timestamp' => '2026-01-20 09:00:00']),
-                $this->logRow(52, ['type' => 'Message', 'subtype' => 'Received', 'msgid' => $this->fid(43), 'timestamp' => '2025-06-01 09:00:00']),
-                $this->logRow(53, ['type' => 'Message', 'subtype' => 'Received', 'msgid' => $this->fid(40), 'timestamp' => '2026-01-10 09:00:00']),
+                $this->logRow(50, ['type' => 'Message', 'subtype' => 'Received', 'msgid' => $this->fid(41), 'timestamp' => '2003-01-10 09:00:00']),
+                $this->logRow(51, ['type' => 'Message', 'subtype' => 'Received', 'msgid' => $this->fid(42), 'timestamp' => '2003-01-20 09:00:00']),
+                $this->logRow(52, ['type' => 'Message', 'subtype' => 'Received', 'msgid' => $this->fid(43), 'timestamp' => '2002-06-01 09:00:00']),
+                $this->logRow(53, ['type' => 'Message', 'subtype' => 'Received', 'msgid' => $this->fid(40), 'timestamp' => '2003-01-10 09:00:00']),
             ]),
         ];
 
         EngineParity::assert('be29b29dc957', $fixture,
-            fn () => PurgeService::countOrphanedMessageLogs('2026-01-01 00:00:00', '2026-02-01 00:00:00'),
+            fn () => PurgeService::countOrphanedMessageLogs('2003-01-01 00:00:00', '2003-02-01 00:00:00'),
             expect: 2);
     }
 
