@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services;
 
+use App\Database\TemporaryTable;
 use App\Services\AuthorityStatsService;
 use App\Support\ReuseBenefit;
 use Illuminate\Support\Facades\DB;
@@ -346,7 +347,7 @@ class AuthorityStatsServiceCoverageTest extends TestCase
             $this->service->getByAuthority([], '2025-04-01', '2025-06-30');
         } finally {
             // Whatever failed, do not leave the temporary table behind for the next test.
-            DB::statement('DROP TEMPORARY TABLE IF EXISTS pc');
+            TemporaryTable::dropIfExists('pc');
         }
     }
 

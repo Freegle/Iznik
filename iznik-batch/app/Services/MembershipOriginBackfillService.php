@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\TemporaryTable;
 use App\Models\Membership;
 use App\Services\Ripple\RippleEngagementService;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
@@ -119,7 +120,7 @@ class MembershipOriginBackfillService
             $this->backfillMemberships($userId, $chunk, $send, $progress);
         } finally {
             // keep-raw: Schema::dropIfExists() drops a permanent table of the same name too.
-            DB::statement('DROP TEMPORARY TABLE IF EXISTS '.self::LATEST_JOINS);
+            TemporaryTable::dropIfExists(self::LATEST_JOINS);
         }
         $this->backfillHistory($userId, $chunk, $send, $progress);
 
@@ -134,7 +135,7 @@ class MembershipOriginBackfillService
     private function collectLatestJoins(?int $userId, callable $progress): void
     {
         // keep-raw: Schema::dropIfExists() drops a permanent table of the same name too.
-        DB::statement('DROP TEMPORARY TABLE IF EXISTS '.self::LATEST_JOINS);
+        TemporaryTable::dropIfExists(self::LATEST_JOINS);
         Schema::create(self::LATEST_JOINS, function (Blueprint $table) {
             $table->temporary();
             $table->unsignedBigInteger('userid');
