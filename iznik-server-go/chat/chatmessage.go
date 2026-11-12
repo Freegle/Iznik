@@ -777,6 +777,17 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// An Address message is what GET /address/{id} accepts as proof that the address was shared, so
+	// it may only name an address the sender owns.
+	if payload.Addressid != nil {
+		var owned int64
+		db.Table("users_addresses").Where("id = ? AND userid = ?", *payload.Addressid, myid).Count(&owned)
+
+		if owned == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "Not your address")
+		}
+	}
+
 	if payload.Imageid != nil {
 		if err := checkChatImageUnused(db, *payload.Imageid); err != nil {
 			return err
