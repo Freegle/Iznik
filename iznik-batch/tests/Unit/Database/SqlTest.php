@@ -59,4 +59,18 @@ class SqlTest extends TestCase
 
         $this->assertSame($expected, Sql::jsonHasPath('cells', '?'));
     }
+
+    public function test_on_duplicate_key_update_renders_for_the_connections_dialect(): void
+    {
+        $expected = DB::connection()->getDriverName() === 'pgsql'
+            ? 'ON CONFLICT (msgid) DO UPDATE SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, updated_at = NOW()'
+            : 'ON DUPLICATE KEY UPDATE lat = VALUES(lat), lng = VALUES(lng), updated_at = NOW()';
+
+        $this->assertSame($expected, Sql::onDuplicateKeyUpdate(['msgid'], ['lat', 'lng'], ['updated_at = NOW()']));
+    }
+
+    public function test_column_is_quoted_only_where_the_engine_folds_case(): void
+    {
+        $this->assertSame(DB::connection()->getDriverName() === 'pgsql' ? '"ourPostingStatus"' : 'ourPostingStatus', Sql::column('ourPostingStatus'));
+    }
 }

@@ -82,4 +82,35 @@ final class Sql
     {
         return self::render(new JsonHasPath(DB::raw($column), DB::raw($pathOperand)));
     }
+
+    /**
+     * The upsert clause of an INSERT: `ON DUPLICATE KEY UPDATE col = VALUES(col), ...` on MySQL and
+     * `ON CONFLICT (keys) DO UPDATE SET col = EXCLUDED.col, ...` on PostgreSQL, which needs the conflict
+     * target. $assignments are SQL appended as written (for example `updated_at = NOW()`).
+     *
+     * @param  array<int, string>  $conflictKeys  the unique key the insert may collide on
+     * @param  array<int, string>  $columns  columns taken from the new row
+     * @param  array<int, string>  $assignments
+     */
+    public static function onDuplicateKeyUpdate(array $conflictKeys, array $columns, array $assignments = []): string
+    {
+        $postgres = DB::getQueryGrammar() instanceof PostgresGrammar;
+        $set = array_map(fn (string $c) => $postgres ? "{$c} = EXCLUDED.{$c}" : "{$c} = VALUES({$c})", $columns);
+        $set = implode(', ', array_merge($set, $assignments));
+
+        return $postgres
+            ? 'ON CONFLICT ('.implode(', ', $conflictKeys).') DO UPDATE SET '.$set
+            : 'ON DUPLICATE KEY UPDATE '.$set;
+    }
+
+    /**
+     * A column name for raw SQL. MySQL folds nothing, so the name is written as is; PostgreSQL folds an unquoted
+     * name to lower case, so a mixed-case column (ourPostingStatus) has to be quoted there.
+     */
+    public static function column(string $name): string
+    {
+        $grammar = DB::getQueryGrammar();
+
+        return $grammar instanceof PostgresGrammar ? $grammar->wrap($name) : $name;
+    }
 }
