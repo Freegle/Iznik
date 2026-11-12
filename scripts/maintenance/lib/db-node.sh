@@ -299,7 +299,11 @@ db_wait_rejoin() {
       break
     fi
     st=$(rq "$T" "systemctl is-active mysql")
-    if [ "$st" = failed ] || { [ "$st" = inactive ] && [ "$(rq "$T" "awk '{print int(\$1)}' /proc/uptime" || echo 0)" -ge 330 ]; }; then
+    # Retry only once the reboot gate has passed. A "wrong seqno" IST failure leaves
+    # grastate at seqno -1, and within five minutes of boot the wrapper then refuses
+    # the start ("Node has been rebooted"), so a retry inside the gate cannot succeed
+    # and spends the only one.
+    if { [ "$st" = failed ] || [ "$st" = inactive ]; } && [ "$(rq "$T" "awk '{print int(\$1)}' /proc/uptime" || echo 0)" -ge 330 ]; then
       $retried && die "$T: mysql $st after one retry; journalctl -u mysql on $T"
       retried=true
       warn "$T: mysql $st ($(rq "$T" "journalctl -u mysql -b --no-pager | tail -3 | tr '\n' ' '")); one retry"
