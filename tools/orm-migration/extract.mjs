@@ -7,6 +7,8 @@
 //   node tools/orm-migration/extract.mjs summary
 //   node tools/orm-migration/extract.mjs list [--status raw] [--file TEXT]
 //   node tools/orm-migration/extract.mjs orphans
+//
+// update also writes the parity harness's golden stores (lib/parity-store.mjs).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import {
   scanRepo, loadRules, buildManifest, readManifest, serialise, checkManifest, openCount,
 } from './lib/inventory.mjs';
+import { writeStores, checkStores, checkApprovedDiffs, checkCorpusCopies } from './lib/parity-store.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -63,6 +66,10 @@ export function main(argv, out = console) {
       return 1;
     }
     fs.writeFileSync(manifestPath, serialise(manifest));
+    // Only the stores beside the default manifest: a test that points at another manifest must not
+    // rewrite the real ones.
+    const stores = opts.manifest ? [] : writeStores(repoRoot, manifest.sites);
+    for (const st of stores) out.log(`parity golden store written to ${st}`);
     out.log(`${manifest.sites.length} entries written to ${path.relative(repoRoot, manifestPath)}`);
     out.log(`status counts: ${JSON.stringify(manifest.counts)}; baseline ${manifest.ratchet.baseline}`);
     return 0;
@@ -72,6 +79,10 @@ export function main(argv, out = console) {
     let base = null;
     if (opts.base) base = baseManifest(repoRoot, opts.base, path.relative(repoRoot, manifestPath).split(path.sep).join('/'));
     const { failures, warnings } = checkManifest(scan, committed, rules, { baseManifest: base });
+    if (committed) {
+      failures.push(...checkApprovedDiffs(committed.sites));
+      if (!opts.manifest) failures.push(...checkStores(repoRoot, committed.sites), ...checkCorpusCopies(repoRoot));
+    }
     for (const w of warnings) out.log(`RAW-SQL-RATCHET: warning: ${w}`);
     if (failures.length) {
       out.error(`RAW-SQL-RATCHET: ${failures.length} problem(s)`);
