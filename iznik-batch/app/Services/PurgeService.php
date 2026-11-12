@@ -281,14 +281,12 @@ class PurgeService
     }
 
     /**
-     * Old live Pending copies of posts that are Pending only. A post that is live in another
-     * collection, or has a Taken or Received outcome, survives a stale Pending copy (for
-     * example a retired or rippled one).
+     * Old Pending copies of posts that are Pending only. A post that is live in another
+     * collection survives a stale Pending copy (for example a retired or rippled one).
      */
     private function stalePendingQuery($cutoff)
     {
         return MessageGroup::where('collection', MessageGroup::COLLECTION_PENDING)
-            ->where('deleted', 0)
             ->where('arrival', '<', $cutoff)
             ->whereNotExists(function ($q) {
                 $q->select(DB::raw(1))
@@ -296,12 +294,6 @@ class PurgeService
                     ->whereColumn('other.msgid', 'messages_groups.msgid')
                     ->where('other.deleted', 0)
                     ->where('other.collection', '!=', MessageGroup::COLLECTION_PENDING);
-            })
-            ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_outcomes')
-                    ->whereColumn('messages_outcomes.msgid', 'messages_groups.msgid')
-                    ->whereIn('messages_outcomes.outcome', ['Taken', 'Received']);
             });
     }
 
