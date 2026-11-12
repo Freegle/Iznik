@@ -120,7 +120,7 @@ func loadLocations(srcDB *sql.DB, idx *Index, extraWhere string) error {
 	var locs []Item
 	var scanned, skipped int
 
-	log.Printf("spatial-loader: scanning locations from MySQL...")
+	log.Printf("spatial-loader: scanning locations from the source database...")
 	for rows.Next() {
 		var item Item
 		var name, locType string
@@ -147,7 +147,7 @@ func loadLocations(srcDB *sql.DB, idx *Index, extraWhere string) error {
 		locs = append(locs, item)
 		scanned++
 		if scanned%10000 == 0 {
-			log.Printf("spatial-loader: scanned %d rows from MySQL...", scanned)
+			log.Printf("spatial-loader: scanned %d rows from the source database...", scanned)
 		}
 	}
 	if err := rows.Err(); err != nil {
