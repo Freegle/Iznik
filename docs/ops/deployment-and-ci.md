@@ -163,6 +163,13 @@ is whether the failing suite's language appears in the diff at all: a Go-only co
 turns `Coveralls - vitest` red has not changed any JavaScript, so the number moved without
 the code moving.
 
+## The second database engine
+
+`build-and-test` also runs the Go API and Laravel suites, and the PostgreSQL tooling tests, on PostgreSQL. The MySQL runs are
+unchanged and required. Each PostgreSQL run starts when the MySQL run of the same suite finishes and is compared with a
+committed list of known failures, so a new failure fails the job and a known one does not. How it works and how to
+regenerate the lists is in [database engines](../developers/reference/database-engines.md#both-engines-in-ci).
+
 ## Rollback
 
 Because `production` is a branch that deploys on update, and Netlify keeps previous

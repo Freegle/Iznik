@@ -100,7 +100,10 @@ orbs:
   # repo already carries the fix (large + the improved logs): publish it as 1.1.386
   # from a machine with a CircleCI token (this host has none) and move this pin
   # forward again.
-  freegle: freegle/tests@1.1.409
+  #
+  # 1.1.410 adds start-pg-suite-tests: the Go and Laravel suites and the tooling tests run on
+  # PostgreSQL after the MySQL run of the same suite, and collect-background-checks waits for them.
+  freegle: freegle/tests@1.1.410
 
 jobs:
   # The CI half of the raw-SQL guard. The Claude Code PreToolUse hook only sees

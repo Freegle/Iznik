@@ -26,6 +26,14 @@ covers:
   - iznik-routing-go/cmd/rippleextract/*
   - iznik-routing-go/scripts/pg-test-schema.mjs
   - status-nuxt/server/api/tests/routing.post.ts
+  - status-nuxt/server/api/tests/go-pg.post.ts
+  - status-nuxt/server/api/tests/laravel-pg.post.ts
+  - status-nuxt/server/api/tests/pgtools.post.ts
+  - status-nuxt/server/utils/pgSuite.ts
+  - tools/pg-ratchet/**
+  - scripts/check-portable-migrations.mjs
+  - iznik-server-go/database/postgres.go
+  - iznik-batch/tests/bootstrap.php
   - iznik-spatial-go/source*
   - iznik-spatial-go/testdata/mysql_source_queries.golden
 ---
@@ -640,6 +648,61 @@ failure paths: a refused row, a repaired shape a typed column cannot hold, an un
 - The fixtures contain no `rippling_reach` rows and no real polygons. The parity numbers on real data, in particular
   how many rows are repaired and how many move the bounding box, are not known yet.
 
+## Both engines in CI
+
+CI runs the suites on MySQL exactly as before, and then on PostgreSQL. MySQL stays required. The PostgreSQL
+runs start in the same job, each after the MySQL run of the same suite has finished, and overlap Playwright. They
+are the orb command `start-pg-suite-tests`, which calls the status API like the other suites, and the job's
+`collect-background-checks` step is the gate.
+
+| Run | Status endpoint | What it does |
+|---|---|---|
+| Go API on PostgreSQL | `/api/tests/go-pg` | Rebuilds `iznik_go_test` on PostgreSQL from the baseline, then runs every test with `DB_ENGINE=postgres`. |
+| Laravel on PostgreSQL | `/api/tests/laravel-pg` | Rebuilds `iznik_batch_test` the same way, then runs every test file with `DB_CONNECTION=pgsql` and `TEST_DB_ENGINE=pgsql`. `tests/bootstrap.php` skips the MySQL migrations. |
+| Tooling | `/api/tests/pgtools` | The converter, fixture, migration and ratchet tests, the tests that need a PostgreSQL or MySQL server, `regenerate.sh --check` and the routing schema check. |
+
+The routing and spatial services run their engine tests in their own suites, on both engines, with the
+requirement flags described above. The parity harness tests are part of the Go and Laravel suites.
+
+**The ratchet.** The code is not ported yet, so many tests fail on PostgreSQL. They are not skipped and the run
+is not allowed to fail. Each suite has a committed list of the tests known to fail there:
+`tools/pg-ratchet/known-failures/go.txt` and `laravel.txt`. The run fails when a test outside the list fails,
+and when the suite produced no results. It prints the listed tests that now pass, so the list can shrink, and
+the listed names that were not in the run at all. Converting a site and removing its tests from the list belong in
+the same pull request.
+
+**Per-test results.** A panic ends a Go package, and a fatal error ends a PHPUnit process, so the drivers keep
+going. `tools/pg-ratchet/go-suite.mjs` compiles the big `test` package once and runs it in chunks, and a test that
+takes its process down is recorded as `CRASH` and the rest run in a new process. The other packages run through
+`go test -json`. `laravel-suite.mjs` runs the test files of a directory per PHPUnit process, and runs a chunk
+that left no JUnit file again file by file. A test that crashed counts as failed.
+
+**Regenerating a list.** Take the results from a CI run on the branch: the job's artifacts hold
+`test-output/pg-ratchet-go-pg/pg-ratchet/go/go-results.txt` and `.../laravel/laravel-results.txt`, one line per test.
+Then:
+
+```bash
+node tools/pg-ratchet/ratchet.mjs update --suite go --results go-results.txt
+node tools/pg-ratchet/ratchet.mjs update --suite laravel --results laravel-results.txt
+```
+
+To remove only the tests that now pass, run `ratchet.mjs check` and delete the `now passes` names. To run a suite
+locally against a PostgreSQL server, point the driver at it: `go-suite.mjs --root iznik-server-go --out <dir>`
+with `DB_ENGINE=postgres` and the `PGSQL_*` settings in the environment. Both drivers' failure details are in
+`go-failures.log` and `laravel-failures.log` beside the results.
+
+**The Go API engine.** `DB_ENGINE` unset or `mysql` is the MySQL path, unchanged. `postgres` opens the GORM
+PostgreSQL dialector from `PGSQL_HOST`, `PGSQL_PORT`, `PGSQL_USERNAME`, `PGSQL_PASSWORD`, `PGSQL_DATABASE` and
+`PGSQL_SSLMODE`, with the session time zone set to UTC. `PGSQL_HOST_READ` registers `dbresolver` with the same
+failover to the source that MySQL has (see the spike above for what it found). `database.Pool`, the MySQL driver's
+cancellable-query handle, is nil on PostgreSQL. Any other value of `DB_ENGINE` stops the process.
+
+**Migrations.** A migration a branch adds is written with Blueprint. A raw statement in it needs a
+`// mysql-only: <reason>` comment, and the CI job `check-portable-migrations` checks the migrations the branch adds.
+The baseline is checked by `regenerate.sh --check` in the tooling run, so a migration that changes the schema
+fails CI until the baseline is regenerated.
+
 ## Not yet done
 
-The Go API and Laravel suites on PostgreSQL are run by CI against a known-failures list (see CI below). Converting the failing sites, the PostgreSQL side of the Laravel code that writes the routing service's fingerprint columns, and the spatial benchmark are later steps in the plan.
+Converting the failing sites and the failing tests' fixtures (tasks 6, 7, 9 and 10 of the plan), the PostgreSQL side of
+the Laravel code that writes the routing service's fingerprint columns, and the spatial benchmark.
