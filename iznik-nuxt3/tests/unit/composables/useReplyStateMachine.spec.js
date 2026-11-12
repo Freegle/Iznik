@@ -1301,6 +1301,28 @@ describe('handleJoinGroup (via submit with logged-in user)', () => {
     expect(result.state.value).toBe(ReplyState.ERROR)
   })
 
+  it('does not leave a reply that ended in ERROR armed to send on the next page load', async () => {
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = {}
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 200 }],
+    })
+    mockAuthStore.joinGroup.mockRejectedValue(new Error('banned'))
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    await doLoggedInSubmit(result)
+
+    expect(result.state.value).toBe(ReplyState.ERROR)
+    // useReplyToPost sends whatever sits in these three fields for a
+    // logged-in member, so after an error they must be empty.
+    expect(mockReplyMsgId).toBeNull()
+    expect(mockReplyMessage).toBeNull()
+    expect(mockReplyingAt).toBeNull()
+  })
+
   it('triggers auth error flow when message fetch returns 401', async () => {
     mockMeValue = { id: 10 }
     mockMyidValue = 10
