@@ -423,7 +423,8 @@ func TestStripeIPN_GiftAid_DuplicateInsertNoError(t *testing.T) {
 
 // A webhook that records money must only act on events Stripe sent. An event with no
 // Stripe-Signature header is refused and records nothing, even when it is well formed
-// and names a real member's address.
+// and names a real member's address. The other TestStripeIPN tests post unsigned events and
+// expect them to be recorded, so the change that makes this pass must sign their requests too.
 func TestStripeIPN_UnsignedEventIsRefused(t *testing.T) {
 	prefix := uniquePrefix("stripeunsigned")
 	db := database.DBConn
