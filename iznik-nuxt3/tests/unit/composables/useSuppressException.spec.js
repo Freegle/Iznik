@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
+  isLocalStack,
   suppressException,
   suppressSentryEvent,
+  thrownByThirdParty,
 } from '~/composables/useSuppressException'
 
 describe('suppressException', () => {
@@ -443,5 +445,117 @@ describe('suppressSentryEvent', () => {
       },
     }
     expect(suppressSentryEvent(event)).toBe(false)
+  })
+})
+
+describe('isLocalStack', () => {
+  it.each([
+    ['modtools-prod-local.localhost', 'http:'],
+    ['freegle-prod-local.localhost', 'https:'],
+    ['localhost', 'http:'],
+    ['127.0.0.1', 'http:'],
+  ])('treats %s over %s as a local stack', (hostname, protocol) => {
+    expect(isLocalStack({ hostname, protocol })).toBe(true)
+  })
+
+  it.each([
+    ['localhost', 'https:'],
+    ['localhost', 'capacitor:'],
+    ['www.ilovefreegle.org', 'https:'],
+    ['modtools.org', 'https:'],
+    ['ilovefreegle.org', 'https:'],
+  ])(
+    'treats %s over %s as live (the app and the sites)',
+    (hostname, protocol) => {
+      expect(isLocalStack({ hostname, protocol })).toBe(false)
+    }
+  )
+})
+
+describe('thrownByThirdParty', () => {
+  function eventWithFrames(...filenames) {
+    return {
+      exception: {
+        values: [
+          {
+            type: 'Error',
+            value: 'pa',
+            stacktrace: {
+              frames: filenames.map((filename) => ({ filename })),
+            },
+          },
+        ],
+      },
+    }
+  }
+
+  // Sentry "Error: pa": Sentry's own XHR wrapper (in our bundle) calls back
+  // into Google's sign-in script, which throws.
+  it('drops an error thrown inside Google sign-in under our bundled Sentry wrapper', () => {
+    expect(
+      thrownByThirdParty(
+        eventWithFrames(
+          'https://www.ilovefreegle.org/_nuxt/entry.abc123.js',
+          'https://accounts.google.com/gsi/client',
+          'https://accounts.google.com/gsi/client'
+        )
+      )
+    ).toBe(true)
+  })
+
+  it.each([
+    'https://btloader.com/tag',
+    'https://cdn.btloader.com/tag',
+    'https://imasdk.googleapis.com/js/sdkloader/ima3.js',
+    'https://example-ads.net/score.min.js',
+    'chrome-extension://abcdef/content.js',
+    'safari-web-extension://abcdef/content.js',
+    'iabjs://navigation_performance_logger_android',
+  ])('drops an error thrown in %s', (filename) => {
+    expect(thrownByThirdParty(eventWithFrames(filename))).toBe(true)
+  })
+
+  it('keeps an error thrown in our own code after passing through a vendor script', () => {
+    expect(
+      thrownByThirdParty(
+        eventWithFrames(
+          'https://accounts.google.com/gsi/client',
+          'https://www.ilovefreegle.org/_nuxt/LoginModal.def456.js'
+        )
+      )
+    ).toBe(false)
+  })
+
+  it('ignores anonymous frames when finding where it was thrown', () => {
+    expect(
+      thrownByThirdParty(
+        eventWithFrames(
+          'https://www.ilovefreegle.org/_nuxt/entry.abc123.js',
+          '<anonymous>'
+        )
+      )
+    ).toBe(false)
+  })
+
+  // Sentry lists causes first and the error itself last.
+  it('keeps our own error that wraps a vendor error as its cause', () => {
+    const vendorCause = eventWithFrames(
+      'https://accounts.google.com/gsi/client'
+    ).exception.values[0]
+    const ours = eventWithFrames(
+      'https://www.ilovefreegle.org/_nuxt/LoginModal.def456.js'
+    ).exception.values[0]
+
+    expect(
+      thrownByThirdParty({ exception: { values: [vendorCause, ours] } })
+    ).toBe(false)
+    expect(
+      thrownByThirdParty({ exception: { values: [ours, vendorCause] } })
+    ).toBe(true)
+  })
+
+  it('keeps an event with no frames', () => {
+    expect(thrownByThirdParty({ message: 'hello' })).toBe(false)
+    expect(thrownByThirdParty(eventWithFrames())).toBe(false)
   })
 })

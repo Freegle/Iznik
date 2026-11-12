@@ -972,9 +972,11 @@ class ReachService
         }
         if (microtime(true) < self::$labelEvalDownUntil) {
             // Nothing is asked while the breaker holds, and everything on a
-            // member's path fails open on the silence. Keep reporting it: an
-            // outage lasts hours and this is the only alert during all of them.
-            self::reportEvalUnavailable('breaker open after an earlier failure');
+            // member's path fails open on the silence. Not reported: the failure that
+            // opened it was, and the first call after the breaker expires reports
+            // again if the server is still down, so an outage that lasts hours still
+            // alerts every five minutes. Reporting this too only echoed the failure.
+            Log::info('ripple: reach evaluation skipped, breaker open');
 
             return $none;
         }

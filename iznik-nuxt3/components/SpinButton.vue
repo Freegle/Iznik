@@ -27,8 +27,10 @@
 <script setup>
 import { useMiscStore } from '~/stores/misc'
 import { ref, defineAsyncComponent, onBeforeUnmount } from '#imports'
+import * as Sentry from '@sentry/browser'
+import { getCurrentInstance } from 'vue'
 import { action } from '~/composables/useClientLog'
-const { $sentryCaptureException } = useNuxtApp()
+import { spinButtonContext } from '~/composables/useSpinButtonDiagnostics'
 
 const ConfirmModal = defineAsyncComponent(() => import('./ConfirmModal'))
 
@@ -130,6 +132,9 @@ const done = ref(false)
 const showConfirm = ref(false)
 const actionConfirmed = ref(false)
 let timer = null
+// The component whose template holds this button, and when the button was last pressed.
+const owner = getCurrentInstance()?.parent
+let clickedAt = null
 
 const spinColorClass =
   props.spinColor || SPINNER_COLOR[props.variant] || 'text-success'
@@ -173,14 +178,28 @@ const forgottenCallback = () => {
       label: props.label,
       icon_name: props.iconName,
     })
-    $sentryCaptureException(
-      'SpinButton - callback not called, ' +
-        props.variant +
-        ', ' +
-        props.label +
-        ', ' +
-        props.iconName
-    )
+    const context = spinButtonContext({
+      componentName: owner?.type?.__name || owner?.type?.name,
+      label: props.label,
+      clickedAt,
+      online: useMiscStore().online,
+      connection: navigator.connection,
+    })
+
+    Sentry.withScope((scope) => {
+      scope.setExtras(context)
+      scope.setTag('spinbutton_component', context.component || 'unknown')
+      Sentry.captureException(
+        new Error(
+          'SpinButton - callback not called, ' +
+            props.variant +
+            ', ' +
+            props.label +
+            ', ' +
+            props.iconName
+        )
+      )
+    })
   }
 }
 
@@ -191,6 +210,7 @@ const onClick = () => {
     } else {
       done.value = false
       loading.value = true
+      clickedAt = Date.now()
       timer = setTimeout(forgottenCallback, 20 * 1000)
       emit('handle', finishSpinner, props.handleParam)
     }
@@ -201,6 +221,7 @@ const confirmed = () => {
   actionConfirmed.value = true
   done.value = false
   loading.value = true
+  clickedAt = Date.now()
   emit('handle', finishSpinner, props.handleParam)
   timer = setTimeout(forgottenCallback, 20 * 1000)
 }

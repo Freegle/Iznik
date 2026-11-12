@@ -279,6 +279,14 @@ export function useMe() {
         const wkt = new Wkt.Wkt()
         try {
           wkt.read(g.bbox)
+
+          if (!wkt.construct) {
+            // The wicket-leaflet extension is added by loadLeaflet(); without it toObject() throws
+            // "this.construct[this.type]". Skip rather than throw, and leave the group out.
+            console.log('WKT extension not loaded', g.id)
+            return
+          }
+
           const obj = wkt.toObject()
           const thisbounds = obj.getBounds()
           const sw = thisbounds.getSouthWest()

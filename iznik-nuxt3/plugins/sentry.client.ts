@@ -5,10 +5,13 @@ import { useRouter } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
 import {
+  isLocalStack,
   suppressException,
   suppressSentryEvent,
+  thrownByThirdParty,
 } from '~/composables/useSuppressException'
 import { onTraceChange, getTraceId, getSessionId } from '~/composables/useTrace'
+import { applyApiFailurePolicy } from '~/composables/useApiFailurePolicy'
 import {
   useClientLog,
   setRouteNameProvider,
@@ -115,6 +118,29 @@ export default defineNuxtPlugin((nuxtApp) => {
           // Prevented at source by plugins/leafletTooltipGuard.client.js; this
           // entry catches residual events from cached bundles.
           'latLngToLayerPoint',
+
+          // Microsoft's link scanner (Outlook, Defender) opens the links in our
+          // mails in a scripted browser that rejects with this. The string is
+          // not in our code; every one of 12 sampled addresses is Microsoft's
+          // network (AS8075). About 1,000 events in the 14 days to 2026-11-11.
+          /Object Not Found Matching Id:\d+, MethodName:update, ParamCount:\d+/,
+
+          // A browser extension messaging a tab that has gone.
+          'Invalid call to runtime.sendMessage(). Tab not found',
+
+          // Something cancelled on purpose: an ad video paused or ended before
+          // it played, or a request aborted by whoever started it. Not a fault
+          // in itself, and these come with no frames to say whose it was; the
+          // breadcrumbs before them are the IMA and GPT ad scripts, and there is
+          // no .play() in our code. About 90 events in the 14 days to 2026-11-11.
+          /The play\(\) request was interrupted/,
+          'signal is aborted without reason',
+          'The operation was aborted',
+          'The user aborted a request',
+
+          // Safari's wording for 'Failed to fetch' (above), which the SDK suffixes
+          // with the host. Kept when the host is ours.
+          /Load failed \((?![^)]*(ilovefreegle\.org|modtools\.org))[^)]*\)/,
         ],
         integrations: [
           Sentry.browserTracingIntegration({ router }),
@@ -127,10 +153,25 @@ export default defineNuxtPlugin((nuxtApp) => {
         debug: config.public.SENTRY_ENABLE_DEBUG || false, // Enable debug mode
         environment: config.public.ENVIRONMENT || 'dev', // Set environment
         // The following enables exceptions to be logged to console despite logErrors being set to false (preventing them from being passed to the default Vue err handler)
+        // Performance data from automation or a local stack is no more ours to
+        // keep than its errors.
+        beforeSendTransaction(event) {
+          if (window.navigator.webdriver || isLocalStack(window.location)) {
+            return null
+          }
+
+          return event
+        },
         beforeSend(event, hint) {
           if (useMiscStore()?.unloading) {
             // All network requests are aborted during unload, and so we'll get spurious errors.  Ignore them.
             console.log('Ignore error in unload')
+            return null
+          }
+
+          // A failed API call is only worth an issue under the rules in useApiFailurePolicy, however
+          // it reached here (the Vue handler, an unhandled rejection or a component's own capture).
+          if (!applyApiFailurePolicy(event, hint)) {
             return null
           }
 
@@ -144,8 +185,13 @@ export default defineNuxtPlugin((nuxtApp) => {
             return null
           }
 
+          if (thrownByThirdParty(event)) {
+            console.log('Thrown inside a third-party script - suppress event')
+            return null
+          }
+
           // In modtools, 401 means session expired during a long mod session.
-          // BaseAPI already clears auth state and the login modal appears.
+          // The next session check (fetchUser) clears auth and puts up the login modal.
           // Any of the 600+ store calls can hit this; suppress globally here
           // rather than adding try/catch to every caller.
           // On the main Freegle site, 401 is unexpected and should still be reported.
@@ -400,6 +446,16 @@ export default defineNuxtPlugin((nuxtApp) => {
           // check above misses it, and CI runs sent Google sign-in errors to the live project
           // as 'production'. The console line above stays: the e2e fixtures read it.
           if (window.navigator.webdriver) {
+            return null
+          }
+
+          // A local or CI stack (freegle-prod-local.localhost, modtools-prod-local.localhost:9080,
+          // a dev server on http://localhost:3000) is not production, however it was built, and
+          // the ModTools DSN is fixed in config.js so every local ModTools reported to the live
+          // project: 2,033 events in the 14 days to 2026-11-11, labelled production. The app is
+          // served from https://localhost (Android) or capacitor://localhost (iOS), so a bare
+          // localhost counts as local only over plain http.
+          if (isLocalStack(window.location)) {
             return null
           }
 

@@ -8,6 +8,7 @@ import {
   useImageHostBlocked,
   noteImageLoaded,
   isCrawler,
+  normaliseDeliveryMessage,
   MAX_INDIVIDUAL_REPORTS,
   AGGREGATE_EVERY,
 } from '~/composables/useImageFailureDiagnostics'
@@ -50,7 +51,7 @@ function setUserAgent(ua) {
 }
 
 // A fetch stand-in driven by a per-URL decision: 'ok' answers 200, 'notfound'
-// answers 404, 'cors' rejects cors mode but answers opaquely in no-cors mode,
+// answers 404, 'heic' answers 400 with a delivery error body, 'cors' rejects cors mode but answers opaquely in no-cors mode,
 // 'dead' rejects every mode like an unreachable host.
 function fakeFetch(decide) {
   return vi.fn((url, opts = {}) => {
@@ -60,6 +61,21 @@ function fakeFetch(decide) {
     }
     if (verdict === 'notfound') {
       return Promise.resolve({ status: 404, type: 'cors' })
+    }
+    if (verdict === 'heic') {
+      return Promise.resolve({
+        status: 400,
+        type: 'cors',
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              status: 'error',
+              code: 400,
+              message:
+                'libvips error: heif: Unsupported feature: Unsupported codec (4.3000)\n',
+            })
+          ),
+      })
     }
     if (verdict === 'cors') {
       return opts.mode === 'no-cors'
@@ -101,6 +117,44 @@ describe('useImageFailureDiagnostics', () => {
         status: 404,
       })
       expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('reads the delivery error message from a 4xx body', async () => {
+      const fetch = fakeFetch(() => 'heic')
+      expect(await probeUrl(IMAGE_URL, fetch)).toEqual({
+        probed: true,
+        reachable: true,
+        status: 400,
+        message:
+          'libvips error: heif: Unsupported feature: Unsupported codec (4.3000)',
+      })
+    })
+
+    it('still reports the status when the error body cannot be read', async () => {
+      const fetch = vi.fn(() =>
+        Promise.resolve({
+          status: 502,
+          type: 'cors',
+          text: () => Promise.reject(new Error('stream closed')),
+        })
+      )
+      expect(await probeUrl(IMAGE_URL, fetch)).toEqual({
+        probed: true,
+        reachable: true,
+        status: 502,
+      })
+    })
+
+    it('keeps a non-JSON error body as the message', async () => {
+      const fetch = vi.fn(() =>
+        Promise.resolve({
+          status: 404,
+          type: 'cors',
+          text: () => Promise.resolve('Not Found'),
+        })
+      )
+      const probe = await probeUrl(IMAGE_URL, fetch)
+      expect(probe.message).toBe('Not Found')
     })
 
     it('treats a CORS refusal as reachable via an opaque no-cors fetch', async () => {
@@ -186,8 +240,8 @@ describe('useImageFailureDiagnostics', () => {
       expect(mockCaptureMessage).not.toHaveBeenCalled()
     })
 
-    it('reports a missing image with its probe result and no host check', async () => {
-      const fetch = fakeFetch(() => 'notfound')
+    it('sends a delivery 4xx to Sentry, fingerprinted by status and message', async () => {
+      const fetch = fakeFetch(() => 'heic')
       await reportImageFailure(
         { src: 'freegletusd-abc', url: IMAGE_URL },
         fetch
@@ -195,20 +249,75 @@ describe('useImageFailureDiagnostics', () => {
 
       expect(mockCaptureMessage).toHaveBeenCalledTimes(1)
       expect(mockCaptureMessage).toHaveBeenCalledWith(
-        'Failed to fetch image freegletusd-abc',
+        'Image delivery error 400: libvips error: heif: Unsupported feature: Unsupported codec (N)',
         expect.objectContaining({
           level: 'warning',
+          fingerprint: [
+            'image-delivery-error',
+            '400',
+            'libvips error: heif: Unsupported feature: Unsupported codec (N)',
+          ],
           extra: expect.objectContaining({
+            src: 'freegletusd-abc',
             url: IMAGE_URL,
-            probe: expect.objectContaining({ reachable: true, status: 404 }),
+            probe: expect.objectContaining({ reachable: true, status: 400 }),
             failures_in_session: 1,
             image_host_blocked: false,
           }),
         })
       )
+      expect(mockClientWarn).not.toHaveBeenCalled()
       // The host answered, so the API/delivery comparison never runs.
       expect(fetch).toHaveBeenCalledTimes(1)
       expect(useImageHostBlocked().value).toBe(false)
+    })
+
+    it('gives a 4xx with no readable message its own fingerprint', async () => {
+      await reportImageFailure(
+        { src: 'freegletusd-abc', url: IMAGE_URL },
+        fakeFetch(() => 'notfound')
+      )
+      expect(mockCaptureMessage).toHaveBeenCalledWith(
+        'Image delivery error 404: no message',
+        expect.objectContaining({
+          fingerprint: ['image-delivery-error', '404', 'no message'],
+        })
+      )
+    })
+
+    it('keeps a reachable host out of Sentry and logs it to Loki', async () => {
+      // The delivery host serves the image (200) but the img element still failed: a renderer
+      // that does not paint images, for instance. That says nothing about delivery.
+      const fetch = fakeFetch(() => 'ok')
+      await reportImageFailure(
+        { src: 'freegletusd-abc', url: IMAGE_URL },
+        fetch
+      )
+
+      expect(mockCaptureMessage).not.toHaveBeenCalled()
+      expect(mockClientWarn).toHaveBeenCalledWith(
+        'image_failed',
+        expect.objectContaining({
+          src: 'freegletusd-abc',
+          url: IMAGE_URL,
+          probe: expect.objectContaining({ reachable: true, status: 200 }),
+          failures_in_session: 1,
+        })
+      )
+    })
+
+    it('keeps an opaque (CORS-blocked) probe out of Sentry', async () => {
+      await reportImageFailure(
+        { src: 'freegletusd-abc', url: IMAGE_URL },
+        fakeFetch(() => 'cors')
+      )
+      expect(mockCaptureMessage).not.toHaveBeenCalled()
+      expect(mockClientWarn).toHaveBeenCalledWith(
+        'image_failed',
+        expect.objectContaining({
+          probe: expect.objectContaining({ opaque: true }),
+        })
+      )
     })
 
     it('flags the session once when delivery is unreachable but the API is not', async () => {
@@ -220,12 +329,14 @@ describe('useImageFailureDiagnostics', () => {
       )
 
       expect(useImageHostBlocked().value).toBe(true)
-      const messages = mockCaptureMessage.mock.calls.map((c) => c[0])
-      expect(messages).toEqual([
-        'Failed to fetch image freegletusd-abc',
+      // The per-image network failure is Loki only; the one-off host message is Sentry.
+      expect(mockCaptureMessage.mock.calls.map((c) => c[0])).toEqual([
         'Image host unreachable: delivery blocked on this device or network',
       ])
-      expect(mockClientWarn).toHaveBeenCalledTimes(1)
+      expect(mockClientWarn.mock.calls.map((c) => c[0])).toEqual([
+        'image_failed',
+        'image_host_unreachable',
+      ])
       expect(mockClientWarn).toHaveBeenCalledWith(
         'image_host_unreachable',
         expect.objectContaining({
@@ -238,21 +349,19 @@ describe('useImageFailureDiagnostics', () => {
       const apiProbes = fetch.mock.calls.filter((c) => isApi(c[0])).length
       expect(apiProbes).toBe(1)
 
-      // A second failure is reported individually but the host check is not
-      // repeated.
+      // A second failure is logged individually but the host check is not repeated.
       await reportImageFailure(
         { src: 'freegletusd-def', url: IMAGE_URL },
         fetch
       )
-      expect(mockCaptureMessage).toHaveBeenCalledTimes(3)
-      expect(mockCaptureMessage.mock.calls[2][0]).toBe(
-        'Failed to fetch image freegletusd-def'
-      )
-      expect(mockCaptureMessage.mock.calls[2][1].extra.image_host_blocked).toBe(
-        true
-      )
+      expect(mockCaptureMessage).toHaveBeenCalledTimes(1)
+      expect(mockClientWarn.mock.calls.map((c) => c[0])).toEqual([
+        'image_failed',
+        'image_host_unreachable',
+        'image_failed',
+      ])
+      expect(mockClientWarn.mock.calls[2][1].image_host_blocked).toBe(true)
       expect(fetch.mock.calls.filter((c) => isApi(c[0])).length).toBe(1)
-      expect(mockClientWarn).toHaveBeenCalledTimes(1)
     })
 
     // A device that blocks the image host never loads an image. One that loaded
@@ -269,12 +378,9 @@ describe('useImageFailureDiagnostics', () => {
       )
 
       expect(useImageHostBlocked().value).toBe(false)
-      const messages = mockCaptureMessage.mock.calls.map((c) => c[0])
-      expect(messages).toEqual([
-        'Failed to fetch image freegletusd-abc',
+      expect(mockCaptureMessage.mock.calls.map((c) => c[0])).toEqual([
         'Image host stopped answering mid-session: images had loaded earlier',
       ])
-      expect(mockClientWarn).toHaveBeenCalledTimes(1)
       expect(mockClientWarn).toHaveBeenCalledWith(
         'image_host_dropped',
         expect.objectContaining({ images_loaded_before: 2 })
@@ -290,11 +396,13 @@ describe('useImageFailureDiagnostics', () => {
       )
 
       expect(useImageHostBlocked().value).toBe(false)
-      expect(mockCaptureMessage).toHaveBeenCalledTimes(1)
-      expect(mockClientWarn).not.toHaveBeenCalled()
+      expect(mockCaptureMessage).not.toHaveBeenCalled()
+      expect(mockClientWarn.mock.calls.map((c) => c[0])).toEqual([
+        'image_failed',
+      ])
     })
 
-    it('caps individual reports and then reports an aggregate count', async () => {
+    it('caps individual reports and then logs an aggregate count to Loki', async () => {
       const fetch = fakeFetch(() => 'notfound')
       const total = MAX_INDIVIDUAL_REPORTS + AGGREGATE_EVERY
 
@@ -305,18 +413,36 @@ describe('useImageFailureDiagnostics', () => {
         )
       }
 
-      // MAX_INDIVIDUAL_REPORTS individual reports, then one aggregate at the
-      // AGGREGATE_EVERY boundary, and nothing in between.
-      expect(mockCaptureMessage).toHaveBeenCalledTimes(
-        MAX_INDIVIDUAL_REPORTS + 1
-      )
-      const last = mockCaptureMessage.mock.calls[MAX_INDIVIDUAL_REPORTS]
-      expect(last[0]).toBe(
-        'Image failures continuing: ' + AGGREGATE_EVERY + ' this session'
-      )
-      expect(last[1].extra.latest_src).toBe('freegletusd-' + AGGREGATE_EVERY)
+      // MAX_INDIVIDUAL_REPORTS individual Sentry reports, then nothing in Sentry.
+      expect(mockCaptureMessage).toHaveBeenCalledTimes(MAX_INDIVIDUAL_REPORTS)
+      // One aggregate line at the AGGREGATE_EVERY boundary, and nothing in between.
+      expect(mockClientWarn).toHaveBeenCalledTimes(1)
+      const [name, context] = mockClientWarn.mock.calls[0]
+      expect(name).toBe('image_failures_continuing')
+      expect(context.failures_in_session).toBe(AGGREGATE_EVERY)
+      expect(context.latest_src).toBe('freegletusd-' + AGGREGATE_EVERY)
       // Only the individually reported failures were probed.
       expect(fetch).toHaveBeenCalledTimes(MAX_INDIVIDUAL_REPORTS)
+    })
+  })
+
+  describe('normaliseDeliveryMessage', () => {
+    it('masks numbers so one reason is one issue', () => {
+      expect(
+        normaliseDeliveryMessage('Input image exceeds pixel limit 1234 x 5678')
+      ).toBe('Input image exceeds pixel limit N x N')
+    })
+
+    it('masks URLs and image ids so one reason is one issue', () => {
+      expect(
+        normaliseDeliveryMessage(
+          'Unable to fetch https://uploads.example/7fb318f3d31a06ba5b37255ef737c55e for 7fb318f3d31a06ba'
+        )
+      ).toBe('Unable to fetch URL for ID')
+    })
+
+    it('has a stable value for a missing message', () => {
+      expect(normaliseDeliveryMessage(null)).toBe('no message')
     })
   })
 

@@ -279,8 +279,8 @@ export function setupModMessages(reset) {
       fetchedIds = await messageStore.fetchMessagesMT(params)
     } catch (e) {
       if (e?.response?.status === 401) {
-        // Session expired — BaseAPI already cleared auth state.
-        // The layout's loginStateKnown watcher will show the login modal.
+        // Session expired. BaseAPI leaves auth alone on a 401 from anything but /session,
+        // so the next session check (fetchUser) is what clears it and shows the login modal.
         show.value = 0
         return
       }

@@ -126,21 +126,41 @@ export function calculateMapHeight(heightFraction) {
   return height
 }
 
+// The Leaflet extensions (gesture handling, wicket-leaflet) are added once, to whichever window.L
+// is in place. They are separate from setting window.L because the vue-leaflet plugin pins
+// window.L first, and gating them on it being unset left them out whenever a map had rendered
+// before a page asked for them (wicket then threw "this.construct[this.type]").
+let leafletExtensions = null
+
 export async function loadLeaflet() {
-  if (import.meta.client && !window.L) {
+  if (!import.meta.client) {
+    return
+  }
+
+  if (!window.L) {
     // Load Leaflet CSS alongside the JS (lazy-loaded so non-map pages skip it)
     await import('leaflet/dist/leaflet.css')
 
     // Rebuild the object to avoid "not extensible" issues when loading old-fashioned leaflet plugins.
     window.L = { ...(await import('leaflet/dist/leaflet-src.esm')) }
-
-    // Use our own ESM gesture handler instead of the npm package which accesses
-    // global L at module-evaluation time and breaks bundler optimisations.
-    const { registerGestureHandling } =
-      await import('~/composables/gestureHandling')
-    registerGestureHandling(window.L)
-
-    window.Wkt = await import('wicket')
-    await import('wicket/wicket-leaflet')
   }
+
+  if (!leafletExtensions) {
+    leafletExtensions = (async () => {
+      // Use our own ESM gesture handler instead of the npm package which accesses
+      // global L at module-evaluation time and breaks bundler optimisations.
+      const { registerGestureHandling } =
+        await import('~/composables/gestureHandling')
+      registerGestureHandling(window.L)
+
+      window.Wkt = await import('wicket')
+      await import('wicket/wicket-leaflet')
+    })().catch((e) => {
+      // Let the next caller try again rather than caching the failure.
+      leafletExtensions = null
+      throw e
+    })
+  }
+
+  await leafletExtensions
 }

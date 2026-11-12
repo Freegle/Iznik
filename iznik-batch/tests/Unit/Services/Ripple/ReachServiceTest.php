@@ -787,6 +787,25 @@ class ReachServiceTest extends TestCase
         ReachService::resetLabelEvalBreaker();
     }
 
+    public function test_label_eval_breaker_open_is_not_reported_again(): void
+    {
+        Http::fake(['*reach-eval*' => Http::response(null, 500)]);
+        Log::spy();
+
+        $svc = app(ReachService::class);
+        $svc->labelVerdicts(51.5, -0.1, [1]);
+
+        // Let the once-a-minute limit through, so only the breaker path decides the count.
+        $alerted = new \ReflectionProperty(ReachService::class, 'labelEvalAlertedAt');
+        $alerted->setValue(null, 0.0);
+        $svc->labelVerdicts(51.5, -0.1, [2]);
+
+        Log::shouldHaveReceived('warning')->once();
+        Http::assertSentCount(1);
+
+        ReachService::resetLabelEvalBreaker();
+    }
+
     public function test_label_eval_404_and_503_do_not_trip_the_breaker(): void
     {
         Http::fake(['*reach-eval*' => Http::response(null, 404)]);

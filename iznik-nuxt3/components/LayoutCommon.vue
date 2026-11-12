@@ -27,7 +27,7 @@
             }"
           >
             <div
-              class="d-flex justify-content-around w-100"
+              class="sticky-ad-row d-flex justify-content-around w-100"
               :class="{
                 adRendering: adRendering && !firstRender,
               }"
@@ -248,7 +248,10 @@ function monitorTabVisibility() {
     document.addEventListener('visibilitychange', async () => {
       miscStore.visible = !document.hidden
 
-      if (me && !document.hidden) {
+      // me is a ref, so it must be read for its value: the ref itself is always truthy, which sent a
+      // signed-out visitor's own-data calls to the API on every return to the page. A member whose
+      // user has not loaded yet still has a session token, and still wants their badges.
+      if ((me.value || authStore.auth?.jwt) && !document.hidden) {
         try {
           // We have become visible. Refetch our notification count and chat count, which are the two key things which
           // produce red badges people should click on.
@@ -507,6 +510,15 @@ body.modal-open {
 
   .adRendering {
     background-color: var(--color-gray-600);
+  }
+
+  /* The ad row takes whatever height the band has left. Without this it was only as tall
+     as the jobs or the ad inside it, which grows as the job rows load, and the
+     "Hate ads?" line below it was pushed down each time. Filling the band keeps that line
+     pinned to the bottom and the ad's top edge fixed, so nothing in the band moves. */
+  .sticky-ad-row {
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   @include media-breakpoint-up(lg) {

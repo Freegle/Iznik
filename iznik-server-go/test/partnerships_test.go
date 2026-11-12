@@ -1410,3 +1410,44 @@ func TestPartnershipPlainMemberOnTheTeamMayUseThePage(t *testing.T) {
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 }
+
+// The job list is what the Partnerships page polls. A job queued a moment ago must be in it,
+// with a files list (empty until the scheduler has rendered something).
+func TestPartnershipStatsJobsListShowsQueuedJob(t *testing.T) {
+	prefix := uniquePrefix("PartnershipStatsList")
+	_, token := partnershipsUser(t, prefix)
+	authorityID := createPartnershipAuthority(t, prefix)
+
+	body := fmt.Sprintf(`{"authorityids":[%d],"quarter":"2026-04-01"}`, authorityID)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/partnership/statsjob?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var created map[string]interface{}
+	json2.Unmarshal(rsp(resp), &created)
+	jobID := uint64(created["id"].(float64))
+	require.NotZero(t, jobID)
+	t.Cleanup(func() {
+		database.DBConn.Exec("DELETE FROM partnerships_statsjobs WHERE id = ?", jobID)
+	})
+
+	resp, _ = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/partnership/statsjob?jwt=%s", token), nil))
+	require.Equal(t, 200, resp.StatusCode)
+
+	var listed map[string]interface{}
+	json2.Unmarshal(rsp(resp), &listed)
+	jobs, _ := listed["jobs"].([]interface{})
+
+	var found map[string]interface{}
+	for _, j := range jobs {
+		m := j.(map[string]interface{})
+		if uint64(m["id"].(float64)) == jobID {
+			found = m
+		}
+	}
+	require.NotNil(t, found, "the queued job should be listed")
+	files, ok := found["files"].([]interface{})
+	assert.True(t, ok, "files should be a list, not null")
+	assert.Empty(t, files)
+}

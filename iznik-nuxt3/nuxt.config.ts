@@ -6,6 +6,7 @@ import { sentryVitePlugin } from '@sentry/vite-plugin'
 import config from './config'
 import { branding } from './branding.config'
 import { componentNameTransform } from './build-plugins/componentNameTransform'
+import { leafletAlias } from './build-plugins/leafletAlias'
 
 // Cached, brand-aware page-title string used in both `app.head.title` and
 // the og:title / twitter:title meta tags so they stay in lockstep.
@@ -216,6 +217,19 @@ export default defineNuxtConfig({
     // in-app navigation, which never reaches the server.
     '/find': { redirect: { to: '/ask', statusCode: 301 } },
     '/find/**': { redirect: { to: '/ask/**', statusCode: 301 } },
+
+    // Addresses from the old Freegle site and its emails that people still follow, from Google
+    // results and mail already sent. Each was seen as a 404 in Sentry (NUXT3-DC6 family). On Netlify
+    // public/_redirects answers first, at the edge (and holds /mygroups, which it already had); these
+    // cover hosts that do not read that file.
+    '/groups': { redirect: { to: '/explore', statusCode: 301 } },
+    '/groups/**': { redirect: { to: '/explore', statusCode: 301 } },
+    '/search': { redirect: { to: '/browse', statusCode: 301 } },
+    '/ask/search': { redirect: { to: '/browse', statusCode: 301 } },
+    '/offer': { redirect: { to: '/give', statusCode: 301 } },
+    '/main.php': { redirect: { to: '/', statusCode: 301 } },
+    '/m.php': { redirect: { to: '/', statusCode: 301 } },
+    '/index.php': { redirect: { to: '/', statusCode: 301 } },
 
     // These pages are for logged-in users, or aren't performance-critical enough to render on the server.
     '/birthday/**': { ssr: false },
@@ -464,6 +478,10 @@ export default defineNuxtConfig({
   },
 
   vite: {
+    resolve: {
+      // One Leaflet: see build-plugins/leafletAlias.js.
+      alias: [leafletAlias],
+    },
     vue: {
       template: {
         compilerOptions: {

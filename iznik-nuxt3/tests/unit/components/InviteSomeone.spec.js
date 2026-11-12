@@ -30,10 +30,6 @@ vi.mock('#app', () => ({
   }),
 }))
 
-vi.mock('vue-social-sharing', () => ({
-  default: {},
-}))
-
 vi.mock('@capacitor/share', () => ({
   Share: {
     share: vi.fn(),
@@ -95,7 +91,7 @@ describe('InviteSomeone', () => {
           'b-list-group-item': {
             template: '<div class="b-list-group-item"><slot /></div>',
           },
-          ShareNetwork: {
+          ShareLink: {
             template:
               '<div class="share-network" :data-network="network" @click="$emit(\'open\')"><slot /></div>',
             props: ['network', 'url', 'title', 'description', 'hashtags'],

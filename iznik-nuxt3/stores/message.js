@@ -1073,7 +1073,8 @@ export const useMessageStore = defineStore('message', {
       // ModTools — match any group in the message's groups array (multi-group support).
       const gid = parseInt(groupid)
       const ret = Object.values(state.list).filter((message) => {
-        return message.groups.some((g) => parseInt(g.groupid) === gid)
+        // A message fetched without its groups has none to match.
+        return message.groups?.some((g) => parseInt(g.groupid) === gid)
       })
       return ret
     },

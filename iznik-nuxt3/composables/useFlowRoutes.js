@@ -13,6 +13,7 @@
  *   ask mobile:   ask-mobile-photos, ask-mobile-details, ask-mobile-whereami
  */
 import { FlowName, useFlowTelemetry } from '~/composables/useFlowTelemetry'
+import { composeMessageList } from '~/composables/composeMessageList'
 
 export const FLOW_ROUTES = {
   [FlowName.GIVE]: {
@@ -65,7 +66,7 @@ const RESTORED_AFTER_MS = 5000
  * setup() creates a blank message on every visit, hence the content test.
  */
 export function draftAgeFromStore(composeStore, type) {
-  const draft = (composeStore?.messages || []).find(
+  const draft = composeMessageList(composeStore).find(
     (m) =>
       m &&
       m.type === type &&

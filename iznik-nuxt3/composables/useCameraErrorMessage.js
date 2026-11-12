@@ -1,4 +1,4 @@
-import * as Sentry from '@sentry/browser'
+import { action } from '~/composables/useClientLog'
 
 // Human-readable feedback for a failed Capacitor Camera/gallery call.
 //
@@ -11,7 +11,7 @@ import * as Sentry from '@sentry/browser'
 // upload, no error, no clue what to do next.
 //
 // This function is pure (maps error -> message); reportCameraError() below
-// wraps it with the Sentry signal.
+// wraps it with the Loki log line.
 export function cameraErrorMessage(e) {
   const message = e?.message || ''
 
@@ -26,16 +26,15 @@ export function cameraErrorMessage(e) {
   return "Sorry, we couldn't get that photo. Please try again."
 }
 
-// Same mapping as cameraErrorMessage(), but also records a Sentry event when the
-// failure was a declined OS permission (not a plain cancellation). Declines were
-// previously only console.log()'d, so we had no way to see how often app users
-// hit this; the Sentry signal lets us measure it (and the monitor-fsm surfaces
-// it). Returns the user-facing message (or null to stay silent on cancellation).
+// Same mapping as cameraErrorMessage(), but also logs a Loki client action when the failure
+// was a declined OS permission (not a plain cancellation). A decline is a member's choice,
+// not a fault, so it is counted in Loki and not raised in Sentry. Returns the user-facing
+// message (or null to stay silent on cancellation).
 export function reportCameraError(e) {
   const message = e?.message || ''
 
   if (/denied/i.test(message) && !/cancelled/i.test(message)) {
-    Sentry.captureMessage('app camera/photos permission denied', 'warning')
+    action('camera_permission_denied', { error_message: message })
   }
 
   return cameraErrorMessage(e)

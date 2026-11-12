@@ -81,9 +81,9 @@ see [Domains, services and runbooks](domains-services-and-runbooks.md).
 
 ## Error tracking: Sentry
 
-**Sentry** captures application errors. The **monitor-fsm** (see `monitor-fsm/README.md`)
-scans unresolved Sentry issues each iteration and can propose fixes for recurring issues as
-pull requests for a human to review.
+**Sentry** captures application errors that a person should act on. What belongs there, and the
+client-side filters that keep everything else out, are in
+[../developers/reference/sentry.md](../developers/reference/sentry.md).
 
 ### Members' API requests on a backup node
 

@@ -68,12 +68,22 @@ try {
 
     exit($status);
 } catch (\Throwable $e) {
-    // Capture bootstrap failures to Sentry.
+    // Capture bootstrap failures to Sentry, but not a mistyped command line.
     if (class_exists(\Sentry\SentrySdk::class)) {
         try {
-            \Sentry\captureException($e);
-            // Flush to ensure async sending completes before we exit.
-            \Sentry\SentrySdk::getCurrentHub()->getClient()?->flush(2);
+            $usageError = false;
+            try {
+                require_once __DIR__.'/bootstrap/artisan-usage-error.php';
+                $usageError = artisanIsUsageError($e);
+            } catch (\Throwable $ignored) {
+                // Cannot tell, so report it.
+            }
+
+            if (! $usageError) {
+                \Sentry\captureException($e);
+                // Flush to ensure async sending completes before we exit.
+                \Sentry\SentrySdk::getCurrentHub()->getClient()?->flush(2);
+            }
         } catch (\Throwable $sentryError) {
             // Don't let Sentry errors mask the original error.
             error_log('Sentry capture failed: ' . $sentryError->getMessage());

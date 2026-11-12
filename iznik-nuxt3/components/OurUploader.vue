@@ -67,7 +67,6 @@ import * as tus from 'tus-js-client'
 
 import ResizeObserver from 'resize-observer-polyfill'
 import hasOwn from 'object.hasown'
-import * as Sentry from '@sentry/browser'
 import { uid } from '~/composables/useId'
 import {
   createRetryCoalescer,
@@ -614,8 +613,8 @@ onMounted(() => {
     if (!uppyTimer) {
       uppyTimer = setTimeout(() => {
         console.log('Uppy timed out')
-        Sentry.captureMessage('Uppy timed out')
-        // NB this only means the modal has been open >30s, NOT that an upload failed.
+        // This only means the modal has been open for 30s, not that an upload failed, so it
+        // is a Loki action to count and not a Sentry event to read.
         action('upload_modal_open_30s', { uploader: 'our' })
       }, 30000)
     }

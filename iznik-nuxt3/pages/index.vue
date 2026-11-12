@@ -105,6 +105,7 @@
   </div>
 </template>
 <script setup>
+import { explorePlaceLocation } from '~/composables/useExplorePlace'
 import { buildHead } from '~/composables/useBuildHead'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
@@ -262,7 +263,7 @@ async function explorePlace(place) {
     variant: type.value + '-place',
   })
 
-  router.push('/explore/place/' + JSON.stringify(place))
+  router.push(explorePlaceLocation(place))
 }
 
 // The landing and its buttons only count as shown when a logged-out visitor is looking at them.

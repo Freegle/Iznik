@@ -421,6 +421,17 @@ describe('getByGroup', () => {
     expect(store.getByGroup(99)).toHaveLength(0)
   })
 
+  it('skips a message that has no groups at all (Sentry 7713738164)', () => {
+    const store = useMessageStore()
+    store.list = {
+      1: { id: 1, subject: 'No groups', groups: null },
+      2: { id: 2, subject: 'Missing groups' },
+      3: { id: 3, subject: 'Chair', groups: [{ groupid: 20 }] },
+    }
+
+    expect(store.getByGroup(20).map((m) => m.id)).toEqual([3])
+  })
+
   it('handles messages with empty groups array', () => {
     const store = useMessageStore()
     store.list = {

@@ -28,6 +28,8 @@ const adsEnabled = p2?.length && parseInt(p2[0].value)
   gap: 0.5rem;
   padding: 0.25rem 1rem;
   height: 23px;
+  /* Never squeezed by the ad row above it in the sticky band. */
+  flex: 0 0 auto;
   background: linear-gradient(to bottom, $color-gray--lighter, white);
   border-top: 1px solid $color-gray--light;
   font-size: 0.65rem;

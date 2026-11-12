@@ -25,14 +25,16 @@ type StatsFile struct {
 
 // StatsJob is a queued request to render authority statistics spreadsheets.
 type StatsJob struct {
-	ID           uint64      `json:"id"`
-	Authorityids string      `json:"authorityids"`
-	Quarter      string      `json:"quarter"`
-	Status       string      `json:"status"`
-	Error        *string     `json:"error"`
-	Requested    string      `json:"requested"`
-	Completed    *string     `json:"completed"`
-	Files        []StatsFile `json:"files"`
+	ID           uint64  `json:"id"`
+	Authorityids string  `json:"authorityids"`
+	Quarter      string  `json:"quarter"`
+	Status       string  `json:"status"`
+	Error        *string `json:"error"`
+	Requested    string  `json:"requested"`
+	Completed    *string `json:"completed"`
+	// Files is filled in by ListStatsJobs from a second query. gorm:"-" stops GORM treating
+	// it as a relation, which it cannot resolve and which fails the whole job query.
+	Files []StatsFile `json:"files" gorm:"-"`
 }
 
 // maxStatsJobs is how many recent jobs the page shows. Older ones are still in the table but

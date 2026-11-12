@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import * as Sentry from '@sentry/browser'
 import SpinButton from '~/components/SpinButton.vue'
+import { trackApiCall } from '~/composables/useApiCallsInFlight'
 
 const mockOnline = vi.fn(() => true)
 
@@ -12,6 +14,12 @@ vi.mock('~/stores/misc', () => ({
 
 vi.mock('~/composables/useClientLog', () => ({
   action: vi.fn(),
+}))
+
+const mockScope = { setExtras: vi.fn(), setTag: vi.fn() }
+vi.mock('@sentry/browser', () => ({
+  withScope: (fn) => fn(mockScope),
+  captureException: vi.fn(),
 }))
 
 const mockSentryCaptureException = vi.fn()
@@ -137,6 +145,48 @@ describe('SpinButton', () => {
       await vi.advanceTimersByTimeAsync(200)
 
       expect(wrapper.find('.v-icon').attributes('data-icon')).toBe('heart')
+    })
+  })
+
+  describe('a handler that never reports back', () => {
+    it('reports once after 20 seconds, with what it was waiting on', async () => {
+      const wrapper = createWrapper({ label: 'Send', iconName: 'envelope' })
+      await wrapper.find('button').trigger('click')
+      trackApiCall('POST', '/chatmessages?requestid=3')
+
+      await vi.advanceTimersByTimeAsync(19000)
+      expect(Sentry.captureException).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1500)
+
+      expect(Sentry.captureException).toHaveBeenCalledTimes(1)
+      expect(Sentry.captureException.mock.calls[0][0].message).toBe(
+        'SpinButton - callback not called, primary, Send, envelope'
+      )
+      expect(mockScope.setExtras).toHaveBeenCalledWith(
+        expect.objectContaining({
+          label: 'Send',
+          waitedMs: 20000,
+          online: true,
+          apiCallsInFlight: [
+            expect.objectContaining({
+              method: 'POST',
+              path: '/chatmessages',
+              stage: 'waiting_for_online',
+            }),
+          ],
+        })
+      )
+    })
+
+    it('does not report when the handler finishes in time', async () => {
+      const wrapper = createWrapper()
+      await wrapper.find('button').trigger('click')
+      wrapper.emitted('handle')[0][0]()
+
+      await vi.advanceTimersByTimeAsync(30000)
+
+      expect(Sentry.captureException).not.toHaveBeenCalled()
     })
   })
 

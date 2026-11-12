@@ -22,7 +22,11 @@ vi.mock('@sentry/vue', () => ({
 
 vi.mock('~/stores/misc', () => ({ useMiscStore: vi.fn(() => ({})) }))
 vi.mock('~/stores/auth', () => ({ useAuthStore: vi.fn(() => ({})) }))
+const isLocalStackMock = vi.hoisted(() => vi.fn(() => false))
+const thrownByThirdPartyMock = vi.hoisted(() => vi.fn(() => false))
 vi.mock('~/composables/useSuppressException', () => ({
+  isLocalStack: isLocalStackMock,
+  thrownByThirdParty: thrownByThirdPartyMock,
   suppressException: vi.fn(() => false),
   suppressSentryEvent: vi.fn(() => false),
 }))
@@ -245,6 +249,118 @@ describe('plugins/sentry.client', () => {
       expect(
         options.beforeSend(event, { originalException: new Error('pa') })
       ).toBe(event)
+    })
+  })
+
+  // Sentry MODTOOLS: 2,033 events in the 14 days to 2026-11-11 came from
+  // *.localhost stacks labelled production.
+  describe('beforeSend from a local or CI stack', () => {
+    afterEach(() => {
+      isLocalStackMock.mockReturnValue(false)
+      vi.restoreAllMocks()
+    })
+
+    it('logs the exception to the console but does not send it', async () => {
+      isLocalStackMock.mockReturnValue(true)
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      await runPlugin()
+      const options = mockInit.mock.calls[0][0]
+
+      const result = options.beforeSend(
+        { extra: {}, exception: {} },
+        { originalException: new Error('boom') }
+      )
+
+      expect(result).toBeNull()
+      expect(isLocalStackMock).toHaveBeenCalledWith(window.location)
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Exception for Sentry]: (Error: boom)',
+        expect.anything()
+      )
+    })
+  })
+
+  describe('beforeSend for an error thrown inside a third-party script', () => {
+    afterEach(() => {
+      thrownByThirdPartyMock.mockReturnValue(false)
+      vi.restoreAllMocks()
+    })
+
+    it('does not send it', async () => {
+      thrownByThirdPartyMock.mockReturnValue(true)
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      await runPlugin()
+      const options = mockInit.mock.calls[0][0]
+      const event = { extra: {}, exception: {} }
+
+      expect(
+        options.beforeSend(event, { originalException: new Error('pa') })
+      ).toBeNull()
+      expect(thrownByThirdPartyMock).toHaveBeenCalledWith(event)
+    })
+  })
+
+  // Sentry's own matching: a string matches anywhere in the message, a RegExp
+  // is tested against it.
+  describe('ignoreErrors', () => {
+    async function ignored(message) {
+      await runPlugin()
+      const { ignoreErrors } = mockInit.mock.calls[0][0]
+      return ignoreErrors.some((pattern) =>
+        typeof pattern === 'string'
+          ? message.includes(pattern)
+          : pattern.test(message)
+      )
+    }
+
+    it.each([
+      'Error: Object Not Found Matching Id:2, MethodName:update, ParamCount:4',
+      'UnhandledRejection: Non-Error promise rejection captured with value: Object Not Found Matching Id:3, MethodName:update, ParamCount:4',
+      'Error: Invalid call to runtime.sendMessage(). Tab not found.',
+      'Error: AbortError: The play() request was interrupted by a call to pause(). https://goo.gl/LdLk22',
+      'AbortError: The play() request was interrupted by end of playback.',
+      'AbortError: signal is aborted without reason',
+      'Error: AbortError: The operation was aborted.',
+      'TypeError: Load failed (api.btloader.com)',
+    ])('ignores %s', async (message) => {
+      expect(await ignored(message)).toBe(true)
+    })
+
+    it.each([
+      'TypeError: Load failed (www.ilovefreegle.org)',
+      'TypeError: Load failed (delivery.ilovefreegle.org)',
+      'TypeError: Load failed (modtools.org)',
+      "TypeError: Cannot read properties of undefined (reading 'lat')",
+    ])('still reports %s', async (message) => {
+      expect(await ignored(message)).toBe(false)
+    })
+  })
+
+  describe('beforeSendTransaction', () => {
+    afterEach(() => {
+      isLocalStackMock.mockReturnValue(false)
+      delete window.navigator.webdriver
+    })
+
+    it('drops performance data from a local stack and from automation', async () => {
+      await runPlugin()
+      const { beforeSendTransaction } = mockInit.mock.calls[0][0]
+      const transaction = { type: 'transaction' }
+
+      expect(beforeSendTransaction(transaction)).toBe(transaction)
+
+      isLocalStackMock.mockReturnValue(true)
+      expect(beforeSendTransaction(transaction)).toBeNull()
+
+      isLocalStackMock.mockReturnValue(false)
+      Object.defineProperty(window.navigator, 'webdriver', {
+        value: true,
+        configurable: true,
+      })
+      expect(beforeSendTransaction(transaction)).toBeNull()
     })
   })
 })

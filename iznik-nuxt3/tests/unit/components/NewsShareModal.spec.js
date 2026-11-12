@@ -25,10 +25,6 @@ vi.mock('@/stores/mobile', () => ({
   useMobileStore: () => mockMobileStore,
 }))
 
-vi.mock('vue-social-sharing', () => ({
-  default: {},
-}))
-
 vi.mock('@capacitor/share', () => ({
   Share: {
     share: vi.fn().mockResolvedValue(undefined),
@@ -84,7 +80,7 @@ describe('NewsShareModal', () => {
           'b-list-group-item': {
             template: '<div class="b-list-group-item"><slot /></div>',
           },
-          ShareNetwork: {
+          ShareLink: {
             template:
               '<div class="share-network" :data-network="network"><slot /></div>',
             props: ['network', 'url', 'title', 'description', 'hashtags'],
@@ -222,7 +218,7 @@ describe('NewsShareModal', () => {
             },
             'b-list-group': { template: '<div />' },
             'b-list-group-item': { template: '<div />' },
-            ShareNetwork: { template: '<div />' },
+            ShareLink: { template: '<div />' },
             'v-icon': { template: '<span />' },
           },
         },

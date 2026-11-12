@@ -438,4 +438,30 @@ describe('loadLeaflet', () => {
     await loadLeaflet()
     expect(window.L).toBe(existing)
   })
+
+  // The vue-leaflet plugin pins window.L before any page asks for Leaflet, so the extensions
+  // cannot depend on window.L being unset. Without wicket-leaflet, Wkt.toObject() throws
+  // "this.construct[this.type]" (Sentry NUXT3-DS5).
+  it('still adds the extensions when window.L was pinned first', async () => {
+    vi.resetModules()
+    const { loadLeaflet: fresh } = await import('~/composables/useMap')
+    const pinned = {
+      Map: { mergeOptions: vi.fn(), addInitHook: vi.fn() },
+      Handler: { extend: vi.fn(() => class {}) },
+      DomEvent: { on: vi.fn(), off: vi.fn() },
+      DomUtil: { addClass: vi.fn(), removeClass: vi.fn(), hasClass: vi.fn() },
+    }
+    window.L = pinned
+    delete window.Wkt
+
+    await fresh()
+
+    expect(window.L).toBe(pinned)
+    expect(pinned.Map.mergeOptions).toHaveBeenCalledTimes(1)
+    expect(window.Wkt).toBeTruthy()
+
+    await fresh()
+
+    expect(pinned.Map.mergeOptions).toHaveBeenCalledTimes(1)
+  })
 })

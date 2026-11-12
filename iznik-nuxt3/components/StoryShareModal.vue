@@ -29,7 +29,7 @@
           class="flex-wrap"
         >
           <b-list-group-item>
-            <ShareNetwork
+            <ShareLink
               network="facebook"
               :url="story.url"
               :title="'Sharing ' + story.headline"
@@ -40,10 +40,10 @@
               <b-button variant="secondary" class="mt-1 facebook">
                 <v-icon :icon="['fab', 'facebook']" /> Facebook
               </b-button>
-            </ShareNetwork>
+            </ShareLink>
           </b-list-group-item>
           <b-list-group-item>
-            <ShareNetwork
+            <ShareLink
               network="twitter"
               :url="story.url"
               :title="'Sharing ' + story.headline"
@@ -54,10 +54,10 @@
               <b-button variant="secondary" class="mt-1 twitter">
                 <v-icon :icon="['fab', 'twitter']" /> X
               </b-button>
-            </ShareNetwork>
+            </ShareLink>
           </b-list-group-item>
           <b-list-group-item>
-            <ShareNetwork
+            <ShareLink
               network="whatsapp"
               :url="story.url"
               :title="'Sharing ' + story.headline"
@@ -68,10 +68,10 @@
               <b-button variant="secondary" class="mt-1 whatsapp">
                 <v-icon :icon="['fab', 'whatsapp']" /> Whatsapp
               </b-button>
-            </ShareNetwork>
+            </ShareLink>
           </b-list-group-item>
           <b-list-group-item>
-            <ShareNetwork
+            <ShareLink
               network="email"
               :url="story.url"
               :title="'Sharing ' + story.headline"
@@ -82,7 +82,7 @@
               <b-button variant="secondary" class="mt-1 gmail">
                 <v-icon icon="envelope" /> Email
               </b-button>
-            </ShareNetwork>
+            </ShareLink>
           </b-list-group-item>
           <b-list-group-item>
             <b-button
@@ -108,12 +108,10 @@
 // There are a bunch of icons we need only rarely.  By requiring them here we avoid
 // requiring them in the vue-awesome plugin.  That makes them available everywhere - but
 // increases the bundle size.  Putting them here allows better bundling.
-import VueSocialSharing from 'vue-social-sharing'
 import { ref, computed } from 'vue'
 import { Share } from '@capacitor/share'
 import { useStoryStore } from '~/stores/stories'
 import { useOurModal } from '~/composables/useOurModal'
-import { useNuxtApp } from '#app'
 import { useMobileStore } from '@/stores/mobile' // APP
 
 const props = defineProps({
@@ -130,11 +128,6 @@ const bump = ref(0)
 const mobileStore = useMobileStore()
 
 const isApp = ref(mobileStore.isApp) // APP
-
-// We install this plugin here rather than from the plugins folder to reduce page load side in the mainline
-// case.
-const nuxtApp = useNuxtApp()
-nuxtApp.vueApp.use(VueSocialSharing)
 
 try {
   await storyStore.fetch(props.id, true)

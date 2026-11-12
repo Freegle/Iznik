@@ -533,8 +533,9 @@ export const useAuthStore = defineStore('auth', {
             }
           }
         } catch (e) {
-          // 401/404 means our JWT is genuinely invalid — BaseAPI already clears
-          // auth for 401.  Any other error (500, network timeout) is a server
+          // 401/404 means our JWT is genuinely invalid, and nothing else clears it:
+          // BaseAPI leaves auth alone on every 401, so it is wiped below when no
+          // user came back.  Any other error (500, network timeout) is a server
           // problem — the JWT may still be valid so we must not wipe it.
           // A network failure has no status at all ("Too many retries, give
           // up" when the app resumes before its connection is back), and must
