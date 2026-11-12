@@ -20,7 +20,7 @@ for its nearby-freegler queries.
 
 ## Datasets
 
-The index is rebuilt from MySQL and kept in sync. Eight datasets are served:
+The index is rebuilt from the source database (MySQL, or PostgreSQL when `SPATIAL_SOURCE_ENGINE=postgres`) and kept in sync. Eight datasets are served:
 
 | Name | Geometry | Source table | Spatial column | Sync |
 |------|----------|--------------|----------------|------|
@@ -124,8 +124,17 @@ read `results[0].id`.
 | `MYSQL_USER` | `iznik` | MySQL username |
 | `MYSQL_PASSWORD` | `iz` | MySQL password |
 | `MYSQL_DBNAME` | `iznik` | Database name |
+| `SPATIAL_SOURCE_ENGINE` | `mysql` | Which database the indexes are built from: `mysql` or `postgres` |
+| `PGSQL_HOST` | `postgres` | PostgreSQL host (only when the engine is `postgres`) |
+| `PGSQL_PORT` | `5432` | PostgreSQL port |
+| `PGSQL_USERNAME` | `root` | PostgreSQL username |
+| `PGSQL_PASSWORD` | `iznik` | PostgreSQL password |
+| `PGSQL_DATABASE` | `iznik` | PostgreSQL database name |
 
-CLI flag: `-rebuild` forces a full rebuild from MySQL on startup (otherwise
+The MYSQL_* settings apply to the MySQL source and the PGSQL_* ones to the PostgreSQL source; see
+[`database-engines.md`](../docs/developers/reference/database-engines.md) for how the loaders differ by engine.
+
+CLI flag: `-rebuild` forces a full rebuild from the source database on startup (otherwise
 existing on-disk indexes are reopened).
 
 ---

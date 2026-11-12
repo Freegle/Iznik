@@ -15,12 +15,12 @@ func (d *NewsfeedDataset) Name() string { return "newsfeed" }
 func (d *NewsfeedDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *NewsfeedDataset) DeltaInterval() time.Duration   { return 2 * time.Minute }
 
-func (d *NewsfeedDataset) Load(mysqlDB *sql.DB, idx *Index) error {
-	return loadNewsfeed(mysqlDB, idx, "")
+func (d *NewsfeedDataset) Load(srcDB *sql.DB, idx *Index) error {
+	return loadNewsfeed(srcDB, idx, "")
 }
 
-func (d *NewsfeedDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
-	rows, err := mysqlDB.Query(`
+func (d *NewsfeedDataset) ApplyDelta(srcDB *sql.DB, idx *Index, since time.Time) error {
+	rows, err := srcQuery(srcDB, `
 		SELECT id, ST_X(position) AS lng, ST_Y(position) AS lat,
 		       COALESCE(type, '') AS type, COALESCE(userid, 0) AS userid, deleted
 		FROM newsfeed
@@ -89,7 +89,7 @@ func (d *NewsfeedDataset) Within(idx *Index, params QueryParams) ([]int64, error
 	return ids, nil
 }
 
-func loadNewsfeed(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
+func loadNewsfeed(srcDB *sql.DB, idx *Index, extraWhere string) error {
 	query := `
 		SELECT id, ST_X(position) AS lng, ST_Y(position) AS lat, COALESCE(type, '') AS type, COALESCE(userid, 0) AS userid
 		FROM newsfeed
@@ -98,7 +98,7 @@ func loadNewsfeed(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 		  AND position IS NOT NULL
 	` + extraWhere
 
-	rows, err := mysqlDB.Query(query)
+	rows, err := srcQuery(srcDB, query)
 	if err != nil {
 		return fmt.Errorf("newsfeed load query: %w", err)
 	}

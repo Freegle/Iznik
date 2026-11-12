@@ -55,7 +55,7 @@ func (s *datasetState) swapIndex(newIdx *Index) {
 // withIndex would reject the seed with errIndexNotReady. Lazily create an empty
 // in-memory index here: upsert populates it immediately, so KNN never sees a
 // 0-row index by this path, and the production guards that refuse to SERVE an
-// empty index built from MySQL (rebuild/startupLoad) are untouched. In-memory
+// empty index built from the source database (rebuild/startupLoad) are untouched. In-memory
 // keeps it off disk, so it can't be adopted by a later startupLoad and can't
 // race a rebuild's file rename.
 func (s *datasetState) ensureIndex() error {
@@ -72,17 +72,17 @@ func (s *datasetState) ensureIndex() error {
 	return nil
 }
 
-// server manages all datasets and the MySQL connection.
+// server manages all datasets and the connection to the source database.
 type server struct {
 	datasets map[string]*datasetState
-	mysqlDB  *sql.DB
+	srcDB    *sql.DB
 	idxDir   string
 }
 
-func newServer(mysqlDB *sql.DB, idxDir string, datasets []Dataset) *server {
+func newServer(srcDB *sql.DB, idxDir string, datasets []Dataset) *server {
 	srv := &server{
 		datasets: make(map[string]*datasetState, len(datasets)),
-		mysqlDB:  mysqlDB,
+		srcDB:    srcDB,
 		idxDir:   idxDir,
 	}
 	for _, ds := range datasets {
@@ -117,7 +117,7 @@ func (srv *server) rebuild(name string) error {
 		return fmt.Errorf("%s: create index: %w", name, err)
 	}
 
-	if err := state.ds.Load(srv.mysqlDB, newIdx); err != nil {
+	if err := state.ds.Load(srv.srcDB, newIdx); err != nil {
 		newIdx.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("%s: load: %w", name, err)
@@ -186,7 +186,7 @@ func (srv *server) rebuild(name string) error {
 	// datasets, record that baseline so the next CheckDrift compares against the
 	// freshly-built state rather than re-triggering on the change we just healed.
 	if dc, ok := state.ds.(DriftChecker); ok {
-		if err := dc.NoteReconciled(srv.mysqlDB); err != nil {
+		if err := dc.NoteReconciled(srv.srcDB); err != nil {
 			log.Printf("spatial-server: %s note-reconciled failed: %v", name, err)
 		}
 	}
@@ -215,7 +215,7 @@ func (srv *server) checkAndRebuildOnDrift(name string, state *datasetState) bool
 	var reason string
 	err := state.withIndex(func(idx *Index) error {
 		var e error
-		need, reason, e = dc.CheckDrift(srv.mysqlDB, idx)
+		need, reason, e = dc.CheckDrift(srv.srcDB, idx)
 		return e
 	})
 	switch {
@@ -245,7 +245,7 @@ func (srv *server) rebuildAll() {
 	}
 }
 
-// startupLoad opens existing indexes or builds them from MySQL.
+// startupLoad opens existing indexes or builds them from the source database.
 func (srv *server) startupLoad(forceRebuild bool) {
 	for name, state := range srv.datasets {
 		if forceRebuild {
@@ -261,7 +261,7 @@ func (srv *server) startupLoad(forceRebuild bool) {
 			// An on-disk index can open cleanly yet be empty — e.g. a previous
 			// build was interrupted or produced 0 rows. Adopting it would report
 			// ready with count 0 and silently serve wrong results, so verify it
-			// has rows; if not, discard it and rebuild from MySQL.
+			// has rows; if not, discard it and rebuild from the source database.
 			if n, cErr := existing.CountRows(); cErr == nil && n > 0 {
 				state.idx = existing
 				// Resume deltas from the index's own persisted sync point (zero
@@ -333,7 +333,7 @@ func (srv *server) startScheduler() {
 				// 20:53, and the row stayed stale despite ticking deltas).
 				tickStart := time.Now()
 				err := s.withIndex(func(idx *Index) error {
-					if err := s.ds.ApplyDelta(srv.mysqlDB, idx, since); err != nil {
+					if err := s.ds.ApplyDelta(srv.srcDB, idx, since); err != nil {
 						return err
 					}
 					return idx.SetMetaTime("last_sync", tickStart)
@@ -361,7 +361,7 @@ func (srv *server) idxPath(name string) string {
 	// the duplicate WhatJobs postings — Discourse 9363). A pre-company on-disk index
 	// would be adopted at startup and dedup on (", title) — collapsing distinct
 	// employers — until the next nightly/swap rebuild. Bumping the filename means a
-	// deploy can't find the old index and rebuilds once from MySQL with `company`.
+	// deploy can't find the old index and rebuilds once from the source database with `company`.
 	if name == "jobs" {
 		return srv.idxDir + "/" + name + ".v2.db"
 	}

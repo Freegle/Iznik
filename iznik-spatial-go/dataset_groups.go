@@ -21,10 +21,11 @@ func (d *GroupsDataset) Name() string { return "groups" }
 func (d *GroupsDataset) RebuildInterval() time.Duration { return 15 * time.Minute }
 func (d *GroupsDataset) DeltaInterval() time.Duration   { return 0 }
 
-func (d *GroupsDataset) Load(mysqlDB *sql.DB, idx *Index) error {
-	rows, err := mysqlDB.Query(`
-		SELECT id, ST_AsWKB(polyindex) AS wkb, nameshort
-		FROM ` + "`groups`" + `
+func (d *GroupsDataset) Load(srcDB *sql.DB, idx *Index) error {
+	dl := dialectOf(srcDB)
+	rows, err := srcQuery(srcDB, `
+		SELECT id, `+dl.asWKB("polyindex")+` AS wkb, nameshort
+		FROM `+dl.quote("groups")+`
 		WHERE publish = 1 AND listable = 1
 		  AND polyindex IS NOT NULL
 	`)

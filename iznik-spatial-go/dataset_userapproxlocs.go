@@ -15,8 +15,8 @@ func (d *UserApproxLocsDataset) Name() string { return "userapproxlocs" }
 func (d *UserApproxLocsDataset) RebuildInterval() time.Duration { return 15 * time.Minute }
 func (d *UserApproxLocsDataset) DeltaInterval() time.Duration   { return 0 }
 
-func (d *UserApproxLocsDataset) Load(mysqlDB *sql.DB, idx *Index) error {
-	rows, err := mysqlDB.Query(`SELECT userid, lng, lat FROM users_approxlocs WHERE lng IS NOT NULL AND lat IS NOT NULL`)
+func (d *UserApproxLocsDataset) Load(srcDB *sql.DB, idx *Index) error {
+	rows, err := srcQuery(srcDB, `SELECT userid, lng, lat FROM users_approxlocs WHERE lng IS NOT NULL AND lat IS NOT NULL`)
 	if err != nil {
 		return fmt.Errorf("userapproxlocs load query: %w", err)
 	}

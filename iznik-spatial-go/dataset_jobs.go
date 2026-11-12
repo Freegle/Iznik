@@ -49,13 +49,13 @@ func (d *JobsDataset) Name() string { return "jobs" }
 func (d *JobsDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *JobsDataset) DeltaInterval() time.Duration   { return 5 * time.Minute }
 
-func (d *JobsDataset) Load(mysqlDB *sql.DB, idx *Index) error {
-	return loadJobs(mysqlDB, idx, "")
+func (d *JobsDataset) Load(srcDB *sql.DB, idx *Index) error {
+	return loadJobs(srcDB, idx, "")
 }
 
-func (d *JobsDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
-	rows, err := mysqlDB.Query(`
-		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, visible, COALESCE(company, '') AS company, COALESCE(bodyhash, '') AS bodyhash
+func (d *JobsDataset) ApplyDelta(srcDB *sql.DB, idx *Index, since time.Time) error {
+	rows, err := srcQuery(srcDB, `
+		SELECT id, `+dialectOf(srcDB).asWKB("geometry")+` AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, visible, COALESCE(company, '') AS company, COALESCE(bodyhash, '') AS bodyhash
 		FROM jobs
 		WHERE seenat > ?
 	`, since.UTC())
@@ -179,14 +179,14 @@ func (d *JobsDataset) Within(idx *Index, params QueryParams) ([]int64, error) {
 	return ids, nil
 }
 
-func loadJobs(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
+func loadJobs(srcDB *sql.DB, idx *Index, extraWhere string) error {
 	query := `
-		SELECT id, ST_AsWKB(geometry) AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, COALESCE(company, '') AS company, COALESCE(bodyhash, '') AS bodyhash
+		SELECT id, ` + dialectOf(srcDB).asWKB("geometry") + ` AS wkb, COALESCE(title, '') AS title, COALESCE(city, '') AS city, cpc, COALESCE(company, '') AS company, COALESCE(bodyhash, '') AS bodyhash
 		FROM jobs
 		WHERE ` + jobsLiveFilter + `
 	` + extraWhere
 
-	rows, err := mysqlDB.Query(query)
+	rows, err := srcQuery(srcDB, query)
 	if err != nil {
 		return fmt.Errorf("jobs load query: %w", err)
 	}
@@ -239,7 +239,7 @@ func loadJobs(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 // text. The empty string is returned for an empty table (MAX over no rows).
 func (d *JobsDataset) jobsMaxSeen(db *sql.DB) (string, error) {
 	var s sql.NullString
-	if err := db.QueryRow(`SELECT CAST(MAX(seenat) AS CHAR) FROM jobs`).Scan(&s); err != nil {
+	if err := srcQueryRow(db, dialectOf(db).maxSeenat()).Scan(&s); err != nil {
 		return "", err
 	}
 	return s.String, nil
@@ -255,7 +255,7 @@ func (d *JobsDataset) jobsMaxSeen(db *sql.DB) (string, error) {
 // count is answered from the index alone.
 func (d *JobsDataset) liveCount(db *sql.DB) (int64, error) {
 	var n int64
-	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM jobs WHERE visible = 1 AND cpc >= %.2f`, minJobsCPC)).Scan(&n)
+	err := srcQueryRow(db, fmt.Sprintf(`SELECT COUNT(*) FROM jobs WHERE visible = 1 AND cpc >= %.2f`, minJobsCPC)).Scan(&n)
 	return n, err
 }
 

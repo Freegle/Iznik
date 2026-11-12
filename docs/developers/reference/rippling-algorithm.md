@@ -1695,7 +1695,8 @@ that tracing into a ~130m coarse raster anyway (§How a read surface must ask th
 question), so the stored precision is parsed once and thrown away. `overflow_cells`
 mirrors `overflow_bounds`' nesting and JSON paths exactly, with each ring's WKT replaced
 by base64 cell bytes, so `iznik-spatial-go` asks for a lane with the identical
-`JSON_EXTRACT` it always used. It builds that lane's coarse raster from the cells when
+`JSON_EXTRACT` it always used (on a PostgreSQL source the same path string goes to
+`jsonb_path_query_first`; see `database-engines.md`). It builds that lane's coarse raster from the cells when
 they are there and parses the WKT when they are not - **per lane**, so a partly-converted
 table is a normal state rather than a migration window. The coarse raster itself is
 unchanged at 192 cells and ~9KB a ring: the cells replace the *parse*, not the

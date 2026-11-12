@@ -938,12 +938,25 @@ services:
       percona:
         condition: service_healthy
         required: false
+      # Waited for so a PostgreSQL-sourced service does not build its first indexes before the
+      # database accepts connections. Absent when the database profile is not running.
+      postgres:
+        condition: service_healthy
+        required: false
     restart: "no"
     environment:
       - MYSQL_HOST=percona
       - MYSQL_PORT=3306
       - MYSQL_USER=root
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      # The database the indexes are built from: mysql, or postgres which reads the PGSQL_* settings
+      # below. The service's tests run against both engines and read both sets.
+      - SPATIAL_SOURCE_ENGINE=${SPATIAL_SOURCE_ENGINE:-mysql}
+      - PGSQL_HOST=${PGSQL_HOST:-postgres}
+      - PGSQL_PORT=${PGSQL_PORT:-5432}
+      - PGSQL_DATABASE=${PGSQL_DATABASE:-iznik}
+      - PGSQL_USERNAME=${PGSQL_USERNAME:-root}
+      - PGSQL_PASSWORD=${PGSQL_PASSWORD:-iznik}
       - SPATIAL_INDEX_DIR=/data
       - SPATIAL_PORT=8194
       - SPATIAL_ADMIN_PORT=8195

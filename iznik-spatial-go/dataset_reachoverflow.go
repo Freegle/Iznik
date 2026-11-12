@@ -103,15 +103,17 @@ func overflowLaneOrder() []string {
 	return paths
 }
 
-// overflowSelect builds the SELECT list that pulls every lane's cells in one
+// overflowSelectFor builds the SELECT list that pulls every lane's cells in one
 // pass over the row. Reading the whole overflow_cells column instead would
-// move the same bytes and then re-walk the JSON in Go; asking MySQL for each
+// move the same bytes and then re-walk the JSON in Go; asking the database for each
 // path costs one keyed extraction per lane and returns NULL for the lanes a
 // post does not carry (most of them).
-func overflowSelect() (cols string, args []interface{}) {
+//
+// The paths are bound parameters, in lane order, on both engines.
+func overflowSelectFor(dl sourceDialect) (cols string, args []interface{}) {
 	var parts []string
 	for _, path := range overflowLaneOrder() {
-		parts = append(parts, "JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?))")
+		parts = append(parts, dl.jsonText("overflow_cells", "?"))
 		args = append(args, path)
 	}
 	return strings.Join(parts, ", "), args
@@ -130,7 +132,7 @@ func newOverflowRowScan(laneCount int) overflowRowScan {
 	}
 }
 
-// scanDest is the destination list matching overflowSelect's column order:
+// scanDest is the destination list matching overflowSelectFor's column order:
 // the caller's own leading columns, then all lanes' cells.
 func (r *overflowRowScan) scanDest(leading ...interface{}) []interface{} {
 	dest := make([]interface{}, 0, len(leading)+len(r.cells))
@@ -213,11 +215,11 @@ func buildOverflowItems(r overflowRowScan, lanes []string) []Item {
 // has_overflow is the generated, indexed flag for "this row carries rings", so
 // the scan touches ~4,400 rows of a 17GB table rather than all 52,000 - the
 // distinction that keeps a rebuild off the cluster's back.
-func (d *ReachOverflowDataset) Load(mysqlDB *sql.DB, idx *Index) error {
+func (d *ReachOverflowDataset) Load(srcDB *sql.DB, idx *Index) error {
 	lanes := overflowLaneOrder()
-	cols, args := overflowSelect()
+	cols, args := overflowSelectFor(dialectOf(srcDB))
 
-	rows, err := mysqlDB.Query(
+	rows, err := srcQuery(srcDB,
 		"SELECT msgid, "+cols+" FROM rippling_reach WHERE has_overflow = 1 AND status != 'held'",
 		args...)
 	if err != nil {
@@ -296,9 +298,9 @@ func (d *ReachOverflowDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 // The delta deliberately looks at ALL changed rows, not just those still
 // carrying rings: a post whose rings were removed is exactly the case that must
 // produce deletions, and filtering on has_overflow would hide it.
-func (d *ReachOverflowDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
+func (d *ReachOverflowDataset) ApplyDelta(srcDB *sql.DB, idx *Index, since time.Time) error {
 	lanes := overflowLaneOrder()
-	cols, args := overflowSelect()
+	cols, args := overflowSelectFor(dialectOf(srcDB))
 	args = append(args, since.UTC())
 
 	// has_overflow (generated, indexed) bounds this to rows that actually carry
@@ -306,7 +308,7 @@ func (d *ReachOverflowDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since tim
 	// the tick reads a couple of megabytes instead of every changed row's ~0.8MB
 	// of ring WKT. A post that LOSES its rings drops out of this filter and is
 	// therefore cleaned up by the reconcile below, not here.
-	rows, err := mysqlDB.Query(
+	rows, err := srcQuery(srcDB,
 		"SELECT msgid, status, "+cols+
 			" FROM rippling_reach WHERE has_overflow = 1 AND updated_at > ?", args...)
 	if err != nil {
@@ -355,7 +357,7 @@ func (d *ReachOverflowDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since tim
 			touched, upserted, since.Format(time.RFC3339))
 	}
 
-	return d.reconcile(mysqlDB, idx)
+	return d.reconcile(srcDB, idx)
 }
 
 // reconcile diffs the index against the source, for the two reasons the reach
@@ -376,8 +378,8 @@ func (d *ReachOverflowDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since tim
 // removed by the delta the moment it is held; and were one to linger, apiv2
 // re-checks status against MySQL before admitting anyone (rippling.liveMsgids),
 // so the index is not the thing standing between a held post and a reader.
-func (d *ReachOverflowDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
-	rows, err := mysqlDB.Query("SELECT msgid FROM rippling_reach WHERE has_overflow = 1")
+func (d *ReachOverflowDataset) reconcile(srcDB *sql.DB, idx *Index) error {
+	rows, err := srcQuery(srcDB, "SELECT msgid FROM rippling_reach WHERE has_overflow = 1")
 	if err != nil {
 		return fmt.Errorf("reachoverflow reconcile ids: %w", err)
 	}

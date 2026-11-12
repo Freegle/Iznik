@@ -93,13 +93,16 @@ var (
 	unionColPresent bool
 )
 
-func gridColumnsPresent(mysqlDB *sql.DB) bool {
+// reachColumnProbe counts the rippling_reach columns of that name in the source's current schema.
+func reachColumnProbe(srcDB *sql.DB, column string) string {
+	return `SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = ` + dialectOf(srcDB).currentSchema() + ` AND table_name = 'rippling_reach' AND column_name = '` + column + `'`
+}
+
+func gridColumnsPresent(srcDB *sql.DB) bool {
 	gridColsOnce.Do(func() {
 		var n int
-		if err := mysqlDB.QueryRow(
-			`SELECT COUNT(*) FROM information_schema.columns
-			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'polygon_cells'`,
-		).Scan(&n); err == nil {
+		if err := srcQueryRow(srcDB, reachColumnProbe(srcDB, "polygon_cells")).Scan(&n); err == nil {
 			gridColsPresent = n > 0
 		}
 		if !gridColsPresent {
@@ -107,23 +110,20 @@ func gridColumnsPresent(mysqlDB *sql.DB) bool {
 		}
 		// Same once: does the union-readiness column exist? Decides which
 		// retirement predicate reachSelect compiles (see retiredExpr).
-		if err := mysqlDB.QueryRow(
-			`SELECT COUNT(*) FROM information_schema.columns
-			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'origin_union_secs'`,
-		).Scan(&n); err == nil {
+		if err := srcQueryRow(srcDB, reachColumnProbe(srcDB, "origin_union_secs")).Scan(&n); err == nil {
 			unionColPresent = n > 0
 		}
 	})
 	return gridColsPresent
 }
 
-func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
-	if !gridColumnsPresent(mysqlDB) {
+func (d *ReachDataset) Load(srcDB *sql.DB, idx *Index) error {
+	if !gridColumnsPresent(srcDB) {
 		return InsertItems(idx, nil, nil)
 	}
 	// Load ALL non-held statuses; held rows are simply absent (the delta
 	// re-adds them if released).
-	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.status != 'held'`))
+	rows, err := srcQuery(srcDB, reachSelect(`WHERE rr.status != 'held'`))
 	if err != nil {
 		return fmt.Errorf("reach load query: %w", err)
 	}
@@ -196,11 +196,11 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 // ApplyDelta upserts reaches modified since `since` and removes newly-held
 // ones. Clips and expansions both arrive as plain updates: the item is
 // rebuilt from the row's current cells, so there is no drift to reconcile.
-func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
-	if !gridColumnsPresent(mysqlDB) {
+func (d *ReachDataset) ApplyDelta(srcDB *sql.DB, idx *Index, since time.Time) error {
+	if !gridColumnsPresent(srcDB) {
 		return nil
 	}
-	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.updated_at > ?`), since.UTC())
+	rows, err := srcQuery(srcDB, reachSelect(`WHERE rr.updated_at > ?`), since.UTC())
 	if err != nil {
 		return fmt.Errorf("reach delta query: %w", err)
 	}
@@ -257,15 +257,15 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 	// the first delta looks back only one interval). The id list is ~52k
 	// bigints ≈ 400KB per tick — cheap — and makes the index converge on the
 	// source within one delta interval regardless of what was missed.
-	return d.reconcile(mysqlDB, idx)
+	return d.reconcile(srcDB, idx)
 }
 
 // reconcile diffs the index's extids against rippling_reach's live msgids:
 // index-only entries are deleted, source-only msgids are fetched and built.
-func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
+func (d *ReachDataset) reconcile(srcDB *sql.DB, idx *Index) error {
 	// Retired rows (grid drained under labels-truth) are OUT of the source
 	// set, so their stale index entries are deleted like any other.
-	rows, err := mysqlDB.Query(`SELECT msgid FROM rippling_reach WHERE status != 'held'
+	rows, err := srcQuery(srcDB, `SELECT msgid FROM rippling_reach WHERE status != 'held'
 		AND NOT (reach_labels IS NOT NULL AND polygon_cells IS NULL)`)
 	if err != nil {
 		return fmt.Errorf("reach reconcile ids: %w", err)
@@ -309,7 +309,7 @@ func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 		if _, ok := indexed[id]; ok {
 			continue
 		}
-		row := mysqlDB.QueryRow(reachSelect(`WHERE rr.msgid = ?`), id)
+		row := srcQueryRow(srcDB, reachSelect(`WHERE rr.msgid = ?`), id)
 		var r reachRawRow
 		if scanErr := row.Scan(&r.msgid, &r.status, &r.cells, &r.retired); scanErr != nil {
 			// Row vanished between the id list and this fetch: fine, next tick.
