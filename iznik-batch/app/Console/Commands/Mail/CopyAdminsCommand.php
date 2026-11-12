@@ -120,6 +120,8 @@ class CopyAdminsCommand extends Command
                     // It is its own column and is never merged into subject or text.
                     'modguidance' => $admin->modguidance,
                     'mjml' => $admin->mjml,
+                    // Whether the local volunteers are named is set once on the suggestion, so every copy keeps it.
+                    'volunteercredits' => $admin->volunteercredits,
                 ]);
 
                 $copied++;
