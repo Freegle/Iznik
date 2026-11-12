@@ -192,6 +192,12 @@ func CreateMerge(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid parameters")
 	}
 
+	// Accepting the offer merges the two accounts, so it follows the same rules as a moderator
+	// merging them directly.
+	if !user.MayMergeAccounts(myid, req.User1, req.User2) {
+		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
+	}
+
 	uid := generateUID()
 
 	db := database.DBConn

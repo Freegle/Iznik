@@ -26,6 +26,9 @@ Admin and Support may merge any two accounts. A moderator may merge two accounts
 moderate both, neither is their own account, and neither is an Admin or Support account. A moderator
 shares a community with themselves, so without the second and third rules they could absorb another
 member's emails and logins, or an Admin's system role, into their own account.
+The same rules apply when a moderator offers a merge (`CreateMerge`, `PUT /api/merge`), because
+accepting the offer merges the accounts. `MayMergeAccounts` in `iznik-server-go/user/user.go`
+holds them for both paths.
 
 All four call the same function, `MergeUsersTx` in `iznik-server-go/user/user.go`. Its first
 argument is the account to discard and its second the account to keep. V1 had a single

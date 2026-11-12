@@ -3255,6 +3255,23 @@ func handleUserUnsubscribe(c *fiber.Ctx, myid uint64, req UserPostRequest) error
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// MayMergeAccounts reports whether myid may merge the two accounts, or offer to. Admin and Support
+// always may. A moderator must moderate both accounts. A moderator merge is for two duplicates of
+// one member: a moderator is always a member of their own community, so they pass the moderation
+// test for their own account, and without the further rules they could absorb another member's
+// emails and logins, or an Admin or Support account's role.
+func MayMergeAccounts(myid, id1, id2 uint64) bool {
+	if auth.IsAdminOrSupport(myid) {
+		return true
+	}
+
+	if !(IsModOfUser(myid, id1) && IsModOfUser(myid, id2)) {
+		return false
+	}
+
+	return id1 != myid && id2 != myid && !auth.IsAdminOrSupport(id1) && !auth.IsAdminOrSupport(id2)
+}
+
 // handleMerge merges user id1 (discard) into user id2 (keep).
 // UI text: "merge FROM the first user INTO the second user" → id1=discard, id2=keep.
 // Admin/Support can always merge. Moderators can merge if they moderate both users (V1 parity).
@@ -3310,19 +3327,8 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Cannot merge a user with themselves")
 	}
 
-	// Full permission check: admin/support can always merge; moderators must moderate both users.
-	if !auth.IsAdminOrSupport(myid) {
-		if !(IsModOfUser(myid, uint64(req.ID1)) && IsModOfUser(myid, uint64(req.ID2))) {
-			return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
-		}
-
-		// A moderator merge is for two duplicates of one member. A moderator is always a member of
-		// their own community, so they pass the test above for their own account; without this they
-		// could absorb another member's emails and logins, or an Admin or Support account's role.
-		if uint64(req.ID1) == myid || uint64(req.ID2) == myid ||
-			auth.IsAdminOrSupport(uint64(req.ID1)) || auth.IsAdminOrSupport(uint64(req.ID2)) {
-			return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
-		}
+	if !MayMergeAccounts(myid, uint64(req.ID1), uint64(req.ID2)) {
+		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
 	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
