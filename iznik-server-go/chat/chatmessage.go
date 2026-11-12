@@ -685,8 +685,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 	chattype := utils.CHAT_MESSAGE_DEFAULT
 
-	// modnote flag creates a ModMail message (visible as group volunteer message).
+	// modnote flag creates a ModMail message (visible as group volunteer message). It needs
+	// text; who may send one is checked below, once the chat is known.
 	if payload.Modnote {
+		if payload.Message == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "Message must be non-empty")
+		}
 		chattype = utils.CHAT_MESSAGE_MODMAIL
 	} else if payload.Refmsgid != nil {
 		chattype = utils.CHAT_MESSAGE_INTERESTED
@@ -751,6 +755,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	}
 	db.Table("chat_rooms").Select("COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid, chattype").
 		Where("id = ?", id).Scan(&writeRoom)
+	// A ModMail speaks for the volunteers. A member writing in their own chat is not one, whatever
+	// else they may be elsewhere; the access check above admits anyone else only as a moderator.
+	if payload.Modnote && (writeRoom.User1 == myid || writeRoom.User2 == myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only a volunteer can send a volunteer message")
+	}
 	if writeRoom.Chattype == utils.CHAT_TYPE_USER2USER && writeRoom.User1 != myid && writeRoom.User2 != myid &&
 		(!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User1) ||
 			!modmessaging.MayContactThroughAnyGroup(db, myid, writeRoom.User2)) {
