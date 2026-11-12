@@ -5309,9 +5309,17 @@ class UnifiedDigestServiceTest extends TestCase
 
     public function test_reach_mail_skips_a_trashnothing_member(): void
     {
-        // The daily path leaves out members with a tnuserid: they are a partner's members.
+        // The daily path leaves out members with a tnuserid: they are a partner's members. This
+        // one has a last location inside the reach, so the only thing keeping them out is that.
         [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+        $locationId = (int) DB::table('locations')->insertGetId([
+            'name' => 'TestLocation_' . uniqid('', true),
+            'type' => 'Postcode',
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
         $member->tnuserid = 987654;
+        $member->lastlocation = $locationId;
         $member->save();
 
         $this->assertSame(0, $this->service->mailNewlyReachedForPost($message->id));
