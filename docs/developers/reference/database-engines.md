@@ -23,39 +23,58 @@ the dev container, the schema baseline and its converter, and the routing spike.
 
 The `postgres` service in `docker-compose.yml` (profile `database`) runs `postgis/postgis:18-3.6`:
 PostgreSQL 18 with PostGIS 3.6. Database `iznik`, user `root`, host `postgres` on the compose network.
-The environment names the PHP and Go code already use are `PGSQL_HOST`, `PGSQL_PORT`,
-`PGSQL_DATABASE`, `PGSQL_USERNAME` and `PGSQL_PASSWORD`. Its data is not in memory and not on a
-named volume, so recreating the container empties it; the setup script rebuilds it.
+The Laravel connection `pgsql` (`iznik-batch/config/database.php`) and the spike read `PGSQL_HOST`,
+`PGSQL_PORT`, `PGSQL_DATABASE`, `PGSQL_USERNAME` and `PGSQL_PASSWORD`; the Go API does not read them yet.
+Its data is not in memory and not on a named volume, so recreating the container empties it; the setup
+script rebuilds it.
+
+The CircleCI orb starts this service in both Phase 1 starts, and three compose services wait on it
+(`condition: service_healthy`, not required). CI therefore pulls and starts the PostgreSQL 18 image on every
+run. No CI job uses the database yet, and the MySQL path and its test results are unchanged.
 
 ## Building both engines
 
-`scripts/setup-test-database.sh` builds MySQL as it always did. Set `PG_ENGINE=1` and it then calls
-`scripts/setup-pg-database.sh`, which builds two PostgreSQL databases from the baseline:
-`iznik` and `iznik_go_test`, both schema only. There are no PostgreSQL fixtures yet. Without
-`PG_ENGINE=1` the PostgreSQL code is never reached, so CI is unaffected.
+`scripts/setup-test-database.sh` builds MySQL as it always did. When the PostgreSQL container is running it
+then calls `scripts/setup-pg-database.sh`, which builds two PostgreSQL databases from the baseline:
+`iznik` and `iznik_go_test`, both schema only. There are no PostgreSQL fixtures yet.
+
+- `PG_ENGINE` unset: build if the container is running. A failure is a loud warning and MySQL is still
+  ready, so the MySQL path cannot be broken by the second engine.
+- `PG_ENGINE=1`: build, and fail the script if it cannot. The PostgreSQL CI job will set this.
+- `PG_ENGINE=0`: skip.
 
 ```bash
-COMPOSE_PROJECT_NAME=freegle-<name> PG_ENGINE=1 ./scripts/setup-test-database.sh
+COMPOSE_PROJECT_NAME=freegle-<name> ./scripts/setup-test-database.sh
 COMPOSE_PROJECT_NAME=freegle-<name> ./scripts/setup-pg-database.sh   # PostgreSQL only
 ```
 
-A database that already has tables is left alone. `PG_REBUILD=1` drops and rebuilds it. As with the
+A database that already has tables is left alone. `PG_REBUILD=1` drops and rebuilds it. The baseline
+loads in one transaction, so a failed load leaves an empty database that the next run rebuilds. As with the
 MySQL setup, always set `COMPOSE_PROJECT_NAME`, or the script targets the main instance.
 
 ## The schema baseline
 
 There is one PostgreSQL baseline, `iznik-batch/database/postgres/baseline.sql`. It is generated, never
 edited. The Laravel migrations stay the source of truth, and are not rewritten and not run on
-PostgreSQL. The converter reads a `mysqldump --no-data` of the migrated schema, so the two
-engines cannot drift: change a migration, regenerate, commit the result.
+PostgreSQL. The converter reads a `mysqldump --no-data` of the migrated schema, so the baseline can
+be rebuilt from the migrations at any time: change a migration, regenerate, commit the result.
+`--check` regenerates to a temporary file and fails if the committed baseline differs, which is how a
+stale baseline is found. No CI job runs it yet (see the end of this page), so run it before pushing a
+migration.
 
 ```bash
-COMPOSE_PROJECT_NAME=freegle-<name> tools/pg-schema/regenerate.sh
+COMPOSE_PROJECT_NAME=freegle-<name> tools/pg-schema/regenerate.sh           # rewrite the baseline
+COMPOSE_PROJECT_NAME=freegle-<name> tools/pg-schema/regenerate.sh --check   # is it stale?
+DUMP_FILE=/path/to/mysqldump.sql tools/pg-schema/regenerate.sh              # from a dump you already have
 ```
 
 `tools/pg-schema/convert.mjs` is plain Node with no packages. It stops with an error on anything it
-does not recognise (a column attribute, a table option, FULLTEXT, a view, a check constraint, a
-function it has no translation for) so a new kind of MySQL DDL is a decision and never a guess. The
+does not recognise (a column attribute, a table option, FULLTEXT, a check constraint, a trigger, an
+event, a view, table partitioning, a function in a generated column it has no translation for) so a new
+kind of MySQL DDL is a decision and never a guess. It finds triggers, events, views and partitioning
+through mysqldump's version comments (`/*!50003 ... */`) as well as plain SQL. Stored functions and
+procedures are the one exception: they are named in the report and skipped, because the four there are
+ported by hand. The
 baseline also records every existing migration in the `migrations` table, so Laravel sees the
 baseline as already applied.
 
@@ -69,7 +88,7 @@ Counts are for the baseline as generated on 2026-11-12 (297 tables).
 | `tinyint`, `tinyint(1)` | `smallint` | Code compares these with `= 1`; a boolean would break every such comparison. |
 | `mediumint`, `year` | `integer`, `smallint` | |
 | `decimal(p,s)`, `double`, `float` | `numeric(p,s)`, `double precision`, `real` | |
-| `varchar(n)`, `char(n)` | same | |
+| `varchar(n)`, `char(n)` | same | A column that becomes `citext` has no length, so it gets a `CHECK (char_length(col) <= n)` named `<table>_<column>_length`. |
 | `text`, `mediumtext`, `longtext` | `text` | |
 | `blob`, `mediumblob`, `longblob` | `bytea` | |
 | `json` | `jsonb` | Decided: jsonb indexes the paths the code extracts. |
@@ -78,7 +97,8 @@ Counts are for the baseline as generated on 2026-11-12 (297 tables).
 | `timestamp` | `timestamptz` | Both are stored as UTC and shown in the session zone. Connections must set the session time zone to UTC. |
 | `datetime` | `timestamp` | Both are literal, with no zone. |
 | `DEFAULT CURRENT_TIMESTAMP` | same | |
-| `timestamp ... ON UPDATE CURRENT_TIMESTAMP` | a `BEFORE UPDATE` trigger | MySQL moves the column only when the row really changed and the statement did not set it itself. The trigger does the same. Generated columns are left out of the comparison. |
+| `timestamp ... ON UPDATE CURRENT_TIMESTAMP` | a `BEFORE UPDATE` trigger | The trigger moves the column when the row really changed and the column kept its old value. A statement that sets the column to a different value keeps it, as in MySQL. A statement that sets it to its current value (`SET ts = ts`, or a GORM `Save` of a loaded row) is moved here and left alone in MySQL: a trigger cannot tell that from not naming the column. Generated columns are left out of the comparison. |
+| `DEFAULT CURRENT_TIMESTAMP`, the trigger, `timestamp` | microseconds | MySQL `timestamp` without an argument keeps whole seconds; `timestamptz` keeps microseconds. Code that compares a stored time with a value cut to the second needs a look. |
 | zero-date default (`'0000-00-00 00:00:00'`) | `'1970-01-01 00:00:00+00'` | PostgreSQL has no zero date. One column has it (`communityevents_dates.end`). |
 | `AUTO_INCREMENT` | `GENERATED BY DEFAULT AS IDENTITY` | Explicit ids are still allowed, which the fixtures use. `iznik_reset_identities()` moves each sequence past the largest id after a load. |
 | generated column `VIRTUAL` or `STORED` | `STORED` | MySQL allows an index on a virtual column; PostgreSQL does not. Expressions go through a short allowlist (`md5`, `lower`, `upper`, `coalesce`, `ifnull`, `if`), and `if()` becomes `CASE`. |
@@ -112,6 +132,19 @@ wrong answer or an error the code has never seen.
   a missing `NOT NULL` column and truncates long strings. PostgreSQL refuses all three. `stats.type` once held
   1.8 million `''` rows this way. Expect new errors where the code never set a column or sent a bad value.
 - **Case sensitivity** of every text column that is not `citext`, in `=`, `LIKE`, `ORDER BY` and `GROUP BY`.
+  This includes the generated column `messages_outcomes.feedback`, whose `comments NOT IN (...)` test was
+  case-insensitive in MySQL and is case-sensitive here.
+- **Accents and trailing spaces.** MySQL's `utf8mb4_unicode_ci` treats `e` and `é` as equal and ignores trailing
+  spaces in `=`. `citext` folds case only, so a lookup that relied on either matches differently.
+- **Enum values** are matched case-insensitively in MySQL (`'Approved'` is stored as `approved`). The `CHECK` is
+  exact, so a value in the wrong case is refused.
+- **Column names are case-sensitive once quoted.** MySQL ignores the case of a column name. These 14 columns keep a
+  mixed-case name and so need quoting in raw SQL, and an unquoted `TransactionID` is read as `transactionid` and
+  fails: `users_donations.Payer`, `PayerDisplayName`, `TransactionID`, `GrossAmount`, `TransactionType`;
+  `memberships.ourPostingStatus`; `memberships_yahoo.yahooAlias`, `yahooPostingStatus`, `yahooDeliveryType`;
+  `users.yahooUserId`; `messages_isochrones.activeUsers`; `messages_deadlines.FOP`;
+  `os_county_electoral_division_region.OGR_FID` and `SHAPE`. Words PostgreSQL reserves (`from`, `to`,
+  `user`, `group`, `end`, `default`, `primary`) are quoted in the baseline and need it in raw SQL too.
 - **Sort order** of text follows the database collation, not MySQL's. `ENUM` columns sort by position in MySQL and
   alphabetically here, so any `ORDER BY` on an enum needs a look.
 - **`LAST_INSERT_ID()` and `res.LastInsertId()`** do not exist; use `RETURNING id`.
@@ -201,6 +234,6 @@ return postgres.New(postgres.Config{Conn: sql.OpenDB(fc)}), fc, nil
 
 ## Not yet done
 
-PostgreSQL fixtures, the Go and Laravel suites on PostgreSQL, the stored functions, a CI job for the
-converter and a check that the committed baseline matches a fresh conversion, and the spatial benchmark are
-later steps in the plan.
+PostgreSQL fixtures, the Go and Laravel suites on PostgreSQL, the stored functions, a CI job that runs the
+converter and PostgreSQL tests and `regenerate.sh --check` (it needs the orb changed), and the spatial
+benchmark are later steps in the plan.
