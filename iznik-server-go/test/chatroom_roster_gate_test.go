@@ -13,8 +13,8 @@ import (
 )
 
 // TestChatRosterUpdateRequiresParticipantOrMod covers the fix for the mod-chat roster IDOR (H2):
-// a logged-in user who is neither a participant of a User2Mod/Mod2Mod chat nor a system moderator
-// must not be able to read or forge its roster via POST /chatrooms. The room's own participant is
+// a logged-in user who is neither a participant of a User2Mod/Mod2Mod chat nor a moderator of its
+// group must not be able to read or forge its roster via POST /chatrooms. The room's own participant is
 // still allowed.
 func TestChatRosterUpdateRequiresParticipantOrMod(t *testing.T) {
 	prefix := uniquePrefix("RosterGate")

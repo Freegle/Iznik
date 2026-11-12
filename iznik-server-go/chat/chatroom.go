@@ -1615,19 +1615,24 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPostRequest) error {
 	// Verify user can see this chat and is a legitimate member
 	var room ChatRoom
-	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", req.ID).Scan(&room)
+	db.Table("chat_rooms").Select("id, chattype, COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2").Where("id = ?", req.ID).Scan(&room)
 	if room.ID == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": strconv.FormatUint(req.ID, 10) + " Not visible to you"})
 	}
+
+	var groupid uint64
+	db.Table("chat_rooms").Select("COALESCE(groupid, 0)").Where("id = ?", req.ID).Scan(&groupid)
 
 	// Permission check - prevent client bugs from inserting mods into User2User chats
 	canUpdate := false
 	switch room.Chattype {
 	case utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_GROUP, utils.CHAT_TYPE_MOD2MOD:
-		// SECURITY: the caller must be a participant of the room or a platform (system-role)
-		// moderator. Without this any authenticated user could read/forge the roster of an
-		// arbitrary modmail or mod-team chat simply by guessing its (small, sequential) id.
-		canUpdate = (myid == room.User1 || myid == room.User2 || auth.IsSystemMod(myid))
+		// SECURITY: the caller must be a participant of the room, a moderator of the room's own
+		// group, or Support/Admin. Without this any authenticated user could read/forge the roster
+		// of an arbitrary modmail or mod-team chat simply by guessing its (small, sequential) id,
+		// and a roster row on a Mod2Mod chat is what makes its mail reach that user.
+		canUpdate = canSeeChatRoom(myid, room.User1, room.User2, groupid, room.Chattype) &&
+			mod2ModAllowed(myid, room.Chattype, groupid)
 	case utils.CHAT_TYPE_USER2USER:
 		canUpdate = (myid == room.User1 || myid == room.User2)
 	}
