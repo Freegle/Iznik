@@ -21,7 +21,11 @@ class CommunityNewsPlacesTest extends TestCase
         parent::setUp();
         // Same reason as CommunityNewsAreaServiceTest: opt-out means the seeded
         // groups would otherwise flood every count.
-        DB::statement("UPDATE " . Sql::table('groups') . " SET settings = JSON_SET(COALESCE(settings, '{}'), '$.communitynews', 0)");
+        foreach (DB::table('groups')->get(['id', 'settings']) as $g) {
+            $settings = json_decode($g->settings ?? '{}', true) ?: [];
+            $settings['communitynews'] = 0;
+            DB::table('groups')->where('id', $g->id)->update(['settings' => json_encode($settings)]);
+        }
         DB::table('places')->delete();
     }
 

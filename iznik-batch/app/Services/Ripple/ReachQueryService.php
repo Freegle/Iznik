@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Sql;
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Point;
 use App\Database\Expressions\StContains;
@@ -305,7 +306,7 @@ class ReachQueryService
             $selects = [];
             $params = [];
             foreach ($paths as $i => $path) {
-                $selects[] = "JSON_CONTAINS_PATH($laneColumn, 'one', ?) AS p$i";
+                $selects[] = Sql::jsonHasPath($laneColumn, '?') . " AS p$i";
                 $params[] = $path;
             }
             $params[] = $msgid;
