@@ -3500,6 +3500,20 @@ func actingOnHomeGroup(db *gorm.DB, msgid uint64, acting []uint64) bool {
 	return false
 }
 
+// queueFreebieAlertsRemoveIfNotLive takes a post off freebiealerts.app once it is no longer
+// Approved on any community.
+func queueFreebieAlertsRemoveIfNotLive(db *gorm.DB, msgid uint64) {
+	var live int64
+	db.Clauses(dbresolver.Write).Table("messages_groups").
+		Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).Count(&live)
+	if live > 0 {
+		return
+	}
+	if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{"msgid": msgid}); err != nil {
+		log.Printf("Failed to queue freebie alerts remove for message %d: %v", msgid, err)
+	}
+}
+
 // handleBackToPending moves an approved message back to pending.
 func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -3581,6 +3595,8 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		ctx.Groupid = gid
 		logAndNotifyMods(db, flog.LOG_SUBTYPE_HOLD, ctx, myid, req.ID, 0, "Back to pending")
 	}
+
+	queueFreebieAlertsRemoveIfNotLive(db, req.ID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -4027,6 +4043,8 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	if err := tx.Commit().Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction commit failed")
 	}
+
+	queueFreebieAlertsRemoveIfNotLive(db, req.ID)
 
 	// Clear deadline if it's in the past or today — an old deadline is no longer
 	// relevant when reposting and would cause the message to appear expired.
