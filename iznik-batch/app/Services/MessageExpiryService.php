@@ -346,6 +346,18 @@ SQL;
      */
     protected function processMessageExpiry(int $msgid): void
     {
+        // The candidate list is built once and walked afterwards, so the post may have been
+        // completed (any outcome other than Expired) or promised since. Leave it alone then.
+        $completed = DB::table('messages_outcomes')
+            ->where('msgid', $msgid)
+            ->where('outcome', '!=', MessageOutcome::OUTCOME_EXPIRED)
+            ->exists();
+        $promised = DB::table('messages_promises')->where('msgid', $msgid)->exists();
+
+        if ($completed || $promised) {
+            return;
+        }
+
         DB::table('messages_outcomes_intended')->where('msgid', $msgid)->delete();
         DB::table('messages_outcomes')->where('msgid', $msgid)->delete();
 
