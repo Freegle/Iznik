@@ -94,7 +94,7 @@ class ChatReviewService
                AND reviewrejected = 0
                AND chat_messages_held.id IS NULL
              GROUP BY memberships.groupid
-             ORDER BY ".Sql::expr(new Rand()),
+             ORDER BY ".Sql::render(new Rand()),
             [$threshold]
         );
 

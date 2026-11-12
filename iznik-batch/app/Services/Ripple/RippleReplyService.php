@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Sql;
 use App\Models\ChatMessage;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\FirstReply\Metrics;
@@ -480,7 +481,7 @@ class RippleReplyService
             ->where('h.msgid', $msgid)
             ->where('h.status', 'held')
             // keep-raw: JSON_UNQUOTE(JSON_EXTRACT(...)) has no query-builder equivalent.
-            ->selectRaw("h.*, JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band")
+            ->selectRaw('h.*, ' . Sql::jsonText('u.settings', '$.browseDensityBand') . ' AS density_band')
             ->get();
 
         $released = 0;
@@ -612,15 +613,17 @@ class RippleReplyService
         // but the chat never appears in the list until the hourly recompute. Bump on
         // release, keyed off the message's own date via GREATEST so we never move
         // latestmessage backwards.
-        // keep-raw: GREATEST()/COALESCE() and a multi-table UPDATE...JOIN have no builder form.
-        DB::update(
-            'UPDATE chat_rooms cr ' .
-            'JOIN rippling_held_replies rhr ON rhr.id = ? ' .
-            'JOIN chat_messages cm ON cm.id = rhr.chatmsgid ' .
-            'SET cr.latestmessage = GREATEST(COALESCE(cr.latestmessage, cm.date), cm.date) ' .
-            'WHERE cr.id = rhr.chatid',
-            [$ripplingRowId]
-        );
+        $held = DB::table('rippling_held_replies as rhr')
+            ->join('chat_messages as cm', 'cm.id', '=', 'rhr.chatmsgid')
+            ->where('rhr.id', $ripplingRowId)
+            ->first(['rhr.chatid', 'cm.date']);
+        if ($held !== null) {
+            // keep-raw: GREATEST()/COALESCE() have no builder method.
+            DB::update(
+                'UPDATE chat_rooms SET latestmessage = GREATEST(COALESCE(latestmessage, ?), ?) WHERE id = ?',
+                [$held->date, $held->date, $held->chatid]
+            );
+        }
 
         $this->recordEvent('released');
         $this->recordEvent("released_{$reason}");

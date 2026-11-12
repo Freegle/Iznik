@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Database\JsonTable;
-use App\Database\TemporaryTable;
+use App\Database\Sql;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\Arithmetic;
 use App\Database\Expressions\CaseWhen;
@@ -507,7 +507,7 @@ class AuthorityStatsService
         // temp table, so converting would destroy a same-named permanent
         // table. The raw form's TEMPORARY keyword makes it a no-op against a
         // permanent table - verified: it left one untouched.
-        TemporaryTable::dropIfExists('pc');
+        DB::statement(Sql::dropTemporaryTable('pc'));
         Schema::create('pc', function (Blueprint $table) {
             $table->temporary();
             $table->unsignedBigInteger('locationid');
@@ -628,7 +628,7 @@ class AuthorityStatsService
 
         // keep-raw: see the DROP above - Schema::dropIfExists() can only ever
         // emit a non-TEMPORARY drop.
-        TemporaryTable::dropIfExists('pc');
+        DB::statement(Sql::dropTemporaryTable('pc'));
 
         return $ret;
     }

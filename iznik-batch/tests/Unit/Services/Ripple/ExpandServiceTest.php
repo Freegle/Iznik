@@ -4884,8 +4884,8 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['{"spammers":{"worrywords":"rabbit"}}', 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
         $this->service()->process(false, 500);
@@ -4917,8 +4917,8 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['{"spammers":{"worrywords":"rabbit"}}', 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
         $this->service()->process(false, 500);
@@ -4944,8 +4944,8 @@ class ExpandServiceTest extends TestCase
 
         $fussy = $this->createTestGroup();
         DB::statement(
-            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $fussy->id]
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['{"spammers":{"worrywords":"rabbit"}}', 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $fussy->id]
         );
 
         $relaxed = $this->createTestGroup();
@@ -5034,8 +5034,8 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['{"spammers":{"worrywords":"rabbit"}}', 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
         $this->service()->process(false, 500);

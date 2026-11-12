@@ -171,8 +171,8 @@ class UserApproxLocService
             // NULL, which would silently place the member in the Atlantic.
             // A Trash Nothing member's mylocation is stale V1 data; TN is the master for their
             // location (User::chosenLatLng), so it is not read for them.
-            ->selectRaw('CASE WHEN u.tnuserid IS NULL THEN '.Sql::expr(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.mylocation.lat')))).' END AS myloc_lat')
-            ->selectRaw('CASE WHEN u.tnuserid IS NULL THEN '.Sql::expr(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.mylocation.lng')))).' END AS myloc_lng')
+            ->selectRaw('CASE WHEN u.tnuserid IS NULL THEN '.Sql::render(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.mylocation.lat')))).' END AS myloc_lat')
+            ->selectRaw('CASE WHEN u.tnuserid IS NULL THEN '.Sql::render(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.mylocation.lng')))).' END AS myloc_lng')
             ->get();
     }
 

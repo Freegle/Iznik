@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Sql;
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Point;
 use App\Database\Expressions\StContains;
@@ -184,7 +185,7 @@ class ReachQueryService
             DB::table('rippling_event_metrics')->upsert(
                 [['day' => now()->toDateString(), 'event' => $event, 'count' => 1]],
                 ['day', 'event'],
-                ['count' => DB::raw('count + 1')]
+                ['count' => DB::raw('rippling_event_metrics.count + 1')]
             );
         } catch (\Throwable $e) {
             // Counting must never cost anyone their reply.
@@ -305,7 +306,7 @@ class ReachQueryService
             $selects = [];
             $params = [];
             foreach ($paths as $i => $path) {
-                $selects[] = "JSON_CONTAINS_PATH($laneColumn, 'one', ?) AS p$i";
+                $selects[] = Sql::jsonHasPath($laneColumn, '?') . " AS p$i";
                 $params[] = $path;
             }
             $params[] = $msgid;

@@ -122,10 +122,10 @@ class ExpandService
     private function recordEvent(string $event, int $by = 1): void
     {
         try {
-            DB::statement(
-                'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
-                . 'ON DUPLICATE KEY UPDATE count = count + ?',
-                [$event, $by, $by]
+            DB::table('rippling_event_metrics')->upsert(
+                [['day' => now()->toDateString(), 'event' => $event, 'count' => $by]],
+                ['day', 'event'],
+                ['count' => DB::raw('rippling_event_metrics.count + ' . (int) $by)]
             );
         } catch (\Throwable $e) {
             // best-effort; never affect the expander
@@ -2163,7 +2163,7 @@ class ExpandService
                        -- moderator's decision.
                        SELECT 1 FROM rippling_reach rr
                        WHERE rr.msgid = ?
-                         AND JSON_CONTAINS(COALESCE(rr.rejected_groups, JSON_ARRAY()), CAST(g.id AS JSON))
+                         AND " . Sql::jsonArrayHas('rr.rejected_groups', 'g.id') . "
                    )
                    {$leftAfterRippleSql}
                    AND NOT EXISTS (

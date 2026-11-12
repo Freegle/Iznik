@@ -72,8 +72,8 @@ class MessageIllustrationsService
         // above the mark and is picked up next time rather than skipped.
         $highWater = (int) (DB::table('messages_attachments')->max('id') ?? 0);
 
-        $aiFlag = fn (string $alias) => Sql::expr(new JsonUnquote(new JsonExtract(DB::raw($alias.'.externalmods'), Value::of('$.ai'))));
-        $aiRaw = fn (string $alias) => Sql::expr(new JsonExtract(DB::raw($alias.'.externalmods'), Value::of('$.ai')));
+        $aiFlag = fn (string $alias) => Sql::render(new JsonUnquote(new JsonExtract(DB::raw($alias.'.externalmods'), Value::of('$.ai'))));
+        $aiRaw = fn (string $alias) => Sql::render(new JsonExtract(DB::raw($alias.'.externalmods'), Value::of('$.ai')));
         $aiMine = $aiFlag('ma_ai');
         $realFlag = $aiFlag('ma_real');
         $realRaw = $aiRaw('ma_real');

@@ -21,9 +21,11 @@ class CommunityNewsAreaServiceTest extends TestCase
         // suite ships with must be explicitly opted out or they flood every
         // count (31 areas where a test built 2). Each test then opts its own
         // groups in or out deliberately.
-        DB::statement(
-            "UPDATE " . Sql::table('groups') . " SET settings = JSON_SET(COALESCE(settings, '{}'), '$.communitynews', 0)"
-        );
+        foreach (DB::table('groups')->get(['id', 'settings']) as $g) {
+            $settings = json_decode($g->settings ?? '{}', true) ?: [];
+            $settings['communitynews'] = 0;
+            DB::table('groups')->where('id', $g->id)->update(['settings' => json_encode($settings)]);
+        }
     }
 
     private function svc(): CommunityNewsAreaService

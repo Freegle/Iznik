@@ -86,38 +86,35 @@ class ReplyAttributionBackfillService
              * the attribution CASE rather than referencing the just-assigned columns: in a
              * multi-table UPDATE, MySQL does not guarantee assignments see earlier ones.
              */
-            // keep-raw: a multi-table UPDATE ... JOIN (derived subquery LIMIT {chunk}) whose
-            // SET clause assigns correlated EXISTS(...) subqueries directly as column values
-            // (was_notified, was_ripple_group_member, was_ripple_join, post_had_rippled) and a
-            // CASE WHEN expression (attribution). Correlated-subquery-as-UPDATE-value has no
-            // builder equivalent (Grammar::isExpression only accepts Expression, never a
-            // Builder - a sub-builder passed as a value gets bound as a serialised parameter,
-            // not inlined as SQL), and CASE WHEN in a SET list is unconvertible outright. It
-            // must also stay one atomic statement: splitting into SELECT-then-UPDATE would let
-            // the batch of (msgid,userid) rows and the EXISTS evidence drift apart between the
-            // read and the write, which is exactly the staleness this backfill exists to avoid.
-            $affected = DB::affectingStatement("
-                UPDATE rippling_reply_attribution rra
-                JOIN (
-                    SELECT msgid, userid FROM rippling_reply_attribution
-                    WHERE attribution IS NULL
-                    ORDER BY msgid, userid
-                    LIMIT {$chunk}
-                ) batch ON batch.msgid = rra.msgid AND batch.userid = rra.userid
-                SET
-                    rra.was_notified = EXISTS(
+            // keep-raw: the SET clause assigns correlated EXISTS(...) subqueries and a CASE WHEN directly
+            // as column values; the builder cannot inline a sub-builder as a value. The whole batch must
+            // stay one atomic statement: splitting into SELECT-then-UPDATE would let the batch of
+            // (msgid,userid) rows and the EXISTS evidence drift apart between the read and the write.
+            // The builder's update-with-join renders the join for both engines. A flag column is set from
+            // CASE WHEN ... THEN 1 ELSE 0 END, because PostgreSQL will not store a boolean in a tinyint.
+            $batch = DB::table('rippling_reply_attribution')
+                ->select('msgid', 'userid')
+                ->whereNull('attribution')
+                ->orderBy('msgid')
+                ->orderBy('userid')
+                ->limit($chunk);
+            $flag = static fn (string $condition) => DB::raw('CASE WHEN ' . $condition . ' THEN 1 ELSE 0 END');
+            $affected = DB::table('rippling_reply_attribution as rra')
+                ->joinSub($batch, 'batch', fn ($join) => $join->on('batch.msgid', '=', 'rra.msgid')->on('batch.userid', '=', 'rra.userid'))
+                ->update([
+                    'rra.was_notified' => $flag("EXISTS(
                         SELECT 1 FROM rippling_reach_notified rrn
                         WHERE rrn.msgid = rra.msgid AND rrn.userid = rra.userid
-                          AND rrn.notified_at <= rra.replied_at),
-                    rra.was_ripple_group_member = EXISTS(
+                          AND rrn.notified_at <= rra.replied_at)"),
+                    'rra.was_ripple_group_member' => $flag("EXISTS(
                         SELECT 1 FROM messages_groups mg
                         INNER JOIN memberships mem ON mem.groupid = mg.groupid
                           AND mem.userid = rra.userid AND mem.collection = 'Approved'
                           AND mem.added < mg.arrival
                         WHERE mg.msgid = rra.msgid AND mg.rippled_in = 1
-                          AND mg.deleted = 0 AND mg.arrival <= rra.replied_at),
-                    rra.was_ripple_join = {$rippleJoinOnly},
-                    rra.post_had_rippled = (
+                          AND mg.deleted = 0 AND mg.arrival <= rra.replied_at)"),
+                    'rra.was_ripple_join' => $flag($rippleJoinOnly),
+                    'rra.post_had_rippled' => $flag("(
                         EXISTS(
                             SELECT 1 FROM messages_groups mg2
                             WHERE mg2.msgid = rra.msgid AND mg2.rippled_in = 1
@@ -125,8 +122,8 @@ class ReplyAttributionBackfillService
                         OR EXISTS(
                             SELECT 1 FROM rippling_reach rr
                             WHERE rr.msgid = rra.msgid
-                              AND (rr.created_at IS NULL OR rr.created_at <= rra.replied_at))),
-                    rra.attribution = CASE
+                              AND (rr.created_at IS NULL OR rr.created_at <= rra.replied_at)))"),
+                    'rra.attribution' => DB::raw("CASE
                         WHEN rra.was_home_member = 1 AND NOT {$rippleJoinOnly} THEN 'home'
                         WHEN EXISTS(
                             SELECT 1 FROM rippling_reach_notified rrn2
@@ -141,8 +138,8 @@ class ReplyAttributionBackfillService
                               AND mg3.deleted = 0 AND mg3.arrival <= rra.replied_at) THEN 'ripple_group'
                         WHEN {$rippleJoinOnly} THEN 'ripple_join'
                         ELSE 'unknown'
-                    END
-            ");
+                    END"),
+                ]);
 
             $total += $affected;
 

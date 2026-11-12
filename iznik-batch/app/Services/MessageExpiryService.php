@@ -276,16 +276,16 @@ class MessageExpiryService
         // The scan is bounded to postings that arrived in the last AGE_EXPIRY_LOOKBACK_DAYS
         // (using the arrival index) and returns at most AGE_EXPIRY_BATCH of the oldest each
         // run, so a backlog drains over a few daily runs rather than in one long statement.
-        $num = fn (string $path) => '('.Sql::expr(new JsonNumber(DB::raw('g.settings'), Value::of($path))).' + 0)';
+        $num = fn (string $path) => '('.Sql::render(new JsonNumber(DB::raw('g.settings'), Value::of($path))).' + 0)';
         $jmaxagetoshow = $num('$.maxagetoshow');
         $jreposts_offer = $num('$.reposts.offer');
         $jreposts_max = $num('$.reposts.max');
         $jreposts_wanted = $num('$.reposts.wanted');
-        $lookback = Sql::expr(new DateSub(new Now(), DB::raw('?'), 'DAY'));
-        $oneDayAgo = Sql::expr(new DateSub(new Now(), 1, 'DAY'));
-        $sixDaysAgo = Sql::expr(new DateSub(new Now(), 6, 'DAY'));
+        $lookback = Sql::render(new DateSub(new Now(), DB::raw('?'), 'DAY'));
+        $oneDayAgo = Sql::render(new DateSub(new Now(), 1, 'DAY'));
+        $sixDaysAgo = Sql::render(new DateSub(new Now(), 6, 'DAY'));
         $groups = Sql::table('groups');
-        $ageDays = Sql::expr(new TimestampDiff('DAY', DB::raw('mg.arrival'), new Now()));
+        $ageDays = Sql::render(new TimestampDiff('DAY', DB::raw('mg.arrival'), new Now()));
         $sql = <<<SQL
 SELECT m.id AS msgid, MIN(live.arrival) AS first_arrival
 FROM messages_groups live
