@@ -2,6 +2,7 @@
 
 namespace App\Services\FirstReply;
 
+use App\Database\Spatial;
 use App\Services\Ripple\ReachService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -280,7 +281,7 @@ class MaxReachService
             try {
                 $row = DB::selectOne(
                     'SELECT ST_Contains(ST_GeomFromText(?, ' . self::srid() . '), '
-                    . 'ST_SRID(POINT(?, ?), ' . self::srid() . ')) AS inside',
+                    . Spatial::point('?', '?', self::srid()) . ') AS inside',
                     [(string) $entry['wkt'], $lng, $lat]
                 );
                 if ((int) ($row->inside ?? 0) === 1) {

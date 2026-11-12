@@ -2,6 +2,9 @@
 
 namespace Tests\Unit\Database;
 
+use App\Database\Expressions\MbrContains;
+use App\Database\Expressions\MbrIntersects;
+use App\Database\Expressions\MbrWithin;
 use App\Database\Expressions\Point;
 use App\Database\Expressions\StAsText;
 use App\Database\Expressions\StDistanceSphere;
@@ -94,5 +97,28 @@ class ExpressionsPostgresSpatialTest extends TestCase
 
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 4326);
         $this->assertSame('POINT', $this->evaluate((new StGeometryType($point))->getValue($this->pg)));
+    }
+
+    public function test_the_bounding_box_predicates_render_operators_on_postgresql(): void
+    {
+        $this->assertSame('MBRContains(`a`, `b`)', (new MbrContains('a', 'b'))->getValue($this->mysql));
+        $this->assertSame('MBRWithin(`a`, `b`)', (new MbrWithin('a', 'b'))->getValue($this->mysql));
+        $this->assertSame('MBRIntersects(`a`, `b`)', (new MbrIntersects('a', 'b'))->getValue($this->mysql));
+        $this->assertSame('("a" ~ "b")', (new MbrContains('a', 'b'))->getValue($this->pg));
+        $this->assertSame('("a" @ "b")', (new MbrWithin('a', 'b'))->getValue($this->pg));
+        $this->assertSame('("a" && "b")', (new MbrIntersects('a', 'b'))->getValue($this->pg));
+    }
+
+    public function test_the_bounding_box_predicates_answer_like_mysql_on_postgresql(): void
+    {
+        $outer = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 4326);
+        $inner = new StGeomFromText(Value::of('POLYGON((2 2, 2 4, 4 4, 4 2, 2 2))'), 4326);
+        $far = new StGeomFromText(Value::of('POLYGON((20 20, 20 30, 30 30, 30 20, 20 20))'), 4326);
+
+        $this->assertTrue($this->evaluate((new MbrContains($outer, $inner))->getValue($this->pg)));
+        $this->assertFalse($this->evaluate((new MbrContains($inner, $outer))->getValue($this->pg)));
+        $this->assertTrue($this->evaluate((new MbrWithin($inner, $outer))->getValue($this->pg)));
+        $this->assertTrue($this->evaluate((new MbrIntersects($outer, $inner))->getValue($this->pg)));
+        $this->assertFalse($this->evaluate((new MbrIntersects($outer, $far))->getValue($this->pg)));
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Ripple;
 
+use App\Database\Spatial;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Console\Command;
@@ -78,7 +79,7 @@ class BackfillInnerBoundsCommand extends Command
                         // and ensureUsefulInner never rewrites a useful inner.
                         // keep-raw: ST_GeometryType/ST_Area GIS expressions per single row
                         $row = DB::selectOne(
-                            'SELECT ST_GeometryType(outer_bound) AS outer_type,
+                            'SELECT ' . Spatial::geometryType('outer_bound') . ' AS outer_type,
                                     inner_bound IS NULL AS missing,
                                     COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(outer_bound), 0), 0) AS ratio
                                FROM rippling_reach

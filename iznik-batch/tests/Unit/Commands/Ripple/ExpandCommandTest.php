@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\Ripple;
 
+use App\Database\Sql;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -103,11 +104,11 @@ class ExpandCommandTest extends TestCase
         $g1 = $this->createTestGroup();
         $g2 = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', " . config('freegle.srid') . ") WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET polyindex = ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', " . config('freegle.srid') . ") WHERE id = ?",
             [$g1->id]
         );
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((0.0 51.4,0.2 51.4,0.2 51.6,0.0 51.6,0.0 51.4))', " . config('freegle.srid') . ") WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET polyindex = ST_GeomFromText('POLYGON((0.0 51.4,0.2 51.4,0.2 51.6,0.0 51.6,0.0 51.4))', " . config('freegle.srid') . ") WHERE id = ?",
             [$g2->id]
         );
 

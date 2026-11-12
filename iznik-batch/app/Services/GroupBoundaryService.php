@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Sql;
 use App\Mail\Group\BoundaryErrorMail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -37,7 +38,7 @@ class GroupBoundaryService
                 // is invalid).
                 DB::select(
                     "SELECT ST_Intersection(ST_GeomFromText(polyofficial, ?), COALESCE(simplified, polygon))
-                     FROM `groups`
+                     FROM " . Sql::table('groups') . "
                      INNER JOIN `authorities` ON type = 'Freegle' AND publish = 1 AND onmap = 1
                      WHERE authorities.id = 74579 AND groups.id = ?",
                     [$srid, $group->id]
@@ -50,7 +51,7 @@ class GroupBoundaryService
                     // is invalid).
                     DB::select(
                         "SELECT ST_Intersection(ST_GeomFromText(poly, ?), COALESCE(simplified, polygon))
-                         FROM `groups`
+                         FROM " . Sql::table('groups') . "
                          INNER JOIN `authorities` ON type = 'Freegle' AND publish = 1 AND onmap = 1
                          WHERE authorities.id = 74579 AND groups.id = ?",
                         [$srid, $group->id]

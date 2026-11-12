@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\FirstReply;
 
+use App\Database\Spatial;
 use App\Models\ChatMessage;
 use App\Models\Message;
 use App\Models\User;
@@ -61,7 +62,7 @@ class EngagementServiceTest extends TestCase
 
         DB::statement(
             'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(?, ?), ' . config('freegle.srid') . '), 0, 0, ?, ?, NOW())',
+             VALUES (?, ' . Spatial::point('?', '?', config('freegle.srid')) . ', 0, 0, ?, ?, NOW())',
             [
                 $message->id, $group->lng, $group->lat, $group->id,
                 $attributes['type'] ?? Message::TYPE_OFFER,
