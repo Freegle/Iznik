@@ -3401,7 +3401,9 @@ func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	if remainingGroups == 0 {
 		// Identical golden to
 		// 499057e391e9 (DeleteMessageEndpoint); converted together per gate (h).
-		db.Table("messages").Where("id = ?", req.ID).Update("deleted", gorm.Expr("NOW()"))
+		// The id is released so a redelivery of the same mail is not read as a duplicate of this row.
+		db.Table("messages").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"deleted": gorm.Expr("NOW()"), "messageid": gorm.Expr("NULL")})
 
 		// Remove from freebiealerts.app — post is no longer available on any group.
 		if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
@@ -3409,6 +3411,13 @@ func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}); err != nil {
 			log.Printf("Failed to queue freebie alerts remove for message %d: %v", req.ID, err)
 		}
+	}
+
+	// Record who deleted it, on each community acted on.
+	var fromuser uint64
+	db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&fromuser)
+	for _, gid := range authorizedGroups {
+		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, gid, fromuser, myid, req.ID, 0, "Spam")
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
