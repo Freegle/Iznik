@@ -23,6 +23,35 @@ class MessageExpiryServiceTest extends TestCase
         $this->service = new MessageExpiryService();
     }
 
+    public function test_deadline_expired_post_keeps_its_expired_outcome_so_the_extend_link_can_work(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group);
+        $message->deadline = now()->subDays(1)->format('Y-m-d');
+        $message->save();
+
+        // The 03:00 schedule runs the deadline pass and then the age pass in one command.
+        $this->service->processDeadlineExpired();
+        $this->service->processExpiredFromSpatialIndex();
+
+        // The DeadlineReached email offers Extend, and extending only works by removing an
+        // Expired outcome, so it has to still be there.
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_EXPIRED,
+            'comments' => 'Reached deadline',
+        ]);
+        $this->assertDatabaseMissing('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+        ]);
+    }
+
     public function test_process_deadline_expired_with_no_messages(): void
     {
         $stats = $this->service->processDeadlineExpired();
