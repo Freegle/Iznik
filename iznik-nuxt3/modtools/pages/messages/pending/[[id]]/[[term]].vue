@@ -398,8 +398,8 @@ async function loadMore($state) {
       busy.value = false
 
       if (e?.response?.status === 401) {
-        // Session expired. BaseAPI has already cleared auth state and the
-        // layout will put up the login modal, so say nothing here.
+        // Session expired. BaseAPI leaves auth alone on a 401 from anything but /session,
+        // and the next session check (fetchUser) puts up the login modal, so say nothing here.
         $state.complete()
         return
       }

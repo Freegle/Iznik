@@ -34,6 +34,7 @@ import {
 } from '#imports'
 import SupportLink from '~/components/SupportLink'
 import { useGroupStore } from '~/stores/group'
+import { parseExplorePlace } from '~/composables/useExplorePlace'
 
 const PostMapAndList = defineAsyncComponent(
   () => import('~/components/PostMapAndList')
@@ -56,7 +57,14 @@ useHead(
 )
 
 const groupStore = useGroupStore()
-const place = route.params.place ? JSON.parse(route.params.place) : null
+const place = parseExplorePlace(route.params.place)
+
+// A link we cannot read (cut short, or garbled in transit) goes to the community finder instead
+// of an error page.
+if (!place) {
+  await navigateTo('/explore', { replace: true })
+}
+
 const initialBounds = place && place.bbox ? place.bbox : null
 const minZoom = place?.minZoom
 

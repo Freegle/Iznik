@@ -7,6 +7,7 @@ import (
 	"fmt"
 	neturl "net/url"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -5554,4 +5555,140 @@ func TestSearchUsers_PostcodeStillSupportOnly(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&body)
 	assert.Nil(t, body["users"])
 	assert.Nil(t, body["matches"])
+}
+
+// An address row that belongs to no account must not break the search for everyone else.
+func TestSearchUsers_AddressWithNoAccountDoesNotHideOtherMatches(t *testing.T) {
+	prefix := uniquePrefix("searchorphan")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	_, adminToken := CreateTestSession(t, adminID)
+
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	db.Exec("UPDATE users SET fullname = ? WHERE id = ?", prefix+" findme", targetID)
+
+	orphan := prefix + "_orphan@test.com"
+	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (NULL, ?, ?)", orphan, orphan)
+	t.Cleanup(func() { db.Exec("DELETE FROM users_emails WHERE email = ?", orphan) })
+
+	url := fmt.Sprintf("/api/user/search?q=%s&jwt=%s", prefix, adminToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+
+	found := false
+	for _, u := range result["users"].([]interface{}) {
+		if uint64(u.(float64)) == targetID {
+			found = true
+		}
+	}
+	assert.True(t, found, "the member should still be found when a matching address has no account")
+}
+
+// Several signups for one new address at once (a double-tapped button, a retry) must make one
+// account. Every caller gets an answer that points at it, and no account is left with no
+// address.
+func TestPutUserConcurrentSignupsMakeOneAccount(t *testing.T) {
+	prefix := uniquePrefix("putrace")
+	email := fmt.Sprintf("%s@test.com", prefix)
+	db := database.DBConn
+
+	t.Cleanup(func() {
+		db.Exec("DELETE ul FROM users_logins ul JOIN users u ON u.id = ul.userid WHERE u.lastname = ?", prefix)
+		db.Exec("DELETE FROM users_emails WHERE email = ?", email)
+		db.Exec("DELETE FROM users WHERE lastname = ?", prefix)
+	})
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"email":     email,
+		"password":  "testpass123",
+		"firstname": "Race",
+		"lastname":  prefix,
+	})
+
+	const callers = 6
+	statuses := make([]int, callers)
+	ids := make([]float64, callers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			req := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(payload))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := getApp().Test(req, 10000)
+			if err != nil || resp == nil {
+				return
+			}
+			statuses[i] = resp.StatusCode
+			var result map[string]interface{}
+			json.NewDecoder(resp.Body).Decode(&result)
+			if id, ok := result["id"].(float64); ok {
+				ids[i] = id
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var emailRows int64
+	db.Table("users_emails").Where("email = ?", email).Count(&emailRows)
+	assert.Equal(t, int64(1), emailRows, "one address row")
+
+	var accounts int64
+	db.Table("users").Where("lastname = ?", prefix).Count(&accounts)
+	assert.Equal(t, int64(1), accounts, "one account, none left behind without an address")
+
+	var winner uint64
+	db.Raw("SELECT userid FROM users_emails WHERE email = ?", email).Scan(&winner)
+	for i := 0; i < callers; i++ {
+		assert.Equal(t, fiber.StatusOK, statuses[i], "the right password signs in or creates")
+		assert.Equal(t, float64(winner), ids[i], "every answer points at the one account")
+	}
+}
+
+// An address row with no account (userid NULL) must not block a signup for that address for
+// ever: the signup takes the row over.
+func TestPutUserTakesOverAnAddressWithNoAccount(t *testing.T) {
+	prefix := uniquePrefix("putorphan")
+	email := fmt.Sprintf("%s@test.com", prefix)
+	db := database.DBConn
+
+	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (NULL, ?, ?)", email, email)
+	t.Cleanup(func() {
+		db.Exec("DELETE ul FROM users_logins ul JOIN users u ON u.id = ul.userid WHERE u.lastname = ?", prefix)
+		db.Exec("DELETE FROM users_emails WHERE email = ?", email)
+		db.Exec("DELETE FROM users WHERE lastname = ?", prefix)
+	})
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"email":     email,
+		"password":  "testpass123",
+		"firstname": "Orphan",
+		"lastname":  prefix,
+	})
+	req := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(payload))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	id, _ := result["id"].(float64)
+	assert.NotZero(t, id)
+
+	var rows int64
+	db.Table("users_emails").Where("email = ?", email).Count(&rows)
+	assert.Equal(t, int64(1), rows, "the existing row is taken over, not duplicated")
+
+	var owner uint64
+	db.Raw("SELECT COALESCE(userid, 0) FROM users_emails WHERE email = ?", email).Scan(&owner)
+	assert.Equal(t, uint64(id), owner)
 }

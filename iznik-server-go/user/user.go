@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -29,10 +30,12 @@ import (
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/utils"
+	"github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/plugin/dbresolver"
 )
 
 type Aboutme struct {
@@ -1302,7 +1305,10 @@ func SearchUsers(c *fiber.Ctx) error {
 	// parenthesised UNION is the "table", so it renders verbatim rather than
 	// being quoted as an identifier.
 	db.Table("("+
-		"(SELECT userid FROM users_emails WHERE email LIKE ? OR canon LIKE ? OR backwards LIKE ?) "+
+		// userid is nullable: an address row with no account must not be selected, or its
+		// NULL (which sorts first) makes the whole result fail to scan and the search
+		// comes back empty.
+		"(SELECT userid FROM users_emails WHERE (email LIKE ? OR canon LIKE ? OR backwards LIKE ?) AND userid IS NOT NULL) "+
 		"UNION "+
 		// firstname/lastname and their concatenation as well as fullname: LoveJunk-origin
 		// members have fullname NULL and their name split across the two columns, and the
@@ -2219,6 +2225,20 @@ type UserDeleteRequest struct {
 	ID uint64 `json:"id"`
 }
 
+// errNoNewUserID is returned inside the signup transaction when the insert gave no id back.
+var errNoNewUserID = errors.New("no id returned for the new user")
+
+// isDuplicateEmail is true when err is MySQL's duplicate entry error (1062) on the address
+// key of users_emails. MySQL 8 names the key "users_emails.email"; MySQL 5.7, Percona and
+// MariaDB name it just "email".
+func isDuplicateEmail(err error) bool {
+	var me *mysql.MySQLError
+	if !errors.As(err, &me) || me.Number != 1062 {
+		return false
+	}
+	return strings.Contains(me.Message, "for key 'email'") || strings.Contains(me.Message, "for key 'users_emails.email'")
+}
+
 // PutUser creates a new user (signup).
 //
 // @Summary Create/signup a new user
@@ -2248,11 +2268,10 @@ func PutUser(c *fiber.Ctx) error {
 	emailhygiene.Report(email, "user.PutUser", 0)
 	db := database.DBConn
 
-	// Check if email already exists.
-	var existingUID uint64
-	db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&existingUID)
-
-	if existingUID > 0 {
+	// What to answer when the address already belongs to an account. Used both when the
+	// address is found up front and when another signup for the same address wins the race
+	// between that check and our insert.
+	respondExisting := func(existingUID uint64) error {
 		// Authenticated callers (e.g. moderators using Add Member in ModTools) get the existing
 		// user's ID back — idempotent, mirrors PHP v1 behaviour for mods.
 		myid := WhoAmI(c)
@@ -2280,6 +2299,14 @@ func PutUser(c *fiber.Ctx) error {
 			"ret":    2,
 			"status": "That email is already in use",
 		})
+	}
+
+	// Check if email already exists. userid is nullable, so an address with no account reads as 0.
+	var existingUID uint64
+	db.Table("users_emails").Select("COALESCE(userid, 0)").Where("email = ?", email).Limit(1).Scan(&existingUID)
+
+	if existingUID > 0 {
+		return respondExisting(existingUID)
 	}
 
 	// Build display name from parts.
@@ -2310,33 +2337,10 @@ func PutUser(c *fiber.Ctx) error {
 	// SELECT LAST_INSERT_ID() query, so no connection-pool race. See
 	// test/insertid_gorm_writeback_test.go, which proves this against the
 	// real database.
-	row := map[string]interface{}{
-		"fullname":  fullname,
-		"firstname": firstname,
-		"lastname":  lastname,
-		"added":     gorm.Expr("NOW()"),
-	}
-	if err := db.Table("users").Create(row).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
-	}
-
-	newUserIDInt, _ := row["@id"].(int64)
-	if newUserIDInt == 0 {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new user ID")
-	}
-	newUserID := uint64(newUserIDInt)
-
-	// Add email.
-	canon := CanonicalizeEmail(email)
-	db.Table("users_emails").Create(map[string]interface{}{
-		"userid":    newUserID,
-		"email":     email,
-		"preferred": gorm.Expr("1"),
-		"validated": gorm.Expr("NOW()"),
-		"canon":     canon,
-		"backwards": reverseString(canon),
-	})
-
+	//
+	// The user and its address go in together. users_emails.email is unique, so when two
+	// signups for one address race, the loser's insert fails; inside a transaction that
+	// rolls its user row back too, instead of leaving an account with no address.
 	// Generate random password if none provided (for email-only signup).
 	// The client shows this to the user in the welcome modal.
 	password := req.Password
@@ -2352,13 +2356,114 @@ func PutUser(c *fiber.Ctx) error {
 	h := sha1.New()
 	h.Write([]byte(password + salt))
 	hashed := hex.EncodeToString(h.Sum(nil))
-	db.Table("users_logins").Create(map[string]interface{}{
-		"userid":      newUserID,
-		"type":        utils.LOGIN_TYPE_NATIVE,
-		"uid":         newUserID,
-		"credentials": hashed,
-		"salt":        salt,
-	})
+
+	canon := CanonicalizeEmail(email)
+	var newUserID uint64
+
+	// The password goes in with the account and its address. A signup that loses the race reads
+	// the winner as soon as its address commits and checks the password it was given, so the
+	// password must not arrive later than the address.
+	createLogin := func(tx *gorm.DB) error {
+		return tx.Table("users_logins").Create(map[string]interface{}{
+			"userid":      newUserID,
+			"type":        utils.LOGIN_TYPE_NATIVE,
+			"uid":         newUserID,
+			"credentials": hashed,
+			"salt":        salt,
+		}).Error
+	}
+
+	createUserAndAddress := func() error {
+		// Built afresh each time: GORM writes the new id back into this map.
+		row := map[string]interface{}{
+			"fullname":  fullname,
+			"firstname": firstname,
+			"lastname":  lastname,
+			"added":     gorm.Expr("NOW()"),
+		}
+
+		return db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Table("users").Create(row).Error; err != nil {
+				return err
+			}
+
+			newUserIDInt, _ := row["@id"].(int64)
+			if newUserIDInt == 0 {
+				return errNoNewUserID
+			}
+			newUserID = uint64(newUserIDInt)
+
+			// Insert first. Looking for an orphan to claim before inserting would take a gap
+			// lock on a row that is not there, and two racing signups would deadlock on it.
+			insertErr := tx.Table("users_emails").Create(map[string]interface{}{
+				"userid":    newUserID,
+				"email":     email,
+				"preferred": gorm.Expr("1"),
+				"validated": gorm.Expr("NOW()"),
+				"canon":     canon,
+				"backwards": reverseString(canon),
+			}).Error
+			if insertErr == nil {
+				return createLogin(tx)
+			}
+			if !isDuplicateEmail(insertErr) {
+				return insertErr
+			}
+
+			// The address is already there. If it belongs to no account (userid NULL), take
+			// it over; a failed statement leaves this transaction usable. Otherwise someone
+			// else has it, and the caller answers as for an existing account.
+			claim := tx.Table("users_emails").Where("email = ? AND userid IS NULL", email).Updates(map[string]interface{}{
+				"userid":    newUserID,
+				"preferred": gorm.Expr("1"),
+				"validated": gorm.Expr("NOW()"),
+				"canon":     canon,
+				"backwards": reverseString(canon),
+			})
+			if claim.Error != nil {
+				return claim.Error
+			}
+			if claim.RowsAffected == 0 {
+				return insertErr
+			}
+
+			return createLogin(tx)
+		})
+	}
+
+	// A lost race shows up as a duplicate address, or, when two signups claim the same
+	// orphan row at once, as a deadlock. Either way the other signup has won: answer as if
+	// we had found them in the first place. A deadlock with no winner visible yet gets one
+	// more go.
+	var txErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		txErr = createUserAndAddress()
+		if txErr == nil {
+			break
+		}
+
+		lostRace := isDuplicateEmail(txErr)
+		deadlocked := database.IsDeadlockOrLockTimeout(txErr)
+		if !lostRace && !deadlocked {
+			break
+		}
+
+		var winner uint64
+		// From the write node: a replica may not have the winner's row yet.
+		db.Clauses(dbresolver.Write).Table("users_emails").Select("COALESCE(userid, 0)").Where("email = ?", email).Limit(1).Scan(&winner)
+		if winner > 0 {
+			return respondExisting(winner)
+		}
+		if lostRace {
+			break
+		}
+	}
+	if txErr != nil {
+		if errors.Is(txErr, errNoNewUserID) {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new user ID")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
+	}
 
 	// If groupid provided, add membership.
 	if req.GroupID > 0 {
@@ -3678,7 +3783,10 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	// Table()+Delete(nil) carries no
 	// model, so User.Deleted (a plain *time.Time, not gorm.DeletedAt) can never
 	// turn this into a soft-delete UPDATE.
-	db.Table("users").Where("id = ?", id1).Delete(nil)
+	// A deadlock here would leave the merged-away account behind, so run it again.
+	_ = database.RetryOnDeadlock("merge delete", func() error {
+		return db.Table("users").Where("id = ?", id1).Delete(nil).Error
+	})
 
 	// A moderator's Discourse account may be linked to the account that just went. Move it to the
 	// kept one now, in the background, rather than at their next sign-in, so their email and name

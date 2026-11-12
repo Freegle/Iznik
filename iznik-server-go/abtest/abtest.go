@@ -96,17 +96,19 @@ func PostABTest(c *fiber.Ctx) error {
 		// as the original wrote it, so rate picks up the incremented value.
 		// clause.Assignments(map...) sorts keys alphabetically ("rate" before
 		// "shown"), which would silently swap the order and change the result.
-		db.Table("abtest").Clauses(clause.OnConflict{
-			DoUpdates: clause.Set{
-				{Column: clause.Column{Name: "shown"}, Value: gorm.Expr("shown + 1")},
-				{Column: clause.Column{Name: "rate"}, Value: gorm.Expr("COALESCE(100 * action / shown, 0)")},
-			},
-		}).Create(map[string]interface{}{
-			"uid":     req.UID,
-			"variant": req.Variant,
-			"shown":   gorm.Expr("1"),
-			"action":  gorm.Expr("0"),
-			"rate":    gorm.Expr("0"),
+		_ = database.RetryOnDeadlock("abtest shown", func() error {
+			return db.Table("abtest").Clauses(clause.OnConflict{
+				DoUpdates: clause.Set{
+					{Column: clause.Column{Name: "shown"}, Value: gorm.Expr("shown + 1")},
+					{Column: clause.Column{Name: "rate"}, Value: gorm.Expr("COALESCE(100 * action / shown, 0)")},
+				},
+			}).Create(map[string]interface{}{
+				"uid":     req.UID,
+				"variant": req.Variant,
+				"shown":   gorm.Expr("1"),
+				"action":  gorm.Expr("0"),
+				"rate":    gorm.Expr("0"),
+			}).Error
 		})
 	}
 
@@ -118,17 +120,19 @@ func PostABTest(c *fiber.Ctx) error {
 		// Same reasoning as
 		// 7e75c8eb601d above: rate reads action, which this statement also
 		// assigns, so action must stay first in an explicit ordered Set.
-		db.Table("abtest").Clauses(clause.OnConflict{
-			DoUpdates: clause.Set{
-				{Column: clause.Column{Name: "action"}, Value: gorm.Expr("action + ?", score)},
-				{Column: clause.Column{Name: "rate"}, Value: gorm.Expr("COALESCE(100 * action / shown, 0)")},
-			},
-		}).Create(map[string]interface{}{
-			"uid":     req.UID,
-			"variant": req.Variant,
-			"shown":   gorm.Expr("0"),
-			"action":  score,
-			"rate":    gorm.Expr("0"),
+		_ = database.RetryOnDeadlock("abtest action", func() error {
+			return db.Table("abtest").Clauses(clause.OnConflict{
+				DoUpdates: clause.Set{
+					{Column: clause.Column{Name: "action"}, Value: gorm.Expr("action + ?", score)},
+					{Column: clause.Column{Name: "rate"}, Value: gorm.Expr("COALESCE(100 * action / shown, 0)")},
+				},
+			}).Create(map[string]interface{}{
+				"uid":     req.UID,
+				"variant": req.Variant,
+				"shown":   gorm.Expr("0"),
+				"action":  score,
+				"rate":    gorm.Expr("0"),
+			}).Error
 		})
 	}
 

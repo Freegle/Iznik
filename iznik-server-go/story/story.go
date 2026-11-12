@@ -216,7 +216,7 @@ func canModStory(myid uint64, storyID uint64) bool {
 	db := database.DBConn
 
 	var authorID uint64
-	db.Table("users_stories").Select("userid").Where("id = ?", storyID).Scan(&authorID)
+	db.Table("users_stories").Select("COALESCE(userid, 0)").Where("id = ?", storyID).Scan(&authorID)
 
 	if authorID == 0 {
 		return false

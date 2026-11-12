@@ -66,6 +66,14 @@ var (
 // found out was a member asking why a post three miles away had not reached
 // her.
 func reportEvalUnavailable(reason string) {
+	reportEvalUnavailableAfter(reason, 0, 0)
+}
+
+// reportEvalUnavailableAfter is reportEvalUnavailable with how long the failed call took and
+// how many candidate ids it carried. They go in as Sentry extras, not in the message, so the
+// reports still group together. A call that timed out at the 3s client limit with a thousand
+// ids is a different problem from one that timed out with five.
+func reportEvalUnavailableAfter(reason string, elapsed time.Duration, msgids int) {
 	reachAlertMu.Lock()
 	if !reachAlertLast.IsZero() && time.Since(reachAlertLast) < reachAlertInterval {
 		reachAlertMu.Unlock()
@@ -76,7 +84,13 @@ func reportEvalUnavailable(reason string) {
 
 	msg := "Rippling reach evaluation unavailable: " + reason
 	log.Println(msg)
-	sentry.CaptureMessage(msg)
+	sentry.WithScope(func(scope *sentry.Scope) {
+		if elapsed > 0 {
+			scope.SetExtra("elapsed_ms", elapsed.Milliseconds())
+			scope.SetExtra("msgids", msgids)
+		}
+		sentry.CaptureMessage(msg)
+	})
 }
 
 // RescueUndecided returns the subset of ids whose stored label verdicts the
@@ -202,8 +216,9 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 	}
 	if !roadblur.RoutingHealthy() {
 		// The breaker is open, so nothing is asked and everything downstream
-		// fails open. Keep reporting it: an outage lasts hours, and this is
-		// the only alert during all of them.
+		// fails open. Keep reporting it (throttled to once a minute): the breaker is
+		// shared with blur and drive-time calls, whose failures open it without
+		// reporting anything, so this can be the only alert during an outage.
 		reportEvalUnavailable("routing breaker open")
 		return nil, nil, false
 	}
@@ -227,6 +242,7 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 		}
 		var parsed labelEvalResponse
 		var reason string
+		callStart := time.Now()
 		for attempt := 1; attempt <= labelEvalAttempts; attempt++ {
 			var retry bool
 			parsed, retry, reason = postLabelEval(body)
@@ -236,7 +252,7 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 			time.Sleep(labelEvalRetryDelay)
 		}
 		if reason != "" {
-			reportEvalUnavailable(reason)
+			reportEvalUnavailableAfter(reason, time.Since(callStart), end-start)
 			return nil, nil, false
 		}
 		for _, r := range parsed.Results {

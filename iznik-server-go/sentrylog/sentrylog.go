@@ -92,15 +92,22 @@ func (l logger) Error(ctx context.Context, msg string, data ...interface{}) {
 	if l.LogLevel >= logger2.Error {
 		fmt.Printf(l.errStr+msg, append([]interface{}{utils.FileWithLineNum()}, data...)...)
 		err := fmt.Errorf(l.errStr+msg, append([]interface{}{utils.FileWithLineNum()}, data...)...)
-		sentry.CaptureMessage(err.Error())
+		sentry.CaptureMessage(ScrubMessage(err.Error()))
 	}
 }
 
 // Trace print sql message
 func (l logger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	if err != nil && (!errors.Is(err, ErrRecordNotFound) || !l.IgnoreRecordNotFoundError) {
-		fmt.Println("TRACE ", err.Error())
-		sentry.CaptureMessage(err.Error())
+		if IsDeadlock(err) {
+			// A deadlock is routine on a Galera cluster and says nothing about the
+			// code that hit it. It stays in the log, where its rate can be watched;
+			// Sentry gets the errors a person has to act on.
+			fmt.Println("DEADLOCK ", err.Error())
+		} else {
+			fmt.Println("TRACE ", err.Error())
+			capture(ctx, err, fc)
+		}
 	}
 
 	if l.LogLevel <= logger2.Silent {

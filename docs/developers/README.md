@@ -64,6 +64,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Database read/write split | [../ops/reference/database-read-write-split.md](../ops/reference/database-read-write-split.md) |
 | Index hygiene and schema parity | [../ops/reference/database-index-hygiene.md](../ops/reference/database-index-hygiene.md) |
 | Logging and observability | [../ops/reference/logging.md](../ops/reference/logging.md) |
+| What belongs in Sentry, and the client filters | [./reference/sentry.md](./reference/sentry.md) |
 | Spatial services (plain English) | [./reference/spatial-servers.md](./reference/spatial-servers.md) |
 | Rippling out algorithm | [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md) |
 | Third-party services we depend on | [./reference/external-services.md](./reference/external-services.md) |

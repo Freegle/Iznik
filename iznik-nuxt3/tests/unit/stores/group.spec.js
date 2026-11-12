@@ -184,7 +184,7 @@ describe('group store', () => {
 
       const result = await store.fetch(1)
 
-      expect(mockFetch).toHaveBeenCalledWith(1, expect.any(Function))
+      expect(mockFetch).toHaveBeenCalledWith(1)
       expect(result).toEqual(group)
       expect(store.list[1]).toEqual(group)
     })
@@ -281,23 +281,15 @@ describe('group store', () => {
       expect(result1).toEqual(result2)
     })
 
-    it('calls fetch with error callback function', async () => {
+    it('does not filter errors itself: a missing group is a 404, which is not reported', async () => {
       const store = useGroupStore()
       store.init({})
 
-      let callbackFn
-      mockFetch.mockImplementation((id, cb) => {
-        callbackFn = cb
-        return Promise.resolve({ id: 1, nameshort: 'Group1', settings: {} })
-      })
+      mockFetch.mockResolvedValue({ id: 1, nameshort: 'Group1', settings: {} })
 
       await store.fetch(1)
 
-      expect(callbackFn).toBeDefined()
-      expect(typeof callbackFn).toBe('function')
-      // Verify error callback suppresses ret === 10
-      expect(callbackFn({ ret: 10 })).toBe(false)
-      expect(callbackFn({ ret: 0 })).toBe(true)
+      expect(mockFetch).toHaveBeenCalledWith(1)
     })
 
     it('converts string id to integer', async () => {
@@ -309,7 +301,7 @@ describe('group store', () => {
 
       const result = await store.fetch('123')
 
-      expect(mockFetch).toHaveBeenCalledWith(123, expect.any(Function))
+      expect(mockFetch).toHaveBeenCalledWith(123)
       expect(result.id).toBe(123)
     })
 

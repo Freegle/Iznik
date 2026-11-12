@@ -76,6 +76,7 @@
   </client-only>
 </template>
 <script setup>
+import { explorePlaceLocation } from '~/composables/useExplorePlace'
 import Wkt from 'wicket'
 import { buildHead } from '~/composables/useBuildHead'
 import { useAuthorityStore } from '~/stores/authority'
@@ -153,7 +154,7 @@ function idle(map) {
 
 function explorePlace(place) {
   place.minZoom = 12
-  router.push('/explore/place/' + JSON.stringify(place))
+  router.push(explorePlaceLocation(place))
 }
 </script>
 <style scoped lang="scss">

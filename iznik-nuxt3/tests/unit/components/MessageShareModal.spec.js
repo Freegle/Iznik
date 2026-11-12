@@ -48,12 +48,6 @@ vi.mock('#app', () => ({
   }),
 }))
 
-vi.mock('vue-social-sharing', () => ({
-  default: {
-    install: vi.fn(),
-  },
-}))
-
 vi.mock('@capacitor/share', () => ({
   Share: {
     share: vi.fn().mockResolvedValue(undefined),
@@ -117,7 +111,7 @@ describe('MessageShareModal', () => {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],
           },
-          ShareNetwork: {
+          ShareLink: {
             template:
               '<div class="share-network" :data-network="network" @click="$emit(\'open\')"><slot /></div>',
             props: ['network', 'url', 'title', 'description', 'hashtags'],

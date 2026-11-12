@@ -57,10 +57,6 @@ vi.mock('@capacitor/share', () => ({
   },
 }))
 
-vi.mock('vue-social-sharing', () => ({
-  default: {},
-}))
-
 describe('StoryShareModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -101,7 +97,7 @@ describe('StoryShareModal', () => {
           'b-list-group-item': {
             template: '<div class="b-list-group-item"><slot /></div>',
           },
-          ShareNetwork: {
+          ShareLink: {
             template:
               '<div class="share-network" :data-network="network" @click="$emit(\'open\')"><slot /></div>',
             props: ['network', 'url', 'title', 'description', 'hashtags'],

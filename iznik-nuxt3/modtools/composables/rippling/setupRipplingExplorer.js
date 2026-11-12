@@ -1289,8 +1289,11 @@ export async function setupRipplingExplorer({
       })
       .catch((err) => {
         showStatus('Error: ' + err.message, false)
-        document.getElementById('rippling-stats').innerHTML =
-          `<div class="rpl-tip" style="color:#c00">${err.message}</div>`
+        // The explorer may have been closed while the request was out, taking the panel with it.
+        const statsEl = document.getElementById('rippling-stats')
+        if (statsEl) {
+          statsEl.innerHTML = `<div class="rpl-tip" style="color:#c00">${err.message}</div>`
+        }
       })
   }
 
@@ -1716,6 +1719,8 @@ export async function setupRipplingExplorer({
   const FREEGLER_DOT_MIN_ZOOM = 11
 
   function drawFreeglersLayer() {
+    // The explorer was closed while the freeglers were still loading: there is no map to draw on.
+    if (destroyed || !map) return
     freeglersMarkers.forEach((m) => map.removeLayer(m))
     freeglersMarkers = []
     // Always build the grid so updateFreeglersInside can compute the count and

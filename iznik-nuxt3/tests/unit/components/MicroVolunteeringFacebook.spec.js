@@ -18,10 +18,6 @@ vi.mock('#app', () => ({
   }),
 }))
 
-vi.mock('vue-social-sharing', () => ({
-  default: {},
-}))
-
 describe('MicroVolunteeringFacebook', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -44,7 +40,7 @@ describe('MicroVolunteeringFacebook', () => {
             template: '<span class="v-icon" :data-icon="icon" />',
             props: ['icon'],
           },
-          ShareNetwork: {
+          ShareLink: {
             template:
               '<div class="share-network" :data-network="network" :data-url="url"><slot /></div>',
             props: ['network', 'url', 'title', 'hashtags'],
@@ -80,7 +76,7 @@ describe('MicroVolunteeringFacebook', () => {
       expect(shareBtn.exists()).toBe(true)
     })
 
-    it('renders ShareNetwork component', () => {
+    it('renders ShareLink component', () => {
       const wrapper = createWrapper()
       const shareNetwork = wrapper.find('.share-network')
       expect(shareNetwork.exists()).toBe(true)

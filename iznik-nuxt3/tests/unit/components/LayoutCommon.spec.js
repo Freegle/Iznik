@@ -388,6 +388,7 @@ describe('LayoutCommon', () => {
     }
 
     afterEach(() => {
+      mockAuthStore.auth = { jwt: null }
       Object.defineProperty(document, 'hidden', {
         configurable: true,
         get: () => false,
@@ -395,6 +396,7 @@ describe('LayoutCommon', () => {
     })
 
     it('refetches notifications and chats when the tab becomes visible', async () => {
+      mockMe.value = { id: 3 }
       createWrapper()
       await flushPromises()
       setHidden(false)
@@ -405,6 +407,7 @@ describe('LayoutCommon', () => {
     })
 
     it('re-checks login by fetching the user when the chat refetch fails', async () => {
+      mockMe.value = { id: 3 }
       mockChatStore.fetchChats.mockRejectedValueOnce(new Error('logged out'))
       createWrapper()
       await flushPromises()
@@ -415,6 +418,7 @@ describe('LayoutCommon', () => {
     })
 
     it('does not refetch while the tab is hidden', async () => {
+      mockMe.value = { id: 3 }
       createWrapper()
       await flushPromises()
       setHidden(true)
@@ -423,12 +427,19 @@ describe('LayoutCommon', () => {
       expect(mockNotificationStore.fetchCount).not.toHaveBeenCalled()
     })
 
-    // TODO: latent bug — monitorTabVisibility checks `if (me && !document.hidden)`
-    // where `me` is the ref object itself (always truthy), not `me.value`. So it
-    // refetches notifications/chats on every visibility change even when logged
-    // out. This looks unintended but is left untouched per the coverage-only
-    // scope of this change.
-    it.skip('does not refetch when logged out (currently always refetches - latent bug)', async () => {
+    it('refetches for a member whose user has not loaded yet but who has a session token', async () => {
+      mockMe.value = null
+      mockAuthStore.auth = { jwt: 'a-jwt' }
+      createWrapper()
+      await flushPromises()
+      setHidden(false)
+      document.dispatchEvent(new Event('visibilitychange'))
+      await flushPromises()
+      expect(mockChatStore.fetchChats).toHaveBeenCalled()
+    })
+
+    // A signed-out visitor has no chats or notifications, and asking for them answers 401.
+    it('does not refetch when logged out', async () => {
       mockMe.value = null
       createWrapper()
       await flushPromises()
@@ -436,6 +447,7 @@ describe('LayoutCommon', () => {
       document.dispatchEvent(new Event('visibilitychange'))
       await flushPromises()
       expect(mockNotificationStore.fetchCount).not.toHaveBeenCalled()
+      expect(mockChatStore.fetchChats).not.toHaveBeenCalled()
     })
   })
 

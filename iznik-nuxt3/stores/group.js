@@ -109,17 +109,9 @@ export const useGroupStore = defineStore('group', {
             await this.fetching[id]
             await nextTick()
           } else {
-            this.fetching[id] = api(this.config).group.fetch(
-              id,
-              function (data) {
-                if (data && data.ret === 10) {
-                  // Not hosting a group isn't worth logging.
-                  return false
-                } else {
-                  return true
-                }
-              }
-            )
+            // A group that does not exist answers 404, which is not reported (see
+            // useApiFailurePolicy), so there is nothing to filter here.
+            this.fetching[id] = api(this.config).group.fetch(id)
 
             const group = await this.fetching[id]
             this.fetching[id] = null

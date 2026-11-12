@@ -273,6 +273,12 @@ import { useMe } from '~/composables/useMe'
 import Api from '~/api'
 import { useMobileStore } from '@/stores/mobile' // APP
 import { useLoginTelemetry } from '~/composables/useLoginTelemetry'
+import { socialLoginOutcome } from '~/composables/useSocialLoginOutcome'
+import {
+  googleButtonFailureKind,
+  inAppBrowser,
+} from '~/composables/useGoogleButtonReport'
+import { action } from '~/composables/useClientLog'
 import { flowArm, FlowName } from '~/composables/useFlowTelemetry'
 
 const NoticeMessage = defineAsyncComponent(
@@ -493,7 +499,11 @@ onMounted(() => {
 function socialLoginFailed(provider, message, error, cancelled) {
   socialLoginError.value = message
 
-  if (cancelled) {
+  const outcome = cancelled
+    ? 'cancelled'
+    : socialLoginOutcome(error?.message ?? message)
+
+  if (outcome === 'cancelled') {
     // The member changed their mind. Not a fault.
     return
   }
@@ -502,6 +512,23 @@ function socialLoginFailed(provider, message, error, cancelled) {
 
   if (isApp.value) {
     platform = isiOS.value ? 'ios-app' : 'android-app'
+  }
+
+  if (outcome === 'device') {
+    // This phone cannot sign in with that provider, or this build is misconfigured. Count it in the
+    // logs (a spike is the signal), and leave a breadcrumb so any event that follows has the context.
+    Sentry.addBreadcrumb({
+      category: 'social-login',
+      level: 'warning',
+      message: error?.message ?? message,
+      data: { provider, platform },
+    })
+    action('social_login_device_unavailable', {
+      provider,
+      platform,
+      reason: error?.message ?? message,
+    })
+    return
   }
 
   Sentry.captureException(error instanceof Error ? error : new Error(message), {
@@ -1073,18 +1100,35 @@ function reportGoogleButtonMissing(attempts) {
   // be reproduced afterwards on any browser, connection speed or cache state
   // we could think of, and a report saying only "it happened again" would
   // leave the next one just as unanswerable.
+  const facts = {
+    scriptLoaded: Boolean(window?.google?.accounts?.id),
+    containerPresent: Boolean(document.getElementById('googleLoginButton')),
+    attempts,
+    waitedMs: Date.now() - googleDrawStarted,
+    signUp: signUp.value,
+    // Where the container went: the modal itself, and whether there is more than one button.
+    modalInPage: Boolean(document.getElementById('loginModal')),
+    containerCount: document.querySelectorAll('#googleLoginButton').length,
+    loggedIn: loggedIn.value,
+    forceLogin: forceLogin.value,
+    showModal: showModal.value,
+    instanceId,
+    inAppBrowser: inAppBrowser(window?.navigator?.userAgent),
+  }
+  const kind = googleButtonFailureKind(facts)
+
+  if (kind === 'script_not_loaded') {
+    action('google_button_script_not_loaded', facts)
+    return
+  }
+
   Sentry.captureException(new Error('Google sign-in button did not draw'), {
     tags: {
       social_login_provider: 'google',
       social_login_platform: 'web',
+      google_button_failure: kind,
     },
-    extra: {
-      scriptLoaded: Boolean(window?.google?.accounts?.id),
-      containerPresent: Boolean(document.getElementById('googleLoginButton')),
-      attempts,
-      waitedMs: Date.now() - googleDrawStarted,
-      signUp: signUp.value,
-    },
+    extra: facts,
   })
 }
 
