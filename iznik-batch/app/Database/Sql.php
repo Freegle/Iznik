@@ -22,6 +22,19 @@ final class Sql
         return DB::getQueryGrammar()->wrapTable($table);
     }
 
+    /**
+     * An index hint for a raw FROM clause: "FORCE INDEX (name) " on MySQL, where the optimiser needs steering,
+     * and nothing on PostgreSQL, which has no hints. $kind is FORCE, USE or IGNORE.
+     */
+    public static function indexHint(string $kind, string $index): string
+    {
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            return '';
+        }
+
+        return strtoupper($kind).' INDEX ('.$index.') ';
+    }
+
     public static function col(string $column): string
     {
         return DB::getQueryGrammar()->wrap($column);
