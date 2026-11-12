@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands\User;
 
+use App\Database\Expressions\Regexp;
+use App\Database\Expressions\Value;
 use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -99,7 +101,7 @@ class DetectRelatedAccountsCommand extends Command
             ->whereNotNull('message')
             // Cheap prefilter so the regexes only run on messages that could carry a mobile
             // number or a postcode; the index on date bounds the scan itself.
-            ->where('message', 'REGEXP', '0?7[0-9][0-9 ()-]{8,}|[A-Za-z]{1,2}[0-9][A-Za-z0-9]?[ ]?[0-9][A-Za-z]{2}')
+            ->where(new Regexp('message', Value::of('0?7[0-9][0-9 ()-]{8,}|[A-Za-z]{1,2}[0-9][A-Za-z0-9]?[ ]?[0-9][A-Za-z]{2}')))
             // chunkById, not chunk: chunk pages with OFFSET, which walks further into the
             // table on every page and can skip rows as new chat arrives mid-run.
             ->chunkById(2000, function ($rows) use (&$seen) {

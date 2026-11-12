@@ -3,6 +3,7 @@
 namespace App\Services\Ux;
 
 use Carbon\Carbon;
+use Illuminate\Contracts\Database\Query\Expression;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -20,7 +21,7 @@ use Illuminate\Support\Facades\DB;
  *   FROM (the cohort) c <joins> GROUP BY c.arm, c.stratum
  *
  * A subclass writes types(), words(), guardrails(), joins(), converted() and bad(). They are SQL over
- * the alias c (an exposure row) and the token :window, which is replaced by design.window_hours as a
+ * the alias c (an exposure row) and the token :window (written `INTERVAL :window HOUR` in a date sum), which is replaced by design.window_hours as a
  * whole number before the query is run. A guardrail's base is the members counted. Strata are the
  * exposure's own stratum, and a null stratum is one pooled stratum. A subclass may override counts()
  * or add keys to extra() to show more.
@@ -31,6 +32,12 @@ use Illuminate\Support\Facades\DB;
  */
 abstract class ExposureSource implements UxMetricSource
 {
+    /** An expression rendered for the connection in use, to put in the SQL a subclass writes. */
+    protected static function sql(Expression $expression): string
+    {
+        return (string) $expression->getValue(DB::getQueryGrammar());
+    }
+
     /** SQL joins over the cohort, alias c. Empty when the measure needs none. */
     abstract protected function joins(object $exp): string;
 
@@ -143,6 +150,8 @@ abstract class ExposureSource implements UxMetricSource
             .$this->joins($exp).' GROUP BY c.arm, c.stratum';
         // The window is a whole number from the design, put in as a literal because a named binding
         // cannot be used twice in one prepared statement.
+        // `INTERVAL :window HOUR` becomes the standard `INTERVAL '24' HOUR`, which both MySQL and PostgreSQL read.
+        $sql = str_replace('INTERVAL :window HOUR', "INTERVAL '{$window}' HOUR", $sql);
         $sql = str_replace(':window', (string) $window, $sql);
 
         // keep-raw: one grouped query over the counted cohort and the source's own joins; the query builder cannot express it.

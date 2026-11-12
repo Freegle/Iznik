@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Database\Expressions\CurrentSchema;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -54,7 +55,7 @@ class UxExperimentExposure extends Model
 
         // keep-raw: the schema check Schema::hasTable makes, answered by the write node instead of the read node.
         return $model->getConnection()->selectFromWriteConnection(
-            "select 1 from information_schema.tables where table_schema = schema() and table_name = ? and table_type in ('BASE TABLE', 'SYSTEM VERSIONED') limit 1",
+            "select 1 from information_schema.tables where table_schema = ".(new CurrentSchema)->getValue($model->getConnection()->getQueryGrammar())." and table_name = ? and table_type in ('BASE TABLE', 'SYSTEM VERSIONED') limit 1",
             [$model->getTable()]
         ) !== [];
     }

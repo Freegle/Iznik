@@ -36,7 +36,7 @@ class InterestedReplySource extends ExposureSource
     private const HANDED_OVER = '(EXISTS (SELECT 1 FROM messages_promises p WHERE p.userid = c.userid'
         .' AND p.promisedat >= c.exposed_at AND p.promisedat < c.exposed_at + INTERVAL :window HOUR)'
         .' OR EXISTS (SELECT 1 FROM messages_by b WHERE b.userid = c.userid'
-        .' AND b.`timestamp` >= c.exposed_at AND b.`timestamp` < c.exposed_at + INTERVAL :window HOUR))';
+        .' AND b.timestamp >= c.exposed_at AND b.timestamp < c.exposed_at + INTERVAL :window HOUR))';
 
     public function types(): array
     {
@@ -96,10 +96,10 @@ class InterestedReplySource extends ExposureSource
         // keep-raw: one aggregate over the marks and each mark's first later reply; the query builder cannot express the derived table.
         $row = DB::selectOne(
             "SELECT COUNT(*) AS marks, COUNT(DISTINCT m.userid) AS members,
-                    COALESCE(SUM(m.firstreply IS NOT NULL), 0) AS replied,
-                    COALESCE(SUM(m.firstreply IS NOT NULL AND (m.chasedat IS NULL OR m.firstreply < m.chasedat)), 0) AS replied_before_chase,
-                    COALESCE(SUM(m.firstreply IS NOT NULL AND m.chasedat IS NOT NULL AND m.firstreply >= m.chasedat), 0) AS replied_after_chase,
-                    COALESCE(SUM(m.chasedat IS NOT NULL), 0) AS chased
+                    COALESCE(SUM(CASE WHEN m.firstreply IS NOT NULL THEN 1 ELSE 0 END), 0) AS replied,
+                    COALESCE(SUM(CASE WHEN m.firstreply IS NOT NULL AND (m.chasedat IS NULL OR m.firstreply < m.chasedat) THEN 1 ELSE 0 END), 0) AS replied_before_chase,
+                    COALESCE(SUM(CASE WHEN m.firstreply IS NOT NULL AND m.chasedat IS NOT NULL AND m.firstreply >= m.chasedat THEN 1 ELSE 0 END), 0) AS replied_after_chase,
+                    COALESCE(SUM(CASE WHEN m.chasedat IS NOT NULL THEN 1 ELSE 0 END), 0) AS chased
              FROM (SELECT i.userid, i.chasedat,
                           (SELECT MIN(cm.date) FROM chat_messages cm
                            WHERE cm.userid = i.userid AND cm.type = 'Interested' AND cm.refmsgid = i.msgid AND cm.date >= i.added) AS firstreply

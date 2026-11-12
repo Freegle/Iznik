@@ -88,6 +88,7 @@ class Location extends Model implements Auditable
         }
 
         $srid  = config('freegle.srid', 3857);
+        $groups = DB::getQueryGrammar()->wrapTable('groups');
         $order = implode(',', array_map('intval', $ids));
 
         // Point built from the postcode's own lat/lng as POINT(lng lat) SRID 3857,
@@ -102,7 +103,7 @@ class Location extends Model implements Auditable
              WHERE p.id IN ($order)
                AND p.lat IS NOT NULL AND p.lng IS NOT NULL
                AND ST_Contains(
-                     (SELECT polyindex FROM `groups` WHERE id = ? AND polyindex IS NOT NULL),
+                     (SELECT polyindex FROM {$groups} WHERE id = ? AND polyindex IS NOT NULL),
                      ST_GeomFromText(CONCAT('POINT(', p.lng, ' ', p.lat, ')'), ?)
                    )
              ORDER BY FIELD(p.id, $order)
@@ -143,6 +144,7 @@ class Location extends Model implements Auditable
     {
         $srid     = config('freegle.srid', 3857);
         $pointWkt = "POINT($lng $lat)";
+        $groups   = DB::getQueryGrammar()->wrapTable('groups');
 
         // Polygon-containment check: if the point lies inside one or more group
         // polyindex polygons, those groups are authoritative and beat the centroid-
@@ -151,7 +153,7 @@ class Location extends Model implements Auditable
         // keep-raw: ST_Contains/ST_GeomFromText/haversine() have no builder method.
         $containing = DB::select(
             "SELECT id
-             FROM `groups`
+             FROM {$groups}
              WHERE publish = 1 AND listable = 1
                AND ST_Contains(polyindex, ST_GeomFromText(?, ?))
              ORDER BY haversine(lat, lng, ?, ?) ASC
@@ -167,7 +169,7 @@ class Location extends Model implements Auditable
         // keep-raw: haversine() has no builder method.
         $rows = DB::select(
             "SELECT id
-             FROM `groups`
+             FROM {$groups}
              WHERE publish = 1 AND listable = 1
                AND haversine(lat, lng, ?, ?) < ?
              ORDER BY haversine(lat, lng, ?, ?) ASC

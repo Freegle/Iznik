@@ -39,7 +39,7 @@ class TNBackfillPostSendersCommandTest extends TestCase
         DB::table('messages_history')->insert([
             'msgid'    => $message->id,
             'groupid'  => $group->id,
-            'source'   => Message::SOURCE_EMAIL,
+            'source'   => Message::SOURCE_PLATFORM,
             'fromuser' => $user->id,
             'fromname' => 'Tricia Hayes',
             'subject'  => $message->subject,
