@@ -120,6 +120,22 @@ func assertResultParity(t TestingT, engines []Engine, siteID string, fixture Fix
 	}
 }
 
+// resetAutoIncrement puts MySQL's AUTO_INCREMENT counters back after a rollback. An explicit id above the
+// counter moves the counter past it and a rollback does not move it back, so the ids the rest of the suite
+// is handed by AUTO_INCREMENT climb out of the fixture's range and, many tests later, reach ids a later
+// fixture uses (a user with id IDBase+3001 then exists and the fixture's insert is refused). ALTER TABLE
+// ... AUTO_INCREMENT = 1 sets the counter to one above the highest id left in the table. PostgreSQL's
+// identity columns ignore explicit ids and need nothing.
+func resetAutoIncrement(e Engine, fixture Fixture) {
+	if e.Dialect != MySQL {
+		return
+	}
+	for _, t := range fixture {
+		// keep-raw: DDL, which GORM has no builder for
+		e.DB.Exec("ALTER TABLE `" + t.Table + "` AUTO_INCREMENT = 1")
+	}
+}
+
 // runOn loads the fixture into a transaction on the engine, runs the site, and rolls back.
 func runOn(e Engine, fixture Fixture, run func(db *gorm.DB) any) (result any, failures []string, err error) {
 	rec := &errorRecorder{}
@@ -127,7 +143,10 @@ func runOn(e Engine, fixture Fixture, run func(db *gorm.DB) any) (result any, fa
 	if tx.Error != nil {
 		return nil, nil, fmt.Errorf("beginning a transaction: %w", tx.Error)
 	}
-	defer tx.Rollback()
+	defer func() {
+		tx.Rollback()
+		resetAutoIncrement(e, fixture)
+	}()
 
 	if err := fixture.Load(tx); err != nil {
 		return nil, nil, fmt.Errorf("loading the fixture: %w", err)

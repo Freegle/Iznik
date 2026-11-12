@@ -216,6 +216,9 @@ abstract class TestCase extends BaseTestCase
 
         parent::tearDown();
 
+        // Counters a MySQL parity fixture moved (a no-op for any other test). The test's transaction has ended.
+        \Tests\Support\OrmHarness\EngineParity::resetAutoIncrement();
+
         // After Laravel's flushHandlersState() wiped and re-created handlers,
         // restore the exact stack PHPUnit snapshotted before this test.
         if ($this->phpunitErrorHandlers !== null) {

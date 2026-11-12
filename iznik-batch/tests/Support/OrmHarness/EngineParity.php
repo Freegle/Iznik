@@ -35,6 +35,9 @@ use PHPUnit\Framework\TestCase;
  */
 final class EngineParity
 {
+    /** @var array<string,true> the tables a MySQL fixture has written to since the counters were last reset */
+    private static array $touchedTables = [];
+
     /** The first id a fixture row may use. Other tests create their own rows, so fixtures keep clear. */
     public const ID_BASE = 2000000000;
 
@@ -235,6 +238,11 @@ final class EngineParity
      */
     private static function load(Connection $conn, string $engine, array $fixture): void
     {
+        if ($engine === 'mysql') {
+            foreach ($fixture as $t) {
+                self::$touchedTables[$t['table']] = true;
+            }
+        }
         foreach ($fixture as $t) {
             foreach ($t['rows'] as $i => $row) {
                 if ($row === []) {
@@ -251,6 +259,37 @@ final class EngineParity
                     throw new \RuntimeException("fixture table {$t['table']} row {$i}: ".$e->getMessage(), 0, $e);
                 }
             }
+        }
+    }
+
+    /**
+     * Puts MySQL's AUTO_INCREMENT counters back after the tests that loaded a fixture. An explicit id above
+     * the counter moves the counter past it and a rollback does not move it back, so the ids the rest of the
+     * suite is handed climb out of the fixture's range and can reach the ids a later fixture uses.
+     * ALTER TABLE ... AUTO_INCREMENT = 1 sets the counter to one above the highest id left in the table.
+     *
+     * Called by Tests\TestCase::tearDown after the test's own transaction has ended, on a connection of its
+     * own: an ALTER TABLE on the test's connection would end that transaction, and from any other connection
+     * it would wait for the test's locks. It does nothing unless a MySQL fixture was loaded.
+     */
+    public static function resetAutoIncrement(): void
+    {
+        if (self::$touchedTables === []) {
+            return;
+        }
+        $tables = array_keys(self::$touchedTables);
+        self::$touchedTables = [];
+        try {
+            $pdo = new \PDO(
+                'mysql:host='.(getenv('DB_HOST') ?: 'percona').';port='.(getenv('DB_PORT') ?: '3306').';dbname='.(getenv('DB_DATABASE') ?: 'iznik_batch_test'),
+                getenv('DB_USERNAME') ?: 'root',
+                getenv('DB_PASSWORD') ?: 'iznik'
+            );
+            foreach ($tables as $table) {
+                $pdo->exec('ALTER TABLE `'.str_replace('`', '', $table).'` AUTO_INCREMENT = 1');
+            }
+        } catch (\Throwable) {
+            // The counters stay where they are. Nothing else depends on this.
         }
     }
 }

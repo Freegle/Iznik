@@ -11,7 +11,7 @@
     "retired": 23
   },
   "testFixtures": {
-    "total": 6448,
+    "total": 6457,
     "files": {
       "iznik-server-go/authority/stats_split_test.go": 5,
       "iznik-server-go/chat/chat_test.go": 2,
@@ -23,6 +23,7 @@
       "iznik-server-go/lockdown/lockdown_test.go": 3,
       "iznik-server-go/paf/paf_handlers_test.go": 29,
       "iznik-server-go/parity/fixture.go": 2,
+      "iznik-server-go/parity/resultparity.go": 1,
       "iznik-server-go/test/abtest_tdd_test.go": 6,
       "iznik-server-go/test/abtest_test.go": 8,
       "iznik-server-go/test/address_test.go": 21,
@@ -140,7 +141,7 @@
       "iznik-server-go/test/lockdown_held_test.go": 3,
       "iznik-server-go/test/log_test.go": 10,
       "iznik-server-go/test/logs_test.go": 28,
-      "iznik-server-go/test/main_test.go": 14,
+      "iznik-server-go/test/main_test.go": 20,
       "iznik-server-go/test/matches_test.go": 4,
       "iznik-server-go/test/member_review_orphan_test.go": 8,
       "iznik-server-go/test/membership_added_origin_test.go": 7,
@@ -325,7 +326,7 @@
       "iznik-batch/tests/Feature/Volunteering/VolunteeringMaintenanceServiceTest.php": 2,
       "iznik-batch/tests/Support/HidesExposureTable.php": 1,
       "iznik-batch/tests/Support/LagsTheReadNode.php": 5,
-      "iznik-batch/tests/Support/OrmHarness/EngineParity.php": 3,
+      "iznik-batch/tests/Support/OrmHarness/EngineParity.php": 4,
       "iznik-batch/tests/Support/OrmHarness/ResultParity.php": 1,
       "iznik-batch/tests/Support/SeedsAuthorityStats.php": 1,
       "iznik-batch/tests/Support/SeedsReachCells.php": 1,
@@ -400,7 +401,7 @@
       "iznik-batch/tests/Unit/Services/VisualiseServiceTest.php": 2,
       "iznik-batch/tests/Unit/Services/WhatJobsServiceTest.php": 7,
       "iznik-batch/tests/Unit/Support/TransactionPolicyTest.php": 4,
-      "iznik-batch/tests/bootstrap.php": 1
+      "iznik-batch/tests/bootstrap.php": 2
     }
   },
   "sites": [

@@ -114,8 +114,12 @@ Rows go in insert order, parents first, because the foreign keys are real on bot
 so parallel packages do not wait on each other. Name every NOT NULL column with no default: MySQL here runs
 non-strict and fills one in quietly, and PostgreSQL refuses. `groups.polyindex` is NOT NULL, so a group needs
 `Geometry(...)`, which is labelled 3857 on MySQL and 4326 on PostgreSQL as in the baseline.
-An explicit id also moves a MySQL table's auto-increment counter, and a rollback does not move it back, so later rows
-in that database get ids above 2,000,000,000. That is harmless in a test database.
+An explicit id also moves a MySQL table's auto-increment counter, and a rollback does not move it back. Left alone,
+later rows in that database get ids above 2,000,000,000 and, a thousand rows on, reach the ids a later fixture uses:
+the fixture's insert is then refused as a duplicate. So the harness resets the counter of every table the fixture
+wrote to (`ALTER TABLE ... AUTO_INCREMENT = 1` sets it to one above the highest id left): in Go after each run, in
+Laravel from `Tests\TestCase::tearDown`, on a connection of its own once the test's transaction has ended.
+PostgreSQL identity columns ignore explicit ids and need nothing.
 
 The result is normalised before comparing. Integer widths and floats with no fraction are one number,
 `true` is 1, bytes are text, a time with a zone is the same instant in UTC. NULL is never 0 or an empty
