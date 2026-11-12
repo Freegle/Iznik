@@ -2,7 +2,7 @@
 //
 // Pulls historical (post, replier) records from MySQL directly, no iznik
 // framework dependencies, so it can run anywhere with DB access (e.g. inside
-// the iznik-routing-go container which already has MYSQL_HOST/USER/PASSWORD
+// the iznik-routing-go container which already has the database settings
 // in env).
 //
 // Output JSON matches what cmd/ripplesim expects.
@@ -11,20 +11,21 @@
 //
 //	rippleextract --months=12 --limit=10000 --output=/tmp/ripple_sim_data.json
 //
-// Env required: MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DBNAME.
+// Env: DB_ENGINE (mysql, the default, or postgres). For MySQL: MYSQL_HOST, MYSQL_PORT, MYSQL_USER,
+// MYSQL_PASSWORD, MYSQL_DBNAME. For PostgreSQL: PGSQL_HOST, PGSQL_PORT, PGSQL_USERNAME,
+// PGSQL_PASSWORD, PGSQL_DATABASE.
 package main
 
 import (
 	"database/sql"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/freegle/iznik-routing-go/dbengine"
 )
 
 type Replier struct {
@@ -61,25 +62,17 @@ var (
 	output = flag.String("output", "/tmp/ripple_sim_data.json", "output JSON path")
 )
 
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 func main() {
 	flag.Parse()
 	log.SetFlags(log.Ltime)
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=false&readTimeout=300s",
-		env("MYSQL_USER", "root"),
-		env("MYSQL_PASSWORD", ""),
-		env("MYSQL_HOST", "localhost"),
-		env("MYSQL_PORT", "3306"),
-		env("MYSQL_DBNAME", "iznik"),
-	)
-	db, err := sql.Open("mysql", dsn)
+	engine, err := dbengine.FromEnv()
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	settings := dbengine.SettingsFromEnv(engine, dbengine.Settings{Host: "localhost", User: "root"})
+	dsn := engine.DSN(settings, dbengine.DSNOptions{ParseTime: false, ReadTimeout: 300 * time.Second})
+	db, err := sql.Open(engine.Driver(), dsn)
 	if err != nil {
 		log.Fatalf("open: %v", err)
 	}
@@ -94,19 +87,7 @@ func main() {
 
 	// ----- 1. enumerate candidate post IDs -----
 	log.Printf("step 1: enumerating posts with at least one reply...")
-	q1 := `SELECT m.id
-	         FROM messages m
-	         INNER JOIN messages_spatial ms ON ms.msgid = m.id
-	         WHERE m.arrival >= ?
-	           AND m.type IN ('Offer', 'Wanted')
-	           AND ms.point IS NOT NULL
-	           AND EXISTS (
-	               SELECT 1 FROM chat_messages cm
-	                WHERE cm.refmsgid = m.id
-	                  AND cm.type = 'Interested'
-	                  AND cm.reviewrejected = 0
-	                  AND cm.reviewrequired = 0
-	           )`
+	q1 := sqlCandidates()
 	rows, err := db.Query(q1, cutoff)
 	if err != nil {
 		log.Fatalf("step1 query: %v", err)
@@ -157,24 +138,7 @@ func main() {
 			ph[i] = "?"
 			args[i] = id
 		}
-		q2 := `SELECT m.id,
-		              ST_Y(ms.point) AS lat,
-		              ST_X(ms.point) AS lng,
-		              DATE_FORMAT(m.arrival, '%Y-%m-%d %H:%i:%s') AS arrival,
-		              m.type,
-		              IFNULL(m.fromuser, 0),
-		              mo.outcome,
-		              DATE_FORMAT(mo.timestamp, '%Y-%m-%d %H:%i:%s') AS outcome_at,
-		              tpc.ru_category
-		         FROM messages m
-		         INNER JOIN messages_spatial ms ON ms.msgid = m.id
-		         LEFT JOIN messages_outcomes mo
-		           ON mo.msgid = m.id
-		          AND mo.outcome IN ('Taken','Promised','Withdrawn','Repost')
-		         LEFT JOIN locations l ON l.id = m.locationid AND l.type = 'Postcode'
-		         LEFT JOIN transport_postcode_classification tpc
-		           ON tpc.postcode = REPLACE(l.name, ' ', '')
-		         WHERE m.id IN (` + strings.Join(ph, ",") + `)`
+		q2 := sqlPostMetadata(strings.Join(ph, ","))
 		r, err := db.Query(q2, args...)
 		if err != nil {
 			log.Fatalf("step2 query: %v", err)
@@ -218,21 +182,7 @@ func main() {
 		// Join replier→approxloc for location AND replier→memberships
 		// (via the post's group) for the email-frequency setting.  The
 		// post's group is messages_groups.groupid.
-		q3 := `SELECT cm.refmsgid,
-		              cm.userid,
-		              DATE_FORMAT(cm.date, '%Y-%m-%d %H:%i:%s') AS reply_time,
-		              ual.lat,
-		              ual.lng,
-		              m.emailfrequency
-		         FROM chat_messages cm
-		         LEFT JOIN users_approxlocs ual ON ual.userid = cm.userid
-		         LEFT JOIN messages_groups mg ON mg.msgid = cm.refmsgid
-		         LEFT JOIN memberships m
-		           ON m.userid = cm.userid AND m.groupid = mg.groupid
-		         WHERE cm.refmsgid IN (` + strings.Join(ph, ",") + `)
-		           AND cm.type = 'Interested'
-		           AND cm.reviewrejected = 0
-		           AND cm.reviewrequired = 0`
+		q3 := sqlRepliers(strings.Join(ph, ","))
 		r, err := db.Query(q3, args...)
 		if err != nil {
 			log.Fatalf("step3 query: %v", err)
