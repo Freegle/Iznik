@@ -96,6 +96,12 @@ refused.
 In the email-verify case a refusal is logged and the confirmation still succeeds: the address
 moves to the member's current account and the other account is left as it was.
 
+A TrashNothing address (`@user.trashnothing.com`, bare or a per-group alias) is the exception,
+because it belongs to the account holding the TN id TrashNothing names for it. A member cannot
+add one: `PatchSession` answers `ret: 12` with the reason and sends no mail, and the batch's
+`email_verify` task skips one queued before that. A key already mailed for one is refused when
+it is confirmed (403 with the reason, the key spent), with nothing merged and nothing moved.
+
 ## The PHP copy
 
 `iznik-batch/app/Models/User.php` has `merge()`, a second port of the V1 function in PHP.
