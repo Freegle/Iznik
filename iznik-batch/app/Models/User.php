@@ -1438,6 +1438,12 @@ class User extends Model implements Auditable
         return $role;
     }
 
+    /** How a merge refusal names an account's TN id. */
+    private static function tnIdDetail(self $user): string
+    {
+        return $user->tnuserid ? "tnuserid {$user->tnuserid}" : 'no tnuserid';
+    }
+
     /**
      * Merge two user accounts, consolidating $id2 into $id1.
      *
@@ -1450,8 +1456,8 @@ class User extends Model implements Auditable
      * @param int $id1 The user ID to keep (merge target)
      * @param int $id2 The user ID to absorb and delete
      * @param string $reason Human-readable reason for the merge
-     * @param bool $forceMerge If TRUE, bypass canMerge() checks and the different-tnuserid
-     *                         refusal (the latter is still reported)
+     * @param bool $forceMerge If TRUE, bypass canMerge() checks. A TrashNothing account, or two
+     *                         TN usernames, are refused whatever this says
      * @param int|null $byUserId The user performing the merge (for logging)
      * @return bool TRUE on success, FALSE on failure or if merge is blocked
      */
@@ -1474,35 +1480,25 @@ class User extends Model implements Auditable
             return FALSE;
         }
 
-        // Two different tnuserids are two Trash Nothing accounts. The merge below keeps
-        // id1's and deletes id2 with its own, after which TN posts from the lost id
-        // resolve to nobody, and it cannot be undone. Refuse unless forced, and report to
-        // Sentry either way: a caller asking for this at all means something upstream
-        // decided that two TN accounts are one person.
-        if ($u1->tnuserid && $u2->tnuserid && (int) $u1->tnuserid !== (int) $u2->tnuserid) {
-            $detail = "user {$id2} (tnuserid {$u2->tnuserid}) into user {$id1} (tnuserid {$u1->tnuserid}), reason: {$reason}";
+        // TrashNothing accounts are never merged, with each other or with a Freegle account
+        // (.claude/rules/conventions.md), and forcing does not change that. Only a TN id says who a
+        // TN member is, and the merge below keeps id1 and deletes id2 with whatever it held.
+        // MergeUsersTx in iznik-server-go refuses the same. Reported, because a caller asking for
+        // this at all means something upstream decided a TN account is somebody else's too.
+        if ($u1->isTrashNothingAccount() || $u2->isTrashNothingAccount()) {
+            report(new TnUserIdMergeConflict('Refused merge of a Trash Nothing account: '
+                . "user {$id2} (" . self::tnIdDetail($u2) . ") into user {$id1} (" . self::tnIdDetail($u1) . "), reason: {$reason}"));
 
-            if (!$forceMerge) {
-                report(new TnUserIdMergeConflict("Refused merge of two Trash Nothing accounts: {$detail}"));
-
-                return FALSE;
-            }
-
-            report(new TnUserIdMergeConflict("Forced merge of two Trash Nothing accounts, tnuserid {$u2->tnuserid} will be lost: {$detail}"));
+            return FALSE;
         }
 
-        // Two different usernames may be two members too, and nothing here can prove they are one
-        // who renamed. MergeUsersTx in iznik-server-go refuses the same.
+        // Neither is a TrashNothing account, but either can still hold a TN address that is not its
+        // preferred one. Two different usernames may be two members, and nothing here can prove they
+        // are one who renamed. MergeUsersTx in iznik-server-go refuses the same.
         if (count(array_unique([...$u1->tnUsernames(), ...$u2->tnUsernames()])) > 1) {
-            $detail = "user {$id2} into user {$id1}, reason: {$reason}";
+            report(new TnUserIdMergeConflict("Refused merge of two TN usernames: user {$id2} into user {$id1}, reason: {$reason}"));
 
-            if (!$forceMerge) {
-                report(new TnUserIdMergeConflict("Refused merge of two TN usernames: {$detail}"));
-
-                return FALSE;
-            }
-
-            report(new TnUserIdMergeConflict("Forced merge of two TN usernames: {$detail}"));
+            return FALSE;
         }
 
         try {
@@ -1871,22 +1867,7 @@ class User extends Model implements Auditable
                 $u1->save();
             }
 
-            // --- Merge TN user ID ---
-            $tnId1 = $u1->tnuserid;
-            $tnId2 = $u2->tnuserid;
-
-            if (!$tnId1 && $tnId2) {
-                $u2->tnuserid = NULL;
-                Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id2} set=tnuserid=NULL");
-                if (!$dryRun) {
-                    $u2->save();
-                }
-                $u1->tnuserid = $tnId2;
-                Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=tnuserid={$tnId2}");
-                if (!$dryRun) {
-                    $u1->save();
-                }
-            }
+            // tnuserid never moves: an account holding one is a TrashNothing account, refused above.
 
             // --- Merge gift aid (keep most favourable declaration) ---
             $giftAids = GiftAid::whereIn('userid', [$id1, $id2])

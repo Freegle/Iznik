@@ -354,15 +354,55 @@ class UserMergeTest extends TestCase
         $this->assertEquals(User::SYSTEMROLE_SUPPORT, $role);
     }
 
-    public function test_merge_transfers_tn_user_id(): void
+    /**
+     * TrashNothing accounts are never merged with a Freegle account, in either direction, whether
+     * the account is known by its TN id or by its preferred TN address. MergeUsersTx in
+     * iznik-server-go refuses the same.
+     */
+    public function test_merge_refuses_a_tn_account_with_a_freegle_account_and_reports_it(): void
     {
-        $user1 = $this->createTestUser(['tnuserid' => null]);
-        $user2 = $this->createTestUser(['tnuserid' => 12345]);
+        Exceptions::fake();
 
-        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
+        $freegle  = $this->createTestUser();
+        $stamped  = $this->createTestUser(['tnuserid' => 99020206]);
+        $byAddress = $this->createTestUser([
+            'email_preferred' => 'byaddress-' . uniqid() . '-g1@user.trashnothing.com',
+        ]);
 
-        $tnId = DB::table('users')->where('id', $user1->id)->value('tnuserid');
-        $this->assertEquals(12345, $tnId);
+        $this->assertFalse(User::merge($freegle->id, $stamped->id, self::MERGE_REASON));
+        $this->assertFalse(User::merge($stamped->id, $freegle->id, self::MERGE_REASON));
+        $this->assertFalse(User::merge($freegle->id, $byAddress->id, self::MERGE_REASON));
+
+        $this->assertNotNull(User::find($freegle->id));
+        $this->assertNotNull(User::find($stamped->id));
+        $this->assertNotNull(User::find($byAddress->id));
+        $this->assertEquals(99020206, DB::table('users')->where('id', $stamped->id)->value('tnuserid'));
+        $this->assertNull(DB::table('users')->where('id', $freegle->id)->value('tnuserid'));
+
+        Exceptions::assertReportedCount(3);
+        Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
+            str_contains($e->getMessage(), 'Refused merge of a Trash Nothing account'));
+    }
+
+    /**
+     * Nor with each other: a stamped account and a twin holding the same username are two accounts,
+     * and only a TN id says which is the member's.
+     */
+    public function test_merge_refuses_a_tn_twin_with_the_same_username(): void
+    {
+        Exceptions::fake();
+
+        $username = 'twin-' . uniqid();
+        $stamped  = $this->createTestUser([
+            'tnuserid'        => 99020207,
+            'email_preferred' => "{$username}-g1@user.trashnothing.com",
+        ]);
+        $twin = $this->createTestUser(['email_preferred' => "{$username}-g2@user.trashnothing.com"]);
+
+        $this->assertFalse(User::merge($stamped->id, $twin->id, self::MERGE_REASON));
+
+        $this->assertNotNull(User::find($twin->id));
+        Exceptions::assertReported(TnUserIdMergeConflict::class);
     }
 
     public function test_merge_refuses_different_tn_user_ids_and_reports_it(): void
@@ -386,21 +426,22 @@ class UserMergeTest extends TestCase
             && str_contains($e->getMessage(), '99020202'));
     }
 
-    public function test_forced_merge_of_different_tn_user_ids_proceeds_and_reports_it(): void
+    /** Never means never: forcing a merge passes canMerge() and nothing else. */
+    public function test_forced_merge_of_tn_accounts_is_still_refused(): void
     {
         Exceptions::fake();
 
         $user1 = $this->createTestUser(['tnuserid' => 99020203]);
         $user2 = $this->createTestUser(['tnuserid' => 99020204]);
 
-        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON, true));
+        $this->assertFalse(User::merge($user1->id, $user2->id, self::MERGE_REASON, true));
 
-        $this->assertNull(User::find($user2->id));
-        $this->assertEquals(99020203, DB::table('users')->where('id', $user1->id)->value('tnuserid'));
+        $this->assertNotNull(User::find($user2->id));
+        $this->assertEquals(99020204, DB::table('users')->where('id', $user2->id)->value('tnuserid'));
 
         Exceptions::assertReportedCount(1);
         Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
-            str_contains($e->getMessage(), 'tnuserid 99020204 will be lost'));
+            str_contains($e->getMessage(), 'Refused merge'));
     }
 
     private function giveTnAddress(User $user, string $localPart): void
@@ -412,12 +453,15 @@ class UserMergeTest extends TestCase
         ]);
     }
 
-    /** Two usernames may be two members, as two TN ids are, and a merge cannot be undone. */
+    /**
+     * Two usernames may be two members, as two TN ids are, and a merge cannot be undone. Neither is
+     * a TrashNothing account here (the TN addresses are not preferred), so the usernames refuse it.
+     */
     public function test_merge_refuses_two_tn_usernames_and_reports_it(): void
     {
         Exceptions::fake();
 
-        $user1 = $this->createTestUser(['tnuserid' => 99020205]);
+        $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         $this->giveTnAddress($user1, 'one');
         $this->giveTnAddress($user2, 'two');
@@ -433,7 +477,7 @@ class UserMergeTest extends TestCase
             && str_contains($e->getMessage(), 'two TN usernames'));
     }
 
-    public function test_forced_merge_of_two_tn_usernames_proceeds_and_reports_it(): void
+    public function test_forced_merge_of_two_tn_usernames_is_still_refused(): void
     {
         Exceptions::fake();
 
@@ -442,21 +486,30 @@ class UserMergeTest extends TestCase
         $this->giveTnAddress($user1, 'one');
         $this->giveTnAddress($user2, 'two');
 
-        $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON, true));
+        $this->assertFalse(User::merge($user1->id, $user2->id, self::MERGE_REASON, true));
 
-        $this->assertNull(User::find($user2->id));
+        $this->assertNotNull(User::find($user2->id));
 
         Exceptions::assertReportedCount(1);
         Exceptions::assertReported(fn (TnUserIdMergeConflict $e) =>
-            str_contains($e->getMessage(), 'Forced merge'));
+            str_contains($e->getMessage(), 'Refused merge of two TN usernames'));
     }
 
-    public function test_merge_with_one_tn_user_id_is_not_reported(): void
+    public function test_merge_of_two_freegle_accounts_is_not_reported(): void
     {
         Exceptions::fake();
 
-        $user1 = $this->createTestUser(['tnuserid' => 99020205]);
-        $user2 = $this->createTestUser(['tnuserid' => null]);
+        // One TN username on both, neither as the preferred address: two Freegle accounts.
+        $username = 'same-' . uniqid();
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        foreach ([[$user1, 'g1'], [$user2, 'g2']] as [$user, $group]) {
+            DB::table('users_emails')->insert([
+                'userid'    => $user->id,
+                'email'     => "{$username}-{$group}@user.trashnothing.com",
+                'preferred' => 0,
+            ]);
+        }
 
         $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
 
