@@ -44,6 +44,11 @@ Follow existing patterns in iznik-server-go. Structure: AUTH → PARSE → DB �
 - Laravel migrations in `iznik-batch/database/migrations/` are source of truth.
 - Production: Manual idempotent SQL using `INFORMATION_SCHEMA.COLUMNS` checks. Put in `*_migration.sql` files.
 
+## Raw SQL
+
+- Every raw SQL site in production Go and Laravel code is listed in `tools/orm-migration/manifest.json`, generated from the code by `node tools/orm-migration/extract.mjs update`. CI (`check-raw-sql-ratchet`) fails a branch that adds a site the manifest does not list, or raises the count of `raw` sites. Test files are exempt.
+- New raw SQL carries a `// keep-raw: <reason>` comment above it, in Go and in PHP. The comment becomes the entry's reason. Read `tools/orm-migration/README.md` before changing the manifest by hand.
+
 ## Code Quality
 
 - No copy-paste — extract shared logic. Address linting/static analysis warnings.
