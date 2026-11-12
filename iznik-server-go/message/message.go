@@ -2602,8 +2602,9 @@ func logAndNotifyMods(db *gorm.DB, subtype string, ctx *MessageModContext, myid 
 // messages with a location — Pending/Spam/Rejected must never be added here. The
 // query re-checks collection=Approved so this is a safe no-op if called otherwise.
 //
-// messages_spatial is keyed on (msgid, groupid): a cross-posted message gets one row
-// per group it is approved on, so it shows in browse/search on each of those groups.
+// messages_spatial is unique on msgid: a cross-posted message has one row, whose group is
+// the post's own (non-rippled) copy first, then the latest arrival, then the lowest groupid.
+// That is the order the 5-minute reconciler uses (MessageSpatialService::REPRESENTATIVE_ORDER).
 func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 	type spatialRow struct {
 		Lat     float64
@@ -2629,6 +2630,8 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 			"AND messages.lat IS NOT NULL AND messages.lng IS NOT NULL "+
 			"AND messages_outcomes.id IS NULL",
 			msgid, utils.COLLECTION_APPROVED).
+		Order("messages_groups.rippled_in ASC, messages_groups.arrival DESC, messages_groups.groupid ASC").
+		Limit(1).
 		Scan(&rows)
 
 	for _, row := range rows {
@@ -2636,9 +2639,9 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 			continue
 		}
 
-		// groupid is part of the unique key, so it is never updated on conflict.
 		db.Table("messages_spatial").Clauses(clause.OnConflict{
 			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "groupid"}, Value: clause.Column{Table: "excluded", Name: "groupid"}},
 				{Column: clause.Column{Name: "point"}, Value: clause.Column{Table: "excluded", Name: "point"}},
 				{Column: clause.Column{Name: "msgtype"}, Value: clause.Column{Table: "excluded", Name: "msgtype"}},
 				{Column: clause.Column{Name: "arrival"}, Value: clause.Column{Table: "excluded", Name: "arrival"}},
