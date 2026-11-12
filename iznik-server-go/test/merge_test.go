@@ -142,6 +142,58 @@ func TestPostMergeAccept(t *testing.T) {
 	assert.NotNil(t, accepted)
 }
 
+// postMergeAction sends the member's answer to a merge offer, as the /merge page does.
+func postMergeAction(t *testing.T, mergeID uint64, uid string, keep uint64, other uint64, action string) int {
+	body := fmt.Sprintf(`{"id":%d,"uid":"%s","user1":%d,"user2":%d,"action":"%s"}`,
+		mergeID, uid, keep, other, action)
+	req := httptest.NewRequest("POST", "/api/merge", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	return resp.StatusCode
+}
+
+// The /merge page tells the member "We've merged your accounts", so Accept must merge them: the
+// account sent as user1 is kept and the other is merged into it.
+func TestPostMergeAcceptMergesTheAccounts(t *testing.T) {
+	prefix := uniquePrefix("MergeAccDo")
+	offered1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	offered2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	db := database.DBConn
+
+	mergeID, uid := createTestMerge(t, offered1, offered2, modID)
+
+	// The member keeps the second account of the offer.
+	assert.Equal(t, 200, postMergeAction(t, mergeID, uid, offered2, offered1, "Accept"))
+
+	assert.True(t, userExists(offered2), "the chosen account is kept")
+	assert.False(t, userExists(offered1), "the other account is merged away")
+
+	var emails int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND email = ?",
+		offered2, prefix+"_u1@test.com").Scan(&emails)
+	assert.Equal(t, int64(1), emails, "the merged account's email moves to the kept account")
+
+	assert.NotNil(t, findLog(db, "User", "Merged", offered1), "a Merged log row for the discarded account")
+	assert.NotNil(t, findLog(db, "User", "Merged", offered2), "a Merged log row for the kept account")
+}
+
+// A TrashNothing member is never merged with a Freegle account, so accepting such an offer is
+// refused and both accounts stay.
+func TestPostMergeAcceptRefusesTrashNothingWithFreegle(t *testing.T) {
+	prefix := uniquePrefix("MergeAccTN")
+	fd := CreateTestUser(t, prefix+"_fd", utils.SYSTEMROLE_USER)
+	tn := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	stampTN(tn, 991090)
+
+	mergeID, uid := createTestMerge(t, fd, tn, modID)
+
+	assert.Equal(t, 400, postMergeAction(t, mergeID, uid, fd, tn, "Accept"))
+	assert.True(t, userExists(fd))
+	assert.True(t, userExists(tn))
+}
+
 func TestPostMergeReject(t *testing.T) {
 	prefix := uniquePrefix("MergeRej")
 	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
