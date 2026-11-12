@@ -1510,9 +1510,11 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 // =============================================================================
 
 // moderationAccess decides whether a moderator may act on a chat message, using the same scope as the review
-// queue: the chat is visible to them (canSeeChatRoom, plus mod2ModAllowed for a moderators' chat), or they do wider
-// chat review and the action is Approve, the only action that review offers. It returns 0 when allowed, otherwise
-// the HTTP status to refuse with. A message that does not exist is left to the action handlers to report.
+// queue (getReviewQueue): a User2Mod chat of one of their groups, or a User2User chat whose recipient is on one of
+// their groups (or has no groups and the sender is on one of theirs). A moderator who does wider chat review may
+// also Approve, the only action that review offers, for a recipient on a widerchatreview group. A moderator who is
+// one of the two people in the chat never acts on it. It returns 0 when allowed, otherwise the HTTP status to
+// refuse with: 404 when the message does not exist, 403 when it is outside the moderator's queue.
 func moderationAccess(db *gorm.DB, myid uint64, msgID uint64, action string) int {
 	var room struct {
 		ID       uint64
@@ -1532,23 +1534,58 @@ func moderationAccess(db *gorm.DB, myid uint64, msgID uint64, action string) int
 		return fiber.StatusNotFound
 	}
 
-	if canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) && mod2ModAllowed(myid, room.Chattype, room.Groupid) {
-		return 0
+	if myid == room.User1 || myid == room.User2 {
+		return fiber.StatusForbidden
 	}
 
-	if action == "Approve" && room.Chattype == utils.CHAT_TYPE_USER2USER && user.HasWiderReview(myid) {
+	var modGroups []uint64
+	db.Table("memberships").Select("groupid").
+		Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&modGroups)
+
+	if len(modGroups) == 0 {
+		return fiber.StatusForbidden
+	}
+
+	switch room.Chattype {
+	case utils.CHAT_TYPE_USER2MOD:
+		for _, g := range modGroups {
+			if g == room.Groupid {
+				return 0
+			}
+		}
+
+	case utils.CHAT_TYPE_USER2USER:
 		recipient := room.User1
 		if room.Userid == room.User1 {
 			recipient = room.User2
 		}
 
-		var wider int64
-		db.Table("memberships m").
-			Joins("INNER JOIN `groups` g ON g.id = m.groupid AND g.type = ?", utils.GROUP_TYPE_FREEGLE).
-			Where("m.userid = ? AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1", recipient).
-			Count(&wider)
-		if wider > 0 {
+		var onModsGroups int64
+		db.Table("memberships").Where("userid = ? AND groupid IN ?", recipient, modGroups).Count(&onModsGroups)
+		if onModsGroups > 0 {
 			return 0
+		}
+
+		var recipientGroups int64
+		db.Table("memberships").Where("userid = ?", recipient).Count(&recipientGroups)
+		if recipientGroups == 0 {
+			var senderOnModsGroups int64
+			db.Table("memberships").Where("userid = ? AND groupid IN ?", room.Userid, modGroups).Count(&senderOnModsGroups)
+			if senderOnModsGroups > 0 {
+				return 0
+			}
+		}
+
+		if action == "Approve" && user.HasWiderReview(myid) {
+			var wider int64
+			db.Table("memberships m").
+				Joins("INNER JOIN `groups` g ON g.id = m.groupid AND g.type = ?", utils.GROUP_TYPE_FREEGLE).
+				Where("m.userid = ? AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1", recipient).
+				Count(&wider)
+			if wider > 0 {
+				return 0
+			}
 		}
 	}
 
@@ -2324,7 +2361,7 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	// Find and reject all identical pending messages from last 24 hours (spam flood prevention).
 	// Only a message with text has an identity to match on: an image-only message has empty text, which
 	// every other image-only message shares. A twin another moderator is holding is theirs to decide, so
-	// it is left pending and held.
+	// it is left pending and held, and so is a twin outside the queue this moderator may act on.
 	type dupMsg struct {
 		ID     uint64
 		Chatid uint64
@@ -2343,6 +2380,10 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	affectedChats := map[uint64]bool{msg.Chatid: true}
 
 	for _, dup := range dups {
+		if moderationAccess(db, myid, dup.ID, "Reject") != 0 {
+			continue
+		}
+
 		// Converted together with its
 		// identical twin above (09878cd3c660).
 		db.Table("chat_messages").Where("id = ?", dup.ID).
