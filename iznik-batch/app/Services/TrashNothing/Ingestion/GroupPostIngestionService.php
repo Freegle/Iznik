@@ -2,6 +2,8 @@
 
 namespace App\Services\TrashNothing\Ingestion;
 
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StSrid;
 use App\Models\Group;
 use App\Models\Location;
 use App\Models\Membership;
@@ -1135,13 +1137,17 @@ class GroupPostIngestionService
         $msgType = $message->type;
 
         try {
-            DB::statement(
-                "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-                 VALUES (?, ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?), ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE
-                 point = ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?),
-                 groupid = ?, msgtype = ?, arrival = ?",
-                [$messageId, $srid, $groupId, $msgType, $arrival, $srid, $groupId, $msgType, $arrival]
+            // lat/lng are DECIMAL columns, which PDO returns as strings: cast so Point() renders literals.
+            DB::table('messages_spatial')->upsert(
+                [[
+                    'msgid'   => $messageId,
+                    'point'   => new StSrid(new Point((float) $message->lng, (float) $message->lat), $srid),
+                    'groupid' => $groupId,
+                    'msgtype' => $msgType,
+                    'arrival' => $arrival,
+                ]],
+                ['msgid'],
+                ['point', 'groupid', 'msgtype', 'arrival']
             );
         } catch (\Exception $e) {
             Log::warning('TN post ingestion: failed to add to spatial index', [
