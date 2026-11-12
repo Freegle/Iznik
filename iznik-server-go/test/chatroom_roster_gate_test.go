@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
@@ -39,4 +40,46 @@ func TestChatRosterUpdateRequiresParticipantOrMod(t *testing.T) {
 	req2.Header.Set("Content-Type", "application/json")
 	resp2, _ := getApp().Test(req2)
 	assert.Equal(t, fiber.StatusOK, resp2.StatusCode)
+}
+
+func postRosterUpdate(t *testing.T, userID, chatID uint64) int {
+	_, token := CreateTestSession(t, userID)
+	req := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, strings.NewReader(fmt.Sprintf(`{"id":%d}`, chatID)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	return resp.StatusCode
+}
+
+// A roster update on a User2Mod or Mod2Mod chat is for that community's own active moderators. A
+// platform moderator (system role Moderator) of a different community must not read its roster or
+// get a roster row in it, and a group moderator whose system role is plain User must be able to
+// mark their own community's chat read.
+func TestChatRosterUpdateIsScopedToTheRoomsCommunity(t *testing.T) {
+	prefix := uniquePrefix("RosterScope")
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+
+	modA := CreateTestUser(t, prefix+"_moda", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modA, groupA, utils.ROLE_MODERATOR)
+
+	modB := CreateTestUser(t, prefix+"_modb", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, modB, groupB, utils.ROLE_MODERATOR)
+
+	memberB := CreateTestUser(t, prefix+"_memberb", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, memberB, groupB, utils.ROLE_MEMBER)
+
+	mod2modB := CreateTestChatRoom(t, 0, nil, &groupB, "Mod2Mod")
+	user2modB := CreateTestChatRoom(t, memberB, nil, &groupB, "User2Mod")
+
+	for _, chatID := range []uint64{mod2modB, user2modB} {
+		assert.Equal(t, fiber.StatusForbidden, postRosterUpdate(t, modA, chatID),
+			"a moderator of another community must be refused")
+
+		var rows int64
+		database.DBConn.Table("chat_roster").Where("chatid = ? AND userid = ?", chatID, modA).Count(&rows)
+		assert.Equal(t, int64(0), rows, "a refused roster update must not create a roster row")
+
+		assert.Equal(t, fiber.StatusOK, postRosterUpdate(t, modB, chatID),
+			"a moderator of the room's own community may mark it read")
+	}
 }
