@@ -55,7 +55,9 @@ Posted by {!! $post['posterName'] !!}{!! ($post['groupName'] ?? null) ? ' on ' .
 @if(!empty($post['firstPostedFormatted']))
 First posted {!! $post['firstPostedFormatted'] !!}
 @endif
+@if(empty($post['isOwnPost']))
 Reply: {{ $post['messageUrl'] }}
+@endif
 
 @endforeach
 ------------------------------------
