@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StSrid;
 use App\Models\Group;
 use App\Models\User;
 use App\Services\UserApproxLocService;
@@ -227,7 +229,7 @@ class UserApproxLocServiceTest extends TestCase
 
         $this->assertEquals(
             $lastaccess->format('Y-m-d H:i:s'),
-            $this->row($user)->timestamp,
+            \Illuminate\Support\Carbon::parse($this->row($user)->timestamp)->format('Y-m-d H:i:s'),
             'timestamp carries lastaccess - the prune and the readers key off it'
         );
     }
@@ -314,7 +316,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $stale->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), " . config('freegle.srid') . ")"),
+            'position' => new StSrid(new Point(-0.1, 51.5), (int) config('freegle.srid')),
             'timestamp' => now()->subDays(250),
         ]);
 
@@ -331,7 +333,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $fresh->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), " . config('freegle.srid') . ")"),
+            'position' => new StSrid(new Point(-0.1, 51.5), (int) config('freegle.srid')),
             'timestamp' => now()->subDays(30),
         ]);
 
@@ -362,7 +364,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $stale->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), " . config('freegle.srid') . ")"),
+            'position' => new StSrid(new Point(-0.1, 51.5), (int) config('freegle.srid')),
             'timestamp' => now()->subDays(250),
         ]);
 

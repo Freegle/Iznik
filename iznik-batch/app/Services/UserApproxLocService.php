@@ -2,6 +2,12 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\JsonUnquote;
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StSrid;
+use App\Database\Expressions\Value;
+use App\Database\Sql;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -165,8 +171,8 @@ class UserApproxLocService
             // NULL, which would silently place the member in the Atlantic.
             // A Trash Nothing member's mylocation is stale V1 data; TN is the master for their
             // location (User::chosenLatLng), so it is not read for them.
-            ->selectRaw("CASE WHEN u.tnuserid IS NULL THEN JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lat')) END AS myloc_lat")
-            ->selectRaw("CASE WHEN u.tnuserid IS NULL THEN JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lng')) END AS myloc_lng")
+            ->selectRaw('CASE WHEN u.tnuserid IS NULL THEN '.Sql::expr(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.mylocation.lat')))).' END AS myloc_lat')
+            ->selectRaw('CASE WHEN u.tnuserid IS NULL THEN '.Sql::expr(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.mylocation.lng')))).' END AS myloc_lng')
             ->get();
     }
 
@@ -230,27 +236,21 @@ class UserApproxLocService
     {
         $srid = (int) config('freegle.srid', 3857);
 
-        $placeholders = implode(', ', array_fill(0, count($rows), '(?, ?, ?, ST_SRID(POINT(?, ?), ?), ?)'));
-
-        $bindings = [];
+        // The geometry is built in the same statement (the SPATIAL index on position needs a value),
+        // so the position is an expression among the column values.
+        $values = [];
 
         foreach ($rows as [$userid, $lat, $lng, $lastaccess]) {
-            array_push($bindings, $userid, $lat, $lng, $lng, $lat, $srid, $lastaccess);
+            $values[] = [
+                'userid' => $userid,
+                'lat' => $lat,
+                'lng' => $lng,
+                'position' => new StSrid(new Point((float) $lng, (float) $lat), $srid),
+                'timestamp' => $lastaccess,
+            ];
         }
 
-        // keep-raw: the builder's upsert() binds column values only, so it cannot put the
-        // ST_SRID(POINT(...)) spatial constructor in the VALUES list, and the SPATIAL index on
-        // position means the geometry has to be built in the same statement.
-        DB::statement(
-            "INSERT INTO users_approxlocs (userid, lat, lng, position, timestamp)
-             VALUES $placeholders AS new
-             ON DUPLICATE KEY UPDATE
-               lat = new.lat,
-               lng = new.lng,
-               position = new.position,
-               timestamp = new.timestamp",
-            $bindings
-        );
+        DB::table('users_approxlocs')->upsert($values, ['userid'], ['lat', 'lng', 'position', 'timestamp']);
     }
 
     /**
