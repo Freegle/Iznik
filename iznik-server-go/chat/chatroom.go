@@ -113,6 +113,7 @@ type ChatRoom struct {
 	Chattype string `json:"chattype"`
 	User1    uint64 `json:"user1"`
 	User2    uint64 `json:"user2"`
+	Groupid  uint64 `json:"-" gorm:"column:groupid"`
 }
 
 // parseChattypes extracts chattypes from query parameters.
@@ -1615,7 +1616,7 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPostRequest) error {
 	// Verify user can see this chat and is a legitimate member
 	var room ChatRoom
-	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", req.ID).Scan(&room)
+	db.Table("chat_rooms").Select("id, chattype, user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", req.ID).Scan(&room)
 	if room.ID == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": strconv.FormatUint(req.ID, 10) + " Not visible to you"})
 	}
@@ -1624,10 +1625,13 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 	canUpdate := false
 	switch room.Chattype {
 	case utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_GROUP, utils.CHAT_TYPE_MOD2MOD:
-		// SECURITY: the caller must be a participant of the room or a platform (system-role)
-		// moderator. Without this any authenticated user could read/forge the roster of an
-		// arbitrary modmail or mod-team chat simply by guessing its (small, sequential) id.
-		canUpdate = (myid == room.User1 || myid == room.User2 || auth.IsSystemMod(myid))
+		// SECURITY: the caller must be able to see the room (a participant, or a moderator of the
+		// room's own community; Admin and Support see all) and, for a moderators' chat, be an
+		// active moderator there. Without this any authenticated user could read/forge the roster
+		// of an arbitrary modmail or mod-team chat simply by guessing its (small, sequential) id,
+		// and a platform moderator could do it for any community's chats.
+		canUpdate = canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) &&
+			mod2ModAllowed(myid, room.Chattype, room.Groupid)
 	case utils.CHAT_TYPE_USER2USER:
 		canUpdate = (myid == room.User1 || myid == room.User2)
 	}
