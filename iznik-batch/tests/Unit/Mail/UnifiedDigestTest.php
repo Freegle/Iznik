@@ -1694,4 +1694,12 @@ class UnifiedDigestTest extends TestCase
         // your own post. Nothing else in a digest of one own post is a Reply button.
         $this->assertStringNotContainsString('>Reply</a>', $html);
     }
+
+    public function test_text_part_has_no_reply_line_on_the_recipients_own_post(): void
+    {
+        $text = $this->spooledDailyDigestOfOnlyTheRecipientsOwnPost()['text'] ?? '';
+
+        $this->assertStringContainsString('My own lamp', $text, 'the card rendered');
+        $this->assertStringNotContainsString('Reply:', $text);
+    }
 }
