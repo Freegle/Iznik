@@ -702,3 +702,46 @@ func TestCommentEditUnflagClearsFlagOthers(t *testing.T) {
 	db.Exec("DELETE FROM users_comments WHERE id = ?", commentID)
 	db.Exec("UPDATE memberships SET reviewreason = NULL, reviewrequestedat = NULL WHERE userid = ?", targetID)
 }
+
+// A partial edit changes only the fields it sends. Setting just the flag must leave the note text
+// as it was.
+func TestCommentEditSendingOnlyTheFlagKeepsTheNoteText(t *testing.T) {
+	prefix := uniquePrefix("cmwr_partial")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	targetID := CreateTestUser(t, prefix+"_target", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, targetID, groupID, utils.ROLE_MEMBER)
+	_, modToken := CreateTestSession(t, modID)
+
+	db := database.DBConn
+	db.Exec("INSERT INTO users_comments (userid, groupid, byuserid, user1, user2, user11, flag) VALUES (?, ?, ?, 'First note', 'Second note', 'Last note', 0)", targetID, groupID, modID)
+	var commentID uint64
+	db.Raw("SELECT id FROM users_comments WHERE userid = ? AND groupid = ? ORDER BY id DESC LIMIT 1", targetID, groupID).Scan(&commentID)
+
+	body := fmt.Sprintf(`{"id":%d,"flag":true}`, commentID)
+	req := httptest.NewRequest("PATCH", "/api/comment?jwt="+modToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var row struct {
+		User1  *string
+		User2  *string
+		User11 *string
+		Flag   int
+	}
+	db.Raw("SELECT user1, user2, user11, flag FROM users_comments WHERE id = ?", commentID).Scan(&row)
+	assert.Equal(t, 1, row.Flag, "the flag is set")
+	if assert.NotNil(t, row.User1, "user1 must not be blanked") {
+		assert.Equal(t, "First note", *row.User1)
+	}
+	if assert.NotNil(t, row.User2, "user2 must not be blanked") {
+		assert.Equal(t, "Second note", *row.User2)
+	}
+	if assert.NotNil(t, row.User11, "user11 must not be blanked") {
+		assert.Equal(t, "Last note", *row.User11)
+	}
+
+	db.Exec("DELETE FROM users_comments WHERE id = ?", commentID)
+}
