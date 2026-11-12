@@ -5,6 +5,10 @@ import { useMe } from '~/composables/useMe'
 import { action } from '~/composables/useClientLog'
 import { trackConversion } from '~/composables/useTrackConversion'
 
+// Sends in flight, by message id. The state machine re-enables Send after its processing timeout while a
+// slow send may still be running; a second call joins the first rather than sending the text again.
+const sendsInFlight = new Map()
+
 export function useReplyToPost() {
   const replyStore = useReplyStore()
   const messageStore = useMessageStore()
@@ -50,7 +54,25 @@ export function useReplyToPost() {
     return null
   })
 
-  async function replyToPost(chatButtonRef, noNavigate = false) {
+  function replyToPost(chatButtonRef, noNavigate = false) {
+    const msgId = replyToSend.value?.replyMsgId
+
+    if (msgId && sendsInFlight.has(msgId)) {
+      return sendsInFlight.get(msgId)
+    }
+
+    const sending = sendReply(chatButtonRef, noNavigate)
+
+    if (msgId) {
+      sendsInFlight.set(msgId, sending)
+      const done = () => sendsInFlight.delete(msgId)
+      sending.then(done, done)
+    }
+
+    return sending
+  }
+
+  async function sendReply(chatButtonRef, noNavigate) {
     // We have different buttons which display at different screen sizes. Which of those is visible and hence
     // clicked tells us whether we want to open this chat in a popup or not.
     console.log('Execute reply to post', JSON.stringify(replyToSend.value))
