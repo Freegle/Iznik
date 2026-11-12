@@ -176,6 +176,9 @@
                 />
               </label>
             </div>
+            <NoticeMessage v-if="pastDeadline" variant="danger" class="mt-2">
+              The closing date must be today or in the future.
+            </NoticeMessage>
             <NoticeMessage v-if="wentWrong" variant="danger" class="mt-2">
               Something went wrong posting your items. Please try again.
             </NoticeMessage>
@@ -249,8 +252,19 @@ const editorKey = ref(0)
 // a saved draft before we've had a chance to restore it (see onMounted).
 const draftReady = ref(false)
 
-// Earliest selectable closing date is today.
-const today = new Date().toISOString().slice(0, 10)
+// Earliest selectable closing date is today, as the member's calendar sees it.
+function todayString() {
+  const d = new Date()
+  return (
+    d.getFullYear() +
+    '-' +
+    String(d.getMonth() + 1).padStart(2, '0') +
+    '-' +
+    String(d.getDate()).padStart(2, '0')
+  )
+}
+const today = todayString()
+const pastDeadline = ref(false)
 
 // Persist photos by their server identity only — drop the transient blob
 // `preview` URL (invalid after a refresh and potentially large).
@@ -387,9 +401,8 @@ async function saveEdit() {
     bulkslots: slots.value.map((s) => s.trim()).filter(Boolean),
     accessinstructions: accessInstructions.value.trim(),
   }
-  if (deadline.value) {
-    payload.deadline = new Date(deadline.value).toISOString()
-  }
+  // A blank date clears the closing date; leaving the field out would keep the old one.
+  payload.deadline = deadline.value || ''
   await messageStore.patch(payload)
   router.push('/clearance/' + editId.value)
 }
@@ -476,7 +489,9 @@ onMounted(async () => {
       tray.value = saved.tray || []
       slots.value = saved.slots && saved.slots.length ? saved.slots : ['']
       accessInstructions.value = saved.accessInstructions || ''
-      deadline.value = saved.deadline || ''
+      // A closing date saved on an earlier day may have gone; start with none rather than post it.
+      deadline.value =
+        saved.deadline && saved.deadline >= todayString() ? saved.deadline : ''
       editorKey.value++ // force the editor to seed from the restored items
     }
   }
@@ -516,6 +531,12 @@ async function submit(callback) {
     return
   }
   wentWrong.value = false
+  pastDeadline.value = false
+  if (!isEditing.value && deadline.value && deadline.value < todayString()) {
+    pastDeadline.value = true
+    if (callback) callback()
+    return
+  }
   try {
     if (isEditing.value) {
       await saveEdit()
@@ -553,7 +574,8 @@ async function submit(callback) {
     }
     const submitOptions = {}
     if (deadline.value) {
-      submitOptions.deadline = new Date(deadline.value).toISOString()
+      // The column is a DATE, so send YYYY-MM-DD.
+      submitOptions.deadline = deadline.value
     }
     const id = await composeStore.createDraft(message, email.value)
     console.log('[clearance] createDraft -> draft id', id)
