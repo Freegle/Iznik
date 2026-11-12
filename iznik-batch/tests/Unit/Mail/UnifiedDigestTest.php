@@ -1702,4 +1702,29 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringContainsString('My own lamp', $text, 'the card rendered');
         $this->assertStringNotContainsString('Reply:', $text);
     }
+
+    public function test_text_part_prints_apostrophes_and_ampersands_literally_in_came_and_went(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $poster = $this->createTestUser();
+
+        $live = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+        $gone = $this->createTestMessage($poster, $group, ['subject' => "OFFER: Kid's bike & Tom's helmet (London)"]);
+        $gone->load(['groups', 'attachments']);
+
+        $mail = new UnifiedDigest(
+            $user,
+            collect([['message' => $live, 'postedToGroups' => [$group->id]]]),
+            UnifiedDigestService::MODE_DAILY,
+            collect(),
+            collect([$gone])
+        );
+        $text = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com')['text'] ?? '';
+
+        $this->assertStringContainsString("Kid's bike & Tom's helmet", $text);
+        $this->assertStringNotContainsString('&#039;', $text);
+        $this->assertStringNotContainsString('&amp;', $text);
+    }
 }
