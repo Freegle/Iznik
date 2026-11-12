@@ -270,6 +270,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, Describes
         return [
             'userid' => $this->user->id,
             'mode' => $this->mode,
+            // Match mail keeps its reason, so a retry has the same subject and opening line.
+            'matchReason' => $this->matchReason,
             'posts' => $this->posts->map(fn ($post) => [
                 'msgid' => $post['message']->id,
                 'groups' => array_values($post['postedToGroups'] ?? []),
@@ -366,7 +368,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, Describes
             $posts,
             $mode,
             $sponsors,
-            $completed
+            $completed,
+            $descriptor['matchReason'] ?? null
         );
     }
 
