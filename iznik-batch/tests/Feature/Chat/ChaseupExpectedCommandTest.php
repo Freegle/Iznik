@@ -251,6 +251,87 @@ class ChaseupExpectedCommandTest extends TestCase
         Mail::assertNothingSent();
     }
 
+    /**
+     * The command is daily and a message stays eligible for five days, so a message that is
+     * still unanswered would be chased on every run unless a run records that it chased it.
+     */
+    public function test_an_unanswered_message_is_chased_once_not_on_every_daily_run(): void
+    {
+        Mail::fake();
+
+        $this->makeExpectedScenario();
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 1 message(s)')
+            ->assertExitCode(0);
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 0 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
+    public function test_skips_message_still_awaiting_processing(): void
+    {
+        Mail::fake();
+
+        $this->makeExpectedScenario(['processingrequired' => 1]);
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 0 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_message_whose_processing_failed(): void
+    {
+        Mail::fake();
+
+        $this->makeExpectedScenario(['processingsuccessful' => 0]);
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 0 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_reply_held_by_rippling_until_it_is_released(): void
+    {
+        Mail::fake();
+
+        [$expecter, , $room, $msgId] = $this->makeExpectedScenario();
+
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($expecter, $group);
+        $rowId = (int) DB::table('rippling_held_replies')->insertGetId([
+            'chatid' => $room->id,
+            'chatmsgid' => $msgId,
+            'msgid' => $post->id,
+            'replieruserid' => $expecter->id,
+            'lat' => 51.5,
+            'lng' => -0.1,
+            'status' => 'held',
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 0 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+
+        DB::table('rippling_held_replies')->where('id', $rowId)->update(['status' => 'released']);
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 1 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
     public function test_dry_run_sends_nothing(): void
     {
         Mail::fake();
