@@ -3672,17 +3672,37 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
-	// Restore the original text from the most recent pending edit before marking it reverted.
-	// The PATCH edit flow immediately writes the new text into messages, so we must explicitly
-	// restore the old values here — otherwise the edited text stays visible after rejection.
+	// Restore the state before the first pending edit, then mark the edits reverted.
+	// The PATCH edit flow immediately writes the new values into messages, so we must explicitly
+	// restore the old values here - otherwise the edited text stays visible after rejection.
+	// An edit records an old value only for a field it changed, so each field takes the old
+	// value from the oldest pending edit that changed it.
 	type editOldValues struct {
 		Oldsubject *string
 		Oldtext    *string
+		Oldtype    *string
 	}
-	var old editOldValues
-	db.Table("messages_edits").Select("oldsubject, oldtext").
+	var edits []editOldValues
+	db.Table("messages_edits").Select("oldsubject, oldtext, oldtype").
 		Where("msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL", req.ID).
-		Order("id DESC").Limit(1).Scan(&old)
+		Order("id ASC").Scan(&edits)
+	var old editOldValues
+	for _, e := range edits {
+		if old.Oldsubject == nil {
+			old.Oldsubject = e.Oldsubject
+		}
+		if old.Oldtext == nil {
+			old.Oldtext = e.Oldtext
+		}
+		if old.Oldtype == nil {
+			old.Oldtype = e.Oldtype
+		}
+	}
+	if old.Oldtype != nil {
+		db.Table("messages").Where("id = ?", req.ID).Update("type", *old.Oldtype)
+		db.Table("messages_groups").Where("msgid = ?", req.ID).Update("msgtype", *old.Oldtype)
+		db.Table("messages_spatial").Where("msgid = ?", req.ID).Update("msgtype", *old.Oldtype)
+	}
 	if old.Oldsubject != nil || old.Oldtext != nil {
 		// The guard
 		// above means at least one of Oldsubject/Oldtext is set, so this is a
