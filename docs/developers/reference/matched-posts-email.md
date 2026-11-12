@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-26
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
@@ -65,7 +65,9 @@ This is a **separate** mail from the daily digest's relevance ranking
      registered app device). This is the primary channel — delivered regardless
      of email;
    - an **email** (`App\Mail\Matched\MatchedPosts`, adaptive hero/list layout)
-     when the member has an address.
+     when the member has an address and `User::sendOurMails()` is true (not deleted, mail not
+     turned off, address not bouncing, not on holiday). Deleted accounts are dropped from the
+     recipients altogether, so they get no channel.
    Then it records each matched post in `messages_matched_notified` (dedup across
    both channels) and bumps `lastrelevantcheck`. The subject/notification title
    mirror each other: "Someone is offering: <item>" for one match, "Freegle
