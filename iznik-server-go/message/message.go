@@ -5337,19 +5337,51 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to delete this message")
 	}
 
-	// Identical golden to 73672934d660
-	// (handleSpam); converted together per gate (h).
-	db.Table("messages").Where("id = ?", msgid).Update("deleted", gorm.Expr("NOW()"))
-
-	// Write audit-log entry when a moderator deletes a message. Log against the
-	// group the mod acted on when supplied (?groupid=), else fall back to the
-	// primary group.
+	// A moderator's delete is per community: it removes only the copies on the communities
+	// they moderate, and the shared post goes only once no undeleted copy remains. The
+	// lockdown gate and another moderator's hold apply as they do to the POST Delete action.
+	var modGroups []uint64
+	deleteShared := true
 	if isMod {
-		groupid := uint64(c.QueryInt("groupid", 0))
-		if groupid == 0 {
-			groupid = getPrimaryGroupForMessage(db, msgid)
+		if lockdown.GateMod(c, myid) {
+			return nil
 		}
+
+		reqGid := uint64(c.QueryInt("groupid", 0))
+		holdReq := PostMessageRequest{ID: msgid}
+		if reqGid > 0 {
+			holdReq.Groupid = &reqGid
+		}
+		if holder, holderName := heldByAnotherMod(myid, holdReq); holder != 0 {
+			return heldByAnotherResponse(c, holder, holderName)
+		}
+
+		var err error
+		modGroups, err = resolveAuthorizedGroups(myid, reqGid, getAllGroupsForMessage(db, msgid))
+		if err != nil {
+			return err
+		}
+
+		db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", msgid, modGroups).
+			Update("deleted", gorm.Expr("1"))
+
+		// Pin to the write host: this gates the shared delete on rows just modified.
+		var remaining int64
+		db.Clauses(dbresolver.Write).Table("messages_groups").Where("msgid = ? AND deleted = 0", msgid).Count(&remaining)
+		deleteShared = remaining == 0
+	}
+
+	if deleteShared {
+		db.Table("messages").Where("id = ?", msgid).Update("deleted", gorm.Expr("NOW()"))
+	}
+
+	// Write an audit-log entry against each community a moderator deleted the post from.
+	for _, groupid := range modGroups {
 		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupid, fromuser, myid, msgid, 0, "")
+	}
+
+	if !deleteShared {
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
 	// Remove from freebiealerts.app — post is no longer available.
