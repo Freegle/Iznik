@@ -5,8 +5,8 @@ namespace Tests\Unit\Commands\Message;
 use App\Services\Embedding\EmbedderContract;
 use App\Services\EmbeddingService;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\FakeEmbedder;
 use Tests\TestCase;
-use Tests\Unit\Services\FakeEmbedder;
 
 class RegenerateEmbeddingsCommandTest extends TestCase
 {
