@@ -476,6 +476,16 @@ func FindPartnerByName(name string) uint64 {
 // may do the same and still agree with it.
 const tnPartnerDomain = "user.trashnothing.com"
 
+// IsTNAddress says whether an address is on TrashNothing's domain, bare or a per-group alias, in
+// any case. Such an address belongs to the account holding the TN id TrashNothing names for it,
+// so a member cannot add or confirm one themselves.
+func IsTNAddress(email string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(email)), "@"+tnPartnerDomain)
+}
+
+// MsgTNAddressRefused is what a member is told when they try to add or confirm a TrashNothing address.
+const MsgTNAddressRefused = "That's a TrashNothing address. Only TrashNothing can link one to an account, so it can't be added here. Please use your own email address."
+
 // tnAliasRegexp matches a partner per-group alias, <username>-g<groupid>@<domain>.
 // Trash Nothing mints one address per TN GROUP, so a member active in several TN
 // groups presents several addresses differing only in the -g part. It mirrors
