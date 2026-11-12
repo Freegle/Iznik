@@ -2,6 +2,9 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Value;
+use App\Database\Expressions\JsonNumber;
+use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Coalesce;
 use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Traits\FeatureFlags;
@@ -219,7 +222,7 @@ class StoriesNewsletterService
                 // site for no reduction. whereJsonContains()/where('->') also don't support a
                 // default-value fallback for a missing key.
                 $q->whereNull('groups.settings')
-                    ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 1) != 0");
+                    ->orWhere(new Comparison(new Coalesce(new JsonNumber('groups.settings', Value::of('$.newsletter')), 1), '!=', 0));
             })
             ->distinct();
 
