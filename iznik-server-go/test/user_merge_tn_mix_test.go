@@ -6,6 +6,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
+	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,13 +27,20 @@ func TestMergeUsersTxRefusesTrashNothingWithFreegleAccount(t *testing.T) {
 	stampTN(tn, 991005)
 	CreateTestMembership(t, tn, groupID, utils.ROLE_MEMBER)
 
-	assert.Error(t, user.MergeUsersTx(db, volunteer, tn, tn), "the volunteer is not merged into the TrashNothing account")
+	err := user.MergeUsersTx(db, volunteer, tn, tn)
+	var refusal *fiber.Error
+	if assert.ErrorAs(t, err, &refusal, "the volunteer is not merged into the TrashNothing account") {
+		assert.Equal(t, fiber.StatusBadRequest, refusal.Code, "the merge is refused as a bad request")
+	}
 	assert.True(t, userExists(volunteer))
 
 	var role string
 	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", tn, groupID).Scan(&role)
 	assert.Equal(t, utils.ROLE_MEMBER, role, "the TrashNothing account does not gain the moderator role")
 
-	assert.Error(t, user.MergeUsersTx(db, tn, volunteer, volunteer), "nor the other way round")
+	err = user.MergeUsersTx(db, tn, volunteer, volunteer)
+	if assert.ErrorAs(t, err, &refusal, "nor the other way round") {
+		assert.Equal(t, fiber.StatusBadRequest, refusal.Code)
+	}
 	assert.True(t, userExists(tn))
 }
