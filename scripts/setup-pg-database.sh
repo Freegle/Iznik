@@ -7,13 +7,15 @@
 #   COMPOSE_PROJECT_NAME=freegle-<name> ./scripts/setup-pg-database.sh
 #
 # The schema comes from iznik-batch/database/postgres/baseline.sql, which
-# tools/pg-schema/regenerate.sh produces from the migrated MySQL schema. Two databases are built
-# from it: iznik (the dev database) and iznik_go_test (schema only, as on MySQL). The fixtures in
-# scripts/fixtures are then loaded into iznik, as on MySQL, by tools/fixtures/load.mjs (Node, on the host or in a container), and
-# the fixture posts are rolled forward so they stay inside the feed's 31 day window.
+# tools/pg-schema/regenerate.sh produces from the migrated MySQL schema. The stored functions come
+# from iznik-batch/database/postgres/functions.sql, loaded in the same transaction. Two databases are built
+# from them: iznik (the dev database) and iznik_go_test (schema only, as on MySQL). The fixtures in
+# scripts/fixtures are then loaded into iznik, as on MySQL, by tools/fixtures/load.mjs (Node, on the host or
+# in a container), and the fixture posts are rolled forward so they stay inside the feed's 31 day window.
 #
-# A database that already has tables is left alone, so re-running is cheap. PG_REBUILD=1 (or
-# SELF_HOSTED_RUNNER=true) drops and rebuilds it.
+# A database that already has tables is left alone, so re-running is cheap, except that the functions
+# file is loaded again over it (it is all CREATE OR REPLACE) so a change to a function reaches a
+# database that was built before. PG_REBUILD=1 (or SELF_HOSTED_RUNNER=true) drops and rebuilds it.
 #
 # Settings, all optional:
 #   COMPOSE_PROJECT_NAME  container prefix, as for setup-test-database.sh (default freegle)
@@ -24,9 +26,11 @@
 #   PG_BASELINE           a baseline file to load instead of the committed one (tests use this)
 #   PG_FIXTURES           0 skips the fixtures (default: load them into PG_DATABASE)
 #   PG_FIXTURE_ORPHANS    1 prints every foreign key that loaded rows break, after the load
+#   PG_FUNCTIONS          a functions file to load instead of the committed one
 
 REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 BASELINE="${PG_BASELINE:-${REPO_DIR}/iznik-batch/database/postgres/baseline.sql}"
+FUNCTIONS="${PG_FUNCTIONS:-${REPO_DIR}/iznik-batch/database/postgres/functions.sql}"
 PREFIX="${COMPOSE_PROJECT_NAME:-freegle}"
 PG_CONTAINER="${PG_CONTAINER:-${PREFIX}-postgres}"
 PG_DATABASE="${PG_DATABASE:-iznik}"
@@ -44,6 +48,10 @@ fi
 
 if [ ! -f "$BASELINE" ]; then
   echo "Missing ${BASELINE}. Run tools/pg-schema/regenerate.sh."
+  exit 1
+fi
+if [ ! -f "$FUNCTIONS" ]; then
+  echo "Missing ${FUNCTIONS}."
   exit 1
 fi
 
@@ -71,17 +79,21 @@ build() {
   fi
   if [ "$tables" != "0" ] && [ "${PG_REBUILD:-}" != "1" ] && [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
     echo "PostgreSQL database ${db} already has ${tables} tables; set PG_REBUILD=1 to rebuild it"
+    if ! $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 < "$FUNCTIONS" >/dev/null; then
+      echo "Loading the PostgreSQL stored functions into ${db} FAILED"
+      return 1
+    fi
     return 0
   fi
   echo "Building PostgreSQL database ${db} from the baseline..."
-  # The baseline loads in one transaction (-1), so a failure leaves an empty database that the next
-  # run rebuilds, never a half-built one that looks finished.
+  # The baseline and the functions load in one transaction (-1), so a failure leaves an empty database
+  # that the next run rebuilds, never a half-built one that looks finished.
   if ! $PG_PSQL -d postgres -X -q -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS \"${db}\" WITH (FORCE)" -c "CREATE DATABASE \"${db}\""; then
     echo "Could not create PostgreSQL database ${db}"
     return 1
   fi
-  if ! $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 < "$BASELINE" >/dev/null; then
-    echo "Loading the PostgreSQL baseline into ${db} FAILED"
+  if ! { cat "$BASELINE"; echo; cat "$FUNCTIONS"; } | $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 >/dev/null; then
+    echo "Loading the PostgreSQL baseline and functions into ${db} FAILED"
     return 1
   fi
   tables=$($PG_PSQL -d "$db" -X -q -At -c "SELECT count(*) FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace AND relname <> 'spatial_ref_sys'")
