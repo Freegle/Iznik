@@ -420,3 +420,29 @@ func TestStripeIPN_GiftAid_DuplicateInsertNoError(t *testing.T) {
 	db.Exec("DELETE FROM users_donations WHERE TransactionID IN (?, ?)", chargeID1, chargeID2)
 	db.Exec("DELETE FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", userID)
 }
+
+// A webhook that records money must only act on events Stripe sent. An event with no
+// Stripe-Signature header is refused and records nothing, even when it is well formed
+// and names a real member's address.
+func TestStripeIPN_UnsignedEventIsRefused(t *testing.T) {
+	prefix := uniquePrefix("stripeunsigned")
+	db := database.DBConn
+
+	CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
+	email := prefix + "_donor@test.com"
+
+	chargeID := "ch_test_" + prefix
+	body := makeChargeEvent(chargeID, 50000, map[string]string{}, email, "One-time donation")
+
+	req := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Contains(t, []int{400, 401, 403}, resp.StatusCode, "an unsigned event must be refused")
+
+	var donationCount int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&donationCount)
+	assert.Equal(t, int64(0), donationCount, "an unsigned event must not record a donation")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
+}
