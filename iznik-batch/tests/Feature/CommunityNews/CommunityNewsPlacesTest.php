@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\CommunityNews;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Models\CommunityNewsArea;
 use App\Services\CommunityNews\CommunityNewsAreaService;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +21,11 @@ class CommunityNewsPlacesTest extends TestCase
         parent::setUp();
         // Same reason as CommunityNewsAreaServiceTest: opt-out means the seeded
         // groups would otherwise flood every count.
-        DB::statement("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.communitynews', 0)");
+        foreach (DB::table('groups')->get(['id', 'settings']) as $g) {
+            $settings = json_decode($g->settings ?? '{}', true) ?: [];
+            $settings['communitynews'] = 0;
+            DB::table('groups')->where('id', $g->id)->update(['settings' => json_encode($settings)]);
+        }
         DB::table('places')->delete();
     }
 
@@ -32,7 +38,7 @@ class CommunityNewsPlacesTest extends TestCase
     {
         $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::statement(
-            'INSERT INTO places (name, lat, lng, population, position) VALUES (?, ?, ?, ?, ST_SRID(POINT(?, ?), ' . $srid . '))',
+            'INSERT INTO places (name, lat, lng, population, position) VALUES (?, ?, ?, ?, ' . Spatial::point('?', '?', $srid) . ')',
             [$name, $lat, $lng, $pop, $lng, $lat]
         );
     }
@@ -45,7 +51,7 @@ class CommunityNewsPlacesTest extends TestCase
             'POLYGON((%1$f %2$f, %3$f %2$f, %3$f %4$f, %1$f %4$f, %1$f %2$f))',
             $lng - $half, $lat - $half, $lng + $half, $lat + $half
         );
-        DB::statement('UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?', [$wkt, $srid, $group->id]);
+        DB::statement('UPDATE ' . Sql::table('groups') . ' SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?', [$wkt, $srid, $group->id]);
     }
 
     public function test_places_inside_the_area_come_back_biggest_first(): void

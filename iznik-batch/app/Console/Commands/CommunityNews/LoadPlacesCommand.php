@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\CommunityNews;
 
+use App\Database\Spatial;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -86,7 +87,7 @@ class LoadPlacesCommand extends Command
         $bind = [];
         foreach ($rows as $r) {
             // POINT takes X then Y, so longitude first.
-            $values[] = "(?, ?, ?, ?, ST_SRID(POINT(?, ?), {$srid}))";
+            $values[] = "(?, ?, ?, ?, " . Spatial::point('?', '?', $srid) . ")";
             array_push($bind, $r['name'], $r['lat'], $r['lng'], $r['population'], $r['lng'], $r['lat']);
         }
 

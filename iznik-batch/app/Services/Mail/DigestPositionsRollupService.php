@@ -2,6 +2,11 @@
 
 namespace App\Services\Mail;
 
+use App\Database\Expressions\Value;
+use App\Database\Expressions\Regexp;
+use App\Database\Expressions\JsonLength;
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Alias;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -41,31 +46,33 @@ class DigestPositionsRollupService
         $start = $date.' 00:00:00';
         $end = $date.' 23:59:59';
 
-        $cohort = "e.email_type LIKE 'UnifiedDigest%'
-            AND u.tnuserid IS NULL
-            AND e.metadata IS NOT NULL
-            AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0
-            AND e.sent_at BETWEEN ? AND ?";
+        // The digests of the day that count: ours, not TrashNothing members', with a post list.
+        $postCount = fn () => new JsonLength('e.metadata', Value::of('$.post_msgids'));
+        $cohort = fn ($query) => $query
+            ->where('e.email_type', 'like', 'UnifiedDigest%')
+            ->whereNull('u.tnuserid')
+            ->whereNotNull('e.metadata')
+            ->where(new Comparison($postCount(), '>', 0))
+            ->whereBetween('e.sent_at', [$start, $end]);
 
-        // keep-raw: FORCE INDEX (sent_at) and JSON_LENGTH grouping on a computed alias cannot be rendered by the builder.
-        $sizes = DB::select("
-            SELECT e.email_type AS email_type, JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt
-            FROM email_tracking e FORCE INDEX (sent_at)
-            LEFT JOIN users u ON e.userid = u.id
-            WHERE $cohort
-            GROUP BY e.email_type, num_posts", [$start, $end]);
+        $sizes = $cohort(
+            DB::table('email_tracking as e')
+                ->forceIndex('sent_at')
+                ->leftJoin('users as u', 'e.userid', '=', 'u.id')
+                ->select('e.email_type as email_type')
+                ->addSelect(new Alias($postCount(), 'num_posts'))
+                ->selectRaw('COUNT(*) AS cnt')
+        )->groupBy('e.email_type', 'num_posts')->get();
 
-        // keep-raw: REGEXP on link_position plus COUNT(DISTINCT) over the shared cohort fragment; the builder cannot render it.
-        $clicks = DB::select("
-            SELECT e.email_type AS email_type, c.link_position AS link_position,
-                   COUNT(DISTINCT c.email_tracking_id) AS emails_clicked,
-                   COUNT(*) AS clicks
-            FROM email_tracking_clicks c
-            JOIN email_tracking e ON c.email_tracking_id = e.id
-            LEFT JOIN users u ON e.userid = u.id
-            WHERE $cohort
-              AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)\$'
-            GROUP BY e.email_type, c.link_position", [$start, $end]);
+        $clicks = $cohort(
+            DB::table('email_tracking_clicks as c')
+                ->join('email_tracking as e', 'c.email_tracking_id', '=', 'e.id')
+                ->leftJoin('users as u', 'e.userid', '=', 'u.id')
+                ->select('e.email_type as email_type', 'c.link_position as link_position')
+                ->selectRaw('COUNT(DISTINCT c.email_tracking_id) AS emails_clicked')
+                ->selectRaw('COUNT(*) AS clicks')
+        )->where(new Regexp('c.link_position', Value::of('^(post_[0-9]+|p[0-9]+)$')))
+            ->groupBy('e.email_type', 'c.link_position')->get();
 
         /** @var array<string, array<int, array{shown:int, emails_clicked:int, clicks:int}>> $byType */
         $byType = [];

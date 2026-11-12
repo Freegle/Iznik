@@ -2,6 +2,12 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Value;
+use App\Database\Expressions\Max;
+use App\Database\Expressions\JsonUnquote;
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\Alias;
 use App\Mail\Engage\EngageMail;
 use App\Models\Group;
 use App\Models\User;
@@ -102,14 +108,11 @@ class EngageEmailService
             }
 
             // Respect group-level engagement setting
-            // keep-raw: COALESCE + JSON_UNQUOTE/JSON_EXTRACT under a MAX() aggregate
-            // have no query-builder equivalent - both are functions the builder
-            // cannot express, layered inside an aliased aggregate.
             $engagementEnabled = DB::table('memberships')
                 ->join('groups', 'groups.id', '=', 'memberships.groupid')
                 ->where('memberships.userid', $userId)
                 ->where('groups.type', Group::TYPE_FREEGLE)
-                ->selectRaw('MAX(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(memberships.settings, "$.engagement")), 1)) AS enabled')
+                ->select(new Alias(new Max(new Coalesce(new JsonUnquote(new JsonExtract('memberships.settings', Value::of('$.engagement'))), Value::of('1'))), 'enabled'))
                 ->value('enabled');
 
             if ($engagementEnabled === '0' || $engagementEnabled === 0) {

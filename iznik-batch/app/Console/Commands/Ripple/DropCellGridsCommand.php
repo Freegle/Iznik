@@ -91,7 +91,7 @@ class DropCellGridsCommand extends Command
             DB::statement(
                 'UPDATE rippling_reach
                     SET max_polygon_cells = NULL,
-                        polygon_cells = IF(origin_union_secs IS NOT NULL, NULL, polygon_cells)
+                        polygon_cells = CASE WHEN origin_union_secs IS NOT NULL THEN NULL ELSE polygon_cells END
                   WHERE msgid = ?',
                 [$row->msgid]
             );

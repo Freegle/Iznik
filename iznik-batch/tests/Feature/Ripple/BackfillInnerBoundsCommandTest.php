@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Ripple;
 
+use App\Database\Spatial;
 use App\Models\Message;
 use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Support\Facades\DB;
@@ -109,7 +110,7 @@ class BackfillInnerBoundsCommandTest extends TestCase
         $this->assertSame($goodBefore, $goodAfter, 'a useful inner is not rewritten');
 
         $deg = DB::selectOne(
-            'SELECT ST_GeometryType(outer_bound) AS ot, inner_bound IS NULL AS inner_null
+            'SELECT ' . Spatial::geometryType('outer_bound') . ' AS ot, inner_bound IS NULL AS inner_null
                FROM rippling_reach WHERE msgid = ?',
             [$degraded]
         );

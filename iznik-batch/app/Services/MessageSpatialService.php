@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Sql;
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Point;
 use App\Database\Expressions\StSrid;
@@ -162,7 +163,7 @@ class MessageSpatialService
         return '(SELECT msgid, groupid, arrival, rippled_in, collection, deleted, '
             . 'ROW_NUMBER() OVER (PARTITION BY msgid ORDER BY ' . implode(', ', $order) . ') '
             . 'AS representative_rank '
-            . 'FROM messages_groups FORCE INDEX (arrival) '
+            . 'FROM messages_groups' . Sql::forceIndex('arrival') . ' '
             . "WHERE arrival >= '" . $cutoff . "' "
             . "AND collection = '" . MessageGroup::COLLECTION_APPROVED . "' "
             . 'AND deleted = 0'

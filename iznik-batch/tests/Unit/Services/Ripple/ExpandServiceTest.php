@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Models\ChatMessage;
 use App\Models\Group;
 use App\Models\Membership;
@@ -732,7 +734,7 @@ class ExpandServiceTest extends TestCase
         $group = $this->createTestGroup();
         // Rejected group's area = the EASTERN half of the schedule polygon (lng -0.15..-0.10).
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText(
+            "UPDATE " . Sql::table('groups') . " SET polyindex = ST_GeomFromText(
                 'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', " . config('freegle.srid') . ")
              WHERE id = ?",
             [$group->id]
@@ -1124,7 +1126,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -1165,7 +1167,7 @@ class ExpandServiceTest extends TestCase
         $fresh = $this->createTestGroup();
         foreach ([$carrying, $fresh] as $g) {
             DB::statement(
-                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
                 [$poly, config('freegle.srid'), $g->id]
             );
         }
@@ -1219,7 +1221,7 @@ class ExpandServiceTest extends TestCase
         $fresh = $this->createTestGroup();
         foreach ([$carrying, $fresh] as $g) {
             DB::statement(
-                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
                 [$poly, config('freegle.srid'), $g->id]
             );
         }
@@ -1267,21 +1269,21 @@ class ExpandServiceTest extends TestCase
         // Group B: area intersects the fake reach (-0.20..-0.10 lng, 51.50..51.60 lat).
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
         // Group C: far away → must NOT ripple in.
         $groupC = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((1.0 53.0,1.1 53.0,1.1 53.1,1.0 53.1,1.0 53.0))', config('freegle.srid'), $groupC->id]
         );
 
         // Group D: area intersects the reach BUT not a live Freegle group → must NOT ripple in.
         $groupD = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, type = 'Other', onhere = 0, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, type = 'Other', onhere = 0, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.16 51.53,-0.13 51.53,-0.13 51.57,-0.16 51.57,-0.16 51.53))', config('freegle.srid'), $groupD->id]
         );
 
@@ -1333,7 +1335,7 @@ class ExpandServiceTest extends TestCase
         // ST_Intersects passes and only the node-set gate can exclude it.
         $g = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $g->id]
         );
         return $g;
@@ -1403,7 +1405,7 @@ class ExpandServiceTest extends TestCase
         // Rippled group's area INTERSECTS the reach polygon, so the polygon-only path
         // keeps it - only the node-set gate can retract it.
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $rippled->id]
         );
         $message = Message::create([
@@ -1459,7 +1461,7 @@ class ExpandServiceTest extends TestCase
         $origin = $this->createTestGroup();
         $rippled = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $rippled->id]
         );
         $message = Message::create([
@@ -1500,7 +1502,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -1516,7 +1518,7 @@ class ExpandServiceTest extends TestCase
     {
         $g = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $g->id]
         );
 
@@ -1635,7 +1637,7 @@ class ExpandServiceTest extends TestCase
             $msgid = $this->seedSpatialPost(now()->subMinutes(30));
             $groupB = $this->createTestGroup();
             DB::statement(
-                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
                 ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
             );
 
@@ -1667,7 +1669,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -1695,7 +1697,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -1720,7 +1722,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -1751,7 +1753,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -1787,7 +1789,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -1816,7 +1818,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -1883,7 +1885,7 @@ class ExpandServiceTest extends TestCase
         // Inner box: lng -0.18..-0.12, lat 51.52..51.58 — entirely inside the reach.
         $groupPolyWkt = 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))';
         DB::statement(
-            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             [$groupPolyWkt, $originGid]
         );
 
@@ -1925,14 +1927,14 @@ class ExpandServiceTest extends TestCase
             'publish'   => 1,
         ]);
         DB::statement(
-            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', $playgroundGroup->id]
         );
 
         // Normal group with same area — must ripple in (confirms the reach does cover the area).
         $normalGroup = $this->createTestGroup();
         DB::statement(
-            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', $normalGroup->id]
         );
 
@@ -1967,14 +1969,14 @@ class ExpandServiceTest extends TestCase
         // Opted out of ripple-IN, area fully inside the reach.
         $optedOut = $this->createTestGroup();
         DB::statement(
-            'UPDATE `groups` SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             ['{"rippling": {"in": 0}}', $area, $optedOut->id]
         );
 
         // Control: same area, no setting — proves the reach really does cover it.
         $normalGroup = $this->createTestGroup();
         DB::statement(
-            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             [$area, $normalGroup->id]
         );
 
@@ -2011,7 +2013,7 @@ class ExpandServiceTest extends TestCase
         // A neighbouring community whose area the reach would otherwise cover.
         $neighbour = $this->createTestGroup();
         DB::statement(
-            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', $neighbour->id]
         );
 
@@ -2074,7 +2076,7 @@ class ExpandServiceTest extends TestCase
 
         $neighbour = $this->createTestGroup();
         DB::statement(
-            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', $neighbour->id]
         );
 
@@ -2186,7 +2188,7 @@ class ExpandServiceTest extends TestCase
         // Group whose area intersects the fake reach.
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2236,7 +2238,7 @@ class ExpandServiceTest extends TestCase
         // Group whose area intersects the fake reach.
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2271,7 +2273,7 @@ class ExpandServiceTest extends TestCase
         // Group whose area intersects the fake reach.
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2300,7 +2302,7 @@ class ExpandServiceTest extends TestCase
         // Group whose area intersects the fake reach.
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2335,7 +2337,7 @@ class ExpandServiceTest extends TestCase
         // Group B: area intersects the fake reach.
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2396,7 +2398,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2424,7 +2426,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2454,7 +2456,7 @@ class ExpandServiceTest extends TestCase
         // Group B's area intersects the reach — it would ripple in but for the ban.
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2484,7 +2486,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
         DB::table('memberships')->insert([
@@ -2597,7 +2599,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2626,7 +2628,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2662,7 +2664,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2686,7 +2688,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2730,7 +2732,7 @@ class ExpandServiceTest extends TestCase
         $allowed = $this->createTestGroup();
         foreach ([$blocked, $allowed] as $g) {
             DB::statement(
-                "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
                 [$area, config('freegle.srid'), $g->id]
             );
         }
@@ -2778,7 +2780,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2818,7 +2820,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2862,7 +2864,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2892,7 +2894,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2938,7 +2940,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -2987,7 +2989,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -3023,7 +3025,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -3036,7 +3038,7 @@ class ExpandServiceTest extends TestCase
         // be re-claimed.
         $groupC = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.17 51.53,-0.13 51.53,-0.13 51.57,-0.17 51.57,-0.17 51.53))', config('freegle.srid'), $groupC->id]
         );
         DB::table('rippling_reach')->where('msgid', $msgid)->update([
@@ -3080,7 +3082,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -3113,7 +3115,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, onhere = 1, welcomemail = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, onhere = 1, welcomemail = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['Welcome to our lovely community! Please be kind.',
              'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
@@ -3244,7 +3246,7 @@ class ExpandServiceTest extends TestCase
     {
         $group = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $group->id]
         );
 
@@ -3957,8 +3959,8 @@ class ExpandServiceTest extends TestCase
         $far = $this->createTestGroup();
 
         // near overlaps the reach square (0 0,1 1); far is disjoint.
-        DB::statement("UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((0.5 0.5,0.5 1.5,1.5 1.5,1.5 0.5,0.5 0.5))', $srid) WHERE id = ?", [$near->id]);
-        DB::statement("UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((10 10,10 11,11 11,11 10,10 10))', $srid) WHERE id = ?", [$far->id]);
+        DB::statement("UPDATE " . Sql::table('groups') . " SET polyindex = ST_GeomFromText('POLYGON((0.5 0.5,0.5 1.5,1.5 1.5,1.5 0.5,0.5 0.5))', $srid) WHERE id = ?", [$near->id]);
+        DB::statement("UPDATE " . Sql::table('groups') . " SET polyindex = ST_GeomFromText('POLYGON((10 10,10 11,11 11,11 10,10 10))', $srid) WHERE id = ?", [$far->id]);
 
         $msg = Message::create([
             'type' => Message::TYPE_OFFER, 'fromuser' => $poster->id,
@@ -4342,7 +4344,7 @@ class ExpandServiceTest extends TestCase
 
         $check = DB::selectOne(
             'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS o,
-                    (inner_bound IS NULL OR MBRWithin(inner_bound, ST_GeomFromText(?, ' . config('freegle.srid') . '))) AS i
+                    (inner_bound IS NULL OR ' . Spatial::mbrWithin('inner_bound', 'ST_GeomFromText(?, ' . config('freegle.srid') . ')') . ') AS i
                FROM rippling_reach WHERE msgid = ?',
             [$bbox, $bbox, $msgid]
         );
@@ -4447,7 +4449,7 @@ class ExpandServiceTest extends TestCase
         $msgid = $this->seedSpatialPost(now()->subHours(7));
         $group = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText(
+            "UPDATE " . Sql::table('groups') . " SET polyindex = ST_GeomFromText(
                 'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', " . config('freegle.srid') . ")
              WHERE id = ?",
             [$group->id]
@@ -4472,7 +4474,7 @@ class ExpandServiceTest extends TestCase
         // A point well inside the rejected (clipped-out) eastern area must not be
         // cheap-accepted by the inner bound.
         $innerAccepts = (int) DB::selectOne(
-            'SELECT IFNULL(ST_Contains(inner_bound, ST_SRID(POINT(-0.12, 51.55), ' . config('freegle.srid') . ')), 0) AS c
+            'SELECT COALESCE(ST_Contains(inner_bound, ' . Spatial::point('-0.12', '51.55', config('freegle.srid')) . '), false) AS c
                FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         )->c;
@@ -4566,7 +4568,7 @@ class ExpandServiceTest extends TestCase
         $group = $this->createTestGroup();
         // Rejected group's area = the EASTERN half of the reach (lng -0.15..-0.10).
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText(
+            "UPDATE " . Sql::table('groups') . " SET polyindex = ST_GeomFromText(
                 'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', " . config('freegle.srid') . ")
              WHERE id = ?",
             [$group->id]
@@ -4730,7 +4732,7 @@ class ExpandServiceTest extends TestCase
         $group = $this->createTestGroup();
         // Rejected group's area = the EASTERN half of the reach (lng -0.15..-0.10).
         DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText(
+            "UPDATE " . Sql::table('groups') . " SET polyindex = ST_GeomFromText(
                 'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', " . config('freegle.srid') . ")
              WHERE id = ?",
             [$group->id]
@@ -4882,8 +4884,8 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['{"spammers":{"worrywords":"rabbit"}}', 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
         $this->service()->process(false, 500);
@@ -4915,8 +4917,8 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['{"spammers":{"worrywords":"rabbit"}}', 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
         $this->service()->process(false, 500);
@@ -4942,13 +4944,13 @@ class ExpandServiceTest extends TestCase
 
         $fussy = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $fussy->id]
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['{"spammers":{"worrywords":"rabbit"}}', 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $fussy->id]
         );
 
         $relaxed = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.17 51.53,-0.13 51.53,-0.13 51.57,-0.17 51.57,-0.17 51.53))', config('freegle.srid'), $relaxed->id]
         );
 
@@ -4984,7 +4986,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -5007,7 +5009,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
         DB::table('concern_keywords')->insert([
@@ -5032,8 +5034,8 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', 'rabbit')), polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['{"spammers":{"worrywords":"rabbit"}}', 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
         $this->service()->process(false, 500);
@@ -5058,7 +5060,7 @@ class ExpandServiceTest extends TestCase
 
         $groupB = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $groupB->id]
         );
 
@@ -5104,13 +5106,13 @@ class ExpandServiceTest extends TestCase
 
         $removed = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.18 51.52,-0.16 51.52,-0.16 51.58,-0.18 51.58,-0.18 51.52))', config('freegle.srid'), $removed->id]
         );
 
         $other = $this->createTestGroup();
         DB::statement(
-            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            "UPDATE " . Sql::table('groups') . " SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
             ['POLYGON((-0.14 51.52,-0.12 51.52,-0.12 51.58,-0.14 51.58,-0.14 51.52))', config('freegle.srid'), $other->id]
         );
 

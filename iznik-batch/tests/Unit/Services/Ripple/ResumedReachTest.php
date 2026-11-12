@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Models\Membership;
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Ripple\RippleIntroMail;
@@ -178,7 +180,7 @@ class ResumedReachTest extends TestCase
     {
         $group = $this->createTestGroup();
         DB::statement(
-            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             [$wkt, $group->id]
         );
 
@@ -409,7 +411,7 @@ class ResumedReachTest extends TestCase
     private function outerBoundContains(\stdClass $f, array $at): bool
     {
         return (bool) DB::selectOne(
-            'SELECT ST_Contains(outer_bound, ST_SRID(POINT(?, ?), ' . config('freegle.srid') . ')) AS inside FROM rippling_reach WHERE msgid = ?',
+            'SELECT ST_Contains(outer_bound, ' . Spatial::point('?', '?', config('freegle.srid')) . ') AS inside FROM rippling_reach WHERE msgid = ?',
             [$at[1], $at[0], $f->msgid]
         )->inside;
     }

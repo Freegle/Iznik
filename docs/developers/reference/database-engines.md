@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-13
 owner: Freegle dev team
 covers:
   - tools/pg-schema/*
@@ -34,6 +34,10 @@ covers:
   - scripts/check-portable-migrations.mjs
   - iznik-server-go/database/postgres.go
   - iznik-batch/tests/bootstrap.php
+  - iznik-batch/database/postgres/test-mode.sql
+  - iznik-batch/app/Database/PostgresBinaryConnection.php
+  - iznik-batch/app/Database/Expressions/Concerns/PostgresDialect.php
+  - iznik-batch/tests/Unit/Database/ExpressionsPostgresTest.php
   - iznik-spatial-go/source*
   - iznik-spatial-go/testdata/mysql_source_queries.golden
 ---
@@ -701,6 +705,31 @@ cancellable-query handle, is nil on PostgreSQL. Any other value of `DB_ENGINE` s
 `// mysql-only: <reason>` comment, and the CI job `check-portable-migrations` checks the migrations the branch adds.
 The baseline is checked by `regenerate.sh --check` in the tooling run, so a migration that changes the schema
 fails CI until the baseline is regenerated.
+
+## Laravel code on PostgreSQL
+
+The Laravel suite runs on PostgreSQL in CI (`laravel-pg`, above). What makes the code and the tests work on both
+engines, and what to do when you write either:
+
+- **The geometry label.** `config('freegle.srid')` is 3857 on MySQL and 4326 on PostgreSQL (the baseline relabels,
+  it does not reproject). Never write the number in SQL or in a test: read the config.
+- **Test databases are not strict.** The MySQL test databases are built without strict mode, so an INSERT that leaves
+  out a NOT NULL column stores the zero value. `iznik-batch/database/postgres/test-mode.sql`, loaded by
+  `setup-pg-database.sh` after the baseline and the functions, gives each such column the same default on PostgreSQL.
+  It reads the catalog, so a new column is covered without an edit. An invalid ENUM value is the other difference: MySQL
+  stores an empty string and PostgreSQL's CHECK refuses it, so a test uses a real value.
+- **Binary data.** `App\Database\PostgresBinaryConnection` is the `pgsql` connection class. It sends a string that
+  is not text (a NUL byte or invalid UTF-8) as a binary parameter and reads a bytea column back as a string, as the
+  MySQL driver does for a blob.
+- **Expressions.** The classes in `app/Database/Expressions` render MySQL, and where PostgreSQL spells a thing
+  differently or answers differently they branch on the grammar (`Concerns\PostgresDialect`). The MySQL text never
+  changes, and `tests/Unit/Database/ExpressionsPostgresTest.php` pins the PostgreSQL text and, when the suite runs on
+  PostgreSQL, the answer. A JSON path must be a simple `$.member` or `[index]` path on PostgreSQL.
+- **Tests that pin MySQL text.** `ExpressionsTest` and the golden SQL of the parity harness render with a MySQL
+  grammar on either engine. A test whose subject is MySQL-only (information_schema column types, the MySQL connection
+  class) calls `requiresMySql('why')` and is skipped on PostgreSQL.
+- **Foreign keys.** A test that needs them off uses `Tests\Support\ForeignKeyChecks`, which sets the MySQL session
+  variable or PostgreSQL's `session_replication_role`.
 
 ## Not yet done
 

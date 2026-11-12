@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Sql;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\Arithmetic;
 use App\Database\Expressions\CaseWhen;
@@ -505,7 +506,7 @@ class AuthorityStatsService
         // temp table, so converting would destroy a same-named permanent
         // table. The raw form's TEMPORARY keyword makes it a no-op against a
         // permanent table - verified: it left one untouched.
-        DB::statement('DROP TEMPORARY TABLE IF EXISTS pc');
+        DB::statement(Sql::dropTemporaryTable('pc'));
         Schema::create('pc', function (Blueprint $table) {
             $table->temporary();
             $table->unsignedBigInteger('locationid');
@@ -626,7 +627,7 @@ class AuthorityStatsService
 
         // keep-raw: see the DROP above - Schema::dropIfExists() can only ever
         // emit a non-TEMPORARY drop.
-        DB::statement('DROP TEMPORARY TABLE IF EXISTS pc');
+        DB::statement(Sql::dropTemporaryTable('pc'));
 
         return $ret;
     }

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\CommunityNews;
 
+use App\Database\Sql;
 use App\Mail\CommunityNews\CommunityNewsMail;
 use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
@@ -63,7 +64,7 @@ class CommunityNewsEmailServiceLockdownTest extends TestCase
         $s = $lat - $delta;
         $n = $lat + $delta;
         DB::statement(
-            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
             ["POLYGON(($w $s, $e $s, $e $n, $w $n, $w $s))", $srid, $group->id]
         );
     }

@@ -2,6 +2,11 @@
 
 namespace App\Services\FirstReply;
 
+use App\Database\Sql;
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\JsonUnquote;
+use App\Database\Expressions\Value;
+use App\Database\Spatial;
 use App\Services\Ripple\RingIndex;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
@@ -496,8 +501,8 @@ class MatchMailService
                     m.fromuser AS fromuser, m.subject AS subject
              FROM messages_spatial ms
              JOIN messages m ON m.id = ms.msgid
-             WHERE ms.arrival <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
-               AND ms.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)
+             WHERE ms.arrival <= " . Sql::nowMinus('?', 'MINUTE') . "
+               AND ms.arrival > " . Sql::nowMinus('?', 'HOUR') . "
                AND m.deleted IS NULL
                AND NOT EXISTS (
                      SELECT 1 FROM chat_messages cm
@@ -698,16 +703,7 @@ class MatchMailService
         // order the reach mailer uses, so a candidate is measured from the point
         // that decides their reach membership everywhere else. Built once and
         // interpolated three times (band tests + distance); each use binds SRID.
-        $pointExpr = "ST_SRID(POINT(
-                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
-                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
-                          ELSE l.lng END,
-                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
-                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
-                          ELSE l.lat END
-                   ), ?)";
+        $pointExpr = Spatial::memberPoint('u.settings', 'l.lng', 'l.lat', '?', ' AND u.tnuserid IS NULL');
 
         // The reach test and the "is this a real, mailable member" test in one
         // pass. dist is how far the candidate stands beyond the CURRENT reach
@@ -738,18 +734,19 @@ class MatchMailService
         // distanceToNearestCellMetres for the nearest-edge ordering. dist is a
         // NULL placeholder here; applyCellBand fills it in from the grids.
         // keep-raw: JSON-vs-locations CASE point expression and a dynamic IN list - the builder cannot render this shape
+        $densityBand = Spatial::sql(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.browseDensityBand'))));
         $rows = DB::select(
             "SELECT u.id AS id,
                     NULL AS dist,
                     ST_Y($pointExpr) AS cand_lat,
                     ST_X($pointExpr) AS cand_lng,
-                    JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band
+                    {$densityBand} AS density_band
              FROM users u
              LEFT JOIN locations l ON l.id = u.lastlocation
              JOIN rippling_reach rr ON rr.msgid = ?
              WHERE u.id IN (" . implode(',', array_fill(0, count($userIds), '?')) . ")
                AND u.deleted IS NULL
-               AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
+               AND (u.lastaccess IS NULL OR u.lastaccess > " . Sql::nowMinus('90', 'DAY') . ")
                AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id{$mailableSql})
                -- OUTSIDE the reach the post has right now, INSIDE the reach it
                -- will eventually have. Someone already inside the current
@@ -761,10 +758,10 @@ class MatchMailService
                AND rr.reach_labels IS NOT NULL
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
-                     WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
+                     WHERE fs.userid = u.id AND fs.sent_at > " . Sql::nowMinus('?', 'HOUR') . "
                    )
                AND (SELECT COUNT(*) FROM firstreply_scouts fs2
-                    WHERE fs2.userid = u.id AND fs2.sent_at > DATE_SUB(NOW(), INTERVAL 7 DAY)) < ?
+                    WHERE fs2.userid = u.id AND fs2.sent_at > " . Sql::nowMinus('7', 'DAY') . ") < ?
                AND NOT EXISTS (
                      SELECT 1 FROM rippling_reach_notified rn
                      WHERE rn.msgid = ? AND rn.userid = u.id
