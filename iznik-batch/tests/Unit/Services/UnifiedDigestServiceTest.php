@@ -5170,8 +5170,11 @@ class UnifiedDigestServiceTest extends TestCase
      */
     public function test_routing_outage_holds_the_mark_for_fifteen_minutes_then_moves_on_with_one_error(): void
     {
-        [$msgid] = $this->seedSettledPostOutsideThePostPass();
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
         DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
         $markKey = UnifiedDigestService::reachMailMarkKey(0);
         $this->assertSame(15, UnifiedDigestService::REACH_MARK_MAX_HOLD_MINUTES);
 
