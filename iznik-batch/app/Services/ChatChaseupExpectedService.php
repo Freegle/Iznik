@@ -60,6 +60,20 @@ class ChatChaseupExpectedService
             // the current timestamp.
             ->whereRaw('TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?', [self::EXPECTED_GRACE_MINUTES])
             ->where('chat_rooms.chattype', ChatRoom::TYPE_USER2USER)
+            // The chase-up shows the message to the expectee, so it must pass the
+            // delivery gates of ChatNotificationService::getUnmailedMessages. A
+            // message held, rejected, deleted or still processing keeps
+            // replyexpected=1, but the expectee was never allowed to see it.
+            ->where('chat_messages.deleted', 0)
+            ->where('chat_messages.reviewrequired', 0)
+            ->where('chat_messages.reviewrejected', 0)
+            ->where('chat_messages.processingrequired', 0)
+            ->where('chat_messages.processingsuccessful', 1)
+            ->whereNotExists(function ($q) {
+                $q->from('rippling_held_replies as cmr')
+                    ->whereColumn('cmr.chatmsgid', 'chat_messages.id')
+                    ->where('cmr.status', '<>', 'released');
+            })
             ->orderBy('chat_messages.id', 'desc')
             ->get([
                 'chat_messages.id as chatmsgid',
