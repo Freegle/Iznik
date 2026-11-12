@@ -282,7 +282,7 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 		return chat, true
 	}
 
-	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
+	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid, room.Chattype) {
 		var chat ChatRoomListEntry
 		return chat, true
 	}
