@@ -2,6 +2,10 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\JsonUnquote;
+use App\Database\Expressions\Value;
+use App\Database\Sql;
 use App\Support\ItemName;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -68,26 +72,32 @@ class MessageIllustrationsService
         // above the mark and is picked up next time rather than skipped.
         $highWater = (int) (DB::table('messages_attachments')->max('id') ?? 0);
 
+        $aiFlag = fn (string $alias) => Sql::expr(new JsonUnquote(new JsonExtract(DB::raw($alias.'.externalmods'), Value::of('$.ai'))));
+        $aiRaw = fn (string $alias) => Sql::expr(new JsonExtract(DB::raw($alias.'.externalmods'), Value::of('$.ai')));
+        $aiMine = $aiFlag('ma_ai');
+        $realFlag = $aiFlag('ma_real');
+        $realRaw = $aiRaw('ma_real');
+
         $duplicates = DB::select("
             SELECT DISTINCT ma_ai.id, ma_ai.msgid
             FROM messages_attachments ma_ai
             INNER JOIN messages_attachments ma_real ON ma_real.msgid = ma_ai.msgid
-            WHERE JSON_EXTRACT(ma_ai.externalmods, '$.ai') = TRUE
+            WHERE {$aiMine} = 'true'
             AND (
                 ma_real.externalmods IS NULL
-                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') IS NULL
-                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') = FALSE
+                OR {$realRaw} IS NULL
+                OR {$realFlag} = 'false'
             )
             AND ma_real.id > ?
             UNION
             SELECT DISTINCT ma_ai.id, ma_ai.msgid
             FROM messages_attachments ma_ai
             INNER JOIN messages_attachments ma_real ON ma_real.msgid = ma_ai.msgid
-            WHERE JSON_EXTRACT(ma_ai.externalmods, '$.ai') = TRUE
+            WHERE {$aiMine} = 'true'
             AND (
                 ma_real.externalmods IS NULL
-                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') IS NULL
-                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') = FALSE
+                OR {$realRaw} IS NULL
+                OR {$realFlag} = 'false'
             )
             AND ma_ai.id > ?
         ", [$watermark, $watermark]);

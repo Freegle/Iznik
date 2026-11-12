@@ -137,7 +137,7 @@ class PurgeService
      */
     private function newestChatMessageIdBefore(\Carbon\CarbonInterface $when): int
     {
-        return (int) ChatMessage::where('date', '<', $when)->orderByDesc('date')->limit(1)->value('id');
+        return (int) ChatMessage::where('date', '<', $when)->orderByDesc('date')->orderByDesc('id')->limit(1)->value('id');
     }
 
     /**
@@ -744,10 +744,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs WHERE `type` = 'User' AND (`subtype` = 'Login' OR `subtype` = 'Logout') AND `timestamp` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('logs')->where('type', 'User')->where(fn ($w) => $w->where('subtype', 'Login')->orWhere('subtype', 'Logout'))->where('timestamp', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -768,10 +765,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs WHERE `type` = 'User' AND `subtype` = 'Deleted' AND `timestamp` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('logs')->where('type', 'User')->where('subtype', 'Deleted')->where('timestamp', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -792,10 +786,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs WHERE `type` = 'User' AND `subtype` = 'Created' AND `timestamp` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('logs')->where('type', 'User')->where('subtype', 'Created')->where('timestamp', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -818,10 +809,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs WHERE (`type` = 'User' OR `type` = 'Group') AND `subtype` = '' AND `timestamp` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('logs')->where(fn ($w) => $w->where('type', 'User')->orWhere('type', 'Group'))->where('subtype', '')->where('timestamp', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -842,10 +830,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs WHERE `type` = 'User' AND `subtype` = 'Bounce' AND `timestamp` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('logs')->where('type', 'User')->where('subtype', 'Bounce')->where('timestamp', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -866,10 +851,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM bounces_emails WHERE `date` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('bounces_emails')->where('date', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -894,10 +876,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs_emails WHERE `timestamp` < ? OR `timestamp` > ? LIMIT {$this->chunkSize}",
-                [$cutoff, $future]
-            );
+            $count = DB::table('logs_emails')->where(fn ($w) => $w->where('timestamp', '<', $cutoff)->orWhere('timestamp', '>', $future))->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -932,10 +911,7 @@ class PurgeService
 
         foreach ($groups as $groupId) {
             do {
-                $count = DB::delete(
-                    "DELETE FROM logs WHERE `timestamp` < ? AND groupid = ? LIMIT {$this->chunkSize}",
-                    [$cutoff, $groupId]
-                );
+                $count = DB::table('logs')->where('timestamp', '<', $cutoff)->where('groupid', $groupId)->limit($this->chunkSize)->delete();
                 $total += $count;
             } while ($count > 0);
         }
@@ -1016,10 +992,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs_src WHERE `date` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('logs_src')->where('date', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -1040,10 +1013,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs_errors WHERE `date` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('logs_errors')->where('date', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -1064,10 +1034,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs WHERE `timestamp` < ? AND `type` = 'Plugin' LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('logs')->where('timestamp', '<', $cutoff)->where('type', 'Plugin')->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -1088,10 +1055,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM logs_sql WHERE `date` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('logs_sql')->where('date', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -1112,10 +1076,7 @@ class PurgeService
         $total = 0;
 
         do {
-            $count = DB::delete(
-                "DELETE FROM users_active WHERE `timestamp` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
+            $count = DB::table('users_active')->where('timestamp', '<', $cutoff)->limit($this->chunkSize)->delete();
             $total += $count;
         } while ($count > 0);
 
@@ -1131,7 +1092,7 @@ class PurgeService
 
         if ($dryRun) {
             $logs = DB::select(
-                "SELECT COUNT(*) as cnt FROM logs LEFT JOIN users ON users.id = logs.user WHERE `timestamp` < ? AND logs.user IS NOT NULL AND users.id IS NULL",
+                "SELECT COUNT(*) as cnt FROM logs LEFT JOIN users ON users.id = logs.user WHERE logs.timestamp < ? AND logs.user IS NOT NULL AND users.id IS NULL",
                 [$cutoff]
             );
 
@@ -1151,7 +1112,7 @@ class PurgeService
 
         do {
             $logs = DB::select(
-                "SELECT logs.id FROM logs LEFT JOIN users ON users.id = logs.user WHERE `timestamp` < ? AND logs.user IS NOT NULL AND users.id IS NULL AND logs.id > ? ORDER BY logs.id LIMIT {$this->chunkSize}",
+                "SELECT logs.id FROM logs LEFT JOIN users ON users.id = logs.user WHERE logs.timestamp < ? AND logs.user IS NOT NULL AND users.id IS NULL AND logs.id > ? ORDER BY logs.id LIMIT {$this->chunkSize}",
                 [$cutoff, $lastId]
             );
 
