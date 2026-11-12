@@ -37,6 +37,10 @@ const OUT = args.out
 const ROOT = args.root || '/var/www/html'
 const CHUNK = Number(args.chunk || 40)
 const build = makeExec(args['exec-json'])
+// A file that takes longer than this, alone, is recorded as a crash. A chunk gets 20 seconds a file, and
+// at least CHUNK_MIN_S.
+const FILE_LIMIT_S = 120
+const CHUNK_MIN_S = 240
 const DEADLINE = Date.now() + Number(args['deadline-min'] || 45) * 60000
 
 fs.mkdirSync(OUT, { recursive: true })
@@ -75,7 +79,10 @@ async function runFiles(files, label) {
   const cfg = `/tmp/pg-chunk-${n}.xml`
   const junit = `/tmp/pg-chunk-${n}.junit.xml`
   await capture(build(ROOT, ['sh', '-c', `cat > ${cfg}; rm -f ${junit}`], { stdin: true }), { input: chunkConfig(baseXml, files, ROOT), timeoutMs: 60000 })
-  const r = await capture(build(ROOT, ['vendor/bin/phpunit', '--configuration', cfg, '--log-junit', junit, '--no-progress', '--colors=never']), { timeoutMs: 20 * 60000 })
+  // timeout runs inside the container, so a hung PHPUnit is killed there: killing the docker exec client
+  // would leave it running, holding its database locks against everything after it.
+  const limit = files.length === 1 ? FILE_LIMIT_S : Math.max(CHUNK_MIN_S, files.length * 20)
+  const r = await capture(build(ROOT, ['timeout', '-s', 'KILL', String(limit), 'vendor/bin/phpunit', '--configuration', cfg, '--log-junit', junit, '--no-progress', '--colors=never']), { timeoutMs: (limit + 60) * 1000 })
   const x = await capture(build(ROOT, ['sh', '-c', `[ -f ${junit} ] && cat ${junit}`]), { timeoutMs: 60000 })
   await capture(build(ROOT, ['rm', '-f', cfg, junit]), { timeoutMs: 30000 })
   if (x.code !== 0 || !x.out.includes('<testsuite')) {

@@ -24,7 +24,8 @@ class PilotEngineParityTest extends TestCase
 
     private function logRow(int $n, array $more): array
     {
-        return ['id' => $this->fid($n), 'timestamp' => '2026-01-10 09:00:00'] + $more;
+        // $more first: with + the left array wins, so a timestamp given in $more must come first to be kept.
+        return $more + ['id' => $this->fid($n), 'timestamp' => '2026-01-10 09:00:00'];
     }
 
     /**

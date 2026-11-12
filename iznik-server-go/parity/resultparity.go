@@ -130,10 +130,17 @@ func resetAutoIncrement(e Engine, fixture Fixture) {
 	if e.Dialect != MySQL {
 		return
 	}
-	for _, t := range fixture {
-		// keep-raw: DDL, which GORM has no builder for
-		e.DB.Exec("ALTER TABLE `" + t.Table + "` AUTO_INCREMENT = 1")
-	}
+	// One connection, with a short lock wait: MySQL's default metadata lock wait is a year, and a table
+	// still held by a transaction somewhere must cost this call a few seconds and not the whole run.
+	_ = e.DB.Connection(func(tx *gorm.DB) error {
+		// keep-raw: session setting, which GORM has no builder for
+		tx.Exec("SET SESSION lock_wait_timeout = 3")
+		for _, t := range fixture {
+			// keep-raw: DDL, which GORM has no builder for
+			tx.Exec("ALTER TABLE `" + t.Table + "` AUTO_INCREMENT = 1")
+		}
+		return nil
+	})
 }
 
 // runOn loads the fixture into a transaction on the engine, runs the site, and rolls back.

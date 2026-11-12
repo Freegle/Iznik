@@ -285,6 +285,9 @@ final class EngineParity
                 getenv('DB_USERNAME') ?: 'root',
                 getenv('DB_PASSWORD') ?: 'iznik'
             );
+            // MySQL's default metadata lock wait is a year: a table still held by a transaction elsewhere must
+            // cost this a few seconds, not the run.
+            $pdo->exec('SET SESSION lock_wait_timeout = 3');
             foreach ($tables as $table) {
                 $pdo->exec('ALTER TABLE `'.str_replace('`', '', $table).'` AUTO_INCREMENT = 1');
             }

@@ -11,7 +11,7 @@
     "retired": 23
   },
   "testFixtures": {
-    "total": 6457,
+    "total": 6459,
     "files": {
       "iznik-server-go/authority/stats_split_test.go": 5,
       "iznik-server-go/chat/chat_test.go": 2,
@@ -23,7 +23,7 @@
       "iznik-server-go/lockdown/lockdown_test.go": 3,
       "iznik-server-go/paf/paf_handlers_test.go": 29,
       "iznik-server-go/parity/fixture.go": 2,
-      "iznik-server-go/parity/resultparity.go": 1,
+      "iznik-server-go/parity/resultparity.go": 2,
       "iznik-server-go/test/abtest_tdd_test.go": 6,
       "iznik-server-go/test/abtest_test.go": 8,
       "iznik-server-go/test/address_test.go": 21,
@@ -326,7 +326,7 @@
       "iznik-batch/tests/Feature/Volunteering/VolunteeringMaintenanceServiceTest.php": 2,
       "iznik-batch/tests/Support/HidesExposureTable.php": 1,
       "iznik-batch/tests/Support/LagsTheReadNode.php": 5,
-      "iznik-batch/tests/Support/OrmHarness/EngineParity.php": 4,
+      "iznik-batch/tests/Support/OrmHarness/EngineParity.php": 5,
       "iznik-batch/tests/Support/OrmHarness/ResultParity.php": 1,
       "iznik-batch/tests/Support/SeedsAuthorityStats.php": 1,
       "iznik-batch/tests/Support/SeedsReachCells.php": 1,
