@@ -1572,6 +1572,9 @@ func handleNudge(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	newIdInt, _ := row["@id"].(int64)
 	newId := uint64(newIdInt)
 
+	// The sender is on the roster after a nudge, as after any chat message, or they are never emailed the reply.
+	ensureRosterRow(db, chatid, myid)
+
 	// Update latestmessage on chat room
 	// Identical SQL also appears in
 	// GetOrCreateUser2ModChat, which is left entirely raw (transaction/FOR
