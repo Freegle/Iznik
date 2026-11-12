@@ -3311,8 +3311,18 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 
 	// Full permission check: admin/support can always merge; moderators must moderate both users.
-	if !auth.IsAdminOrSupport(myid) && !(IsModOfUser(myid, uint64(req.ID1)) && IsModOfUser(myid, uint64(req.ID2))) {
-		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
+	if !auth.IsAdminOrSupport(myid) {
+		if !(IsModOfUser(myid, uint64(req.ID1)) && IsModOfUser(myid, uint64(req.ID2))) {
+			return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
+		}
+
+		// A moderator merge is for two duplicates of one member. A moderator is always a member of
+		// their own community, so they pass the test above for their own account; without this they
+		// could absorb another member's emails and logins, or an Admin or Support account's role.
+		if uint64(req.ID1) == myid || uint64(req.ID2) == myid ||
+			auth.IsAdminOrSupport(uint64(req.ID1)) || auth.IsAdminOrSupport(uint64(req.ID2)) {
+			return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
+		}
 	}
 
 	// A TrashNothing member is a partner's member, not one of ours: their account is never merged

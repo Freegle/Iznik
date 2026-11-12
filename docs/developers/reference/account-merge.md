@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
@@ -19,6 +19,11 @@ account being kept, then deletes the discarded one. It happens in three ways:
 | A moderator or Support, in ModTools | `handleMerge` in `iznik-server-go/user/user.go` (`POST /api/user`, action `Merge`) | the moderator |
 | The member, by confirming an email address that belongs to their other account | the `key` branch of `PatchSession` in `iznik-server-go/session/session.go` | the member |
 | The TrashNothing sync, when it finds a member's twin accounts | `HealTNDivergence` in `iznik-server-go/user/partner.go` | the kept account |
+
+Admin and Support may merge any two accounts. A moderator may merge two accounts only when they
+moderate both, neither is their own account, and neither is an Admin or Support account. A moderator
+shares a community with themselves, so without the second and third rules they could absorb another
+member's emails and logins, or an Admin's system role, into their own account.
 
 All three call the same function, `MergeUsersTx` in `iznik-server-go/user/user.go`. Its first
 argument is the account to discard and its second the account to keep. V1 had a single
