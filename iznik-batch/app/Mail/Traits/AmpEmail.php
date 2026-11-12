@@ -66,6 +66,30 @@ trait AmpEmail
     ];
 
     /**
+     * Pull out the parts of an AMP document that hold CSS: style blocks, inline
+     * style attributes and link tags. Member text is HTML-escaped, so it cannot
+     * form any of these.
+     */
+    protected function extractAmpCss(string $html): string
+    {
+        $css = [];
+
+        if (preg_match_all('/<style\b[^>]*>(.*?)<\/style>/is', $html, $m)) {
+            $css = array_merge($css, $m[1]);
+        }
+
+        if (preg_match_all('/<[^>]*\sstyle\s*=\s*(?:"([^"]*)"|\'([^\']*)\')/i', $html, $m)) {
+            $css = array_merge($css, array_filter($m[1]), array_filter($m[2]));
+        }
+
+        if (preg_match_all('/<link\b[^>]*>/i', $html, $m)) {
+            $css = array_merge($css, $m[0]);
+        }
+
+        return implode("\n", $css);
+    }
+
+    /**
      * Validate AMP HTML for forbidden CSS properties.
      *
      * Throws an exception if forbidden patterns are found. This catches
@@ -298,9 +322,9 @@ trait AmpEmail
             return;
         }
 
-        // Validate AMP HTML for forbidden CSS before using it.
-        // This will throw an exception during testing if problems are found.
-        $this->validateAmpCss($this->ampHtml);
+        // Validate only the CSS in the template, never member text. Words such as
+        // "Face mask: free" in a post must not stop the email being sent.
+        $this->validateAmpCss($this->extractAmpCss($this->ampHtml));
 
         $body = $message->getBody();
 
