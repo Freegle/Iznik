@@ -25,8 +25,13 @@ export function parseResults(text) {
   return out
 }
 
+// A name is one line: a test name can hold a newline or a tab (a data set label that is a query).
+export function cleanName(name) {
+  return name.replace(/\s+/g, ' ').trim()
+}
+
 export function formatResults(results) {
-  return results.map((r) => `${r.kind}\t${r.name}`).join('\n') + (results.length ? '\n' : '')
+  return results.map((r) => `${r.kind}\t${cleanName(r.name)}`).join('\n') + (results.length ? '\n' : '')
 }
 
 /** Reads a known-failures list: one name per line, # comments and blank lines ignored. */

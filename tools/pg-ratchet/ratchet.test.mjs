@@ -32,6 +32,11 @@ test('results round trip', () => {
   assert.deepEqual(parseResults(formatResults(rows)), rows)
 })
 
+test('a name with a newline or tab is written as one line', () => {
+  const text = formatResults([{ kind: 'FAIL', name: 'T::t with data set "a\n  b\tc"' }])
+  assert.equal(text, 'FAIL\tT::t with data set "a b c"\n')
+})
+
 test('results reject a line with no tab or an unknown kind', () => {
   assert.throws(() => parseResults('PASS test:TestA\n'), /tab/)
   assert.throws(() => parseResults('MAYBE\tx\n'), /unknown kind/)
