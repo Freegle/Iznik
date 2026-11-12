@@ -401,3 +401,86 @@ func TestGetMergeReturnsEmptyLoginsArrayForUserWithoutLogins(t *testing.T) {
 	assert.True(t, ok2, "user2.logins must be [] not null/missing")
 	assert.Equal(t, 0, len(l2))
 }
+
+// postMergeFromPage sends the answer exactly as the /merge page does: the id comes from the link's
+// query string, so it is a JSON string, while the user ids are numbers. With id typed as a plain
+// number in the handler this body was refused as "Missing parameters" for every member.
+func postMergeFromPage(t *testing.T, mergeID uint64, uid string, keep uint64, other uint64, action string) int {
+	body := fmt.Sprintf(`{"id":"%d","uid":"%s","user1":%d,"user2":%d,"action":"%s"}`,
+		mergeID, uid, keep, other, action)
+	req := httptest.NewRequest("POST", "/api/merge", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	return resp.StatusCode
+}
+
+func TestPostMergeAcceptWithStringIdAsSentByThePage(t *testing.T) {
+	prefix := uniquePrefix("MergeAccStr")
+	offered1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	offered2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+
+	mergeID, uid := createTestMerge(t, offered1, offered2, modID)
+
+	assert.Equal(t, 200, postMergeFromPage(t, mergeID, uid, offered1, offered2, "Accept"))
+
+	var accepted *string
+	database.DBConn.Raw("SELECT accepted FROM merges WHERE id = ?", mergeID).Scan(&accepted)
+	assert.NotNil(t, accepted, "the offer is stamped accepted")
+	assert.True(t, userExists(offered1), "the chosen account is kept")
+	assert.False(t, userExists(offered2), "the other account is merged away")
+}
+
+func TestPostMergeRejectWithStringIdAsSentByThePage(t *testing.T) {
+	prefix := uniquePrefix("MergeRejStr")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+
+	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
+
+	assert.Equal(t, 200, postMergeFromPage(t, mergeID, uid, user1ID, user2ID, "Reject"))
+
+	var rejected *string
+	database.DBConn.Raw("SELECT rejected FROM merges WHERE id = ?", mergeID).Scan(&rejected)
+	assert.NotNil(t, rejected, "the offer is stamped rejected")
+	assert.True(t, userExists(user1ID))
+	assert.True(t, userExists(user2ID))
+}
+
+// Two TrashNothing accounts are never merged by an offer either.
+func TestPostMergeAcceptRefusesTwoTrashNothingAccounts(t *testing.T) {
+	prefix := uniquePrefix("MergeAccTN2")
+	tn1 := CreateTestUser(t, prefix+"_tn1", utils.SYSTEMROLE_USER)
+	tn2 := CreateTestUser(t, prefix+"_tn2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	stampTN(tn1, 991091)
+	stampTN(tn2, 991091)
+
+	mergeID, uid := createTestMerge(t, tn1, tn2, modID)
+
+	assert.Equal(t, 400, postMergeFromPage(t, mergeID, uid, tn1, tn2, "Accept"))
+	assert.True(t, userExists(tn1))
+	assert.True(t, userExists(tn2))
+}
+
+// A member who has opted out of merging (canmerge false) is not merged by accepting an offer, and
+// the offer is not stamped accepted.
+func TestPostMergeAcceptRefusesMemberWhoOptedOut(t *testing.T) {
+	prefix := uniquePrefix("MergeAccOptOut")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	db := database.DBConn
+	db.Exec("UPDATE users SET settings = ? WHERE id = ?", `{"canmerge":false}`, user2ID)
+
+	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
+
+	assert.Equal(t, 400, postMergeFromPage(t, mergeID, uid, user1ID, user2ID, "Accept"))
+	assert.True(t, userExists(user1ID))
+	assert.True(t, userExists(user2ID))
+
+	var accepted *string
+	db.Raw("SELECT accepted FROM merges WHERE id = ?", mergeID).Scan(&accepted)
+	assert.Nil(t, accepted)
+}

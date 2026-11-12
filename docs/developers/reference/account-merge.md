@@ -31,6 +31,13 @@ The same rules apply when a moderator offers a merge (`CreateMerge`, `PUT /api/m
 accepting the offer merges the accounts. `MayMergeAccounts` in `iznik-server-go/user/user.go`
 holds them for both paths.
 
+The `/merge` page sends the offer's `id` as a JSON string, because it comes from the link's query
+string. `PostMerge` reads `id`, `user1` and `user2` as `utils.FlexUint64`, so a string or a
+number both work. Do not type them as plain integers: the whole body then fails to parse, the
+request is refused as missing parameters, and neither Accept nor Reject is recorded. That was the
+case from April to November 2026. Accepting also refuses a TrashNothing account on either side and
+a member who has set `canmerge` to false.
+
 All four call the same function, `MergeUsersTx` in `iznik-server-go/user/user.go`. Its first
 argument is the account to discard and its second the account to keep. V1 had a single
 `User::merge()`, and `MergeUsersTx` is its port. **Do not write a second merge path.** The Go
