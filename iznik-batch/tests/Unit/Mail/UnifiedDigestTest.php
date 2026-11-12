@@ -1643,4 +1643,29 @@ class UnifiedDigestTest extends TestCase
                 "{$key} must use the compact /e/d/i/ tracking route");
         }
     }
+
+    public function test_subject_teaser_does_not_cut_an_item_name_in_the_middle_of_a_character(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        // 21 ASCII characters then a two-byte one: byte 22, where the name is cut, is half of it.
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Set of wooden chairs Épinal style (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $subject = $mail->envelope()->subject;
+
+        $this->assertTrue(mb_check_encoding($subject, 'UTF-8'), 'the subject must stay valid UTF-8');
+        $this->assertStringContainsString('Set of wooden chairs É...', $subject, 'the name is cut at 22 characters, not 22 bytes');
+    }
 }
