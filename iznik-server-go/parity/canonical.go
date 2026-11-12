@@ -304,11 +304,17 @@ var spaceBeforeParenKeywords = buildKeywordSet(
 	"EXISTS", "FROM",
 )
 
-// renameAliases rewrites table/join aliases and explicit "AS" aliases
-// (table or column) to positional names a1, a2, ... in order of first
-// appearance, and rewrites every later bare reference to a renamed alias to
-// match. This is what makes "users u" and "users AS u1" compare equal: both
-// reduce to "users a1".
+// renameAliases rewrites table aliases (including derived-table aliases) to
+// positional names a1, a2, ... in order of first appearance, and rewrites
+// every later bare reference to a renamed alias to match. This is what makes
+// "users u" and "users AS u1" compare equal: both reduce to "users a1".
+//
+// A select-list alias ("COUNT(*) AS cnt") is an output column name, and the
+// code that reads the result (a GORM struct field, a Laravel property) depends
+// on it, so it stays literal. Only the AS keyword is dropped, so "x AS cnt"
+// and "x cnt" still compare equal. An AS alias counts as a table alias when it
+// follows a derived table in FROM or JOIN, or when the name is used as a
+// qualifier ("name.column") anywhere in the statement.
 //
 // It is a heuristic over the token stream, not a scoped SQL parser, so it
 // assumes (true for every hand-written and GORM-rendered statement in this
@@ -330,6 +336,7 @@ func renameAliases(tokens []token) []token {
 		canon[key] = "a" + strconv.Itoa(len(canon)+1)
 	}
 
+	qualifiers := qualifierNames(tokens)
 	var funcStack []string // upper-cased token immediately before each open '(' still in scope
 
 	i := 0
@@ -383,7 +390,9 @@ func renameAliases(tokens []token) []token {
 				top = funcStack[len(funcStack)-1]
 			}
 			if top != "CAST" && top != "CONVERT" && i+1 < len(tokens) && tokens[i+1].kind == tIdent {
-				register(tokens[i+1].text)
+				if qualifiers[strings.ToLower(tokens[i+1].text)] || followsDerivedTable(tokens, i) {
+					register(tokens[i+1].text)
+				}
 				drop[i] = true
 			}
 			i++
@@ -393,7 +402,7 @@ func renameAliases(tokens []token) []token {
 		}
 	}
 
-	if len(canon) == 0 {
+	if len(canon) == 0 && len(drop) == 0 {
 		return tokens
 	}
 
@@ -411,6 +420,44 @@ func renameAliases(tokens []token) []token {
 		out = append(out, t)
 	}
 	return out
+}
+
+// qualifierNames returns the lower-cased identifiers that are used as the
+// qualifier of a column reference ("name.column"), which marks them as table
+// aliases rather than output column names.
+func qualifierNames(tokens []token) map[string]bool {
+	out := map[string]bool{}
+	for i := 0; i+1 < len(tokens); i++ {
+		if tokens[i].kind == tIdent && tokens[i+1].kind == tPunct && tokens[i+1].text == "." {
+			out[strings.ToLower(tokens[i].text)] = true
+		}
+	}
+	return out
+}
+
+// followsDerivedTable reports whether the AS at index as comes straight after
+// a parenthesised subquery that sits directly after FROM or JOIN, so the alias
+// names a derived table rather than a select-list expression.
+func followsDerivedTable(tokens []token, as int) bool {
+	if as == 0 || tokens[as-1].kind != tPunct || tokens[as-1].text != ")" {
+		return false
+	}
+	depth := 0
+	for j := as - 1; j >= 0; j-- {
+		if tokens[j].kind != tPunct {
+			continue
+		}
+		switch tokens[j].text {
+		case ")":
+			depth++
+		case "(":
+			depth--
+			if depth == 0 {
+				return j > 0 && tokens[j-1].kind == tKeyword && (tokens[j-1].text == "from" || tokens[j-1].text == "join")
+			}
+		}
+	}
+	return false
 }
 
 // skipQualifiedName advances past a possibly schema-qualified name
