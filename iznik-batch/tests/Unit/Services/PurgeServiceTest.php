@@ -334,6 +334,64 @@ class PurgeServiceTest extends TestCase
         $this->assertEquals(1, $count);
     }
 
+    public function test_purge_pending_messages_keeps_a_post_approved_on_another_group(): void
+    {
+        $user = $this->createTestUser();
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $this->createMembership($user, $groupA);
+
+        $message = $this->createTestMessage($user, $groupA);
+        DB::table('messages_outcomes')->insert(['msgid' => $message->id, 'outcome' => 'Taken']);
+
+        // Approved on A, with an old retired Pending copy on B (as an outcome leaves it) and an
+        // old live Pending copy on a third group (a rippled copy never reviewed).
+        $groupC = $this->createTestGroup();
+        MessageGroup::where('msgid', $message->id)->update(['arrival' => now()->subDays(100)]);
+        foreach ([[$groupB, 1], [$groupC, 0]] as [$group, $deleted]) {
+            DB::table('messages_groups')->insert([
+                'msgid' => $message->id,
+                'groupid' => $group->id,
+                'collection' => MessageGroup::COLLECTION_PENDING,
+                'arrival' => now()->subDays(100),
+                'deleted' => $deleted,
+            ]);
+        }
+
+        $this->service->purgePendingMessages();
+
+        $this->assertDatabaseHas('messages', ['id' => $message->id]);
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id,
+            'groupid' => $groupA->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+        ]);
+        $this->assertDatabaseHas('messages_outcomes', ['msgid' => $message->id, 'outcome' => 'Taken']);
+    }
+
+    public function test_purge_non_freegle_messages_keeps_a_post_also_on_a_freegle_group(): void
+    {
+        $user = $this->createTestUser();
+        $freegle = $this->createTestGroup();
+        $reuse = $this->createTestGroup(['type' => 'Reuse']);
+        $this->createMembership($user, $freegle);
+
+        $message = $this->createTestMessage($user, $freegle);
+        DB::table('messages_outcomes')->insert(['msgid' => $message->id, 'outcome' => 'Taken']);
+        MessageGroup::where('msgid', $message->id)->update(['arrival' => now()->subDays(100)]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $reuse->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(100),
+        ]);
+
+        $this->service->purgeNonFreegleMessages();
+
+        $this->assertDatabaseHas('messages', ['id' => $message->id]);
+        $this->assertDatabaseHas('messages_groups', ['msgid' => $message->id, 'groupid' => $freegle->id]);
+        $this->assertDatabaseHas('messages_outcomes', ['msgid' => $message->id, 'outcome' => 'Taken']);
+    }
     public function test_purge_old_drafts(): void
     {
         $user = $this->createTestUser();
