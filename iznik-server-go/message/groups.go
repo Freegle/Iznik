@@ -147,6 +147,8 @@ func Groups(c *fiber.Ctx) error {
 		// A post withdrawn while Pending keeps its group row as deleted=1 and gets no
 		// outcome, so the outcome check alone let it back in (Discourse 10216/2).
 		"AND messages_groups.deleted = 0 " +
+		// A Rejected post is not live and never reaches messages_spatial, so it is not shown back.
+		"AND messages_groups.collection != '" + utils.COLLECTION_REJECTED + "' " +
 		// This arm exists for posts that are not in messages_spatial yet (Pending, or
 		// brand-new and awaiting the spatial insert). Once a post IS in spatial the arm
 		// above serves it, so admitting it here too handed the client duplicate rows
