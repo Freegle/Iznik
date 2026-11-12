@@ -192,3 +192,162 @@ BEGIN
   RETURN c;
 END
 $$;
+
+-- MySQL function names that code written for MySQL calls. They are here so that one SQL text can serve both
+-- engines (the Go API translates the syntax it cannot express this way: iznik-server-go/database/pgtranslate.go).
+-- Each takes and returns what the MySQL function does for the inputs the code uses.
+
+-- JSON_EXTRACT(doc, '$.a.b'): the value at the path as JSON, NULL when the path is missing. jsonpath
+-- accepts the same path syntax for the forms in use.
+CREATE OR REPLACE FUNCTION json_extract(j jsonb, path text) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT jsonb_path_query_first(j, path::jsonpath) $$;
+
+CREATE OR REPLACE FUNCTION json_extract(j text, path text) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT jsonb_path_query_first(NULLIF(j, '')::jsonb, path::jsonpath) $$;
+
+-- JSON_UNQUOTE(json): the text of a JSON string, or the JSON text of anything else.
+CREATE OR REPLACE FUNCTION json_unquote(j jsonb) RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT j #>> '{}' $$;
+
+CREATE OR REPLACE FUNCTION json_unquote(j text) RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN j IS NULL THEN NULL ELSE (j::jsonb) #>> '{}' END $$;
+
+-- JSON_SET(doc, '$.a.b', value): sets the value at a path made of object keys.
+CREATE OR REPLACE FUNCTION json_set(j jsonb, path text, v anyelement) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT jsonb_set(COALESCE(j, '{}'::jsonb), string_to_array(regexp_replace(path, '^\$\.?', ''), '.'), to_jsonb(v), true)
+$$;
+
+CREATE OR REPLACE FUNCTION json_set(j text, path text, v anyelement) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_set(NULLIF(j, '')::jsonb, path, v) $$;
+
+-- JSON_MERGE_PATCH(a, b): RFC 7396 merge patch.
+CREATE OR REPLACE FUNCTION json_merge_patch(a jsonb, b jsonb) RETURNS jsonb
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+DECLARE
+  k text;
+  v jsonb;
+  r jsonb;
+BEGIN
+  IF jsonb_typeof(b) IS DISTINCT FROM 'object' THEN
+    RETURN b;
+  END IF;
+  r := CASE WHEN jsonb_typeof(a) = 'object' THEN a ELSE '{}'::jsonb END;
+  FOR k, v IN SELECT * FROM jsonb_each(b) LOOP
+    IF v = 'null'::jsonb THEN
+      r := r - k;
+    ELSE
+      r := jsonb_set(r, ARRAY[k], json_merge_patch(r -> k, v), true);
+    END IF;
+  END LOOP;
+  RETURN r;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION json_merge_patch(a text, b text) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_merge_patch(NULLIF(a, '')::jsonb, NULLIF(b, '')::jsonb) $$;
+
+CREATE OR REPLACE FUNCTION json_merge_patch(a text, b json) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_merge_patch(NULLIF(a, '')::jsonb, b::jsonb) $$;
+
+-- DATE_FORMAT(t, '%Y-%m-%d %H:%i:%s'): the specifiers the code uses; any other character is copied.
+CREATE OR REPLACE FUNCTION date_format(t timestamp, fmt text) RETURNS text
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+DECLARE
+  out text := '';
+  i int := 1;
+  c text;
+  p text;
+BEGIN
+  IF t IS NULL OR fmt IS NULL THEN
+    RETURN NULL;
+  END IF;
+  WHILE i <= length(fmt) LOOP
+    c := substr(fmt, i, 1);
+    IF c = '%' AND i < length(fmt) THEN
+      i := i + 1;
+      c := substr(fmt, i, 1);
+      p := CASE c
+        WHEN 'Y' THEN 'YYYY' WHEN 'y' THEN 'YY' WHEN 'm' THEN 'MM' WHEN 'c' THEN 'FMMM'
+        WHEN 'd' THEN 'DD' WHEN 'e' THEN 'FMDD' WHEN 'H' THEN 'HH24' WHEN 'k' THEN 'FMHH24'
+        WHEN 'h' THEN 'HH12' WHEN 'I' THEN 'HH12' WHEN 'l' THEN 'FMHH12' WHEN 'i' THEN 'MI'
+        WHEN 's' THEN 'SS' WHEN 'S' THEN 'SS' WHEN 'p' THEN 'AM' WHEN 'M' THEN 'FMMonth'
+        WHEN 'b' THEN 'Mon' WHEN 'a' THEN 'Dy' WHEN 'W' THEN 'FMDay' WHEN 'j' THEN 'DDD'
+        WHEN 'T' THEN 'HH24:MI:SS' WHEN 'f' THEN 'US' WHEN 'u' THEN 'IW' WHEN 'v' THEN 'IW'
+        ELSE NULL END;
+      IF p IS NOT NULL THEN
+        out := out || to_char(t, p);
+      ELSE
+        out := out || c;
+      END IF;
+    ELSE
+      out := out || c;
+    END IF;
+    i := i + 1;
+  END LOOP;
+  RETURN out;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION date_format(t timestamptz, fmt text) RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT date_format((t AT TIME ZONE 'UTC')::timestamp, fmt) $$;
+
+CREATE OR REPLACE FUNCTION date_format(t date, fmt text) RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT date_format(t::timestamp, fmt) $$;
+
+-- DATEDIFF(a, b): whole days from b to a, ignoring the time of day.
+CREATE OR REPLACE FUNCTION datediff(a timestamptz, b timestamptz) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT ((a AT TIME ZONE 'UTC')::date - (b AT TIME ZONE 'UTC')::date) $$;
+
+-- TIMESTAMPDIFF(unit, a, b): whole units from a to b, truncated toward zero.
+CREATE OR REPLACE FUNCTION timestampdiff(unit text, a timestamptz, b timestamptz) RETURNS bigint
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT CASE lower(unit)
+    WHEN 'second' THEN trunc(extract(epoch FROM (b - a)))::bigint
+    WHEN 'minute' THEN trunc(extract(epoch FROM (b - a)) / 60)::bigint
+    WHEN 'hour' THEN trunc(extract(epoch FROM (b - a)) / 3600)::bigint
+    WHEN 'day' THEN trunc(extract(epoch FROM (b - a)) / 86400)::bigint
+    WHEN 'week' THEN trunc(extract(epoch FROM (b - a)) / 604800)::bigint
+    WHEN 'month' THEN ((extract(year FROM age(b, a)) * 12 + extract(month FROM age(b, a))))::bigint
+    WHEN 'year' THEN extract(year FROM age(b, a))::bigint
+  END
+$$;
+
+CREATE OR REPLACE FUNCTION unix_timestamp(t timestamptz) RETURNS bigint
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT floor(extract(epoch FROM t))::bigint $$;
+
+CREATE OR REPLACE FUNCTION unix_timestamp() RETURNS bigint
+LANGUAGE sql STABLE PARALLEL SAFE AS $$ SELECT floor(extract(epoch FROM now()))::bigint $$;
+
+CREATE OR REPLACE FUNCTION from_unixtime(s double precision) RETURNS timestamptz
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT to_timestamp(s) $$;
+
+-- LOCATE(substr, str [, pos]): 1 based position, 0 when absent.
+CREATE OR REPLACE FUNCTION locate(sub text, str text) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT strpos(str, sub) $$;
+
+CREATE OR REPLACE FUNCTION locate(sub text, str text, pos integer) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT CASE WHEN strpos(substr(str, pos), sub) = 0 THEN 0 ELSE strpos(substr(str, pos), sub) + pos - 1 END
+$$;
+
+CREATE OR REPLACE FUNCTION find_in_set(s text, list text) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT COALESCE((SELECT ord::integer FROM unnest(string_to_array(list, ',')) WITH ORDINALITY u(v, ord) WHERE v = s LIMIT 1), 0)
+$$;
+
+CREATE OR REPLACE FUNCTION year(t timestamptz) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT extract(year FROM t AT TIME ZONE 'UTC')::integer $$;
+
+CREATE OR REPLACE FUNCTION month(t timestamptz) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT extract(month FROM t AT TIME ZONE 'UTC')::integer $$;
+
+CREATE OR REPLACE FUNCTION day(t timestamptz) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT extract(day FROM t AT TIME ZONE 'UTC')::integer $$;
+
+CREATE OR REPLACE FUNCTION hour(t timestamptz) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT extract(hour FROM t AT TIME ZONE 'UTC')::integer $$;
+
+-- DAYOFWEEK: 1 is Sunday, as in MySQL.
+CREATE OR REPLACE FUNCTION dayofweek(t timestamptz) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT extract(dow FROM t AT TIME ZONE 'UTC')::integer + 1 $$;

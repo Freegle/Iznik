@@ -7,6 +7,7 @@ import (
 	"math"
 	"regexp"
 	"strconv"
+	"os"
 	"strings"
 
 	"github.com/tidwall/geodesic"
@@ -134,7 +135,16 @@ const BLUR_NONE = 0
 const BLUR_USER = 400
 const BLUR_1K = 1000
 
-const SRID = 3857
+// SRID is the label the spatial columns carry: 3857 on MySQL, where the data is degrees under a projected
+// label, and 4326 on PostgreSQL, where the baseline relabels the columns to match the data.
+var SRID = spatialSRID()
+
+func spatialSRID() int {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("DB_ENGINE")), "postgres") {
+		return 4326
+	}
+	return 3857
+}
 
 const CHAT_TYPE_USER2USER = "User2User"
 const CHAT_TYPE_USER2MOD = "User2Mod"
