@@ -735,7 +735,7 @@ export function convert(dumpText, config = {}, opts = {}) {
 
   r.hit('table options ENGINE/CHARSET/COLLATE/AUTO_INCREMENT/ROW_FORMAT dropped')
   if (ddlComments.length) r.hit('table and column COMMENT -> COMMENT ON', String(ddlComments.length) + ' comments')
-  if (routines.length) r.note(`skipped ${routines.length} stored routines (task 5 ports them): ${routines.map((x) => x.name).join(', ')}`)
+  if (routines.length) r.note(`skipped ${routines.length} stored routines (iznik-batch/database/postgres/functions.sql defines their PostgreSQL versions): ${routines.map((x) => x.name).join(', ')}`)
 
   const migrationInserts = []
   if (opts.migrations && opts.migrations.length) {
