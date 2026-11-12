@@ -739,7 +739,7 @@ class UnifiedDigestService
                 break;
             }
             try {
-                $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun);
+                $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, null, true);
                 $stats['posts_processed']++;
             } catch (\Throwable $e) {
                 $stats['errors']++;
@@ -826,7 +826,7 @@ class UnifiedDigestService
                     $ringAdmitted = RingIndex::admittedFor($lat, $lng, RingIndex::lanesFor(is_string($band) ? $band : null));
 
                     foreach (array_unique(array_merge($candidates, $ringAdmitted)) as $msgid) {
-                        $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, (int) $row->userid);
+                        $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, (int) $row->userid, true);
                     }
                 }
 
@@ -1069,7 +1069,12 @@ class UnifiedDigestService
         return (int) config('freegle.srid', 3857);
     }
 
-    public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false, ?int $onlyUserid = null): int
+    /**
+     * @param bool $propagateFailure When true a failure is rethrown after logging, so the reach pass and
+     *     the member queue can hold their mark and their row and try again. The default swallows it, for
+     *     callers (AutoApproveService) where the mail is best effort.
+     */
+    public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false, ?int $onlyUserid = null, bool $propagateFailure = false): int
     {
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             return 0;
@@ -1276,6 +1281,9 @@ class UnifiedDigestService
             return count($this->spoolPostToRecipients($msg, $recipientIds, $recipientLatLng, $dryRun));
         } catch (\Throwable $e) {
             Log::warning('ripple: mailNewlyReachedForPost failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+            if ($propagateFailure) {
+                throw $e;
+            }
             return 0;
         }
     }
