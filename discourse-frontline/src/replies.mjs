@@ -20,7 +20,9 @@ export function safeModelText(s, maxLen = 600) {
   if (typeof s !== 'string') return null
   const t = s.replace(/\s+/g, ' ').trim()
   if (!t || t.length > maxLen) return null
-  if (/https?:|www\.|[\w-]+\.(?:com|org|net|uk|io|co)\b/i.test(t)) return null
+  // Any word.word ending that could be a web address, whatever the ending. A full
+  // stop with no space after it also trips this, which errs the safe way.
+  if (/https?:|www\.|[a-z0-9-]+\.[a-z]{2,}\b/i.test(t)) return null
   if (/[[\]<>`]|!\(|\]\(/.test(t)) return null
   if (/@|\b\d{5,}\b|\b0\d{3,4}[ -]?\d{3}[ -]?\d{3,4}\b/.test(t)) return null
   return t

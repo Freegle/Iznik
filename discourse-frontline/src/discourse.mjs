@@ -47,7 +47,8 @@ export function createDiscourse(cfg, { fetchFn = fetch, sleep = (ms) => new Prom
     for (let attempt = 0; ; attempt++) {
       let resp
       try {
-        resp = await fetchFn(`${cfg.discourseBase}${path}`, { ...init, headers: headers(Boolean(init.body)) })
+        // A connection that hangs must not hang the lap with it.
+        resp = await fetchFn(`${cfg.discourseBase}${path}`, { ...init, headers: headers(Boolean(init.body)), signal: AbortSignal.timeout(30000) })
       } catch (e) {
         throw new DiscourseError(`${path}: ${e.message}`, 0)
       }
@@ -67,7 +68,7 @@ export function createDiscourse(cfg, { fetchFn = fetch, sleep = (ms) => new Prom
      * Posts newer than `afterId`, oldest first. The forum lists newest first, a page
      * at a time, so this walks back until it meets the cursor.
      */
-    async postsAfter(afterId, maxPages = 10) {
+    async postsAfter(afterId, maxPages = 100) {
       const out = []
       let before = null
       for (let page = 0; page < maxPages; page++) {
@@ -78,7 +79,8 @@ export function createDiscourse(cfg, { fetchFn = fetch, sleep = (ms) => new Prom
         const lowest = Math.min(...posts.map((p) => p.id))
         if (lowest <= afterId + 1) break
         before = lowest
-        if (page === maxPages - 1) throw new DiscourseError(`more than ${maxPages} pages of new posts: run backfill`, 0)
+        if (page === maxPages - 1) throw new DiscourseError(`more than ${maxPages} pages of unread posts: raise the page limit or move the cursor with backfill`, 0)
+        await sleep(500)
       }
       return out.sort((a, b) => a.postId - b.postId)
     },

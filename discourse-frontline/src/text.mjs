@@ -66,15 +66,22 @@ export function clip(s, max) {
   return `${cut.slice(0, at > max * 0.6 ? at : max).trimEnd()} [...]`
 }
 
+// A zero-width space: it breaks an @name so that nobody is notified, and shows as nothing.
+const GAP = String.fromCharCode(0x200b)
+
 /**
  * Somebody else's words, made safe to put inside a [quote] block in our own post.
  * A closing tag in their text would otherwise end the quote early and put the rest
- * in the service's voice, and an @name would notify someone.
+ * in the service's voice, an @name would notify someone, and a link or an email
+ * address would be published a second time under the service's name.
  */
 export function safeQuote(s, max = 280) {
   return clip(s.replace(/\s+/g, ' ').trim(), max)
-    .replace(/\[(\/?)(quote|code|img|url|details)/gi, '[​$1$2')
-    .replace(/@(\w)/g, '@​$1')
-    .replace(/!\[/g, '!​[')
-    .replace(/https?:\/\/\S+/gi, '(link)')
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '(email address)')
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+|\/\/[a-z0-9-]+\.\S+|\bwww\.\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\/\S*/gi, '(link)')
+    // Square brackets carry every Discourse tag and every markdown link, and angle
+    // brackets carry HTML. None of them is needed to read what somebody said.
+    .replace(/\[/g, '(').replace(/\]/g, ')').replace(/[<>`]/g, '')
+    .replace(/@(\w)/g, `@${GAP}$1`)
+    .replace(/^[#>\-*\s]+/, '')
 }

@@ -58,7 +58,7 @@ export async function ingestWiki(db, cfg, { fetchFn = fetch, sleep = (ms) => new
       action: 'query', format: 'json', formatversion: '2', generator: 'allpages', gaplimit: '50',
       gapfilterredir: 'nonredirects', prop: 'revisions', rvprop: 'content', rvslots: 'main', ...cont,
     })
-    const resp = await fetchFn(`${cfg.wikiApi}?${q}`, { headers: { 'User-Agent': 'discourse-frontline' } })
+    const resp = await fetchFn(`${cfg.wikiApi}?${q}`, { headers: { 'User-Agent': 'discourse-frontline' }, signal: AbortSignal.timeout(60000) })
     if (!resp.ok) throw new Error(`wiki: HTTP ${resp.status}`)
     const data = await resp.json()
     for (const p of data.query?.pages ?? []) {

@@ -28,6 +28,9 @@ function int(v, fallback) {
 export function loadConfig(env = process.env) {
   const mode = env.FRONTLINE_MODE || 'shadow'
   if (!MODES.includes(mode)) throw new Error(`FRONTLINE_MODE must be one of ${MODES.join(', ')}`)
+  // Without its own name the service would read its replies as new posts and answer
+  // them. In shadow nothing is posted, so there the name can wait.
+  if ((mode === 'ask' || mode === 'live') && !env.FRONTLINE_BOT_USERNAME) throw new Error(`FRONTLINE_BOT_USERNAME is required in ${mode} mode`)
   const discourseBase = (env.DISCOURSE_URL || 'https://discourse.ilovefreegle.org').replace(/\/$/, '')
   return {
     mode,

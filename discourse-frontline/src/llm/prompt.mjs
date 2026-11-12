@@ -92,7 +92,7 @@ export function buildUserMessage({ post, thread = [], candidates = [], sections 
   const tag = randomBytes(6).toString('hex')
   const block = (name, body) => `<<${name} ${tag}>>\n${body}\n<<end ${name} ${tag}>>`
   const parts = []
-  parts.push(`Topic title: ${clip((post.topicTitle ?? '').replace(/\s+/g, ' '), 160)}`)
+  parts.push(block('topic title', clip((post.topicTitle ?? '').replace(/\s+/g, ' '), 160)))
   if (thread.length) {
     parts.push('Earlier posts in the same case, oldest first:')
     for (const t of thread) parts.push(block(`earlier post by ${t.role}`, clip(t.text, 900)))
@@ -141,9 +141,9 @@ export function checkForm(form, { candidates = [], sections = [] } = {}) {
   const answer = typeof form.answer === 'string' && form.answer.trim() && sources.length ? form.answer.trim() : null
   const sameAs = typeof form.same_as === 'string' && labels.has(form.same_as) ? form.same_as : null
   let kind = form.kind
-  // A follow-up to nothing is not a follow-up. Read it again as "other" would lose
-  // it, so it is kept as a bug and looked at.
-  if (kind === 'followup' && !sameAs) kind = 'bug'
+  // A follow-up to nothing is not a follow-up. Calling it "other" would lose it, so
+  // it is kept as a bug and looked at, unless all it says is that something works.
+  if (kind === 'followup' && !sameAs) kind = form.followup_type === 'resolved' ? 'other' : 'bug'
   return {
     kind,
     summary: form.summary.replace(/\s+/g, ' ').trim().slice(0, 300),

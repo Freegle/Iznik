@@ -29,6 +29,8 @@ export function decide({ form: read, post, anchor, sameAs, facts, caseText, sour
   if (anchor) return followup(anchor.row, anchor.type, { form: read, post, facts, caseText, cfg })
   // A follow-up that pickAnchor did not take: somebody else, in another topic,
   // reporting what an open case already covers. That is a report of its own.
+  // Unless all it says is that the thing works again, which needs no reply.
+  if (read.kind === 'followup' && read.followupType === 'resolved') return { op: 'skip', why: 'resolved-elsewhere' }
   const form = read.kind === 'followup' && sameAs ? { ...read, kind: sameAs.kind } : read
 
   if (form.kind === 'other') return { op: 'skip', why: form.confidence === 'low' ? 'other-unsure' : 'other' }
@@ -80,11 +82,14 @@ export function decide({ form: read, post, anchor, sameAs, facts, caseText, sour
  * Worked out before the decision because the facts a decision rests on are the
  * reporter's posts in that case, and those have to be gathered first.
  */
-export function pickAnchor({ form, post, openCase, sameAs }) {
+export function pickAnchor({ form, post, openCase, sameAs, threadedBy = 'reply' }) {
   // A reporter replying while we wait on them is answering us, whatever the post
   // looks like on its own. "Chrome on my laptop" is not a new report.
   if (openCase && openCase.state === 'waiting-reporter' && post.author === openCase.reporter && form.kind !== 'question' && form.kind !== 'feature') {
-    return { row: openCase, type: 'detail' }
+    // Unless nothing ties the post to the case but its author, and the model is
+    // sure it is a full report of something else. Then it is a second problem.
+    const elsewhere = threadedBy === 'author' && form.kind === 'bug' && form.confidence === 'high' && form.has.actual && sameAs?.id !== openCase.id
+    if (!elsewhere) return { row: openCase, type: 'detail' }
   }
   // In the same topic, or from the reporter, a follow-up adds to the case quietly.
   // From somebody else in another topic it is a new report of the same thing, and

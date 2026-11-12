@@ -14,7 +14,7 @@ import { extractFacts, mergeFacts } from './slots.mjs'
 import { searchKb } from './kb/index.mjs'
 import { buildUserMessage, checkForm } from './llm/prompt.mjs'
 import { decide, pickAnchor } from './decide.mjs'
-import { sendReply } from './outbound.mjs'
+import { deliverReply, recordReply } from './outbound.mjs'
 import { writeReport } from './report.mjs'
 
 const QUESTION_LIKE = /\?|\b(?:how (?:do|can|should|to)|is (?:there|it)|can (?:i|we|you|a)|should (?:i|we)|what(?:'s| is| are| do| does| should)|where (?:do|can|is)|why (?:do|does|is|are)|does (?:anyone|anybody)|anyone know|wondering)\b/i
@@ -52,9 +52,10 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
     const refs = [post.replyTo, ...post.quotes.filter((x) => !x.topic || x.topic === post.topicId).map((x) => x.post)].filter(Boolean)
     for (const n of refs) {
       const row = q.postRow.get(post.topicId, n)
-      if (row?.case_id) return resolve(q.caseById.get(row.case_id))
+      if (row?.case_id) return { row: resolve(q.caseById.get(row.case_id)), by: 'reply' }
     }
-    return q.waitingFor.get(post.topicId, post.author) ?? null
+    // Weaker: nothing links the post to the case except who wrote it and where.
+    return { row: q.waitingFor.get(post.topicId, post.author) ?? null, by: 'author' }
   }
 
   function candidatesFor(post, openCase) {
@@ -94,7 +95,10 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
     const c = q.caseById.get(id)
     db.prepare(`UPDATE "case" SET state = ?, summary = ?, facts = ?, unknowns = ?, asks = ?, affected = ?, still_broken = ?, human_replied = ?, updated_at = ? WHERE id = ?`).run(
       p.state ?? c.state, p.summary ?? c.summary, JSON.stringify(p.facts ?? JSON.parse(c.facts)), JSON.stringify(p.unknowns ?? JSON.parse(c.unknowns)),
-      p.asks ?? c.asks, c.affected + (p.affectedDelta ?? 0), p.stillBroken ? 1 : c.still_broken, p.humanReplied ? 1 : c.human_replied, now().toISOString(), id)
+      p.asks ?? c.asks, c.affected + (p.affectedDelta ?? 0), p.stillBroken ? 1 : c.still_broken, p.humanReplied ? 1 : c.human_replied,
+      // `touch: false` is for other people's chatter on a case. It must not put off
+      // the day a reporter who never answered is given up on.
+      p.touch === false ? c.updated_at : now().toISOString(), id)
   }
 
   /** Everything the reporter has said in a case, with this post added. */
@@ -111,7 +115,7 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
   function applySignal(post, pf, openCase) {
     if (pf.signal === 'staff') {
       tx(db, () => {
-        if (openCase) patchCase(openCase.id, { humanReplied: true })
+        if (openCase) patchCase(openCase.id, { humanReplied: true, touch: false })
         storePost(post, 'signal:staff', openCase?.id ?? null)
         advance(post.postId)
       })
@@ -124,8 +128,11 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
       const recent = pf.signal === 'still-broken' ? q.recentBug.get(post.topicId, daysAgo(21)) : null
       const target = openCase ?? (recent?.reporter === post.author ? recent : null)
       if (!target) return false
+      // A reporter we have asked a question of is answering it, even if the answer
+      // opens with "still not working". The model reads that.
+      if (target.state === 'waiting-reporter' && post.author === target.reporter) return false
       tx(db, () => {
-        patchCase(target.id, pf.signal === 'metoo' ? { affectedDelta: post.author === target.reporter ? 0 : 1 } : { stillBroken: true })
+        patchCase(target.id, pf.signal === 'metoo' ? { affectedDelta: post.author === target.reporter ? 0 : 1, touch: false } : { stillBroken: true, touch: false })
         storePost(post, `signal:${pf.signal}`, target.id)
         writeReport(db, cfg, target.id)
         advance(post.postId)
@@ -145,7 +152,8 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
 
   async function handlePost(post, lapState) {
     const pf = prefilter(post, cfg)
-    const openCase = threadCase(post)
+    const threaded = threadCase(post)
+    const openCase = threaded.row
     if (!pf.pass && applySignal(post, pf, openCase)) {
       lapState.byRule++
       return
@@ -170,6 +178,8 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
     } catch (e) {
       // Try again next lap, a few times. After that the post is set aside for a
       // person and the lap moves on, so one bad post cannot hold up the forum.
+      // An edit being re-read is already stored; checkEdits counts its own tries.
+      if (post.edited) throw e
       const attempts = (q.postById.get(post.postId)?.attempts ?? 0) + 1
       tx(db, () => {
         storePost(post, 'error')
@@ -185,12 +195,16 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
     lapState.byModel++
 
     const sameAs = form.sameAs ? candidates.find((c) => c.label === form.sameAs).row : null
-    const anchor = pickAnchor({ form, post, openCase, sameAs })
+    // An edited post is the one its case was opened from. Whatever the model makes
+    // of the new wording, it is more detail on that case and never a second case.
+    const anchor = post.edited && openCase ? { row: openCase, type: 'detail' } : pickAnchor({ form, post, openCase, sameAs, threadedBy: threaded.by })
     const { facts, caseText } = reporterView(anchor?.row ?? null, post)
     const d = decide({ form, post, anchor, sameAs, facts, caseText, sources: sections.filter((s) => form.answerSources.includes(s.label)), cfg, postUrl })
 
     let caseId = null
     let reportFor = null
+    let draft = null
+    let replyId = null
     tx(db, () => {
       const iso = now().toISOString()
       if (d.op === 'skip') {
@@ -218,13 +232,18 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
       }
       if (caseId) indexCase(caseId)
       if (reportFor) writeReport(db, cfg, reportFor)
+      // The reply is recorded with the case, in the same transaction. A crash before
+      // it is sent then leaves a row that the next lap finds, not a case waiting on a
+      // question nobody was asked.
+      if (d.reply) {
+        draft = { ...d.reply, topicId: post.topicId, postNumber: post.postNumber, caseId, quote: post.text || '(picture)', quoteUser: post.author, listenOnly: pf.listenOnly }
+        replyId = recordReply(db, draft, now())
+      }
       advance(post.postId)
     })
 
     if (d.reply) {
-      const outcome = await sendReply(db, discourse, cfg, {
-        ...d.reply, topicId: post.topicId, postNumber: post.postNumber, caseId, quote: post.text || '(picture)', quoteUser: post.author, listenOnly: pf.listenOnly,
-      }, lapState, now())
+      const outcome = replyId ? await deliverReply(db, discourse, cfg, replyId, draft, lapState, now()) : 'exists'
       lapState.replies[outcome] = (lapState.replies[outcome] ?? 0) + 1
       // A question that did not go out is not being waited on. Without this the
       // reporter's next post, about anything, would be read as their answer to it.
@@ -242,10 +261,32 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
   async function checkEdits(lapState) {
     const waiting = db.prepare(`SELECT c.id, p.post_id, p.version FROM "case" c JOIN post p ON p.topic_id = c.topic_id AND p.post_number = c.post_number WHERE c.state = 'waiting-reporter'`).all()
     for (const w of waiting) {
-      const fresh = await discourse.post(w.post_id)
+      let fresh
+      try {
+        fresh = await discourse.post(w.post_id)
+      } catch (e) {
+        // The post has been deleted or hidden. Stop waiting on it; one missing post
+        // must not stop the lap. Any other fault will show when the new posts are read.
+        if ([403, 404, 410].includes(e.status)) tx(db, () => {
+          patchCase(w.id, { state: 'ready' })
+          writeReport(db, cfg, w.id)
+        })
+        continue
+      }
       if (fresh.version > w.version && fresh.text) {
+        const key = `edit-tries:${w.post_id}:${fresh.version}`
+        try {
+          await handlePost({ ...fresh, edited: true }, lapState)
+        } catch (e) {
+          if (e instanceof LapStopped) throw e
+          // The next lap sees the same edit again, three times at most. A failure
+          // here must not keep the lap from the new posts.
+          const tries = getKv(db, key, 0) + 1
+          setKv(db, key, tries)
+          lapState.errors++
+          if (tries < MAX_ATTEMPTS) continue
+        }
         db.prepare('UPDATE post SET version = ? WHERE post_id = ?').run(fresh.version, w.post_id)
-        await handlePost({ ...fresh, edited: true }, lapState)
       }
     }
   }
@@ -266,6 +307,12 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
 
     // A reply caught mid-send by a crash may or may not have landed. A person looks.
     db.prepare(`UPDATE outbound SET status = 'unknown', reason = 'interrupted while sending' WHERE status = 'sending'`).run()
+    // A reply recorded and never checked or sent: the run died in between. It stays a
+    // draft for a person, and a question among them is no longer waited on.
+    tx(db, () => {
+      db.prepare(`UPDATE "case" SET state = 'ready' WHERE state = 'waiting-reporter' AND id IN (SELECT case_id FROM outbound WHERE status = 'draft' AND reason IS NULL AND kind = 'ask')`).run()
+      db.prepare(`UPDATE outbound SET reason = 'interrupted before sending' WHERE status = 'draft' AND reason IS NULL`).run()
+    })
 
     let cursor = getKv(db, 'cursor')
     if (cursor === null) {

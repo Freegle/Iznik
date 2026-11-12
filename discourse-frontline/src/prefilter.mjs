@@ -8,7 +8,7 @@ import { wordCount } from './text.mjs'
 
 const THANKS = /\b(thanks?|thank you|thx|ta|cheers|great|brilliant|perfect|lovely|super|fab|wonderful|excellent|good to know|noted|understood|will do|ok(?:ay)?)\b/i
 // A short post with any of these in it is saying something, however politely.
-const NOT_JUST_THANKS = /\?|\b(but|still|not|n't|cannot|won't|doesn't|isn't|again|however|although|except|problem|issue|broken|wrong|error|fail|how|why|when|where|could|can you|please)\b/i
+const NOT_JUST_THANKS = /\?|n't\b|\b(but|still|not|cannot|again|however|although|though|except|only|problem|issue|broken|wrong|missing|slow|error|fail|how|why|when|where|could|can you|please)\b/i
 
 const ME_TOO = /\b(me too|same here|same (?:problem|issue|thing)(?: here| for me)?|(?:also|too) (?:seeing|getting|having|happening)|(?:seeing|getting|having) (?:this|the same|that) (?:too|as well|here)|happening (?:to|for) me (?:too|as well))\b|^\s*\+1\b/i
 // "Not working" alone is how a first report reads, so it is not in here: only words
@@ -45,12 +45,12 @@ export function prefilter(post, cfg) {
   if (words === 0 && !post.hasImage) return { pass: false, why: 'empty' }
 
   // The order matters: "thanks, but it's still not working" is not a thank-you.
-  if (words <= 30 && STILL_BROKEN.test(text) && !/\?/.test(text)) return { pass: false, why: 'still-broken', signal: 'still-broken' }
+  if (words <= 12 && STILL_BROKEN.test(text) && !/\?/.test(text)) return { pass: false, why: 'still-broken', signal: 'still-broken' }
   if (words <= 18 && ME_TOO.test(text) && !/\?/.test(text)) return { pass: false, why: 'me-too', signal: 'metoo' }
-  if (words <= 14 && !NOT_JUST_THANKS.test(text)) {
+  if (words <= 14 && !NOT_JUST_THANKS.test(text) && !PROBLEM.test(text)) {
     if (RESOLVED.test(text)) return { pass: false, why: 'resolved', signal: 'resolved' }
     if (THANKS.test(text)) return { pass: false, why: 'thanks', signal: 'thanks' }
   }
-  if (words <= 3 && !post.hasImage) return { pass: false, why: 'too-short' }
+  if (words <= 3 && !post.hasImage && !PROBLEM.test(text)) return { pass: false, why: 'too-short' }
   return { pass: true, listenOnly }
 }
