@@ -379,3 +379,33 @@ func TestBareTrashNothingAddressIsTheSameMember(t *testing.T) {
 	assert.Empty(t, user.FindTNSiblings(db, prefix+"@test.com"))
 	assert.Equal(t, user.CanonicalizeEmail("mary.jane@test.com"), user.CanonicalizePartnerEmail("mary.jane@test.com"))
 }
+
+// A volunteer who has a TrashNothing alias on their Freegle account must not be merged into a
+// TrashNothing member's account by the twin heal: the member would inherit the volunteer's
+// moderator role and the volunteer would lose their account. A TrashNothing account never holds a
+// moderator role.
+func TestHealTNDivergenceDoesNotMergeAModeratorIntoATrashNothingAccount(t *testing.T) {
+	prefix := uniquePrefix("partner_heal_mod")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	tnMember := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 66671)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 66671, tnMember)
+
+	volunteer := CreateTestUser(t, prefix+"_vol", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, volunteer, groupID, utils.ROLE_MODERATOR)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 0, NOW())",
+		volunteer, prefix+"-g1@user.trashnothing.com")
+
+	result := user.HealTNDivergence(db, []uint64{tnMember, volunteer})
+	assert.Equal(t, []uint64{tnMember, volunteer}, result, "the twins are left as they were")
+
+	var volunteerRows int64
+	db.Table("users").Where("id = ?", volunteer).Count(&volunteerRows)
+	assert.Equal(t, int64(1), volunteerRows, "the volunteer's account must not be deleted")
+
+	var tnRole int64
+	db.Table("memberships").Where("userid = ? AND role IN (?, ?)", tnMember, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&tnRole)
+	assert.Equal(t, int64(0), tnRole, "the TrashNothing account must not gain a moderator role")
+}
