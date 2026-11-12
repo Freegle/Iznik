@@ -5,6 +5,7 @@ namespace Tests\Feature\Chat;
 use App\Mail\Chat\ChatNotification;
 use App\Models\ChatRoom;
 use App\Models\User;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
@@ -344,5 +345,166 @@ class ChaseupExpectedCommandTest extends TestCase
             ->assertExitCode(0);
 
         Mail::assertNothingSent();
+        $this->assertSame(0, DB::table('chat_chaseup_expected_sent')->count(), 'a dry run records nothing');
+    }
+
+    /**
+     * Every deploy clears the cache, so what was chased has to be remembered in the database.
+     */
+    public function test_a_second_run_after_a_cache_flush_sends_nothing(): void
+    {
+        Mail::fake();
+
+        [, $expectee, , $msgId] = $this->makeExpectedScenario();
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 1 message(s)')
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('chat_chaseup_expected_sent')
+            ->where('chatmsgid', $msgId)->where('userid', $expectee->id)->count());
+
+        Cache::flush();
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 0 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
+    /**
+     * The newest unanswered message in a chat is the one chased. Once it has been chased, an older
+     * unanswered message in the same chat must not be chased in its place.
+     */
+    public function test_an_older_message_is_not_chased_after_the_newest_was(): void
+    {
+        Mail::fake();
+
+        [$expecter, $expectee, $room] = $this->makeExpectedScenario();
+        $newer = $this->createTestChatMessage($room, $expecter, [
+            'date' => now()->subDays(2),
+            'replyexpected' => 1,
+            'replyreceived' => 0,
+        ]);
+        DB::table('users_expected')->insert([
+            'expecter' => $expecter->id,
+            'expectee' => $expectee->id,
+            'chatmsgid' => $newer->id,
+            'value' => -1,
+        ]);
+
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 1 message(s)')
+            ->assertExitCode(0);
+        Cache::flush();
+        $this->artisan('chats:chaseup-expected')
+            ->expectsOutputToContain('Chased up 0 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
+    public function test_skips_closed_roster(): void
+    {
+        Mail::fake();
+
+        [, $expectee, $room] = $this->makeExpectedScenario();
+        DB::table('chat_roster')
+            ->where('chatid', $room->id)
+            ->where('userid', $expectee->id)
+            ->update(['status' => 'Closed']);
+
+        $this->artisan('chats:chaseup-expected')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_deleted_account(): void
+    {
+        Mail::fake();
+
+        [, $expectee] = $this->makeExpectedScenario();
+        DB::table('users')->where('id', $expectee->id)->update(['deleted' => now()]);
+
+        $this->artisan('chats:chaseup-expected')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_limit_caps_one_run_and_the_oldest_go_first(): void
+    {
+        Mail::fake();
+
+        [, $expecteeOld, , $oldMsg] = $this->makeExpectedScenario(['date' => now()->subDays(4)]);
+        [, , , $newMsg] = $this->makeExpectedScenario(['date' => now()->subDays(2)]);
+        DB::table('users')->where('id', $expecteeOld->id)->update(['lastaccess' => now()->subDay()]);
+
+        $this->artisan('chats:chaseup-expected', ['--limit' => 1])
+            ->expectsOutputToContain('Chased up 1 message(s)')
+            ->assertExitCode(0);
+
+        $this->assertSame(1, DB::table('chat_chaseup_expected_sent')->where('chatmsgid', $oldMsg)->count());
+        $this->assertSame(0, DB::table('chat_chaseup_expected_sent')->where('chatmsgid', $newMsg)->count());
+
+        // The backlog drains on the next run.
+        $this->artisan('chats:chaseup-expected', ['--limit' => 1])
+            ->expectsOutputToContain('Chased up 1 message(s)')
+            ->assertExitCode(0);
+        $this->assertSame(1, DB::table('chat_chaseup_expected_sent')->where('chatmsgid', $newMsg)->count());
+        Mail::assertSentCount(2);
+    }
+
+    public function test_dry_run_with_a_limit_reports_how_many_it_would_send(): void
+    {
+        Mail::fake();
+
+        $this->makeExpectedScenario();
+        $this->makeExpectedScenario();
+        $this->makeExpectedScenario();
+
+        $this->artisan('chats:chaseup-expected', ['--dry-run' => true, '--limit' => 2])
+            ->expectsOutputToContain('Would chase up 2 message(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_old_sent_records_are_pruned(): void
+    {
+        Mail::fake();
+
+        DB::table('chat_chaseup_expected_sent')->insert([
+            ['chatmsgid' => 1, 'userid' => 1, 'sent' => now()->subDays(30)],
+            ['chatmsgid' => 2, 'userid' => 1, 'sent' => now()->subDay()],
+        ]);
+
+        $this->artisan('chats:chaseup-expected')->assertExitCode(0);
+
+        $this->assertSame(0, DB::table('chat_chaseup_expected_sent')->where('chatmsgid', 1)->count());
+        $this->assertSame(1, DB::table('chat_chaseup_expected_sent')->where('chatmsgid', 2)->count());
+    }
+
+    public function test_the_scheduled_run_passes_a_limit_of_500(): void
+    {
+        config([
+            'freegle.schedule.profile' => 'full',
+            'freegle.schedule.overlay' => null,
+        ]);
+
+        $schedule = new \Illuminate\Console\Scheduling\Schedule();
+        $this->app->instance(\Illuminate\Console\Scheduling\Schedule::class, $schedule);
+        \Illuminate\Support\Facades\Facade::clearResolvedInstances();
+        require base_path('routes/console.php');
+
+        $commands = [];
+        foreach ($schedule->events() as $event) {
+            if (str_contains((string) $event->command, 'chats:chaseup-expected')) {
+                $commands[] = (string) $event->command;
+            }
+        }
+
+        $this->assertCount(1, $commands);
+        $this->assertStringContainsString('--limit=500', $commands[0]);
     }
 }
