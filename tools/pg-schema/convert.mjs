@@ -318,13 +318,16 @@ export function parseDump(text) {
         else if (body.trim()) t.keys.push(parseKey(body))
       }
       tables.push(t)
-    } else if (/^DELIMITER ;;/.test(line)) {
-      for (i++; i < lines.length && !/^DELIMITER ;/.test(lines[i]); i++) {
-        const r = lines[i].match(/^CREATE\b.*?\b(FUNCTION|PROCEDURE|TRIGGER|EVENT) `([^`]+)`/)
-        if (r) routines.push({ kind: r[1], name: r[2] })
-      }
-    } else if (/^CREATE\b.*\bVIEW\b/.test(line)) {
-      fail(`views are not translated: ${line}`)
+    } else if (line.startsWith('/*!') || /^(CREATE|DROP|DELIMITER)\b/.test(line)) {
+      // mysqldump wraps triggers, events, views and partitioning in version comments such as
+      // /*!50003 CREATE*/ ... /*!50003 TRIGGER ...*/. Strip the markers before matching, so none of
+      // them is missed because of how it is written.
+      const plain = line.replace(/\/\*!\d+\s*/g, '').replace(/\*\//g, '').trim()
+      let r
+      if (/\bPARTITION BY\b/.test(plain)) fail(`table partitioning is not translated: ${line}`)
+      else if (/^CREATE\b.*?\b(TRIGGER|EVENT)\b\s*`/.test(plain) || /^(TRIGGER|EVENT)\s+`/.test(plain)) fail(`triggers and events are not translated: ${line}`)
+      else if (/^(?:(?:CREATE|DROP)\b.*?)?\bVIEW\b\s*[`\w]/.test(plain)) fail(`views are not translated: ${line}`)
+      else if ((r = plain.match(/^CREATE\b.*?\b(FUNCTION|PROCEDURE) `([^`]+)`/))) routines.push({ kind: r[1], name: r[2] })
     }
   }
   return { tables, routines }
@@ -637,6 +640,12 @@ export function convert(dumpText, config = {}, opts = {}) {
       const fqn = `${t.name}.${c.name}`
       let { pg, check } = pgType(c, t.name, ctx)
       if (citextFinal.has(fqn)) {
+        // citext has no length, so a varchar(n) or char(n) keeps its limit as a CHECK.
+        const len = pg.match(/^(?:varchar|char)\((\d+)\)/)
+        if (len) {
+          checks.push(`CONSTRAINT ${qi(fit(`${t.name}_${c.name}_length`))} CHECK (char_length(${qi(c.name)}) <= ${len[1]})`)
+          r.hit('citext column keeps its varchar(n) limit as a length CHECK', fqn)
+        }
         pg = pg.replace(/^(varchar\(\d+\)|char\(\d+\)|text)/, 'citext')
         r.hit('case-insensitive text column -> citext', fqn)
       }
