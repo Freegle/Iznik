@@ -131,3 +131,31 @@ test('the two canonicaliser corpus copies must match', () => {
   assert.match(run(dir, 'update').out, /written/);
   assert.equal(run(dir, 'check').code, 1);
 });
+
+test('approve records the approved diff in the manifest and the stores, and refuses without a reason', () => {
+  const dir = makeRepo();
+  run(dir, 'update');
+  const id = Object.keys(readStore(dir, STORES[0]).sites)[0];
+
+  assert.equal(run(dir, 'approve', id, '--sql', 'UPDATE t SET a = ?').code, 1);
+  assert.equal(run(dir, 'approve', 'ffffffffffff', '--sql', 'SELECT 1', '--reason', 'r').code, 1);
+
+  const ok = run(dir, 'approve', id, '--sql', 'SELECT id FROM users WHERE id = ?  ', '--reason', 'Same statement.');
+  assert.equal(ok.code, 0);
+  assert.deepEqual(readStore(dir, STORES[0]).sites[id].approvedDiff, { sql: 'SELECT id FROM users WHERE id = ?', reason: 'Same statement.' });
+  assert.equal(run(dir, 'check').code, 0);
+
+  // The decision survives regeneration.
+  run(dir, 'update');
+  assert.equal(readStore(dir, STORES[0]).sites[id].approvedDiff.reason, 'Same statement.');
+});
+
+test('the parity package is test support, so its fixture SQL is not a production site', () => {
+  const dir = makeRepo();
+  fs.mkdirSync(path.join(dir, 'iznik-server-go/parity'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'iznik-server-go/parity/fixture.go'), 'package parity\nfunc G() any { return gorm.Expr("ST_GeomFromText(?, 4326)", w) }\n');
+  run(dir, 'update');
+  const m = JSON.parse(fs.readFileSync(path.join(dir, 'tools/orm-migration/manifest.json'), 'utf8'));
+  assert.ok(!m.sites.some((s) => s.file.startsWith('iznik-server-go/parity/')));
+  assert.ok(m.testFixtures.files['iznik-server-go/parity/fixture.go'] >= 1);
+});

@@ -7,6 +7,7 @@
 //   node tools/orm-migration/extract.mjs summary
 //   node tools/orm-migration/extract.mjs list [--status raw] [--file TEXT]
 //   node tools/orm-migration/extract.mjs orphans
+//   node tools/orm-migration/extract.mjs approve ID --sql 'SELECT ...' --reason 'Why this is the same statement.'
 //
 // update also writes the parity harness's golden stores (lib/parity-store.mjs).
 
@@ -95,6 +96,26 @@ export function main(argv, out = console) {
       return 1;
     }
     out.log(`RAW-SQL-RATCHET: ok (${scan.sites.length} production sites, ${openCount(committed.sites)} raw or in-progress, baseline ${committed.ratchet.baseline})`);
+    return 0;
+  }
+
+  if (cmd === 'approve') {
+    const id = opts._[1];
+    const site = committed && committed.sites.find((x) => x.id === id);
+    if (!site) {
+      out.error(`approve: no manifest entry with id ${id}`);
+      return 1;
+    }
+    const sql = (opts.sql || '').trim();
+    const reason = (opts.reason || '').trim();
+    if (!sql || !reason) {
+      out.error('approve needs both --sql (what the converted code renders) and --reason (why that is the same statement)');
+      return 1;
+    }
+    site.approvedDiff = { sql, reason };
+    fs.writeFileSync(manifestPath, serialise(committed));
+    if (!opts.manifest) writeStores(repoRoot, committed.sites);
+    out.log(`approved diff recorded for ${id} (${site.file}:${site.line})`);
     return 0;
   }
 

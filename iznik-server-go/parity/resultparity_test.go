@@ -172,19 +172,35 @@ func TestResultParity_ABadFixtureNamesTheTableAndRow(t *testing.T) {
 	}
 }
 
-func TestResultParity_NeedsTwoEnginesAndARealSite(t *testing.T) {
+func TestResultParity_NeedsAnEngineAndARealSite(t *testing.T) {
 	withSites(t, map[string]Site{"aaaaaaaaaaaa": {GoldenSQL: "SELECT 1"}})
 	run := func(db *gorm.DB) any { return 1 }
 
 	r := &recorder{}
-	assertResultParity(r, pgPair(t)[:1], "aaaaaaaaaaaa", nil, run)
-	if !r.failed || !strings.Contains(r.message, "needs two engines") {
-		t.Fatalf("one engine is not a comparison: %q", r.message)
+	assertResultParity(r, nil, "aaaaaaaaaaaa", nil, run)
+	if !r.failed || !strings.Contains(r.message, "no engine") {
+		t.Fatalf("no engine is not a comparison: %q", r.message)
 	}
 
 	r = &recorder{}
 	assertResultParity(r, pgPair(t), "cccccccccccc", nil, run)
 	if !r.failed || !strings.Contains(r.message, "no manifest entry") {
 		t.Fatalf("an unknown site must fail: %q", r.message)
+	}
+}
+
+// One engine runs the checks that need no second engine: the statements must not fail, the result
+// must not be empty, and Expect must hold.
+func TestResultParity_OneEngineStillChecksTheSiteWorksAndGivesTheExpectedRows(t *testing.T) {
+	withSites(t, map[string]Site{"aaaaaaaaaaaa": {GoldenSQL: "SELECT groupid FROM memberships WHERE userid = ?"}})
+
+	one := pgPair(t)[:1]
+	run := func(db *gorm.DB) any { return groupIDsFor(db, ID(1)) }
+	assertResultParity(t, one, "aaaaaaaaaaaa", membershipFixture(), run, Expect([]uint64{ID(100)}))
+
+	r := &recorder{}
+	assertResultParity(r, one, "aaaaaaaaaaaa", membershipFixture(), run, Expect([]uint64{ID(101)}))
+	if !r.failed {
+		t.Fatalf("a wrong answer must fail on one engine too")
 	}
 }

@@ -32,6 +32,9 @@ type Engine struct {
 //	PGSQL_HOST (postgres), PGSQL_PORT (5432), PGSQL_USERNAME (root), PGSQL_PASSWORD (iznik),
 //	PGSQL_DATABASE (iznik_go_test)
 //	PG_ENGINE: unset, use PostgreSQL if it is reachable; 1, it must be; 0, skip it.
+//	PARITY_ENGINES: unset, both engines; "postgres" or "mysql", that one alone. A single-engine run
+//	checks that the site works there and gives the fixture's answer (Expect), and compares nothing.
+//	It is for a developer who has one engine up. CI leaves it unset.
 //
 // With PostgreSQL absent a Layer 2 test is skipped, because there is nothing to compare. CI sets
 // PG_ENGINE=1 once a job provides the engine, and the skip becomes a failure.
@@ -137,6 +140,24 @@ func openEngine(d Dialect) (*Engine, error) {
 // there. PG_ENGINE=1 turns the PostgreSQL skip into a failure.
 func OpenEngines(tb testing.TB) []Engine {
 	tb.Helper()
+
+	switch only := os.Getenv("PARITY_ENGINES"); only {
+	case "":
+	case "postgres":
+		pg, err := openEngine(Postgres)
+		if err != nil {
+			tb.Fatalf("parity: PARITY_ENGINES=postgres but PostgreSQL is not reachable: %v", err)
+		}
+		return []Engine{*pg}
+	case "mysql":
+		my, err := openEngine(MySQL)
+		if err != nil {
+			tb.Fatalf("parity: PARITY_ENGINES=mysql but MySQL is not reachable: %v", err)
+		}
+		return []Engine{*my}
+	default:
+		tb.Fatalf("parity: PARITY_ENGINES=%q: use postgres, mysql or leave it unset", only)
+	}
 
 	my, err := openEngine(MySQL)
 	if err != nil {

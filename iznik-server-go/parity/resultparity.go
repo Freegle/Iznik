@@ -66,8 +66,8 @@ func assertResultParity(t TestingT, engines []Engine, siteID string, fixture Fix
 	if err != nil {
 		t.Fatalf("parity: %v", err)
 	}
-	if len(engines) < 2 {
-		t.Fatalf("parity: site %q: result parity needs two engines, got %d", siteID, len(engines))
+	if len(engines) == 0 {
+		t.Fatalf("parity: site %q: no engine to run on", siteID)
 	}
 
 	var cfg config
@@ -106,6 +106,7 @@ func assertResultParity(t TestingT, engines []Engine, siteID string, fixture Fix
 		results[i] = n
 	}
 
+	// With one engine there is nothing to compare: the checks above are all it gets.
 	for i := 1; i < len(engines); i++ {
 		if d := firstDifference(results[0], results[i], "result"); d != "" {
 			order := "compared as a set"

@@ -18,8 +18,11 @@ export const TREES = [
 
 const SKIP_DIRS = new Set(['vendor', 'node_modules', '.git', 'storage', '.idea']);
 
+// The parity harness package is test support: it writes the SQL of fixtures, and no request reaches it.
+const TEST_SUPPORT_DIRS = ['iznik-server-go/parity/'];
+
 export function isTestPath(rel, lang) {
-  if (lang === 'go') return rel.endsWith('_test.go') || /(^|\/)test\//.test(rel);
+  if (lang === 'go') return rel.endsWith('_test.go') || /(^|\/)test\//.test(rel) || TEST_SUPPORT_DIRS.some((d) => rel.startsWith(d));
   return /^iznik-batch\/tests\//.test(rel);
 }
 
