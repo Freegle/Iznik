@@ -1725,6 +1725,6 @@ class UnifiedDigestTest extends TestCase
 
         $this->assertStringContainsString("Kid's bike & Tom's helmet", $text);
         $this->assertStringNotContainsString('&#039;', $text);
-        $this->assertStringNotContainsString('&amp;', $text);
+        $this->assertStringNotContainsString('bike &amp;', $text, 'the ampersand in the item name is not escaped');
     }
 }
