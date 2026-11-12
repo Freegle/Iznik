@@ -1237,3 +1237,36 @@ describe('message store - a post deleted since it was cached', () => {
     expect(store.list[10].subject).toBe('Still here')
   })
 })
+
+describe('message store - fetchMyGroups() after a failure and for another group', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('retries after a failed request instead of re-awaiting the failure', async () => {
+    const store = freshStore()
+    mockMygroups
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([{ id: 1 }])
+
+    await expect(store.fetchMyGroups()).rejects.toThrow('offline')
+    const ret = await store.fetchMyGroups()
+
+    expect(mockMygroups).toHaveBeenCalledTimes(2)
+    expect(ret).toEqual([{ id: 1 }])
+  })
+
+  it('makes a separate request for a different group fetched at the same time', async () => {
+    const store = freshStore()
+    mockMygroups.mockImplementation((gid) => Promise.resolve([{ gid }]))
+
+    const [all, one] = await Promise.all([
+      store.fetchMyGroups(0),
+      store.fetchMyGroups(12),
+    ])
+
+    expect(mockMygroups).toHaveBeenCalledTimes(2)
+    expect(all).toEqual([{ gid: 0 }])
+    expect(one).toEqual([{ gid: 12 }])
+  })
+})
