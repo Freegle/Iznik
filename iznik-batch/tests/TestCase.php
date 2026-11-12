@@ -393,6 +393,18 @@ abstract class TestCase extends BaseTestCase
      *
      * @throws \InvalidArgumentException if nameshort or namefull is provided
      */
+    /**
+     * Skips the test when the suite is running on PostgreSQL. For a test whose subject is a MySQL-only thing:
+     * MySQL's information_schema column types, its connection class, or the statements recorded in the MySQL
+     * golden files. Say what the MySQL-only thing is.
+     */
+    protected function requiresMySql(string $why): void
+    {
+        if (\DB::connection()->getDriverName() === 'pgsql') {
+            $this->markTestSkipped('MySQL only: '.$why);
+        }
+    }
+
     protected function createTestGroup(array $attributes = []): Group
     {
         // Fail fast if caller tries to use hardcoded names - these cause collisions in parallel tests.

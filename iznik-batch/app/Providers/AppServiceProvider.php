@@ -44,6 +44,8 @@ class AppServiceProvider extends ServiceProvider
             return new DeadlockRetryConnection($connection, $database, $prefix, $config);
         });
 
+        // PostgreSQL: binary data behaves as it does on MySQL (strings that are not text go in as binary
+        // parameters, bytea comes back as a string), and JSON paths work on text columns holding JSON.
         \Illuminate\Database\Connection::resolverFor('pgsql', function ($connection, $database, $prefix, $config) {
             return new \App\Database\JsonTextPostgresConnection($connection, $database, $prefix, $config);
         });
