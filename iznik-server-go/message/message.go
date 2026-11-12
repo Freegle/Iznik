@@ -4841,7 +4841,9 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 			for i, attid := range req.Attachments {
 				primary := i == 0
-				db.Table("messages_attachments").Where("id = ?", attid).
+				// Only unattached photos or ones already on this post may be linked, so a
+				// photo on another post is never moved.
+				db.Table("messages_attachments").Where("id = ? AND (msgid IS NULL OR msgid = ?)", attid, req.ID).
 					Updates(map[string]interface{}{"msgid": req.ID, "primary": primary})
 			}
 			// Delete any attachments not in the new list. The list never holds an
