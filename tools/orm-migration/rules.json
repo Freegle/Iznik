@@ -1,0 +1,65 @@
+{
+  "_comment": [
+    "File-level decisions the inventory applies on every run. A rule needs a reason.",
+    "Use 'excluded' for SQL that runs against a different database engine, and 'keep-raw'",
+    "for SQL that stays raw by design.",
+    "Individual sites are not listed here: a site stays raw on purpose by carrying a",
+    "'// keep-raw: <reason>' comment above it, which the inventory turns into a keep-raw entry.",
+    "A rule matches on 'file' (a trailing slash means a whole directory), and optionally on",
+    "'function' and 'surface', or pins one site with 'id'."
+  ],
+  "rules": [
+    {
+      "file": "iznik-batch/database/migrations/",
+      "status": "keep-raw",
+      "reason": "Schema migrations: DDL, one-off backfills and guard queries. They are frozen history. The PostgreSQL schema is generated from the migrated MySQL schema by a converter and these files are not rewritten.",
+      "porting": "None needed per file. The converter reads the migrated MySQL schema, not the migrations. A new migration that needs MySQL-only DDL gets a PostgreSQL twin or is covered by the converter.",
+      "category": "Schema migration (frozen)"
+    },
+    {
+      "file": "iznik-batch/app/Services/EeeSqliteService.php",
+      "surface": "pdo",
+      "status": "excluded",
+      "reason": "Runs against a separate local SQLite classification store (config freegle.eee.sqlite_path), not the shared MySQL database.",
+      "porting": "Not applicable: a local, rebuildable SQLite file.",
+      "category": "Other engine: local SQLite store"
+    },
+    {
+      "file": "iznik-batch/app/Services/EeeComponentService.php",
+      "surface": "pdo",
+      "status": "excluded",
+      "reason": "Reads the same local SQLite classification store through an injected EeeSqliteService.",
+      "porting": "Not applicable: a local, rebuildable SQLite file.",
+      "category": "Other engine: local SQLite store"
+    },
+    {
+      "file": "iznik-batch/app/Console/Commands/Eee/",
+      "surface": "pdo",
+      "status": "excluded",
+      "reason": "These commands read the local SQLite classification store through an injected EeeSqliteService. Only the pdo surface is excluded, so a DB:: call added to one of these files is still an inventoried MySQL site.",
+      "porting": "Not applicable: a local, rebuildable SQLite file.",
+      "category": "Other engine: local SQLite store"
+    },
+    {
+      "file": "iznik-server-go/userdump/sqlite.go",
+      "status": "excluded",
+      "reason": "Builds a SQLite export file for a member data download. It does not query the MySQL database.",
+      "porting": "Not applicable: SQLite file written for the member.",
+      "category": "Other engine: SQLite export file"
+    },
+    {
+      "file": "iznik-spatial-go/index.go",
+      "status": "excluded",
+      "reason": "The spatial service's own on-disk SQLite R-tree index. It is rebuilt from the main database by the dataset loaders, which are inventoried separately.",
+      "porting": "Not applicable: the sidecar keeps its SQLite index on either engine. Only the dataset loaders are repointed.",
+      "category": "Other engine: local SQLite R-tree"
+    },
+    {
+      "file": "iznik-server-go/database/retry.go",
+      "status": "keep-raw",
+      "reason": "Retry wrappers: they run a statement the caller has already built. Each caller of RetryExec, RetryExecResult and RetryQuery is inventoried with its own SQL, so the statement text is not here.",
+      "porting": "The wrappers are dialect-neutral. The retry predicates match MySQL error text and numbers (1213, 1205) and need a PostgreSQL twin (SQLSTATE 40P01 and 40001).",
+      "category": "Retry wrapper (infrastructure)"
+    }
+  ]
+}
