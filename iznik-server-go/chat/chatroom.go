@@ -484,6 +484,9 @@ func PutChatRoom(c *fiber.Ctx) error {
 		myid, req.Userid, req.Userid, myid, utils.CHAT_TYPE_USER2USER).Limit(1).Scan(&existingID)
 
 	if existingID > 0 {
+		// Opening a chat puts the opener back on its roster if an old merge left them without a row.
+		ensureRosterRow(db, existingID, myid)
+
 		if req.UpdateRoster != nil && *req.UpdateRoster {
 			// Converted together with
 			// its identical twin below (a29c37823e28): a half-converted pair
