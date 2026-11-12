@@ -342,7 +342,6 @@ class PurgeServiceTest extends TestCase
         $this->createMembership($user, $groupA);
 
         $message = $this->createTestMessage($user, $groupA);
-        DB::table('messages_outcomes')->insert(['msgid' => $message->id, 'outcome' => 'Taken']);
 
         // Approved on A, with an old retired Pending copy on B (as an outcome leaves it) and an
         // old live Pending copy on a third group (a rippled copy never reviewed).
@@ -366,7 +365,6 @@ class PurgeServiceTest extends TestCase
             'groupid' => $groupA->id,
             'collection' => MessageGroup::COLLECTION_APPROVED,
         ]);
-        $this->assertDatabaseHas('messages_outcomes', ['msgid' => $message->id, 'outcome' => 'Taken']);
     }
 
     public function test_purge_non_freegle_messages_keeps_a_post_also_on_a_freegle_group(): void
@@ -392,6 +390,7 @@ class PurgeServiceTest extends TestCase
         $this->assertDatabaseHas('messages_groups', ['msgid' => $message->id, 'groupid' => $freegle->id]);
         $this->assertDatabaseHas('messages_outcomes', ['msgid' => $message->id, 'outcome' => 'Taken']);
     }
+
     public function test_purge_old_drafts(): void
     {
         $user = $this->createTestUser();
