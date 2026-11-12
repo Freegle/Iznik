@@ -104,6 +104,7 @@ func TestTranslatePostgres(t *testing.T) {
 		{"coalesce bool", "COALESCE(JSON_EXTRACT(s, '$.a') = 1, 0)", "COALESCE(JSON_EXTRACT(s, '$.a') = 1, false)"},
 		{"update ignore", `UPDATE IGNORE "users_emails" SET "email"=$1 WHERE userid = $2`,
 			`UPDATE "users_emails" SET "email"=$1 WHERE (userid = $2) AND NOT EXISTS (SELECT 1 FROM "users_emails" ig_x WHERE ig_x."email" = ($1))`},
+		{"cast json", "SELECT CAST(5 AS JSON), CAST('{\"a\":1}' AS JSON)", "SELECT to_jsonb(5), ('{\"a\":1}')::jsonb"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {

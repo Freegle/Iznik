@@ -561,3 +561,41 @@ $$;
 
 CREATE OR REPLACE FUNCTION json_length(j jsonb, path text) RETURNS integer
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_length(json_extract(j, path)) $$;
+
+-- JSON_ARRAY_APPEND(doc, '$', value): appends to a top-level array, makes a one-element array of anything else.
+CREATE OR REPLACE FUNCTION json_array_append(j jsonb, path text, v anyelement) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT CASE WHEN j IS NULL THEN NULL
+              WHEN jsonb_typeof(j) = 'array' THEN j || jsonb_build_array(v)
+              ELSE jsonb_build_array(j, v) END
+$$;
+
+CREATE OR REPLACE FUNCTION json_array_append(j text, path text, v anyelement) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_array_append(NULLIF(j, '')::jsonb, path, v) $$;
+
+-- JSON_TYPE(json): the kind of value, as MySQL names it.
+CREATE OR REPLACE FUNCTION json_type(j jsonb) RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT CASE jsonb_typeof(j) WHEN 'object' THEN 'OBJECT' WHEN 'array' THEN 'ARRAY' WHEN 'string' THEN 'STRING'
+                              WHEN 'number' THEN CASE WHEN j::text ~ '[.eE]' THEN 'DOUBLE' ELSE 'INTEGER' END
+                              WHEN 'boolean' THEN 'BOOLEAN' WHEN 'null' THEN 'NULL' END
+$$;
+
+-- A comparison next to a number: MySQL's comparisons are 0 or 1, so EXISTS(...) = 1 and JSON_CONTAINS(...) = 0
+-- are ordinary tests there.
+CREATE OR REPLACE FUNCTION iznik_bool_eq_int(b boolean, i integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT b = (i <> 0) $$;
+
+CREATE OR REPLACE FUNCTION iznik_bool_ne_int(b boolean, i integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT b <> (i <> 0) $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_operator WHERE oprname = '=' AND oprleft = 'boolean'::regtype AND oprright = 'integer'::regtype) THEN
+    CREATE OPERATOR = (LEFTARG = boolean, RIGHTARG = integer, FUNCTION = iznik_bool_eq_int);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_operator WHERE oprname = '<>' AND oprleft = 'boolean'::regtype AND oprright = 'integer'::regtype) THEN
+    CREATE OPERATOR <> (LEFTARG = boolean, RIGHTARG = integer, FUNCTION = iznik_bool_ne_int);
+  END IF;
+END
+$$;

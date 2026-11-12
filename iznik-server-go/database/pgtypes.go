@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
 	"reflect"
@@ -120,59 +121,68 @@ func registerLenientTypes(_ context.Context, conn *pgx.Conn) error {
 	return nil
 }
 
-// pgRows turns the booleans PostgreSQL returns for comparisons into 1 and 0, which is what MySQL returns
-// and what the code that reads them expects.
+// pgRows makes PostgreSQL's results look like MySQL's to database/sql: the booleans PostgreSQL returns for
+// comparisons are 1 and 0, and text comes as bytes, as MySQL's driver returns it, so that a json.RawMessage
+// or []byte can be scanned from a text column and GORM gives a map the string.
 type pgRows struct{ driver.Rows }
 
-func (r pgRows) Next(dest []driver.Value) error {
+func newPgRows(r driver.Rows) *pgRows { return &pgRows{r} }
+
+func (r *pgRows) Next(dest []driver.Value) error {
 	if err := r.Rows.Next(dest); err != nil {
 		return err
 	}
 	for i, v := range dest {
-		if b, ok := v.(bool); ok {
-			if b {
+		switch x := v.(type) {
+		case bool:
+			if x {
 				dest[i] = int64(1)
 			} else {
 				dest[i] = int64(0)
 			}
+		case string:
+			dest[i] = []byte(x)
 		}
 	}
 	return nil
 }
 
-func (r pgRows) ColumnTypeScanType(i int) reflect.Type {
+func (r *pgRows) ColumnTypeScanType(i int) reflect.Type {
 	if s, ok := r.Rows.(driver.RowsColumnTypeScanType); ok {
 		t := s.ColumnTypeScanType(i)
 		if t == reflect.TypeOf(false) {
 			return reflect.TypeOf(int64(0))
+		}
+		if t != nil && t.Kind() == reflect.String {
+			return reflect.TypeOf(sql.RawBytes{})
 		}
 		return t
 	}
 	return reflect.TypeOf("")
 }
 
-func (r pgRows) ColumnTypeDatabaseTypeName(i int) string {
+func (r *pgRows) ColumnTypeDatabaseTypeName(i int) string {
 	if s, ok := r.Rows.(driver.RowsColumnTypeDatabaseTypeName); ok {
 		return s.ColumnTypeDatabaseTypeName(i)
 	}
 	return ""
 }
 
-func (r pgRows) ColumnTypeLength(i int) (int64, bool) {
+func (r *pgRows) ColumnTypeLength(i int) (int64, bool) {
 	if s, ok := r.Rows.(driver.RowsColumnTypeLength); ok {
 		return s.ColumnTypeLength(i)
 	}
 	return 0, false
 }
 
-func (r pgRows) ColumnTypeNullable(i int) (bool, bool) {
+func (r *pgRows) ColumnTypeNullable(i int) (bool, bool) {
 	if s, ok := r.Rows.(driver.RowsColumnTypeNullable); ok {
 		return s.ColumnTypeNullable(i)
 	}
 	return false, false
 }
 
-func (r pgRows) ColumnTypePrecisionScale(i int) (int64, int64, bool) {
+func (r *pgRows) ColumnTypePrecisionScale(i int) (int64, int64, bool) {
 	if s, ok := r.Rows.(driver.RowsColumnTypePrecisionScale); ok {
 		return s.ColumnTypePrecisionScale(i)
 	}

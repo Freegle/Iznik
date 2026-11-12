@@ -221,7 +221,7 @@ func (p *pgTranslatingConn) QueryContext(ctx context.Context, q string, args []d
 	if err != nil {
 		return nil, err
 	}
-	return pgRows{rows}, nil
+	return newPgRows(rows), nil
 }
 
 func (p *pgTranslatingConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {

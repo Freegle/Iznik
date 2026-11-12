@@ -126,14 +126,38 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		changed = true
 	}
 
-	// CAST(x AS JSON).
-	for i := range ts {
-		if isKw(ts[i], "JSON") {
-			if p := prevSig(ts, i-1); p >= 0 && isKw(ts[p], "AS") {
-				ts[i].s = "jsonb"
-				changed = true
+	// CAST(x AS JSON): a number becomes a JSON number, anything else is JSON text.
+	for i := len(ts) - 1; i >= 0; i-- {
+		if !isKw(ts[i], "CAST") {
+			continue
+		}
+		cl := callEnd(ts, i)
+		if cl < 0 {
+			continue
+		}
+		o := nextSig(ts, i+1)
+		inner := ts[o+1 : cl]
+		as := -1
+		depth := 0
+		for j, t := range inner {
+			if isP(t, "(") {
+				depth++
+			} else if isP(t, ")") {
+				depth--
+			} else if depth == 0 && isKw(t, "AS") {
+				as = j
 			}
 		}
+		if as < 0 || len(trimToks(inner[as+1:])) != 1 || !isKw(trimToks(inner[as+1:])[0], "JSON") {
+			continue
+		}
+		val := trimToks(inner[:as])
+		if len(val) == 1 && isNumberTok(val[0]) {
+			ts = concatToks(ts[:i], []tok{word("to_jsonb"), punct("(")}, val, []tok{punct(")")}, ts[cl+1:])
+		} else {
+			ts = concatToks(ts[:i], []tok{punct("(")}, val, []tok{punct(")"), punct(":"), punct(":"), word("jsonb")}, ts[cl+1:])
+		}
+		changed = true
 	}
 
 	ts, changed = wrapJSONBranches(ts, changed)
@@ -834,6 +858,9 @@ func translateUpdateIgnore(ts []tok, first int, cat catalog) ([]tok, bool) {
 		}
 		val := trimToks(a[2:])
 		if hasIdentifier(val) {
+			if len(val) == 1 && strings.EqualFold(identName(val[0]), identName(a[0])) {
+				continue // col = col changes nothing
+			}
 			return ts, false
 		}
 		newVal[strings.ToLower(identName(a[0]))] = val
