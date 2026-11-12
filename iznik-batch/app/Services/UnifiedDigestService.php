@@ -2067,10 +2067,13 @@ class UnifiedDigestService
         // ...and drop the ones whose item went out in an earlier digest. deduplicatePosts
         // collapses the copies that land in ONE digest; this is the same decision across
         // digests, which is how one item reached members on four days running (Discourse 9808).
+        // The posts the last digest left out at the cap are exempt: nothing of them was sent,
+        // and a copy behind the cursor is not evidence that it was.
         $deduplicatedPosts = $this->dropCardsAlreadyCovered(
             $deduplicatedPosts,
             $digestTracker->lastmsgdate,
-            $this->digestGroupIdsForUser($user, $mode)
+            $this->digestGroupIdsForUser($user, $mode),
+            array_map('intval', $digestTracker->carryover ?? [])
         );
 
         if ($deduplicatedPosts->isEmpty() && $pinnedCards->isEmpty()) {
@@ -3322,11 +3325,14 @@ class UnifiedDigestService
      * disagree about what counts as something they have already seen.
      *
      * @param Collection $cards Entries of ['message' => Message, 'postedToGroups' => int[]]
+     * @param int[] $keepMsgids Messages never dropped here: carried over because the cap left
+     *     them out, so they were not sent whatever a copy behind the cursor suggests.
      */
     public function dropCardsAlreadyCovered(
         Collection $cards,
         \DateTimeInterface|string|null $cursorMsgdate,
-        array $groupIds
+        array $groupIds,
+        array $keepMsgids = []
     ): Collection
     {
         if ($cards->isEmpty()) {
@@ -3343,7 +3349,11 @@ class UnifiedDigestService
             return $cards;
         }
 
-        return $cards->reject(fn ($card) => isset($covered[(int) $card['message']->id]))->values();
+        $keep = array_flip($keepMsgids);
+
+        return $cards->reject(
+            fn ($card) => isset($covered[(int) $card['message']->id]) && !isset($keep[(int) $card['message']->id])
+        )->values();
     }
 
     /**
