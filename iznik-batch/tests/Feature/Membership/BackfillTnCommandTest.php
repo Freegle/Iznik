@@ -546,7 +546,7 @@ class BackfillTnCommandTest extends TestCase
 
         // The log insert fails after it has run; the flag must not stay cleared without it.
         DB::listen(function ($query) {
-            if (str_starts_with($query->sql, 'insert into `logs`')) {
+            if (preg_match('/^insert into [`"]logs[`"]/', $query->sql) === 1) {
                 throw new \RuntimeException('log insert failed');
             }
         });

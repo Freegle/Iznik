@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Database;
 
+use App\Database\Expressions\Comparison;
 use App\Database\Expressions\MbrContains;
 use App\Database\Expressions\MbrIntersects;
 use App\Database\Expressions\MbrWithin;
@@ -120,5 +121,13 @@ class ExpressionsPostgresSpatialTest extends TestCase
         $this->assertTrue($this->evaluate((new MbrWithin($inner, $outer))->getValue($this->pg)));
         $this->assertTrue($this->evaluate((new MbrIntersects($outer, $inner))->getValue($this->pg)));
         $this->assertFalse($this->evaluate((new MbrIntersects($outer, $far))->getValue($this->pg)));
+    }
+
+    public function test_the_null_safe_equality_renders_is_not_distinct_from_on_postgresql(): void
+    {
+        $same = new Comparison('a', '<=>', 'b');
+
+        $this->assertSame('`a` <=> `b`', $same->getValue($this->mysql));
+        $this->assertSame('"a" IS NOT DISTINCT FROM "b"', $same->getValue($this->pg));
     }
 }

@@ -3941,7 +3941,7 @@ class ExpandServiceTest extends TestCase
         $sched = json_decode($after->schedule, true);
         $last = end($sched);
         $this->assertSame(50, (int) $last['cumulative_users'], 'stored schedule now caps at 50');
-        $this->assertSame('2020-01-01 00:00:00', (string) $after->updated_at, 'updated_at preserved (no reach-mail trigger)');
+        $this->assertSame('2020-01-01 00:00:00', \Carbon\Carbon::parse((string) $after->updated_at)->toDateTimeString(), 'updated_at preserved (no reach-mail trigger)');
 
         // Crosspost-breadth stat is reported and the cap never widens reach.
         $this->assertArrayHasKey('groups_before', $r);
@@ -4265,7 +4265,7 @@ class ExpandServiceTest extends TestCase
         $this->assertSame([$originGid], json_decode($row->reachable_group_ids, true));
         $ticks = json_decode($row->schedule, true);
         $this->assertArrayNotHasKey('wkt', $ticks[0], 'the rebuilt schedule is slim');
-        $this->assertSame('2026-01-01 00:00:00', (string) $row->updated_at,
+        $this->assertSame('2026-01-01 00:00:00', \Carbon\Carbon::parse((string) $row->updated_at)->toDateTimeString(),
             'backfill preserves updated_at so the reach mailer never reconsiders the row');
 
         $this->assertSame(
