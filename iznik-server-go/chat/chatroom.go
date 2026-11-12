@@ -154,25 +154,15 @@ func ListForUser(c *fiber.Ctx) error {
 
 	since := c.Query("since")
 
-	var start string
-
-	// Default lookback based on chat types.
-	hasMod := false
-	for _, ct := range chattypes {
-		if ct == utils.CHAT_TYPE_USER2MOD || ct == utils.CHAT_TYPE_MOD2MOD {
-			hasMod = true
-			break
-		}
-	}
-	if hasMod {
-		start = time.Now().AddDate(0, 0, -chatActiveLimitMT).Format("2006-01-02")
-	} else {
-		start = time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
-	}
+	// Default lookback: the chats with the volunteers have the longer window, and a chat between members has
+	// CHAT_ACTIVE_LIMIT days whichever types are asked for, as the website asks for both together.
+	start := time.Now().AddDate(0, 0, -chatActiveLimitMT).Format("2006-01-02")
+	u2uStart := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 	if since != "" {
 		t, err := time.Parse(time.RFC3339, since)
 		if err == nil {
 			start = t.Format("2006-01-02")
+			u2uStart = start
 		}
 		// Invalid since: leave start at default (avoids empty-string TIMESTAMP bug)
 	}
@@ -186,7 +176,7 @@ func ListForUser(c *fiber.Ctx) error {
 		keepChat, _ = strconv.ParseUint(keepChatStr, 10, 64)
 	}
 
-	r := listChats(myid, chattypes, start, search, 0, keepChat, includeClosed, true)
+	r := listChats(myid, chattypes, start, u2uStart, search, 0, keepChat, includeClosed, true)
 
 	if len(r) == 0 {
 		// Force [] rather than null to be returned.
@@ -222,7 +212,7 @@ func ListForUserMT(c *fiber.Ctx) error {
 
 	search := c.Query("search")
 
-	r := listChats(myid, chattypes, start, search, 0, 0, false, false)
+	r := listChats(myid, chattypes, start, start, search, 0, 0, false, false)
 	if r == nil {
 		r = []ChatRoomListEntry{}
 	}
@@ -256,7 +246,7 @@ func GetChat(c *fiber.Ctx) error {
 func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 	// Include empty (and maybe closed) chats if we're getting a specific chat.
 	// Pass all chat types so any type of chat can be fetched.
-	chats := listChats(myid, []string{utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_MOD2MOD}, "2009-09-11", "", id, id, true, false)
+	chats := listChats(myid, []string{utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_MOD2MOD}, "2009-09-11", "2009-09-11", "", id, id, true, false)
 
 	if len(chats) > 0 {
 		return chats[0], false
@@ -295,7 +285,7 @@ func GetChatRoom(id uint64, myid uint64) (ChatRoomListEntry, bool) {
 	if participant == 0 {
 		participant = room.User2
 	}
-	chats = listChats(participant, []string{room.Chattype}, "2009-09-11", "", id, id, true, false)
+	chats = listChats(participant, []string{room.Chattype}, "2009-09-11", "2009-09-11", "", id, id, true, false)
 	if len(chats) > 0 {
 		return chats[0], false
 	}
@@ -805,7 +795,9 @@ func PostChatRoom(c *fiber.Ctx) error {
 // Internal helpers
 // =============================================================================
 
-func listChats(myid uint64, chattypes []string, start string, search string, onlyChat uint64, keepChat uint64, includeClosed bool, memberOnly bool) []ChatRoomListEntry {
+// listChats lists the chats of one user. start is the cutoff on a chat's latest message for the chats with the
+// volunteers, and u2uStart the cutoff for a chat between two members.
+func listChats(myid uint64, chattypes []string, start string, u2uStart string, search string, onlyChat uint64, keepChat uint64, includeClosed bool, memberOnly bool) []ChatRoomListEntry {
 	var r []ChatRoomListEntry
 
 	// V1 parity: unseen messages older than CHAT_ACTIVE_LIMIT days are excluded
@@ -896,7 +888,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					"LEFT JOIN chat_roster c2 ON c2.userid = user2 AND chat_rooms.id = c2.chatid "+
 					"INNER JOIN users ON users.id = user2 "+
 					"WHERE user1 = ? AND user1 != user2 AND chattype = ? AND latestmessage >= ? "+onlyChatq+statusq)
-			params = append(params, myid, myid, utils.CHAT_TYPE_USER2USER, start)
+			params = append(params, myid, myid, utils.CHAT_TYPE_USER2USER, u2uStart)
 
 			// User2User: user is user2
 			unions = append(unions,
@@ -906,7 +898,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 					"LEFT JOIN chat_roster c1 ON c1.userid = ? AND chat_rooms.id = c1.chatid "+
 					"LEFT JOIN chat_roster c2 ON c2.userid = user1 AND chat_rooms.id = c2.chatid "+
 					"WHERE user2 = ? AND user1 != user2 AND chattype = ? AND latestmessage >= ? "+onlyChatq+statusq)
-			params = append(params, myid, myid, utils.CHAT_TYPE_USER2USER, start)
+			params = append(params, myid, myid, utils.CHAT_TYPE_USER2USER, u2uStart)
 
 		case utils.CHAT_TYPE_MOD2MOD:
 			// Mod2Mod: user is a moderator of the group.
@@ -1249,7 +1241,7 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			// check; it sits between the lastmsgseen and lastmsg-join placeholders, all of
 			// which are myid, so appending one more keeps every placeholder correctly bound.
 			// keep-raw: the chat list is one hand-built query with correlated subqueries for the unseen count, the snippet and the visible-message test.
-			res := db.Raw(sql, myid, myid, unseenSince, myid, myid, start, utils.CHAT_TYPE_USER2USER, myid, myid, myid, myid, myid)
+			res := db.Raw(sql, myid, myid, unseenSince, myid, myid, u2uStart, utils.CHAT_TYPE_USER2USER, myid, myid, myid, myid, myid)
 			res.Scan(&chats2)
 		}()
 
