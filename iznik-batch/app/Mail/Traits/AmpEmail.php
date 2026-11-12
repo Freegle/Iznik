@@ -78,8 +78,18 @@ trait AmpEmail
             $css = array_merge($css, $m[1]);
         }
 
-        if (preg_match_all('/<[^>]*\sstyle\s*=\s*(?:"([^"]*)"|\'([^\']*)\')/i', $html, $m)) {
-            $css = array_merge($css, array_filter($m[1]), array_filter($m[2]));
+        // Walk each start tag with its quoted values kept whole, so a '>' inside an earlier
+        // attribute (an amp-bind expression, an on= handler) does not end the tag early.
+        if (preg_match_all('/<[a-z][^\s>\/]*(?:"[^"]*"|\'[^\']*\'|[^"\'>])*>/i', $html, $tags)) {
+            foreach ($tags[0] as $tag) {
+                if (preg_match_all('/\s([^\s=\/>"\']+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>"\']+))/', $tag, $attrs, PREG_SET_ORDER)) {
+                    foreach ($attrs as $attr) {
+                        if (strcasecmp($attr[1], 'style') === 0) {
+                            $css[] = $attr[2] . ($attr[3] ?? '') . ($attr[4] ?? '');
+                        }
+                    }
+                }
+            }
         }
 
         if (preg_match_all('/<link\b[^>]*>/i', $html, $m)) {
