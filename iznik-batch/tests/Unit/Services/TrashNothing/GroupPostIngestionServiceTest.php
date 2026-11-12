@@ -1976,7 +1976,7 @@ class GroupPostIngestionServiceTest extends TestCase
 
         // The log insert fails: nothing of the join may be left behind.
         DB::listen(function ($query) {
-            if (str_starts_with($query->sql, 'insert into `logs`')
+            if (preg_match('/^insert into [`"]logs[`"]/', $query->sql) === 1
                 && in_array(GroupPostIngestionService::JOIN_LOG_UNADDRESSED, $query->bindings, true)) {
                 throw new \RuntimeException('log insert failed');
             }

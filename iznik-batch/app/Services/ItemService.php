@@ -39,7 +39,7 @@ class ItemService
     /**
      * Find or create the catalog row for $name, returning its id (null for an
      * empty name). The `name` unique index is case-insensitive, so the
-     * LAST_INSERT_ID() upsert returns the existing id on a case-only difference
+     * find-or-insert returns the existing id on a case-only difference
      * — exactly as V1 Item::create() did. A freshly-created item gets a weight
      * estimate; existing rows keep their weight.
      */
@@ -54,13 +54,16 @@ class ItemService
             $name = mb_substr($name, 0, self::MAX_ITEM_NAME_LENGTH);
         }
 
-        // keep-raw: LAST_INSERT_ID(id) readback on a case-insensitive-unique
-        // upsert - no builder form returns the existing row's id this way.
-        DB::statement(
-            'INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), name = ?',
-            [$name, $name]
-        );
-        $id = (int) DB::getPdo()->lastInsertId();
+        // The name lookup follows the column's collation. On MySQL that is case-insensitive, so a
+        // case-only difference finds the existing row and takes the new spelling, as V1 Item::create() did.
+        $id = (int) DB::table('items')->useWritePdo()->where('name', $name)->value('id');
+        if ($id <= 0) {
+            DB::table('items')->insertOrIgnore(['name' => $name]);
+            // A concurrent insert of the same name wins the race: read the row back either way.
+            $id = (int) DB::table('items')->useWritePdo()->where('name', $name)->value('id');
+        } else {
+            DB::table('items')->where('id', $id)->update(['name' => $name]);
+        }
         if ($id <= 0) {
             return null;
         }
