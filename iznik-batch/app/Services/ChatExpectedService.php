@@ -234,14 +234,11 @@ class ChatExpectedService
                 }
 
                 if (($existing[$msg->id] ?? null) !== $value) {
-                    // keep-raw: INSERT ... ON DUPLICATE KEY UPDATE against the chatmsgid
-                    // unique key. upsert() would name every column in the update clause;
-                    // this must only ever touch value.
-                    DB::statement(
-                        'INSERT INTO users_expected (expecter, expectee, chatmsgid, value)
-                         VALUES (?, ?, ?, ?)
-                         ON DUPLICATE KEY UPDATE value = VALUES(value)',
-                        [$msg->userid, $other, $msg->id, $value]
+                    // Against the chatmsgid unique key; only the value is ever updated.
+                    DB::table('users_expected')->upsert(
+                        [['expecter' => $msg->userid, 'expectee' => $other, 'chatmsgid' => $msg->id, 'value' => $value]],
+                        ['chatmsgid'],
+                        ['value']
                     );
                 }
             }

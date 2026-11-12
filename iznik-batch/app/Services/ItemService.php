@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\UpsertReturningId;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -54,13 +55,8 @@ class ItemService
             $name = mb_substr($name, 0, self::MAX_ITEM_NAME_LENGTH);
         }
 
-        // keep-raw: LAST_INSERT_ID(id) readback on a case-insensitive-unique
-        // upsert - no builder form returns the existing row's id this way.
-        DB::statement(
-            'INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), name = ?',
-            [$name, $name]
-        );
-        $id = (int) DB::getPdo()->lastInsertId();
+        // The name is unique case-insensitively, so an existing item comes back whatever the case.
+        $id = UpsertReturningId::id('items', ['name' => $name], ['name'], ['name' => $name]);
         if ($id <= 0) {
             return null;
         }
