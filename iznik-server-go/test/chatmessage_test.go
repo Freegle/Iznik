@@ -224,6 +224,74 @@ func TestRejectDuplicatesChatMessage(t *testing.T) {
 	assert.Equal(t, 1, reviewRejected, "duplicate message should also be rejected")
 }
 
+// The duplicate sweep must respect holds: a twin another moderator is holding is theirs to
+// decide, so a reject elsewhere leaves it pending and still held.
+func TestRejectDuplicatesSkipsTwinHeldByAnotherMod(t *testing.T) {
+	_, regularUserID, groupID, _, msgID, modToken := setupModerationData(t)
+	db := database.DBConn
+
+	otherUserID := CreateTestUser(t, uniquePrefix(t.Name())+"_other", utils.SYSTEMROLE_USER)
+	otherModID := CreateTestUser(t, uniquePrefix(t.Name())+"_othermod", utils.SYSTEMROLE_USER)
+	otherGroupID := CreateTestGroup(t, uniquePrefix(t.Name())+"_g2")
+	CreateTestMembership(t, otherUserID, otherGroupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherModID, otherGroupID, utils.ROLE_MODERATOR)
+	chatID2 := CreateTestChatRoom(t, otherUserID, nil, &otherGroupID, "User2Mod")
+	_ = groupID
+
+	db.Exec(
+		"INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) VALUES (?, ?, ?, NOW(), 1, 1)",
+		chatID2, regularUserID, "Test message needing review")
+	var heldMsgID uint64
+	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID2).Scan(&heldMsgID)
+	db.Exec("INSERT INTO chat_messages_held (msgid, userid) VALUES (?, ?)", heldMsgID, otherModID)
+
+	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Reject",
+	}, modToken)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var reviewRequired, reviewRejected int
+	db.Raw("SELECT reviewrequired, reviewrejected FROM chat_messages WHERE id = ?", heldMsgID).Row().Scan(&reviewRequired, &reviewRejected)
+	assert.Equal(t, 1, reviewRequired, "a twin held by another moderator must stay pending")
+	assert.Equal(t, 0, reviewRejected, "a twin held by another moderator must not be rejected")
+
+	var heldCount int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages_held WHERE msgid = ?", heldMsgID).Scan(&heldCount)
+	assert.Equal(t, int64(1), heldCount, "the other moderator's hold must be left in place")
+}
+
+// An image-only message has empty text, so matching on text alone would match every pending
+// image-only message in the last day. Rejecting one rejects only that one.
+func TestRejectEmptyTextMessageDoesNotRejectOtherEmptyMessages(t *testing.T) {
+	_, regularUserID, _, _, msgID, modToken := setupModerationData(t)
+	db := database.DBConn
+
+	db.Exec("UPDATE chat_messages SET message = '' WHERE id = ?", msgID)
+
+	otherUserID := CreateTestUser(t, uniquePrefix(t.Name())+"_other", utils.SYSTEMROLE_USER)
+	otherGroupID := CreateTestGroup(t, uniquePrefix(t.Name())+"_g2")
+	CreateTestMembership(t, otherUserID, otherGroupID, utils.ROLE_MEMBER)
+	chatID2 := CreateTestChatRoom(t, otherUserID, nil, &otherGroupID, "User2Mod")
+
+	db.Exec(
+		"INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingsuccessful) VALUES (?, ?, '', NOW(), 1, 1)",
+		chatID2, regularUserID)
+	var otherMsgID uint64
+	db.Raw("SELECT id FROM chat_messages WHERE chatid = ? ORDER BY id DESC LIMIT 1", chatID2).Scan(&otherMsgID)
+
+	resp := postChatmessages(t, "/api/chatmessages", map[string]interface{}{
+		"id":     msgID,
+		"action": "Reject",
+	}, modToken)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var reviewRequired, reviewRejected int
+	db.Raw("SELECT reviewrequired, reviewrejected FROM chat_messages WHERE id = ?", otherMsgID).Row().Scan(&reviewRequired, &reviewRejected)
+	assert.Equal(t, 1, reviewRequired, "another image-only message must stay pending")
+	assert.Equal(t, 0, reviewRejected, "another image-only message must not be rejected")
+}
+
 func TestHoldChatMessage(t *testing.T) {
 	modUserID, _, _, _, msgID, modToken := setupModerationData(t)
 	db := database.DBConn
