@@ -128,6 +128,8 @@ class ProvenSitesTest extends TestCase
 
     public function test_layer2_aggregate_select_site(): void
     {
+        $this->requiresMySql('ResultParity runs the recorded MySQL statement (HAVING on a select alias), which PostgreSQL refuses');
+
         $userWithDuplicates = $this->createTestUser();
         $userWithOne = $this->createTestUser();
 

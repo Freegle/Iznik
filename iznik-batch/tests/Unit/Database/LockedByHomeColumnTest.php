@@ -8,6 +8,12 @@ use Tests\TestCase;
 
 class LockedByHomeColumnTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->requiresMySql('reads the column definition from MySQL information_schema');
+    }
+
     public function test_messages_groups_has_locked_by_home_defaulting_to_zero(): void
     {
         $this->assertTrue(Schema::hasColumn('messages_groups', 'locked_by_home'));

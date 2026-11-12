@@ -4,8 +4,8 @@ namespace Tests\Unit\Commands\Message;
 
 use App\Services\Embedding\EmbedderContract;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\FakeEmbedder;
 use Tests\TestCase;
-use Tests\Unit\Services\FakeEmbedder;
 
 class GenerateEmbeddingsCommandTest extends TestCase
 {
