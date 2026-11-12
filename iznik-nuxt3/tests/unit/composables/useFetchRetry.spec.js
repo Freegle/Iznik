@@ -624,4 +624,38 @@ describe('useFetchRetry', () => {
       expect(settled).toEqual([200, { ok: true }])
     })
   })
+
+  describe('creating requests', () => {
+    // PUT /message/submit creates and posts a message in one call.  If the server committed it
+    // and the reply was lost, a blind retry would make a second post.  A retried create must
+    // either not be retried, or carry the same idempotency key so the server can drop the repeat.
+    it('should not repeat a message create after a lost reply without a shared key', async () => {
+      mockFetch
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce({ id: 1 }),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/apiv2/message/submit', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      promise.catch(() => {})
+
+      await vi.advanceTimersByTimeAsync(5000)
+      vi.useRealTimers()
+
+      const keys = mockFetch.mock.calls.map(
+        (c) => c[1]?.headers?.['Idempotency-Key']
+      )
+      const sharedKey =
+        keys.length > 1 && !!keys[0] && keys.every((k) => k === keys[0])
+
+      expect(mockFetch.mock.calls.length === 1 || sharedKey).toBe(true)
+    })
+  })
 })
