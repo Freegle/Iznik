@@ -21,21 +21,21 @@ class PilotSitesTest extends TestCase
      */
     public function test_opt_out_log_query(): void
     {
-        GoldenSql::assert('8f86a2ed92d0', fn () => ExpandService::optOutLogQuery(5));
+        GoldenSql::assertExecuted('8f86a2ed92d0', fn () => ExpandService::optOutLogRows(5));
     }
 
     /**
-     * first() is take(1), so the golden's LIMIT 1 is the same statement. The test adds it because
-     * it renders the query without running it.
+     * first() is take(1), so the golden's LIMIT 1 is the same statement. The method ends in
+     * first(), and the test runs the method.
      */
     public function test_organic_membership_query(): void
     {
-        GoldenSql::assert('c24c68341f84', fn () => ExpandService::organicMembershipQuery(5)->limit(1));
+        GoldenSql::assertExecuted('c24c68341f84', fn () => ExpandService::organicMembership(5));
     }
 
     public function test_orphaned_message_log_count(): void
     {
-        GoldenSql::assertCount('be29b29dc957', fn () => PurgeService::orphanedMessageLogQuery('2026-01-01 00:00:00', '2026-02-01 00:00:00'));
+        GoldenSql::assertExecuted('be29b29dc957', fn () => PurgeService::countOrphanedMessageLogs('2026-01-01 00:00:00', '2026-02-01 00:00:00'));
     }
 
     /**
@@ -46,7 +46,7 @@ class PilotSitesTest extends TestCase
     public function test_delete_log(): void
     {
         foreach (['29a8e9d8e68d', 'a8a7d546e8d4'] as $siteId) {
-            GoldenSql::assertDelete($siteId, fn () => PurgeService::deleteLogQuery(5));
+            GoldenSql::assertExecuted($siteId, fn () => PurgeService::deleteLog(5));
         }
     }
 }

@@ -72,7 +72,7 @@ class PilotEngineParityTest extends TestCase
             ]),
         ];
 
-        EngineParity::assert('c24c68341f84', $fixture, fn () => ExpandService::organicMembershipQuery($uid)->first(),
+        EngineParity::assert('c24c68341f84', $fixture, fn () => ExpandService::organicMembership($uid),
             expect: ['emailfrequency' => 12, 'eventsallowed' => 1, 'volunteeringallowed' => 1]);
     }
 
@@ -95,7 +95,7 @@ class PilotEngineParityTest extends TestCase
         ];
 
         EngineParity::assert('be29b29dc957', $fixture,
-            fn () => PurgeService::orphanedMessageLogQuery('2026-01-01 00:00:00', '2026-02-01 00:00:00')->count(),
+            fn () => PurgeService::countOrphanedMessageLogs('2026-01-01 00:00:00', '2026-02-01 00:00:00'),
             expect: 2);
     }
 
@@ -115,7 +115,7 @@ class PilotEngineParityTest extends TestCase
         // The same statement is two sites, one in each purge.
         foreach (['29a8e9d8e68d', 'a8a7d546e8d4'] as $siteId) {
             EngineParity::assert($siteId, $fixture, function () {
-                PurgeService::deleteLogQuery($this->fid(61))->delete();
+                PurgeService::deleteLog($this->fid(61));
 
                 return DB::table('logs')->whereBetween('id', [$this->fid(60), $this->fid(62)])->orderBy('id')->pluck('id')->all();
             }, ordered: true, expect: [$this->fid(60), $this->fid(62)]);

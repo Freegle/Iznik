@@ -9,7 +9,6 @@ use App\Models\EmailTracking;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Traits\ChunkedProcessing;
-use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -945,29 +944,31 @@ class PurgeService
     }
 
     /**
-     * Logs that name a message that no longer exists, between two times. The query is built here
-     * and not inline so the parity test renders the statement that runs.
+     * How many logs name a message that no longer exists, between two times. The statement is built
+     * and run here, not inline, so the parity test runs the same method and sees the statement that
+     * is sent.
      *
      * @internal
      */
-    public static function orphanedMessageLogQuery(\DateTimeInterface|string $from, \DateTimeInterface|string $to): QueryBuilder
+    public static function countOrphanedMessageLogs(\DateTimeInterface|string $from, \DateTimeInterface|string $to): int
     {
         return DB::table('logs')
             ->leftJoin('messages', 'messages.id', '=', 'logs.msgid')
             ->whereNotNull('logs.msgid')
             ->whereNull('messages.id')
             ->where('logs.timestamp', '>=', $from)
-            ->where('logs.timestamp', '<', $to);
+            ->where('logs.timestamp', '<', $to)
+            ->count();
     }
 
     /**
-     * One log row, by id.
+     * Deletes one log row, by id. Built and run here for the same reason as the count above.
      *
      * @internal
      */
-    public static function deleteLogQuery(int $id): QueryBuilder
+    public static function deleteLog(int $id): int
     {
-        return DB::table('logs')->where('id', $id);
+        return DB::table('logs')->where('id', $id)->delete();
     }
 
     /**
@@ -979,7 +980,7 @@ class PurgeService
         $end = now()->subDays(60)->startOfDay();
 
         if ($dryRun) {
-            return self::orphanedMessageLogQuery($end, $start)->count();
+            return self::countOrphanedMessageLogs($end, $start);
         }
 
         $total = 0;
@@ -993,7 +994,7 @@ class PurgeService
             );
 
             foreach ($logs as $log) {
-                self::deleteLogQuery((int) $log->id)->delete();
+                self::deleteLog((int) $log->id);
                 $total++;
             }
         } while (count($logs) > 0);
@@ -1155,7 +1156,7 @@ class PurgeService
             );
 
             foreach ($logs as $log) {
-                self::deleteLogQuery((int) $log->id)->delete();
+                self::deleteLog((int) $log->id);
                 $total++;
                 $lastId = (int) $log->id;
             }
