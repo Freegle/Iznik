@@ -49,6 +49,26 @@ class DemergeUserCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
+    public function test_refuses_when_both_emails_belong_to_the_same_user(): void
+    {
+        // Two addresses of one account is not a merge, so there is nothing to undo.
+        // Here live and backup are the same DB, so a run that proceeds would delete
+        // the account's own rows.
+        $suffix = uniqid();
+        $email = "demerge_same_a_{$suffix}@example.com";
+        $otherEmail = "demerge_same_b_{$suffix}@example.com";
+
+        $userId = DB::table('users')->insertGetId(['fullname' => 'Demerge Test Same', 'added' => now()]);
+        DB::table('users_emails')->insert(['userid' => $userId, 'email' => $email, 'added' => now()]);
+        DB::table('users_emails')->insert(['userid' => $userId, 'email' => $otherEmail, 'added' => now()]);
+        $this->cleanupUserIds[] = $userId;
+
+        $this->artisan("user:demerge --email={$email} --from-email={$otherEmail} --backup-host=percona --backup-port=3306 --backup-password=iznik --backup-db=iznik_batch_test")
+            ->assertExitCode(1);
+
+        $this->assertEquals(2, DB::table('users_emails')->where('userid', $userId)->count());
+    }
+
     public function test_runs_without_error_when_no_rows_to_demerge(): void
     {
         // Use the test DB as both live and backup. Since DatabaseTransactions is disabled,
