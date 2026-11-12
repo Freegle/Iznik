@@ -120,3 +120,25 @@ test('a value the repairs do not cover stops the load, and says which', { skip }
   assert.notEqual(r.status, 0)
   assert.match(r.stderr, /isochrones_source_check/)
 })
+
+test('setup-pg-database.sh seeds iznik and rolls the posts forward, leaves the Go test database empty, and PG_FIXTURES=0 seeds nothing', { skip }, () => {
+  const script = path.join(here, '../../scripts/setup-pg-database.sh')
+  const a = `${DB}_s1`
+  const b = `${DB}_s2`
+  const run = (extra = {}) =>
+    spawnSync('bash', [script], { encoding: 'utf8', env: { ...process.env, PG_PSQL: `${PSQL}`, PG_DATABASE: a, PG_TEST_DATABASE: b, PG_REBUILD: '1', ...extra } })
+  try {
+    let r = run()
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    assert.match(r.stdout, /Fixtures loaded into/)
+    assert.ok(Number(psql(a, 'SELECT count(*) FROM users')) > 100)
+    assert.equal(psql(b, 'SELECT count(*) FROM users'), '0')
+    const age = Number(psql(a, 'SELECT CURRENT_DATE - max(arrival)::date FROM messages_groups WHERE arrival <= now()'))
+    assert.ok(age >= 0 && age < 31, `the newest post is ${age} days old`)
+    r = run({ PG_FIXTURES: '0' })
+    assert.equal(r.status, 0, r.stdout + r.stderr)
+    assert.equal(psql(a, 'SELECT count(*) FROM users'), '0')
+  } finally {
+    psql('postgres', `DROP DATABASE IF EXISTS ${a} WITH (FORCE); DROP DATABASE IF EXISTS ${b} WITH (FORCE);`)
+  }
+})

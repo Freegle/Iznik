@@ -2,11 +2,11 @@
 # Set up test databases via Laravel migrations (single source of truth) + captured fixtures.
 #
 # Laravel migrations in iznik-batch are the authoritative schema definition. Test fixture
-# DATA lives in scripts/fixtures/, in a format that belongs to neither engine (captured once
+# DATA lives in scripts/fixtures/, in a format that belongs to no one engine (captured once
 # from the retired V1 seeders — see scripts/regenerate-test-fixtures.sh), and tools/fixtures/load.mjs
-# writes it as SQL for MySQL here and for PostgreSQL in scripts/setup-pg-database.sh. All DB operations
-# run through the `percona` container's mysql/mysqldump clients; the `batch` container runs the
-# migrations. The fixture loader is Node, so this script needs node on the host.
+# writes it as SQL for the engine asked for. All DB operations run through the `percona`
+# container's mysql/mysqldump clients; the `batch` container runs the migrations. The fixture
+# loader is Node: the host's, or a node container where the host has none.
 
 # Resolve the repo dir from the script location BEFORE any cd (robust on CI + local).
 REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
@@ -68,12 +68,16 @@ docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik \
 # without also removing its file from scripts/fixtures/tables breaks
 # the fixture load below with a cryptic "ERROR 1146 ... doesn't exist" that aborts on
 # the FIRST stale table and hides any others. Catch ALL stale tables here up front.
-if ! command -v node >/dev/null 2>&1; then
-  echo "ERROR: node is needed to load the test fixtures (tools/fixtures/load.mjs) and is not installed"
-  exit 1
-fi
+# The fixture loader is Node. Use the host's, or a throwaway node container where the host has none.
+fixture_loader() {
+  if command -v node >/dev/null 2>&1; then
+    node "${REPO_DIR}/tools/fixtures/load.mjs" "$@"
+  else
+    docker run --rm -v "${REPO_DIR}:/repo:ro" node:22-slim node /repo/tools/fixtures/load.mjs "$@"
+  fi
+}
 echo "Checking the fixture tables against migrated schema..."
-if ! FIXTURE_TABLES=$(node "${REPO_DIR}/tools/fixtures/load.mjs" --engine mysql --list-tables); then
+if ! FIXTURE_TABLES=$(fixture_loader --engine mysql --list-tables); then
   echo "ERROR: could not read the fixtures in scripts/fixtures"
   exit 1
 fi
@@ -98,7 +102,7 @@ echo "Fixture tables OK"
 echo "Loading test fixtures into iznik (scripts/fixtures)..."
 FIXTURE_SQL=$(mktemp)
 trap 'rm -f "$FIXTURE_SQL"' EXIT
-if ! node "${REPO_DIR}/tools/fixtures/load.mjs" --engine mysql --part captured > "$FIXTURE_SQL"; then
+if ! fixture_loader --engine mysql --part captured > "$FIXTURE_SQL"; then
   echo "Writing the fixture SQL FAILED — aborting test database setup"
   exit 1
 fi
@@ -110,7 +114,7 @@ fi
 echo "Fixtures loaded"
 
 # Hand-written additions that survive regenerating the captured tables (scripts/fixtures/extra-steps.json).
-if ! node "${REPO_DIR}/tools/fixtures/load.mjs" --engine mysql --part extra > "$FIXTURE_SQL"; then
+if ! fixture_loader --engine mysql --part extra > "$FIXTURE_SQL"; then
   echo "Writing the extra fixture SQL FAILED — aborting test database setup"
   exit 1
 fi

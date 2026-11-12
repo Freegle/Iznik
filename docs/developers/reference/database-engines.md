@@ -40,7 +40,7 @@ run. No CI job uses the database yet, and the MySQL path and its test results ar
 then calls `scripts/setup-pg-database.sh`, which builds two PostgreSQL databases from the baseline:
 `iznik` and `iznik_go_test`. It then loads the fixtures into `iznik` and rolls the fixture posts forward,
 as the MySQL path does; `iznik_go_test` stays schema only, as on MySQL. The fixtures are in a neutral format
-that loads into either engine: see [Test fixtures](test-fixtures.md). Both paths need Node on the host.
+that loads into either engine: see [Test fixtures](test-fixtures.md). Both paths use Node for the fixtures: the host's, or a throwaway container where the host has none.
 
 - `PG_ENGINE` unset: build if the container is running. A failure is a loud warning and MySQL is still
   ready, so the MySQL path cannot be broken by the second engine.

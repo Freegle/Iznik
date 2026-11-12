@@ -81,7 +81,7 @@ node tools/fixtures/load.mjs --engine pgsql  | docker exec -i freegle-postgres p
 ```
 
 You rarely need to: `scripts/setup-test-database.sh` loads MySQL, and `scripts/setup-pg-database.sh` loads
-PostgreSQL (see [Database engines](database-engines.md)). Both need Node on the host, and both roll the
+PostgreSQL (see [Database engines](database-engines.md)). Both use Node, from the host or from a throwaway `node:22-slim` container where the host has none, and both roll the
 post dates forward afterwards, because the posts carry the dates they were captured with and the feed shows
 only the last 31 days. The status container's Playwright reset loads MySQL the same way.
 

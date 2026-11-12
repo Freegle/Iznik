@@ -9,7 +9,7 @@
 # The schema comes from iznik-batch/database/postgres/baseline.sql, which
 # tools/pg-schema/regenerate.sh produces from the migrated MySQL schema. Two databases are built
 # from it: iznik (the dev database) and iznik_go_test (schema only, as on MySQL). The fixtures in
-# scripts/fixtures are then loaded into iznik, as on MySQL, by tools/fixtures/load.mjs (Node), and
+# scripts/fixtures are then loaded into iznik, as on MySQL, by tools/fixtures/load.mjs (Node, on the host or in a container), and
 # the fixture posts are rolled forward so they stay inside the feed's 31 day window.
 #
 # A database that already has tables is left alone, so re-running is cheap. PG_REBUILD=1 (or
@@ -88,18 +88,23 @@ build() {
   echo "PostgreSQL database ${db} ready (${tables} tables)"
 }
 
+# The fixture loader is Node. Use the host's, or a throwaway node container where the host has none.
+fixture_loader() {
+  if command -v node >/dev/null 2>&1; then
+    node "${REPO_DIR}/tools/fixtures/load.mjs" "$@"
+  else
+    docker run --rm -v "${REPO_DIR}:/repo:ro" node:22-slim node /repo/tools/fixtures/load.mjs "$@"
+  fi
+}
+
 # Loads the neutral fixtures into one database, in a single transaction: a value PostgreSQL refuses
 # stops the load and leaves the database as it was, so a half-seeded database never looks finished.
 # Foreign keys are switched off for the load, as on MySQL, which needs a superuser. The load can be
 # repeated: rows already there are left alone.
 load_fixtures() {
   local db="$1"
-  if ! command -v node >/dev/null 2>&1; then
-    echo "node is needed to load the test fixtures (tools/fixtures/load.mjs) and is not installed"
-    return 1
-  fi
   echo "Loading test fixtures into PostgreSQL database ${db} (scripts/fixtures)..."
-  if ! ( set -o pipefail; node "${REPO_DIR}/tools/fixtures/load.mjs" --engine pgsql | $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 >/dev/null ); then
+  if ! ( set -o pipefail; fixture_loader --engine pgsql | $PG_PSQL -d "$db" -X -q -1 -v ON_ERROR_STOP=1 >/dev/null ); then
     echo "Loading the fixtures into PostgreSQL database ${db} FAILED"
     return 1
   fi
