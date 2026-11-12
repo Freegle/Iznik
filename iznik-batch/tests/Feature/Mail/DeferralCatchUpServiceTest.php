@@ -559,4 +559,51 @@ class DeferralCatchUpServiceTest extends TestCase
             return $mail->delayedSince === '15 August' && $mail->provider === null;
         });
     }
+
+    /**
+     * The count in "you had N messages" is what the member can open and read, which is what the
+     * notifier emails and the member site counts: not held for review, processed, not deleted, not
+     * from a deleted sender, and not held by rippling.
+     */
+    public function test_does_not_count_messages_the_member_cannot_see(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $other = $this->createTestUser();
+        $deletedSender = $this->createTestUser(['deleted' => now()]);
+        $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($other, $group);
+
+        // The one message they can read.
+        $this->createTestChatMessage($room, $other);
+
+        // Held for review, still to be processed, failed processing, deleted, from a deleted sender.
+        $this->createTestChatMessage($room, $other, ['reviewrequired' => 1]);
+        $this->createTestChatMessage($room, $other, ['processingrequired' => 1, 'processingsuccessful' => 0]);
+        $this->createTestChatMessage($room, $other, ['processingsuccessful' => 0]);
+        $this->createTestChatMessage($room, $other, ['deleted' => 1]);
+        $this->createTestChatMessage($room, $deletedSender);
+
+        // Held back by rippling until the post has reached the replier.
+        $heldByRippling = $this->createTestChatMessage($room, $other);
+        DB::table('rippling_held_replies')->insert([
+            'chatid' => $room->id,
+            'chatmsgid' => $heldByRippling->id,
+            'msgid' => $post->id,
+            'replieruserid' => $other->id,
+            'status' => 'held',
+            'created_at' => now(),
+        ]);
+
+        $this->owe($member->id, 'chat', 7);
+
+        $this->catchUp->run();
+
+        Mail::assertSent(UnreadChatCatchUpMail::class, function ($mail) {
+            return $mail->chatCount === 1 && $mail->messageCount === 1;
+        });
+    }
 }
