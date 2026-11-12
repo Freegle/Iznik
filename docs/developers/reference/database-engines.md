@@ -16,6 +16,7 @@ covers:
   - iznik-routing-go/internal/dbtest/*
   - iznik-routing-go/cmd/rippleextract/*
   - iznik-routing-go/scripts/pg-test-schema.mjs
+  - status-nuxt/server/api/tests/routing.post.ts
 ---
 
 # Database engines: MySQL and PostgreSQL
@@ -272,7 +273,7 @@ What differs, and why:
 - **Geometry.** MySQL columns are SRID 3857 and PostgreSQL columns are 4326, both holding degrees. A WKT
   string or point built in the statement takes the column's SRID. `POINT(x, y)` is `ST_MakePoint`.
   `ST_GeometryType` answers `POLYGON` on MySQL and `ST_Polygon` on PostGIS. `MBRContains` against a box is
-  `&&`, which the GiST index answers. `ST_Distance_Sphere` is `ST_DistanceSphere`; both use the 6370986 m radius.
+  `&&`, which the GiST index answers. `ST_Distance_Sphere` is `ST_DistanceSphere`. The two use slightly different earth radii (about 6370986 m and 6371008.77 m), so distances differ by a few parts in a million; the one use here, a nearest-first ordering, is not affected.
 - **Syntax.** `INTERVAL 90 DAY` is `INTERVAL '90 days'`, `IF()` is `CASE`, `STRAIGHT_JOIN` is dropped (the
   PostgreSQL planner picks the order), `INSERT IGNORE` is `ON CONFLICT DO NOTHING` (both report only the rows
   really inserted), and the `information_schema` check for the (msgid, leaf, fp) key is `pg_index`.
@@ -287,8 +288,10 @@ What differs, and why:
   comparison goes through it, so equal fingerprints stay equal. Anything else that writes
   `reach_labels_next_fp` or `rippling_reach_leaves.fp` on PostgreSQL must do the same, and a value read back
   into `uint64` must be cast back. The Laravel side has not been ported yet.
-- **Times.** PostgreSQL `timestamp` columns take the wall clock of a value as given, so times are sent in UTC.
-  The MySQL driver already converts.
+- **Times.** The baseline's time columns are `timestamptz`, so pgx sends an absolute instant and the zone of
+  the Go value does not matter. The service still sends UTC, and the connection sets the session zone to UTC.
+- **Single-precision floats.** `rippling_reach.max_drive_min` is `real`. pgx widens it to 12.300000190734863
+  where MySQL gives 12.3, so the PostgreSQL statements read it through a text cast.
 - **Sort order** of text follows the database collation. `/v1/groups/list` sorts by `nameshort`, a `citext`
   column on PostgreSQL.
 
@@ -308,7 +311,10 @@ digest handlers, the stored-label loaders, `labels-export` and `labels-apply` (i
   baseline. `--check` fails if it is stale, and `TestSchemaMatchesBaseline` does the same comparison table by
   table when the baseline is beside the module.
 - A test skips when its server cannot be reached. `ROUTING_REQUIRE_DB=mysql`, `postgres` or `all` turns
-  that into a failure, so a CI job that is meant to run an engine cannot pass by skipping it.
+  that into a failure, so a CI job that is meant to run an engine cannot pass by skipping it. The status API's
+  routing suite (`status-nuxt/server/api/tests/routing.post.ts`) sets `all` when `CI` is set, and it copies
+  `dbengine/` and `internal/` into the routing container with the rest of the source. A local run skips an
+  engine whose server is down.
 - `ROUTING_TEST_DB_PREFIX` changes the name prefix of the scratch databases (`routing_go_test`).
 
 ```bash

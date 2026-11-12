@@ -45,9 +45,16 @@ func portableSQL(q string) string { return sqlFor(q, q) }
 // dbengine.Engine.FingerprintArg).
 func fpArg(fp uint64) any { return dbengine.Current().FingerprintArg(fp) }
 
-// utcArg sends a time as UTC. The MySQL driver does that itself; PostgreSQL's timestamp (without
-// zone) columns take the wall clock of the value as given, so it must already be UTC.
+// utcArg sends a time as UTC. The MySQL driver converts to its configured location itself. On
+// PostgreSQL the columns are timestamptz and pgx sends an absolute instant, so the zone of the
+// value does not change what is compared; sending UTC keeps the two engines' arguments the same.
 func utcArg(t time.Time) time.Time { return t.UTC() }
+
+// pgSingleAsDouble reads a single-precision (real) column as the double a MySQL FLOAT column
+// gives: 12.3 stays 12.3. pgx widens the 32-bit value, which would give 12.300000190734863.
+func pgSingleAsDouble(col string) string {
+	return "CAST(CAST(" + col + " AS text) AS double precision)"
+}
 
 // sqlSessionExists is the JWT session check (middleware.go).
 func sqlSessionExists() string {
@@ -353,7 +360,7 @@ func sqlEvalRows(placeholders string) string {
 			"FROM rippling_reach rr WHERE rr.msgid IN ("+
 			placeholders+")",
 		"SELECT rr.msgid, COALESCE(CASE WHEN rr.reach_labels_next_fp = ? THEN rr.reach_labels_next END, rr.reach_labels), "+
-			"rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, rr.origin_union_secs, "+
+			"rr.tick, "+pgSingleAsDouble("rr.max_drive_min")+", rr.schedule, rr.rejected_groups, rr.status, rr.origin_union_secs, "+
 			"(SELECT mg.groupid FROM messages_groups mg WHERE mg.msgid = rr.msgid AND mg.deleted = 0 ORDER BY mg.arrival ASC LIMIT 1) "+
 			"FROM rippling_reach rr WHERE rr.msgid IN ("+
 			placeholders+")")
@@ -448,5 +455,7 @@ func sqlCountLeaves(table string) string {
 
 // sqlLabelExportRows reads the posts that have a drive budget (reach_labels_export.go).
 func sqlLabelExportRows() string {
-	return portableSQL("SELECT msgid, lat, lng, max_drive_min FROM rippling_reach WHERE max_drive_min > 0 ORDER BY msgid")
+	return sqlFor(
+		"SELECT msgid, lat, lng, max_drive_min FROM rippling_reach WHERE max_drive_min > 0 ORDER BY msgid",
+		"SELECT msgid, lat, lng, "+pgSingleAsDouble("max_drive_min")+" FROM rippling_reach WHERE max_drive_min > 0 ORDER BY msgid")
 }

@@ -167,7 +167,7 @@ func seedReach(t *testing.T, s *dbtest.Scratch) {
 		[]byte{0x01, 0x02}, []byte{0x0a, 0x0b}, dbengine.Current().FingerprintArg(fpLive))
 	s.Insert(t, "rippling_reach", cols, 302, 51.440, -2.570, outer, 1, 0.0, nil, nil, "expanding", nil,
 		[]byte{0x03}, nil, nil)
-	s.Insert(t, "rippling_reach", cols, 303, 51.600, -2.000, outer, 1, 20.0, nil, nil, "expanding", nil,
+	s.Insert(t, "rippling_reach", cols, 303, 51.600, -2.000, outer, 1, 12.3, nil, nil, "expanding", nil,
 		[]byte{0x04}, nil, nil)
 
 	lcols := []string{"msgid", "leaf", "fp"}
@@ -499,7 +499,7 @@ func TestEngine_ReachEvalLoaders(t *testing.T) {
 		useDB(t, s)
 
 		// No engine loaded: the live label is used, the staged one ignored.
-		rows, err := evalRowLoader([]uint64{301, 302, 999})
+		rows, err := evalRowLoader([]uint64{301, 302, 303, 999})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -507,8 +507,11 @@ func TestEngine_ReachEvalLoaders(t *testing.T) {
 		for _, r := range rows {
 			byID[r.msgid] = r
 		}
-		if len(byID) != 2 {
-			t.Fatalf("rows for 301, 302 and a missing post: %d", len(rows))
+		if len(byID) != 3 {
+			t.Fatalf("rows for 301, 302, 303 and a missing post: %d", len(rows))
+		}
+		if byID[303].maxMin != 12.3 {
+			t.Errorf("drive budget of 303: %v", byID[303].maxMin)
 		}
 		r := byID[301]
 		if string(r.blob) != "\x01\x02" || r.tick != 3 || r.maxMin != 30 || r.schedule != "sched" ||
@@ -567,6 +570,11 @@ func TestEngine_LabelExportRows(t *testing.T) {
 		if len(rows) != 2 || rows[0].msgid != 301 || rows[1].msgid != 303 ||
 			!near(rows[0].lat, 51.455) || !near(rows[0].lng, -2.585) || rows[0].driveMin != 30 {
 			t.Errorf("export rows: %+v", rows)
+		}
+		// The column is a single-precision float on both engines. 12.3 is not exact in float32, so
+		// this fails if one engine widens the stored value to 12.300000190734863.
+		if len(rows) == 2 && rows[1].driveMin != 12.3 {
+			t.Errorf("drive budget of 303: %v", rows[1].driveMin)
 		}
 		if rows := loadLabelExportRows(1); len(rows) != 1 || rows[0].msgid != 301 {
 			t.Errorf("limited export: %+v", rows)
