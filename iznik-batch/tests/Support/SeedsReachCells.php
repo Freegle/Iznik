@@ -2,6 +2,8 @@
 
 namespace Tests\Support;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Services\Ripple\CellSetService;
 
 /**
@@ -131,12 +133,12 @@ trait SeedsReachCells
                 // keep-raw equivalent lives in tests: MBR test against every fixture group.
                 $rows = \Illuminate\Support\Facades\DB::select(
                     'SELECT id,
-                            MBRWithin(polyindex, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS w
-                       FROM `groups`
+                            ' . Spatial::mbrWithin('polyindex', 'ST_GeomFromText(?, ' . config('freegle.srid') . ')') . ' AS w
+                       FROM ' . Sql::table('groups') . '
                       WHERE polyindex IS NOT NULL
-                        AND ST_GeometryType(polyindex) <> \'POINT\'
+                        AND ' . Spatial::geometryType('polyindex') . ' <> \'POINT\'
                         AND publish = 1
-                        AND MBRIntersects(polyindex, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
+                        AND ' . Spatial::mbrIntersects('polyindex', 'ST_GeomFromText(?, ' . config('freegle.srid') . ')'),
                     [$bbox, $bbox]
                 );
                 foreach ($rows as $row) {

@@ -2,6 +2,8 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\AnyValue;
 use App\Database\Expressions\Arithmetic;
@@ -531,14 +533,14 @@ class ExpandService
         // builder can render neither.
         $row = DB::selectOne(
             "SELECT COUNT(*) AS c
-             FROM `groups` g
+             FROM " . Sql::table('groups') . " g
              WHERE g.id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")
                AND g.publish = 1
                AND g.type = 'Freegle'
                AND g.onhere = 1
                AND g.nameshort NOT LIKE '%playground%'
                AND g.polyindex IS NOT NULL
-               AND ST_GeometryType(g.polyindex) <> 'POINT'"
+               AND " . Spatial::geometryType('g.polyindex') . " <> 'POINT'"
             . $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN),
             $ids
         );
@@ -1653,7 +1655,7 @@ class ExpandService
             ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
             // keep-raw: ST_Contains/ST_GeomFromText are spatial functions the builder cannot render
             ->when($withinPolyWkt !== null, fn ($q) => $q->whereRaw(
-                'ST_Contains(ST_GeomFromText(?, ' . self::srid() . '), ST_SRID(POINT(lng, lat), ' . self::srid() . '))',
+                'ST_Contains(ST_GeomFromText(?, ' . self::srid() . '), ' . Spatial::point('lng', 'lat', self::srid()) . ')',
                 [$withinPolyWkt]
             ))
             ->limit($limit)
@@ -2142,13 +2144,13 @@ class ExpandService
             // keep-raw: ST_Intersects/ST_GeometryType plus the correlated logs/ban NOT EXISTS arms the builder cannot render
             $targetGroups = DB::select(
                 "SELECT g.id
-                 FROM `groups` g
+                 FROM " . Sql::table('groups') . " g
                  WHERE g.publish = 1
                    AND g.type = 'Freegle'
                    AND g.onhere = 1
                    AND g.nameshort NOT LIKE '%playground%'" . $inOptOut . "
                    AND g.polyindex IS NOT NULL
-                   AND ST_GeometryType(g.polyindex) <> 'POINT'
+                   AND " . Spatial::geometryType('g.polyindex') . " <> 'POINT'
                    AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::srid() . "))" . $reachableGate . "
                    AND NOT EXISTS (
                        SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
@@ -3166,10 +3168,10 @@ class ExpandService
             $groupRow = DB::selectOne(
                 'SELECT ST_AsText(g.polyindex) AS group_wkt
                  FROM messages_groups mg
-                 JOIN `groups` g ON g.id = mg.groupid
+                 JOIN ' . Sql::table('groups') . ' g ON g.id = mg.groupid
                  WHERE mg.msgid = ? AND mg.deleted = 0
                    AND g.polyindex IS NOT NULL
-                   AND ST_GeometryType(g.polyindex) <> \'POINT\'
+                   AND ' . Spatial::geometryType('g.polyindex') . ' <> \'POINT\'
                  ORDER BY mg.arrival ASC
                  LIMIT 1',
                 [$msgid]

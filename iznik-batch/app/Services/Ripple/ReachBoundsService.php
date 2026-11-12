@@ -2,6 +2,8 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -183,7 +185,7 @@ class ReachBoundsService
         try {
             // keep-raw: ST_GeometryType/ST_Area GIS expressions; useReadPdo=false (own-write read)
             $row = DB::select(
-                "SELECT ST_GeometryType(outer_bound) AS outer_type,
+                "SELECT " . Spatial::geometryType('outer_bound') . " AS outer_type,
                         inner_bound IS NULL AS missing,
                         COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area($poly), 0), 0) AS ratio
                    FROM rippling_reach$join
@@ -211,7 +213,7 @@ class ReachBoundsService
                 "UPDATE rippling_reach$join
                     SET inner_bound = " . self::innerExpr($poly) . ',
                         updated_at = updated_at
-                  WHERE msgid = ? AND ST_GeometryType(outer_bound) <> \'POINT\'',
+                  WHERE msgid = ? AND ' . Spatial::geometryType('outer_bound') . ' <> \'POINT\'',
                 array_merge($binds, [$msgid])
             );
         } catch (\Throwable $e) {
@@ -294,7 +296,7 @@ class ReachBoundsService
         try {
             DB::update(
                 'UPDATE rippling_reach
-                    SET outer_bound = ST_SRID(POINT(lng, lat), ' . config('freegle.srid') . '),
+                    SET outer_bound = ' . Spatial::point('lng', 'lat', config('freegle.srid')) . ',
                         inner_bound = NULL,
                         updated_at = updated_at
                   WHERE msgid = ?',
@@ -353,10 +355,10 @@ class ReachBoundsService
                     SET rr.outer_bound = COALESCE(
                         (SELECT ST_Union(rr.outer_bound, g.polyindex)
                            FROM messages_groups mg
-                           JOIN `groups` g ON g.id = mg.groupid
+                           JOIN ' . Sql::table('groups') . ' g ON g.id = mg.groupid
                           WHERE mg.msgid = rr.msgid AND mg.deleted = 0
                             AND g.polyindex IS NOT NULL
-                            AND ST_GeometryType(g.polyindex) <> \'POINT\'
+                            AND ' . Spatial::geometryType('g.polyindex') . ' <> \'POINT\'
                           ORDER BY mg.arrival ASC
                           LIMIT 1),
                         rr.outer_bound),

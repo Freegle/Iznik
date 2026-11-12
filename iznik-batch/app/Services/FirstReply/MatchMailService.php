@@ -2,6 +2,10 @@
 
 namespace App\Services\FirstReply;
 
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\JsonUnquote;
+use App\Database\Expressions\Value;
+use App\Database\Spatial;
 use App\Services\Ripple\RingIndex;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
@@ -698,16 +702,7 @@ class MatchMailService
         // order the reach mailer uses, so a candidate is measured from the point
         // that decides their reach membership everywhere else. Built once and
         // interpolated three times (band tests + distance); each use binds SRID.
-        $pointExpr = "ST_SRID(POINT(
-                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
-                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
-                          ELSE l.lng END,
-                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
-                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
-                          ELSE l.lat END
-                   ), ?)";
+        $pointExpr = Spatial::memberPoint('u.settings', 'l.lng', 'l.lat', '?', ' AND u.tnuserid IS NULL');
 
         // The reach test and the "is this a real, mailable member" test in one
         // pass. dist is how far the candidate stands beyond the CURRENT reach
@@ -738,12 +733,13 @@ class MatchMailService
         // distanceToNearestCellMetres for the nearest-edge ordering. dist is a
         // NULL placeholder here; applyCellBand fills it in from the grids.
         // keep-raw: JSON-vs-locations CASE point expression and a dynamic IN list - the builder cannot render this shape
+        $densityBand = Spatial::sql(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.browseDensityBand'))));
         $rows = DB::select(
             "SELECT u.id AS id,
                     NULL AS dist,
                     ST_Y($pointExpr) AS cand_lat,
                     ST_X($pointExpr) AS cand_lng,
-                    JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band
+                    {$densityBand} AS density_band
              FROM users u
              LEFT JOIN locations l ON l.id = u.lastlocation
              JOIN rippling_reach rr ON rr.msgid = ?
