@@ -8,6 +8,12 @@ use Tests\TestCase;
 
 class MembershipAddedOriginColumnTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->requiresMySql('reads the column definition from MySQL information_schema');
+    }
+
     /**
      * The ENUM and the model's list are written separately, so a value added to one and not the
      * other would only show up as a refused insert. Both tables carry the same list.
