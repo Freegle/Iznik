@@ -78,7 +78,9 @@ Deploy, in this order:
 1. Run the SQL in `iznik-batch/database/migrations/2026_11_12_000001_add_reminded_to_merges_migration.sql`
    on production before the batch code goes out.
 2. Deploy the Go API, the frontend and batch.
-3. Just after the deploy, while the 7 days of logs still hold the refused Accepts, on the host that
+3. Set `APIV2_MERGE_URL` in the batch-prod environment to the address at which batch-prod reaches the Go
+   API's `/api/merge` on its internal port (the compose default `apiv2:8192` is not reachable from
+   batch-prod). Then, just after the deploy, while the 7 days of logs still hold the refused Accepts, on the host that
    can reach Loki: `LOKI_URL=<loki> node scripts/merge-accepts-from-loki.mjs > accepts.txt`, then
    `docker cp accepts.txt batch-prod:/tmp/accepts.txt`, then
    `docker exec batch-prod php artisan merges:complete-accepted --file=/tmp/accepts.txt` (dry run),

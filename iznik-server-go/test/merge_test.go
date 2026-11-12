@@ -517,3 +517,16 @@ func TestPostMergeAcceptRefusesWhenAnAccountHasGone(t *testing.T) {
 	database.DBConn.Raw("SELECT accepted FROM merges WHERE id = ?", mergeID).Scan(&accepted)
 	assert.Nil(t, accepted)
 }
+
+// Once accepted, the offer says so even though the discarded account is gone.
+func TestPostMergeAcceptAgainAfterTheMergeIs409NotNotFound(t *testing.T) {
+	prefix := uniquePrefix("MergeAccTwice")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+
+	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
+	assert.Equal(t, 200, postMergeFromPage(t, mergeID, uid, user1ID, user2ID, "Accept"))
+	assert.False(t, userExists(user2ID))
+	assert.Equal(t, 409, postMergeFromPage(t, mergeID, uid, user1ID, user2ID, "Accept"))
+}

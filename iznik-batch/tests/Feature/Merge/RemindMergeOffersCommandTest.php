@@ -143,6 +143,18 @@ class RemindMergeOffersCommandTest extends TestCase
         $this->assertNull($this->reminded($bounce));
     }
 
+    public function test_a_deleted_account_is_left_alone(): void
+    {
+        [$id] = $this->offer([], [], ['deleted' => now()]);
+
+        $this->artisan('merges:remind', ['--since' => '2030-05-01', '--apply' => true])
+            ->expectsOutputToContain('email off or bouncing: 1')
+            ->assertSuccessful();
+
+        $this->assertSame([], $this->spooled);
+        $this->assertNull($this->reminded($id));
+    }
+
     public function test_limit_caps_the_offers_handled(): void
     {
         $this->offer();

@@ -1410,11 +1410,12 @@ return [
     // the slider would get. Same reachability note as apiv2_deprecated_url: inside
     // this compose network the batch container reaches apiv2 on port 8192, and
     // batch-prod must set BROWSE_TOWN_NEAR_URL for its own network.
-    // The Go API's merge endpoint, which merges:complete-accepted calls so that a late Accept goes
-    // through the same code as one made on the /merge page. Same reachability note as above.
-    'apiv2_merge_url' => EnvSetting::env('APIV2_MERGE_URL', 'http://apiv2:8192/api/merge'),
-
     'town_near_url' => EnvSetting::env('BROWSE_TOWN_NEAR_URL', 'http://apiv2:8192/api/town/near'),
+
+    // The Go API's merge endpoint, which merges:complete-accepted calls so that a late Accept goes
+    // through the same code as one made on the /merge page. Same reachability note as above:
+    // PROD must set APIV2_MERGE_URL for its network.
+    'apiv2_merge_url' => EnvSetting::env('APIV2_MERGE_URL', 'http://apiv2:8192/api/merge'),
 
     // monitor:deprecated-endpoints observation window (days). Bounded under Loki's
     // max_query_length (~30d) — a longer since-sunset range 400s; this many days of

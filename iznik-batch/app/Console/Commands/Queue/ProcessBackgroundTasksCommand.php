@@ -2152,9 +2152,6 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
-     * Obfuscate an email address for display (e.g. "j***@example.com").
-     */
-    /**
      * Remap postcodes to their nearest area after a location geometry change.
      */
     protected function handleRemapPostcodes(array $data): void

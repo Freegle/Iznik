@@ -53,12 +53,12 @@ class MergeOfferRules
     }
 
     /**
-     * Whether the member has turned our email off or it is bouncing.
+     * Whether we must not email the member: email turned off, bouncing, or the account deleted.
      */
     public function emailOff(User $user): bool
     {
         $simple = ($user->settings ?? [])['simplemail'] ?? null;
 
-        return $simple === User::SIMPLE_MAIL_NONE || (int) $user->bouncing !== 0;
+        return $simple === User::SIMPLE_MAIL_NONE || (int) $user->bouncing !== 0 || $user->deleted !== null;
     }
 }
