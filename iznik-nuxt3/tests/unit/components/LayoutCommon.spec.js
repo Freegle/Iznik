@@ -202,6 +202,28 @@ describe('LayoutCommon', () => {
     })
   })
 
+  describe('sticky band layout', () => {
+    // The band is a fixed-height column. If the ad row only takes its content height, the CTA
+    // below it moves each time the jobs rows load; the row has to fill the band instead.
+    const read = (rel) =>
+      require('fs').readFileSync(
+        require('path').resolve(__dirname, '../../../components', rel),
+        'utf-8'
+      )
+
+    it('marks the ad row so it can fill the band', () => {
+      const src = read('LayoutCommon.vue')
+      const rowPos = src.indexOf('sticky-ad-row d-flex')
+      expect(rowPos).toBeGreaterThan(-1)
+      expect(rowPos).toBeLessThan(src.indexOf('<ExternalDa'))
+      expect(src).toMatch(/\.sticky-ad-row\s*\{[^}]*flex:\s*1 1 auto/)
+    })
+
+    it('keeps the CTA at its own height', () => {
+      expect(read('DaDisableCTA.vue')).toMatch(/flex:\s*0 0 auto/)
+    })
+  })
+
   describe('allowAd computed', () => {
     it.each([
       ['/', false, false, false],

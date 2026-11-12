@@ -27,7 +27,7 @@
             }"
           >
             <div
-              class="d-flex justify-content-around w-100"
+              class="sticky-ad-row d-flex justify-content-around w-100"
               :class="{
                 adRendering: adRendering && !firstRender,
               }"
@@ -510,6 +510,15 @@ body.modal-open {
 
   .adRendering {
     background-color: var(--color-gray-600);
+  }
+
+  /* The ad row takes whatever height the band has left. Without this it was only as tall
+     as the jobs or the ad inside it, which grows as the job rows load, and the
+     "Hate ads?" line below it was pushed down each time. Filling the band keeps that line
+     pinned to the bottom and the ad's top edge fixed, so nothing in the band moves. */
+  .sticky-ad-row {
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   @include media-breakpoint-up(lg) {
