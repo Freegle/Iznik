@@ -5,6 +5,8 @@ namespace Tests\Unit\Database;
 use App\Database\Expressions\CastAs;
 use App\Database\Expressions\Collate;
 use App\Database\Expressions\Concat;
+use App\Database\Expressions\Sha2;
+use App\Database\Expressions\SubstringIndex;
 use App\Database\Expressions\DateDiff;
 use App\Database\Expressions\Greatest;
 use App\Database\Expressions\JsonContains;
@@ -184,5 +186,33 @@ class ExpressionsPostgresTest extends TestCase
         $this->assertSame('LOWER("a")', (new Collate('a', 'utf8mb4_unicode_ci'))->getValue($this->pg));
         $this->assertSame('"a" COLLATE "C"', (new Collate('a', 'utf8mb4_bin'))->getValue($this->pg));
         $this->assertSame('`a` COLLATE utf8mb4_unicode_ci', (new Collate('a', 'utf8mb4_unicode_ci'))->getValue($this->mysql));
+    }
+
+    public function test_sha2_is_lowercase_hex_of_the_utf8_bytes(): void
+    {
+        $this->assertSame("SHA2(`a`, 256)", (new Sha2('a'))->getValue($this->mysql));
+        $this->assertSame("encode(sha256(convert_to(CAST(\"a\" AS text), 'UTF8')), 'hex')", (new Sha2('a'))->getValue($this->pg));
+        $this->assertSame(hash('sha256', "caf\u{00e9}"), $this->evaluate((new Sha2(Value::of("caf\u{00e9}")))->getValue($this->pg)));
+        $this->assertSame(hash('sha512', 'x'), $this->evaluate((new Sha2(Value::of('x'), 512))->getValue($this->pg)));
+    }
+
+    public function test_sha2_refuses_an_unknown_length(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        new Sha2('a', 100);
+    }
+
+    public function test_substring_index_takes_the_first_or_last_part(): void
+    {
+        $this->assertSame("SUBSTRING_INDEX(`email`, '@', -1)", (new SubstringIndex('email', '@', -1))->getValue($this->mysql));
+        $this->assertSame('example.org', $this->evaluate((new SubstringIndex(Value::of('a@b@example.org'), '@', -1))->getValue($this->pg)));
+        $this->assertSame('a', $this->evaluate((new SubstringIndex(Value::of('a@b@example.org'), '@', 1))->getValue($this->pg)));
+        $this->assertSame('none', $this->evaluate((new SubstringIndex(Value::of('none'), '@', -1))->getValue($this->pg)));
+    }
+
+    public function test_substring_index_refuses_a_count_it_cannot_translate(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        (new SubstringIndex('a', '.', 2))->getValue($this->pg);
     }
 }
