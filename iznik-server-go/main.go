@@ -31,6 +31,11 @@ import (
 
 var fiberLambda *fiberadapter.FiberLambda
 
+// skipCompression is true for the routes the compress middleware must not touch.
+func skipCompression(path string) bool {
+	return strings.HasPrefix(path, "/api/modtools/user/") && strings.HasSuffix(path, "/dump")
+}
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU() * 8)
 
@@ -86,8 +91,7 @@ func main() {
 			// this route. (Same reason the Loki middleware skips stream
 			// bodies - see misc/lokiMiddleware.go.)
 			Next: func(c *fiber.Ctx) bool {
-				path := c.Path()
-				return strings.HasPrefix(path, "/api/modtools/user/") && strings.HasSuffix(path, "/dump")
+				return skipCompression(c.Path())
 			},
 		}))
 	}
