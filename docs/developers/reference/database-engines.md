@@ -242,10 +242,10 @@ their command-line clients, so nothing about a host or password is in the reposi
 
 | Command | What it does |
 |---|---|
-| `node tools/pg-migrate/migrate.mjs audit` | Reads MySQL and lists what the baseline would refuse: ENUM values outside the list (including the empty string MySQL stores for a bad one) and zero or partial dates. |
+| `node tools/pg-migrate/migrate.mjs audit` | Reads MySQL and lists what the baseline would refuse: ENUM values outside the list (including the empty string MySQL stores for a bad one), zero or partial dates (with which loader will meet them), impossible dates such as 2026-02-30, and a NUL character in text. |
 | `node tools/pg-migrate/migrate.mjs pgloader-config --out FILE` | Writes the pgloader load file for the plain tables. |
 | `node tools/pg-migrate/migrate.mjs etl [TABLE...]` | Loads the tables pgloader cannot: those with a geometry column or a generated column. Any table can be named. |
-| `node tools/pg-migrate/migrate.mjs parity counts\|geometry\|fk\|all` | Compares the copy with MySQL. Exit code 1 when it does not match. |
+| `node tools/pg-migrate/migrate.mjs parity counts\|values\|geometry\|fk\|all` | Compares the copy with MySQL. Exit code 1 when it does not match. |
 
 Settings are environment variables. `MYSQL_CMD` is the mysql client command (default: docker exec into
 `<prefix>-percona`), `MYSQL_DB` the schema (default `iznik`), `PG_PSQL` the psql command without `-d`
@@ -257,7 +257,9 @@ file needs `MIGRATE_MYSQL_URI` and `MIGRATE_PG_URI`, which have no default.
 - **pgloader** loads the plain tables, data only, into the schema the baseline already made. Its configuration is
   `pgloader.load.template`. It excludes the `migrations` table (the baseline fills it) and every table the ETL owns.
   Its cast rules keep the baseline types: `tinyint` stays `smallint`, `set` stays comma separated text, zero dates
-  become NULL. **The configuration has never been run.** pgloader was not available where it was written. Treat the
+  become NULL. Both sessions are pinned to UTC. There is no `truncate`: PostgreSQL refuses to truncate a table that an
+  ETL table points at, so the target must be a fresh baseline, and a second load means rebuilding the database.
+  **The configuration has never been run.** pgloader was not available where it was written. Treat the
   first run as a test: render it, run it on the restored copy, then run `parity counts`.
 - **The ETL** (`etl.mjs`) loads the rest. pgloader does not convert MySQL geometry, and it copies every source column,
   which PostgreSQL refuses for a generated column (`users_emails.md5hash`, `messages_outcomes.feedback` and
@@ -280,17 +282,31 @@ every stored value and stops on anything but 3857 or 0, because the relabel assu
   (`rippling_reach_overflow.bbox` is one). Otherwise the load stops with the shape and the
   start of the original bytes.
 - Zero and partial dates load as NULL, or as 1970-01-01 in a NOT NULL column. Each run prints how many per column.
+  pgloader differs: it loads NULL, so a zero date in a NOT NULL column of a plain table fails its batch. `audit` says
+  which loader meets each one.
+- A bounded character column (`varchar(n)`) is not cast, so a value longer than the column is an error and not cut.
 - Identity sequences are moved past the loaded ids at the end (`iznik_reset_identities()`).
 
 ### What the parity checks do
 
 - `counts`: an exact `COUNT(*)` per table on both sides, and tables MySQL has that the schema does not.
+- `values`: per table and column, one aggregate on each side: the sum of numbers, of text lengths, of byte lengths and
+  of dates as seconds since 1970 read in UTC, with the non-null count. A time zone shift, a cut string or a changed
+  number moves it. Geometry, json and floating point columns are not covered. Each is a scan of the table on both sides.
 - `geometry`: for each geometry column, reads the originals from MySQL again and compares each with the loaded row.
-  A row is **identical** (same bytes), **repaired** (the original was invalid and the copy is valid with the same
-  bounding box), or a failure: missing, extra, null on one side, wrong SRID, invalid, changed though the original was
-  valid, or **repaired with the bounding box moved**. The last one is real: PostGIS repairs a hole that lies outside
-  its shell by turning it into a second polygon, so the area grows. Rerun with `--allow-extent-change` once the
-  listed rows have been looked at.
+  A row is **identical** (same bytes), **repaired** (the original was invalid and the copy is valid, of the same
+  dimension, with the same bounding box), or a failure: missing, extra, null on one side, wrong SRID, invalid, changed
+  though the original was valid, or one of three repairs that change what the shape is:
+  - **repaired-type-changed**: a polygon became lines, a point or a collection. It has no area now, so containment
+    answers are wrong. Most geometry columns are untyped, so the load does not refuse these.
+  - **repaired-extent-changed**: the bounding box moved. PostGIS repairs a hole that lies outside its shell by turning
+    it into a second polygon, so the area grows.
+  - **repaired-area-lost**: the repaired area is more than 10 per cent below the original's (`--area-loss`). The area
+    of an invalid original is a signed sum, so this only looks for loss. A ring wound twice reads as double and trips
+    it although the shape is the same: look at the listed rows.
+
+  Rerun with `--allow-extent-change` or `--allow-type-change` (which also covers area lost) once the listed rows have
+  been looked at.
 - Probe answers: for each probe point, which rows contain it and which are within a distance, asked of both engines.
   The probes are `--probes FILE` (JSON with a `probes` list of name, x, y and optional radius) plus a point on the
   surface of the first three loaded geometries per column (`--auto-probes N`). A difference on a row the load did not
@@ -306,20 +322,33 @@ every stored value and stops on anything but 3857 or 0, because the relabel assu
 `tools/pg-migrate/fixtures/rehearsal.json` holds made-up rows for eight tables: valid polygons, a bow-tie, a multipolygon,
 a polygon with a hole, a hole outside its shell, points, zero dates, tabs, newlines and emoji in text, JSON and bytes.
 `--fixture FILE` makes the commands read these rows through derived tables (`SELECT ... UNION ALL SELECT ...`) so
-that no table is written in MySQL, which is only read.
+that no table is written in MySQL, which is only read. A table's `types` object casts columns to real MySQL DATETIME,
+DECIMAL, JSON and integer types. The derived tables cannot be TIMESTAMP columns, cannot hold a zero date as a typed
+value (`messages_spatial` is untyped for that reason), and eight tables are loaded, not the whole of
+`scripts/test-fixtures.sql`: the dev MySQL database holds no tables and the tooling does not write to it. A real
+type test needs a restored copy.
 
 ```bash
 node --test tools/pg-migrate/migrate.test.mjs     # no database needed
 PG_PSQL="docker exec -i freegle-postgres psql -U root" MYSQL_CMD="docker exec -i freegle-percona mysql -uroot -p<password>" \
   node --test tools/pg-migrate/rehearse.test.mjs  # builds a scratch database from the baseline and drops it
+
+# The same load and checks from the command line, against a database built from the baseline:
+node tools/pg-migrate/migrate.mjs etl --fixture tools/pg-migrate/fixtures/rehearsal.json --truncate
+node tools/pg-migrate/migrate.mjs parity all --fixture tools/pg-migrate/fixtures/rehearsal.json --allow-extent-change
 ```
 
-The rehearsal covers the ETL, the audit and all three parity checks, including how each one fails. It also covers the
+Without `--allow-extent-change` the second command fails on purpose: the fixture holds a hole outside its shell. With
+`--fixture`, `parity all` skips the foreign key check, because the fixture does not hold the parent tables.
+
+The rehearsal covers the ETL, the audit and all four parity checks, including how each one fails. It also covers the
 failure paths: a refused row, a repaired shape a typed column cannot hold, an unexpected SRID and a NUL character.
 
 ### What the production run still needs
 
-- A first real run of the pgloader file, which has not been run.
+- A first real run of the pgloader file, which has not been run. About 275 of about 298 tables go through it. The
+  unit tests check its clause order, option names, UTC pins and the absence of `truncate` against the pgloader
+  documentation, and cannot show that pgloader accepts it.
 - A decision on what to do with the rows `audit` lists. The load does not change enum values: a value outside its list
   stops the table, and for a plain table pgloader rejects the batch. Fix or map those in MySQL first.
 - The ETL streams a table through one mysql client in one transaction. That suits the geometry and generated-column
@@ -332,4 +361,5 @@ failure paths: a refused row, a repaired shape a typed column cannot hold, an un
 
 PostgreSQL fixtures, the Go and Laravel suites on PostgreSQL, the stored functions, a CI job that runs the
 converter, migration tooling and PostgreSQL tests and `regenerate.sh --check` (it needs the orb changed), and the
-spatial benchmark are later steps in the plan.
+spatial benchmark are later steps in the plan. Until that job exists, nothing in CI runs `migrate.test.mjs` (it needs no
+database) or `rehearse.test.mjs` (it needs both engines), as with `tools/pg-schema`.
