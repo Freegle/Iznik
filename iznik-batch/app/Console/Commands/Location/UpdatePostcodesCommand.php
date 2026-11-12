@@ -2,26 +2,25 @@
 
 namespace App\Console\Commands\Location;
 
-use App\Services\DoogalService;
+use App\Services\PostcodeDirectoryService;
 use Illuminate\Console\Command;
 use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
- * Add new UK postcodes and refresh changed lat/lng from the Doogal Code-Point
- * dataset. Faithful migration of V1 scripts/cli/doogal.php and the cron/doogal
- * wrapper (which downloaded + unzipped the CSV before running it).
+ * Add new UK postcodes and refresh changed lat/lng from the ONS Postcode Directory.
+ * Began as a migration of V1 scripts/cli/doogal.php and the cron/doogal wrapper.
  */
 #[AsCommand(name: 'locations:update-postcodes')]
 class UpdatePostcodesCommand extends Command
 {
     protected $signature = 'locations:update-postcodes
-                            {--file= : Path to an already-extracted Code-Point/Doogal CSV (skips download)}
-                            {--url= : Override the postcodes.zip download URL}
+                            {--file= : Path to an already-extracted ONSPD CSV (skips download)}
+                            {--url= : Download this ONSPD zip instead of the newest release}
                             {--keep : Keep the downloaded/extracted temp files}';
 
-    protected $description = 'Add new UK postcodes and refresh changed lat/lng from the Doogal dataset (V1 cli/doogal.php)';
+    protected $description = 'Add new UK postcodes and refresh changed lat/lng from the ONS Postcode Directory';
 
-    public function handle(DoogalService $service): int
+    public function handle(PostcodeDirectoryService $service): int
     {
         $file = $this->option('file');
         $downloaded = false;
