@@ -1418,6 +1418,53 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+    public function test_a_carried_post_with_an_older_copy_on_another_group_is_still_offered(): void
+    {
+        // A carried post is older than the cursor by construction, so a copy of it that
+        // arrived before the cursor looks like "already sent" to the cross-digest check. The
+        // cap left the item out, so nothing of it was sent: it has to be offered again.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $other = $this->createTestGroup();
+        $this->createMembership($recipient, $other, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($poster, $other);
+
+        $arrival = now()->subHours(3);
+        $carried = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: CarriedCopyZq (TestLocation)',
+            'textbody' => 'A carried item.',
+            'arrival' => $arrival,
+        ]);
+        // The same item, hand cross-posted to the member's other group.
+        $this->createTestMessage($poster, $other, [
+            'subject' => 'OFFER: CarriedCopyZq (TestLocation)',
+            'textbody' => 'A carried item.',
+            'arrival' => $arrival,
+        ]);
+
+        $this->trackerWithCarryover($recipient, [$carried->id], now()->subHours(2));
+
+        // Something new, so the digest goes out whatever happens to the carried post.
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: FreshOtherZq (TestLocation)',
+            'arrival' => now()->subHour(),
+        ]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $shown = array_map(
+            fn ($p) => (int) $p['msgid'],
+            $this->lastDailyDigest()->mailDescriptor()['posts']
+        );
+        $this->assertContains(
+            (int) $carried->id,
+            $shown,
+            'a carried post was dropped as already covered because a copy of it sits behind the cursor'
+        );
+    }
+
     /**
      * A daily tracker with a carryover list and a cursor, as a run that hit the cap leaves it.
      *
