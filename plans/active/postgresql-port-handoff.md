@@ -79,3 +79,16 @@ driver or JPEG tools. About 390 tests cannot run that way. Use the stack.
 `iznik-batch/database/postgres/test-mode.sql`, `scripts/setup-pg-database.sh`,
 `tools/orm-migration/manifest.json` (regenerate with `node tools/orm-migration/extract.mjs update`),
 `tools/pg-ratchet/known-failures/*.txt`, `docs/developers/reference/database-engines.md`.
+
+## Local results at `ffe12cea76`, 2026-11-13 (added after the pause)
+
+Run in the `pg-port` stack through the status API, MySQL first.
+
+- **Laravel on MySQL:** all 9911 tests pass, with the `'Email'` migration applied.
+- **Laravel on PostgreSQL:** 9827 pass, 22 fail, 61 skipped.
+  - 89 tests on the list now pass and are to be removed from `tools/pg-ratchet/known-failures/laravel.txt`.
+    The run's log names each one.
+  - 21 tests on the list still fail.
+  - One test outside the list fails: the `ResumedReachTest` case in open item 1. It fails here as it
+    does in CI, so it can be reproduced in the stack. It is not a matter of timing on the CI runner.
+- The 17 failures of the earlier local run are gone now that the MySQL test databases exist.
