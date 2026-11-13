@@ -133,6 +133,7 @@ func TestTranslatePostgres(t *testing.T) {
 		{"sequential set", "UPDATE items SET id = id + 1, name = id", "UPDATE items SET id = id + 1, name = (id + 1)"},
 		{"sequential upsert", "INSERT INTO messages_by (msgid, userid, count) VALUES ($1, $2, 1) ON DUPLICATE KEY UPDATE count = count + 1, msgid = count",
 			`INSERT INTO messages_by (msgid, userid, count) VALUES ($1, $2, 1) ON CONFLICT ("msgid","userid") DO UPDATE SET count = "messages_by"."count" + 1, msgid = ("messages_by"."count" + 1)`},
+		{"sequential subselect untouched", "UPDATE items SET id = 2, name = (SELECT id FROM t2)", "UPDATE items SET id = 2, name = (SELECT id FROM t2)"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {

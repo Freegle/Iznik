@@ -276,7 +276,21 @@ func sequentialAssignments(assigns []tok, table string) ([]tok, bool) {
 		var nr []tok
 		for j := 0; j < len(rhs); j++ {
 			t := rhs[j]
-			if t.k == tkWord || t.k == tkQuote {
+			// A subselect has its own columns: copy it as it is.
+			if isP(t, "(") {
+				if k := nextSig(rhs, j+1); k >= 0 && isKw(rhs[k], "SELECT") {
+					if cl := matchClose(rhs, j); cl > 0 {
+						nr = append(nr, rhs[j:cl+1]...)
+						j = cl
+						continue
+					}
+				}
+			}
+			afterAs := false
+			if pa := prevSig(rhs, j-1); pa >= 0 && isKw(rhs[pa], "AS") {
+				afterAs = true
+			}
+			if (t.k == tkWord || t.k == tkQuote) && !afterAs {
 				name := strings.ToLower(identName(t))
 				// table.col
 				if table != "" && name == strings.ToLower(table) && j+2 < len(rhs) && isP(rhs[j+1], ".") {
