@@ -1977,9 +1977,14 @@ func Search(c *fiber.Ctx) error {
 	// digits. strconv.ParseUint succeeds only for an all-digits term, so ordinary
 	// searches fall through to the word search below. Access stays restricted by
 	// groupFilter, so a mod only gets the message if it is in their groups.
+	// SearchByMsgID sees live posts only; a moderator also finds one that has been
+	// withdrawn, taken or expired, as the ModTools Approved page lists it.
 	if idStr := strings.TrimPrefix(term, "#"); idStr != "" {
 		if msgid, err := strconv.ParseUint(idStr, 10, 64); err == nil {
 			byID := SearchByMsgID(db, msgid, groupids)
+			if len(byID) == 0 {
+				byID = SearchModeratedByMsgID(db, myid, msgid, groupids)
+			}
 			if len(byID) > 0 {
 				wg.Wait()
 				return c.JSON(applyOriginOnly(byID))
