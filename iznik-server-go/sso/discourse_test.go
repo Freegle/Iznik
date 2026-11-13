@@ -420,14 +420,6 @@ func TestValidateDiscourseSession_MissingFields(t *testing.T) {
 	}
 }
 
-func TestValidateDiscourseSession_ValidJSONCompleteFields_TriesDB(t *testing.T) {
-	// Cookie has all required fields — the function proceeds past pre-DB checks
-	// and hits database.DBConn. Without a DB this panics. Skip if no DB.
-	// This test documents that the pre-DB path is not an exit point here.
-	t.Skip("requires database — verifies that pre-DB checks pass; DB path not reachable in unit tests")
-	_, _, _ = validateDiscourseSession(`{"id":1,"series":"abc","token":"xyz"}`)
-}
-
 // ----- os.Setenv safety — restore original value after tests that mutate env -----
 
 func init() {

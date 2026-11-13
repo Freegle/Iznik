@@ -69,9 +69,7 @@ class WelcomeMailIntegrationTest extends TestCase
      */
     public function test_welcome_email_delivered_to_mailpit(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('delivery');
         $password = 'welcomepass123';
@@ -93,9 +91,7 @@ class WelcomeMailIntegrationTest extends TestCase
      */
     public function test_welcome_email_contains_expected_content(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('content');
         $password = 'mypassword456';
@@ -126,9 +122,7 @@ class WelcomeMailIntegrationTest extends TestCase
      */
     public function test_welcome_email_without_password_excludes_password_section(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('nopassword');
 
@@ -148,9 +142,7 @@ class WelcomeMailIntegrationTest extends TestCase
      */
     public function test_welcome_email_footer_contains_recipient(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('footer');
 
@@ -169,9 +161,7 @@ class WelcomeMailIntegrationTest extends TestCase
      */
     public function test_welcome_email_contains_cta_buttons(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('cta');
 
@@ -206,9 +196,7 @@ class WelcomeMailIntegrationTest extends TestCase
      */
     public function test_welcome_email_passes_spam_checks(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $recipientEmail = $this->uniqueEmail('spam');
 

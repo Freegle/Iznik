@@ -274,7 +274,7 @@ func TestUserDumpRedactsSecrets(t *testing.T) {
 	db := writeTempDB(t, rsp(resp))
 
 	if !tableExists(db, "users_logins") {
-		t.Skip("users_logins absent in this schema")
+		t.Fatal("the dump has no users_logins table, so the redaction cannot be checked")
 	}
 	var cred string
 	err := db.QueryRow("SELECT credentials FROM users_logins LIMIT 1").Scan(&cred)

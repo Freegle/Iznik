@@ -131,11 +131,12 @@ func TestApplySettingsDefaultsToJSON_ExtraFieldsPreserved(t *testing.T) {
 }
 
 func TestApplySettingsDefaultsToJSON_NullJSON(t *testing.T) {
-	// TODO: latent bug — ApplySettingsDefaultsToJSON panics when settings contains the JSON
-	// literal "null": json.Unmarshal("null", &map) succeeds but leaves the map nil, and the
-	// subsequent m["notificationmails"] = true write panics at runtime.
-	t.Skip("latent bug: JSON null produces a nil map, causing a write-to-nil-map panic")
-	ApplySettingsDefaultsToJSON(json.RawMessage(`null`), "")
+	// The JSON literal null unmarshals into a nil map. Writing a default into it used to panic. Settings
+	// stored as null come back as they are, for every role.
+	for _, role := range []string{"", utils.SYSTEMROLE_USER, utils.SYSTEMROLE_MODERATOR} {
+		result := ApplySettingsDefaultsToJSON(json.RawMessage(`null`), role)
+		assert.Equal(t, `null`, string(result), "role %q", role)
+	}
 }
 
 // ---------------------------------------------------------------------------
