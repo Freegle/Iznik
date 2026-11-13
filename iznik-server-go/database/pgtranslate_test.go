@@ -120,6 +120,9 @@ func TestTranslatePostgres(t *testing.T) {
 		{"param is null", "SET h = CASE WHEN $3 IS NOT NULL THEN 1 ELSE 0 END", "SET h = CASE WHEN $3::text IS NOT NULL THEN 1 ELSE 0 END"},
 		{"union scalar subquery", "SELECT (SELECT d FROM u WHERE u.id = t.id) AS x FROM t UNION SELECT 1 FROM v", "SELECT (SELECT d FROM u WHERE u.id = t.id) AS x FROM t UNION SELECT 1 FROM v"},
 		{"geometry type", "WHERE ST_GeometryType(g) IN ('POLYGON')", "WHERE iznik_geometrytype(g) IN ('POLYGON')"},
+		{"drop temporary", "DROP TEMPORARY TABLE IF EXISTS pc", "DROP  TABLE IF EXISTS pc"},
+		{"rename table", "RENAME TABLE a TO b", "ALTER TABLE a RENAME TO b"},
+		{"coalesce max json", "COALESCE(MAX(JSON_EXTRACT(d, '$.u')), -1)", "COALESCE(MAX(JSON_EXTRACT(d, '$.u')), to_jsonb(-1))"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {

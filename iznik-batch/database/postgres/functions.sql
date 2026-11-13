@@ -617,3 +617,43 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     ELSE upper(substr(ST_GeometryType(g), 4))
   END
 $$;
+
+-- FIELD(x, a, b, c): the 1 based position of x in the list, 0 when absent.
+CREATE OR REPLACE FUNCTION field(s text, VARIADIC list text[]) RETURNS integer
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT COALESCE(array_position(list, s), 0) $$;
+
+-- MAX and MIN of a JSON value, as MySQL orders JSON scalars: jsonb's own ordering.
+CREATE OR REPLACE FUNCTION iznik_jsonb_max_step(a jsonb, b jsonb) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN a IS NULL OR b > a THEN b ELSE a END $$;
+
+CREATE OR REPLACE FUNCTION iznik_jsonb_min_step(a jsonb, b jsonb) RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN a IS NULL OR b < a THEN b ELSE a END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid WHERE p.proname = 'max' AND p.proargtypes[0] = 'jsonb'::regtype) THEN
+    CREATE AGGREGATE max(jsonb) (SFUNC = iznik_jsonb_max_step, STYPE = jsonb);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid WHERE p.proname = 'min' AND p.proargtypes[0] = 'jsonb'::regtype) THEN
+    CREATE AGGREGATE min(jsonb) (SFUNC = iznik_jsonb_min_step, STYPE = jsonb);
+  END IF;
+END
+$$;
+
+-- A number matched with LIKE, as MySQL allows: id LIKE '%12%'.
+CREATE OR REPLACE FUNCTION iznik_bigint_like(i bigint, pattern text) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT i::text LIKE pattern $$;
+
+CREATE OR REPLACE FUNCTION iznik_bigint_not_like(i bigint, pattern text) RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT i::text NOT LIKE pattern $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_operator WHERE oprname = '~~' AND oprleft = 'bigint'::regtype AND oprright = 'text'::regtype) THEN
+    CREATE OPERATOR ~~ (LEFTARG = bigint, RIGHTARG = text, FUNCTION = iznik_bigint_like);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_operator WHERE oprname = '!~~' AND oprleft = 'bigint'::regtype AND oprright = 'text'::regtype) THEN
+    CREATE OPERATOR !~~ (LEFTARG = bigint, RIGHTARG = text, FUNCTION = iznik_bigint_not_like);
+  END IF;
+END
+$$;

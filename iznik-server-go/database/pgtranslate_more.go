@@ -30,6 +30,27 @@ func isColumnOf(cat catalog, table, name string) bool {
 func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 	changed := false
 
+	// DROP TEMPORARY TABLE and RENAME TABLE a TO b.
+	for i := 0; i < len(ts); i++ {
+		if isKw(ts[i], "DROP") {
+			if n := nextSig(ts, i+1); n >= 0 && isKw(ts[n], "TEMPORARY") {
+				ts[n] = tok{tkSpace, ""}
+				changed = true
+			}
+		}
+		if i == nextSig(ts, 0) && isKw(ts[i], "RENAME") {
+			if t := nextSig(ts, i+1); t >= 0 && isKw(ts[t], "TABLE") {
+				if from := nextSig(ts, t+1); from >= 0 {
+					if to := nextSig(ts, from+1); to >= 0 && isKw(ts[to], "TO") {
+						ts[i], ts[t] = word("ALTER"), word("TABLE")
+						ts[to] = word("RENAME TO")
+						changed = true
+					}
+				}
+			}
+		}
+	}
+
 	// Index hints and STRAIGHT_JOIN.
 	for i := 0; i < len(ts); i++ {
 		if !(isKw(ts[i], "FORCE") || isKw(ts[i], "USE") || isKw(ts[i], "IGNORE")) {
@@ -841,6 +862,13 @@ func wrapJSONBranches(ts []tok, changed bool) ([]tok, bool) {
 		seg = trimToks(seg)
 		if len(seg) > 2 && isKw(seg[0], "json_extract") && callEnd(seg, 0) == len(seg)-1 {
 			return true
+		}
+		if len(seg) > 2 && (isKw(seg[0], "MAX") || isKw(seg[0], "MIN")) && callEnd(seg, 0) == len(seg)-1 {
+			for _, t := range seg {
+				if isKw(t, "json_extract") {
+					return true
+				}
+			}
 		}
 		// a nested CASE or COALESCE whose result is a JSON value
 		if len(seg) > 2 && (isKw(seg[0], "CASE") || isKw(seg[0], "COALESCE")) {

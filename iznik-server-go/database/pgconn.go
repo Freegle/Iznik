@@ -57,7 +57,7 @@ func (c *pgTranslatingConnector) statement(q string) pgStatement {
 		return v.(pgStatement)
 	}
 	t := translatePostgres(q, c)
-	st := pgStatement{sql: t, jsonArgs: strings.Contains(t, "jsonb_build_") || strings.Contains(t, "json_set(")}
+	st := pgStatement{sql: t, jsonArgs: strings.Contains(t, "jsonb_build_") || strings.Contains(t, "json_set(") || strings.Contains(strings.ToLower(t), "concat(")}
 	if table, ok := plainInsertTable(t); ok && isColumnOf(c, table, "id") {
 		st.insertID = true
 	}
@@ -284,7 +284,7 @@ func typeJSONParams(sql string, args []driver.NamedValue) string {
 	ts := lexSQL(sql)
 	changed := false
 	for i := 0; i < len(ts); i++ {
-		if !(isKw(ts[i], "jsonb_build_object") || isKw(ts[i], "jsonb_build_array") || isKw(ts[i], "json_set")) {
+		if !(isKw(ts[i], "jsonb_build_object") || isKw(ts[i], "jsonb_build_array") || isKw(ts[i], "json_set") || isKw(ts[i], "concat")) {
 			continue
 		}
 		o := nextSig(ts, i+1)

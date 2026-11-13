@@ -716,7 +716,7 @@ It is in `iznik-server-go/database` and does nothing on MySQL.
   mechanical equivalent: backtick quoting, `IFNULL`, `IF()`, `INTERVAL n UNIT` and `DATE_ADD`/`DATE_SUB`,
   `CAST AS UNSIGNED`, `INSERT IGNORE`, `REPLACE INTO`, `ON DUPLICATE KEY UPDATE` (the conflict target is the
   unique index whose columns the INSERT names, read from `pg_catalog`), `UPDATE IGNORE`, multi-table `UPDATE`
-  and `DELETE` (inner joins), index hints, `GROUP_CONCAT`, `LIMIT a, b`, `REGEXP`, the spatial constructors
+  and `DELETE` (inner joins), `UPDATE` and `DELETE` with `ORDER BY` or `LIMIT` (rows picked by `ctid`), `?` placeholders, `DROP TEMPORARY TABLE`, `RENAME TABLE`, `ST_GeometryType`, index hints, `GROUP_CONCAT`, `LIMIT a, b`, `REGEXP`, the spatial constructors
   (`POINT`, `LINESTRING`, `POLYGON`, `MBRIntersects`, `ST_SRID(g, n)`) and the mixed-case column names. It is
   pure, idempotent, and passes SQL that is already PostgreSQL through unchanged. `pgtranslate_test.go` is the
   table of cases.
@@ -726,7 +726,8 @@ It is in `iznik-server-go/database` and does nothing on MySQL.
   what it names, `SELECT DISTINCT` with an `ORDER BY` on an unselected column becomes a `GROUP BY`, and a
   select-list `EXISTS(...)` is 0 or 1.
 - `pgconn.go` wraps the pgx connection. An `INSERT` into a table with an `id` column goes out with
-  `RETURNING id` so that `LastInsertId()` works. Bound arguments of JSON constructors get the type of the Go value.
+  `RETURNING id` so that `LastInsertId()` works, and a NULL sent to a NOT NULL column that has an implicit default
+  is sent as that default, as non-strict MySQL stores it. Bound arguments of JSON constructors get the type of the Go value.
 - `pgtypes.go` gives the driver MySQL's leniency at the edge. A Go `bool` can be sent for a smallint and a number
   for a text parameter. A boolean comes back as 1 or 0, and text comes back as bytes, as MySQL's driver returns
   it, so `json.RawMessage` scans from a text column.
