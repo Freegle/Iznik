@@ -2602,8 +2602,9 @@ func logAndNotifyMods(db *gorm.DB, subtype string, ctx *MessageModContext, myid 
 // messages with a location — Pending/Spam/Rejected must never be added here. The
 // query re-checks collection=Approved so this is a safe no-op if called otherwise.
 //
-// messages_spatial is keyed on (msgid, groupid): a cross-posted message gets one row
-// per group it is approved on, so it shows in browse/search on each of those groups.
+// messages_spatial is unique on msgid: a cross-posted message has one row, whose group is
+// the post's own (non-rippled) copy first, then the latest arrival, then the lowest groupid.
+// That is the order the 5-minute reconciler uses (MessageSpatialService::REPRESENTATIVE_ORDER).
 func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 	type spatialRow struct {
 		Lat     float64
@@ -2629,6 +2630,8 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 			"AND messages.lat IS NOT NULL AND messages.lng IS NOT NULL "+
 			"AND messages_outcomes.id IS NULL",
 			msgid, utils.COLLECTION_APPROVED).
+		Order("messages_groups.rippled_in ASC, messages_groups.arrival DESC, messages_groups.groupid ASC").
+		Limit(1).
 		Scan(&rows)
 
 	for _, row := range rows {
@@ -2636,9 +2639,9 @@ func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
 			continue
 		}
 
-		// groupid is part of the unique key, so it is never updated on conflict.
 		db.Table("messages_spatial").Clauses(clause.OnConflict{
 			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "groupid"}, Value: clause.Column{Table: "excluded", Name: "groupid"}},
 				{Column: clause.Column{Name: "point"}, Value: clause.Column{Table: "excluded", Name: "point"}},
 				{Column: clause.Column{Name: "msgtype"}, Value: clause.Column{Table: "excluded", Name: "msgtype"}},
 				{Column: clause.Column{Name: "arrival"}, Value: clause.Column{Table: "excluded", Name: "arrival"}},
@@ -3324,6 +3327,8 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		}
 	}
 
+	removeFromBrowseIfNotLive(db, req.ID)
+
 	subject := ""
 	if req.Subject != nil {
 		subject = *req.Subject
@@ -3401,7 +3406,9 @@ func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	if remainingGroups == 0 {
 		// Identical golden to
 		// 499057e391e9 (DeleteMessageEndpoint); converted together per gate (h).
-		db.Table("messages").Where("id = ?", req.ID).Update("deleted", gorm.Expr("NOW()"))
+		// The id is released so a redelivery of the same mail is not read as a duplicate of this row.
+		db.Table("messages").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"deleted": gorm.Expr("NOW()"), "messageid": gorm.Expr("NULL")})
 
 		// Remove from freebiealerts.app — post is no longer available on any group.
 		if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
@@ -3409,6 +3416,15 @@ func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}); err != nil {
 			log.Printf("Failed to queue freebie alerts remove for message %d: %v", req.ID, err)
 		}
+	}
+
+	removeFromBrowseIfNotLive(db, req.ID)
+
+	// Record who deleted it, on each community acted on.
+	var fromuser uint64
+	db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&fromuser)
+	for _, gid := range authorizedGroups {
+		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, gid, fromuser, myid, req.ID, 0, "Spam")
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -3450,12 +3466,14 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// A hold is a pending-queue concept, so only Pending copies take one. A copy that is
+	// A hold is a pending-queue concept, so only copies waiting for a moderator (Pending, or
+	// flagged as spam) take one. A copy that is
 	// already Approved would otherwise show "Held by" on a live post. Back to pending sets
 	// its hold itself, before flipping the copy.
 	var pendingGroups []uint64
 	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, authorizedGroups, utils.COLLECTION_PENDING).
+		Where("msgid = ? AND groupid IN ? AND collection IN ?", req.ID, authorizedGroups,
+			[]string{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}).
 		Scan(&pendingGroups)
 	authorizedGroups = pendingGroups
 
@@ -3484,6 +3502,32 @@ func actingOnHomeGroup(db *gorm.DB, msgid uint64, acting []uint64) bool {
 	}
 
 	return false
+}
+
+// removeFromBrowseIfNotLive takes a post out of the spatial index, which browse and the map
+// read, as soon as it is no longer Approved on any community, rather than leaving it for
+// the 5-minute reconciler.
+func removeFromBrowseIfNotLive(db *gorm.DB, msgid uint64) {
+	var live int64
+	db.Clauses(dbresolver.Write).Table("messages_groups").
+		Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).Count(&live)
+	if live == 0 {
+		db.Table("messages_spatial").Where("msgid = ?", msgid).Delete(nil)
+	}
+}
+
+// queueFreebieAlertsRemoveIfNotLive takes a post off freebiealerts.app once it is no longer
+// Approved on any community.
+func queueFreebieAlertsRemoveIfNotLive(db *gorm.DB, msgid uint64) {
+	var live int64
+	db.Clauses(dbresolver.Write).Table("messages_groups").
+		Where("msgid = ? AND collection = ? AND deleted = 0", msgid, utils.COLLECTION_APPROVED).Count(&live)
+	if live > 0 {
+		return
+	}
+	if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{"msgid": msgid}); err != nil {
+		log.Printf("Failed to queue freebie alerts remove for message %d: %v", msgid, err)
+	}
 }
 
 // handleBackToPending moves an approved message back to pending.
@@ -3567,6 +3611,9 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		ctx.Groupid = gid
 		logAndNotifyMods(db, flog.LOG_SUBTYPE_HOLD, ctx, myid, req.ID, 0, "Back to pending")
 	}
+
+	queueFreebieAlertsRemoveIfNotLive(db, req.ID)
+	removeFromBrowseIfNotLive(db, req.ID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -3661,17 +3708,37 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
-	// Restore the original text from the most recent pending edit before marking it reverted.
-	// The PATCH edit flow immediately writes the new text into messages, so we must explicitly
-	// restore the old values here — otherwise the edited text stays visible after rejection.
+	// Restore the state before the first pending edit, then mark the edits reverted.
+	// The PATCH edit flow immediately writes the new values into messages, so we must explicitly
+	// restore the old values here - otherwise the edited text stays visible after rejection.
+	// An edit records an old value only for a field it changed, so each field takes the old
+	// value from the oldest pending edit that changed it.
 	type editOldValues struct {
 		Oldsubject *string
 		Oldtext    *string
+		Oldtype    *string
 	}
-	var old editOldValues
-	db.Table("messages_edits").Select("oldsubject, oldtext").
+	var edits []editOldValues
+	db.Table("messages_edits").Select("oldsubject, oldtext, oldtype").
 		Where("msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL", req.ID).
-		Order("id DESC").Limit(1).Scan(&old)
+		Order("id ASC").Scan(&edits)
+	var old editOldValues
+	for _, e := range edits {
+		if old.Oldsubject == nil {
+			old.Oldsubject = e.Oldsubject
+		}
+		if old.Oldtext == nil {
+			old.Oldtext = e.Oldtext
+		}
+		if old.Oldtype == nil {
+			old.Oldtype = e.Oldtype
+		}
+	}
+	if old.Oldtype != nil {
+		db.Table("messages").Where("id = ?", req.ID).Update("type", *old.Oldtype)
+		db.Table("messages_groups").Where("msgid = ?", req.ID).Update("msgtype", *old.Oldtype)
+		db.Table("messages_spatial").Where("msgid = ?", req.ID).Update("msgtype", *old.Oldtype)
+	}
 	if old.Oldsubject != nil || old.Oldtext != nil {
 		// The guard
 		// above means at least one of Oldsubject/Oldtext is set, so this is a
@@ -3881,7 +3948,20 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	//   - no groupid (the owner withdrawing their own message): ALL groups
 	//     the message is on — a withdrawal is global to the poster.
 	var groupids []uint64
-	if req.Groupid != nil && *req.Groupid > 0 {
+	if !isOwner {
+		// A moderator acts only on communities they moderate.
+		var onMessage []uint64
+		db.Table("messages_groups").Select("groupid").Where("msgid = ?", req.ID).Scan(&onMessage)
+		var reqGroupid uint64
+		if req.Groupid != nil {
+			reqGroupid = *req.Groupid
+		}
+		authorized, err := resolveAuthorizedGroups(myid, reqGroupid, onMessage)
+		if err != nil {
+			return err
+		}
+		groupids = authorized
+	} else if req.Groupid != nil && *req.Groupid > 0 {
 		groupids = []uint64{*req.Groupid}
 	} else {
 		db.Table("messages_groups").Select("groupid").Where("msgid = ?", req.ID).Scan(&groupids)
@@ -3980,6 +4060,8 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	if err := tx.Commit().Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction commit failed")
 	}
+
+	queueFreebieAlertsRemoveIfNotLive(db, req.ID)
 
 	// Clear deadline if it's in the past or today — an old deadline is no longer
 	// relevant when reposting and would cause the message to appear expired.
@@ -4562,6 +4644,16 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 		return fiber.NewError(fiber.StatusForbidden, "This post can't be edited - the poster didn't choose this community")
 	}
 
+	// A change of type is between Offer and Wanted. A post that already has another type
+	// (an Admin message) may be sent back with the type it has.
+	if req.Type != nil {
+		var currentType string
+		db.Table("messages").Select("type").Where("id = ?", req.ID).Scan(&currentType)
+		if *req.Type != currentType && *req.Type != utils.OFFER && *req.Type != utils.WANTED {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid type")
+		}
+	}
+
 	// Only an OFFER is ever split. A split post changed to a WANTED, by its poster or a
 	// moderator, is first put back as it was written, so a WANTED never has an item list,
 	// Mark TAKEN on its items, or "Which would you like?" in its reply box. Any item list
@@ -4621,6 +4713,8 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	if req.Type != nil {
 		// also update messages_groups.msgtype.
 		db.Table("messages_groups").Where("msgid = ?", req.ID).Update("msgtype", *req.Type)
+		// Browse and the map read the type from messages_spatial.
+		db.Table("messages_spatial").Where("msgid = ?", req.ID).Update("msgtype", *req.Type)
 	}
 	// Master's availablenow/deadline SET entries are not repeated here: this
 	// branch assembles the whole SET list in
@@ -6730,11 +6824,14 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// that rippled into a neighbouring group and is sitting in its veto window is not
 	// that: the post is live at home, so withdrawing it is a real outcome, and the
 	// rippled copy is retired below like Taken and Received do. Rows already soft-deleted
-	// do not count either (Discourse 10102).
+	// do not count either (Discourse 10102). A post that is Approved on another community
+	// is live, so it takes the outcome path below, which retires the Pending copies and keeps
+	// the post and its outcome.
 	if req.Outcome == utils.OUTCOME_WITHDRAWN {
-		var pendingCount int64
+		var pendingCount, liveElsewhere int64
 		db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0 AND rippled_in = 0", req.ID, utils.COLLECTION_PENDING).Count(&pendingCount)
-		if pendingCount > 0 {
+		db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_APPROVED).Count(&liveElsewhere)
+		if pendingCount > 0 && liveElsewhere == 0 {
 			// Capture the groups the post is actively pending on *before* the
 			// soft-delete, so we can write a per-group audit log below.
 			var pendingGroups []uint64
@@ -7148,9 +7245,18 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
 	}
 
-	// Must be mod of the source group (i.e. a group the message is currently on).
-	if !isModForMessage(db, myid, req.ID) {
-		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+	// Must be mod of a community the post was posted to. A copy that merely rippled into
+	// a moderator's community gives them no standing over the post itself.
+	if !auth.IsAdminOrSupport(myid) {
+		var homeMod int64
+		db.Table("messages_groups mg").
+			Joins("JOIN memberships m ON m.groupid = mg.groupid").
+			Where("mg.msgid = ? AND mg.rippled_in = 0 AND m.userid = ? AND m.role IN (?, ?)",
+				req.ID, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+			Count(&homeMod)
+		if homeMod == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+		}
 	}
 
 	// Must also be mod of the target group.

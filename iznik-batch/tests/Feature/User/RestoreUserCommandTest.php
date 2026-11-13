@@ -34,4 +34,35 @@ class RestoreUserCommandTest extends TestCase
                 ->count()
         );
     }
+
+    public function test_restore_puts_back_a_ban(): void
+    {
+        // users_banned has no id column. The restore must still write its rows, so a restored
+        // member who was banned from a group stays banned.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        DB::table('users_banned')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'date' => now(),
+            'byuser' => null,
+        ]);
+
+        $path = sys_get_temp_dir().'/restore-banned-'.$user->id.'.json';
+        $this->artisan('user:dump', ['--id' => $user->id, '--output' => $path])->assertExitCode(0);
+
+        DB::table('users_banned')->where('userid', $user->id)->delete();
+        $this->assertSame(0, DB::table('users_banned')->where('userid', $user->id)->count());
+
+        $this->artisan('user:restore', ['--input' => $path])->assertExitCode(0);
+        unlink($path);
+
+        $this->assertSame(
+            1,
+            DB::table('users_banned')
+                ->where('userid', $user->id)
+                ->where('groupid', $group->id)
+                ->count()
+        );
+    }
 }

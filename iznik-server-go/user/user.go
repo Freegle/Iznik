@@ -3456,6 +3456,23 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 		return fiber.NewError(fiber.StatusBadRequest, "These accounts belong to two different TrashNothing members and can't be merged.")
 	}
 
+	// A TrashNothing member is never given a volunteer's role. Every merge path comes through
+	// here, not only the moderator merge, so a merge of a TrashNothing account with an account
+	// that moderates a community is refused. The TN divergence heal, which pairs a stamped
+	// account with its unstamped twin, is unaffected: a twin holds no role.
+	tnSide1, tnSide2 := IsTrashNothingAccount(db, id1), IsTrashNothingAccount(db, id2)
+	if tnSide1 != tnSide2 {
+		freegleSide := id1
+		if tnSide1 {
+			freegleSide = id2
+		}
+		var roles int64
+		db.Table("memberships").Where("userid = ? AND role IN ?", freegleSide, []string{utils.ROLE_MODERATOR, utils.ROLE_OWNER}).Count(&roles)
+		if roles > 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "You can't merge a TrashNothing member with an account that moderates a community.")
+		}
+	}
+
 	// A member can set canmerge to false in their settings to stop their account being merged.
 	// V1 and the PHP merge in iznik-batch both refuse in that case; so does this.
 	if userOptedOutOfMerge(db, id1) || userOptedOutOfMerge(db, id2) {
