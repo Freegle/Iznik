@@ -123,6 +123,11 @@ func TestTranslatePostgres(t *testing.T) {
 		{"drop temporary", "DROP TEMPORARY TABLE IF EXISTS pc", "DROP  TABLE IF EXISTS pc"},
 		{"rename table", "RENAME TABLE a TO b", "ALTER TABLE a RENAME TO b"},
 		{"coalesce max json", "COALESCE(MAX(JSON_EXTRACT(d, '$.u')), -1)", "COALESCE(MAX(JSON_EXTRACT(d, '$.u')), to_jsonb(-1))"},
+		{"question mark in a string", "INSERT INTO t (a, b, c) VALUES ($1, $2, 'Can you?$3', ?)", "INSERT INTO t (a, b, c) VALUES ($1, $2, 'Can you??', $3)"},
+		{"jsonb arrow in union", "SELECT d->>'k' AS x FROM t UNION SELECT 'a' FROM u", "SELECT d->>'k' AS x FROM t UNION SELECT 'a' FROM u"},
+		{"param used twice", "WHERE id = $1 OR $1 IS NULL", "WHERE id = $1 OR $1 IS NULL"},
+		{"jsonb question operator", "WHERE d ?| array['a'] AND x = ?", "WHERE d ?| array['a'] AND x = $1"},
+		{"limit with returning", "UPDATE t SET a = 1 LIMIT 1 RETURNING id", "UPDATE t SET a = 1 LIMIT 1 RETURNING id"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {

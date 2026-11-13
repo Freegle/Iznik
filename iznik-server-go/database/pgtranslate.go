@@ -225,23 +225,51 @@ func translatePostgres(sql string, cat catalog) string {
 	ts := lexSQL(sql)
 	changed := false
 
-	// A statement sent straight to database/sql (not through GORM) has ? placeholders; PostgreSQL wants $n.
-	hasNumbered := false
-	for _, t := range ts {
-		if t.k == tkWord && len(t.s) > 1 && t.s[0] == '$' && t.s[1] >= '0' && t.s[1] <= '9' {
-			hasNumbered = true
-			break
+	// ? placeholders. A statement sent straight to database/sql has only ?, and PostgreSQL wants $n. GORM, which
+	// numbers a ? wherever it finds one even inside a quoted string, leaves a statement with a ? in a string
+	// literal numbered wrongly: the string holds a $n and a real placeholder is still ?. Both are put right: the
+	// real placeholders are numbered in order and the $n in a string is a ? again.
+	bare, numbered := 0, map[string]bool{}
+	for i, t := range ts {
+		if isP(t, "?") && !isJSONOperatorQuestion(ts, i) {
+			bare++
+		} else if t.k == tkWord && len(t.s) > 1 && t.s[0] == '$' && t.s[1] >= '0' && t.s[1] <= '9' {
+			numbered[t.s] = true
 		}
 	}
-	if !hasNumbered {
-		n := 0
-		for i, t := range ts {
-			if isP(t, "?") {
-				n++
-				ts[i] = tok{tkWord, "$" + strconv.Itoa(n)}
-				changed = true
+	if bare > 0 {
+		var inStrings []string
+		for _, t := range ts {
+			if t.k != tkStr {
+				continue
+			}
+			for i := 0; i+1 < len(t.s); i++ {
+				if t.s[i] == '$' && t.s[i+1] >= '0' && t.s[i+1] <= '9' {
+					j := i + 1
+					for j < len(t.s) && t.s[j] >= '0' && t.s[j] <= '9' {
+						j++
+					}
+					if !numbered[t.s[i:j]] {
+						inStrings = append(inStrings, t.s[i:j])
+					}
+				}
 			}
 		}
+		n := 0
+		for i, t := range ts {
+			switch {
+			case (isP(t, "?") && !isJSONOperatorQuestion(ts, i)) || (t.k == tkWord && numbered[t.s]):
+				n++
+				ts[i] = tok{tkWord, "$" + strconv.Itoa(n)}
+			case t.k == tkStr && len(inStrings) > 0:
+				str := t.s
+				for _, p := range inStrings {
+					str = strings.ReplaceAll(str, p, "?")
+				}
+				ts[i].s = str
+			}
+		}
+		changed = true
 	}
 
 	// Identifiers.
@@ -506,4 +534,10 @@ func appendOnConflictDoNothing(ts []tok) []tok {
 	}
 	ins := []tok{sp(), word("ON"), sp(), word("CONFLICT"), sp(), word("DO"), sp(), word("NOTHING")}
 	return concatToks(ts[:end], ins, ts[end:])
+}
+
+// isJSONOperatorQuestion reports whether the ? at ts[i] is a jsonb operator (?, ?| or ?&) and not a placeholder:
+// it has a | or & straight after it.
+func isJSONOperatorQuestion(ts []tok, i int) bool {
+	return i+1 < len(ts) && (isP(ts[i+1], "|") || isP(ts[i+1], "&"))
 }

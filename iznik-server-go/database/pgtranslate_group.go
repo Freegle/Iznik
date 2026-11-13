@@ -562,7 +562,14 @@ func isComparisonItem(e []tok) bool {
 		return false
 	}
 	depth, caseDepth := 0, 0
-	for _, t := range e {
+	for i, t := range e {
+		// -> ->> @> <@ #> are jsonb operators, not comparisons
+		if i > 0 && isP(t, ">") && (isP(e[i-1], "-") || isP(e[i-1], "@") || isP(e[i-1], "#") || isP(e[i-1], ">")) {
+			continue
+		}
+		if isP(t, "<") && i+1 < len(e) && isP(e[i+1], "@") {
+			continue
+		}
 		switch {
 		case isP(t, "("):
 			depth++

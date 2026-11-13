@@ -191,6 +191,9 @@ func translateLimitedDML(ts []tok) ([]tok, bool) {
 	if !upd && !isKw(ts[first], "DELETE") {
 		return ts, false
 	}
+	if topKw(ts, first+1, "RETURNING") >= 0 {
+		return ts, false
+	}
 	order := topKw(ts, first+1, "ORDER")
 	limit := topKw(ts, first+1, "LIMIT")
 	cut := order

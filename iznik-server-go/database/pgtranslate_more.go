@@ -324,6 +324,17 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		if p := prevSig(ts, i-1); p >= 0 && isP(ts[p], ":") {
 			continue
 		}
+		onlyIs := true
+		for j, u := range ts {
+			if u.k == tkWord && u.s == t.s {
+				if nn := nextSig(ts, j+1); nn < 0 || !isKw(ts[nn], "IS") {
+					onlyIs = false
+				}
+			}
+		}
+		if !onlyIs {
+			continue
+		}
 		ts = concatToks(ts[:i+1], []tok{punct(":"), punct(":"), word("text")}, ts[i+1:])
 		changed = true
 	}

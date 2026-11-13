@@ -170,6 +170,20 @@ func (c *pgTranslatingConnector) unique(table string, cols []string) []string {
 			return ix
 		}
 	}
+	// A key with a column left out still conflicts when that column is NOT NULL, because the row then
+	// takes the column's default; with a nullable column left out the key holds NULL and never conflicts.
+	for _, ix := range c.idx[strings.ToLower(table)] {
+		ok := true
+		for _, col := range ix {
+			if _, notNull := c.defs[strings.ToLower(table)][strings.ToLower(col)]; !have[strings.ToLower(col)] && !notNull {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return ix
+		}
+	}
 	return nil
 }
 
