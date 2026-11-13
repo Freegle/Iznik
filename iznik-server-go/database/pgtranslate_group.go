@@ -380,6 +380,17 @@ func fixOneSelect(ts []tok, s int) ([]tok, bool) {
 		if i > 0 {
 			newSel = append(newSel, punct(","), sp())
 		}
+		if isScalarSubquery(it.expr) {
+			// A correlated subquery may use an outer column that is not grouped; it is "an arbitrary row's value".
+			if wrapped, did := wrapOuterRefs(it.expr, outerAliases(ts[p.from:gEnd]), groups); did {
+				newSel = append(newSel, wrapped...)
+				if it.aliasTok != nil {
+					newSel = append(newSel, sp(), word("AS"), sp(), *it.aliasTok)
+				}
+				selChanged = true
+				continue
+			}
+		}
 		if ok(it.expr) {
 			newSel = append(newSel, it.raw...)
 			continue
@@ -584,4 +595,94 @@ func isComparisonItem(e []tok) bool {
 		}
 	}
 	return false
+}
+
+func isScalarSubquery(e []tok) bool {
+	e = trimToks(e)
+	if len(e) < 3 || !isP(e[0], "(") || matchClose(e, 0) != len(e)-1 {
+		return false
+	}
+	n := nextSig(e, 1)
+	return n >= 0 && isKw(e[n], "SELECT")
+}
+
+// tableAliases collects the names a FROM or JOIN clause gives its tables: the alias, or the table name.
+func tableAliases(ts []tok) map[string]bool {
+	out := map[string]bool{}
+	for i, t := range ts {
+		if !(isKw(t, "FROM") || isKw(t, "JOIN")) {
+			continue
+		}
+		n := nextSig(ts, i+1)
+		if n < 0 || ts[n].k == tkPunct {
+			continue
+		}
+		name := strings.ToLower(identName(ts[n]))
+		if m := nextSig(ts, n+1); m >= 0 && isP(ts[m], ".") { // schema.table
+			if k := nextSig(ts, m+1); k >= 0 {
+				n = k
+				name = strings.ToLower(identName(ts[k]))
+			}
+		}
+		out[name] = true
+		a := nextSig(ts, n+1)
+		if a >= 0 && isKw(ts[a], "AS") {
+			a = nextSig(ts, a+1)
+		}
+		if a >= 0 && (ts[a].k == tkWord || ts[a].k == tkQuote) {
+			switch strings.ToUpper(ts[a].s) {
+			case "WHERE", "JOIN", "INNER", "LEFT", "RIGHT", "CROSS", "ON", "GROUP", "ORDER", "LIMIT", "HAVING", "UNION", "FORCE", "USE", "IGNORE", "USING", "STRAIGHT_JOIN", "SET", "AS":
+			default:
+				out[strings.ToLower(identName(ts[a]))] = true
+			}
+		}
+	}
+	return out
+}
+
+// outerAliases is the set of table names of the select whose FROM clause is ts, at its own level.
+func outerAliases(ts []tok) map[string]bool {
+	depth := 0
+	var top []tok
+	for _, t := range ts {
+		if isP(t, "(") {
+			depth++
+			continue
+		}
+		if isP(t, ")") {
+			depth--
+			continue
+		}
+		if depth == 0 {
+			top = append(top, t)
+		}
+	}
+	return tableAliases(top)
+}
+
+// wrapOuterRefs wraps, in a correlated subquery, each qualified reference to a column of the outer select
+// that is not grouped there, as ANY_VALUE(outer.column).
+func wrapOuterRefs(sub []tok, outer map[string]bool, groups map[string]bool) ([]tok, bool) {
+	inner := tableAliases(sub)
+	var out []tok
+	did := false
+	for i := 0; i < len(sub); i++ {
+		t := sub[i]
+		if (t.k == tkWord || t.k == tkQuote) && i+2 < len(sub) && isP(sub[i+1], ".") && (sub[i+2].k == tkWord || sub[i+2].k == tkQuote) {
+			q := strings.ToLower(identName(t))
+			p := prevSig(sub, i-1)
+			already := p >= 0 && isP(sub[p], "(") && prevSig(sub, p-1) >= 0 && isKw(sub[prevSig(sub, p-1)], "ANY_VALUE")
+			if outer[q] && !inner[q] && !already && (p < 0 || !isP(sub[p], ".")) {
+				key := q + "." + strings.ToLower(identName(sub[i+2]))
+				if !groups[key] {
+					out = append(out, word("ANY_VALUE"), punct("("), t, sub[i+1], sub[i+2], punct(")"))
+					i += 2
+					did = true
+					continue
+				}
+			}
+		}
+		out = append(out, t)
+	}
+	return out, did
 }

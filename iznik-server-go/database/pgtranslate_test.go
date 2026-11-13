@@ -128,6 +128,8 @@ func TestTranslatePostgres(t *testing.T) {
 		{"param used twice", "WHERE id = $1 OR $1 IS NULL", "WHERE id = $1 OR $1 IS NULL"},
 		{"jsonb question operator", "WHERE d ?| array['a'] AND x = ?", "WHERE d ?| array['a'] AND x = $1"},
 		{"limit with returning", "UPDATE t SET a = 1 LIMIT 1 RETURNING id", "UPDATE t SET a = 1 LIMIT 1 RETURNING id"},
+		{"correlated subquery in group by", "SELECT m.id, (SELECT MIN(e.x) FROM e WHERE e.u = u.id) AS first FROM m JOIN u ON u.id = m.uid GROUP BY m.uid",
+			`SELECT ANY_VALUE(m.id) AS "id", (SELECT MIN(e.x) FROM e WHERE e.u = ANY_VALUE(u.id)) AS first FROM m JOIN u ON u.id = m.uid GROUP BY m.uid`},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {
