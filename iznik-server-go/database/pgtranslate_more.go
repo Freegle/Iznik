@@ -73,6 +73,7 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		"ST_DISTANCE_SPHERE": "ST_DistanceSphere",
 		"POINT":              "ST_MakePoint",
 		"MBRCONTAINS":        "ST_Contains",
+		"ST_GEOMETRYTYPE":    "iznik_geometrytype",
 	}
 	for i, t := range ts {
 		if t.k != tkWord {

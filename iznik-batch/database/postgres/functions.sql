@@ -607,3 +607,13 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ST_GeometryType(g) as MySQL names the types: POLYGON, MULTIPOLYGON, POINT, GEOMCOLLECTION. PostGIS says ST_Polygon.
+-- The Go API's translator calls this for ST_GeometryType.
+CREATE OR REPLACE FUNCTION iznik_geometrytype(g geometry) RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT CASE ST_GeometryType(g)
+    WHEN 'ST_GeometryCollection' THEN 'GEOMCOLLECTION'
+    ELSE upper(substr(ST_GeometryType(g), 4))
+  END
+$$;

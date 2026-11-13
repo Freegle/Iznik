@@ -119,6 +119,7 @@ func TestTranslatePostgres(t *testing.T) {
 		{"union comparison", "SELECT a > 1 AS x, b FROM t UNION SELECT c, d FROM u", "SELECT ((a > 1))::int AS x, b FROM t UNION SELECT c, d FROM u"},
 		{"param is null", "SET h = CASE WHEN $3 IS NOT NULL THEN 1 ELSE 0 END", "SET h = CASE WHEN $3::text IS NOT NULL THEN 1 ELSE 0 END"},
 		{"union scalar subquery", "SELECT (SELECT d FROM u WHERE u.id = t.id) AS x FROM t UNION SELECT 1 FROM v", "SELECT (SELECT d FROM u WHERE u.id = t.id) AS x FROM t UNION SELECT 1 FROM v"},
+		{"geometry type", "WHERE ST_GeometryType(g) IN ('POLYGON')", "WHERE iznik_geometrytype(g) IN ('POLYGON')"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {
