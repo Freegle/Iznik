@@ -117,7 +117,9 @@ class VolunteeringDigestService
     /**
      * Build the deduplicated, group-attributed opportunity list for one user:
      * every global opportunity, plus opportunities shared with any of the user's
-     * volunteering-enabled groups, each shown once.
+     * volunteering-enabled groups, each shown once. An opportunity posted
+     * separately on several of them (same poster, title and location) also
+     * counts as one (see foldSamePostings()).
      *
      * @param array<int,array>  $oppsById
      * @param array<int,int[]>  $groupsByOpp     opp id => [group ids] (group-specific opps)
@@ -137,14 +139,10 @@ class VolunteeringDigestService
                 continue;
             }
 
-            $oppData['groups'] = array_values(array_filter(array_map(
-                fn ($gid) => $eligibleGroups[$gid] ?? null,
-                $shared
-            )));
-            $out[] = $oppData;
+            $out[] = [$oppData, $shared];
         }
 
-        return $out;
+        return $this->foldSamePostings($out, $eligibleGroups);
     }
 
     /**
@@ -257,6 +255,11 @@ class VolunteeringDigestService
                 'applyby'        => $applyby,
                 'url'            => "{$userSite}/volunteering/{$id}",
                 'groups'         => [],
+                'samePostingKey' => $this->samePostingKey(
+                    $v->userid !== null ? (int) $v->userid : null,
+                    $v->title,
+                    $v->location
+                ),
             ];
         }
 

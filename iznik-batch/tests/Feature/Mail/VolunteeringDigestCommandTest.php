@@ -7,6 +7,7 @@ use App\Models\Group;
 use App\Services\EmailSpoolerService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class VolunteeringDigestCommandTest extends TestCase
@@ -27,9 +28,9 @@ class VolunteeringDigestCommandTest extends TestCase
         DB::statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
-    private function createVolunteering(?int $groupId = null, string $title = 'Test Volunteering'): int
+    private function createVolunteering(?int $groupId = null, string $title = 'Test Volunteering', array $fields = []): int
     {
-        $volId = DB::table('volunteering')->insertGetId([
+        $volId = DB::table('volunteering')->insertGetId($fields + [
             'title' => $title,
             'location' => 'Community Centre',
             'description' => 'Help needed at local centre.',
@@ -55,6 +56,16 @@ class VolunteeringDigestCommandTest extends TestCase
             'volunteeringid' => $volId,
             'groupid' => $groupId,
         ]);
+    }
+
+    private function memberOf(array $groups): \App\Models\User
+    {
+        $user = $this->createTestUser();
+        foreach ($groups as $group) {
+            $this->createMembership($user, $group, ['volunteeringallowed' => 1, 'emailfrequency' => 24]);
+        }
+
+        return $user;
     }
 
     private function setLastSent(int $userId, \DateTimeInterface|string $when): void
@@ -133,6 +144,67 @@ class VolunteeringDigestCommandTest extends TestCase
         Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) {
             return count($mail->volunteerings) === 2;
         });
+    }
+
+    public function test_same_opportunity_posted_separately_on_several_groups_appears_once(): void
+    {
+        // An organiser who posts one opportunity to each nearby community
+        // creates a separate opportunity per community. A member of several of
+        // them must see it ONCE, with every community named.
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $user = $this->memberOf([$group1, $group2]);
+
+        $poster = $this->createTestUser();
+        $first = $this->createVolunteering($group1->id, 'Drivers needed', ['userid' => $poster->id]);
+        $this->createVolunteering($group2->id, ' drivers  NEEDED', ['userid' => $poster->id, 'location' => 'community centre']);
+
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
+
+        Mail::assertSent(VolunteeringDigestMail::class, function (VolunteeringDigestMail $mail) use ($user, $first, $group1, $group2) {
+            if ($mail->userId !== $user->id || count($mail->volunteerings) !== 1) {
+                return false;
+            }
+            $names = array_column($mail->volunteerings[0]['groups'], 'name');
+            sort($names);
+            $expected = [$group1->namefull, $group2->namefull];
+            sort($expected);
+
+            // The copy kept is the first one posted, so the link is stable.
+            return $names === $expected && $mail->volunteerings[0]['id'] === $first;
+        });
+    }
+
+    #[DataProvider('differingOpportunityProvider')]
+    public function test_opportunities_that_differ_are_not_merged(string $what): void
+    {
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $user = $this->memberOf([$group1, $group2]);
+
+        $poster = $this->createTestUser();
+        $this->createVolunteering($group1->id, 'Drivers needed', ['userid' => $poster->id]);
+        $this->createVolunteering($group2->id, 'Drivers needed', [
+            'userid'   => $what === 'poster' ? $this->createTestUser()->id : $poster->id,
+            'location' => $what === 'location' ? 'Another Hall' : 'Community Centre',
+        ]);
+
+        $this->artisan('mail:volunteering-digest')->assertExitCode(0);
+
+        Mail::assertSent(VolunteeringDigestMail::class, fn (VolunteeringDigestMail $mail) =>
+            $mail->userId === $user->id && count($mail->volunteerings) === 2);
+    }
+
+    public static function differingOpportunityProvider(): array
+    {
+        return [
+            'different place'  => ['location'],
+            'different poster' => ['poster'],
+        ];
     }
 
     public function test_opportunity_cross_posted_to_several_of_users_groups_appears_once(): void

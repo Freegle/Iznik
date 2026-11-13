@@ -7,6 +7,7 @@ use App\Models\Group;
 use App\Services\EmailSpoolerService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class EventsDigestCommandTest extends TestCase
@@ -58,6 +59,29 @@ class EventsDigestCommandTest extends TestCase
             'eventid' => $eventId,
             'groupid' => $groupId,
         ]);
+    }
+
+    /**
+     * The same event posted separately on each group: one communityevents row
+     * per group, all starting at the same moment.
+     *
+     * @param array<int> $groupIds
+     * @return array<int> the event ids, in group order
+     */
+    private function createSameEventOnEachGroup(array $groupIds, string $title, array $fields = []): array
+    {
+        $start = now()->addDays(7)->startOfHour();
+        $ids = [];
+        foreach ($groupIds as $groupId) {
+            $id = $this->createEvent($groupId, $title, 7, $fields);
+            DB::table('communityevents_dates')->where('eventid', $id)->update([
+                'start' => $start,
+                'end'   => $start->copy()->addHours(2),
+            ]);
+            $ids[] = $id;
+        }
+
+        return $ids;
     }
 
     private function addEventImage(int $eventId, ?string $externalUrl = null): int
@@ -194,6 +218,143 @@ class EventsDigestCommandTest extends TestCase
                 fn ($g) => collect($urls)->contains(fn ($u) => str_contains($u, '/explore/' . $g->nameshort))
             );
         });
+    }
+
+    public function test_same_event_posted_separately_on_several_groups_appears_once(): void
+    {
+        // An organiser who posts one event to each nearby community creates a
+        // separate event per community. A member of several of them must see it
+        // ONCE, with every community named.
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $group3 = $this->createTestGroup();
+
+        $user = $this->createTestUser();
+        foreach ([$group1, $group2, $group3] as $group) {
+            $this->createMembership($user, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+        }
+
+        $poster = $this->createTestUser();
+        $ids = $this->createSameEventOnEachGroup(
+            [$group1->id, $group2->id, $group3->id],
+            'Cafe Conversations',
+            ['userid' => $poster->id]
+        );
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) use ($user, $ids, $group1, $group2, $group3) {
+            if ($mail->userId !== $user->id || count($mail->events) !== 1) {
+                return false;
+            }
+            $names = array_column($mail->events[0]['groups'], 'name');
+            sort($names);
+            $expected = [$group1->namefull, $group2->namefull, $group3->namefull];
+            sort($expected);
+
+            // The copy kept is the first one posted, so the link is stable from
+            // one mail to the next.
+            return $names === $expected && $mail->events[0]['id'] === min($ids);
+        });
+    }
+
+    public function test_same_event_is_matched_despite_case_and_spacing(): void
+    {
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $user = $this->createTestUser();
+        $this->createMembership($user, $group1, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+        $this->createMembership($user, $group2, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $poster = $this->createTestUser();
+        [, $second] = $this->createSameEventOnEachGroup(
+            [$group1->id, $group2->id],
+            'Cafe Conversations',
+            ['userid' => $poster->id]
+        );
+        DB::table('communityevents')->where('id', $second)->update([
+            'title'    => '  cafe   conversations ',
+            'location' => 'TEST HALL,  Test Town',
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, fn (EventsDigestMail $mail) =>
+            $mail->userId === $user->id && count($mail->events) === 1 && count($mail->events[0]['groups']) === 2);
+    }
+
+    /**
+     * Events that share a title but differ in place, time or poster are
+     * different events and each is shown.
+     */
+    #[DataProvider('differingEventProvider')]
+    public function test_events_that_differ_are_not_merged(string $what): void
+    {
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $user = $this->createTestUser();
+        $this->createMembership($user, $group1, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+        $this->createMembership($user, $group2, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $poster = $this->createTestUser();
+        [, $second] = $this->createSameEventOnEachGroup(
+            [$group1->id, $group2->id],
+            'Film screening',
+            ['userid' => $poster->id]
+        );
+
+        if ($what === 'location') {
+            DB::table('communityevents')->where('id', $second)->update(['location' => 'Another Hall']);
+        } elseif ($what === 'start') {
+            DB::table('communityevents_dates')->where('eventid', $second)->update(['start' => now()->addDays(9)]);
+        } else {
+            DB::table('communityevents')->where('id', $second)->update(['userid' => $this->createTestUser()->id]);
+        }
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, fn (EventsDigestMail $mail) =>
+            $mail->userId === $user->id && count($mail->events) === 2);
+    }
+
+    public static function differingEventProvider(): array
+    {
+        return [
+            'different place'  => ['location'],
+            'different time'   => ['start'],
+            'different poster' => ['poster'],
+        ];
+    }
+
+    public function test_member_of_one_group_sees_only_that_group_on_a_repeated_event(): void
+    {
+        Mail::fake();
+
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $user = $this->createTestUser();
+        $this->createMembership($user, $group2, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $poster = $this->createTestUser();
+        [, $second] = $this->createSameEventOnEachGroup(
+            [$group1->id, $group2->id],
+            'Cafe Conversations',
+            ['userid' => $poster->id]
+        );
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, fn (EventsDigestMail $mail) =>
+            $mail->userId === $user->id
+            && count($mail->events) === 1
+            && $mail->events[0]['id'] === $second
+            && array_column($mail->events[0]['groups'], 'name') === [$group2->namefull]);
     }
 
     public function test_spool_failure_for_one_user_does_not_abort_digest(): void

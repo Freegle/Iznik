@@ -10,7 +10,7 @@ use RuntimeException;
 /**
  * Builds the UK deprivation quintile CSV (lat,lng,quintile) by:
  *   1. Downloading the mySociety composite UK IMD (code → quintile lookup)
- *   2. Fetching England & Wales LSOA centroids from ONS ArcGIS API
+ *   2. Fetching England & Wales 2011 LSOA population-weighted centroids from ONS ArcGIS
  *   3. Fetching Scotland Data Zone centroids from maps.gov.scot
  *   4. Fetching Northern Ireland SOA polygons from OpenDataNI and computing
  *      polygon centroids, transforming from Irish Grid (EPSG:29903) to WGS84
@@ -119,13 +119,19 @@ class DeprivationDataService
     }
 
     /**
+     * ONS's layer of the 2011 LSOA population-weighted centroids, in WGS84. 2011 because the
+     * IMD lookup is keyed by 2011 LSOA codes. The code field is CODE.
+     */
+    private const EW_CENTROIDS_URL = 'https://services-eu1.arcgis.com/6BsumkdKnml1ntNV/arcgis/rest/services/'
+        . '2011_LSOA_Population_Weighted_Centroid/FeatureServer/0/query';
+
+    /**
      * Fetch England & Wales LSOA centroids from ONS ArcGIS, paginated.
      * Returns array of [lat, lng, quintile].
      */
     private function fetchEnglandWalesCentroids(array $imdLookup): array
     {
-        $url = 'https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/'
-             . 'LSOA_Dec_2011_PWC_in_England_and_Wales_2022/FeatureServer/0/query';
+        $url = self::EW_CENTROIDS_URL;
 
         $rows   = [];
         $offset = 0;
@@ -133,7 +139,7 @@ class DeprivationDataService
         while (true) {
             $response = Http::timeout(60)->withHeaders(['User-Agent' => self::USER_AGENT])->get($url, [
                 'where'             => '1=1',
-                'outFields'         => 'lsoa11cd',
+                'outFields'         => 'CODE',
                 'returnGeometry'    => 'true',
                 'outSR'             => '4326',
                 'f'                 => 'json',
@@ -152,7 +158,7 @@ class DeprivationDataService
             }
 
             foreach ($data['features'] ?? [] as $feature) {
-                $code = (string) ($feature['attributes']['lsoa11cd'] ?? '');
+                $code = (string) ($feature['attributes']['CODE'] ?? '');
                 $geo  = $feature['geometry'] ?? [];
                 $lng  = $geo['x'] ?? null;
                 $lat  = $geo['y'] ?? null;
@@ -165,10 +171,13 @@ class DeprivationDataService
                 }
             }
 
-            if (empty($data['exceededTransferLimit'])) {
+            // The server caps a page at its own maxRecordCount, whatever was asked for, so move
+            // on by what came back: a fixed step would skip the rest of each page.
+            $got = count($data['features'] ?? []);
+            if (empty($data['exceededTransferLimit']) || $got === 0) {
                 break;
             }
-            $offset += 2000;
+            $offset += $got;
         }
 
         return $rows;
