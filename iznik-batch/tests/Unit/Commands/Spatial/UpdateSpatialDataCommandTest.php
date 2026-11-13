@@ -26,11 +26,6 @@ class UpdateSpatialDataCommandTest extends TestCase
             mkdir($this->dataDir, 0755, true);
         }
         config(['freegle.spatial_data_dir' => $this->dataDir]);
-        // Pin the admin URL the reload signal targets so the test is deterministic
-        // regardless of the container's SPATIAL_KNN_URL env (from which
-        // spatial_admin_url is otherwise derived). The Http::fake() stubs and the
-        // reload-URL assertion below both expect localhost:8195.
-        config(['freegle.spatial_admin_url' => 'http://localhost:8195']);
     }
 
     protected function tearDown(): void
@@ -54,7 +49,7 @@ class UpdateSpatialDataCommandTest extends TestCase
             ->expectsOutputToContain('no changes will be made')
             ->expectsOutputToContain('Would download: https://')
             ->expectsOutputToContain('Would run: DeprivationDataService')
-            ->expectsOutputToContain('Would signal: http://')
+            ->doesntExpectOutputToContain('Would signal')
             ->assertExitCode(0);
     }
 
@@ -268,19 +263,18 @@ class UpdateSpatialDataCommandTest extends TestCase
     }
 
     /**
-     * Test reload signal is sent after successful update.
+     * The routing server has no reload endpoint (monit restarts it when the PBF changes),
+     * so a successful run makes no reload call, which used to fail every run with a 404.
      */
-    public function test_sends_reload_signal_to_server(): void
+    public function test_makes_no_reload_call(): void
     {
         Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
 
         $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('Spatial data update complete')
             ->assertExitCode(0);
 
-        Http::assertSent(function ($request) {
-            return $request->url() === 'http://localhost:8195/v1/reload' &&
-                $request->method() === 'POST';
-        });
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/v1/reload'));
     }
 
     /**
@@ -325,7 +319,7 @@ class UpdateSpatialDataCommandTest extends TestCase
 
     /**
      * Build Http::fake() responses that stub the OSM download, all DeprivationDataService
-     * external calls, and the reload signal — returning the given CSV content from
+     * external calls — returning the given CSV content from
      * a combined IMD+geometry response that produces exactly those rows.
      *
      * Rather than constructing realistic multi-page ArcGIS payloads, we stub the
@@ -362,7 +356,6 @@ class UpdateSpatialDataCommandTest extends TestCase
             'https://download.geofabrik.de/europe/ireland-and-northern-ireland-latest.osm.pbf' => Http::response($pbf, 200),
             'https://download.geofabrik.de/europe/isle-of-man-latest.osm.pbf' => Http::response($pbf, 200),
             'https://download.geofabrik.de/europe/guernsey-jersey-latest.osm.pbf' => Http::response($pbf, 200),
-            'http://localhost:8195/v1/reload' => Http::response(['status' => 'ok'], 200),
         ];
     }
 

@@ -54,7 +54,6 @@ class UpdateSpatialDataCommand extends Command
     {
         $dryRun = $this->option('dry-run');
         $dataDir = config('freegle.spatial_data_dir', '/data');
-        $adminUrl = config('freegle.spatial_admin_url', 'http://localhost:8195');
 
         if ($dryRun) {
             $this->info('DRY RUN — no changes will be made.');
@@ -75,14 +74,9 @@ class UpdateSpatialDataCommand extends Command
                 $this->info("  Written to: {$csvPath}");
             }
 
-            // Step 3: Signal Go spatial server to reload
-            $this->info('Step 3: Signaling spatial server to reload...');
-            if (!$dryRun) {
-                $this->signalServerReload($adminUrl);
-                $this->info('  Reload signal sent');
-            } else {
-                $this->info("  [DRY RUN] Would signal: {$adminUrl}/v1/reload");
-            }
+            // No reload call: the routing server has no reload endpoint. monit's spatial-pbf
+            // check restarts it when uk-latest.osm.pbf changes, and the restart reads both
+            // files.
 
             $this->newLine();
             $this->info('Spatial data update complete.');
@@ -435,28 +429,6 @@ class UpdateSpatialDataCommand extends Command
             ];
         } finally {
             fclose($handle);
-        }
-    }
-
-    /**
-     * Signal the Go spatial server to reload data via HTTP POST.
-     */
-    private function signalServerReload(string $adminUrl): void
-    {
-        try {
-            $url = rtrim($adminUrl, '/') . '/v1/reload';
-
-            $response = Http::timeout(10)
-                ->withOptions(['verify' => false])
-                ->post($url);
-
-            if (!$response->successful()) {
-                throw new RuntimeException("Reload signal failed: HTTP {$response->status()}");
-            }
-
-            Log::info('Spatial server reload signal sent', ['url' => $url]);
-        } catch (\Exception $e) {
-            throw new RuntimeException("Failed to signal server reload: {$e->getMessage()}");
         }
     }
 
