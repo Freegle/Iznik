@@ -922,7 +922,10 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					}
 				}
 
-				if message.Fromuser != myid {
+				// A post whose author row has gone has Fromuser 0, which is nobody, and an anonymous
+				// viewer is also 0: only a logged-in viewer can be the owner.
+				isOwner := myid > 0 && message.Fromuser == myid
+				if !isOwner {
 					// Privacy: a non-owner viewer shouldn't see *other people's*
 					// promise rows. But they CAN see their own row if they're a
 					// promisee — that row records terms they are themselves a
@@ -1072,14 +1075,14 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 
 				// Precise location only for mods and message owner.
 				// Other viewers get blurred lat/lng (handled elsewhere).
-				if message.Fromuser == myid || isModForMessage(db, myid, message.ID) {
+				if isOwner || isModForMessage(db, myid, message.ID) {
 					message.Location = loc
 				}
 
 				// Bulk-offer catalogue: group the (now path-resolved) attachments by
 				// item and attach per-item interest. The full per-user interest list
 				// is only visible to the offerer or a moderator.
-				canSeeInterest := message.Fromuser == myid || isGroupMod
+				canSeeInterest := isOwner || isGroupMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 				message.Bulkcount = len(message.BulkItems)
 				if message.Bulkcount > 0 {
@@ -1661,7 +1664,9 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				} else {
 					tx = tx.Joins("LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id")
 				}
-				tx = tx.Where(whereTail, id, utils.OFFER, utils.WANTED)
+				// Pending, Rejected and Spam copies are moderation state, not public posts.
+				tx = tx.Where(whereTail, id, utils.OFFER, utils.WANTED).
+					Where("messages_groups.collection = ?", utils.COLLECTION_APPROVED)
 				if active {
 					tx = tx.Having("hasoutcome = 0")
 				}
@@ -3947,6 +3952,8 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	//     that group only.
 	//   - no groupid (the owner withdrawing their own message): ALL groups
 	//     the message is on — a withdrawal is global to the poster.
+	//   - a moderator who is not the poster acts on the communities they moderate only, so a
+	//     moderator of a rippled copy cannot take the post off its home community.
 	var groupids []uint64
 	if !isOwner {
 		// A moderator acts only on communities they moderate.
@@ -6038,9 +6045,11 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 		logMessageReceived(db, req.Groupid, myid, newMsgID)
 	}
 
-	// Link attachments.
-	for _, attID := range req.Attachments {
-		db.Table("messages_attachments").Where("id = ?", attID).Update("msgid", newMsgID)
+	// Link attachments. Only unattached photos can be linked: another post's photo stays where it is.
+	if len(req.Attachments) > 0 {
+		for _, attID := range linkableAttachments(db, newMsgID, req.Attachments) {
+			db.Table("messages_attachments").Where("id = ?", attID).Update("msgid", newMsgID)
+		}
 	}
 
 	// Create item record.
@@ -7259,6 +7268,13 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
+	// Must be mod of the source group (i.e. a group the message is currently on). The copies on
+	// the communities the moderator runs are the ones that move; the others stay as they are.
+	sourceGroups, err := resolveAuthorizedGroups(myid, 0, getAllGroupsForMessage(db, req.ID))
+	if err != nil {
+		return err
+	}
+
 	// Must also be mod of the target group.
 	if !user.IsModOfGroup(myid, *req.Groupid) {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator on the target group")
@@ -7266,13 +7282,13 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// Use a transaction to ensure DELETE + INSERT are atomic.
 	// Without this, a failure after DELETE would orphan the message.
-	err := db.Transaction(func(tx *gorm.DB) error {
+	err = db.Transaction(func(tx *gorm.DB) error {
 		// Runs on tx (a *gorm.DB
 		// transaction), which the retired harness's dry-run build function
 		// rendered identically to the plain connection - same reasoning as
 		// the retired orm_wave2_pilot_test.go's handleMerge note (removed in
 		// d22ba1d6c).
-		result := tx.Table("messages_groups").Where("msgid = ?", req.ID).Delete(nil)
+		result := tx.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, sourceGroups).Delete(nil)
 		if result.Error != nil {
 			return result.Error
 		}

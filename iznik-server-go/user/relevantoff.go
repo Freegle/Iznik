@@ -14,7 +14,7 @@ import (
 // unsubscribe. It is authenticated by the user's auto-login Link key (the same
 // key mechanism as the login/forget links) so it works with no session: as a
 // one-click List-Unsubscribe (RFC 8058 POST) from Gmail/Yahoo, and as a plain
-// footer link (GET) the recipient can click in a browser.
+// footer link (GET) the recipient can click in a browser. POST applies it; GET only asks.
 //
 // @Router /user/relevantoff [get]
 // @Summary Turn off matched-posts suggestion emails (relevantallowed=0)
@@ -47,19 +47,20 @@ func RelevantOff(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Invalid key")
 	}
 
-	db.Table("users").Where("id = ?", uid).Update("relevantallowed", gorm.Expr("0"))
-
-	// One-click (POST from a mail client) wants a 200; a browser click (GET)
-	// gets a friendly confirmation page.
+	// A GET changes nothing: link scanners and mail proxies follow the footer link with nobody
+	// having clicked, so the page asks first and its form POSTs back here to apply it.
 	if c.Method() == fiber.MethodGet {
 		c.Set("Content-Type", "text/html; charset=utf-8")
-		return c.SendString(
-			"<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
-				"<title>Unsubscribed</title></head>" +
-				"<body style=\"font-family:sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;color:#333\">" +
-				"<h2 style=\"color:#338808\">Done</h2>" +
-				"<p>You won't receive any more suggestion emails from Freegle about posts matching what you've offered or asked for.</p>" +
-				"<p>You can turn them back on any time in your Freegle settings.</p></body></html>")
+		return c.SendString(confirmPage(uid, key, UnsubRelevant))
 	}
+
+	db.Table("users").Where("id = ?", uid).Update("relevantallowed", gorm.Expr("0"))
+
+	// A mail client's one-click POST wants a 200; our own confirm form gets a page saying it worked.
+	if c.FormValue("confirm") != "" {
+		c.Set("Content-Type", "text/html; charset=utf-8")
+		return c.SendString(donePage(UnsubRelevant))
+	}
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
