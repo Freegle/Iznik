@@ -905,7 +905,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stsrid_semantics_setter_relabels_without_moving_coordinates(): void
     {
-        // DoogalService::fixSpatialIndex() relies on exactly this: ST_SRID's
+        // PostcodeDirectoryService::fixSpatialIndex() relies on exactly this: ST_SRID's
         // 2-arg setter form must NOT move the point, only relabel it.
         $geom = new StGeomFromText(Value::of('POINT(5 5)'), 0);
         $sql = (new StAsText(new StSrid($geom, 3857)))->getValue($this->grammar);

@@ -112,6 +112,11 @@ class DemergeUserCommand extends Command
             $backupUserId = $backupEmail->userid;
             $fromBackupUserId = $fromBackupEmail->userid;
 
+            if ($backupUserId === $fromBackupUserId) {
+                $this->error("Both emails belong to backup user #{$backupUserId}; there is no merge to undo.");
+                return self::FAILURE;
+            }
+
             $this->info("Demerging backup user #{$backupUserId} from #{$fromBackupUserId}...");
 
             $totalDeleted = 0;

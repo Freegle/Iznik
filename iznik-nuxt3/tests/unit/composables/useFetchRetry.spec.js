@@ -624,4 +624,95 @@ describe('useFetchRetry', () => {
       expect(settled).toEqual([200, { ok: true }])
     })
   })
+
+  describe('creating requests', () => {
+    // PUT /message/submit creates and posts a message in one call. The server has no way to
+    // recognise a repeat, so if it committed the post and the reply was lost, a retry would make a
+    // second post. The rule: a create is sent once and fails to the caller; the only retry is a 429,
+    // where the server cannot have acted.
+    const CREATE_URL = 'http://test.com/apiv2/message/submit'
+    const createInit = {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }
+
+    it('sends a message create once and rejects when the reply is lost', async () => {
+      mockFetch
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce({ id: 1 }),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch(CREATE_URL, createInit)
+      const outcome = promise.then(
+        () => 'resolved',
+        () => 'rejected'
+      )
+
+      await vi.advanceTimersByTimeAsync(30000)
+      vi.useRealTimers()
+
+      expect(await outcome).toBe('rejected')
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('sends a message create once and rejects on a server error', async () => {
+      mockFetch.mockResolvedValue({ status: 502, statusText: 'Bad Gateway' })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const outcome = retryFetch(CREATE_URL, createInit).then(
+        () => 'resolved',
+        () => 'rejected'
+      )
+
+      await vi.advanceTimersByTimeAsync(30000)
+      vi.useRealTimers()
+
+      expect(await outcome).toBe('rejected')
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('retries a message create when it was rate limited, as the server did nothing', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ status: 429, statusText: 'Too Many Requests' })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce({ id: 1 }),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch(CREATE_URL, createInit)
+      await vi.advanceTimersByTimeAsync(2500)
+      vi.useRealTimers()
+
+      expect(await promise).toEqual([200, { id: 1 }])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('still retries a lost reply on a request that is not a create', async () => {
+      mockFetch
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce({ ok: true }),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com/apiv2/message/42', {
+        method: 'GET',
+      })
+      await vi.advanceTimersByTimeAsync(5000)
+      vi.useRealTimers()
+
+      expect(await promise).toEqual([200, { ok: true }])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+    })
+  })
 })

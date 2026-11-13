@@ -19,11 +19,11 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Maintains the UK postcode rows in the `locations` table from the Doogal
- * Code-Point Open dataset (https://www.doogal.co.uk/files/postcodes.zip).
+ * Maintains the UK postcode rows in the `locations` table from the ONS Postcode
+ * Directory (ONSPD), which ONS publishes every quarter on its Open Geography portal.
  *
- * Faithful migration of V1 scripts/cli/doogal.php (+ the cron/doogal wrapper
- * that downloaded and unzipped the CSV). For each "in use" postcode it either
+ * It began as a migration of V1 scripts/cli/doogal.php, which read Doogal's copy
+ * of the same data with the same coordinates. For each "in use" postcode it either
  * refreshes the lat/lng of an existing location (when it has drifted by more
  * than 2 decimal places) or creates a new Postcode location with a spatial
  * index entry and centroid lat/lng.
@@ -34,8 +34,23 @@ use Illuminate\Support\Facades\Log;
  * ({@see PostcodeRemapService}) — the same "background cron job to save us" that
  * V1 relied on.
  */
-class DoogalService
+class PostcodeDirectoryService
 {
+    /** ArcGIS search for the ONSPD releases, newest first. */
+    private const RELEASE_SEARCH = 'https://www.arcgis.com/sharing/rest/search';
+
+    /** The download of an ArcGIS item. */
+    private const ITEM_DATA = 'https://www.arcgis.com/sharing/rest/content/items/%s/data';
+
+    /** A release's title; the user guide and the hosted table have other titles. */
+    private const RELEASE_TITLE = '/^ONS Postcode Directory \\([A-Za-z]+ \\d{4}\\)$/';
+
+    /** The whole-UK CSV inside the release zip, beside per-area copies and documents. */
+    private const UK_CSV = '#(^|/)ONSPD_[A-Z]+_\\d{4}_UK\\.csv$#';
+
+    /** ONS gives a postcode with no grid reference this latitude. */
+    private const NO_GRID_LAT = 90.0;
+
     private int $srid;
 
     public function __construct()
@@ -44,25 +59,52 @@ class DoogalService
     }
 
     /**
-     * Download the postcodes ZIP, extract it, and return the path to the CSV
-     * inside. Caller is responsible for removing the returned file (and its
-     * containing directory) when done.
+     * The download URL of the newest ONSPD release. ONS gives each release a new item
+     * on its ArcGIS portal, so the address changes every quarter.
+     */
+    public function latestReleaseUrl(): string
+    {
+        $response = Http::timeout(60)->get(self::RELEASE_SEARCH, [
+            'q' => 'title:"ONS Postcode Directory" AND owner:ONSGeography_data AND type:"CSV Collection"',
+            'sortField' => 'created',
+            'sortOrder' => 'desc',
+            'num' => 20,
+            'f' => 'json',
+        ]);
+        if (!$response->successful()) {
+            throw new \RuntimeException('ONSPD release search failed: HTTP '.$response->status());
+        }
+
+        foreach ($response->json('results') ?? [] as $item) {
+            if (preg_match(self::RELEASE_TITLE, (string) ($item['title'] ?? '')) && !empty($item['id'])) {
+                return sprintf(self::ITEM_DATA, $item['id']);
+            }
+        }
+
+        throw new \RuntimeException('No ONS Postcode Directory release found on the ArcGIS portal');
+    }
+
+    /**
+     * Download the ONSPD zip, extract the whole-UK CSV and return its path. Caller is
+     * responsible for removing the returned file (and its containing directory) when done.
      */
     public function fetchCsv(?string $url = null): string
     {
-        $url = $url ?: config('freegle.doogal.zip_url');
+        $url = $url ?: config('freegle.postcodes.zip_url') ?: $this->latestReleaseUrl();
 
-        $dir = sys_get_temp_dir().'/doogal_'.uniqid('', true);
+        $dir = sys_get_temp_dir().'/onspd_'.uniqid('', true);
         if (!mkdir($dir) && !is_dir($dir)) {
             throw new \RuntimeException("Could not create temp dir: {$dir}");
         }
 
-        $zipPath = $dir.'/postcodes.zip';
-        $response = Http::timeout(600)->get($url);
+        // About 250 MB, so straight to disk rather than through memory.
+        $zipPath = $dir.'/onspd.zip';
+        $response = Http::timeout(1800)->sink($zipPath)->get($url);
         if (!$response->successful()) {
+            @unlink($zipPath);
+            @rmdir($dir);
             throw new \RuntimeException("Failed to download {$url}: HTTP {$response->status()}");
         }
-        file_put_contents($zipPath, $response->body());
 
         $zip = new \ZipArchive();
         if ($zip->open($zipPath) !== true) {
@@ -70,24 +112,33 @@ class DoogalService
         }
         $csvName = null;
         for ($i = 0; $i < $zip->numFiles; $i++) {
-            $name = $zip->getNameIndex($i);
-            if (str_ends_with(strtolower((string) $name), '.csv')) {
+            $name = (string) $zip->getNameIndex($i);
+            if (preg_match(self::UK_CSV, $name)) {
                 $csvName = $name;
                 break;
             }
         }
         if ($csvName === null) {
             $zip->close();
-            throw new \RuntimeException("No CSV found inside {$zipPath}");
+            @unlink($zipPath);
+            throw new \RuntimeException("No ONSPD_<month>_<year>_UK.csv inside {$url}");
         }
         $zip->extractTo($dir, $csvName);
         $zip->close();
+        @unlink($zipPath);
 
-        return $dir.'/'.$csvName;
+        // Flat, so the caller removes the file and its one directory.
+        $csvPath = $dir.'/onspd.csv';
+        rename($dir.'/'.$csvName, $csvPath);
+        for ($sub = dirname($dir.'/'.$csvName); $sub !== $dir; $sub = dirname($sub)) {
+            @rmdir($sub);
+        }
+
+        return $csvPath;
     }
 
     /**
-     * Process a Code-Point/Doogal CSV, adding new postcodes and refreshing
+     * Process an ONSPD CSV, adding new postcodes and refreshing
      * changed lat/lng. Returns counts: [processed, added, updated, failed].
      *
      * @param  callable|null  $progress  fn(int $processed, int $added, int $updated)
@@ -159,6 +210,17 @@ class DoogalService
             $batch = [];
         };
 
+        // ONSPD has about 55 columns and ONS adds and renames geography codes between
+        // releases, so find the four this needs by name.
+        $header = fgetcsv($fh, escape: '');
+        $col = is_array($header) ? array_flip(array_map(fn ($h) => strtolower(trim((string) $h)), $header)) : [];
+        foreach (['pcds', 'doterm', 'lat', 'long'] as $name) {
+            if (!isset($col[$name])) {
+                fclose($fh);
+                throw new \RuntimeException("Not an ONSPD CSV: no '{$name}' column in {$csvPath}");
+            }
+        }
+
         while (($fields = fgetcsv($fh, escape: '')) !== false) {
             $processed++;
 
@@ -166,16 +228,16 @@ class DoogalService
                 ($progress)($processed, $added, $updated);
             }
 
-            // Column layout: Postcode, In Use?, Latitude, Longitude, ...
-            if (($fields[1] ?? '') !== 'Yes') {
+            // A postcode is in use until ONS gives it a termination date.
+            if (trim($fields[$col['doterm']] ?? '') !== '') {
                 continue;
             }
 
-            $pc = $fields[0] ?? '';
-            $lat = $fields[2] ?? null;
-            $lng = $fields[3] ?? null;
+            $pc = trim($fields[$col['pcds']] ?? '');
+            $lat = trim($fields[$col['lat']] ?? '');
+            $lng = trim($fields[$col['long']] ?? '');
 
-            if ($pc === '' || (!$lat && !$lng)) {
+            if ($pc === '' || $lat === '' || $lng === '' || (float) $lat > self::NO_GRID_LAT) {
                 continue;
             }
 
@@ -194,7 +256,7 @@ class DoogalService
 
         $this->fixSpatialIndex();
 
-        Log::info('DoogalService: processed postcode CSV', compact('processed', 'added', 'updated', 'failed'));
+        Log::info('PostcodeDirectoryService: processed postcode CSV', compact('processed', 'added', 'updated', 'failed'));
 
         return compact('processed', 'added', 'updated', 'failed');
     }

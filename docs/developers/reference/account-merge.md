@@ -1,8 +1,10 @@
 ---
 last_reviewed: 2026-11-12
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
+  - iznik-server-go/merge/merge.go
   - iznik-server-go/sso/relink.go
   - iznik-server-go/test/user_merge_test.go
   - iznik-batch/app/Services/ChatMergedRoomRepairService.php
@@ -12,14 +14,27 @@ covers:
 # Merging two accounts
 
 One member, two accounts. A merge moves everything from the account being discarded to the
-account being kept, then deletes the discarded one. It happens in two ways:
+account being kept, then deletes the discarded one. It happens in four ways:
 
 | Who starts it | Where | Who is recorded as doing it |
 |---|---|---|
 | A moderator or Support, in ModTools | `handleMerge` in `iznik-server-go/user/user.go` (`POST /api/user`, action `Merge`) | the moderator |
 | The member, by confirming an email address that belongs to their other account | the `key` branch of `PatchSession` in `iznik-server-go/session/session.go` | the member |
+| The member, by accepting a merge offer on the `/merge` page, where they choose which account to keep | `PostMerge` in `iznik-server-go/merge/merge.go` (`POST /api/merge`, action `Accept`; `user1` is kept, `user2` is merged into it) | the kept account |
+| The TrashNothing sync, when it finds a member's twin accounts | `HealTNDivergence` in `iznik-server-go/user/partner.go` | the kept account |
 
-Both call the same function, `MergeUsersTx` in `iznik-server-go/user/user.go`. Its first
+Admin can merge any two accounts. Support can merge any two accounts except an Admin account. A
+moderator can merge two accounts of communities they moderate, and either may be their own. A merge
+keeps the higher system role, so neither account may hold a higher system role than the person
+merging: a merge never raises anyone above the person doing it. A moderator cannot absorb a Support
+or Admin account, and Support cannot absorb an Admin account, as source or target. Two Moderator
+accounts may be merged. Logins, emails and memberships move across, which is why
+the system role is the limit.
+The same rules apply when a moderator offers a merge (`CreateMerge`, `PUT /api/merge`), because
+accepting the offer merges the accounts. `MayMergeAccounts` in `iznik-server-go/user/user.go`
+holds them for both paths.
+
+All four call the same function, `MergeUsersTx` in `iznik-server-go/user/user.go`. Its first
 argument is the account to discard and its second the account to keep. V1 had a single
 `User::merge()`, and `MergeUsersTx` is its port. **Do not write a second merge path.** The Go
 API had a cut-down one for the email-verify case until October 2026, and it is how chats went

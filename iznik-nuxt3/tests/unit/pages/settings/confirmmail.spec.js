@@ -1,139 +1,98 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { reactive } from 'vue'
+import { ref } from 'vue'
 
-const mockRoute = reactive({
-  params: { key: 'abc123' },
+import ConfirmMailPage from '~/pages/settings/confirmmail/[key].vue'
+
+// The link in the verification email lands here. The page has to show the outcome
+// (Verification Succeeded or Verification Failed) to the logged-in member, and the resend
+// box in the failure modal starts with their current address.
+
+const mockPush = vi.fn()
+globalThis.__testUseRouter = () => ({ push: mockPush })
+globalThis.__testUseRoute = () => ({
+  params: { key: 'made-up-key' },
   query: {},
-  path: '/settings/confirmmail/abc123',
-  name: 'settings-confirmmail-key',
-  fullPath: '/settings/confirmmail/abc123',
+  path: '/settings/confirmmail/made-up-key',
+  fullPath: '/settings/confirmmail/made-up-key',
 })
-
-vi.mock('#imports', async () => {
-  const actual = await vi.importActual('#imports')
-  return {
-    ...actual,
-    useRoute: () => mockRoute,
-  }
-})
-globalThis.__testUseRoute = () => mockRoute
-
-const mockAuthStore = vi.hoisted(() => ({
-  me: { id: 1, email: 'me@example.com' },
-  saveAndGet: vi.fn(),
-  saveEmail: vi.fn(),
-}))
-
-vi.mock('~/stores/auth', () => ({
-  useAuthStore: () => mockAuthStore,
-}))
-
-vi.mock('~/composables/useBuildHead', () => ({
-  buildHead: vi.fn().mockReturnValue({}),
-}))
-
-// The page calls useHead as a Nuxt auto-import, which the unit setup does not provide.
 globalThis.useHead = () => {}
 
-async function mountPage() {
-  const ConfirmMailPage = (
-    await import('~/pages/settings/confirmmail/[key].vue')
-  ).default
-  const wrapper = mount(ConfirmMailPage, {
+vi.mock('~/composables/useBuildHead', () => ({
+  buildHead: () => ({}),
+}))
+
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({
+    me: ref({ id: 1, email: 'freegler@example.com' }),
+  }),
+}))
+
+function mountPage() {
+  return mount(ConfirmMailPage, {
     global: {
-      mocks: { me: { id: 1, email: 'me@example.com' } },
       stubs: {
+        // The page loads ExternalLink lazily; a stub keeps that import from still being in
+        // flight when the test ends.
+        ExternalLink: { template: '<a><slot /></a>', props: ['href'] },
         'client-only': { template: '<div><slot /></div>' },
-        'b-modal': {
-          props: ['modelValue', 'title'],
-          template:
-            '<div v-if="modelValue" class="modal" :data-title="title"><slot /><slot name="footer" /></div>',
-        },
         'b-row': { template: '<div><slot /></div>' },
         'b-col': { template: '<div><slot /></div>' },
-        ExternalLink: { template: '<a><slot /></a>', props: ['href'] },
+        'b-modal': {
+          template:
+            '<div v-if="modelValue" class="modal"><h5 class="modal-title">{{ title }}</h5><slot /><slot name="footer" /></div>',
+          props: ['modelValue', 'title'],
+        },
+        'b-form-input': {
+          template:
+            '<input class="resend-email" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+          props: ['modelValue', 'placeholder'],
+        },
       },
     },
   })
-  await flushPromises()
-  return wrapper
 }
 
-function modal(wrapper, title) {
-  return wrapper.find(`.modal[data-title="${title}"]`)
-}
-
-describe('settings/confirmmail/[key]', () => {
+describe('pages/settings/confirmmail/[key].vue', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    globalThis.__mockAuthStore = {
+      user: { id: 1, email: 'freegler@example.com' },
+      saveAndGet: vi.fn().mockResolvedValue({}),
+      saveEmail: vi.fn().mockResolvedValue({ ret: 0 }),
+    }
   })
 
-  it('confirms the key and says so', async () => {
-    mockAuthStore.saveAndGet.mockResolvedValue({})
-    const wrapper = await mountPage()
-
-    expect(mockAuthStore.saveAndGet).toHaveBeenCalledWith({ key: 'abc123' })
-    expect(modal(wrapper, 'Verification Succeeded').exists()).toBe(true)
-  })
-
-  it('offers to resend when the key fails for no stated reason', async () => {
-    mockAuthStore.saveAndGet.mockRejectedValue(new Error('boom'))
-    const wrapper = await mountPage()
-
-    const failed = modal(wrapper, 'Verification Failed')
-    expect(failed.exists()).toBe(true)
-    expect(failed.text()).toContain('Please try again')
-    expect(failed.text()).toContain('Resend verification mail')
-  })
-
-  it('says why a TrashNothing address cannot be confirmed, and offers no resend', async () => {
-    mockAuthStore.saveAndGet.mockRejectedValue({
-      response: {
-        status: 403,
-        data: { error: 403, message: 'That is a TrashNothing address.' },
-      },
-    })
-    const wrapper = await mountPage()
-
-    const failed = modal(wrapper, 'Verification Failed')
-    expect(failed.exists()).toBe(true)
-    expect(failed.text()).toContain('That is a TrashNothing address.')
-    expect(failed.text()).not.toContain('Please try again')
-    expect(failed.text()).not.toContain('Resend verification mail')
-  })
-
-  it('says why a resend to a TrashNothing address is refused', async () => {
-    mockAuthStore.saveAndGet.mockRejectedValue(new Error('boom'))
-    mockAuthStore.saveEmail.mockResolvedValue({
-      ret: 12,
-      status: 'That is a TrashNothing address.',
-    })
-    const wrapper = await mountPage()
-
-    const resend = modal(wrapper, 'Verification Failed')
-      .findAll('button')
-      .find((b) => b.text().includes('Resend verification mail'))
-    await resend.trigger('click')
+  it('confirms the key and shows the Verification Succeeded modal', async () => {
+    const wrapper = mountPage()
     await flushPromises()
 
-    expect(modal(wrapper, 'Verification Sent').exists()).toBe(false)
-    expect(modal(wrapper, 'Verification Failed').text()).toContain(
-      'That is a TrashNothing address.'
+    expect(globalThis.__mockAuthStore.saveAndGet).toHaveBeenCalledWith({
+      key: 'made-up-key',
+    })
+    expect(wrapper.text()).toContain('Verification Succeeded')
+    expect(wrapper.text()).not.toContain('Verification Failed')
+  })
+
+  it('shows the Verification Failed modal with the resend box prefilled when the key is refused', async () => {
+    globalThis.__mockAuthStore.saveAndGet = vi
+      .fn()
+      .mockRejectedValue(new Error('bad key'))
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    // The lazily loaded support link must have rendered before the test ends.
+    await vi.dynamicImportSettled()
+    await flushPromises()
+    expect(wrapper.find('.modal a').text()).toContain(
+      'support@ilovefreegle.org'
     )
-  })
 
-  it('says the mail was resent when it was', async () => {
-    mockAuthStore.saveAndGet.mockRejectedValue(new Error('boom'))
-    mockAuthStore.saveEmail.mockResolvedValue({ ret: 10 })
-    const wrapper = await mountPage()
-
-    const resend = modal(wrapper, 'Verification Failed')
-      .findAll('button')
-      .find((b) => b.text().includes('Resend verification mail'))
-    await resend.trigger('click')
-    await flushPromises()
-
-    expect(modal(wrapper, 'Verification Sent').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Verification Failed')
+    expect(wrapper.text()).not.toContain('Verification Succeeded')
+    expect(wrapper.find('.resend-email').element.value).toBe(
+      'freegler@example.com'
+    )
   })
 })

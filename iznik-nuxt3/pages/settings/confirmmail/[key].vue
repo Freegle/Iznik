@@ -112,6 +112,7 @@
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { buildHead } from '~/composables/useBuildHead'
+import { useMe } from '~/composables/useMe'
 import { useRoute, useRouter } from '#imports'
 
 const ExternalLink = defineAsyncComponent(
@@ -137,6 +138,7 @@ useHead(
 )
 
 const authStore = useAuthStore()
+const { me } = useMe()
 
 // State
 const succeeded = ref(false)
@@ -165,7 +167,7 @@ const resend = async () => {
 }
 
 onMounted(async () => {
-  email.value = authStore.me?.email
+  email.value = me.value?.email
 
   try {
     await authStore.saveAndGet({

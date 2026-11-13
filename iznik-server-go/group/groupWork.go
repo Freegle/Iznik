@@ -467,6 +467,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 				"INNER JOIN chat_rooms cr ON cr.id = cm.chatid "+
 				"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id "+
 				"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? "+
+				"AND COALESCE(cr.user1, 0) <> ? AND COALESCE(cr.user2, 0) <> ? "+
 				"AND ("+
 				"  EXISTS (SELECT 1 FROM memberships m3 INNER JOIN `groups` g3 ON m3.groupid = g3.id AND g3.type = 'Freegle' "+
 				"   WHERE m3.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) AND m3.groupid IN ?) "+
@@ -475,7 +476,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 				"   AND EXISTS (SELECT 1 FROM memberships m5 INNER JOIN `groups` g5 ON m5.groupid = g5.id AND g5.type = 'Freegle' "+
 				"   WHERE m5.userid = cm.userid AND m5.groupid IN ?))"+
 				")) sub",
-				groupIDs, groupIDs, chatCutoff, groupIDs, groupIDs).
+				groupIDs, groupIDs, chatCutoff, myid, myid, groupIDs, groupIDs).
 				Select("groupid, COUNT(*) as count, held").
 				Where("groupid IS NOT NULL").
 				Group("groupid, held").
@@ -520,8 +521,8 @@ func GetGroupWork(c *fiber.Ctx) error {
 				Joins("LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id").
 				Joins("INNER JOIN memberships m1 ON m1.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END)").
 				Joins("INNER JOIN `groups` g ON m1.groupid = g.id AND g.type = 'Freegle'").
-				Where("cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 AND cmh.id IS NULL AND (cm.reportreason IS NULL OR cm.reportreason != 'User')",
-					chatCutoff).
+				Where("cm.reviewrequired = 1 AND cm.reviewrejected = 0 AND cm.date >= ? AND JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 AND cmh.id IS NULL AND (cm.reportreason IS NULL OR cm.reportreason != 'User') AND COALESCE(cr.user1, 0) <> ? AND COALESCE(cr.user2, 0) <> ?",
+					chatCutoff, myid, myid).
 				Group("m1.groupid").
 				Scan(&widerRows)
 

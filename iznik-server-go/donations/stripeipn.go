@@ -3,6 +3,7 @@ package donations
 import (
 	"encoding/json"
 	"log"
+	"os"
 	"strconv"
 	"time"
 
@@ -10,7 +11,42 @@ import (
 	"github.com/gofiber/fiber/v2"
 	stripe "github.com/stripe/stripe-go/v82"
 	stripecustomer "github.com/stripe/stripe-go/v82/customer"
+	"github.com/stripe/stripe-go/v82/webhook"
 )
+
+// stripeWebhookSecrets returns the signing secrets of the Stripe webhook endpoints, live then test.
+// Each endpoint in the Stripe dashboard has its own secret.
+func stripeWebhookSecrets() []string {
+	var secrets []string
+
+	for _, name := range []string{"STRIPE_WEBHOOK_SECRET", "STRIPE_WEBHOOK_SECRET_TEST"} {
+		if v := os.Getenv(name); v != "" {
+			secrets = append(secrets, v)
+		}
+	}
+
+	return secrets
+}
+
+// stripeSignatureValid checks the Stripe-Signature header against the body. When no signing secret is
+// configured it accepts the request, so the webhook works as it always has until a secret is set. When one
+// is configured, a missing, wrong or stale signature is refused.
+func stripeSignatureValid(body []byte, header string) bool {
+	secrets := stripeWebhookSecrets()
+
+	if len(secrets) == 0 {
+		return true
+	}
+
+	for _, secret := range secrets {
+		if _, err := webhook.ConstructEventWithOptions(body, header, secret,
+			webhook.ConstructEventOptions{IgnoreAPIVersionMismatch: true}); err == nil {
+			return true
+		}
+	}
+
+	return false
+}
 
 // MANUAL_THANKS is the minimum one-off donation amount (GBP) that triggers a thank-you request.
 // Must match Donations::MANUAL_THANKS in the legacy V1 PHP implementation.
@@ -30,6 +66,12 @@ const MANUAL_THANKS = 20.0
 func StripeIPN(c *fiber.Ctx) error {
 	body := c.Body()
 	log.Printf("[StripeIPN] Received webhook, body length %d", len(body))
+
+	// With a signing secret configured, only an event Stripe signed is acted on.
+	if !stripeSignatureValid(body, c.Get("Stripe-Signature")) {
+		log.Printf("[StripeIPN] Refused: missing or invalid signature")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid signature"})
+	}
 
 	// Parse the event JSON.
 	var event stripe.Event

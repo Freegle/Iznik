@@ -109,6 +109,91 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertCount(1, $toRecipient);
     }
 
+    public function test_notify_by_email_does_not_mail_the_duplicate_row_on_a_later_pass(): void
+    {
+        // The notifier runs again about a second after each pass. The duplicate row that
+        // was collapsed away in the first pass must not be picked up by the second and
+        // mailed as a new message: one send is one email, however many passes it takes.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $sender->id,
+            'lastmsgemailed' => null,
+        ]);
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $recipient->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Are these still available?',
+            'date' => now()->subMinutes(5),
+        ]);
+        $duplicate = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Are these still available?',
+            'date' => now()->subMinutes(5)->addSecond(),
+        ]);
+
+        // Processing has moved the sender's own roster row past both rows, as it does for every
+        // message they send, so the kept row is marked mailed to all once the recipient has it.
+        ChatRoster::where('chatid', $room->id)->where('userid', $sender->id)
+            ->update(['lastmsgemailed' => $duplicate->id]);
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        $toRecipient = Mail::sent(ChatNotification::class)->filter(
+            fn (ChatNotification $mail) => $mail->hasTo($recipient->email_preferred)
+        );
+        $this->assertCount(1, $toRecipient);
+    }
+
+    public function test_notify_by_email_mails_a_genuine_repeat_sent_minutes_later(): void
+    {
+        // Only rows seconds apart are one send. A member who sends the same short reply
+        // ("Yes") twice, minutes apart, has sent two messages and the recipient is told of both.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $sender->id,
+            'lastmsgemailed' => null,
+        ]);
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $recipient->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Yes',
+            'date' => now()->subMinutes(20),
+        ]);
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Yes',
+            'date' => now()->subMinutes(10),
+        ]);
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        $toRecipient = Mail::sent(ChatNotification::class)->filter(
+            fn (ChatNotification $mail) => $mail->hasTo($recipient->email_preferred)
+        );
+        $this->assertCount(2, $toRecipient);
+    }
+
     public function test_notify_by_email_with_specific_chat(): void
     {
         $sender = $this->createTestUser();
@@ -1373,6 +1458,62 @@ class ChatNotificationServiceTest extends TestCase
         if ($modARoster) {
             $this->assertNull($modARoster->lastmsgemailed, 'Mod A (sender) should NOT have been notified');
         }
+    }
+
+    public function test_notify_by_email_user2mod_mod_message_to_other_mod_is_from_the_author_not_the_member(): void
+    {
+        $member = $this->createTestUser(['fullname' => 'Alice Member']);
+        $group = $this->createTestGroup();
+
+        $modA = $this->createTestUser(['fullname' => 'Mod A (author)']);
+        $modB = $this->createTestUser(['fullname' => 'Mod B (recipient)']);
+
+        foreach ([$modA, $modB] as $mod) {
+            Membership::create([
+                'userid' => $mod->id,
+                'groupid' => $group->id,
+                'role' => Membership::ROLE_MODERATOR,
+                'added' => now(),
+                'settings' => null,
+            ]);
+        }
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id,
+            'groupid' => $group->id,
+            'created' => now(),
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $member->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        $this->createTestChatMessage($room, $modA, [
+            'date' => now()->subMinutes(5),
+            'message' => 'Hello from Mod A',
+        ]);
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id);
+
+        // Mod B reads Mod A's words, so the mail is from the author and from the volunteers, not from the member.
+        Mail::assertSent(ChatNotification::class, function ($mail) use ($modA, $modB, $member) {
+            if ($mail->recipient->id !== $modB->id) {
+                return false;
+            }
+
+            $this->assertSame($modA->id, $mail->sender->id, 'Sender is the message author, not the member');
+            $this->assertNotSame($member->id, $mail->sender->id);
+
+            $fromName = $mail->envelope()->from->name;
+            $this->assertStringNotContainsString('via', $fromName);
+            $this->assertStringContainsString('Volunteers', $fromName);
+
+            return true;
+        });
     }
 
     public function test_notify_by_email_user2mod_active_mod_reply_notifies_other_active_not_backup(): void

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - paf-extractor/server.mjs
@@ -72,7 +72,9 @@ reach the sidecar. An import of the latest records the date it took in
 
 Lines whose postcode is not yet in `locations` are not applied. They show as **Waiting**,
 and are offered again with the next release, by which time the postcode refresh has usually
-added them.
+added them. That refresh is `locations:update-postcodes`, nightly: it reads the newest ONS
+Postcode Directory, which ONS publishes every three months. PAF carries no coordinates, so it
+cannot stand in for it.
 
 Addresses that have left PAF are not deleted: user addresses point at `paf_addresses` rows.
 

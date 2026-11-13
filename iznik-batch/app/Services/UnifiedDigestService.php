@@ -32,6 +32,7 @@ use App\Models\UserDigest;
 use App\Services\Ripple\DigestPostScorer;
 use App\Services\Ripple\DistancePreferenceFilter;
 use App\Services\Ripple\RingIndex;
+use App\Services\Ripple\RoutingRetryableException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -677,7 +678,7 @@ class UnifiedDigestService
      */
     public function sendReachDigests(?int $limit = null, bool $dryRun = false, int $shard = 0, int $shards = 1, ?callable $shouldStop = null): array
     {
-        $stats = ['posts_processed' => 0, 'members_processed' => 0, 'emails_sent' => 0, 'errors' => 0];
+        $stats = ['posts_processed' => 0, 'members_processed' => 0, 'emails_sent' => 0, 'errors' => 0, 'retryable' => 0];
 
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             return $stats;
@@ -739,10 +740,13 @@ class UnifiedDigestService
                 break;
             }
             try {
-                $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun);
+                $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, null, true);
                 $stats['posts_processed']++;
             } catch (\Throwable $e) {
                 $stats['errors']++;
+                if ($e instanceof RoutingRetryableException) {
+                    $stats['retryable']++;
+                }
                 Log::warning('reach-mail: failed for post', ['msgid' => $msgid, 'error' => $e->getMessage()]);
             }
         }
@@ -750,12 +754,34 @@ class UnifiedDigestService
         // The other direction: members whose eligibility changed since the last pass.
         $this->drainMemberQueue($stats, $dryRun, $shard, $shards, $shouldStop);
 
-        // Advance only after a complete, clean, real pass. A dry run must leave the mark where
-        // it is or the next real pass skips what it previewed; a pass stopped early or with a
-        // failed post must too, so the next pass re-examines from the old mark. Re-examining is
-        // free of side effects (the ledger dedupes); a post silently dropped is not.
-        if (! $dryRun && $stats['errors'] === 0 && empty($stats['stopped'])) {
-            $this->setReachMailMark($shard, $passStart);
+        // Advance after a complete, real pass. A dry run must leave the mark where it is or the next
+        // real pass skips what it previewed, and a pass stopped early must too. The only failure
+        // that holds the mark is routing being unreachable or returning a retryable error: asking
+        // again may work, and re-examining is free of side effects (the ledger dedupes). A post that
+        // failed for any other reason is logged and not retried, because it would fail the same way
+        // and each held pass re-reads the whole window.
+        if (! $dryRun && empty($stats['stopped'])) {
+            if ($stats['retryable'] === 0) {
+                $this->setReachMailMark($shard, $passStart);
+                $this->clearReachMailHold($shard);
+            } else {
+                // The hold is timed from the first pass that routing failed, not from the age of the
+                // mark, so a blip after a quiet spell is still given the full window.
+                $heldSince = $this->reachMailHoldSince($shard) ?? $passStart;
+                if ($heldSince->lt(now()->subMinutes(self::REACH_MARK_MAX_HOLD_MINUTES))) {
+                    // Routing has been failing for longer than the hold allows. Let the mark move on
+                    // so the re-read does not keep growing; this is the one error line for the outage.
+                    Log::error('reach-mail: routing still failing after the hold window, giving up on the posts it failed for', [
+                        'shard' => $shard,
+                        'retryable_failures' => $stats['retryable'],
+                        'held_minutes' => self::REACH_MARK_MAX_HOLD_MINUTES,
+                    ]);
+                    $this->setReachMailMark($shard, $passStart);
+                    $this->clearReachMailHold($shard);
+                } else {
+                    $this->setReachMailHoldSince($shard, $heldSince);
+                }
+            }
         }
 
         return $stats;
@@ -784,7 +810,9 @@ class UnifiedDigestService
     {
         $srid = (int) config('freegle.srid', 3857);
 
-        $pending = DB::table('rippling_reach_member_pending')->orderBy('id');
+        // Oldest-queued first. A row that fails for its own reasons is moved to the back (its
+        // `added` is set to now), so it cannot sit at the head and starve the rows behind it.
+        $pending = DB::table('rippling_reach_member_pending')->orderBy('added')->orderBy('id');
         if ($shards > 1) {
             $pending->whereRaw('MOD(userid, ?) = ?', [$shards, $shard]);
         }
@@ -826,7 +854,7 @@ class UnifiedDigestService
                     $ringAdmitted = RingIndex::admittedFor($lat, $lng, RingIndex::lanesFor(is_string($band) ? $band : null));
 
                     foreach (array_unique(array_merge($candidates, $ringAdmitted)) as $msgid) {
-                        $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, (int) $row->userid);
+                        $stats['emails_sent'] += $this->mailNewlyReachedForPost((int) $msgid, $dryRun, (int) $row->userid, true);
                     }
                 }
 
@@ -837,6 +865,17 @@ class UnifiedDigestService
             } catch (\Throwable $e) {
                 $stats['errors']++;
                 Log::warning('reach-mail: failed for queued member', ['userid' => $row->userid, 'error' => $e->getMessage()]);
+
+                if ($e instanceof RoutingRetryableException) {
+                    // Routing is down for everyone: the rest would each wait out the timeout too.
+                    // The row stays at the head, which is right, as every row is waiting on the same thing.
+                    $stats['retryable']++;
+                    break;
+                }
+
+                if (! $dryRun) {
+                    DB::table('rippling_reach_member_pending')->where('id', $row->id)->update(['added' => now()]);
+                }
             }
         }
     }
@@ -845,9 +884,38 @@ class UnifiedDigestService
      * Where shard N of the reach pass keeps its mark. Shards partition posts by MOD(msgid, N)
      * and run concurrently, so each has its own.
      */
+    /** The longest a routing outage may hold a shard's reach-mail mark back, in minutes, timed from the first failing pass. */
+    public const REACH_MARK_MAX_HOLD_MINUTES = 15;
+
     public static function reachMailMarkKey(int $shard): string
     {
         return "reach_mail_mark_shard{$shard}";
+    }
+
+    public static function reachMailHoldKey(int $shard): string
+    {
+        return "reach_mail_hold_since_shard{$shard}";
+    }
+
+    private function reachMailHoldSince(int $shard): ?\Illuminate\Support\Carbon
+    {
+        $raw = DB::table('config')->where('key', self::reachMailHoldKey($shard))->value('value');
+
+        return $raw ? \Illuminate\Support\Carbon::parse($raw) : null;
+    }
+
+    private function setReachMailHoldSince(int $shard, \Illuminate\Support\Carbon $at): void
+    {
+        DB::table('config')->upsert(
+            ['key' => self::reachMailHoldKey($shard), 'value' => $at->toDateTimeString()],
+            ['key'],
+            ['value']
+        );
+    }
+
+    private function clearReachMailHold(int $shard): void
+    {
+        DB::table('config')->where('key', self::reachMailHoldKey($shard))->delete();
     }
 
     private function reachMailMark(int $shard): ?\Illuminate\Support\Carbon
@@ -1069,7 +1137,12 @@ class UnifiedDigestService
         return (int) config('freegle.srid', 3857);
     }
 
-    public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false, ?int $onlyUserid = null): int
+    /**
+     * @param bool $propagateFailure When true a failure is rethrown after logging, so the reach pass and
+     *     the member queue can hold their mark and their row and try again. The default swallows it, for
+     *     callers (AutoApproveService) where the mail is best effort.
+     */
+    public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false, ?int $onlyUserid = null, bool $propagateFailure = false): int
     {
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
             return 0;
@@ -1120,8 +1193,10 @@ class UnifiedDigestService
             // the stored OUTER BOUND (a superset), and exactness lives in
             // PHP: the post's stored LABEL is evaluated at every surviving
             // candidate's point in one routing call - the reach record, with
-            // no grid fallback. No label, or routing unreachable, means
-            // nobody is newly-reached this round; the next sweep re-asks.
+            // no grid fallback. No label means nobody is newly-reached. Routing
+            // unreachable fails the check for a caller that retries (the reach
+            // pass, the member queue), so it holds its mark or row and re-asks;
+            // for the best-effort callers it means nobody this round.
             // For a union-active post the origin group's whole area is
             // admitted, so that flag rides along per candidate.
             $reachSvc = app(\App\Services\Ripple\ReachService::class);
@@ -1227,6 +1302,17 @@ class UnifiedDigestService
                     }
                 }
                 $evals = $points !== [] ? $reachSvc->reachArrivalBatch((string) $probeLabels, $currentSecs, $points) : [];
+                // Routing could not answer (it returns null rather than throwing). Reading that as
+                // "nobody is reached" would let the pass move its mark past this post for good, so
+                // a caller that retries is told, and tries again.
+                // Only an outage that may clear is worth the pass holding its mark for; a request the
+                // service rejected will fail the same way next time.
+                if ($evals === null && $propagateFailure) {
+                    $message = 'reach-arrival could not evaluate the label for post ' . $msgid;
+                    throw $reachSvc->lastArrivalFailureRetryable()
+                        ? new RoutingRetryableException($message)
+                        : new \RuntimeException($message);
+                }
                 foreach ($points as $i => $p) {
                     $labelIn[$i] = (bool) (($evals[$i]['in'] ?? false));
                 }
@@ -1276,6 +1362,9 @@ class UnifiedDigestService
             return count($this->spoolPostToRecipients($msg, $recipientIds, $recipientLatLng, $dryRun));
         } catch (\Throwable $e) {
             Log::warning('ripple: mailNewlyReachedForPost failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+            if ($propagateFailure) {
+                throw $e;
+            }
             return 0;
         }
     }
@@ -2067,10 +2156,13 @@ class UnifiedDigestService
         // ...and drop the ones whose item went out in an earlier digest. deduplicatePosts
         // collapses the copies that land in ONE digest; this is the same decision across
         // digests, which is how one item reached members on four days running (Discourse 9808).
+        // The posts the last digest left out at the cap are exempt: nothing of them was sent,
+        // and a copy behind the cursor is not evidence that it was.
         $deduplicatedPosts = $this->dropCardsAlreadyCovered(
             $deduplicatedPosts,
             $digestTracker->lastmsgdate,
-            $this->digestGroupIdsForUser($user, $mode)
+            $this->digestGroupIdsForUser($user, $mode),
+            array_map('intval', $digestTracker->carryover ?? [])
         );
 
         if ($deduplicatedPosts->isEmpty() && $pinnedCards->isEmpty()) {
@@ -2387,7 +2479,10 @@ class UnifiedDigestService
         // index, and the carryover is a primary-key lookup of at most DIGEST_POST_CAP ids.
         $window = $armFor();
         if ($tracker->lastmsgdate) {
-            $window->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
+            // messages_groups.arrival keeps microseconds but the cursor is stored in whole
+            // seconds, cut down from the newest arrival sent. Windowing on "after the cursor"
+            // would offer that newest post again, so the window starts at the next whole second.
+            $window->where('messages_groups.arrival', '>=', $tracker->lastmsgdate->copy()->addSecond());
         } else {
             $window->where('messages_groups.arrival', '>=', now()->subDay());
         }
@@ -3322,11 +3417,14 @@ class UnifiedDigestService
      * disagree about what counts as something they have already seen.
      *
      * @param Collection $cards Entries of ['message' => Message, 'postedToGroups' => int[]]
+     * @param int[] $keepMsgids Messages never dropped here: carried over because the cap left
+     *     them out, so they were not sent whatever a copy behind the cursor suggests.
      */
     public function dropCardsAlreadyCovered(
         Collection $cards,
         \DateTimeInterface|string|null $cursorMsgdate,
-        array $groupIds
+        array $groupIds,
+        array $keepMsgids = []
     ): Collection
     {
         if ($cards->isEmpty()) {
@@ -3343,7 +3441,11 @@ class UnifiedDigestService
             return $cards;
         }
 
-        return $cards->reject(fn ($card) => isset($covered[(int) $card['message']->id]))->values();
+        $keep = array_flip($keepMsgids);
+
+        return $cards->reject(
+            fn ($card) => isset($covered[(int) $card['message']->id]) && !isset($keep[(int) $card['message']->id])
+        )->values();
     }
 
     /**

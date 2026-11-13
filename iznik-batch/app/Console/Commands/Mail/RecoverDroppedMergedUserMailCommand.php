@@ -244,6 +244,7 @@ class RecoverDroppedMergedUserMailCommand extends Command
                 'reviewrequired' => 0,
                 'reviewrejected' => 0,
                 'processingrequired' => 0,
+                'processingsuccessful' => 1,
             ]);
 
             // Update chat room latestmessage

@@ -31,7 +31,8 @@ reply, you pick someone, and they collect. This guide walks through the whole th
 1. Click **Give** (`/give`), or the **+** button in the app.
 2. **Describe the item.** Give it a clear name (for example "Child's blue bicycle") and a
    short description. A description that is only numbers or symbols, like "24", does not
-   count, and the form says so. You can add one or more **photos**. On the app you can take a photo
+   count, and the form says so. With no photo of your own, the description also needs at least
+   3 characters, and the phone and app form says so before you move on. You can add one or more **photos**. On the app you can take a photo
    there and then, and Freegle can suggest a name from the picture.
    Some items get a note under the name box as you type: for a child car seat it asks you to
    say the make, model and age and that it has never been in a crash, and there are notes for
