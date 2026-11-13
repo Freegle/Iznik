@@ -213,6 +213,7 @@ class ReferToSupportTest extends TestCase
         $task = $this->task($c['task']);
         $this->assertNotNull($task->processed_at);
         $this->assertArrayNotHasKey('reason', json_decode($task->data, true));
+        $this->assertArrayNotHasKey('brief', json_decode($task->data, true));
         $this->assertSame($c['chat'], json_decode($task->data, true)['chatid']);
 
         $run = DB::table('support_ai_runs')->where('kind', 'FirstPass')->where('modid', $c['referrer']->id)->first();
@@ -698,6 +699,32 @@ class ReferToSupportTest extends TestCase
         $this->app->instance(\App\Services\EmailSpoolerService::class, $real);
         $this->runPass();
         $this->assertCount(1, $this->mailsFrom($c['referrer']));
+    }
+
+    public function test_a_pass_whose_mail_failed_is_mailed_on_the_next_run_without_asking_the_helper_again(): void
+    {
+        Mail::fake();
+        $c = $this->refer();
+        $real = app(\App\Services\EmailSpoolerService::class);
+        $spooler = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->andThrow(new \RuntimeException('spool down'));
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spooler);
+
+        $this->artisan('support:first-pass')->assertSuccessful();
+
+        $this->assertCount(1, $this->helperRequests);
+        $this->assertNull($this->task($c['task'])->processed_at);
+        $this->assertSame('The member could not find the item.', json_decode($this->task($c['task'])->data, true)['brief']['answer']);
+
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $real);
+        $this->runPass();
+
+        $this->assertCount(1, $this->helperRequests, 'the model is not spent a second time');
+        $mail = $this->mailsFrom($c['referrer'])->first();
+        $this->assertStringContainsString('The member could not find the item.', $this->textOf($mail));
+        $this->assertStringContainsString('5-hour 42% used', $this->textOf($mail));
+        $this->assertArrayNotHasKey('brief', json_decode($this->task($c['task'])->data, true));
+        $this->assertSame(1, DB::table('support_ai_runs')->where('modid', $c['referrer']->id)->count());
     }
 
     public function test_the_general_task_queue_leaves_a_referral_alone(): void

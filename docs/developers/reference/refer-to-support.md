@@ -108,8 +108,10 @@ time, until none are left or `run_minutes` (10) has passed. For each:
 
 Every referral therefore ends in exactly one mail, within about an hour whatever the helper is
 doing. The mail is built first, then the task is claimed (`processed_at`), then the mail is spooled,
-and a failure after the claim puts it back. Once the mail has gone, the moderator's reason is taken
-out of the task row, because it is free text about a member and nothing reads it again.
+and a failure after the claim puts it back. A finished brief is kept on the task until its mail has
+gone, so a mail that fails is sent by the next run without another pass. Once the mail has gone, the
+moderator's reason and the brief are taken out of the task row, because they are about a member and
+nothing reads them again.
 
 A task that names no chat or no referrer is marked failed and mails nothing. A monitoring check
 (`support:first-pass` in `ScheduledOutcomeRegistry`) breaches when a referral is still unprocessed

@@ -135,6 +135,13 @@ class SupportFirstPassCommand extends Command
 
             return false;
         }
+        // A pass that finished but whose mail did not go left its brief on the task: mail that, and
+        // do not spend the model again.
+        if (is_array($data['brief'] ?? null)) {
+            $finish($data['brief'], null);
+
+            return false;
+        }
         if (! $this->enabled()) {
             $finish(null, FirstPassService::REASON_OFF);
 
@@ -201,6 +208,10 @@ class SupportFirstPassCommand extends Command
             'sevenDay' => is_numeric($quota['sevenDay'] ?? null) ? (float) $quota['sevenDay'] : null,
         ];
         $service->storeRun($referrerId, $referral->userid, $query, $response, null, $brief);
+        // Kept on the task until the mail has gone, so a failed mail does not cost another pass.
+        $data['brief'] = $brief;
+        DB::table('background_tasks')->where('id', $task->id)
+            ->update(['data' => json_encode($data, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)]);
         $finish($brief, null);
 
         return false;
@@ -211,8 +222,8 @@ class SupportFirstPassCommand extends Command
      * task is claimed, then the mail is spooled: the claim is what decides, so it goes once, and a
      * failure after the claim puts the task back for the next run.
      *
-     * Once the mail has gone, the moderator's reason is taken out of the task row: it is free text
-     * about a member, and nothing reads it again.
+     * Once the mail has gone, the moderator's reason and the brief are taken out of the task row:
+     * they are about a member, and nothing reads them again.
      *
      * @param  array<string, mixed>  $data
      * @param  array<string, mixed>|null  $brief
@@ -232,7 +243,7 @@ class SupportFirstPassCommand extends Command
             }
             $spooler->spool($mail, $recipients);
 
-            unset($data['reason']);
+            unset($data['reason'], $data['brief']);
             DB::table('background_tasks')->where('id', $task->id)->update(['data' => json_encode($data)]);
         } catch (\Throwable $e) {
             if ($claimed) {
