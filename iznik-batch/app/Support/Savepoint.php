@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -22,10 +23,13 @@ final class Savepoint
      * @template T
      *
      * @param  callable(): T  $work
+     * @param  ConnectionInterface|null  $connection  the connection the work runs on; the default one if not given
      * @return T
      */
-    public static function around(callable $work): mixed
+    public static function around(callable $work, ?ConnectionInterface $connection = null): mixed
     {
-        return DB::transactionLevel() > 0 ? DB::transaction($work) : $work();
+        $connection ??= DB::connection();
+
+        return $connection->transactionLevel() > 0 ? $connection->transaction($work) : $work();
     }
 }

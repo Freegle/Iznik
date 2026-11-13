@@ -39,7 +39,7 @@ class EloquentUtils
                 if (!$dryRun) {
                     // A clash undoes only this row's update: under a savepoint, PostgreSQL would otherwise abort
                     // the whole outer transaction.
-                    Savepoint::around(fn () => $row->save());
+                    Savepoint::around(fn () => $row->save(), $row->getConnection());
                 }
             } catch (QueryException $e) {
                 Log::warning("Reparent conflict on {$modelClass}#{$row->getKey()} ({$column}): " . $e->getMessage());
