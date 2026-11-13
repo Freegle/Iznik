@@ -1855,7 +1855,7 @@ CREATE TABLE messages_history (
   prunedsubject varchar(1024),
   messageid varchar(255),
   repost smallint DEFAULT 0,
-  CONSTRAINT messages_history_source_check CHECK (source IN ('Yahoo Approved', 'Yahoo Pending', 'Yahoo System', 'Platform')),
+  CONSTRAINT messages_history_source_check CHECK (source IN ('Yahoo Approved', 'Yahoo Pending', 'Yahoo System', 'Platform', 'Email')),
   PRIMARY KEY (id)
 );
 
