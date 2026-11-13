@@ -43,10 +43,11 @@ test('the model cannot make us ask for a screenshot that is there', () => {
   assert.ok(!missingForBug(text, extractFacts(text, { hasImage: true }), all).wanted.includes('screenshot'))
 })
 
-test('where it happened is needed unless the text or the model has it', () => {
+test('where it happened is wanted, never needed, unless the text or the model has it', () => {
   const text = 'Clicking Approve spins for ever. https://modtools.org/x'
-  assert.ok(missingForBug(text, extractFacts(text), all).needed.includes('where'))
-  assert.ok(!missingForBug(text, extractFacts(text), { ...all, platform: true }).needed.includes('where'))
+  assert.ok(missingForBug(text, extractFacts(text), all).wanted.includes('where'))
+  assert.deepEqual(missingForBug(text, extractFacts(text), all).needed, [])
+  assert.ok(!missingForBug(text, extractFacts(text), { ...all, platform: true }).wanted.includes('where'))
 })
 
 test('a later post fills in what an earlier one lacked', () => {

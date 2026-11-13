@@ -86,8 +86,8 @@ export function mergeFacts(a, b) {
  * fact found by rule always wins over it: the model is never allowed to ask for a
  * screenshot that is sitting in the post.
  *
- * Needed, in the order they are asked for: which thing it was, what happened, how to
- * make it happen, and where (app or website). Wanted but never asked for alone: a
+ * Needed, in the order they are asked for: which thing it was, what happened, and how
+ * to make it happen. Wanted but never asked for alone: where (app or website), a
  * screenshot and when it happened. What was expected is not asked for at all: it is
  * nearly always plain from what went wrong, and asking reads as not having listened.
  *
@@ -107,8 +107,11 @@ export function missingForBug(text, facts, has) {
   if (!has.actual) needed.push('what-happened')
   if (!has.steps && !facts.errorText && !facts.hasScreenshot) needed.push('steps')
   const whereKnown = facts.platform || facts.devices.length || facts.browsers.length || has.platform
-  if (!whereKnown) needed.push('where')
 
+  // Replaying ten weeks of history, 41 of 95 questions were asked for this alone.
+  // A moderator who says what went wrong in ModTools should not be sent back to say
+  // which browser, so it is asked beside something else and never on its own.
+  if (!whereKnown) wanted.push('where')
   if (!facts.hasScreenshot && RX.visual.test(text)) wanted.push('screenshot')
   if (!facts.when && !has.when) wanted.push('when')
   return { needed, wanted }

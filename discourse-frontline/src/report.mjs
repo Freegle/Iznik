@@ -54,7 +54,7 @@ export function buildReport(db, cfg, caseId) {
 
 // The two a report is never asked for alone do not make it incomplete.
 function unknownsNeeded(unknowns) {
-  return unknowns.filter((u) => !['screenshot', 'when'].includes(u))
+  return unknowns.filter((u) => !['where', 'screenshot', 'when'].includes(u))
 }
 
 export function reportMarkdown(r) {
