@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref, reactive, nextTick } from 'vue'
+import { ref } from 'vue'
 import SupportPage from '~/modtools/pages/support/[[id]].vue'
 import { useLockdownStore } from '~/stores/lockdown'
 
@@ -136,9 +136,6 @@ describe('support/[[id]].vue page', () => {
           ModSupportLockdown: {
             template: '<div class="mod-support-lockdown" />',
           },
-          ModSupportCaseList: {
-            template: '<div class="mod-support-case-list" />',
-          },
           NoticeMessage: {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],
@@ -191,12 +188,11 @@ describe('support/[[id]].vue page', () => {
       expect(wrapper.find('.mod-support-lockdown').exists()).toBe(true)
     })
 
-    it('appends the Cases tab at the end, after Lockdown', () => {
+    it('ends with the Lockdown tab: there is no Cases tab', () => {
       const wrapper = mountComponent()
       const titles = wrapper.findAll('.b-tab').map((t) => t.text())
-      expect(titles[titles.length - 1]).toContain('Cases')
-      expect(titles[titles.length - 2]).toContain('Lockdown')
-      expect(wrapper.find('.mod-support-case-list').exists()).toBe(true)
+      expect(titles[titles.length - 1]).toContain('Lockdown')
+      expect(titles.some((t) => t.includes('Cases'))).toBe(false)
     })
 
     it('renders the Lockdown tab title in red', () => {
@@ -301,78 +297,28 @@ describe('support/[[id]].vue page', () => {
     })
   })
 
-  describe('cases tab', () => {
-    it('opens on the Cases tab for ?tab=cases', async () => {
-      mockRouteQuery.value = { tab: 'cases' }
-      const wrapper = mountComponent()
-      await flushPromises()
-      expect(wrapper.vm.activeTab).toBe(6)
-    })
-
-    // The auth store is the shared test mock, which reads globalThis.__mockAuthStore.
-    function withWaiting(n) {
-      globalThis.__mockAuthStore = { work: { supportcases: n } }
-      const pinia = createPinia()
-      setActivePinia(pinia)
-      return pinia
-    }
-
+  // Support cases are gone: there is no Cases tab, and no count moves the page off User.
+  describe('no cases tab', () => {
     afterEach(() => {
       delete globalThis.__mockAuthStore
     })
 
-    it('shows the cases waiting for Support as a red count on the tab', () => {
-      const wrapper = mountComponent(withWaiting(3))
-      const count = wrapper.find('[data-testid="cases-tab-count"]')
-      expect(count.exists()).toBe(true)
-      expect(count.text()).toBe('3')
-      expect(count.attributes('title')).toBe('3 waiting for Support')
-    })
-
-    it('shows no count on the tab when nothing is waiting', () => {
-      const wrapper = mountComponent(withWaiting(0))
-      expect(wrapper.find('[data-testid="cases-tab-count"]').exists()).toBe(
+    it('has no Cases tab, and ?tab=cases opens on User', async () => {
+      mockRouteQuery.value = { tab: 'cases' }
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.find('[data-testid="cases-tab-title"]').exists()).toBe(
         false
       )
-    })
-
-    it('opens on the Cases tab while cases are waiting for Support', () => {
-      const wrapper = mountComponent(withWaiting(2))
-      expect(wrapper.vm.activeTab).toBe(6)
-    })
-
-    it('still opens on User for a link to a member, even with cases waiting', () => {
-      mockRouteParams.value = { id: '123' }
-      const wrapper = mountComponent(withWaiting(2))
       expect(wrapper.vm.activeTab).toBe(0)
     })
 
-    it('moves to Cases when the count arrives after the page opened', async () => {
-      const pinia = withWaiting(0)
-      const store = (globalThis.__mockAuthStore = reactive({ work: {} }))
+    it('stays on User whatever work counts the session carries', () => {
+      globalThis.__mockAuthStore = { work: { supportcases: 2 } }
+      const pinia = createPinia()
+      setActivePinia(pinia)
       const wrapper = mountComponent(pinia)
       expect(wrapper.vm.activeTab).toBe(0)
-      store.work = { supportcases: 2 }
-      await nextTick()
-      expect(wrapper.vm.activeTab).toBe(6)
-    })
-
-    it('stays on the tab the visitor picked when the count arrives later', async () => {
-      const pinia = withWaiting(0)
-      const store = (globalThis.__mockAuthStore = reactive({ work: {} }))
-      const wrapper = mountComponent(pinia)
-      wrapper.vm.activeTab = 2
-      await nextTick()
-      store.work = { supportcases: 2 }
-      await nextTick()
-      expect(wrapper.vm.activeTab).toBe(2)
-    })
-
-    it('opens on Lockdown rather than Cases while a lockdown is on', () => {
-      const pinia = withWaiting(2)
-      useLockdownStore().active = true
-      const wrapper = mountComponent(pinia)
-      expect(wrapper.vm.activeTab).toBe(5)
     })
   })
 

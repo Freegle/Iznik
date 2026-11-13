@@ -11,15 +11,18 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
 /**
- * The batch side of the support case first pass: builds the helper request from a case row, calls
- * the helper once, and builds the referral mail.
+ * The batch side of a referral to Support: builds the helper request for the AI first pass, calls
+ * the helper once, and builds the one mail Support gets.
  *
- * The helper investigates the case itself; this class supplies the chat, recent cases,
- * its latest images and the mailbox history. It never sends anything to a member.
+ * A referral is a queued refer_to_support task, read into a plain object by
+ * SupportFirstPassCommand: id (the task's), chatid, userid (the member it is about, if one),
+ * referrerid, groupid, reason and created_at. The helper investigates the referral itself; this
+ * class supplies the chat, its latest images and the mailbox history. It never sends anything to a
+ * member.
  */
 class FirstPassService
 {
-    // The only reasons ever stored on a case or shown in a mail.
+    // The only reasons ever stored on a referral or shown in a mail.
     public const REASON_OFF = 'The first pass is turned off';
 
     public const REASON_BUSY = 'The AI helper was busy';
@@ -75,91 +78,54 @@ class FirstPassService
      *
      * @return array<string, mixed>
      */
-    public function buildRequest(object $case): array
+    public function buildRequest(object $referral): array
     {
-        $chat = $case->chatid ? DB::table('chat_rooms')->where('id', $case->chatid)->first() : null;
-        $group = ($chat && $chat->groupid) ? DB::table('groups')->where('id', $chat->groupid)->first(['id', 'nameshort', 'namefull']) : null;
+        $chat = $referral->chatid ? DB::table('chat_rooms')->where('id', $referral->chatid)->first() : null;
+        $group = $this->group($referral, $chat);
 
         [$images, $skipped] = $chat ? $this->chatImages((int) $chat->id) : [[], 0];
 
         return [
-            'caseid' => (int) $case->id,
-            'memberid' => $case->userid ? (int) $case->userid : null,
+            'referralid' => (int) $referral->id,
+            'memberid' => $referral->userid ? (int) $referral->userid : null,
             'source' => [
-                'kind' => strtolower((string) ($case->source ?? 'Referral')),
-                'chatid' => $case->chatid ? (int) $case->chatid : null,
-                'referrerid' => $case->referrerid ? (int) $case->referrerid : null,
-                'reason' => $case->reason !== null && $case->reason !== '' ? (string) $case->reason : null,
-                'referredAt' => $this->referredAt($case),
+                'kind' => 'referral',
+                'chatid' => $referral->chatid ? (int) $referral->chatid : null,
+                'referrerid' => $referral->referrerid ? (int) $referral->referrerid : null,
+                'reason' => $referral->reason !== null && $referral->reason !== '' ? (string) $referral->reason : null,
+                'referredAt' => $this->referredAt($referral),
             ],
             'chat' => [
                 'id' => $chat ? (int) $chat->id : null,
                 'type' => $chat ? $chat->chattype : null,
                 'group' => $group ? ['id' => (int) $group->id, 'name' => (string) ($group->namefull ?: $group->nameshort)] : null,
-                'messages' => $chat ? $this->chatMessages($chat, $case) : [],
+                'messages' => $chat ? $this->chatMessages($chat, $referral) : [],
             ],
             'images' => $images,
             'imagesSkipped' => $skipped,
-            'mailHistory' => $this->mailbox->forMember($case->userid ? (int) $case->userid : null),
-            'recentCases' => $this->recentCases($case),
+            'mailHistory' => $this->mailbox->forMember($referral->userid ? (int) $referral->userid : null),
         ];
     }
 
-    public const RECENT_CASE_LIMIT = 20;
-
-    public const RECENT_CASE_DAYS = 14;
-
-    public const SUPPORT_REPLY_CHARS = 600;
-
-    /** When the case was referred, UTC, as the helper searches logs around it. */
-    private function referredAt(object $case): ?string
+    /**
+     * The community the referral is for: the one the Go API chose when it queued the referral, else
+     * the chat's own.
+     */
+    private function group(object $referral, ?object $chat): ?object
     {
-        if (empty($case->created_at)) {
+        $id = (int) ($referral->groupid ?? 0) ?: (int) ($chat->groupid ?? 0);
+
+        return $id ? DB::table('groups')->where('id', $id)->first(['id', 'nameshort', 'namefull']) : null;
+    }
+
+    /** When the chat was referred, UTC, as the helper searches logs around it. */
+    private function referredAt(object $referral): ?string
+    {
+        if (empty($referral->created_at)) {
             return null;
         }
 
-        return \Carbon\Carbon::parse($case->created_at, config('app.timezone'))->utc()->format('Y-m-d H:i:s');
-    }
-
-    /**
-     * Other support cases from the last two weeks that have a brief or a Support reply, newest
-     * first, so one incident behind many referrals is answered once.
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    private function recentCases(object $case): array
-    {
-        $rows = DB::table('support_cases as c')
-            ->where('c.id', '!=', $case->id)
-            ->where('c.created_at', '>=', now()->subDays(self::RECENT_CASE_DAYS))
-            ->where(function ($q) {
-                $q->whereNotNull('c.brief')
-                    ->orWhereExists(function ($s) {
-                        $s->select(DB::raw(1))->from('support_case_messages as m')
-                            ->whereColumn('m.caseid', 'c.id')->where('m.role', 'Support'); // role-literal-ok: support case message role
-                    });
-            })
-            ->orderByDesc('c.id')
-            ->limit(self::RECENT_CASE_LIMIT)
-            ->get(['c.id', 'c.created_at', 'c.brief']);
-
-        $replies = $rows->isEmpty() ? collect() : DB::table('support_case_messages')
-            ->whereIn('caseid', $rows->pluck('id'))->where('role', 'Support') // role-literal-ok: support case message role
-            ->orderBy('id')->get(['caseid', 'body'])->keyBy('caseid');
-
-        return $rows->map(function ($r) use ($replies) {
-            $brief = $r->brief ? json_decode((string) $r->brief, true) : null;
-            $brief = is_array($brief) ? $brief : [];
-            $reply = $replies->get($r->id);
-
-            return [
-                'id' => (int) $r->id,
-                'created' => \Carbon\Carbon::parse($r->created_at, config('app.timezone'))->utc()->format('Y-m-d H:i:s'),
-                'classification' => is_string($brief['classification'] ?? null) ? $brief['classification'] : '',
-                'question' => is_string($brief['question'] ?? null) ? $brief['question'] : '',
-                'supportReply' => $reply ? mb_substr((string) $reply->body, 0, self::SUPPORT_REPLY_CHARS) : '',
-            ];
-        })->all();
+        return \Carbon\Carbon::parse($referral->created_at, config('app.timezone'))->utc()->format('Y-m-d H:i:s');
     }
 
     /**
@@ -178,14 +144,8 @@ class FirstPassService
             ->whereNull('h.id');
     }
 
-    /** Whether the chat has a visible message newer than the given time. */
-    public function hasVisibleMessageAfter(int $chatId, string $since): bool
-    {
-        return $this->visibleMessages($chatId)->where('cm.date', '>', $since)->exists();
-    }
-
     /** @return array<int, array<string, mixed>> */
-    private function chatMessages(object $chat, object $case): array
+    private function chatMessages(object $chat, object $referral): array
     {
         $rows = $this->visibleMessages((int) $chat->id)
             ->orderByDesc('cm.date')->orderByDesc('cm.id')
@@ -203,13 +163,13 @@ class FirstPassService
         }
         $mods = array_flip($mods);
 
-        return $rows->map(function ($r) use ($case, $mods) {
+        return $rows->map(function ($r) use ($referral, $mods) {
             $uid = $r->userid ? (int) $r->userid : 0;
             if ($uid === 0 || $r->type === 'System') {
                 $from = 'system';
-            } elseif ($case->userid && $uid === (int) $case->userid) {
+            } elseif ($referral->userid && $uid === (int) $referral->userid) {
                 $from = 'member';
-            } elseif (($case->referrerid && $uid === (int) $case->referrerid) || isset($mods[$uid])) {
+            } elseif (($referral->referrerid && $uid === (int) $referral->referrerid) || isset($mods[$uid])) {
                 $from = 'moderator';
             } else {
                 $from = 'other';
@@ -353,41 +313,52 @@ class FirstPassService
     }
 
     /**
-     * The referral mail for a case, with the brief when there is one, or the reason there is not.
+     * The mail to Support for a referral, with the brief when there is one, or the reason there is not.
+     *
+     * It is sent from the volunteers address of the community the referral is for, so a reply reaches
+     * moderators who can act on it. With no community (Support or Admin referring a chat outside
+     * their own communities) it is sent from the no-reply address and replies go to the referrer.
      *
      * @param  array<string, mixed>|null  $brief
      */
-    public function referralMail(object $case, ?array $brief, ?string $skipReason): ReferToSupportMail
+    public function referralMail(object $referral, ?array $brief, ?string $skipReason): ReferToSupportMail
     {
-        $chat = $case->chatid ? DB::table('chat_rooms')->where('id', $case->chatid)->first() : null;
+        $chat = $referral->chatid ? DB::table('chat_rooms')->where('id', $referral->chatid)->first() : null;
 
-        $referrer = $case->referrerid ? User::find($case->referrerid) : null;
-        $otherId = $case->userid ?: ($chat ? ($chat->user1 == $case->referrerid ? $chat->user2 : $chat->user1) : null);
-        $other = $otherId ? User::find($otherId) : null;
+        $referrer = $referral->referrerid ? User::find($referral->referrerid) : null;
+        $referrerName = $referrer ? ($referrer->fullname ?: 'Unknown') : 'Unknown';
+        $member = $referral->userid ? User::find($referral->userid) : null;
 
-        $replyToAddress = config('freegle.mail.noreply_addr');
-        $replyToName = config('freegle.branding.name');
-        if ($chat && $chat->groupid) {
-            $group = DB::table('groups')->where('id', $chat->groupid)->first();
-            if ($group) {
-                $short = $group->nameshort ?? '';
-                $replyToAddress = $short.'-volunteers@'.config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-                $replyToName = ($group->namefull ?: $short).' Volunteers';
-            }
+        $fromAddress = $replyToAddress = (string) config('freegle.mail.noreply_addr');
+        $fromName = $replyToName = (string) config('freegle.branding.name');
+        $groupName = null;
+
+        $group = $this->group($referral, $chat);
+        $short = (string) ($group->nameshort ?? '');
+        if ($short !== '') {
+            $groupName = (string) ($group->namefull ?: $short);
+            $fromAddress = $replyToAddress = $short.'-volunteers@'.config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+            $fromName = $replyToName = $groupName.' Volunteers';
+        } elseif ($referrer && $referrer->email_preferred) {
+            $replyToAddress = (string) $referrer->email_preferred;
+            $replyToName = $referrerName;
         }
 
         return new ReferToSupportMail(
-            userName: $referrer ? ($referrer->fullname ?: 'Unknown') : 'Unknown',
-            userId: (int) ($case->referrerid ?? 0),
+            referrerName: $referrerName,
+            referrerId: (int) ($referral->referrerid ?? 0),
             chatId: $chat ? (int) $chat->id : null,
-            otherUserName: $other ? ($other->fullname ?: 'Unknown') : 'Unknown',
-            otherUserId: (int) ($otherId ?? 0),
+            chatType: $chat ? (string) $chat->chattype : null,
+            memberName: $member ? ($member->fullname ?: 'Unknown') : 'Unknown',
+            memberId: $member ? (int) $member->id : 0,
+            groupName: $groupName,
+            fromAddress: $fromAddress,
+            fromName: $fromName,
             replyToAddress: $replyToAddress,
             replyToName: $replyToName,
+            reason: $referral->reason !== null && $referral->reason !== '' ? (string) $referral->reason : null,
             brief: $brief,
-            caseId: (int) $case->id,
             skipReason: $skipReason,
-            reason: $case->reason !== null && $case->reason !== '' ? (string) $case->reason : null,
         );
     }
 

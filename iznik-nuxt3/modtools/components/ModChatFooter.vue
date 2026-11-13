@@ -408,15 +408,8 @@
       class="mt-1"
       data-test="refer-sent"
     >
-      Referred to Support. They will look at the chat and get back to you here
-      and by email.
-      <nuxt-link
-        v-if="referCaseId"
-        :to="'/support/cases/' + referCaseId"
-        data-test="refer-case-link"
-      >
-        See the case
-      </nuxt-link>
+      Referred to Support. They will look at the chat and reply by email to your
+      community's volunteers address, which arrives in ModTools Chats.
     </NoticeMessage>
     <NoticeMessage
       v-else-if="referResult === 'failed'"
@@ -434,7 +427,8 @@
       @hidden="showConfirmModal = false"
     >
       <p>
-        The Support volunteers will have a look at the chat and get back to you.
+        The Support volunteers will have a look at the chat. They reply by email
+        to your community's volunteers address.
       </p>
       <label for="refer-reason" class="form-label">
         What do you need help with? (optional)
@@ -966,16 +960,13 @@ const spamReport = () => {
 // Nothing was shown before, and a refused request looked exactly like a sent one.
 const referResult = ref(null)
 const referReason = ref('')
-const referCaseId = ref(null)
 const referToSupport = async () => {
   referResult.value = null
-  referCaseId.value = null
   try {
-    const ret = await $api.chat.referToSupport(
+    await $api.chat.referToSupport(
       props.id,
       referReason.value.trim().slice(0, 2000)
     )
-    referCaseId.value = ret?.caseid || null
     referReason.value = ''
     referResult.value = 'sent'
   } catch (e) {

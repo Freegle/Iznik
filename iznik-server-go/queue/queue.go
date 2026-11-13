@@ -59,6 +59,11 @@ const (
 	// TaskEmailAdminTest sends a test copy of an ADMIN, built as a member would get it, to one address.
 	// Queued by the ModTools ADMIN Test action; processed by iznik-batch ProcessBackgroundTasksCommand.
 	TaskEmailAdminTest = "email_admin_test"
+
+	// TaskReferToSupport is a moderator referring a chat to Support. It is not handled by
+	// ProcessBackgroundTasksCommand: support:first-pass in iznik-batch takes it, runs the AI first pass
+	// and mails Support.
+	TaskReferToSupport = "refer_to_support"
 )
 
 // QueueTask inserts a task into the background_tasks table for async processing by iznik-batch.

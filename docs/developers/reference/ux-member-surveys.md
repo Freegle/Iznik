@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-13
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Ux/UxPromptService.php
@@ -459,7 +459,7 @@ batch, rebuild the helper with the secret, and the site follows.
 | Go not updated, site live | The new card is never offered, because the old server does not serve it. The What members say section says `This part is not switched on yet.` |
 | Helper secret missing | `analyse` and `regroup` stop with "UX_INTERNAL_SECRET is not set", and the helper answers 403. Everything else works. |
 | Privacy gate closed | `analyse` and `regroup` stop with the privacy message. Collecting answers works. |
-| Helper busy | While another long run is going, `analyse` gets 429. The first pass on a support referral uses the same queue, so a pass in progress makes `analyse` get 429, and a running `analyse` makes the first pass get 429, which puts the case back to Pending without counting an attempt. |
+| Helper busy | While another long run is going, `analyse` gets 429. The first pass on a support referral uses the same queue, so a pass in progress makes `analyse` get 429, and a running `analyse` makes the first pass get 429, which leaves the referral waiting without counting an attempt. |
 
 ## 8. The What members say section
 

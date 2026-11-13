@@ -254,16 +254,16 @@ const API_URL = process.env.API_URL || 'http://apiv2.localhost:8192'
 // more concurrent builds onto the server.
 //
 // Key mode (the support first pass, which has no moderator session): pass `key` and the dump is
-// requested with the key in the X-Dump-Key header and the case id in X-Freegle-Case, never in the URL,
+// requested with the key in the X-Dump-Key header and the referral id in X-Freegle-Referral, never in the URL,
 // so it cannot reach an access log. `signal` stops the fetch when the caller's deadline passes. A refused
 // dump throws an error carrying `status`.
-async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress, key, caseId, signal }) {
+async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress, key, referralId, signal }) {
   const base = `${API_URL}/api/modtools/user/${userId}/dump?format=framed&include=${encodeURIComponent(include)}&since=${encodeURIComponent(since)}`
   const url = key ? base : `${base}&jwt=${encodeURIComponent(jwt || '')}`
   const headers = { 'accept-encoding': 'identity' }
   if (key) {
     headers['X-Dump-Key'] = key
-    if (caseId) headers['X-Freegle-Case'] = String(caseId)
+    if (referralId) headers['X-Freegle-Referral'] = String(referralId)
   }
 
   // Inactivity-based abort, not a fixed overall deadline: a healthy framed
@@ -457,7 +457,7 @@ async function prefetchDump({ userId, jwt, since = '90d', fetchDump } = {}) {
 // ---------------------------------------------------------------------------
 function buildTools(ctx) {
   // ctx: { jwt, userId (selected member or 0), progress }, plus for the first pass, which has no login:
-  // { dumpKey, caseId, signal, onDumpRefused } so the dump is fetched with the key, stops at its
+  // { dumpKey, referralId, signal, onDumpRefused } so the dump is fetched with the key, stops at its
   // deadline, and a refused key or a held export is reported rather than worked around.
   const state = { dumpFile: null, privateDumps: {} }
   const p = ctx.progress || (() => {})
@@ -573,7 +573,7 @@ function buildTools(ctx) {
           p('tool', `Downloading full snapshot for user ${id}…`)
           let file
           try {
-            file = await fetchUserDump({ userId: id, key: ctx.dumpKey, caseId: ctx.caseId, signal: ctx.signal, since })
+            file = await fetchUserDump({ userId: id, key: ctx.dumpKey, referralId: ctx.referralId, signal: ctx.signal, since })
           } catch (e) {
             // A refused key or a held export is not something to work around: the first pass stops.
             if (e && [401, 403, 409].includes(e.status) && ctx.onDumpRefused) ctx.onDumpRefused(e.status)
