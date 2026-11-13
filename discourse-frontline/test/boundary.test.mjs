@@ -41,12 +41,12 @@ test('the model is given no tools and the service runs no commands on its say-so
   }
 })
 
-test('only the outbound door and the by-hand send call the forum\'s reply', () => {
+test('only the outbound door calls the forum\'s reply', () => {
   const callers = sources.filter(([, src]) => /\.reply\(/.test(src)).map(([p]) => p.slice(root.length)).sort()
-  assert.deepEqual(callers, ['bin/frontline.mjs', 'src/outbound.mjs'])
+  assert.deepEqual(callers, ['src/outbound.mjs'])
 })
 
 test('the default mode posts nothing', () => {
-  assert.equal(loadConfig({}).mode, 'shadow')
+  assert.equal(loadConfig({}).mode, 'confirm')
   assert.throws(() => loadConfig({ FRONTLINE_MODE: 'everything' }))
 })

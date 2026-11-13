@@ -6,11 +6,14 @@
 
 import { readFileSync } from 'node:fs'
 
-export const MODES = ['off', 'shadow', 'ask', 'live']
+export const MODES = ['off', 'confirm', 'shadow', 'ask', 'live']
 
 /** Which kinds of reply each mode lets out. Everything else is stored as a draft. */
 export const MODE_ALLOWS = {
   off: [],
+  // Every reply waits for a person to send it with `frontline review`.
+  confirm: [],
+  // The same, under the name used for a trial nobody means to send from.
   shadow: [],
   ask: ['ask', 'ack', 'duplicate'],
   live: ['ask', 'ack', 'duplicate', 'answer'],
@@ -26,7 +29,7 @@ function int(v, fallback) {
 }
 
 export function loadConfig(env = process.env) {
-  const mode = env.FRONTLINE_MODE || 'shadow'
+  const mode = env.FRONTLINE_MODE || 'confirm'
   if (!MODES.includes(mode)) throw new Error(`FRONTLINE_MODE must be one of ${MODES.join(', ')}`)
   // Without its own name the service would read its replies as new posts and answer
   // them. In shadow nothing is posted, so there the name can wait.
@@ -49,9 +52,11 @@ export function loadConfig(env = process.env) {
     // reply. In every other category it reads only posts that sound like something is
     // broken, and never replies. Empty means every category is a support category.
     categories: list(env.FRONTLINE_CATEGORIES).map(Number),
-    model: env.FRONTLINE_MODEL || 'claude-haiku-5-5',
-    // 'api' calls Anthropic with an API key. 'cli' goes through the Claude Code login.
-    llm: env.FRONTLINE_LLM === 'cli' ? 'cli' : 'api',
+    model: env.FRONTLINE_MODEL || 'claude-opus-5-5',
+    // 'cli' goes through the Claude Code command line, signed in on the machine or
+    // with a token from `claude setup-token` in CLAUDE_CODE_OAUTH_TOKEN. 'api' calls
+    // Anthropic with an API key.
+    llm: env.FRONTLINE_LLM === 'api' ? 'api' : 'cli',
     wikiApi: env.FRONTLINE_WIKI_API || 'https://wiki.ilovefreegle.org/api.php',
     wikiBase: env.FRONTLINE_WIKI_BASE || 'https://wiki.ilovefreegle.org',
     docsDirs: list(env.FRONTLINE_DOCS_DIRS || '../docs/members,../docs/moderators'),

@@ -4,15 +4,26 @@
 import { join } from 'node:path'
 import { loadConfig } from '../src/config.mjs'
 import { getKv, openDb, setKv } from '../src/db.mjs'
+import { createInterface } from 'node:readline/promises'
 import { createDiscourse } from '../src/discourse.mjs'
+import { confirmSend, discardDraft, pendingDrafts } from '../src/outbound.mjs'
 import { ingestChanges, ingestDocs, ingestWiki, searchKb } from '../src/kb/index.mjs'
 import { createPipeline } from '../src/pipeline.mjs'
 import { runEval } from '../eval/run.mjs'
+import { replay } from '../eval/replay.mjs'
 
 const [cmd, ...args] = process.argv.slice(2)
 const cfg = loadConfig()
 const db = () => openDb(join(cfg.stateDir, 'frontline.db'))
 const out = (o) => console.log(typeof o === 'string' ? o : JSON.stringify(o, null, 2))
+
+function show(r) {
+  const age = Math.round((Date.now() - new Date(r.created_at).getTime()) / 3600000)
+  const since = [r.later_posts ? `${r.later_posts} later post(s) in the topic` : 'nothing posted since', r.human_replied ? 'A PERSON HAS REPLIED' : null].filter(Boolean).join(', ')
+  return `\n=== draft ${r.id}: ${r.kind}, written ${age}h ago (${since})
+${r.topic_title ?? ''}  ${cfg.discourseBase}/t/${r.topic_id}/${r.post_number}
+${r.body}\n`
+}
 
 async function model() {
   if (cfg.llm === 'cli') return (await import('../src/llm/claude-cli.mjs')).createClaudeCli(cfg)
@@ -77,29 +88,55 @@ const commands = {
     })
   },
 
-  /** Replies written but not sent, with why. */
+  /** Replies waiting to be confirmed. */
   drafts() {
-    for (const r of db().prepare(`SELECT id, topic_id, post_number, kind, reason, body FROM outbound WHERE status = 'draft' ORDER BY id`).all()) {
-      out(`--- draft ${r.id}: ${r.kind} to ${cfg.discourseBase}/t/${r.topic_id}/${r.post_number} (${r.reason})\n${r.body}\n`)
-    }
+    for (const r of pendingDrafts(db())) out(show(r))
   },
 
-  /** Send one draft by hand: send <id>. */
-  async send() {
+  /** Go through the waiting replies one at a time and send, discard or leave each. */
+  async review() {
     const d = db()
-    const r = d.prepare(`SELECT * FROM outbound WHERE id = ? AND status = 'draft'`).get(Number(args[0]))
-    if (!r) throw new Error('no such draft')
-    d.prepare(`UPDATE outbound SET status = 'sending' WHERE id = ?`).run(r.id)
-    const postId = await createDiscourse(cfg).reply(r.topic_id, r.body, r.post_number)
-    d.prepare(`UPDATE outbound SET status = 'sent', reason = 'sent by hand', discourse_post_id = ? WHERE id = ?`).run(postId, r.id)
-    // A question sent by hand is now being waited on, like any other.
-    if (r.kind === 'ask' && r.case_id) d.prepare(`UPDATE "case" SET state = 'waiting-reporter', asks = MAX(asks, 1), updated_at = ? WHERE id = ? AND state = 'ready'`).run(new Date().toISOString(), r.case_id)
-    out(`sent as post ${postId}`)
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    const forum = createDiscourse(cfg)
+    for (const r of pendingDrafts(d)) {
+      out(show(r))
+      const a = (await rl.question('[s]end  [d]iscard  [enter] leave  [q]uit > ')).trim().toLowerCase()
+      if (a === 'q') break
+      if (a === 'd') discardDraft(d, r.id)
+      if (a === 's') {
+        try {
+          out(`sent as post ${await confirmSend(d, forum, cfg, r.id, { force: Boolean(r.human_replied) && (await rl.question('A person has replied since. Send anyway? [y/N] > ')).trim().toLowerCase() === 'y' })}`)
+        } catch (e) {
+          out(`not sent: ${e.message}`)
+        }
+      }
+    }
+    rl.close()
+  },
+
+  /** Send one draft: send <id> [--force]. */
+  async send() {
+    out(`sent as post ${await confirmSend(db(), createDiscourse(cfg), cfg, Number(args[0]), { force: args.includes('--force') })}`)
+  },
+
+  /** Throw one draft away: discard <id>. */
+  discard() {
+    discardDraft(db(), Number(args[0]))
+    out('discarded')
   },
 
   /** Try a search of the index: search <words>. Costs nothing. */
   search() {
     out(searchKb(db(), args.join(' '), { sources: ['wiki', 'docs', 'changes'], minShared: 1, limit: 5 }).map((r) => ({ score: Number(r.score.toFixed(1)), source: r.source, title: r.title, heading: r.heading, url: r.url })))
+  },
+
+  /**
+   * Run an archive of past posts through the service as if they were arriving now,
+   * posting nothing: replay <posts.jsonl> [out.json]. Uses the state directory, so
+   * point FRONTLINE_STATE_DIR somewhere of its own.
+   */
+  async replay() {
+    out(await replay({ db: db(), cfg, ask: await model(), file: args[0], outFile: args[1], log: (l) => console.error(JSON.stringify(l)) }))
   },
 
   /** Run the made-up test posts through the real model and score the result. */

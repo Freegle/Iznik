@@ -30,8 +30,8 @@ export function readability(text) {
 
 /** Why this reply must not be posted, or null if it may. Rules only. */
 export function refusal(draft, { cfg, counts, caseRow }) {
-  if (!MODE_ALLOWS[cfg.mode].includes(draft.kind)) return `mode-${cfg.mode}`
-  if (draft.listenOnly) return 'outside-support-categories'
+  // What is wrong with the reply itself comes first, so that a reply held back only
+  // by the mode is one a person can safely send.
   if (caseRow?.human_replied) return 'a-person-already-replied'
   if (!draft.quote?.trim()) return 'nothing-to-quote'
   if (draft.body.length > 1500) return 'too-long'
@@ -52,6 +52,8 @@ export function refusal(draft, { cfg, counts, caseRow }) {
     const r = readability(draft.body)
     if (r.grade > 11 || r.longest > 32) return 'hard-to-read'
   }
+  if (draft.listenOnly) return 'outside-support-categories'
+  if (!MODE_ALLOWS[cfg.mode].includes(draft.kind)) return `mode-${cfg.mode}`
   if (counts.lap >= cfg.maxRepliesPerLap) return 'lap-cap'
   if (counts.topicToday >= cfg.maxRepliesPerTopicPerDay) return 'topic-cap'
   if (counts.today >= cfg.maxRepliesPerDay) return 'day-cap'
@@ -117,4 +119,44 @@ export async function deliverReply(db, discourse, cfg, id, draft, lapState, now 
     set(known ? 'refused' : 'unknown', String(e.message).slice(0, 200))
     return known ? 'refused' : 'unknown'
   }
+}
+
+/** Replies waiting for a person, oldest first, with what has happened since. */
+export function pendingDrafts(db) {
+  return db.prepare(`SELECT o.id, o.topic_id, o.post_number, o.kind, o.reason, o.body, o.created_at, o.case_id,
+      c.summary, c.human_replied, p.topic_title,
+      (SELECT COUNT(*) FROM post later WHERE later.topic_id = o.topic_id AND later.post_number > o.post_number) AS later_posts
+    FROM outbound o LEFT JOIN "case" c ON c.id = o.case_id
+    LEFT JOIN post p ON p.topic_id = o.topic_id AND p.post_number = o.post_number
+    WHERE o.status = 'draft' ORDER BY o.id`).all()
+}
+
+/**
+ * Send a draft a person has confirmed. It was checked when it was written; what is
+ * checked again here is what may have changed since: whether somebody has replied.
+ */
+export async function confirmSend(db, discourse, cfg, id, { force = false, now = new Date() } = {}) {
+  const r = db.prepare(`SELECT * FROM outbound WHERE id = ? AND status = 'draft'`).get(id)
+  if (!r) throw new Error(`no draft ${id}`)
+  if (!cfg.botUsername) throw new Error('FRONTLINE_BOT_USERNAME must be set before anything is sent')
+  const c = r.case_id ? db.prepare('SELECT human_replied FROM "case" WHERE id = ?').get(r.case_id) : null
+  if (c?.human_replied && !force) throw new Error('a person has replied in the thread since this was drafted; send again with --force if it is still wanted')
+  db.prepare(`UPDATE outbound SET status = 'sending' WHERE id = ?`).run(id)
+  let postId
+  try {
+    postId = await discourse.reply(r.topic_id, r.body, r.post_number)
+  } catch (e) {
+    const known = e.status >= 400 && e.status < 500
+    db.prepare('UPDATE outbound SET status = ?, reason = ? WHERE id = ?').run(known ? 'refused' : 'unknown', String(e.message).slice(0, 200), id)
+    throw e
+  }
+  db.prepare(`UPDATE outbound SET status = 'sent', reason = 'confirmed by a person', discourse_post_id = ? WHERE id = ?`).run(postId, id)
+  // A question that has now been asked is waited on, like any other.
+  if (r.kind === 'ask' && r.case_id) db.prepare(`UPDATE "case" SET state = 'waiting-reporter', asks = MAX(asks, 1), updated_at = ? WHERE id = ? AND state = 'ready'`).run(now.toISOString(), r.case_id)
+  return postId
+}
+
+export function discardDraft(db, id) {
+  const r = db.prepare(`UPDATE outbound SET status = 'discarded', reason = 'discarded by a person' WHERE id = ? AND status = 'draft'`).run(id)
+  if (r.changes === 0) throw new Error(`no draft ${id}`)
 }

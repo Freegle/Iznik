@@ -85,25 +85,44 @@ merged pull request titles and nothing more. See `src/report.mjs` for the fields
 
 ## Modes
 
-`FRONTLINE_MODE` is the one switch. The default posts nothing.
+`FRONTLINE_MODE` is the one switch. The default posts nothing until a person says so.
 
 | Mode | Posts |
 |---|---|
 | `off` | Does not run |
-| `shadow` (default) | Nothing. Cases, reports and drafts are written. `frontline drafts` shows them, `frontline send <id>` sends one by hand |
+| `confirm` (default) | Nothing by itself. Every reply is written as a draft and waits for a person |
 | `ask` | Questions, acknowledgements and links to earlier cases |
 | `live` | Those and answers to how-to questions |
 
+`shadow` is `confirm` under another name, for a trial nobody means to send from.
+
+### Confirming replies
+
+```bash
+bin/frontline.mjs review        # one draft at a time: send, discard or leave
+bin/frontline.mjs drafts        # list them
+bin/frontline.mjs send 12       # send one
+bin/frontline.mjs discard 12    # throw one away
+```
+
+Each draft shows the post it answers, how long ago it was written, how many posts have been
+made in the topic since, and whether a person has replied. A draft a person has overtaken is
+not sent unless you say so (`--force`). A draft with something wrong in it (a link off the
+allowlist, an address, an answer that is hard to read) is refused when it is written and never
+offered. A question you confirm is waited on from then, like any other.
+
 ## Running it
 
-Needs Node 22.13 or later. `npm install` is needed only for the API route to the model.
+Needs Node 22.13 or later and the `claude` command line. The model is reached through it: sign in
+on the machine, or run `claude setup-token` once and put the token in `CLAUDE_CODE_OAUTH_TOKEN`
+for the service. `npm install` is needed only for the API route.
 
 ```bash
 bin/frontline.mjs sync        # build the search index: docs, wiki, recent changes (about 10s)
 bin/frontline.mjs lap         # read what is new; the first lap only marks where to start
+bin/frontline.mjs review      # confirm what it wants to say
 bin/frontline.mjs status      # cursor, cases, replies, tokens today
 bin/frontline.mjs queue       # what is waiting for a person
-bin/frontline.mjs drafts      # replies written but not sent
 bin/frontline.mjs backfill 200  # start 200 posts back, to try it on recent posts
 bin/frontline.mjs search approve spinner   # try the index; costs nothing
 ```
@@ -115,13 +134,13 @@ re-reads from where it stopped.
 
 | Setting | Default | |
 |---|---|---|
-| `FRONTLINE_MODE` | `shadow` | See above |
+| `FRONTLINE_MODE` | `confirm` | See above |
 | `FRONTLINE_CATEGORIES` | all | Support category ids. Elsewhere only posts that sound broken are read, and nothing is posted |
 | `FRONTLINE_BOT_USERNAME` | | The account it posts as; its own posts are never read as reports |
 | `FRONTLINE_STAFF` | | Usernames whose posts are a developer speaking |
 | `FRONTLINE_DISCOURSE_KEY` or `FRONTLINE_PROFILE_PATH` | | The forum API key, or a profile file holding one |
-| `FRONTLINE_LLM` | `api` | `api` uses `ANTHROPIC_API_KEY`. `cli` uses the machine's Claude Code login |
-| `FRONTLINE_MODEL` | `claude-haiku-5-5` | |
+| `FRONTLINE_LLM` | `cli` | `cli` uses the Claude Code login or setup token. `api` uses `ANTHROPIC_API_KEY` |
+| `FRONTLINE_MODEL` | `claude-opus-5-5` | |
 | `FRONTLINE_MAX_ASKS` | 2 | Rounds of questions before handing over |
 | `FRONTLINE_MAX_TOKENS_PER_DAY` | 600000 | The lap stops when reached |
 | `FRONTLINE_MAX_REPLIES_PER_DAY`, `_PER_TOPIC_DAY`, `_PER_LAP` | 40, 3, 8 | |
@@ -132,11 +151,16 @@ re-reads from where it stopped.
 ```bash
 ./check.sh          # unit suite: no network, no model, nothing to install
 bin/frontline.mjs eval   # the made-up threads in eval/golden.mjs through the real model
+bin/frontline.mjs replay posts.jsonl out.json   # an archive of past posts, as if arriving now
 ```
 
 `eval` prints how many threads came out right and the tokens used. Run it after any change to
 the prompt, the model or the rules. Every post in `eval/golden.mjs` was written for that file;
 none is copied from the forum.
+
+`replay` is how a change is judged against history without waiting: it runs an archive of real
+posts through the service in order, posts nothing, and writes what it would have done with each
+(`eval/replay.mjs` gives the archive format). Give it a state directory of its own.
 
 ## Not built
 

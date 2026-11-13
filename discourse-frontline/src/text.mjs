@@ -54,6 +54,24 @@ export function cookedToText(cooked) {
   return decodeEntities(s).replace(/[ \t]+/g, ' ').replace(/ ?\n ?/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
+/**
+ * The same three readings from a post's raw markdown, for an archive that kept the
+ * raw text and not the rendered page.
+ */
+export function rawToParts(raw) {
+  let s = raw ?? ''
+  const quotes = []
+  for (const m of s.matchAll(/\[quote="[^"\]]*?post:(\d+),\s*topic:(\d+)[^"\]]*"\]/gi)) quotes.push({ post: Number(m[1]), topic: Number(m[2]) })
+  for (let i = 0; i < 6 && /\[quote/i.test(s); i++) s = s.replace(/\[quote[^\]]*\](?:(?!\[quote)[\s\S])*?\[\/quote\]/gi, ' ')
+  const image = /!\[[^\]]*\]\((?:upload:|https?:)[^)]*\)|<img\b/i.test(s)
+  s = s
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '$1 ($2)')
+    .replace(/^>.*$/gm, '')
+    .replace(/<[^>]+>/g, '')
+  return { text: decodeEntities(s).replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(), hasImage: image, quotes }
+}
+
 export function wordCount(s) {
   return (s.match(/\S+/g) ?? []).length
 }
