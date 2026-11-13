@@ -77,11 +77,11 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
   }
 
   function storePost(post, disposition, caseId = null) {
-    db.prepare(`INSERT INTO post (post_id, topic_id, post_number, reply_to, author, created_at, version, topic_title, text, has_image, disposition, case_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    db.prepare(`INSERT INTO post (post_id, topic_id, post_number, reply_to, author, created_at, version, topic_title, text, has_image, category_id, disposition, case_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(post_id) DO UPDATE SET version = excluded.version, text = excluded.text, has_image = excluded.has_image,
         disposition = excluded.disposition, case_id = COALESCE(excluded.case_id, post.case_id)`)
-      .run(post.postId, post.topicId, post.postNumber, post.replyTo, post.author, post.createdAt, post.version, post.topicTitle, post.text, post.hasImage ? 1 : 0, disposition, caseId)
+      .run(post.postId, post.topicId, post.postNumber, post.replyTo, post.author, post.createdAt, post.version, post.topicTitle, post.text, post.hasImage ? 1 : 0, post.categoryId ?? null, disposition, caseId)
   }
 
   function indexCase(id) {
@@ -259,7 +259,7 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
 
   /** A reporter who edits their post to add what was asked for has answered. */
   async function checkEdits(lapState) {
-    const waiting = db.prepare(`SELECT c.id, p.post_id, p.version FROM "case" c JOIN post p ON p.topic_id = c.topic_id AND p.post_number = c.post_number WHERE c.state = 'waiting-reporter'`).all()
+    const waiting = db.prepare(`SELECT c.id, p.post_id, p.version, p.category_id, p.topic_title FROM "case" c JOIN post p ON p.topic_id = c.topic_id AND p.post_number = c.post_number WHERE c.state = 'waiting-reporter'`).all()
     for (const w of waiting) {
       let fresh
       try {
@@ -276,7 +276,8 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
       if (fresh.version > w.version && fresh.text) {
         const key = `edit-tries:${w.post_id}:${fresh.version}`
         try {
-          await handlePost({ ...fresh, edited: true }, lapState)
+          // The category it was first read in still decides whether a reply needs a person.
+          await handlePost({ ...fresh, categoryId: w.category_id, topicTitle: fresh.topicTitle ?? w.topic_title, edited: true }, lapState)
         } catch (e) {
           if (e instanceof LapStopped) throw e
           // The next lap sees the same edit again, three times at most. A failure
@@ -306,7 +307,8 @@ export function createPipeline({ db, cfg, discourse, ask, now = () => new Date()
     if (cfg.mode === 'off') return { ...lapState, stopped: 'mode off' }
 
     // A reply caught mid-send by a crash may or may not have landed. A person looks.
-    db.prepare(`UPDATE outbound SET status = 'unknown', reason = 'interrupted while sending' WHERE status = 'sending'`).run()
+    // One a person is confirming at this moment is left alone for two minutes.
+    db.prepare(`UPDATE outbound SET status = 'unknown', reason = 'interrupted while sending' WHERE status = 'sending' AND COALESCE(sent_at, '') < ?`).run(new Date(now().getTime() - 120000).toISOString())
     // A reply recorded and never checked or sent: the run died in between. It stays a
     // draft for a person, and a question among them is no longer waited on.
     tx(db, () => {

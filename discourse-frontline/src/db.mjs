@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS post (
   topic_title TEXT,
   text TEXT NOT NULL,
   has_image INTEGER NOT NULL DEFAULT 0,
+  category_id INTEGER,
   -- skipped:<why> | signal:<what> | case | error
   disposition TEXT NOT NULL,
   case_id INTEGER,
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS outbound (
   reason TEXT,
   discourse_post_id INTEGER,
   created_at TEXT NOT NULL,
+  sent_at TEXT,
   UNIQUE (topic_id, post_number, kind, round)
 );
 

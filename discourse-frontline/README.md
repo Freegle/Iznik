@@ -107,8 +107,8 @@ bin/frontline.mjs discard 12    # throw one away
 Each draft shows the post it answers, how long ago it was written, how many posts have been
 made in the topic since, and whether a person has replied. A draft a person has overtaken is
 not sent unless you say so (`--force`). A draft with something wrong in it (a link off the
-allowlist, an address, an answer that is hard to read) is refused when it is written and never
-offered. A question you confirm is waited on from then, like any other.
+allowlist, an address) is refused when it is written and never offered. A question the reporter
+has already posted past needs `--force` too, and is then not waited on. A question you confirm is waited on from then, like any other.
 
 ## Running it
 
@@ -135,6 +135,7 @@ re-reads from where it stopped.
 |---|---|---|
 | `FRONTLINE_MODE` | `confirm` | See above |
 | `FRONTLINE_CATEGORIES` | all | Support category ids. Every category is read; outside these a reply always waits for a person |
+| `FRONTLINE_SKIP_CATEGORIES` | none | Category ids never read at all, for private or staff-only ones |
 | `FRONTLINE_BOT_USERNAME` | | The account it posts as; its own posts are never read as reports |
 | `FRONTLINE_STAFF` | | Usernames whose posts are a developer speaking |
 | `FRONTLINE_DISCOURSE_KEY` or `FRONTLINE_PROFILE_PATH` | | The forum API key, or a profile file holding one |

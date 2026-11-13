@@ -19,8 +19,9 @@ const out = (o) => console.log(typeof o === 'string' ? o : JSON.stringify(o, nul
 
 function show(r) {
   const age = Math.round((Date.now() - new Date(r.created_at).getTime()) / 3600000)
-  const since = [r.later_posts ? `${r.later_posts} later post(s) in the topic` : 'nothing posted since', r.human_replied ? 'A PERSON HAS REPLIED' : null].filter(Boolean).join(', ')
+  const since = [r.later_posts ? `${r.later_posts} later post(s) in the topic` : 'nothing posted since', r.later_by_reporter ? 'THE REPORTER HAS POSTED AGAIN' : null, r.human_replied ? 'A PERSON HAS REPLIED' : null].filter(Boolean).join(', ')
   return `\n=== draft ${r.id}: ${r.kind}, written ${age}h ago (${since})
+held because: ${r.reason}; category ${r.category_id ?? 'unknown'}
 ${r.topic_title ?? ''}  ${cfg.discourseBase}/t/${r.topic_id}/${r.post_number}
 ${r.body}\n`
 }
@@ -95,17 +96,22 @@ const commands = {
 
   /** Go through the waiting replies one at a time and send, discard or leave each. */
   async review() {
+    // One keypress, one draft: only safe with a person at a terminal.
+    if (!process.stdin.isTTY) throw new Error('review needs a terminal; use drafts, send <id> and discard <id> from a script')
     const d = db()
     const rl = createInterface({ input: process.stdin, output: process.stdout })
     const forum = createDiscourse(cfg)
-    for (const r of pendingDrafts(d)) {
+    for (const { id } of pendingDrafts(d)) {
+      // Read again just before it is shown, so what is on screen is how things stand now.
+      const r = pendingDrafts(d).find((x) => x.id === id)
+      if (!r) continue
       out(show(r))
       const a = (await rl.question('[s]end  [d]iscard  [enter] leave  [q]uit > ')).trim().toLowerCase()
       if (a === 'q') break
       if (a === 'd') discardDraft(d, r.id)
       if (a === 's') {
         try {
-          out(`sent as post ${await confirmSend(d, forum, cfg, r.id, { force: Boolean(r.human_replied) && (await rl.question('A person has replied since. Send anyway? [y/N] > ')).trim().toLowerCase() === 'y' })}`)
+          out(`sent as post ${await confirmSend(d, forum, cfg, r.id, { force: Boolean(r.human_replied || (r.kind === 'ask' && r.later_by_reporter)) && (await rl.question('The thread has moved on since this was written. Send anyway? [y/N] > ')).trim().toLowerCase() === 'y' })}`)
         } catch (e) {
           out(`not sent: ${e.message}`)
         }

@@ -12,6 +12,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createPipeline, LapStopped } from '../src/pipeline.mjs'
 import { rawToParts } from '../src/text.mjs'
+import { getKv, setKv } from '../src/db.mjs'
 import { noForum, outcome } from './run.mjs'
 
 export function archivePost(r) {
@@ -40,7 +41,12 @@ export async function replay({ db, cfg, ask, file, outFile, log = () => {} }) {
   // The archive's own staff mark is the forum's (its moderators), not ours: those
   // people report problems like anyone else. Developers are the ones in the settings.
   const runCfg = { ...cfg, mode: 'shadow' }
+  // A replay empties the record before it starts. It will only do that to a record a
+  // replay made, never to the one the live service keeps.
+  const used = db.prepare('SELECT (SELECT COUNT(*) FROM post) + (SELECT COUNT(*) FROM kv) AS n').get().n
+  if (used > 0 && getKv(db, 'made-by-replay') !== true) throw new Error('this state directory holds the live record; point FRONTLINE_STATE_DIR at one of its own for a replay')
   for (const t of ['post', '"case"', 'case_fts', 'outbound', 'usage', 'kv']) db.exec(`DELETE FROM ${t}`)
+  setKv(db, 'made-by-replay', true)
 
   let clock = new Date(rows[0]?.at ?? Date.now())
   const pipeline = createPipeline({ db, cfg: { ...runCfg, maxTokensPerDay: Number.MAX_SAFE_INTEGER }, discourse: noForum, ask, now: () => clock, log })

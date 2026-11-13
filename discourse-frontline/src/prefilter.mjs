@@ -38,7 +38,8 @@ export function prefilter(post, cfg) {
   // there too: in ten weeks of history a quarter of the real reports were outside the
   // support categories. So every category is read. Outside them the service does not
   // speak for itself: a reply there always waits for a person.
-  const listenOnly = !post.edited && cfg.categories.length > 0 && !cfg.categories.includes(post.categoryId)
+  if (cfg.skipCategories.includes(post.categoryId)) return { pass: false, why: 'category-never-read' }
+  const listenOnly = cfg.categories.length > 0 && !cfg.categories.includes(post.categoryId)
   if (cfg.staff.includes(author)) return { pass: false, why: 'staff', signal: 'staff' }
 
   const text = post.text

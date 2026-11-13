@@ -59,16 +59,18 @@ export function cookedToText(cooked) {
  * raw text and not the rendered page.
  */
 export function rawToParts(raw) {
-  let s = raw ?? ''
+  // Long enough for any real post. A cap keeps a pathological one from stalling a replay.
+  let s = (raw ?? '').slice(0, 30000)
   const quotes = []
   for (const m of s.matchAll(/\[quote="[^"\]]*?post:(\d+),\s*topic:(\d+)[^"\]]*"\]/gi)) quotes.push({ post: Number(m[1]), topic: Number(m[2]) })
-  for (let i = 0; i < 6 && /\[quote/i.test(s); i++) s = s.replace(/\[quote[^\]]*\](?:(?!\[quote)[\s\S])*?\[\/quote\]/gi, ' ')
+  for (let i = 0; i < 6 && /\[quote/i.test(s); i++) s = s.replace(/\[quote[^\][]*\](?:(?!\[quote)[\s\S])*?\[\/quote\]/gi, ' ')
   const image = /!\[[^\]]*\]\((?:upload:|https?:)[^)]*\)|<img\b/i.test(s)
   s = s
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '$1 ($2)')
     .replace(/^>.*$/gm, '')
-    .replace(/<[^>]+>/g, '')
+    // Real tags only. "a < b and c > d" and "<anonymous>" in a pasted error are theirs.
+    .replace(/<\/?(?:p|br|div|span|b|i|u|em|strong|small|a|img|details|summary|kbd|sub|sup|hr)\b[^<>]{0,300}>/gi, '')
   return { text: decodeEntities(s).replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(), hasImage: image, quotes }
 }
 

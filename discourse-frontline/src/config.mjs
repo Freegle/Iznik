@@ -52,6 +52,9 @@ export function loadConfig(env = process.env) {
     // may reply as its mode allows; anywhere else a reply always waits for a person.
     // Empty means every category is a support category.
     categories: list(env.FRONTLINE_CATEGORIES).map(Number),
+    // Category ids that are never read at all: private or staff-only ones the account
+    // can see but whose posts should not go to a model or into a report.
+    skipCategories: list(env.FRONTLINE_SKIP_CATEGORIES).map(Number),
     model: env.FRONTLINE_MODEL || 'claude-opus-5-5',
     // 'cli' goes through the Claude Code command line, signed in on the machine or
     // with a token from `claude setup-token` in CLAUDE_CODE_OAUTH_TOKEN. 'api' calls

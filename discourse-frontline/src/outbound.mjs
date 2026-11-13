@@ -48,12 +48,12 @@ export function refusal(draft, { cfg, counts, caseRow }) {
   // Anything shaped like a web address that the link check above did not see as one.
   const unlinked = draft.body.replace(LINK, ' ').replace(/<small>.*?<\/small>/g, ' ')
   if (/\b[a-z0-9-]+\.[a-z]{2,}\/|\bwww\./i.test(unlinked)) return 'bare-web-address'
+  if (draft.listenOnly) return 'outside-support-categories'
+  if (!MODE_ALLOWS[cfg.mode].includes(draft.kind)) return `mode-${cfg.mode}`
   if (draft.kind === 'answer') {
     const r = readability(draft.body)
     if (r.grade > 11 || r.longest > 32) return 'hard-to-read'
   }
-  if (draft.listenOnly) return 'outside-support-categories'
-  if (!MODE_ALLOWS[cfg.mode].includes(draft.kind)) return `mode-${cfg.mode}`
   if (counts.lap >= cfg.maxRepliesPerLap) return 'lap-cap'
   if (counts.topicToday >= cfg.maxRepliesPerTopicPerDay) return 'topic-cap'
   if (counts.today >= cfg.maxRepliesPerDay) return 'day-cap'
@@ -95,19 +95,22 @@ export async function deliverReply(db, discourse, cfg, id, draft, lapState, now 
   const day = iso.slice(0, 10)
   const counts = {
     lap: lapState.sent,
-    today: db.prepare(`SELECT COUNT(*) AS n FROM outbound WHERE status IN ('sent','sending','unknown') AND substr(created_at, 1, 10) = ?`).get(day).n,
-    topicToday: db.prepare(`SELECT COUNT(*) AS n FROM outbound WHERE status IN ('sent','sending','unknown') AND topic_id = ? AND substr(created_at, 1, 10) = ?`).get(draft.topicId, day).n,
+    // Counted on the day a reply went out, which for a confirmed draft is not the day it was written.
+    today: db.prepare(`SELECT COUNT(*) AS n FROM outbound WHERE status IN ('sent','sending','unknown') AND substr(COALESCE(sent_at, created_at), 1, 10) = ?`).get(day).n,
+    topicToday: db.prepare(`SELECT COUNT(*) AS n FROM outbound WHERE status IN ('sent','sending','unknown') AND topic_id = ? AND substr(COALESCE(sent_at, created_at), 1, 10) = ?`).get(draft.topicId, day).n,
   }
   const caseRow = draft.caseId ? db.prepare('SELECT human_replied FROM "case" WHERE id = ?').get(draft.caseId) : null
   const why = refusal(draft, { cfg, counts, caseRow })
   if (why) {
     // Held back by the mode is a draft a person can still send. Anything else is a no.
-    const held = why.startsWith('mode-') || why.endsWith('-cap') || why === 'outside-support-categories'
+    // An answer that reads badly is held too: a person can judge that better than a formula.
+    const held = why.startsWith('mode-') || why.endsWith('-cap') || why === 'outside-support-categories' || why === 'hard-to-read'
     set(held ? 'draft' : 'refused', why)
     return held ? 'draft' : 'refused'
   }
 
   set('sending')
+  db.prepare('UPDATE outbound SET sent_at = ? WHERE id = ?').run(iso, id)
   try {
     const postId = await discourse.reply(draft.topicId, formatRaw(draft), draft.postNumber)
     set('sent', null, postId)
@@ -124,8 +127,9 @@ export async function deliverReply(db, discourse, cfg, id, draft, lapState, now 
 /** Replies waiting for a person, oldest first, with what has happened since. */
 export function pendingDrafts(db) {
   return db.prepare(`SELECT o.id, o.topic_id, o.post_number, o.kind, o.reason, o.body, o.created_at, o.case_id,
-      c.summary, c.human_replied, p.topic_title,
-      (SELECT COUNT(*) FROM post later WHERE later.topic_id = o.topic_id AND later.post_number > o.post_number) AS later_posts
+      c.summary, c.human_replied, p.topic_title, p.category_id,
+      (SELECT COUNT(*) FROM post later WHERE later.topic_id = o.topic_id AND later.post_number > o.post_number) AS later_posts,
+      (SELECT COUNT(*) FROM post later WHERE later.topic_id = o.topic_id AND later.post_number > o.post_number AND later.author = p.author) AS later_by_reporter
     FROM outbound o LEFT JOIN "case" c ON c.id = o.case_id
     LEFT JOIN post p ON p.topic_id = o.topic_id AND p.post_number = o.post_number
     WHERE o.status = 'draft' ORDER BY o.id`).all()
@@ -136,12 +140,16 @@ export function pendingDrafts(db) {
  * checked again here is what may have changed since: whether somebody has replied.
  */
 export async function confirmSend(db, discourse, cfg, id, { force = false, now = new Date() } = {}) {
-  const r = db.prepare(`SELECT * FROM outbound WHERE id = ? AND status = 'draft'`).get(id)
+  const r = pendingDrafts(db).find((d) => d.id === id)
   if (!r) throw new Error(`no draft ${id}`)
   if (!cfg.botUsername) throw new Error('FRONTLINE_BOT_USERNAME must be set before anything is sent')
-  const c = r.case_id ? db.prepare('SELECT human_replied FROM "case" WHERE id = ?').get(r.case_id) : null
-  if (c?.human_replied && !force) throw new Error('a person has replied in the thread since this was drafted; send again with --force if it is still wanted')
-  db.prepare(`UPDATE outbound SET status = 'sending' WHERE id = ?`).run(id)
+  if (r.human_replied && !force) throw new Error('a person has replied in the thread since this was drafted; send again with --force if it is still wanted')
+  // A question the reporter may already have answered in a later post.
+  const overtaken = r.kind === 'ask' && r.later_by_reporter > 0
+  if (overtaken && !force) throw new Error('the reporter has posted again since this question was drafted; read the thread, then send with --force if it is still wanted')
+  // Claimed in one statement, so two people confirming the same draft cannot both send it.
+  const claim = db.prepare(`UPDATE outbound SET status = 'sending', sent_at = ? WHERE id = ? AND status = 'draft'`).run(now.toISOString(), id)
+  if (claim.changes === 0) throw new Error(`draft ${id} has just been dealt with by someone else`)
   let postId
   try {
     postId = await discourse.reply(r.topic_id, r.body, r.post_number)
@@ -152,7 +160,8 @@ export async function confirmSend(db, discourse, cfg, id, { force = false, now =
   }
   db.prepare(`UPDATE outbound SET status = 'sent', reason = 'confirmed by a person', discourse_post_id = ? WHERE id = ?`).run(postId, id)
   // A question that has now been asked is waited on, like any other.
-  if (r.kind === 'ask' && r.case_id) db.prepare(`UPDATE "case" SET state = 'waiting-reporter', asks = MAX(asks, 1), updated_at = ? WHERE id = ? AND state = 'ready'`).run(now.toISOString(), r.case_id)
+  // Not when the reporter had already posted again: their next post is not an answer to it.
+  if (r.kind === 'ask' && r.case_id && !overtaken) db.prepare(`UPDATE "case" SET state = 'waiting-reporter', asks = MAX(asks, 1), updated_at = ? WHERE id = ? AND state = 'ready'`).run(now.toISOString(), r.case_id)
   return postId
 }
 
