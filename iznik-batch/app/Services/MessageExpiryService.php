@@ -14,6 +14,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Models\User;
+use Illuminate\Database\Query\Grammars\PostgresGrammar;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -277,7 +278,16 @@ class MessageExpiryService
         // The scan is bounded to postings that arrived in the last AGE_EXPIRY_LOOKBACK_DAYS
         // (using the arrival index) and returns at most AGE_EXPIRY_BATCH of the oldest each
         // run, so a backlog drains over a few daily runs rather than in one long statement.
-        $num = fn (string $path) => '('.Sql::render(new JsonNumber(DB::raw('g.settings'), Value::of($path))).' + 0)';
+        //
+        // PostgreSQL only: groups.settings is text, and every JsonNumber over it parses the whole document as
+        // jsonb again, about five times for each (post, group) row the threshold test looks at. That was most
+        // of the statement's time. A lateral subquery parses it once per row and the JsonNumbers read the
+        // parsed copy. OFFSET 0 stops the planner folding the subquery back into the expressions, which
+        // would put the parse back in each of them. MySQL's statement is the same text as before.
+        $postgres = DB::getQueryGrammar() instanceof PostgresGrammar;
+        $settings = $postgres ? 'js.doc' : 'g.settings';
+        $parseOnce = $postgres ? "\n        CROSS JOIN LATERAL (SELECT CAST(g.settings AS jsonb) AS doc OFFSET 0) js" : '';
+        $num = fn (string $path) => '('.Sql::render(new JsonNumber(DB::raw($settings), Value::of($path))).' + 0)';
         $jmaxagetoshow = $num('$.maxagetoshow');
         $jreposts_offer = $num('$.reposts.offer');
         $jreposts_max = $num('$.reposts.max');
@@ -310,7 +320,7 @@ WHERE live.collection = 'Approved'
       )
       AND NOT EXISTS (
         SELECT 1 FROM messages_groups mg
-        JOIN {$groups} g ON g.id = mg.groupid
+        JOIN {$groups} g ON g.id = mg.groupid{$parseOnce}
         WHERE mg.msgid = m.id
           AND mg.deleted = 0
           AND mg.collection = 'Approved'

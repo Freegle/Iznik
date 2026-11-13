@@ -211,6 +211,17 @@ class ChatRoom extends Model implements Auditable
     public static function getOrCreateUser2Mod(int $userId, int $groupId): ?self
     {
         $room = DB::transaction(function () use ($userId, $groupId) {
+            if (DB::connection()->getDriverName() === 'pgsql') {
+                // On MySQL the locking read below also stops two creators when there is no room yet: it
+                // takes a gap lock, and the second INSERT fails rather than making a second room. PostgreSQL
+                // locks only rows that exist, so two requests for the same member and community would both
+                // find nothing and both create a room, with no error. This lock is taken on the pair itself,
+                // held until the transaction ends, so the second request waits here and then finds the room
+                // the first one made.
+                // keep-raw: PostgreSQL only; an advisory lock has no builder form.
+                DB::select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', ["u2m:{$userId}:{$groupId}"]);
+            }
+
             // Lock any existing row to close the timing window.
             $chat = DB::table('chat_rooms')
                 ->select('id')

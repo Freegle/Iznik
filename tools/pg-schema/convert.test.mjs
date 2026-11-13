@@ -266,6 +266,159 @@ test('a citext varchar keeps its length as a CHECK', () => {
   assert.ok(!/t_note_length/.test(sql), 'text has no limit to keep')
 })
 
+// --- PostgreSQL-only additions from config.json ------------------------------------------------
+
+const likesDump = dump(
+  table('likes', [
+    '`msgid` bigint unsigned NOT NULL',
+    '`userid` bigint unsigned NOT NULL',
+    "`type` enum('Love','View') NOT NULL DEFAULT 'Love'",
+    "`count` int NOT NULL DEFAULT '1'",
+    '`name` varchar(80) COLLATE utf8mb4_unicode_ci NOT NULL',
+    '`deleted` tinyint(1) NOT NULL DEFAULT \'0\'',
+    'UNIQUE KEY `msgid_2` (`msgid`,`userid`,`type`)',
+    'KEY `msgid` (`msgid`,`type`)',
+    'KEY `userid` (`userid`)',
+  ])
+)
+const why = 'MySQL serves this from the clustered key; PostgreSQL needs its own index.'
+
+test('extraIndexes adds PostgreSQL-only indexes after the converted ones, each with its reason', () => {
+  const { sql, report } = convert(likesDump, {
+    citext: ['likes.name'],
+    extraIndexes: [
+      { table: 'likes', name: 'likes_name_prefix_lower', expression: 'lower(name::text) text_pattern_ops', uses: ['name'], why },
+      { table: 'likes', name: 'likes_live', columns: ['userid', 'msgid'], where: "type = 'View' AND deleted = 0", uses: ['type', 'deleted'], why },
+      { table: 'likes', name: 'likes_views', columns: ['msgid', 'type'], include: ['count'], why: 'two\n  lines' },
+    ],
+  })
+  assert.match(sql, /\n-- MySQL serves this from the clustered key; PostgreSQL needs its own index\.\nCREATE INDEX likes_name_prefix_lower ON likes \(lower\(name::text\) text_pattern_ops\);\n/)
+  assert.match(sql, /\nCREATE INDEX likes_live ON likes \(userid, msgid\) WHERE type = 'View' AND deleted = 0;\n/)
+  // A reason is one comment line, whatever white space the config had in it.
+  assert.match(sql, /\n-- two lines\nCREATE INDEX likes_views ON likes \(msgid, type\) INCLUDE \(count\);\n/)
+  // Every converted index is still there, and comes first.
+  assert.match(sql, /CREATE INDEX likes_userid ON likes \(userid\);/)
+  assert.ok(sql.indexOf('CREATE INDEX likes_userid ') < sql.indexOf('-- PostgreSQL-only indexes'))
+  assert.ok(sql.indexOf('-- PostgreSQL-only indexes') < sql.indexOf('CREATE INDEX likes_live '))
+  assert.ok(sql.indexOf('CREATE INDEX likes_live ') < sql.indexOf('-- Foreign keys'))
+  // Each statement is one line starting CREATE INDEX, which is what the tools that count or copy
+  // the baseline's indexes look for.
+  assert.equal((sql.match(/^CREATE (UNIQUE )?INDEX /gm) || []).length, 6)
+  assert.match(report.text(), /PostgreSQL-only index added/)
+})
+
+test('without the PostgreSQL-only sections the baseline has none of their headings', () => {
+  const { sql } = convert(likesDump, {})
+  assert.ok(!/PostgreSQL-only indexes|Table storage settings|Planner statistics settings/.test(sql))
+  assert.equal(convert(likesDump, { extraIndexes: [], tableStorage: [], columnStatistics: [] }).sql, sql)
+})
+
+test('an extra index may replace a converted index it extends, and nothing else', () => {
+  const wider = { table: 'likes', name: 'likes_userid_type_msgid', columns: ['userid', 'type', 'msgid'], replaces: 'likes_userid', why }
+  const { sql, report } = convert(likesDump, { extraIndexes: [wider] })
+  assert.ok(!/CREATE INDEX likes_userid ON/.test(sql), 'the replaced index is gone')
+  assert.match(sql, /CREATE INDEX likes_userid_type_msgid ON likes \(userid, type, msgid\);/)
+  assert.match(sql, /CREATE INDEX likes_msgid ON likes \(msgid, type\);/)
+  assert.match(report.text(), /KEY replaced by a wider PostgreSQL-only index/)
+
+  const bad = (over, re) => assert.throws(() => convert(likesDump, { extraIndexes: [{ ...wider, ...over }] }), re)
+  bad({ columns: ['type', 'userid'] }, /not the leading columns/)
+  bad({ replaces: 'likes_nope' }, /not a converted index/)
+  bad({ replaces: 'likes_msgid_2', columns: ['msgid', 'userid', 'type', 'count'] }, /unique index and cannot be replaced/)
+  bad({ where: 'deleted = 0', uses: ['deleted'] }, /only a plain column index over every row/)
+  assert.throws(() => convert(likesDump, { extraIndexes: [wider, { ...wider, name: 'likes_again' }] }), /already replaced/)
+})
+
+test('extraIndexes refuses what it cannot check', () => {
+  const base = { table: 'likes', name: 'likes_extra', columns: ['userid', 'msgid'], why }
+  const bad = (over, re) => {
+    const e = { ...base, ...over }
+    for (const k of Object.keys(e)) if (e[k] === undefined) delete e[k]
+    assert.throws(() => convert(likesDump, { extraIndexes: [e] }), (err) => err instanceof ConvertError && re.test(err.message), JSON.stringify(over))
+  }
+  bad({ table: 'nope' }, /names table nope, which is not in the schema/)
+  bad({ columns: ['userid', 'nope'] }, /likes has no column nope/)
+  bad({ columns: [] }, /must be a list of column names/)
+  bad({ include: ['nope'] }, /likes has no column nope/)
+  bad({ include: ['userid'] }, /repeats a key column/)
+  bad({ why: undefined }, /needs a "why"/)
+  bad({ why: '   ' }, /needs a "why"/)
+  bad({ name: 'likes_userid' }, /already used by likes\.userid/)
+  bad({ name: 'extra' }, /must start with the table name/)
+  bad({ name: 'likes_Extra' }, /plain lower-case identifier/)
+  bad({ name: 'likes_' + 'x'.repeat(60) }, /longer than 63 characters/)
+  bad({ expression: 'lower(name::text)' }, /either "columns" or "expression"/)
+  bad({ columns: undefined }, /either "columns" or "expression"/)
+  bad({ columns: undefined, expression: 'lower(name::text)' }, /"uses" must be a list of column names/)
+  bad({ columns: undefined, expression: 'lower(name::text)', uses: ['nope'] }, /likes has no column nope/)
+  bad({ columns: undefined, expression: 'lower(name::text)', uses: ['count'] }, /"uses" lists count, which the expression and where clause do not mention/)
+  bad({ where: 'deleted = 0' }, /"uses" must be a list of column names/)
+  bad({ where: 'deleted = 0; DROP TABLE likes', uses: ['deleted'] }, /one SQL fragment/)
+  bad({ columns: undefined, expression: 'lower(name::text)) -- x', uses: ['name'] }, /one SQL fragment/)
+  bad({ uses: ['userid'] }, /"uses" is only for an expression or a where clause/)
+  bad({ unique: true }, /cannot be unique/)
+  bad({ using: 'gin' }, /unknown setting "using"/)
+  assert.throws(() => convert(likesDump, { extraIndexes: [base, base] }), /already used by config\.extraIndexes\[0\]/)
+  assert.throws(() => convert(likesDump, { extraIndexes: { likes: base } }), /config\.extraIndexes must be a list/)
+})
+
+test('tableStorage sets storage parameters with a reason, and refuses ones it does not know', () => {
+  const { sql } = convert(likesDump, { tableStorage: [{ table: 'likes', set: { fillfactor: 90, autovacuum_vacuum_insert_scale_factor: 0.01 }, why }] })
+  assert.match(sql, /\n-- Table storage settings[^\n]*\n-- MySQL serves[^\n]*\nALTER TABLE likes SET \(fillfactor = 90, autovacuum_vacuum_insert_scale_factor = 0\.01\);\n/)
+  const bad = (e, re) => assert.throws(() => convert(likesDump, { tableStorage: [].concat(e) }), re)
+  bad({ table: 'nope', set: { fillfactor: 90 }, why }, /names table nope/)
+  bad({ table: 'likes', set: { fillfactor: 90 } }, /needs a "why"/)
+  bad({ table: 'likes', set: { fillfactor: 5 }, why }, /not a valid value for fillfactor/)
+  bad({ table: 'likes', set: { fillfactor: '90' }, why }, /not a valid value for fillfactor/)
+  bad({ table: 'likes', set: { toast_tuple_target: 128 }, why }, /not a storage parameter the converter knows/)
+  bad({ table: 'likes', set: {}, why }, /at least one storage parameter/)
+  bad([{ table: 'likes', set: { fillfactor: 90 }, why }, { table: 'likes', set: { fillfactor: 80 }, why }], /likes is listed twice/)
+})
+
+test('columnStatistics sets a statistics target or a distinct-value override, with a reason', () => {
+  const { sql } = convert(likesDump, {
+    columnStatistics: [
+      { column: 'likes.msgid', target: 1000, why },
+      { column: 'likes.userid', nDistinct: -0.07, why },
+      { column: 'likes.count', target: 500, nDistinct: 2000, why },
+    ],
+  })
+  assert.match(sql, /\n-- Planner statistics settings[^\n]*\n-- MySQL serves[^\n]*\nALTER TABLE likes ALTER COLUMN msgid SET STATISTICS 1000;\n/)
+  assert.match(sql, /ALTER TABLE likes ALTER COLUMN userid SET \(n_distinct = -0\.07\);/)
+  assert.match(sql, /ALTER TABLE likes ALTER COLUMN count SET STATISTICS 500;\nALTER TABLE likes ALTER COLUMN count SET \(n_distinct = 2000\);/)
+  const bad = (e, re) => assert.throws(() => convert(likesDump, { columnStatistics: [].concat(e) }), re)
+  bad({ column: 'likes.nope', target: 1000, why }, /likes has no column nope/)
+  bad({ column: 'nope.msgid', target: 1000, why }, /names table nope/)
+  bad({ column: 'msgid', target: 1000, why }, /must be written table\.column/)
+  bad({ column: 'likes.msgid', target: 1000 }, /needs a "why"/)
+  bad({ column: 'likes.msgid', why }, /give a "target", an "nDistinct", or both/)
+  bad({ column: 'likes.msgid', target: 20000, why }, /whole number from 1 to 10000/)
+  bad({ column: 'likes.msgid', nDistinct: 0, why }, /"nDistinct" must be/)
+  bad({ column: 'likes.msgid', nDistinct: -2, why }, /"nDistinct" must be/)
+  bad([{ column: 'likes.msgid', target: 1000, why }, { column: 'likes.msgid', target: 100, why }], /likes\.msgid is listed twice/)
+})
+
+test('the committed config passes its own checks and every PostgreSQL-only entry reached the baseline', async () => {
+  const fs = await import('node:fs')
+  const config = JSON.parse(fs.readFileSync(new URL('./config.json', import.meta.url), 'utf8'))
+  const baseline = fs.readFileSync(new URL('../../iznik-batch/database/postgres/baseline.sql', import.meta.url), 'utf8')
+  assert.ok(config.extraIndexes.length > 0)
+  for (const e of config.extraIndexes) {
+    assert.ok(baseline.includes(`\nCREATE INDEX ${e.name} ON ${e.table} (`), `${e.name} is in the baseline`)
+    if (e.replaces) assert.ok(!new RegExp(`^CREATE INDEX ${e.replaces} ON `, 'm').test(baseline), `${e.replaces} is replaced`)
+  }
+  for (const e of config.tableStorage) assert.ok(baseline.includes(`\nALTER TABLE ${e.table} SET (`), `${e.table} storage is in the baseline`)
+  for (const e of config.columnStatistics) {
+    const [t, c] = e.column.split('.')
+    assert.ok(baseline.includes(`\nALTER TABLE ${t} ALTER COLUMN ${c} SET `), `${e.column} statistics are in the baseline`)
+  }
+  // A citext column joined to a varchar one is compared as plain text, so both sides are citext.
+  for (const [t, c] of [['messages_bulk_items', 'name'], ['jobs', 'canonical_title'], ['users_donations', '"Payer"']]) {
+    const ddl = baseline.match(new RegExp(`^CREATE TABLE ${t} \\(\\n[\\s\\S]*?\\n\\);`, 'm'))[0]
+    assert.match(ddl, new RegExp(`\\n  ${c} citext`), `${t}.${c} is citext`)
+  }
+})
+
 test('the output is deterministic and lists the existing migrations as run', () => {
   const body = dump(table('migrations', [idCol, '`migration` varchar(255) NOT NULL', '`batch` int NOT NULL', 'PRIMARY KEY (`id`)']))
   const a = convert(body, {}, { migrations: ['2025_01_01_000000_a', '2025_01_02_000000_b'] }).sql
@@ -296,4 +449,59 @@ test('setup-test-database.sh builds PostgreSQL after the MySQL path, off with PG
   assert.equal(text.split('setup-pg-database.sh').length - 1, 2, 'one comment and one call')
   // Nothing before the guard mentions PostgreSQL.
   assert.ok(!/postgres|PG_/i.test(text.slice(0, mysqlEnd)))
+})
+
+const dupDump = dump(
+  table('dups', [
+    '`id` bigint unsigned NOT NULL AUTO_INCREMENT',
+    '`a` int NOT NULL',
+    '`b` int NOT NULL',
+    '`name` varchar(80) NOT NULL',
+    'PRIMARY KEY (`id`)',
+    'UNIQUE KEY `id` (`id`)',
+    'KEY `a` (`a`)',
+    'KEY `a_2` (`a`)',
+    'KEY `ab` (`a`,`b`)',
+    'KEY `ba` (`b`,`a`)',
+    'KEY `b` (`b`)',
+    'UNIQUE KEY `b_2` (`b`)',
+    'KEY `name` (`name`)',
+    'KEY `name_2` (`name`(10))',
+  ])
+)
+
+test('a key with the same columns as another key on the table is left out, and uniqueness is kept', () => {
+  const { sql, report } = convert(dupDump, {})
+  const indexes = [...sql.matchAll(/CREATE (?:UNIQUE )?INDEX (\w+) /g)].map((m) => m[1]).sort()
+  // id repeats the primary key; a_2 repeats a; b loses to the unique b_2; name_2 is name once its
+  // prefix length is dropped. (a, b) and (b, a) are different indexes and both stay.
+  assert.deepEqual(indexes, ['dups_a', 'dups_ab', 'dups_b_2', 'dups_ba', 'dups_name'])
+  assert.match(sql, /CREATE UNIQUE INDEX dups_b_2 ON dups \(b\);/)
+  assert.match(sql, /PRIMARY KEY \(id\)/)
+  assert.match(report.text(), /duplicate KEY left out/)
+  // A table with no repeats is converted as before.
+  assert.ok(!/duplicate KEY left out/.test(convert(likesDump, {}).report.text()))
+})
+
+test('narrowedIndexes keeps only the leading columns of a converted index, with a reason', () => {
+  const narrow = { index: 'likes_msgid', columns: ['msgid'], why }
+  const { sql, report } = convert(likesDump, { narrowedIndexes: [narrow] })
+  assert.match(sql, /CREATE INDEX likes_msgid ON likes \(msgid\);/)
+  assert.match(sql, /CREATE UNIQUE INDEX likes_msgid_2 ON likes \(msgid, userid, type\);/)
+  assert.match(report.text(), /KEY narrowed to its leading columns/)
+  assert.equal(convert(likesDump, { narrowedIndexes: [] }).sql, convert(likesDump, {}).sql)
+
+  const bad = (over, re) => {
+    const e = { ...narrow, ...over }
+    for (const k of Object.keys(e)) if (e[k] === undefined) delete e[k]
+    assert.throws(() => convert(likesDump, { narrowedIndexes: [e] }), (err) => err instanceof ConvertError && re.test(err.message), JSON.stringify(over))
+  }
+  bad({ columns: ['type'] }, /must be the leading columns of likes_msgid \(msgid, type\)/)
+  bad({ columns: ['msgid', 'type'] }, /at least one left off/)
+  bad({ columns: [] }, /must be a list of column names/)
+  bad({ index: 'likes_nope' }, /likes_nope is not a converted index/)
+  bad({ index: 'likes_msgid_2', columns: ['msgid'] }, /unique index and cannot be narrowed/)
+  bad({ why: undefined }, /needs a "why"/)
+  bad({ using: 'gin' }, /unknown setting "using"/)
+  assert.throws(() => convert(likesDump, { narrowedIndexes: [narrow, narrow] }), /narrowed twice/)
 })

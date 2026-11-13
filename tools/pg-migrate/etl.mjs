@@ -113,6 +113,9 @@ export async function copyTable(env, table, opts = {}) {
 // Moves every identity sequence past the largest id loaded.
 export async function resetIdentities(env) {
   await pgRun(env, 'SELECT iznik_reset_identities();\n')
+  // The planner knows nothing about freshly loaded rows, and ignores an expression index, until the
+  // tables are analysed.
+  await pgRun(env, 'ANALYZE;\n')
 }
 
 export async function runEtl(env, tables, opts = {}, log = console.log) {

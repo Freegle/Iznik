@@ -1,5 +1,5 @@
 {
-  "_comment": "Case-insensitive matching is decided per column. MySQL compares text case-insensitively everywhere, in unique keys too; PostgreSQL does not. citext lists the columns the code relies on being case-insensitive: text a person or an outside system typed or sent, which is looked up by equality or deduplicated by a unique key. caseSensitive lists unique-key text columns that are deliberately left case sensitive, each with the reason. Patterns may use * in the table or column part. The converter reports any other text column in a unique key as unaudited. Each site is re-checked by its parity test when it is converted.",
+  "_comment": "Case-insensitive matching is decided per column. MySQL compares text case-insensitively everywhere, in unique keys too; PostgreSQL does not. citext lists the columns the code relies on being case-insensitive: text a person or an outside system typed or sent, which is looked up by equality or deduplicated by a unique key, and any column that is joined to one of those (a citext column compared with a varchar one is compared as plain text, which is case sensitive and cannot use the citext index). caseSensitive lists unique-key text columns that are deliberately left case sensitive, each with the reason. Patterns may use * in the table or column part. The converter reports any other text column in a unique key as unaudited. Each site is re-checked by its parity test when it is converted. The last three sections add what only PostgreSQL needs; MySQL is not touched by any of them, and every entry must give its reason in why, which is copied into the baseline as a comment. extraIndexes adds an index: columns (a list) or expression (SQL copied as written), optionally include (covering columns), where (a partial index) and replaces (the converted index this one stands in for, whose columns must be its leading columns). An entry with an expression or a where clause lists the columns it reads in uses, so a renamed column stops the conversion. tableStorage sets storage parameters such as fillfactor. columnStatistics sets a per-column statistics target or nDistinct. Each index here was tried on a scale model of production with the statement it serves; the measurements are in plans/reports/2026-11-13-postgresql-performance-review.md.",
   "citext": [
     "ai_image_aliases.name",
     "ai_images.name",
@@ -12,6 +12,7 @@
     "groups.nameshort",
     "item_desirability.canonical",
     "items.name",
+    "jobs.canonical_title",
     "jobs.location",
     "jobs.title",
     "jobs_keywords.keyword",
@@ -20,6 +21,7 @@
     "mail_suppressions.active_value",
     "mail_suppressions.value",
     "messages.messageid",
+    "messages_bulk_items.name",
     "paf_buildingname.buildingname",
     "paf_departmentname.departmentname",
     "paf_dependentlocality.dependentlocality",
@@ -38,6 +40,7 @@
     "teams.name",
     "transport_postcode_classification.postcode",
     "users.yahooid",
+    "users_donations.Payer",
     "users_emails.canon",
     "users_emails.email",
     "users_invitations.email",
@@ -87,5 +90,121 @@
     "ux_*.*": "telemetry labels (flow, step, field, device class, experiment) written by the app in one fixed case",
     "volunteering.externalid": "an outside system's identifier, matched exactly",
     "weights.name": "item weight labels written by the app in one fixed case"
-  }
+  },
+  "extraIndexes": [
+    {
+      "table": "locations",
+      "name": "locations_name_prefix",
+      "expression": "lower(name::text) text_pattern_ops",
+      "uses": [
+        "name"
+      ],
+      "why": "Prefix search on a citext column (name LIKE 'AB1%') cannot use the plain index on name: citext's LIKE has no index support, and stock Laravel's name::text LIKE ? cannot use it either. This index serves the case-insensitive form lower(name::text) LIKE ?, which the Go code and the Laravel grammar send on PostgreSQL for a LIKE on a citext column (postcode typeahead, WhatJobs geocoding, Gift Aid postcode lookup). MySQL uses KEY name for the same search."
+    },
+    {
+      "table": "users_emails",
+      "name": "users_emails_email_prefix",
+      "expression": "lower(email::text) text_pattern_ops",
+      "uses": [
+        "email"
+      ],
+      "why": "Prefix search on the citext email column cannot use the unique index on email. This index serves the case-insensitive form lower(email::text) LIKE ?, which is what PostgreSQL is sent for a LIKE on a citext column (TrashNothing sync runs one for each new username, donation thanks for each donation). MySQL uses UNIQUE KEY email for the same search."
+    },
+    {
+      "table": "messages_groups",
+      "name": "messages_groups_approved_live",
+      "columns": [
+        "groupid",
+        "msgid"
+      ],
+      "where": "collection = 'Approved' AND deleted = 0",
+      "uses": [
+        "collection",
+        "deleted"
+      ],
+      "why": "The browse feed and unread badge ask which open posts are approved on the member's communities. PostgreSQL answers by reading each community's whole approved history, one heap page per post; with this index it reads the index alone. MySQL probes UNIQUE KEY msgid once per open post and needs nothing more."
+    },
+    {
+      "table": "logs",
+      "name": "logs_groupid_id",
+      "columns": [
+        "groupid",
+        "id"
+      ],
+      "why": "ModTools logs filters by community and takes the newest rows by id. An InnoDB key ends in the primary key, so KEY group (groupid) already returns one community's rows in id order; a PostgreSQL index on (groupid) does not, and the planner walks the whole primary key backwards instead."
+    },
+    {
+      "table": "memberships",
+      "name": "memberships_groupid_collection_id",
+      "columns": [
+        "groupid",
+        "collection",
+        "id"
+      ],
+      "why": "The ModTools member name search filters by community and collection and takes the newest by id. MySQL is told which key to use with FORCE INDEX, which PostgreSQL has no form of. This index returns a community's members in id order, so the planner need not walk the whole primary key and can still stop early on a common name."
+    },
+    {
+      "table": "messages_likes",
+      "name": "messages_likes_userid_type_msgid",
+      "columns": [
+        "userid",
+        "type",
+        "msgid"
+      ],
+      "replaces": "messages_likes_userid",
+      "why": "Which of these posts has this member viewed is asked with userid, type and a list of msgids. InnoDB's KEY userid carries the clustering key (msgid, userid, type), so MySQL answers from the index; a PostgreSQL index on (userid) reads a heap page for every row the member has. It replaces the userid index, which the planner otherwise still prefers."
+    }
+  ],
+  "narrowedIndexes": [
+    {
+      "index": "users_added",
+      "columns": [
+        "added"
+      ],
+      "why": "MySQL has KEY added (added, lastaccess). lastaccess is written on almost every signed-in request, and on PostgreSQL an update that changes an indexed column writes a new entry in every index on the table (16 on users). With lastaccess out of every index, and room left on the page, that update touches none: about 3 WAL records a row against 18 on a scale model. A search that names both columns still uses the index for added and filters lastaccess from the row."
+    }
+  ],
+  "tableStorage": [
+    {
+      "table": "users",
+      "set": {
+        "fillfactor": 85
+      },
+      "why": "PostgreSQL writes a new row version for every update. With room left on the page the new version stays there and no index is touched, when no indexed column changed; on a full page every index on the table gets a new entry (16 on users)."
+    },
+    {
+      "table": "messages_likes",
+      "set": {
+        "fillfactor": 90
+      },
+      "why": "A repeat view updates count and timestamp, neither of which is indexed. With room left on the page that update touches no index; on a full page it adds an entry to all three."
+    }
+  ],
+  "columnStatistics": [
+    {
+      "column": "messages_likes.msgid",
+      "target": 1000,
+      "why": "ANALYZE's default sample put the number of posts with views 24 times too low on a scale model, so the planner expected 350 view rows a post where there are 15, priced the browse feed's view count far too high and compiled it with JIT on every load. A sample ten times larger brings the estimate within a factor of three."
+    },
+    {
+      "column": "messages_attachments.msgid",
+      "target": 1000,
+      "why": "Rows arrive in post order, so the default sample sees few distinct posts and puts the number of posts with photos five times too low. A larger sample brings it within 15 percent."
+    },
+    {
+      "column": "chat_messages.chatid",
+      "target": 1000,
+      "why": "Rows arrive in time order, so the default sample puts the number of chats four times too low. A larger sample halves the error."
+    },
+    {
+      "column": "chat_messages.refmsgid",
+      "target": 1000,
+      "why": "Rows arrive in time order, so the default sample puts the number of posts with replies well under half the real figure, which inflates the cost of the per-post reply count. A larger sample brings it nearer."
+    },
+    {
+      "column": "email_tracking_images.email_tracking_id",
+      "target": 1000,
+      "why": "Rows arrive in time order, so the default sample puts the number of tracked emails with images nearly three times too low. A larger sample gets it right."
+    }
+  ]
 }

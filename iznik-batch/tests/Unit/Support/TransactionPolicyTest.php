@@ -189,6 +189,79 @@ class TransactionPolicyTest extends TestCase
         $this->assertTrue(TransactionPolicy::isDeadlock($e));
     }
 
+    /**
+     * PostgreSQL through PDO always reports driver code 7, so the SQLSTATE is the only signal. These are the
+     * errorInfo arrays the pgsql driver produced for a real deadlock and a real lock timeout.
+     */
+    public function test_is_deadlock_postgres_40p01_is_deadlock(): void
+    {
+        $pdo = new PDOException('SQLSTATE[40P01]: Deadlock detected: 7 ERROR:  deadlock detected', 0);
+        $pdo->errorInfo = ['40P01', 7, "ERROR:  deadlock detected\nDETAIL:  Process 105618 waits for ShareLock on transaction 481478; blocked by process 105601.\nHINT:  See server log for query details.\nCONTEXT:  while updating tuple (0,1) in relation \"memberships\""];
+        $e = new QueryException('pgsql', 'update "memberships" set "role" = ? where "id" = ?', ['Member', 1], $pdo);
+
+        $this->assertTrue(TransactionPolicy::isDeadlock($e));
+    }
+
+    public function test_is_deadlock_postgres_55p03_lock_timeout_is_deadlock(): void
+    {
+        $pdo = new PDOException('SQLSTATE[55P03]: Lock not available: 7 ERROR:  canceling statement due to lock timeout', 0);
+        $pdo->errorInfo = ['55P03', 7, "ERROR:  canceling statement due to lock timeout\nCONTEXT:  while updating tuple (0,1) in relation \"memberships\""];
+        $e = new QueryException('pgsql', 'update "memberships" set "role" = ? where "id" = ?', ['Member', 1], $pdo);
+
+        $this->assertTrue(TransactionPolicy::isDeadlock($e));
+    }
+
+    public function test_is_deadlock_postgres_40001_serialization_failure_is_deadlock(): void
+    {
+        $pdo = new PDOException('SQLSTATE[40001]: Serialization failure: 7 ERROR:  could not serialize access due to concurrent update', 0);
+        $pdo->errorInfo = ['40001', 7, 'ERROR:  could not serialize access due to concurrent update'];
+        $e = new QueryException('pgsql', 'update "memberships" set "role" = ? where "id" = ?', ['Member', 1], $pdo);
+
+        $this->assertTrue(TransactionPolicy::isDeadlock($e));
+    }
+
+    /**
+     * Driver code 7 on every PostgreSQL error must not make every error a deadlock, and the word "deadlock"
+     * or the digits 1213 in a bound value must not either.
+     */
+    public function test_is_deadlock_postgres_other_errors_are_not_deadlocks(): void
+    {
+        $cases = [
+            ['22012', 'ERROR:  division by zero'],
+            ['23505', 'ERROR:  duplicate key value violates unique constraint "users_emails_email"'],
+            ['25P02', 'ERROR:  current transaction is aborted, commands ignored until end of transaction block'],
+            ['57014', 'ERROR:  canceling statement due to statement timeout'],
+        ];
+
+        foreach ($cases as [$state, $message]) {
+            $pdo = new PDOException("SQLSTATE[{$state}]: 7 {$message}", 0);
+            $pdo->errorInfo = [$state, 7, $message];
+            $e = new QueryException('pgsql', 'update "x" set "note" = ? where "id" = ?', ['deadlock 1213 1205', 1], $pdo);
+
+            $this->assertFalse(TransactionPolicy::isDeadlock($e), $state);
+        }
+    }
+
+    /** MySQL never reports the PostgreSQL states, and its own codes classify as they always have. */
+    public function test_is_deadlock_mysql_classification_is_unchanged(): void
+    {
+        $cases = [
+            [['40001', 1213, 'Deadlock found when trying to get lock; try restarting transaction'], true],
+            [['HY000', 1205, 'Lock wait timeout exceeded; try restarting transaction'], true],
+            [['22S01', 3516, 'POLYGON/MULTIPOLYGON value is a geometry of unexpected type GEOMCOLLECTION in st_area.'], false],
+            [['23000', 1062, "Duplicate entry 'a@b.c' for key 'email'"], false],
+            [['42S02', 1146, "Table 'iznik.nope' doesn't exist"], false],
+        ];
+
+        foreach ($cases as [$info, $expected]) {
+            $pdo = new PDOException("SQLSTATE[{$info[0]}]: {$info[1]} {$info[2]}", 0);
+            $pdo->errorInfo = $info;
+            $e = new QueryException('mysql', 'UPDATE x SET y = ?', [1], $pdo);
+
+            $this->assertSame($expected, TransactionPolicy::isDeadlock($e), (string) $info[1]);
+        }
+    }
+
     public function test_atomic_retries_on_deadlock_exception(): void
     {
         $attempts = 0;

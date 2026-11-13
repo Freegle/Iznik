@@ -197,7 +197,12 @@ func GetDonations(c *fiber.Ctx) error {
 	if groupID != "" {
 		tx = tx.Joins("INNER JOIN memberships ON users_donations.userid = memberships.userid AND memberships.groupid = ?", groupID)
 	}
-	tx.Where(whereSQL, whereArgs...).Scan(&raised)
+	// The error is logged, not returned: the answer has always been 200 with raised 0 when the sum cannot
+	// be read, and the page that shows the target copes with that. Logging it is what makes a statement an
+	// engine refuses visible: on PostgreSQL this one failed on every call and nothing said so.
+	if err := tx.Where(whereSQL, whereArgs...).Scan(&raised).Error; err != nil {
+		log.Printf("GetDonations: could not read the amount raised this month: %v", err)
+	}
 
 	return c.JSON(fiber.Map{
 		"target": target,

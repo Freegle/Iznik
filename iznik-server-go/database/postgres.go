@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -61,10 +62,27 @@ func pgEnv(name, def string) string {
 // buildPostgresDSN builds the connection URL for a host. The write host and a read replica share every
 // other part. The session time zone is UTC, because the baseline's timestamp columns are timestamptz and
 // its datetime columns are timestamp without a zone, and both must mean what they meant on MySQL.
+//
+// JIT compilation is turned off for the API's sessions. The API's statements are short and each is planned
+// afresh, so nothing compiled is ever reused; when a feed statement's estimated cost crosses the server's
+// jit_above_cost, PostgreSQL spends 30 to 200 ms compiling it on every call, often more than it saves.
+// PGSQL_JIT=on turns it back on, and PGSQL_JIT=server sends nothing and leaves the server's own setting,
+// which is what a connection pooler that refuses startup parameters it does not know needs.
+//
+// A statement that waits for a lock gives up after 50 seconds, as InnoDB does by default
+// (innodb_lock_wait_timeout). PostgreSQL's own default is to wait for ever, so one stuck writer would hold
+// a pool connection for each request queued behind it. PGSQL_LOCK_TIMEOUT changes the wait (PostgreSQL
+// syntax: 50s, 200ms, 0 for no limit), and "server" sends nothing.
 func buildPostgresDSN(host string) string {
 	q := url.Values{}
 	q.Set("sslmode", pgEnv("PGSQL_SSLMODE", "prefer"))
 	q.Set("TimeZone", "UTC")
+	if jit := strings.ToLower(pgEnv("PGSQL_JIT", "off")); jit != "server" {
+		q.Set("jit", jit)
+	}
+	if lt := strings.ToLower(pgEnv("PGSQL_LOCK_TIMEOUT", pgDefaultLockTimeout)); lt != "server" {
+		q.Set("lock_timeout", lt)
+	}
 	u := url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(pgEnv("PGSQL_USERNAME", "root"), os.Getenv("PGSQL_PASSWORD")),
@@ -75,15 +93,76 @@ func buildPostgresDSN(host string) string {
 	return u.String()
 }
 
+// Pool sizes for PostgreSQL. A MySQL connection is a thread; a PostgreSQL connection is a whole server
+// process with its own memory, and a stock server accepts 100 of them, so the 200 per pool that suits
+// MySQL (database.go) would be refused under load. The defaults leave room for a replica pool, the batch
+// jobs and a second API process inside 100. PGSQL_MAX_OPEN_CONNS and PGSQL_MAX_IDLE_CONNS override them,
+// per pool: the write pool and the read replica pool each take these sizes. A request that finds the
+// pool full waits for a connection, it does not fail.
+// pgDefaultLockTimeout is how long a statement waits for a lock before it fails with SQLSTATE 55P03.
+const pgDefaultLockTimeout = "50s"
+
+const (
+	pgDefaultMaxOpenConns = 30
+	pgDefaultMaxIdleConns = 30
+)
+
+// pgPoolSizes returns the most connections a pool may open and the most it may keep idle. By default
+// the two are equal: a pool that closes backends as load dips and opens them again pays for a new
+// PostgreSQL process and an empty statement cache each time. A value that is not a positive number is
+// ignored, and idle is never more than open.
+func pgPoolSizes() (maxOpen, maxIdle int) {
+	maxOpen = pgEnvInt("PGSQL_MAX_OPEN_CONNS", pgDefaultMaxOpenConns)
+	maxIdle = pgEnvInt("PGSQL_MAX_IDLE_CONNS", pgDefaultMaxIdleConns)
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	return maxOpen, maxIdle
+}
+
+func pgEnvInt(name string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
+// pgConnConfig parses a DSN and sets how pgx sends statements.
+//
+// pgx's default (cache_statement) prepares a named statement on the server for every distinct SQL text
+// and keeps 512 of them per connection. Many of the API's statements have ids pasted into the text (the
+// chat list, the browse feeds), so each member's request is a new text, and each one held 200 to 600 kB
+// of server memory until it fell out of the cache: tens of MB per connection that MySQL never spends,
+// because its driver interpolates parameters and keeps nothing on the server.
+//
+// cache_describe keeps nothing on the server. The first time a connection sees a text it asks the server
+// for the parameter and result types through the unnamed statement, and remembers only that description
+// in the Go process. Every execution is then one round trip, planned with its real values, as on MySQL.
+// The parameter types still come from the server, which the lenient codecs in pgtypes.go depend on
+// (a Go bool for a smallint, a number for a text column); the exec and simple_protocol modes guess the
+// type from the Go value and would break them.
+//
+// A remembered description can go stale when a migration changes a column's type or the columns of a
+// SELECT *. pgx drops the description when a query fails, so the next call asks again; the default mode
+// had the same one-off failure.
+func pgConnConfig(dsn string) (*pgx.ConnConfig, error) {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
+	return cfg, nil
+}
+
 // newPostgresFailoverDialector is the PostgreSQL twin of newFailoverDialector: the replica connector
 // falls back to the source for a retry window after a failed dial.
 func newPostgresFailoverDialector(replicaDSN, sourceDSN string) gorm.Dialector {
-	rc, err := pgx.ParseConfig(replicaDSN)
+	rc, err := pgConnConfig(replicaDSN)
 	if err != nil {
 		panic("database: failed to parse replica DSN for failover: " + err.Error())
 	}
 	rc.ConnectTimeout = 2 * time.Second
-	sc, err := pgx.ParseConfig(sourceDSN)
+	sc, err := pgConnConfig(sourceDSN)
 	if err != nil {
 		panic("database: failed to parse source DSN for failover: " + err.Error())
 	}
@@ -142,6 +221,8 @@ func initPostgres() {
 		}),
 	)
 
+	maxOpen, maxIdle := pgPoolSizes()
+
 	// Built into a local and published last, for the reason given in InitDatabase.
 	db, err := gorm.Open(newPostgresDialector(buildPostgresDSN(writeHost)), &gorm.Config{
 		Logger: newLogger,
@@ -157,8 +238,8 @@ func initPostgres() {
 				Replicas: []gorm.Dialector{newPostgresFailoverDialector(buildPostgresDSN(readHost), buildPostgresDSN(writeHost))},
 				Policy:   dbresolver.RandomPolicy{},
 			}).
-				SetMaxOpenConns(200).
-				SetMaxIdleConns(200).
+				SetMaxOpenConns(maxOpen).
+				SetMaxIdleConns(maxIdle).
 				SetConnMaxLifetime(5 * time.Minute),
 		)
 		if resolverErr != nil {
@@ -172,8 +253,8 @@ func initPostgres() {
 	if err != nil {
 		panic("failed to get database config: " + err.Error())
 	}
-	dbConfig.SetMaxOpenConns(200)
-	dbConfig.SetMaxIdleConns(200)
+	dbConfig.SetMaxOpenConns(maxOpen)
+	dbConfig.SetMaxIdleConns(maxIdle)
 	dbConfig.SetConnMaxLifetime(time.Hour)
 
 	DBConn = db
@@ -183,7 +264,7 @@ func initPostgres() {
 // newPostgresDialector opens a PostgreSQL connection pool whose statements are translated from MySQL
 // syntax (pgtranslate.go).
 func newPostgresDialector(dsn string) gorm.Dialector {
-	cfg, err := pgx.ParseConfig(dsn)
+	cfg, err := pgConnConfig(dsn)
 	if err != nil {
 		panic("database: failed to parse DSN: " + err.Error())
 	}

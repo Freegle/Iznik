@@ -54,4 +54,5 @@ CAST type tinyint to smallint drop typemod,
 EXCLUDING TABLE NAMES MATCHING {{EXCLUDED_TABLES}}
 
 AFTER LOAD DO
-     $$ SELECT iznik_reset_identities(); $$;
+     $$ SELECT iznik_reset_identities(); $$,
+     $$ ANALYZE; $$;

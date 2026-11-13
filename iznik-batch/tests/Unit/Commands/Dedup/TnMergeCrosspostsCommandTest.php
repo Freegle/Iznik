@@ -136,6 +136,50 @@ class TnMergeCrosspostsCommandTest extends TestCase
         $this->assertSame([$canonical], $spatial);
     }
 
+    /**
+     * A table whose unique key has more columns than the message id (messages_likes: message, member, type).
+     * Rows the canonical message has no equivalent of move onto it; the one it already has is dropped. The
+     * result is the same on both engines: MySQL does it with UPDATE IGNORE, PostgreSQL with one statement
+     * that leaves the colliding rows out.
+     */
+    public function test_rows_under_a_wider_unique_key_move_unless_the_canonical_has_them(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmerge')]);
+        $viewerBoth = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmerge')]);
+        $viewerCopy = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmerge')]);
+
+        $tnPostId = 'tn-merge-'.uniqid();
+        $canonical = $this->createTnMessage($tnPostId, $groupA->id, $poster->id);
+        $copy = $this->createTnMessage($tnPostId, $groupB->id, $poster->id);
+
+        DB::table('messages_likes')->insert([
+            // Seen on both copies: the copy's row collides and must be dropped, not moved.
+            ['msgid' => $canonical, 'userid' => $viewerBoth->id, 'type' => 'View', 'count' => 5],
+            ['msgid' => $copy, 'userid' => $viewerBoth->id, 'type' => 'View', 'count' => 2],
+            // The same member, another type, on the copy only: it moves.
+            ['msgid' => $copy, 'userid' => $viewerBoth->id, 'type' => 'Love', 'count' => 1],
+            // Another member, on the copy only: it moves.
+            ['msgid' => $copy, 'userid' => $viewerCopy->id, 'type' => 'View', 'count' => 3],
+        ]);
+
+        $this->artisan('tn:merge-crossposts')->assertSuccessful();
+
+        $this->assertSame(0, DB::table('messages_likes')->where('msgid', $copy)->count());
+
+        $rows = DB::table('messages_likes')->where('msgid', $canonical)
+            ->get()
+            ->map(fn ($r) => "{$r->userid}:{$r->type}:{$r->count}")
+            ->sort()->values()->all();
+        $expected = collect([
+            "{$viewerBoth->id}:View:5",
+            "{$viewerBoth->id}:Love:1",
+            "{$viewerCopy->id}:View:3",
+        ])->sort()->values()->all();
+        $this->assertSame($expected, $rows);
+    }
+
     public function test_dry_run_changes_nothing(): void
     {
         $groupA = $this->createTestGroup();

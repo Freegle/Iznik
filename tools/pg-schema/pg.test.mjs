@@ -122,6 +122,70 @@ test('an ON UPDATE column moves unless the statement names it, whatever value it
   assert.deepEqual(out.slice(-3), ['t', 't', 't'])
 })
 
+// The plan for sql with sequential scans, bitmap scans, sorts and hash and merge joins priced out, so
+// an empty table still shows which index can serve the predicate, the ordering or the join.
+function planOf(sql) {
+  const off = ['seqscan', 'bitmapscan', 'sort', 'hashjoin', 'mergejoin'].map((x) => `SET LOCAL enable_${x} = off;`).join(' ')
+  return scratch(`${off} EXPLAIN (COSTS OFF) ${sql};`)
+}
+
+test('the prefix indexes serve lower(col::text) LIKE, and no other form of LIKE on a citext column is indexed', { skip }, () => {
+  // The case-insensitive form, which matches as MySQL does.
+  assert.match(planOf(`SELECT id FROM locations WHERE lower(name::text) LIKE lower('AB1 2%')`), /locations_name_prefix/)
+  assert.match(planOf(`SELECT id FROM users_emails WHERE lower(email::text) LIKE lower('Someone-g%@user.trashnothing.com')`), /users_emails_email_prefix/)
+  // The same with the pattern already lower-cased and bound as it is, which is how the Go code sends it.
+  assert.match(planOf(`SELECT id FROM locations WHERE lower(name::text) LIKE 'ab1 2%'`), /Index Cond: \(\(lower\(\(name\)::text\) ~>=~ 'ab1 2'::text\)/)
+  // Neither LIKE on the citext column itself nor stock Laravel's col::text LIKE can use an index:
+  // this is why PostgreSQL has to be sent the lower() form.
+  assert.ok(!/Index Cond/.test(planOf(`SELECT id FROM locations WHERE name LIKE 'AB1 2%'`)))
+  assert.ok(!/Index Cond/.test(planOf(`SELECT id FROM locations WHERE name::text LIKE 'AB1 2%'`)))
+  // The lower() form finds what the citext LIKE finds.
+  const rows = scratch(`
+    INSERT INTO locations (name, type) VALUES ('AB1 2CD', 'Postcode'), ('ab1 2ef', 'Postcode'), ('AB12 3CD', 'Postcode');
+    SELECT (SELECT string_agg(name::text, ',' ORDER BY id) FROM locations WHERE name LIKE 'ab1 2%')
+        || '|' || (SELECT string_agg(name::text, ',' ORDER BY id) FROM locations WHERE lower(name::text) LIKE lower('aB1 2%'));`)
+  assert.equal(rows, 'AB1 2CD,ab1 2ef|AB1 2CD,ab1 2ef')
+})
+
+test('the other PostgreSQL-only indexes are there and usable for their statements', { skip }, () => {
+  assert.match(psql(DB, `SELECT pg_get_indexdef('messages_groups_approved_live'::regclass)`), /\(groupid, msgid\) WHERE \(\(collection = 'Approved'::text\) AND \(deleted = 0\)\)/)
+  assert.match(
+    planOf(`SELECT 1 FROM messages_spatial ms WHERE EXISTS (SELECT 1 FROM messages_groups mg WHERE mg.msgid = ms.msgid AND mg.groupid IN (1, 2, 3) AND mg.collection = 'Approved' AND mg.deleted = 0)`),
+    /messages_groups_approved_live|messages_groups_msgid/
+  )
+  assert.match(planOf(`SELECT id FROM logs WHERE groupid = 1 AND type IN ('Group', 'User') ORDER BY id DESC LIMIT 20`), /Index Scan Backward using logs_groupid_id/)
+  assert.match(planOf(`SELECT id FROM memberships WHERE groupid = 1 AND collection = 'Approved' ORDER BY id DESC LIMIT 10`), /Index (Only )?Scan Backward using memberships_groupid_collection_id/)
+  assert.match(planOf(`SELECT msgid FROM messages_likes WHERE userid = 1 AND type = 'View' AND msgid IN (1, 2, 3)`), /messages_likes_userid_type_msgid|messages_likes_msgid_2/)
+  // The wider index stands in for the one on userid alone, which is gone.
+  assert.equal(psql(DB, `SELECT count(*) FROM pg_indexes WHERE indexname = 'messages_likes_userid'`), '0')
+  assert.match(planOf(`SELECT * FROM messages_likes WHERE userid = 1`), /messages_likes_userid_type_msgid/)
+})
+
+test('storage and statistics settings from the config are on the tables', { skip }, () => {
+  assert.equal(psql(DB, `SELECT reloptions::text FROM pg_class WHERE oid = 'users'::regclass`), '{fillfactor=85}')
+  assert.equal(psql(DB, `SELECT reloptions::text FROM pg_class WHERE oid = 'messages_likes'::regclass`), '{fillfactor=90}')
+  assert.equal(psql(DB, `SELECT attstattarget FROM pg_attribute WHERE attrelid = 'messages_likes'::regclass AND attname = 'msgid'`), '1000')
+  const config = JSON.parse(fs.readFileSync(path.join(here, 'config.json'), 'utf8'))
+  const withTarget = Number(psql(DB, `SELECT count(*) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r' AND a.attstattarget IS NOT NULL AND a.attstattarget >= 0 AND a.attnum > 0`))
+  assert.equal(withTarget, config.columnStatistics.filter((e) => e.target !== undefined).length)
+  const withOptions = Number(psql(DB, `SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' AND reloptions IS NOT NULL`))
+  assert.equal(withOptions, config.tableStorage.length)
+})
+
+test('a column joined to a citext column is citext too, so the join ignores case and uses the index', { skip }, () => {
+  for (const sql of [
+    'SELECT i.id FROM messages_bulk_items bi LEFT JOIN items i ON i.name = bi.name',
+    'SELECT ai_images.id FROM jobs LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title',
+    'SELECT users_emails.id FROM users_donations JOIN users_emails ON users_emails.email = users_donations."Payer"',
+  ]) {
+    const plan = planOf(sql)
+    assert.ok(!/::text/.test(plan), `no side is cast to text in: ${sql}\n${plan}`)
+    // Either side may be the one probed; what matters is that an index on the citext column is.
+    assert.match(plan, /Index Cond: \((name|email|"Payer") = /)
+  }
+  assert.equal(psql(DB, `SELECT string_agg(data_type, ',') FROM information_schema.columns WHERE (table_name, column_name) IN (('messages_bulk_items', 'name'), ('jobs', 'canonical_title'), ('users_donations', 'Payer')) AND udt_name = 'citext'`), 'USER-DEFINED,USER-DEFINED,USER-DEFINED')
+})
+
 test('a case-sensitive unique column stays case sensitive', { skip }, () => {
   assert.equal(scratch(`INSERT INTO abtest (uid, variant, shown, action, rate) VALUES ('A', 'x', 0, 0, 0), ('a', 'x', 0, 0, 0); SELECT count(*) FROM abtest;`), '2')
 })

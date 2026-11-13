@@ -149,6 +149,9 @@ return [
             'prefix_indexes' => true,
             'search_path' => env('PGSQL_SEARCH_PATH', 'public'),
             'sslmode' => 'prefer',
+            // A statement that waits for a lock gives up after this long, as InnoDB does after 50 seconds.
+            // PostgreSQL's own default is to wait for ever. See App\Database\LockTimeoutPostgresConnector.
+            'lock_timeout' => env('PGSQL_LOCK_TIMEOUT', '50s'),
         ],
 
         'sqlsrv' => [

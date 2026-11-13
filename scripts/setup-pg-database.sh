@@ -169,6 +169,9 @@ fi
 if [ "${PG_FIXTURES:-}" != "0" ]; then
   load_fixtures "$PG_DATABASE" || exit 1
   roll_forward_fixtures "$PG_DATABASE" || exit 1
+  # An expression index has no statistics until the table is analysed, and without them the planner
+  # does not use it: the prefix searches on postcodes and addresses go back to reading the whole table.
+  $PG_PSQL -d "$PG_DATABASE" -X -q -c "ANALYZE" || exit 1
   if [ "${PG_FIXTURE_ORPHANS:-}" = "1" ]; then
     $PG_PSQL -d "$PG_DATABASE" -X -q -At -f - < "${REPO_DIR}/tools/fixtures/orphans.pg.sql" 2>&1
   fi

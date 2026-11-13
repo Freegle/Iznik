@@ -24,6 +24,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
@@ -33,6 +34,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -353,6 +355,55 @@ func TestEngine_ResolvePlace(t *testing.T) {
 			t.Errorf("nowhere near a postcode: %q, %q", pc, place)
 		}
 	})
+}
+
+// The nearest-postcode lookup must be able to read its box from the lat or lng index on PostgreSQL.
+// Those columns are numeric there, and a double precision bound makes PostgreSQL cast the column
+// instead, which no index can answer: the lookup then reads every row of locations. The scratch
+// table has three rows, so sequential scans are switched off to see which index the planner can use.
+// MySQL compares its DECIMAL columns with the bounds directly, so there is nothing to check there.
+func TestEngine_NearestPostcodeUsesLatLngIndex(t *testing.T) {
+	t.Setenv(dbengine.EnvEngine, string(dbengine.Postgres))
+	s := dbtest.Open(t, dbengine.Postgres)
+	seedMembers(t, s, time.Now().UTC())
+	// Enough analysed rows that the planner has a reason to choose the index. With three rows and no
+	// statistics it picks one by accident. These sit at latitude 53 to 58, outside every box other tests use.
+	s.Exec(t, "INSERT INTO locations (id, name, type, lat, lng) SELECT 1000+g, 'ZZ'||g, 'Postcode', 53+g*0.001, -1+g*0.001 FROM generate_series(1,5000) g")
+	s.Exec(t, "ANALYZE locations")
+
+	// One connection, so the setting and the EXPLAIN share a session.
+	ctx := context.Background()
+	conn, err := s.DB.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "SET enable_seqscan = off"); err != nil {
+		t.Fatal(err)
+	}
+	lat, lng := 51.4545, -2.5879
+	rows, err := conn.QueryContext(ctx, "EXPLAIN "+sqlNearestPostcode(), lat, lat, lng, lng, lng, lat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(line + "\n")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`Index Cond: \(+(p\.)?(lat|lng) [<>]=`).MatchString(plan.String()) {
+		t.Errorf("the box is not read from the lat or lng index:\n%s", plan.String())
+	}
+	if regexp.MustCompile(`\((p\.)?(lat|lng)\)::double precision [<>]=`).MatchString(plan.String()) {
+		t.Errorf("lat or lng is cast before it is compared, so no index can answer it:\n%s", plan.String())
+	}
 }
 
 func TestEngine_ActiveMembersInBox(t *testing.T) {

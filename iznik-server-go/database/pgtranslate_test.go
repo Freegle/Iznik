@@ -139,6 +139,20 @@ func TestTranslatePostgres(t *testing.T) {
 			`INSERT INTO messages_by (msgid, userid, count) VALUES ($1, $2, 1) ON CONFLICT ("msgid","userid") DO UPDATE SET count = "messages_by"."count" + 1, msgid = ("messages_by"."count" + 1)`},
 		{"sequential subselect untouched", "UPDATE items SET id = 2, name = (SELECT id FROM t2)", "UPDATE items SET id = 2, name = (SELECT id FROM t2)"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
+		// MBRContains compares bounding boxes only, so it is the box operator and not the exact ST_Contains.
+		{"mbr contains", "WHERE MBRContains(rr.outer_bound, ST_SRID(POINT($1, $2), $3)) AND ST_Contains(rr.outer_bound, ST_SRID(POINT($4, $5), $6))",
+			"WHERE (rr.outer_bound ~ ST_SetSRID(ST_MakePoint($1, $2), $3)) AND ST_Contains(rr.outer_bound, ST_SetSRID(ST_MakePoint($4, $5), $6))"},
+		{"mbr contains a column in a built box", "WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(1, 2), POINT(3, 4))), 4326), position) AND a = 1",
+			"WHERE (ST_SetSRID(ST_MakePolygon(ST_MakeLine(ARRAY[ST_MakePoint(1, 2), ST_MakePoint(3, 4)])), 4326) ~ position) AND a = 1"},
+		// A column ordered against DATE_FORMAT text: PostgreSQL will not compare a timestamp with text.
+		{"date_format compared with a column", "SELECT COALESCE(SUM(GrossAmount), 0) AS raised FROM users_donations WHERE timestamp >= DATE_FORMAT(NOW(), '%Y-%m-01') AND Payer != $1",
+			`SELECT COALESCE(SUM("GrossAmount"), 0) AS raised FROM users_donations WHERE timestamp >= CAST(DATE_FORMAT(NOW(), '%Y-%m-01') AS timestamp) AND "Payer" != $1`},
+		{"date_format compared with a qualified column", "WHERE t.added < DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')", "WHERE t.added < CAST(DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s') AS timestamp)"},
+		{"date_format selected is text", "SELECT DATE_FORMAT(day, '%Y-%m-%d') AS day FROM t", "SELECT DATE_FORMAT(day, '%Y-%m-%d') AS day FROM t"},
+		{"date_format equality is left alone", "WHERE label = DATE_FORMAT(NOW(), '%Y-%m-%d') OR label <> DATE_FORMAT(NOW(), '%Y-%m-%d')",
+			"WHERE label = DATE_FORMAT(NOW(), '%Y-%m-%d') OR label <> DATE_FORMAT(NOW(), '%Y-%m-%d')"},
+		{"date_format of part of a date is left alone", "WHERE yr >= DATE_FORMAT(NOW(), '%Y')", "WHERE yr >= DATE_FORMAT(NOW(), '%Y')"},
+		{"date_format against a parameter is left alone", "WHERE $1 >= DATE_FORMAT(d, '%Y-%m-%d')", "WHERE $1 >= DATE_FORMAT(d, '%Y-%m-%d')"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

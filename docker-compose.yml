@@ -100,6 +100,10 @@ services:
     # when PG_ENGINE=1 is set (see docs/developers/reference/database-engines.md).
     image: postgis/postgis:18-3.6
     restart: "no"
+    # More connections than the stock 100, so the API's two pools and the batch workers fit. The disks
+    # are solid state, so a random page costs about what a sequential one does: at the stock 4 the planner
+    # prefers reading a community's whole history to probing an index once per post.
+    command: ["postgres", "-c", "max_connections=200", "-c", "random_page_cost=1.1"]
     environment:
       POSTGRES_DB: iznik
       POSTGRES_PASSWORD: iznik
@@ -851,6 +855,11 @@ services:
       - PGSQL_PORT=${PGSQL_PORT:-5432}
       - PGSQL_USERNAME=${PGSQL_USERNAME:-root}
       - PGSQL_PASSWORD=${PGSQL_PASSWORD:-iznik}
+      # Pool sizes and JIT for DB_ENGINE=postgres. Empty means the defaults in iznik-server-go/database/postgres.go.
+      - PGSQL_MAX_OPEN_CONNS=${PGSQL_MAX_OPEN_CONNS:-}
+      - PGSQL_MAX_IDLE_CONNS=${PGSQL_MAX_IDLE_CONNS:-}
+      - PGSQL_JIT=${PGSQL_JIT:-}
+      - PGSQL_LOCK_TIMEOUT=${PGSQL_LOCK_TIMEOUT:-}
       # 1 makes a parity test fail, not skip, when PostgreSQL is unreachable. CI sets it.
       - PG_ENGINE=${PG_ENGINE:-}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}

@@ -1,8 +1,13 @@
 package database
 
 import (
+	"regexp"
 	"strings"
 )
+
+// fullDateFormat matches a DATE_FORMAT format that renders a whole date, with or without a time, where a
+// part may be a fixed number: '%Y-%m-%d', '%Y-%m-01', '%Y-%m-%d %H:%i:%s'.
+var fullDateFormat = regexp.MustCompile(`^'%Y-%m-(%d|\d\d)( (%H|\d\d):(%i|\d\d)(:(%s|\d\d))?)?'$`)
 
 // catalog is what the translator needs to know about the schema: which unique indexes and columns a
 // table has. The connector fills it from pg_catalog; tests use a fake.
@@ -93,7 +98,6 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		"JSON_ARRAYAGG":      "jsonb_agg",
 		"ST_DISTANCE_SPHERE": "ST_DistanceSphere",
 		"POINT":              "ST_MakePoint",
-		"MBRCONTAINS":        "ST_Contains",
 		"ST_GEOMETRYTYPE":    "iznik_geometrytype",
 	}
 	for i, t := range ts {
@@ -381,9 +385,24 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		changed = true
 	}
 
-	// MBRIntersects(a, b) is a bounding-box overlap.
+	// MBRIntersects(a, b) is a bounding-box overlap, and MBRContains(a, b) is true when the bounding box of
+	// a contains the bounding box of b. PostGIS has an operator for each (&& and ~), both served by the GiST
+	// index. MBRContains must not become ST_Contains: that is the exact test on the real shapes, which
+	// reads the whole stored geometry for every candidate, and where MySQL's statement pairs MBRContains
+	// with ST_Contains (rippling/reachbounds.go) the exact test would run twice. The Laravel side maps it
+	// to ~ as well (Expressions/MbrContains.php). PostGIS keeps a geometry's box in single precision,
+	// rounded outwards, so a point within about half a metre outside a box edge can count as inside.
 	for i := len(ts) - 1; i >= 0; i-- {
-		if !isKw(ts[i], "MBRINTERSECTS") {
+		var op []tok
+		switch {
+		case isKw(ts[i], "MBRINTERSECTS"):
+			op = []tok{punct("&"), punct("&")}
+		case isKw(ts[i], "MBRCONTAINS"):
+			op = []tok{punct("~")}
+		default:
+			continue
+		}
+		if p := prevSig(ts, i-1); p >= 0 && isP(ts[p], ".") {
 			continue
 		}
 		o := nextSig(ts, i+1)
@@ -398,7 +417,60 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		if len(args) != 2 {
 			continue
 		}
-		rep := concatToks([]tok{punct("(")}, trimToks(args[0]), []tok{sp(), punct("&"), punct("&"), sp()}, trimToks(args[1]), []tok{punct(")")})
+		rep := concatToks([]tok{punct("(")}, trimToks(args[0]), []tok{sp()}, op, []tok{sp()}, trimToks(args[1]), []tok{punct(")")})
+		ts = concatToks(ts[:i], rep, ts[cl+1:])
+		changed = true
+	}
+
+	// column >= DATE_FORMAT(x, '%Y-%m-01'): MySQL reads the formatted text as a date when it compares it
+	// with a date or time column. PostgreSQL has no comparison between a timestamp and text and refuses the
+	// statement, so the text is cast back to a timestamp. Only this shape is touched: an ordering comparison
+	// (<, <=, >, >=) with a column on the left and a format that renders a whole date on the right. An
+	// equality or an assignment is left alone, because there the other side may well be text.
+	for i := len(ts) - 1; i >= 0; i-- {
+		if !isKw(ts[i], "DATE_FORMAT") {
+			continue
+		}
+		cl := callEnd(ts, i)
+		if cl < 0 {
+			continue
+		}
+		o := nextSig(ts, i+1)
+		args := splitArgs(ts[o+1 : cl])
+		if len(args) != 2 {
+			continue
+		}
+		if f := trimToks(args[1]); len(f) != 1 || f[0].k != tkStr || !fullDateFormat.MatchString(f[0].s) {
+			continue
+		}
+		// The operator straight before the call: one of < >, with or without a following =.
+		p := prevSig(ts, i-1)
+		if p >= 0 && isP(ts[p], "=") {
+			p = prevSig(ts, p-1)
+		} else if p >= 0 && isP(ts[p], ">") {
+			// <> is "not equal", not an ordering.
+			if q := prevSig(ts, p-1); q >= 0 && isP(ts[q], "<") {
+				continue
+			}
+		}
+		if p < 0 || !(isP(ts[p], "<") || isP(ts[p], ">")) {
+			continue
+		}
+		// What is compared with it must be a column: a name, not a parameter, a number or an expression.
+		l := prevSig(ts, p-1)
+		if l < 0 {
+			continue
+		}
+		switch ts[l].k {
+		case tkQuote, tkTick:
+		case tkWord:
+			if c := ts[l].s[0]; c == '$' || (c >= '0' && c <= '9') {
+				continue
+			}
+		default:
+			continue
+		}
+		rep := concatToks([]tok{word("CAST"), punct("(")}, ts[i:cl+1], []tok{sp(), word("AS"), sp(), word("timestamp"), punct(")")})
 		ts = concatToks(ts[:i], rep, ts[cl+1:])
 		changed = true
 	}

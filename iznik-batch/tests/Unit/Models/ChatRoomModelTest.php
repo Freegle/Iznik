@@ -383,6 +383,36 @@ class ChatRoomModelTest extends TestCase
         $this->assertEquals(1, $count, 'Should have exactly one User2Mod chat');
     }
 
+    /**
+     * PostgreSQL's SELECT ... FOR UPDATE locks nothing when no room exists yet, so two creators for the same
+     * member and community are kept apart by an advisory lock on the pair instead. The suite's own
+     * transaction is still open here, so the lock taken inside the call is still held and visible.
+     */
+    public function test_get_or_create_user2mod_locks_the_pair_on_postgresql(): void
+    {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            $this->markTestSkipped('PostgreSQL only: on MySQL the locking read itself stops a second creator.');
+        }
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        ChatRoom::getOrCreateUser2Mod($user->id, $group->id);
+
+        // An advisory lock on one 64-bit key shows in pg_locks as its high and low halves.
+        // keep-raw: PostgreSQL only; reads the session's advisory locks from pg_locks.
+        $held = DB::selectOne(
+            "SELECT count(*) AS held
+               FROM pg_locks l, (SELECT hashtextextended(?, 0) AS k) key
+              WHERE l.locktype = 'advisory' AND l.pid = pg_backend_pid() AND l.granted
+                AND l.classid = CAST((key.k >> 32) & 4294967295 AS oid)
+                AND l.objid = CAST(key.k & 4294967295 AS oid)",
+            ["u2m:{$user->id}:{$group->id}"]
+        )->held;
+
+        $this->assertSame(1, (int) $held);
+    }
+
     public function test_get_or_create_user2mod_different_groups(): void
     {
         $user = $this->createTestUser();

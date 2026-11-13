@@ -371,8 +371,9 @@ type DodgyLocation struct {
 // responsible for populating GroupsNear on the returned slice.
 //
 // pconly is only appended when set, so this statement has exactly 2 possible
-// rendered forms, both proven by the retired ormharness (shapes.json /
-// TestTier3Shapes_b262bf75df3c, removed in d22ba1d6c).
+// rendered forms on MySQL, both proven by the retired ormharness (shapes.json /
+// TestTier3Shapes_b262bf75df3c, removed in d22ba1d6c). PostgreSQL has its own
+// prefix predicate, explained where it is added.
 func typeaheadQuery(prefix string, limit uint64, pconly bool) []Location {
 	type locationWithArea struct {
 		Location
@@ -384,8 +385,20 @@ func typeaheadQuery(prefix string, limit uint64, pconly bool) []Location {
 	var locs []locationWithArea
 	tx := db.Table("locations l1").
 		Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").
-		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
-		Where("l1.name LIKE ?", prefix+"%")
+		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid")
+	if database.Engine() == database.EnginePostgres {
+		// locations.name is citext on PostgreSQL, and a LIKE on a citext column can never use an
+		// index, so the MySQL form below reads the whole table for every prefix that has fewer
+		// matches than the limit. PostgreSQL is given the lower-cased text of the name instead,
+		// which the locations_name_prefix index (lower(name::text) text_pattern_ops) holds, with
+		// the prefix lower-cased here so the match is still case-insensitive. The pattern is
+		// bound as a plain value, not wrapped in lower(), so the planner can read the prefix
+		// out of it. Any LIKE wildcard the caller typed is passed through, as it is on MySQL.
+		// keep-raw: PostgreSQL only, the predicate has to match the expression index exactly.
+		tx = tx.Where("lower(l1.name::text) LIKE ?", strings.ToLower(prefix)+"%")
+	} else {
+		tx = tx.Where("l1.name LIKE ?", prefix+"%")
+	}
 	if pconly {
 		tx = tx.Where("l1.type = '" + TYPE_POSTCODE + "'")
 	}

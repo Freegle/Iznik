@@ -6,8 +6,10 @@ import (
 	"database/sql/driver"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -19,7 +21,7 @@ import (
 type pgTranslatingConnector struct {
 	inner driver.Connector
 	mu    sync.Mutex
-	cache sync.Map // sql -> pgStatement
+	cache pgStatementCache
 	idx   map[string][][]string
 	cols  map[string][]string
 	defs  map[string]map[string]any // table -> column -> implicit default of a NOT NULL column
@@ -32,6 +34,122 @@ type pgStatement struct {
 	insertID bool      // an INSERT into a table with an id column, no RETURNING
 	jsonArgs bool      // has a JSON constructor whose bound arguments need a type
 	nullCols []nullCol // bound parameters of a one-row INSERT that are columns with an implicit default
+	// timeoutMs is the limit a MySQL /*+ MAX_EXECUTION_TIME(n) */ hint asks for, or 0. PostgreSQL reads
+	// the hint as a comment, so the connection applies the limit itself (withStatementTimeout).
+	timeoutMs int
+}
+
+// pgStatementCache holds the translation of each statement text, so a statement is translated once and
+// not on every execution. It has to be bounded: many statements have ids pasted into the text (a member's
+// chat ids, the viewer of a browse feed), so the number of distinct texts grows with the number of
+// members served, and an unbounded map would grow for the life of the process.
+//
+// It keeps two generations. A new text goes into the current one. When the current one is full it
+// becomes the old one and the previous old one is dropped; a text found in the old one is copied
+// forward. So a statement that is still in use is never translated again, one-off texts fall out after
+// at most two generations, and the reads that make up nearly every call stay lock-free.
+type pgStatementCache struct {
+	mu      sync.Mutex // held only to rotate
+	cur     atomic.Pointer[sync.Map]
+	old     atomic.Pointer[sync.Map]
+	entries atomic.Int64 // texts added to cur
+	bytes   atomic.Int64 // their size: the MySQL text and its translation
+}
+
+// The limits on one generation. The whole cache holds at most twice this.
+const (
+	pgStatementCacheMaxEntries = 10000
+	pgStatementCacheMaxBytes   = 32 << 20
+)
+
+func (sc *pgStatementCache) get(q string) (pgStatement, bool) {
+	if m := sc.cur.Load(); m != nil {
+		if v, ok := m.Load(q); ok {
+			return v.(pgStatement), true
+		}
+	}
+	if m := sc.old.Load(); m != nil {
+		if v, ok := m.Load(q); ok {
+			st := v.(pgStatement)
+			sc.put(q, st)
+			return st, true
+		}
+	}
+	return pgStatement{}, false
+}
+
+func (sc *pgStatementCache) put(q string, st pgStatement) {
+	m := sc.cur.Load()
+	if m == nil {
+		sc.mu.Lock()
+		if m = sc.cur.Load(); m == nil {
+			m = &sync.Map{}
+			sc.cur.Store(m)
+		}
+		sc.mu.Unlock()
+	}
+	if _, loaded := m.LoadOrStore(q, st); loaded {
+		return
+	}
+	n := sc.entries.Add(1)
+	b := sc.bytes.Add(int64(len(q) + len(st.sql)))
+	if n <= pgStatementCacheMaxEntries && b <= pgStatementCacheMaxBytes {
+		return
+	}
+	sc.mu.Lock()
+	// Another caller may have rotated while this one waited: only rotate the generation that filled.
+	if sc.cur.Load() == m {
+		sc.old.Store(m)
+		sc.cur.Store(&sync.Map{})
+		sc.entries.Store(0)
+		sc.bytes.Store(0)
+	}
+	sc.mu.Unlock()
+}
+
+// size is the number of texts held in both generations. It walks them, so it is for tests.
+func (sc *pgStatementCache) size() int {
+	n := 0
+	for _, m := range []*sync.Map{sc.cur.Load(), sc.old.Load()} {
+		if m != nil {
+			m.Range(func(_, _ any) bool { n++; return true })
+		}
+	}
+	return n
+}
+
+// maxExecutionTimeMs returns the n of a MySQL optimizer hint /*+ MAX_EXECUTION_TIME(n) */ in the statement,
+// or 0 when it has none. Only a hint comment counts: the words in a string or an ordinary comment do not.
+func maxExecutionTimeMs(q string) int {
+	const name = "MAX_EXECUTION_TIME"
+	if !strings.Contains(q, name) {
+		return 0
+	}
+	for _, t := range lexSQL(q) {
+		if t.k != tkCmt || !strings.HasPrefix(t.s, "/*+") {
+			continue
+		}
+		i := strings.Index(t.s, name)
+		if i < 0 {
+			continue
+		}
+		rest := strings.TrimLeft(t.s[i+len(name):], " \t")
+		if !strings.HasPrefix(rest, "(") {
+			continue
+		}
+		rest = strings.TrimLeft(rest[1:], " \t")
+		j := 0
+		for j < len(rest) && rest[j] >= '0' && rest[j] <= '9' {
+			j++
+		}
+		// More than nine digits is over eleven days: not a limit worth setting, and it keeps the number an int32.
+		if j == 0 || j > 9 || !strings.HasPrefix(strings.TrimLeft(rest[j:], " \t"), ")") {
+			continue
+		}
+		n, _ := strconv.Atoi(rest[:j])
+		return n
+	}
+	return 0
 }
 
 // nullCol ties a bound parameter to the NOT NULL column it is inserted into.
@@ -57,16 +175,16 @@ func (c *pgTranslatingConnector) Connect(ctx context.Context) (driver.Conn, erro
 }
 
 func (c *pgTranslatingConnector) statement(q string) pgStatement {
-	if v, ok := c.cache.Load(q); ok {
-		return v.(pgStatement)
+	if st, ok := c.cache.get(q); ok {
+		return st
 	}
 	t := translatePostgres(q, c)
-	st := pgStatement{sql: t, jsonArgs: strings.Contains(t, "jsonb_build_") || strings.Contains(t, "json_set(") || strings.Contains(strings.ToLower(t), "concat(")}
+	st := pgStatement{sql: t, timeoutMs: maxExecutionTimeMs(q), jsonArgs: strings.Contains(t, "jsonb_build_") || strings.Contains(t, "json_set(") || strings.Contains(strings.ToLower(t), "concat(")}
 	if table, ok := plainInsertTable(t); ok && isColumnOf(c, table, "id") {
 		st.insertID = true
 	}
 	st.nullCols = c.insertNullCols(t)
-	c.cache.Store(q, st)
+	c.cache.put(q, st)
 	return st
 }
 
@@ -203,6 +321,52 @@ func (c *pgTranslatingConnector) unique(table string, cols []string) []string {
 type pgTranslatingConn struct {
 	driver.Conn
 	c *pgTranslatingConnector
+	// unfit is set when a statement time limit could not be taken off again. The pool then drops the
+	// connection (IsValid) instead of handing it, still limited, to an unrelated statement.
+	unfit atomic.Bool
+}
+
+// withStatementTimeout gives the next statement on this connection the time limit its MAX_EXECUTION_TIME
+// hint asks for, and returns the function that takes the limit off again. On MySQL the hint caps one
+// SELECT; PostgreSQL's equivalent is the statement_timeout setting, which belongs to the session, so it
+// is set just before the statement and reset just after, on the same connection. A statement that
+// overruns fails with SQLSTATE 57014, which IsQueryTimeout recognises as it does MySQL's 3024.
+//
+// A plain SET is right inside a transaction too. If the limited statement fails there, the transaction
+// is aborted and the reset is refused, but the rollback that must follow undoes the SET as well. If the
+// reset cannot be sent for any reason the connection is marked unfit, so the limit can never outlive
+// its statement on a pooled connection.
+func (p *pgTranslatingConn) withStatementTimeout(ctx context.Context, ms int) (func(), error) {
+	ex := p.Conn.(driver.ExecerContext)
+	// keep-raw: PostgreSQL session setting standing in for MySQL's MAX_EXECUTION_TIME hint; the value is a number parsed from the hint.
+	if _, err := ex.ExecContext(ctx, "SET statement_timeout = "+strconv.Itoa(ms), nil); err != nil {
+		return nil, err
+	}
+	return func() {
+		// Not the caller's context: that may be cancelled already, and the limit must still come off.
+		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		// keep-raw: takes the PostgreSQL statement time limit off again; nothing MySQL has an equivalent of.
+		if _, err := ex.ExecContext(rctx, "RESET statement_timeout", nil); err != nil {
+			p.unfit.Store(true)
+		}
+	}, nil
+}
+
+// pgTimedRows takes the statement time limit off when the rows are closed: the statement is not finished,
+// and the connection cannot take the reset, until then.
+type pgTimedRows struct {
+	*pgRows
+	done func()
+}
+
+func (r *pgTimedRows) Close() error {
+	err := r.pgRows.Close()
+	if r.done != nil {
+		r.done()
+		r.done = nil
+	}
+	return err
 }
 
 func (p *pgTranslatingConn) Prepare(q string) (driver.Stmt, error) {
@@ -231,6 +395,13 @@ func (p *pgTranslatingConn) ExecContext(ctx context.Context, q string, args []dr
 	}
 	if st.nullCols != nil {
 		args = fillNulls(args, st.nullCols)
+	}
+	if st.timeoutMs > 0 {
+		done, err := p.withStatementTimeout(ctx, st.timeoutMs)
+		if err != nil {
+			return nil, err
+		}
+		defer done()
 	}
 	if !st.insertID {
 		return p.Conn.(driver.ExecerContext).ExecContext(ctx, st.sql, args)
@@ -272,6 +443,18 @@ func (p *pgTranslatingConn) QueryContext(ctx context.Context, q string, args []d
 	if st.nullCols != nil {
 		args = fillNulls(args, st.nullCols)
 	}
+	if st.timeoutMs > 0 {
+		done, err := p.withStatementTimeout(ctx, st.timeoutMs)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := p.Conn.(driver.QueryerContext).QueryContext(ctx, st.sql, args)
+		if err != nil {
+			done()
+			return nil, err
+		}
+		return &pgTimedRows{pgRows: newPgRows(rows), done: done}, nil
+	}
 	rows, err := p.Conn.(driver.QueryerContext).QueryContext(ctx, st.sql, args)
 	if err != nil {
 		return nil, err
@@ -295,6 +478,9 @@ func (p *pgTranslatingConn) ResetSession(ctx context.Context) error {
 }
 
 func (p *pgTranslatingConn) IsValid() bool {
+	if p.unfit.Load() {
+		return false
+	}
 	if v, ok := p.Conn.(driver.Validator); ok {
 		return v.IsValid()
 	}

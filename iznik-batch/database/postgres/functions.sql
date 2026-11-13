@@ -59,8 +59,14 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT GetMaxDimension(g) $$;
 --    result treat NULL as "no distance"; they get it from MySQL already.
 -- The parameters are double precision so that a numeric column, a real column and a literal all
 -- resolve to it.
+--
+-- STRICT because a NULL argument makes the arithmetic NULL anyway: PostgreSQL then returns NULL without
+-- running the body, which matters for groups with no position. It stays PL/pgSQL on purpose. Written as
+-- one inlinable SQL expression the angle has to be spelled out three times (the range test twice and
+-- the ACOS), and measured over 1.2 million points that was under twice as fast, and no faster on the 500
+-- groups the callers order.
 CREATE OR REPLACE FUNCTION haversine(lat1 double precision, lon1 double precision, lat2 double precision, lon2 double precision) RETURNS real
-LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE AS $$
 DECLARE
   a1 double precision := lat1::real;
   o1 double precision := lon1::real;
@@ -194,29 +200,23 @@ END
 $$;
 
 -- crc32(s): MySQL's built-in CRC32 (IEEE polynomial, the same checksum as PHP crc32() and Go crc32.ChecksumIEEE)
--- of the UTF-8 bytes of a string, as an unsigned 32-bit number. PostgreSQL has no built-in. Used to bucket
--- ids into experiment arms, which must agree between PHP, Go and SQL; NULL in, NULL out, as in MySQL.
+-- of the UTF-8 bytes of a string, as an unsigned 32-bit number. Used to bucket ids into experiment arms and
+-- mail shards, which must agree between PHP, Go and SQL; NULL in, NULL out, as in MySQL.
+--
+-- PostgreSQL 18 has the checksum built in, over bytea (pg_catalog.crc32). This is only the step from text to
+-- bytes, so that CRC32(text) written for MySQL finds it. It used to be a PL/pgSQL loop over every bit, which
+-- cost about 6 microseconds a call and was most of the daily digest's shard query (one call per active user,
+-- again for every 500 recipients).
+--
+-- It is declared STABLE, not IMMUTABLE, so that the planner can inline it: convert_to is STABLE, and a
+-- function that claims more than its body does is called as a function instead (about 5 times slower here).
+-- The answer for a given string never changes. All STABLE costs is that crc32() cannot be used in an index
+-- or a generated column, and nothing does that. Keep the body a single strict call, or the STRICT marking
+-- stops the inlining too.
+--
+-- The return type changes neither with the body nor the language, so CREATE OR REPLACE swaps it in place.
 CREATE OR REPLACE FUNCTION crc32(s text) RETURNS bigint
-LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE AS $$
-DECLARE
-  b bytea := convert_to(s, 'UTF8');
-  crc bigint := 4294967295;
-  i integer;
-  j integer;
-BEGIN
-  FOR i IN 0 .. length(b) - 1 LOOP
-    crc := crc # get_byte(b, i);
-    FOR j IN 1 .. 8 LOOP
-      IF (crc & 1) = 1 THEN
-        crc := (crc >> 1) # 3988292384;
-      ELSE
-        crc := crc >> 1;
-      END IF;
-    END LOOP;
-  END LOOP;
-  RETURN crc # 4294967295;
-END
-$$;
+LANGUAGE sql STABLE STRICT PARALLEL SAFE COST 2 AS $$ SELECT pg_catalog.crc32(convert_to(s, 'UTF8')) $$;
 
 -- MySQL function names that code written for MySQL calls. They are here so that one SQL text can serve both
 -- engines (the Go API translates the syntax it cannot express this way: iznik-server-go/database/pgtranslate.go).
@@ -237,14 +237,16 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT j #>> '{}' $$;
 CREATE OR REPLACE FUNCTION json_unquote(j text) RETURNS text
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN j IS NULL THEN NULL ELSE (j::jsonb) #>> '{}' END $$;
 
--- JSON_SET(doc, '$.a.b', value): sets the value at a path made of object keys.
+-- JSON_SET(doc, '$.a.b', value): sets the value at a path made of object keys. STABLE because to_jsonb is
+-- (a timestamp value prints in the session's time zone); marked IMMUTABLE it claimed more than its body and
+-- so was never inlined.
 CREATE OR REPLACE FUNCTION json_set(j jsonb, path text, v anyelement) RETURNS jsonb
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
   SELECT jsonb_set(COALESCE(j, '{}'::jsonb), string_to_array(regexp_replace(path, '^\$\.?', ''), '.'), to_jsonb(v), true)
 $$;
 
 CREATE OR REPLACE FUNCTION json_set(j text, path text, v anyelement) RETURNS jsonb
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_set(NULLIF(j, '')::jsonb, path, v) $$;
+LANGUAGE sql STABLE PARALLEL SAFE AS $$ SELECT json_set(NULLIF(j, '')::jsonb, path, v) $$;
 
 -- JSON_MERGE_PATCH(a, b): RFC 7396 merge patch.
 CREATE OR REPLACE FUNCTION json_merge_patch(a jsonb, b jsonb) RETURNS jsonb
@@ -276,7 +278,11 @@ CREATE OR REPLACE FUNCTION json_merge_patch(a text, b json) RETURNS jsonb
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_merge_patch(NULLIF(a, '')::jsonb, b::jsonb) $$;
 
 -- DATE_FORMAT(t, '%Y-%m-%d %H:%i:%s'): the specifiers the code uses; any other character is copied.
-CREATE OR REPLACE FUNCTION date_format(t timestamp, fmt text) RETURNS text
+--
+-- iznik_date_format_loop is the general form: it walks the format one character at a time and calls
+-- to_char for each specifier. That costs about 4 microseconds a call, which shows when a report formats a
+-- date on every row before grouping by it (the rippling analytics group chat messages and posts by day).
+CREATE OR REPLACE FUNCTION iznik_date_format_loop(t timestamp, fmt text) RETURNS text
 LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
 DECLARE
   out text := '';
@@ -314,11 +320,38 @@ BEGIN
 END
 $$;
 
+-- The formats the code actually writes go straight to one to_char, which is about 10 times faster and
+-- gives the same text as the loop (the digits and colons a format spells out are quoted so that to_char
+-- copies them). Anything else falls through to the loop. A caller writes the format as a literal, so the
+-- planner inlines this, keeps the one branch that matches and drops the rest: the plan shows a bare
+-- to_char. A NULL format falls through to the loop, which returns NULL, and to_char of a NULL time is
+-- NULL, so the NULL handling is the loop's.
+--
+-- The three date_format functions are STABLE, not IMMUTABLE, for the same reason as crc32: to_char is
+-- STABLE (it can print month names in the session's language, which none of these patterns ask for), and
+-- an IMMUTABLE function over a STABLE body is not inlined. Do not mark them STRICT either: a CASE is not
+-- strict as far as the planner can tell, and that also stops the inlining.
+--
+-- Adding a format here: add the same line to the fast paths test in tools/pg-schema/functions.test.mjs,
+-- which checks every branch against the loop.
+CREATE OR REPLACE FUNCTION date_format(t timestamp, fmt text) RETURNS text
+LANGUAGE sql STABLE PARALLEL SAFE COST 5 AS $$
+  SELECT CASE fmt
+    WHEN '%Y-%m-%d' THEN to_char(t, 'YYYY-MM-DD')
+    WHEN '%Y-%m-%d %H:%i:%s' THEN to_char(t, 'YYYY-MM-DD HH24:MI:SS')
+    WHEN '%Y-%m-%d %H:%i' THEN to_char(t, 'YYYY-MM-DD HH24:MI')
+    WHEN '%Y-%m' THEN to_char(t, 'YYYY-MM')
+    WHEN '%Y-%m-01' THEN to_char(t, 'YYYY-MM-"01"')
+    WHEN '%Y-%m-%d %H:00:00' THEN to_char(t, 'YYYY-MM-DD HH24:"00:00"')
+    ELSE iznik_date_format_loop(t, fmt)
+  END
+$$;
+
 CREATE OR REPLACE FUNCTION date_format(t timestamptz, fmt text) RETURNS text
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT date_format((t AT TIME ZONE 'UTC')::timestamp, fmt) $$;
+LANGUAGE sql STABLE PARALLEL SAFE COST 5 AS $$ SELECT date_format((t AT TIME ZONE 'UTC')::timestamp, fmt) $$;
 
 CREATE OR REPLACE FUNCTION date_format(t date, fmt text) RETURNS text
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT date_format(t::timestamp, fmt) $$;
+LANGUAGE sql STABLE PARALLEL SAFE COST 5 AS $$ SELECT date_format(t::timestamp, fmt) $$;
 
 -- DATEDIFF(a, b): whole days from b to a, ignoring the time of day.
 CREATE OR REPLACE FUNCTION datediff(a timestamptz, b timestamptz) RETURNS integer
@@ -378,6 +411,11 @@ CREATE OR REPLACE FUNCTION dayofweek(t timestamptz) RETURNS integer
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT extract(dow FROM t AT TIME ZONE 'UTC')::integer + 1 $$;
 
 -- JSON_VALID(text) and JSON_CONTAINS(doc, candidate).
+--
+-- JSON_VALID stays a PL/pgSQL function that catches the parse error. pg_input_is_valid(j, 'jsonb') would
+-- do it without an exception block, and agrees on every ordinary document, but for one nested thousands
+-- deep it raises "stack depth limit exceeded" where this returns false. The callers test one row at a
+-- time, so the saving is not worth a different answer.
 CREATE OR REPLACE FUNCTION json_valid(j text) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
 BEGIN
@@ -407,18 +445,31 @@ EXCEPTION WHEN others THEN
 END
 $$;
 
--- SUM(condition) counts the rows where it holds, as in MySQL where a comparison is 0 or 1.
+-- SUM(condition) counts the rows where it holds, as in MySQL where a comparison is 0 or 1. As MySQL's SUM
+-- does, it ignores a NULL condition, and gives NULL when there were no rows or every condition was NULL.
+--
+-- The step runs once for every row aggregated, so it is PL/pgSQL with a single expression, which PL/pgSQL
+-- evaluates without starting a query. As a LANGUAGE sql function it did start one per row (a step function
+-- is never inlined) and took about 3.5 times as long. No built-in function takes (bigint, boolean), so this
+-- cannot be handed to C entirely: it is still about 3 times the cost of count(*) FILTER (WHERE condition).
+-- It must not be STRICT: with no starting value PostgreSQL would then want the first condition itself as
+-- the state, and a boolean is not a bigint.
+--
+-- COMBINEFUNC and PARALLEL = SAFE let a query that uses SUM(condition) run in parallel. Without them the
+-- aggregate was marked unsafe, which kept the whole query on one process. Workers' counts are added with
+-- int8pl, which is strict, so a worker that saw no non-NULL condition contributes nothing and a NULL
+-- total stays NULL.
+--
+-- CREATE OR REPLACE, not "create if absent": a database built from an earlier copy of this file has the old
+-- definition, and loading the file again has to move it to this one.
 CREATE OR REPLACE FUNCTION iznik_bool_sum_step(state bigint, b boolean) RETURNS bigint
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN b IS NULL THEN state WHEN b THEN COALESCE(state, 0) + 1 ELSE COALESCE(state, 0) END $$;
-
-DO $$
+LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE COST 10 AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid
-                 WHERE p.proname = 'sum' AND p.proargtypes[0] = 'boolean'::regtype) THEN
-    CREATE AGGREGATE sum(boolean) (SFUNC = iznik_bool_sum_step, STYPE = bigint);
-  END IF;
+  RETURN CASE WHEN b IS NULL THEN state ELSE COALESCE(state, 0) + b::integer END;
 END
 $$;
+
+CREATE OR REPLACE AGGREGATE sum(boolean) (SFUNC = iznik_bool_sum_step, STYPE = bigint, COMBINEFUNC = int8pl, PARALLEL = SAFE);
 
 -- A JSON value compared with a number or text, as MySQL compares them: equal only when the JSON value is
 -- of that kind and has that value, so JSON false is not equal to 0.
@@ -584,15 +635,20 @@ CREATE OR REPLACE FUNCTION json_length(j jsonb, path text) RETURNS integer
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_length(json_extract(j, path)) $$;
 
 -- JSON_ARRAY_APPEND(doc, '$', value): appends to a top-level array, makes a one-element array of anything else.
+-- STABLE because jsonb_build_array is, as for JSON_SET above.
 CREATE OR REPLACE FUNCTION json_array_append(j jsonb, path text, v anyelement) RETURNS jsonb
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
   SELECT CASE WHEN j IS NULL THEN NULL
               WHEN jsonb_typeof(j) = 'array' THEN j || jsonb_build_array(v)
               ELSE jsonb_build_array(j, v) END
 $$;
 
+-- The text form parses the document once, in a subselect. Written as a plain call it would be inlined, and the
+-- parse repeated at each place the jsonb form uses its argument: three times a row.
 CREATE OR REPLACE FUNCTION json_array_append(j text, path text, v anyelement) RETURNS jsonb
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT json_array_append(NULLIF(j, '')::jsonb, path, v) $$;
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+  SELECT json_array_append(d.doc, path, v) FROM (SELECT NULLIF(j, '')::jsonb AS doc OFFSET 0) d
+$$;
 
 -- JSON_TYPE(json): the kind of value, as MySQL names it.
 CREATE OR REPLACE FUNCTION json_type(j jsonb) RETURNS text
@@ -654,16 +710,12 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN a IS NULL OR b > a T
 CREATE OR REPLACE FUNCTION iznik_jsonb_min_step(a jsonb, b jsonb) RETURNS jsonb
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN a IS NULL OR b < a THEN b ELSE a END $$;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid WHERE p.proname = 'max' AND p.proargtypes[0] = 'jsonb'::regtype) THEN
-    CREATE AGGREGATE max(jsonb) (SFUNC = iznik_jsonb_max_step, STYPE = jsonb);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid WHERE p.proname = 'min' AND p.proargtypes[0] = 'jsonb'::regtype) THEN
-    CREATE AGGREGATE min(jsonb) (SFUNC = iznik_jsonb_min_step, STYPE = jsonb);
-  END IF;
-END
-$$;
+-- The larger of two maxima is the maximum, so the step function also combines the results of parallel
+-- workers. PARALLEL = SAFE matters more than the speed of the aggregate itself: an aggregate left at the
+-- default is unsafe, and one unsafe function keeps the whole query that uses it on a single process.
+-- CREATE OR REPLACE so that a database with the earlier definition is moved to this one.
+CREATE OR REPLACE AGGREGATE max(jsonb) (SFUNC = iznik_jsonb_max_step, STYPE = jsonb, COMBINEFUNC = iznik_jsonb_max_step, PARALLEL = SAFE);
+CREATE OR REPLACE AGGREGATE min(jsonb) (SFUNC = iznik_jsonb_min_step, STYPE = jsonb, COMBINEFUNC = iznik_jsonb_min_step, PARALLEL = SAFE);
 
 -- A number matched with LIKE, as MySQL allows: id LIKE '%12%'.
 CREATE OR REPLACE FUNCTION iznik_bigint_like(i bigint, pattern text) RETURNS boolean

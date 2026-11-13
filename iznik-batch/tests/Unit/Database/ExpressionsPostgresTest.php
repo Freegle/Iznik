@@ -184,9 +184,26 @@ class ExpressionsPostgresTest extends TestCase
 
     public function test_collate_ci_compares_without_case(): void
     {
-        $this->assertSame('LOWER("a")', (new Collate('a', 'utf8mb4_unicode_ci'))->getValue($this->pg));
+        $this->assertSame('CAST("a" AS citext)', (new Collate('a', 'utf8mb4_unicode_ci'))->getValue($this->pg));
         $this->assertSame('"a" COLLATE "C"', (new Collate('a', 'utf8mb4_bin'))->getValue($this->pg));
         $this->assertSame('`a` COLLATE utf8mb4_unicode_ci', (new Collate('a', 'utf8mb4_unicode_ci'))->getValue($this->mysql));
+    }
+
+    /**
+     * The join in the nightly stats compares items.name (citext) with a varchar name wrapped in a _ci
+     * Collate. Both a capitalised and a lower-case stored name have to match, whatever case the other side is
+     * in, as they do on MySQL.
+     */
+    public function test_collate_ci_matches_a_citext_column_in_either_case(): void
+    {
+        $ci = (new Collate(Value::of('sofa'), 'utf8mb4_unicode_ci'))->getValue($this->pg);
+        $this->assertTrue($this->evaluate("CAST('Sofa' AS citext) = ".$ci));
+
+        $ci = (new Collate(Value::of('SOFA'), 'utf8mb4_unicode_ci'))->getValue($this->pg);
+        $this->assertTrue($this->evaluate("CAST('sofa' AS citext) = ".$ci));
+
+        $ci = (new Collate(Value::of('chair'), 'utf8mb4_unicode_ci'))->getValue($this->pg);
+        $this->assertFalse($this->evaluate("CAST('Sofa' AS citext) = ".$ci));
     }
 
     public function test_sha2_is_lowercase_hex_of_the_utf8_bytes(): void

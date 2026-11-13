@@ -225,6 +225,69 @@ clock were moved to the statement's time: the three reach writes in `ExpandServi
 partner last asked. The rest are stamps nothing compares to the application's clock, and are left as written.
 `.claude/check-now-commit.sh` prompts whoever commits a new one to make the same check.
 
+### Indexes and settings only PostgreSQL has
+
+The two planners differ, so an index set tuned for MySQL is not enough here. `tools/pg-schema/config.json`
+has four sections for what PostgreSQL needs on top of the converted schema. Each entry carries a `why`,
+which the converter copies into the baseline as a comment.
+
+- `extraIndexes`: an index MySQL does not have, or has implicitly.
+- `tableStorage`: storage parameters such as `fillfactor`.
+- `columnStatistics`: a statistics target for a column whose distinct values `ANALYZE` under-counts.
+- `narrowedIndexes`: a converted index that keeps only its leading columns.
+
+| Index | Serves |
+|---|---|
+| `locations_name_prefix` on `lower(name::text) text_pattern_ops` | Prefix search on a postcode or place name |
+| `users_emails_email_prefix` on `lower(email::text) text_pattern_ops` | Prefix search on an email address |
+| `messages_groups_approved_live` on `(groupid, msgid)` where Approved and not deleted | The "my groups" feed and its unread count |
+| `logs_groupid_id` on `(groupid, id)` | ModTools logs for a community, newest first |
+| `memberships_groupid_collection_id` on `(groupid, collection, id)` | ModTools member search, which has a `FORCE INDEX` on MySQL |
+| `messages_likes_userid_type_msgid`, in place of the `userid` index | Which of a list of posts a member has viewed |
+
+Why these are needed:
+
+- **A prefix `LIKE` cannot use an ordinary index here.** The database's collation is not `C`, and a `citext`
+  column has no index that serves `LIKE` at all. The search has to be written as
+  `lower(col::text) LIKE <lower-cased pattern>` to use the index above. The Go code does that in a PostgreSQL
+  branch at each prefix search. Laravel's grammar (`JsonTextPostgresGrammar`) renders any `LIKE` on a `citext`
+  column as `lower("col"::text) LIKE lower(?)`, which also keeps it case-insensitive, as it is on MySQL. A
+  `LIKE` written against the column itself still works, and reads the whole table.
+- **InnoDB ends every secondary index with the primary key.** A query that filters on a one-column key and
+  orders by `id` is served from that index on MySQL. PostgreSQL appends nothing, so the `id` is added where a
+  query needs it.
+- **An expression index has no statistics until the table is analysed,** and the planner ignores it until
+  then. `scripts/setup-pg-database.sh` and the data copy in `tools/pg-migrate` both run `ANALYZE` after loading.
+- **`plan_cache_mode` must stay at its default.** The prefix index is only usable when the planner sees the
+  bound pattern, which a forced generic plan hides.
+
+Three more columns are `citext` so that a join against a `citext` column stays case-insensitive and can use its
+index: `messages_bulk_items.name`, `jobs.canonical_title` and `users_donations.Payer`. A `citext` column compared
+with a plain text one is compared as plain text, case-sensitively, with no error.
+
+Server settings the dev container sets in `docker-compose.yml`, and a production server would need too:
+`max_connections=200`, and `random_page_cost=1.1` because the disks are solid state. At the stock value of 4
+the planner reads a community's whole posting history where MySQL probes an index once per post. The server
+must be PostgreSQL 18 or later: `crc32` in `functions.sql` calls a built-in that 17 does not have.
+
+There is no connection pooler. The Go API opens at most 30 connections for each pool and the batch jobs a few
+dozen more, which fits inside `max_connections=200` with each connection costing a few megabytes. If more API
+processes are added, raise `max_connections` to match. A transaction pooler only becomes worth its cost at many
+hundreds of connections, and it would need pgbouncer 1.21 or later for prepared statements, and the two Laravel
+jobs that use temporary tables wrapped in a transaction.
+
+Two things the converter does to the MySQL keys, for write cost and not for any query:
+
+- **A key with the same columns as another key on the table is left out.** The MySQL schema has 18, such as
+  `users` with `PRIMARY KEY (id)` and `UNIQUE KEY id (id)`. PostgreSQL writes every index on every insert, so
+  a second copy only costs. The primary key is kept, then a unique key, then the first plain one.
+- **`users_added` is on `(added)`, not `(added, lastaccess)`** (`narrowedIndexes` in `config.json`).
+  `lastaccess` is written on almost every signed-in request. While it is in an index, each of those updates
+  writes a new entry in all 16 indexes on `users`; out of every index, and with the table's fillfactor of 85, the
+  update touches none. A search on both columns uses the index for `added` and filters `lastaccess` from the row.
+
+How this was found, and what is still open, is in `plans/reports/2026-11-13-postgresql-performance-review.md`.
+
 ### Proving it applies
 
 The converter's unit tests need no database:
@@ -243,6 +306,11 @@ PG_SCHEMA_PSQL="docker exec -i freegle-postgres psql -U root" node --test tools/
 ```
 
 ## Stored functions
+
+`crc32()` wraps PostgreSQL 18's built-in, so PostgreSQL 18 is the oldest version that will load this file.
+`crc32`, `date_format`, `json_set` and `json_array_append` are `STABLE`, which lets the planner inline them; a
+`STABLE` function cannot be used in an index expression. `date_format` has fast paths for the formats the code
+uses on columns, listed in the function, and a slower loop for any other format.
 
 MySQL has four stored functions, created by `2026_02_20_000002_create_stored_functions.php`. The converter
 skips routines, so `iznik-batch/database/postgres/functions.sql` holds the PostgreSQL versions. It is written
@@ -803,6 +871,28 @@ It is in `iznik-server-go/database` and does nothing on MySQL.
 This is a bridge. A site that is rewritten to a builder chain or a per-dialect repository no longer needs it, and
 the test for that site is the proof. What the layer cannot translate is left to fail, and its tests stay in the
 ratchet list: see the end of this page.
+
+### The Go API's PostgreSQL connections
+
+- **No named prepared statements.** pgx runs in `cache_describe` mode. Several hot statements paste ids into
+  their text, so every request is a new text; kept as named statements they cost about 630 kB of server memory
+  each, 512 to a connection. Do not switch to the simple protocol: the translator relies on typed parameters.
+- **Pool size** comes from `PGSQL_MAX_OPEN_CONNS` and `PGSQL_MAX_IDLE_CONNS`, 30 each by default, for the write
+  pool and again for the replica pool. PostgreSQL is one process per connection, so MySQL's 200 does not carry over.
+- **JIT is off** for the API's sessions (`PGSQL_JIT`). Compiling a plan costs more than it saves on short queries.
+- **`/*+ MAX_EXECUTION_TIME(n) */`**, MySQL's hint, sets a statement timeout for that statement on PostgreSQL.
+- **The translator's cache is bounded,** so statement texts that differ per member cannot grow it for ever.
+- **`MBRContains`** becomes the bounding-box operator `~`, as it is in MySQL and in Laravel.
+- **Deadlocks.** Laravel's `TransactionPolicy` treats PostgreSQL's `40P01` (deadlock) and `55P03` (lock timeout)
+  as it treats MySQL's 1213 and 1205.
+- **A lock wait ends after 50 seconds,** as InnoDB's does. PostgreSQL's own default is to wait for ever. Both
+  the Go API (a connection parameter) and Laravel (`LockTimeoutPostgresConnector`) set `lock_timeout` on each
+  connection, from `PGSQL_LOCK_TIMEOUT`, default `50s`. The routing and spatial services only read and set nothing.
+- **A locking read of a row that is not there locks nothing on PostgreSQL.** On MySQL `SELECT ... FOR UPDATE`
+  on a missing row stops a second creator through a gap lock. Where the code relies on that to create one row
+  (the chat between a member and a community's volunteers) PostgreSQL takes an advisory lock on the same key.
+- **An update that changes nothing is free on MySQL and writes a new row version here.** The bulk "mark all
+  read" and the daily approximate-location refresh skip rows already in the wanted state on PostgreSQL.
 
 ## Not yet done
 

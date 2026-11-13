@@ -301,3 +301,196 @@ test('levenshtein_less_equal alone agrees with the call site when the typed doma
     assert.deepEqual(out, c.suggestions, c.input)
   }
 })
+
+// ------------------------------------------------------------------------------------------
+// crc32
+// ------------------------------------------------------------------------------------------
+
+// The IEEE CRC-32 of the UTF-8 bytes, worked out here bit by bit: the checksum MySQL's CRC32(), PHP's
+// crc32() and Go's crc32.ChecksumIEEE all give. It is written out, and not taken from zlib, so that the
+// test does not lean on the same C code PostgreSQL does.
+function crc32(s) {
+  let crc = 0xffffffff
+  for (const byte of Buffer.from(s, 'utf8')) {
+    crc ^= byte
+    for (let k = 0; k < 8; k++) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+const crcInputs = [
+  '',
+  '123456789',
+  '1',
+  '42|firstreply',
+  'a\\b',
+  "it's",
+  ' leading and trailing ',
+  'é',
+  'Ünïcödé ß',
+  '日本語',
+  '😀 emoji',
+  'ж'.repeat(300),
+  'x'.repeat(100000),
+  ...Array.from({ length: 500 }, (_, i) => String(i * 7919 + 1)),
+]
+
+test('crc32 is the IEEE checksum of the UTF-8 bytes, as MySQL CRC32 is', { skip }, () => {
+  // 0xCBF43926 is the published check value of the algorithm for this input.
+  assert.equal(crc32('123456789'), 3421780262)
+  const out = column(crcInputs.map((s) => `SELECT crc32(${lit(s)});`).join('\n'))
+  assert.equal(out.length, crcInputs.length)
+  const bad = []
+  crcInputs.forEach((s, i) => {
+    if (Number(out[i]) !== crc32(s)) bad.push(`${s.slice(0, 20)}: expected ${crc32(s)}, PostgreSQL ${out[i]}`)
+  })
+  assert.deepEqual(bad, [])
+})
+
+test('crc32 of NULL is NULL, the result is a bigint, and an id is bucketed as the callers bucket it', { skip }, () => {
+  const out = column(`SELECT crc32(NULL) IS NULL, pg_typeof(crc32('1')), crc32(CAST(1234567 AS text)) % 8;`)[0].split('\t')
+  assert.deepEqual(out, ['t', 'bigint', String(crc32('1234567') % 8)])
+})
+
+test('crc32 is inlined to the built-in, so a shard filter does not call a function per row', { skip }, () => {
+  // An inlined call shows the body (convert_to) in the plan; a call that was not inlined shows only crc32(...).
+  const plan = psql(
+    DB,
+    `CREATE TEMP TABLE crc_ids (id bigint);
+     EXPLAIN (VERBOSE, COSTS OFF) SELECT id FROM crc_ids WHERE (CRC32(CAST(crc_ids.id AS text)) % 8) = 1;`,
+  )
+  assert.match(plan, /crc32\(convert_to\(/)
+  const meta = column(`SELECT l.lanname, p.provolatile, p.proisstrict, p.proparallel FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang WHERE p.oid = 'public.crc32(text)'::regprocedure;`)[0].split('\t')
+  assert.deepEqual(meta, ['sql', 's', 't', 's'])
+})
+
+// ------------------------------------------------------------------------------------------
+// SUM(condition)
+// ------------------------------------------------------------------------------------------
+
+test('SUM(condition) counts the true rows, ignores NULL, and is NULL for no rows or only NULLs, as in MySQL', { skip }, () => {
+  const out = column(
+    `SELECT sum(x) FROM (VALUES (true), (false), (NULL), (true)) t(x);
+     SELECT sum(x) FROM (VALUES (NULL), (false)) t(x);
+     SELECT sum(x) IS NULL FROM (VALUES (NULL::boolean), (NULL)) t(x);
+     SELECT sum(x) IS NULL FROM (SELECT true AS x WHERE false) t;
+     SELECT pg_typeof(sum(x)) FROM (VALUES (true)) t(x);
+     SELECT string_agg(g || '=' || COALESCE(s::text, 'null'), ',' ORDER BY g) FROM (SELECT i % 3 AS g, sum(CASE WHEN i % 3 = 2 THEN NULL ELSE i % 2 = 0 END) AS s FROM generate_series(1, 30) i GROUP BY 1) t;`,
+  )
+  assert.deepEqual(out, ['2', '0', 't', 't', 'bigint', '0=5,1=5,2=null'])
+})
+
+test('SUM(condition) gives the same answer from parallel workers, including a group that is all NULL', { skip }, () => {
+  const out = psql(
+    DB,
+    `CREATE TABLE sum_parallel (g int, x boolean);
+     INSERT INTO sum_parallel SELECT i % 5, CASE WHEN i % 5 = 4 THEN NULL WHEN i % 7 = 0 THEN NULL ELSE i % 3 = 0 END FROM generate_series(1, 200000) i;
+     ANALYZE sum_parallel;
+     SET max_parallel_workers_per_gather = 0;
+     CREATE TEMP TABLE serial AS SELECT g, sum(x) AS s, count(*) FILTER (WHERE x) AS c FROM sum_parallel GROUP BY g;
+     SET max_parallel_workers_per_gather = 2; SET parallel_setup_cost = 0; SET parallel_tuple_cost = 0; SET min_parallel_table_scan_size = 0; SET debug_parallel_query = on;
+     EXPLAIN (COSTS OFF) SELECT g, sum(x) FROM sum_parallel GROUP BY g;
+     SELECT count(*), count(*) FILTER (WHERE p.s IS DISTINCT FROM s.s), count(*) FILTER (WHERE p.s IS NULL), count(*) FILTER (WHERE p.s IS DISTINCT FROM NULLIF(s.c, 0))
+       FROM (SELECT g, sum(x) AS s FROM sum_parallel GROUP BY g) p JOIN serial s USING (g);
+     DROP TABLE sum_parallel;`,
+  )
+  assert.match(out, /Partial (Hash|Group)?Aggregate/, 'the aggregate was not planned in parallel')
+  assert.equal(out.trim().split('\n').pop(), ['5', '0', '1', '0'].join('\t'))
+})
+
+test('the aggregates this file defines can run in parallel, and loading the file replaces an older definition', { skip }, () => {
+  // An aggregate left at the default is PARALLEL UNSAFE, and that keeps any query using it on one process.
+  // The first copies of this file created sum(boolean) with a LANGUAGE sql step and no combine function,
+  // and only when it was absent: put that back, load the file, and it must be the new one again.
+  psql(
+    DB,
+    `CREATE OR REPLACE FUNCTION iznik_bool_sum_step(state bigint, b boolean) RETURNS bigint
+       LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT CASE WHEN b IS NULL THEN state WHEN b THEN COALESCE(state, 0) + 1 ELSE COALESCE(state, 0) END $$;
+     DROP AGGREGATE sum(boolean);
+     CREATE AGGREGATE sum(boolean) (SFUNC = iznik_bool_sum_step, STYPE = bigint);`,
+  )
+  psql(DB, fs.readFileSync(functionsPath, 'utf8'))
+  const out = psql(
+    DB,
+    `SELECT p.proname || '(' || p.proargtypes[0]::regtype || ')', p.proparallel, a.aggcombinefn::regproc, (SELECT l.lanname FROM pg_proc s JOIN pg_language l ON l.oid = s.prolang WHERE s.oid = a.aggtransfn)
+       FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid
+      WHERE p.pronamespace = 'public'::regnamespace AND p.proargtypes[0] IN ('boolean'::regtype, 'jsonb'::regtype) ORDER BY 1;`,
+  ).trim().split('\n').map((l) => l.split('\t'))
+  assert.deepEqual(out, [
+    ['max(jsonb)', 's', 'iznik_jsonb_max_step', 'sql'],
+    ['min(jsonb)', 's', 'iznik_jsonb_min_step', 'sql'],
+    ['sum(boolean)', 's', 'int8pl', 'plpgsql'],
+  ])
+})
+
+test('MAX and MIN of JSON values are unchanged, with NULLs ignored', { skip }, () => {
+  const out = column(
+    `SELECT max(x), min(x) FROM (VALUES ('3'::jsonb), (NULL), ('10'), ('7')) t(x);
+     SELECT max(x) IS NULL, min(x) IS NULL FROM (VALUES (NULL::jsonb)) t(x);`,
+  )
+  assert.deepEqual(out, ['10\t3', 't\tt'])
+})
+
+// ------------------------------------------------------------------------------------------
+// DATE_FORMAT
+// ------------------------------------------------------------------------------------------
+
+// The formats date_format answers with one to_char, and what MySQL prints for 2026-03-09 07:05:03.
+const fastFormats = [
+  ['%Y-%m-%d', '2026-03-09'],
+  ['%Y-%m-%d %H:%i:%s', '2026-03-09 07:05:03'],
+  ['%Y-%m-%d %H:%i', '2026-03-09 07:05'],
+  ['%Y-%m', '2026-03'],
+  ['%Y-%m-01', '2026-03-01'],
+  ['%Y-%m-%d %H:00:00', '2026-03-09 07:00:00'],
+]
+const slowFormats = ['%d/%m/%Y', '%W %e %M %Y %l:%i %p', '%Y-%m-%d%', '%y%c%k%j %T', '', '%', 'no specifiers']
+
+test('date_format prints what MySQL DATE_FORMAT prints for the formats the code uses', { skip }, () => {
+  const out = column(fastFormats.map(([f]) => `SELECT date_format(timestamp '2026-03-09 07:05:03', ${lit(f)});`).join('\n'))
+  assert.deepEqual(out, fastFormats.map(([, want]) => want))
+  assert.equal(column(`SELECT date_format(timestamp '2026-03-09 17:05:03', '%W %e %M %Y %l:%i %p');`)[0], 'Monday 9 March 2026 5:05 PM')
+})
+
+test('every date_format fast path gives exactly what the general loop gives', { skip }, () => {
+  // The times: every 37 minutes and a bit for some years, then the awkward ones. The session is not in
+  // UTC, to show that a timestamptz is formatted in UTC whatever the session says.
+  const times = `(SELECT timestamptz '2019-12-30 00:00:00+00' + g * interval '37 minutes 11.123456 seconds' AS t FROM generate_series(0, 60000) g
+     UNION ALL SELECT v::timestamptz FROM (VALUES ('0001-01-01 00:00:00+00'), ('0099-12-31 23:59:59+00'), ('9999-12-31 23:59:59.999999+00'),
+       ('12345-03-04 05:06:07+00'), ('0044-03-15 12:00:00+00 BC'), ('2026-03-29 00:59:59+00'), ('2026-03-29 01:00:00+00'),
+       ('2026-10-25 00:30:00+00'), ('2026-10-25 01:30:00+00'), ('infinity'), ('-infinity'), (NULL)) v(v)) times`
+  const formats = [...fastFormats.map(([f]) => f), ...slowFormats]
+  const out = psql(
+    DB,
+    `SET timezone = 'Europe/London';
+     SELECT fmt, count(*),
+            count(*) FILTER (WHERE date_format(t, fmt) IS DISTINCT FROM iznik_date_format_loop((t AT TIME ZONE 'UTC')::timestamp, fmt)),
+            count(*) FILTER (WHERE date_format(t::timestamp, fmt) IS DISTINCT FROM iznik_date_format_loop(t::timestamp, fmt)),
+            count(*) FILTER (WHERE date_format(t::date, fmt) IS DISTINCT FROM iznik_date_format_loop(t::date::timestamp, fmt))
+       FROM ${times} CROSS JOIN (VALUES ${formats.map((f) => `(${lit(f)})`).join(', ')}, (NULL)) f(fmt) GROUP BY fmt ORDER BY fmt;
+     ${fastFormats
+       .map(([f]) => `SELECT 'literal', count(*), count(*) FILTER (WHERE date_format(t, ${lit(f)}) IS DISTINCT FROM iznik_date_format_loop((t AT TIME ZONE 'UTC')::timestamp, ${lit(f)})), 0, 0 FROM ${times};`)
+       .join('\n')}`,
+  ).replace(/\n$/, '').split('\n').map((l) => l.split('\t'))
+  // The empty format and the NULL format both print as an empty first field, so the output is not trimmed.
+  assert.equal(out.length, formats.length + 1 + fastFormats.length)
+  for (const [fmt, n, a, b, c] of out) {
+    assert.equal(Number(n), 60013, fmt)
+    assert.deepEqual([a, b, c], ['0', '0', '0'], `format ${fmt} differs from the loop`)
+  }
+})
+
+test('date_format of a NULL time or a NULL format is NULL', { skip }, () => {
+  assert.deepEqual(column(`SELECT date_format(NULL::timestamptz, '%Y-%m-%d') IS NULL, date_format(now(), NULL) IS NULL, date_format(NULL::date, '%d/%m/%Y') IS NULL;`)[0].split('\t'), ['t', 't', 't'])
+})
+
+test('date_format with a literal format is inlined to a single to_char', { skip }, () => {
+  const plan = psql(
+    DB,
+    `CREATE TEMP TABLE df_times (at timestamptz, d date);
+     EXPLAIN (VERBOSE, COSTS OFF) SELECT DATE_FORMAT(at, '%Y-%m-%d') AS day, DATE_FORMAT(d, '%Y-%m') AS month, count(*) FROM df_times GROUP BY 1, 2;`,
+  )
+  assert.match(plan, /to_char\(\(.*at AT TIME ZONE 'UTC'::text\), 'YYYY-MM-DD'::text\)/)
+  assert.match(plan, /'YYYY-MM'::text\)/)
+  assert.doesNotMatch(plan, /date_format/)
+})

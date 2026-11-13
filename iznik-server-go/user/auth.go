@@ -80,9 +80,18 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 					// We have an approximate location.  This should be the first part of the postcode.
 					// Update the user's location if needed.
 					var locations []location.Location
-					db.Table("locations").Select("id").
-						Where("name LIKE ? AND type = ?", *postcodeprefix+"%", location.TYPE_POSTCODE).
-						Limit(1).Scan(&locations)
+					if database.Engine() == database.EnginePostgres {
+						// A prefix LIKE on the case-insensitive name column cannot use an index on PostgreSQL.
+						// The locations_name_prefix index holds lower(name::text), so the lowered form is asked.
+						// keep-raw: PostgreSQL only; matches the expression index on lower(name::text).
+						db.Table("locations").Select("id").
+							Where("lower(name::text) LIKE ? AND type = ?", strings.ToLower(*postcodeprefix)+"%", location.TYPE_POSTCODE).
+							Limit(1).Scan(&locations)
+					} else {
+						db.Table("locations").Select("id").
+							Where("name LIKE ? AND type = ?", *postcodeprefix+"%", location.TYPE_POSTCODE).
+							Limit(1).Scan(&locations)
+					}
 
 					if len(locations) > 0 && locations[0].ID > 0 && (ljuser.Lastlocation == nil || locations[0].ID != *ljuser.Lastlocation) {
 						// We have a location.

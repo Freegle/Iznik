@@ -2,8 +2,12 @@
 
 namespace App\Database;
 
+use App\Support\TransactionPolicy;
+use Closure;
 use Generator;
 use Illuminate\Database\PostgresConnection;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Log;
 use PDO;
 
 /**
@@ -15,9 +19,66 @@ use PDO;
  *
  * Reading: PDO's PostgreSQL driver returns a bytea value as a stream resource, where MySQL's returns a string.
  * The value is read into a string before the row reaches the caller.
+ *
+ * Deadlocks: a statement run outside a transaction that loses a deadlock (40P01) or runs out of lock_timeout
+ * (55P03) is retried, as DeadlockRetryConnection does for MySQL. PostgreSQL has rolled the whole statement
+ * back, so running it again is safe. Inside a transaction nothing is retried here: PostgreSQL has aborted the
+ * transaction and refuses every later statement (25P02), so only the caller can retry, and it has to retry
+ * the transaction as a whole (TransactionPolicy::atomic does).
  */
 class PostgresBinaryConnection extends PostgresConnection
 {
+    protected int $deadlockMaxRetries = 3;
+
+    protected int $deadlockBaseDelayMs = 100;
+
+    protected function handleQueryException(QueryException $e, $query, $bindings, Closure $callback)
+    {
+        // The parent throws here too: a statement inside a transaction is never retried on its own.
+        if ($this->transactions >= 1) {
+            throw $e;
+        }
+
+        if (TransactionPolicy::isDeadlock($e)) {
+            return $this->retryDeadlockedStatement($e, $query, $bindings, $callback);
+        }
+
+        return $this->tryAgainIfCausedByLostConnection($e, $query, $bindings, $callback);
+    }
+
+    /** Runs the statement again, waiting twice as long before each attempt, until it stops losing the lock. */
+    protected function retryDeadlockedStatement(QueryException $e, $query, $bindings, Closure $callback)
+    {
+        for ($attempt = 1; $attempt <= $this->deadlockMaxRetries; $attempt++) {
+            $delayMs = $this->deadlockBaseDelayMs * pow(2, $attempt - 1);
+
+            Log::warning('PostgresBinaryConnection: retrying deadlocked statement', [
+                'query' => $query,
+                'attempt' => $attempt,
+                'max_retries' => $this->deadlockMaxRetries,
+                'delay_ms' => $delayMs,
+            ]);
+
+            usleep($delayMs * 1000);
+
+            try {
+                return $this->runQueryCallback($query, $bindings, $callback);
+            } catch (QueryException $retryException) {
+                if (! TransactionPolicy::isDeadlock($retryException)) {
+                    throw $retryException;
+                }
+                $e = $retryException;
+            }
+        }
+
+        Log::error('PostgresBinaryConnection: deadlock persisted after all retries', [
+            'query' => $query,
+            'attempts' => $this->deadlockMaxRetries,
+        ]);
+
+        throw $e;
+    }
+
     protected function getDefaultQueryGrammar()
     {
         return new PostgresTextJsonGrammar($this);

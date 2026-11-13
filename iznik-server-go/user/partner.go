@@ -341,11 +341,22 @@ func FindTNSiblings(db *gorm.DB, email string) []uint64 {
 	if domain == tnPartnerDomain {
 		bare = username + "@" + domain
 	}
-	db.Table("users_emails").
-		Select("users_emails.userid, users_emails.email").
-		Joins("INNER JOIN users ON users.id = users_emails.userid").
-		Where("(users_emails.email LIKE ? OR users_emails.email = ?) AND users.deleted IS NULL", like, bare).
-		Scan(&rows)
+	if database.Engine() == database.EnginePostgres {
+		// A prefix LIKE on the case-insensitive email column cannot use an index on PostgreSQL. The
+		// users_emails_email_prefix index holds lower(email::text), so the lowered form is asked.
+		// keep-raw: PostgreSQL only; matches the expression index on lower(email::text).
+		db.Table("users_emails").
+			Select("users_emails.userid, users_emails.email").
+			Joins("INNER JOIN users ON users.id = users_emails.userid").
+			Where("(lower(users_emails.email::text) LIKE ? OR users_emails.email = ?) AND users.deleted IS NULL", strings.ToLower(like), bare).
+			Scan(&rows)
+	} else {
+		db.Table("users_emails").
+			Select("users_emails.userid, users_emails.email").
+			Joins("INNER JOIN users ON users.id = users_emails.userid").
+			Where("(users_emails.email LIKE ? OR users_emails.email = ?) AND users.deleted IS NULL", like, bare).
+			Scan(&rows)
+	}
 
 	self := uint64(0)
 	for _, r := range rows {

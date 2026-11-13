@@ -244,6 +244,14 @@ class UserApproxLocService
     {
         $srid = (int) config('freegle.srid', 3857);
 
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            $rows = $this->dropUnchanged($rows);
+
+            if (! $rows) {
+                return;
+            }
+        }
+
         $values = [];
 
         foreach ($rows as [$userid, $lat, $lng, $lastaccess]) {
@@ -257,6 +265,42 @@ class UserApproxLocService
         }
 
         DB::table('users_approxlocs')->upsert($values, ['userid'], ['lat', 'lng', 'position', 'timestamp']);
+    }
+
+    /**
+     * PostgreSQL only: leave out the members whose row already says exactly this.
+     *
+     * Most members have not moved or visited since yesterday's run. MySQL notices that an update changes
+     * nothing and writes nothing. PostgreSQL writes a whole new row version for every row an upsert touches,
+     * and a new entry in each index unless the page has room, so the daily refresh rewrote the table and
+     * grew the spatial index the reach query drives from. Reading the chunk's current rows first and sending
+     * only the ones that differ leaves the unchanged rows alone entirely, without even a row lock.
+     *
+     * The position is not compared: it is built from the same lat and lng, so it only differs when they do.
+     * The timestamps are compared as the text PostgreSQL returned for both, which is equal exactly when the
+     * instants are. A row that only looks different is written as before, so the worst case is today's
+     * behaviour.
+     *
+     * @param  list<array{0:int,1:float,2:float,3:string}>  $rows
+     * @return list<array{0:int,1:float,2:float,3:string}>
+     */
+    private function dropUnchanged(array $rows): array
+    {
+        $existing = DB::table('users_approxlocs')
+            ->whereIn('userid', array_column($rows, 0))
+            ->get(['userid', 'lat', 'lng', 'timestamp'])
+            ->keyBy('userid');
+
+        return array_values(array_filter($rows, function (array $row) use ($existing) {
+            [$userid, $lat, $lng, $lastaccess] = $row;
+            $current = $existing->get($userid);
+
+            // The columns hold six decimal places, so anything closer than half of the last one is the same.
+            return $current === null
+                || abs((float) $current->lat - (float) $lat) >= 0.0000005
+                || abs((float) $current->lng - (float) $lng) >= 0.0000005
+                || (string) $current->timestamp !== (string) $lastaccess;
+        }));
     }
 
     /**

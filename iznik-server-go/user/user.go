@@ -1372,6 +1372,12 @@ func SearchUsers(c *fiber.Ctx) error {
 		if full {
 			db.Raw("SELECT DISTINCT u.id FROM locations l INNER JOIN users u ON u.lastlocation = l.id "+
 				"WHERE l.type = 'Postcode' AND l.name = ? LIMIT ?", outcode, searchUsersLimit).Scan(&pcIDs)
+		} else if database.Engine() == database.EnginePostgres {
+			// The same search through the locations_name_prefix index, which holds lower(name::text): a
+			// prefix LIKE on the case-insensitive column itself cannot use an index on PostgreSQL.
+			// keep-raw: PostgreSQL only; matches the expression index on lower(name::text).
+			db.Raw("SELECT DISTINCT u.id FROM locations l INNER JOIN users u ON u.lastlocation = l.id "+
+				"WHERE l.type = 'Postcode' AND lower(l.name::text) LIKE ? LIMIT ?", strings.ToLower(outcode)+" %", searchUsersLimit).Scan(&pcIDs)
 		} else {
 			db.Raw("SELECT DISTINCT u.id FROM locations l INNER JOIN users u ON u.lastlocation = l.id "+
 				"WHERE l.type = 'Postcode' AND l.name LIKE ? LIMIT ?", outcode+" %", searchUsersLimit).Scan(&pcIDs)

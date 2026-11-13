@@ -343,6 +343,12 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			ret[stat.PartialPostcode] = ps
 		}
 
+		// The join from a bulk item to the items catalogue, by name, used by both bulk weight
+		// queries below. MySQL compares the two names without regard to case and uses the index
+		// on items.name. PostgreSQL does the same because both columns are citext in its schema
+		// (tools/pg-schema/config.json). With only items.name citext it compared them as plain
+		// text: "sofa" no longer found "Sofa" and that item silently got the average weight.
+
 		// Weight for bulk messages: per item weight × quantity for items marked taken
 		// (available=0). Matches by item name to the items catalogue; falls back to the
 		// global average weight when there is no name match or the matched weight is 0.

@@ -563,6 +563,235 @@ function pgExpr(expr, fqn, ctx) {
   return translateExpr(expr, fqn)
 }
 
+// --- PostgreSQL-only additions from config.json ------------------------------------------------
+//
+// The MySQL schema is the source of truth for tables, columns and keys. These three config sections
+// add what only PostgreSQL needs, and each entry must say why:
+//   extraIndexes      an index MySQL does not have or does not need (an expression index for prefix
+//                     LIKE, a partial index, a key that ends in the id as every InnoDB key does)
+//   tableStorage      storage parameters such as fillfactor
+//   columnStatistics  a per-column statistics target or distinct-value override for the planner
+//   narrowedIndexes   a converted index that keeps only its leading columns, because a later column is
+//                     updated so often that indexing it costs more than it saves
+// Nothing here changes what a statement returns, only how fast PostgreSQL finds it.
+
+// A section of the baseline, left out altogether when it has no lines.
+function section(title, lines) {
+  return lines.length ? [title, lines.join('\n'), ''] : []
+}
+
+function configList(config, key) {
+  const list = config[key] === undefined ? [] : config[key]
+  if (!Array.isArray(list)) fail(`config.${key} must be a list`)
+  return list
+}
+
+function checkKeys(entry, allowed, where) {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) fail(`${where} must be an object`)
+  for (const k of Object.keys(entry)) if (!allowed.includes(k)) fail(`${where} has an unknown setting "${k}" (allowed: ${allowed.join(', ')})`)
+}
+
+// The reason is written into the baseline as a comment, so it is one line of plain text.
+function checkWhy(entry, where) {
+  if (typeof entry.why !== 'string' || !entry.why.trim()) fail(`${where} needs a "why": the reason PostgreSQL needs it`)
+  return entry.why.trim().replace(/\s+/g, ' ')
+}
+
+function checkTable(name, tableByName, where) {
+  const t = typeof name === 'string' ? tableByName.get(name) : null
+  if (!t) fail(`${where} names table ${name}, which is not in the schema`)
+  return t
+}
+
+function checkColumns(list, t, where, what) {
+  if (!Array.isArray(list) || !list.length || list.some((c) => typeof c !== 'string')) fail(`${where}: "${what}" must be a list of column names`)
+  for (const c of list) if (!t.columns.some((x) => x.name === c)) fail(`${where}: ${t.name} has no column ${c}`)
+  if (new Set(list).size !== list.length) fail(`${where}: "${what}" names a column twice`)
+  return list
+}
+
+// Text that goes into the baseline as written (an index expression or a WHERE clause). It must be a
+// single fragment: nothing that could end the statement or start a comment.
+function checkFragment(text, where, what) {
+  if (typeof text !== 'string' || !text.trim()) fail(`${where}: "${what}" must be SQL text`)
+  if (/;|--|\/\*|\n/.test(text)) fail(`${where}: "${what}" must be one SQL fragment, with no semicolon, comment or line break`)
+  return text.trim()
+}
+
+// A KEY whose columns are exactly those of the primary key, a unique key or an earlier KEY on the same
+// table. MySQL schemas collect these over the years (users has PRIMARY KEY (id) and UNIQUE KEY id (id)).
+// On PostgreSQL every index is written on every insert, and on every update that is not HOT, so a second
+// copy costs writes and disk and can never be the better choice. Uniqueness is kept: the primary key
+// wins, then a unique key, then the first plain one. A prefix length is dropped in conversion, so
+// KEY (name(10)) and KEY (name) are the same index here. Spatial keys are left alone.
+function duplicateKeys(t) {
+  const sig = (k) => k.parts.map((p) => p.col + (p.desc ? ' DESC' : '')).join(',')
+  const seen = new Map()
+  const skip = new Map()
+  const pk = t.keys.find((k) => k.kind === 'primary')
+  if (pk) seen.set(sig(pk), 'PRIMARY KEY')
+  for (const kind of ['unique', 'plain']) {
+    for (const k of t.keys) {
+      if (k.kind !== kind) continue
+      const s = sig(k)
+      if (seen.has(s)) skip.set(k, seen.get(s))
+      else seen.set(s, k.name)
+    }
+  }
+  return skip
+}
+
+// config.narrowedIndexes by converted index name, each checked as it is used.
+function narrowedIndexes(config) {
+  const byName = new Map()
+  configList(config, 'narrowedIndexes').forEach((e, i) => {
+    const where = `config.narrowedIndexes[${i}]${e && typeof e.index === 'string' ? ' (' + e.index + ')' : ''}`
+    checkKeys(e, ['index', 'columns', 'why'], where)
+    checkWhy(e, where)
+    if (typeof e.index !== 'string' || !e.index) fail(`${where}: "index" must be the PostgreSQL name of a converted index`)
+    if (byName.has(e.index)) fail(`${where}: ${e.index} is narrowed twice`)
+    if (!Array.isArray(e.columns) || !e.columns.length || e.columns.some((c) => typeof c !== 'string')) fail(`${where}: "columns" must be a list of column names`)
+    byName.set(e.index, { columns: e.columns, where, used: false })
+  })
+  return byName
+}
+
+function extraIndexes(config, { tableByName, usedIndexNames, convertedIndexes, ddlIndexes, report }) {
+  const out = []
+  const allowed = ['table', 'name', 'columns', 'expression', 'where', 'include', 'uses', 'replaces', 'why']
+  configList(config, 'extraIndexes').forEach((e, i) => {
+    const where = `config.extraIndexes[${i}]${e && typeof e.name === 'string' ? ' (' + e.name + ')' : ''}`
+    if (e && typeof e === 'object' && 'unique' in e) fail(`${where}: a PostgreSQL-only index cannot be unique, because uniqueness would then differ between the engines; add the key in a MySQL migration`)
+    checkKeys(e, allowed, where)
+    const t = checkTable(e.table, tableByName, where)
+    const why = checkWhy(e, where)
+
+    if (typeof e.name !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(e.name) || RESERVED.has(e.name)) fail(`${where}: "name" must be a plain lower-case identifier`)
+    if (e.name.length > MAX_IDENT) fail(`${where}: the name is longer than ${MAX_IDENT} characters`)
+    if (!e.name.startsWith(t.name + '_')) fail(`${where}: the name must start with the table name, as every converted index does (${t.name}_...)`)
+    if (usedIndexNames.has(e.name)) fail(`${where}: the name is already used by ${usedIndexNames.get(e.name)}`)
+    if (tableByName.has(e.name.replace(/_pkey$/, '')) && e.name.endsWith('_pkey')) fail(`${where}: the name is the one PostgreSQL gives a primary key`)
+    usedIndexNames.set(e.name, `config.extraIndexes[${i}]`)
+
+    if ((e.columns === undefined) === (e.expression === undefined)) fail(`${where}: give either "columns" or "expression", not both and not neither`)
+    let keySql
+    if (e.columns !== undefined) keySql = checkColumns(e.columns, t, where, 'columns').map(qi).join(', ')
+    else keySql = checkFragment(e.expression, where, 'expression')
+    let sql = `CREATE INDEX ${qi(e.name)} ON ${qi(t.name)} (${keySql})`
+
+    if (e.include !== undefined) {
+      const inc = checkColumns(e.include, t, where, 'include')
+      if (e.columns && inc.some((c) => e.columns.includes(c))) fail(`${where}: "include" repeats a key column`)
+      sql += ` INCLUDE (${inc.map(qi).join(', ')})`
+    }
+    let predicate = null
+    if (e.where !== undefined) {
+      predicate = checkFragment(e.where, where, 'where')
+      sql += ` WHERE ${predicate}`
+    }
+
+    // An expression or a WHERE clause is copied as written, so the entry lists the columns it reads
+    // and each is checked against the schema. A column that is renamed or dropped in MySQL then stops
+    // the conversion here, not when the baseline is loaded.
+    const verbatim = [e.expression, predicate].filter((x) => typeof x === 'string').join(' ')
+    if (verbatim) {
+      const uses = checkColumns(e.uses, t, where, 'uses')
+      for (const c of uses) {
+        const quoted = c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        if (!new RegExp(`(^|[^a-z0-9_])"?${quoted}"?([^a-z0-9_]|$)`, 'i').test(verbatim)) fail(`${where}: "uses" lists ${c}, which the expression and where clause do not mention`)
+      }
+    } else if (e.uses !== undefined) {
+      fail(`${where}: "uses" is only for an expression or a where clause`)
+    }
+
+    if (e.replaces !== undefined) {
+      // The replaced index must be one the new index can stand in for everywhere: same table, not
+      // unique or spatial, and its columns are the leading columns of the new one in the same order.
+      const old = convertedIndexes.get(e.replaces)
+      if (!old) fail(`${where}: "replaces" names ${e.replaces}, which is not a converted index`)
+      if (old.table !== t.name) fail(`${where}: ${e.replaces} is on ${old.table}, not ${t.name}`)
+      if (old.kind !== 'plain') fail(`${where}: ${e.replaces} is a ${old.kind} index and cannot be replaced`)
+      if (old.at === null) fail(`${where}: ${e.replaces} is already replaced`)
+      if (!e.columns || predicate) fail(`${where}: only a plain column index over every row can replace another index`)
+      const oldCols = old.parts.map((p) => p.col)
+      if (old.parts.some((p) => p.desc) || oldCols.some((c, j) => e.columns[j] !== c)) {
+        fail(`${where}: ${e.replaces} is on (${oldCols.join(', ')}), which are not the leading columns of the new index`)
+      }
+      ddlIndexes[old.at] = null
+      old.at = null
+      report.hit('KEY replaced by a wider PostgreSQL-only index', `${e.replaces} -> ${e.name}`)
+    }
+
+    out.push(`-- ${why}\n${sql};`)
+    report.hit('PostgreSQL-only index added', e.name)
+  })
+  return out
+}
+
+// Storage parameters that may be set, and the values each accepts.
+const STORAGE_PARAMETERS = {
+  fillfactor: (v) => Number.isInteger(v) && v >= 10 && v <= 100,
+  autovacuum_vacuum_scale_factor: (v) => typeof v === 'number' && v >= 0 && v <= 1,
+  autovacuum_vacuum_insert_scale_factor: (v) => typeof v === 'number' && v >= 0 && v <= 1,
+  autovacuum_analyze_scale_factor: (v) => typeof v === 'number' && v >= 0 && v <= 1,
+  autovacuum_vacuum_threshold: (v) => Number.isInteger(v) && v >= 0,
+  autovacuum_vacuum_insert_threshold: (v) => Number.isInteger(v) && v >= 0,
+  autovacuum_analyze_threshold: (v) => Number.isInteger(v) && v >= 0,
+}
+
+function tableStorage(config, { tableByName, report }) {
+  const out = []
+  const seen = new Set()
+  configList(config, 'tableStorage').forEach((e, i) => {
+    const where = `config.tableStorage[${i}]`
+    checkKeys(e, ['table', 'set', 'why'], where)
+    const t = checkTable(e.table, tableByName, where)
+    const why = checkWhy(e, where)
+    if (seen.has(t.name)) fail(`${where}: ${t.name} is listed twice`)
+    seen.add(t.name)
+    if (e.set === null || typeof e.set !== 'object' || Array.isArray(e.set) || !Object.keys(e.set).length) fail(`${where}: "set" must name at least one storage parameter`)
+    const parts = Object.keys(e.set).map((k) => {
+      if (!Object.hasOwn(STORAGE_PARAMETERS, k)) fail(`${where}: ${k} is not a storage parameter the converter knows (${Object.keys(STORAGE_PARAMETERS).join(', ')})`)
+      if (!STORAGE_PARAMETERS[k](e.set[k])) fail(`${where}: ${JSON.stringify(e.set[k])} is not a valid value for ${k}`)
+      return `${k} = ${e.set[k]}`
+    })
+    out.push(`-- ${why}\nALTER TABLE ${qi(t.name)} SET (${parts.join(', ')});`)
+    report.hit('table storage parameters set', t.name)
+  })
+  return out
+}
+
+function columnStatistics(config, { tableByName, report }) {
+  const out = []
+  const seen = new Set()
+  configList(config, 'columnStatistics').forEach((e, i) => {
+    const where = `config.columnStatistics[${i}]`
+    checkKeys(e, ['column', 'target', 'nDistinct', 'why'], where)
+    const [tn, cn, more] = typeof e.column === 'string' ? e.column.split('.') : []
+    if (!tn || !cn || more !== undefined) fail(`${where}: "column" must be written table.column`)
+    const t = checkTable(tn, tableByName, where)
+    checkColumns([cn], t, where, 'column')
+    const why = checkWhy(e, where)
+    if (seen.has(e.column)) fail(`${where}: ${e.column} is listed twice`)
+    seen.add(e.column)
+    if (e.target === undefined && e.nDistinct === undefined) fail(`${where}: give a "target", an "nDistinct", or both`)
+    const lines = []
+    if (e.target !== undefined) {
+      // 10000 is the largest target PostgreSQL accepts.
+      if (!Number.isInteger(e.target) || e.target < 1 || e.target > 10000) fail(`${where}: "target" must be a whole number from 1 to 10000`)
+      lines.push(`ALTER TABLE ${qi(tn)} ALTER COLUMN ${qi(cn)} SET STATISTICS ${e.target};`)
+    }
+    if (e.nDistinct !== undefined) {
+      // A positive value is a count of distinct values; a negative one, down to -1, is that share of the rows.
+      if (typeof e.nDistinct !== 'number' || !Number.isFinite(e.nDistinct) || e.nDistinct === 0 || e.nDistinct < -1) fail(`${where}: "nDistinct" must be a count above 0, or a share of the rows from -1 to below 0`)
+      lines.push(`ALTER TABLE ${qi(tn)} ALTER COLUMN ${qi(cn)} SET (n_distinct = ${e.nDistinct});`)
+    }
+    out.push(`-- ${why}\n${lines.join('\n')}`)
+    report.hit('column statistics setting', e.column)
+  })
+  return out
+}
+
 // --- baseline writer --------------------------------------------------------------------------
 
 export function convert(dumpText, config = {}, opts = {}) {
@@ -641,6 +870,10 @@ export function convert(dumpText, config = {}, opts = {}) {
   const ddlTriggers = []
   const ddlComments = []
   const usedIndexNames = new Map()
+  // Each converted index by its PostgreSQL name: where its statement sits in ddlIndexes, and what it
+  // covers. config.extraIndexes may replace a plain one with a wider index.
+  const convertedIndexes = new Map()
+  const narrowed = narrowedIndexes(config)
 
   for (const t of tables) {
     const lines = []
@@ -696,8 +929,13 @@ export function convert(dumpText, config = {}, opts = {}) {
     out.push(`CREATE TABLE ${qi(t.name)} (\n  ${lines.join(',\n  ')}\n);`)
     if (t.comment) ddlComments.push(`COMMENT ON TABLE ${qi(t.name)} IS ${ql(t.comment)};`)
 
+    const duplicates = duplicateKeys(t)
     for (const k of t.keys) {
       if (k.kind === 'primary') continue
+      if (duplicates.has(k)) {
+        r.hit('duplicate KEY left out (same columns as another key on the table)', `${t.name}.${k.name} = ${duplicates.get(k)}`)
+        continue
+      }
       if (k.kind === 'fk') {
         let s = `ALTER TABLE ${qi(t.name)} ADD CONSTRAINT ${qi(fit(k.name))} FOREIGN KEY (${k.cols.map(qi).join(', ')}) REFERENCES ${qi(k.refTable)} (${k.refCols.map(qi).join(', ')})`
         if (k.onDelete) s += ` ON DELETE ${k.onDelete}`
@@ -709,6 +947,17 @@ export function convert(dumpText, config = {}, opts = {}) {
       const iname = fit(`${t.name}_${k.name}`)
       if (usedIndexNames.has(iname)) fail(`index name ${iname} produced twice (${usedIndexNames.get(iname)} and ${t.name}.${k.name})`)
       usedIndexNames.set(iname, `${t.name}.${k.name}`)
+      const narrow = narrowed.get(iname)
+      if (narrow) {
+        narrow.used = true
+        if (k.kind !== 'plain') fail(`${narrow.where}: ${iname} is a ${k.kind} index and cannot be narrowed`)
+        const have = k.parts.map((p) => p.col)
+        if (narrow.columns.length >= have.length || narrow.columns.some((c, i) => have[i] !== c)) {
+          fail(`${narrow.where}: the columns must be the leading columns of ${iname} (${have.join(', ')}), with at least one left off`)
+        }
+        k.parts = k.parts.slice(0, narrow.columns.length)
+        r.hit('KEY narrowed to its leading columns on PostgreSQL', `${iname} (${narrow.columns.join(', ')})`)
+      }
       const parts = k.parts.map((p) => {
         if (p.prefix) {
           if (k.kind === 'unique') fail(`unique key with a prefix on ${t.name}.${k.name}: the uniqueness would change`)
@@ -716,6 +965,7 @@ export function convert(dumpText, config = {}, opts = {}) {
         }
         return qi(p.col) + (p.desc ? ' DESC' : '')
       })
+      convertedIndexes.set(iname, { table: t.name, kind: k.kind, parts: k.parts, at: ddlIndexes.length })
       if (k.kind === 'spatial') {
         ddlIndexes.push(`CREATE INDEX ${qi(iname)} ON ${qi(t.name)} USING gist (${parts.join(', ')});`)
         r.hit('SPATIAL KEY -> GiST index')
@@ -765,6 +1015,11 @@ export function convert(dumpText, config = {}, opts = {}) {
     }
   }
 
+  for (const [name, n] of narrowed) if (!n.used) fail(`${n.where}: ${name} is not a converted index`)
+  const ddlExtraIndexes = extraIndexes(config, { tableByName, usedIndexNames, convertedIndexes, ddlIndexes, report: r })
+  const ddlStorage = tableStorage(config, { tableByName, report: r })
+  const ddlStatistics = columnStatistics(config, { tableByName, report: r })
+
   r.hit('table options ENGINE/CHARSET/COLLATE/AUTO_INCREMENT/ROW_FORMAT dropped')
   if (ddlComments.length) r.hit('table and column COMMENT -> COMMENT ON', String(ddlComments.length) + ' comments')
   if (routines.length) r.note(`skipped ${routines.length} stored routines (iznik-batch/database/postgres/functions.sql defines their PostgreSQL versions): ${routines.map((x) => x.name).join(', ')}`)
@@ -789,8 +1044,11 @@ export function convert(dumpText, config = {}, opts = {}) {
     out.join('\n\n'),
     '',
     '-- Indexes',
-    ddlIndexes.join('\n'),
+    ddlIndexes.filter((x) => x !== null).join('\n'),
     '',
+    ...section('-- PostgreSQL-only indexes (config.json extraIndexes). MySQL does not have these, or does not need them.', ddlExtraIndexes),
+    ...section('-- Table storage settings (config.json tableStorage)', ddlStorage),
+    ...section('-- Planner statistics settings (config.json columnStatistics)', ddlStatistics),
     '-- Foreign keys',
     ddlFks.join('\n'),
     '',

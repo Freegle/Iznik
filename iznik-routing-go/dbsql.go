@@ -330,6 +330,12 @@ func sqlActiveMembersInBox() string {
 
 // sqlNearestPostcode finds the postcode nearest a point, with its area name (geocode.go).
 // Args: lat, lat, lng, lng, lng, lat.
+//
+// On PostgreSQL locations.lat and locations.lng are numeric. Comparing them with a double
+// precision bound makes PostgreSQL cast the column, row by row, and then neither the lat nor the
+// lng index can be used: every call read the whole table. So each bound is worked out as a double,
+// which is how the argument arrives, and then cast to numeric, the columns' own type. The cast
+// rounds the bound to 15 significant digits, so 52.4-0.1 is 52.3 and not 52.300000000000004.
 func sqlNearestPostcode() string {
 	return sqlFor(`
 		SELECT p.name AS postcode, COALESCE(a.name,'') AS place
@@ -339,8 +345,8 @@ func sqlNearestPostcode() string {
 	`, `
 		SELECT p.name AS postcode, COALESCE(a.name,'') AS place
 		FROM locations p LEFT JOIN locations a ON a.id = p.areaid
-		WHERE p.type='Postcode' AND p.lat BETWEEN ?::double precision-0.1 AND ?::double precision+0.1
-		  AND p.lng BETWEEN ?::double precision-0.15 AND ?::double precision+0.15
+		WHERE p.type='Postcode' AND p.lat BETWEEN (?::double precision-0.1)::numeric AND (?::double precision+0.1)::numeric
+		  AND p.lng BETWEEN (?::double precision-0.15)::numeric AND (?::double precision+0.15)::numeric
 		ORDER BY ST_DistanceSphere(ST_MakePoint(p.lng,p.lat), ST_MakePoint(?,?)) LIMIT 1
 	`)
 }
