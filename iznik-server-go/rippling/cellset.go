@@ -279,7 +279,7 @@ var polygonCellsExists bool
 func PolygonCellsReady(db *gorm.DB) bool {
 	polygonCellsOnce.Do(func() {
 		var n int64
-		db.Table("information_schema.COLUMNS").
+		db.Table("information_schema.columns").
 			Where("table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'polygon_cells'").
 			Count(&n)
 		polygonCellsExists = n > 0
