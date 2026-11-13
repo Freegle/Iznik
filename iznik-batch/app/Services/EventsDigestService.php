@@ -16,8 +16,9 @@ use Illuminate\Support\Facades\Log;
  * roundups, and the same event cross-posted to multiple of their groups
  * appeared in each one. This now sends ONE email per user covering upcoming
  * events across ALL their event-enabled groups, with each event shown once
- * (deduplicated by event id) and annotated with which of the user's groups it
- * belongs to.
+ * and annotated with which of the user's groups it belongs to. "Once" covers
+ * both one event shared with several groups and the same event posted
+ * separately on each of them (same poster, title, start and location).
  */
 class EventsDigestService
 {
@@ -119,7 +120,8 @@ class EventsDigestService
      * Build the deduplicated, group-attributed event list for one user.
      *
      * An event that belongs to several of the user's groups appears once, with
-     * the names of those groups attached.
+     * the names of those groups attached. So does an event posted separately
+     * on each of them (see foldSamePostings()).
      *
      * @param array<int,array>  $eventsById     eventid => event data (start-ordered)
      * @param array<int,int[]>  $groupsByEvent  eventid => [group ids]
@@ -129,20 +131,16 @@ class EventsDigestService
      */
     protected function eventsForUser(array $eventsById, array $groupsByEvent, array $userGroupIds, array $eligibleGroups): array
     {
-        $out = [];
+        $items = [];
         foreach ($eventsById as $eid => $eventData) {
             $shared = array_values(array_intersect($groupsByEvent[$eid] ?? [], $userGroupIds));
             if (empty($shared)) {
                 continue;
             }
-            $eventData['groups'] = array_values(array_filter(array_map(
-                fn ($gid) => $eligibleGroups[$gid] ?? null,
-                $shared
-            )));
-            $out[] = $eventData;
+            $items[] = [$eventData, $shared];
         }
 
-        return $out;
+        return $this->foldSamePostings($items, $eligibleGroups);
     }
 
     /**
@@ -262,6 +260,12 @@ class EventsDigestService
                 'imageUrl'     => $imageUrl,
                 'url'          => "{$userSite}/communityevent/{$event->id}",
                 'groups'       => [],
+                'samePostingKey' => $this->samePostingKey(
+                    $event->userid !== null ? (int) $event->userid : null,
+                    $event->title,
+                    $event->location,
+                    (string) $event->start
+                ),
             ];
         }
 
