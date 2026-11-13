@@ -24,7 +24,8 @@ return new class extends Migration
             return;
         }
 
-        // mysql-only: Blueprint cannot append a value to an ENUM; the PostgreSQL baseline is converted from this schema.
+        // keep-raw: runs on MySQL only, see the next line
+        // mysql-only: Blueprint cannot append a value to an ENUM, and the PostgreSQL baseline is converted from this schema.
         DB::statement('ALTER TABLE messages_history MODIFY COLUMN source ENUM(' . self::WITH_EMAIL . ") NULL DEFAULT NULL COMMENT 'Source of incoming message'");
     }
 
@@ -34,9 +35,11 @@ return new class extends Migration
             return;
         }
 
-        // mysql-only: the reverse of up(); rows holding 'Email' go back to the empty value first.
+        // keep-raw: runs on MySQL only, see the next line
+        // mysql-only: the reverse of up(), rows holding Email go back to the empty value first.
         DB::statement("UPDATE messages_history SET source = NULL WHERE source = 'Email'");
-        // mysql-only: Blueprint cannot change an ENUM's list.
+        // keep-raw: runs on MySQL only, see the next line
+        // mysql-only: Blueprint cannot change an ENUM list.
         DB::statement('ALTER TABLE messages_history MODIFY COLUMN source ENUM(' . self::WITHOUT_EMAIL . ") NULL DEFAULT NULL COMMENT 'Source of incoming message'");
     }
 };
