@@ -223,6 +223,8 @@ the two as a pair, and three things enforce it (`reach_server.go`):
   takes seconds and the switch can follow at once. A post initialised in the
   remaining gap carries a note for the old layout; clearing its note makes it
   new again to the online path, which re-labels it against the live layout.
+  The monthly map refresh runs this whole sequence unattended: the `reach` profile of
+  `freegle-maint` ([automated host maintenance](../../ops/runbooks/automated-host-maintenance.md#road-map-refresh-reach)).
 
 `/health` reports `reach_partition_fp` so an operator can see every node serving
 the same layout as the notes.
