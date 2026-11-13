@@ -109,17 +109,22 @@ time, until none are left or `run_minutes` (10) has passed. For each:
   again on a later run, and the third start is the last (`MAX_ATTEMPTS`). A start is counted before
   the helper is asked, so a run that is killed mid-pass still counts.
 
-Every referral therefore ends in exactly one mail, within about an hour whatever the helper is
-doing. The mail is built first, then the task is claimed (`processed_at`), then the mail is spooled.
-A mail that was not spooled, because the spooler threw or answered that it sent nothing, puts the
-task back; a failure tidying up after a sent mail does not, so it cannot go twice. A mail that fails
-three times (`MAX_MAIL_FAILURES`) cannot be built from this referral, so the plainest mail goes
-instead: ids only, from the no-reply address, with no first pass. If that cannot be sent either,
-the task is marked failed and the error log says so. A support address whose provider is deferring
-our mail is not counted as a failure: the referral waits, and the 70-minute check reports it. A finished brief is kept on the task until its mail has
-gone, so a mail that fails is sent by the next run without another pass. Once the mail has gone, the
-moderator's reason and the brief are taken out of the task row, because they are about a member and
-nothing reads them again.
+Every referral therefore ends in a mail, within about an hour whatever the helper is doing. The mail
+is spooled first and the task is marked processed after, never the other way round: a run that is
+killed between the two sends the mail again on the next run, which is better than losing it. One
+run at a time is kept by the command's lock.
+
+A mail that was not spooled, because the spooler threw or answered that it sent nothing, leaves the
+task as it is for the next run. Only a thrown failure is counted. Once a referral has both failed
+three times (`MAX_MAIL_FAILURES`) and waited longer than `max_age_minutes`, the full mail is taken
+to be one that cannot be built, and the plainest mail is tried instead: ids only, from the no-reply
+address, with no first pass. A short outage of the mail renderer therefore costs nothing: the full
+mail, with its brief, goes when the renderer is back. A referral is never given up on for a mail
+fault. It keeps being tried, and the 70-minute check reports it. A finished brief is kept on the task until its mail has gone, so a mail that fails is sent by the
+next run without another pass. Once the mail has gone, the moderator's reason and the brief are
+taken out of the task row, because they are about a member and nothing reads them again. The command
+changes single keys of the task's data and never writes the whole of it back, so a reason removed
+while a pass was running (a member forgotten) stays removed.
 
 A task that names no chat or no referrer is marked failed and mails nothing. A monitoring check
 (`support:first-pass` in `ScheduledOutcomeRegistry`) breaches when a referral is still unprocessed
@@ -161,7 +166,7 @@ prompt cache.
   transcript. It is what the daily cap counts, and it shows with the helper's other runs in SysAdmin.
 - **Retention.** `support:purge-runs` runs daily and clears the analysis and transcript of first
   pass runs more than a year old. Forgetting a member clears them on every run about that member,
-  and takes the reason and any brief off a referral about them that has not been mailed yet.
+  and takes the reason, its hash and any brief off a referral about them.
   The stored transcript has image bytes removed and is capped. No request or response body is logged.
 - **Nothing else.** The mail is in the Support mailbox. The task row keeps the chat, referrer,
   member and community ids.

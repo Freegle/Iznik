@@ -124,7 +124,8 @@ const FIRST_PASS_PLAYBOOK =
 // can read but not change anything, so "test" always means a check that could prove the explanation wrong.
 const FIRST_PASS_CAUSE =
   `   **When the question is why something is not working, find the cause before you explain it.** A symptom ` +
-  `said again in other words is not an answer, and advice that does not follow from a cause you found is a guess.\n` +
+  `said again in other words is not an answer, and advice that does not follow from a cause you found is a guess. ` +
+  `The points below are how to choose each check, not a list of checks to run: the limit in step 3 still holds.\n` +
   `   - **Read the evidence exactly**: the member's own words, the error text, the picture, the time it happened. ` +
   `Do not turn one error into a more familiar one.\n` +
   `   - **Find where it breaks.** Follow the thing through its steps (what the member did, what the site recorded, ` +
@@ -138,9 +139,10 @@ const FIRST_PASS_CAUSE =
   `   - **Hold one explanation at a time**, and make the next check the one that could prove it wrong. If it does, ` +
   `drop that explanation and form another. Do not pile a second guess on top of the first.\n` +
   `   - **Keep what you confirmed apart from what you suspect.** If the checks run out before the cause is found, ` +
-  `say plainly that it was not found, say what was ruled out, and put the one check that would settle it in ` +
+  `say plainly in the answer that it was not found, and put the one check that would settle it in ` +
   `"open_questions". Do not suggest a fix for a cause you did not find, and do not give the moderator a list of ` +
-  `things to try at random: give the one next step that follows from the cause, or that would show it.\n`
+  `things to try at random. The draft then says what is known, and the one thing the moderator could ask the ` +
+  `member or look at that would show the cause.\n`
 
 const FIRST_PASS_METHOD =
   `## This run: a first pass on a referral\n` +

@@ -761,13 +761,21 @@ class ReferToSupportTest extends TestCase
         };
         $this->app->instance(FirstPassService::class, $broken);
 
-        for ($i = 0; $i < \App\Console\Commands\Support\SupportFirstPassCommand::MAX_MAIL_FAILURES; $i++) {
+        // Many failures in a short time are an outage, not a mail that cannot be built: the full mail
+        // keeps being tried, with its brief, for as long as the referral is young.
+        for ($i = 0; $i < \App\Console\Commands\Support\SupportFirstPassCommand::MAX_MAIL_FAILURES + 2; $i++) {
             $this->runPass();
             $this->assertNull($this->task($c['task'])->processed_at);
+            $this->assertNull($this->task($c['task'])->failed_at);
         }
         $this->assertCount(1, $this->helperRequests, 'the pass is not run again for a mail that will not build');
         $this->assertCount(0, $this->mailsFrom($c['referrer']));
+        $kept = json_decode($this->task($c['task'])->data, true);
+        $this->assertSame('The member could not find the item.', $kept['brief']['answer'], 'the finished pass is not thrown away');
+        $this->assertSame('Please look', $kept['reason']);
 
+        // Once it has also waited past the limit, Support is told with the plainest mail.
+        DB::table('background_tasks')->where('id', $c['task'])->update(['created_at' => DB::raw('NOW() - INTERVAL 90 MINUTE')]);
         $this->runPass();
 
         $mail = $this->mailsFrom($c['referrer'])->first();
@@ -799,9 +807,47 @@ class ReferToSupportTest extends TestCase
         $this->assertSame($c['referrer']->email_preferred, $envelope->replyTo[0]->address);
     }
 
+    public function test_a_member_forgotten_during_the_pass_does_not_get_their_reason_put_back(): void
+    {
+        Mail::fake();
+        $c = $this->refer(['data' => ['reason' => 'about them', 'reasonhash' => 'abc']]);
+        $spooler = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->andReturn('');
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spooler);
+        // The pass takes minutes. While it runs, the member is forgotten and the reason leaves the row.
+        $this->onHelperCall = fn () => DB::table('background_tasks')->where('id', $c['task'])
+            ->update(['data' => DB::raw("JSON_REMOVE(data, '$.reason', '$.reasonhash')")]);
+
+        $this->artisan('support:first-pass')->assertSuccessful();
+
+        $left = json_decode($this->task($c['task'])->data, true);
+        $this->assertArrayNotHasKey('reason', $left, 'storing the brief must not write the old reason back');
+        $this->assertArrayNotHasKey('reasonhash', $left);
+        $this->assertSame('The member could not find the item.', $left['brief']['answer']);
+        $this->assertSame($c['chat'], $left['chatid']);
+    }
+
+    public function test_a_run_that_dies_after_the_mail_is_spooled_sends_it_again_rather_than_losing_it(): void
+    {
+        Mail::fake();
+        config()->set('freegle.support.first_pass.enabled', false);
+        $c = $this->refer();
+        $real = app(\App\Services\EmailSpoolerService::class);
+        // The mail is spooled, and then the process is gone before the task is marked done.
+        $spooler = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->once()->andReturnUsing(function ($mail, $to) use ($real, $c) {
+            $this->assertNull($this->task($c['task'])->processed_at, 'not marked done before the mail is in the spool');
+
+            return $real->spool($mail, $to);
+        });
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spooler);
+        $this->artisan('support:first-pass')->assertSuccessful();
+        $this->assertNotNull($this->task($c['task'])->processed_at);
+    }
+
     public function test_forgetting_a_member_takes_the_reason_and_brief_off_their_waiting_referral_only(): void
     {
-        $mine = $this->refer(['data' => ['reason' => 'about them', 'brief' => ['answer' => 'facts']]]);
+        $mine = $this->refer(['data' => ['reason' => 'about them', 'reasonhash' => 'abc', 'brief' => ['answer' => 'facts']]]);
         $theirs = $this->refer(['data' => ['reason' => 'about another']]);
 
         app(\App\Services\UserManagementService::class)->forgetUser($mine['member']->id, 'Test reason');
@@ -809,6 +855,7 @@ class ReferToSupportTest extends TestCase
         $left = json_decode($this->task($mine['task'])->data, true);
         $this->assertArrayNotHasKey('reason', $left);
         $this->assertArrayNotHasKey('brief', $left);
+        $this->assertArrayNotHasKey('reasonhash', $left);
         $this->assertSame($mine['chat'], $left['chatid'], 'the referral itself still reaches Support');
         $this->assertSame('about another', json_decode($this->task($theirs['task'])->data, true)['reason']);
     }
