@@ -232,6 +232,7 @@ func fixOneSelect(ts []tok, s int) ([]tok, bool) {
 	if len(items) == 0 {
 		return ts, false
 	}
+	inUnion := topKw(ts, s, "UNION") >= 0 || unionBefore(ts, s)
 	// A select-list EXISTS(...) is 0 or 1 in MySQL, and sits in a UNION beside integer columns.
 	var rebuilt []tok
 	existsFound := false
@@ -240,6 +241,16 @@ func fixOneSelect(ts []tok, s int) ([]tok, bool) {
 			rebuilt = append(rebuilt, punct(","), sp())
 		}
 		e := it.expr
+		if inUnion && isComparisonItem(e) {
+			rebuilt = append(rebuilt, punct("("), punct("("))
+			rebuilt = append(rebuilt, e...)
+			rebuilt = append(rebuilt, punct(")"), punct(")"), punct(":"), punct(":"), word("int"))
+			if it.asTok >= 0 {
+				rebuilt = append(rebuilt, sp(), word("AS"), sp(), *it.aliasTok)
+			}
+			existsFound = true
+			continue
+		}
 		if len(e) > 2 && (isKw(e[0], "EXISTS") && callEnd(e, 0) == len(e)-1) {
 			rebuilt = append(rebuilt, punct("("), word("CASE"), sp(), word("WHEN"), sp())
 			rebuilt = append(rebuilt, e...)
@@ -512,6 +523,56 @@ func afterBy(ts []tok, i int) int {
 func hasWindow(ts []tok) bool {
 	for _, t := range ts {
 		if isKw(t, "OVER") {
+			return true
+		}
+	}
+	return false
+}
+
+// unionBefore reports whether the SELECT at s follows a UNION at the same depth.
+func unionBefore(ts []tok, s int) bool {
+	depth := 0
+	for i := s - 1; i >= 0; i-- {
+		if isP(ts[i], ")") {
+			depth++
+		} else if isP(ts[i], "(") {
+			depth--
+			if depth < 0 {
+				return false
+			}
+		} else if depth == 0 && isKw(ts[i], "UNION") {
+			return true
+		}
+	}
+	return false
+}
+
+// isComparisonItem reports whether a select-list item is a comparison (a boolean in PostgreSQL, 0 or 1 in
+// MySQL): it has a comparison operator outside any parentheses and outside any CASE.
+func isComparisonItem(e []tok) bool {
+	e = trimToks(e)
+	// (a > b): look inside parentheses that enclose the whole item
+	if len(e) > 2 && isP(e[0], "(") && matchClose(e, 0) == len(e)-1 {
+		if n := nextSig(e, 1); n >= 0 && isKw(e[n], "SELECT") {
+			return false // a scalar subquery
+		}
+		return isComparisonItem(e[1 : len(e)-1])
+	}
+	if len(e) == 0 || isKw(e[0], "CASE") {
+		return false
+	}
+	depth, caseDepth := 0, 0
+	for _, t := range e {
+		switch {
+		case isP(t, "("):
+			depth++
+		case isP(t, ")"):
+			depth--
+		case isKw(t, "CASE"):
+			caseDepth++
+		case isKw(t, "END"):
+			caseDepth--
+		case depth == 0 && caseDepth == 0 && (isP(t, "=") || isP(t, ">") || isP(t, "<") || isKw(t, "IS") || isKw(t, "LIKE") || isKw(t, "IN") || isKw(t, "BETWEEN")):
 			return true
 		}
 	}

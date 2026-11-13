@@ -115,6 +115,10 @@ func TestTranslatePostgres(t *testing.T) {
 		{"question marks", "SELECT 1 FROM t WHERE a = ? AND b = '?' AND c = ?", "SELECT 1 FROM t WHERE a = $1 AND b = '?' AND c = $2"},
 		{"update limit", "UPDATE t SET a = 1 WHERE b = 2 ORDER BY id DESC LIMIT 1", "UPDATE t SET a = 1 WHERE ctid IN (SELECT ctid FROM t WHERE b = 2 ORDER BY id DESC LIMIT 1)"},
 		{"delete limit", "DELETE FROM t WHERE b = 2 LIMIT 5", "DELETE FROM t WHERE ctid IN (SELECT ctid FROM t WHERE b = 2 LIMIT 5)"},
+		{"upsert no index named", "INSERT INTO items (id2) VALUES ($1) ON DUPLICATE KEY UPDATE id2 = 1", "INSERT INTO items (id2) VALUES ($1)"},
+		{"union comparison", "SELECT a > 1 AS x, b FROM t UNION SELECT c, d FROM u", "SELECT ((a > 1))::int AS x, b FROM t UNION SELECT c, d FROM u"},
+		{"param is null", "SET h = CASE WHEN $3 IS NOT NULL THEN 1 ELSE 0 END", "SET h = CASE WHEN $3::text IS NOT NULL THEN 1 ELSE 0 END"},
+		{"union scalar subquery", "SELECT (SELECT d FROM u WHERE u.id = t.id) AS x FROM t UNION SELECT 1 FROM v", "SELECT (SELECT d FROM u WHERE u.id = t.id) AS x FROM t UNION SELECT 1 FROM v"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {

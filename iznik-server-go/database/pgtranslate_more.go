@@ -289,6 +289,23 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		}
 	}
 
+	// $n IS [NOT] NULL: PostgreSQL cannot type a bare parameter there.
+	for i := 0; i < len(ts); i++ {
+		t := ts[i]
+		if t.k != tkWord || len(t.s) < 2 || t.s[0] != '$' || t.s[1] < '0' || t.s[1] > '9' {
+			continue
+		}
+		n := nextSig(ts, i+1)
+		if n < 0 || !isKw(ts[n], "IS") {
+			continue
+		}
+		if p := prevSig(ts, i-1); p >= 0 && isP(ts[p], ":") {
+			continue
+		}
+		ts = concatToks(ts[:i+1], []tok{punct(":"), punct(":"), word("text")}, ts[i+1:])
+		changed = true
+	}
+
 	// ST_SRID(g, n) sets the SRID in MySQL.
 	for i := len(ts) - 1; i >= 0; i-- {
 		if !isKw(ts[i], "ST_SRID") {
@@ -680,8 +697,17 @@ func translateStatement(ts []tok, cat catalog) ([]tok, bool) {
 			continue
 		}
 		target := cat.unique(table, cols)
-		if target == nil {
+		if target == nil && len(cols) == 0 {
 			return ts, false
+		}
+		if target == nil {
+			// No unique index is fully named by the INSERT. On MySQL a key with a column left out is NULL
+			// there and never conflicts, so the INSERT is plain; drop the clause.
+			end := len(ts)
+			if r := topKw(ts, i, "RETURNING"); r >= 0 {
+				end = r
+			}
+			return concatToks(trimTrailingSpace(ts[:i]), []tok{sp()}, ts[end:]), true
 		}
 		rest := qualifyUpdate(ts[u+1:], table, cat)
 		var assigns []tok
@@ -812,46 +838,70 @@ func wrapJSONBranches(ts []tok, changed bool) ([]tok, bool) {
 	}
 	isJSONCall := func(seg []tok) bool {
 		seg = trimToks(seg)
-		return len(seg) > 2 && isKw(seg[0], "json_extract") && callEnd(seg, 0) == len(seg)-1
+		if len(seg) > 2 && isKw(seg[0], "json_extract") && callEnd(seg, 0) == len(seg)-1 {
+			return true
+		}
+		// a nested CASE or COALESCE whose result is a JSON value
+		if len(seg) > 2 && (isKw(seg[0], "CASE") || isKw(seg[0], "COALESCE")) {
+			for _, t := range seg {
+				if isKw(t, "json_extract") {
+					return true
+				}
+			}
+		}
+		return false
 	}
 	// CASE ... THEN x ... ELSE y END with simple results.
 	for i := 0; i < len(ts); i++ {
 		if !isKw(ts[i], "CASE") {
 			continue
 		}
-		depth := 0
+		// the END that closes this CASE, and the result segments after its own THEN and ELSE
+		depth, caseDepth := 0, 0
 		end := -1
 		for j := i; j < len(ts); j++ {
 			if isP(ts[j], "(") {
 				depth++
 			} else if isP(ts[j], ")") {
 				depth--
-			} else if depth == 0 && isKw(ts[j], "END") {
-				end = j
-				break
+			} else if isKw(ts[j], "CASE") {
+				caseDepth++
+			} else if isKw(ts[j], "END") {
+				caseDepth--
+				if caseDepth == 0 && depth == 0 {
+					end = j
+					break
+				}
 			}
 		}
 		if end < 0 {
 			continue
 		}
-		// result segments: after THEN up to the next WHEN/ELSE/END, and after ELSE up to END.
 		type seg struct{ from, to int }
 		var segs []seg
-		depth = 0
+		depth, caseDepth = 0, 0
 		for j := i + 1; j < end; j++ {
 			if isP(ts[j], "(") {
 				depth++
 			} else if isP(ts[j], ")") {
 				depth--
-			} else if depth == 0 && (isKw(ts[j], "THEN") || isKw(ts[j], "ELSE")) {
+			} else if isKw(ts[j], "CASE") {
+				caseDepth++
+			} else if isKw(ts[j], "END") {
+				caseDepth--
+			} else if depth == 0 && caseDepth == 0 && (isKw(ts[j], "THEN") || isKw(ts[j], "ELSE")) {
 				k := j + 1
-				d2 := 0
+				d2, c2 := 0, 0
 				for ; k < end; k++ {
 					if isP(ts[k], "(") {
 						d2++
 					} else if isP(ts[k], ")") {
 						d2--
-					} else if d2 == 0 && (isKw(ts[k], "WHEN") || isKw(ts[k], "ELSE")) {
+					} else if isKw(ts[k], "CASE") {
+						c2++
+					} else if isKw(ts[k], "END") {
+						c2--
+					} else if d2 == 0 && c2 == 0 && (isKw(ts[k], "WHEN") || isKw(ts[k], "ELSE")) {
 						break
 					}
 				}
@@ -997,4 +1047,11 @@ func translateUpdateIgnore(ts []tok, first int, cat catalog) ([]tok, bool) {
 func hasCastNumeric(a []tok) bool {
 	n := len(a)
 	return n >= 4 && isKw(a[n-1], "numeric") && isP(a[n-2], ":") && isP(a[n-3], ":")
+}
+
+func trimTrailingSpace(ts []tok) []tok {
+	for len(ts) > 0 && ts[len(ts)-1].k == tkSpace {
+		ts = ts[:len(ts)-1]
+	}
+	return ts
 }
