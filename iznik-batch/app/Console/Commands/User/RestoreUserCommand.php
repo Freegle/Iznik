@@ -410,12 +410,18 @@ class RestoreUserCommand extends Command
                 if ($inserted) {
                     $id = (int) $inserted[0]->id;
                     if (isset($row['id'])) {
-                        // A row inserted with its own id does not move the id sequence on PostgreSQL, so the
-                        // next ordinary insert would be handed an id that is now taken.
+                        // A row inserted with its own id does not move the id sequence on PostgreSQL, so a
+                        // later ordinary insert would be handed an id that is now taken. The sequence only
+                        // ever moves forward: setval is not undone by a rollback, and moving it back would
+                        // hand out an id another session has already been given.
                         // keep-raw: PostgreSQL only, sequence upkeep has no query builder form.
                         DB::select(
-                            "SELECT setval(pg_get_serial_sequence(?, 'id'), GREATEST((SELECT MAX(id) FROM {$quotedTable}), 1))",
-                            [$table]
+                            "SELECT setval(s.seq, ?) FROM (SELECT pg_get_serial_sequence(?, 'id') AS seq) s
+                             WHERE s.seq IS NOT NULL AND ? > COALESCE((
+                                 SELECT ps.last_value FROM pg_sequences ps
+                                 WHERE format('%I.%I', ps.schemaname, ps.sequencename)::regclass = s.seq::regclass
+                             ), 0)",
+                            [$id, $table, $id]
                         );
                     }
 

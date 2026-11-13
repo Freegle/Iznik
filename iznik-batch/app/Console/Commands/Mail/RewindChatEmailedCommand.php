@@ -84,10 +84,11 @@ class RewindChatEmailedCommand extends Command
         // in that chat too, which is what we want - they were all equally
         // undeliverable.
         // PostgreSQL has neither SUBSTRING_INDEX nor CAST(... AS UNSIGNED). The domain is the part after
-        // the last @, and a message id that is not a whole number counts as none, as MySQL's cast makes it 0.
+        // the last @, lowered because MySQL's comparison ignores case and PostgreSQL's does not, and a
+        // message id that is not a whole number counts as none, as MySQL's cast makes it 0.
         $pg = DB::connection()->getDriverName() === 'pgsql';
         $domainSql = $pg
-            ? "(string_to_array(recipient_email::text, '@'))[cardinality(string_to_array(recipient_email::text, '@'))]"
+            ? "lower((string_to_array(recipient_email::text, '@'))[cardinality(string_to_array(recipient_email::text, '@'))])"
             : "SUBSTRING_INDEX(recipient_email, '@', -1)";
         $select = $pg
             ? "userid,
@@ -105,7 +106,7 @@ class RewindChatEmailedCommand extends Command
             ->selectRaw($select)
             ->where('email_type', 'ChatNotification')
             ->whereBetween('sent_at', [$start, $end])
-            ->whereIn(DB::raw($domainSql), $domains)
+            ->whereIn(DB::raw($domainSql), $pg ? array_map('mb_strtolower', $domains) : $domains)
             ->whereNotNull('userid')
             ->whereNotNull('metadata')
             ->groupBy('userid', 'domain', 'chatid')

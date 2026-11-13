@@ -63,10 +63,21 @@ func (f Fixture) Load(tx *gorm.DB) error {
 			// reset after each run (resetAutoIncrement) is skipped when the table is busy, and rows
 			// that other tests then create are numbered from there. Such a row is moved out of the
 			// way for the length of this transaction, and the rollback puts it back.
+			//
+			// The row is looked for with a plain read first, and deleted only when it is there. A
+			// DELETE of an id that is not there locks the gap at the end of the table until the
+			// rollback, which would hold up every insert the other test packages make.
 			if id, ok := r["id"]; ok && d == MySQL {
+				var found int64
 				// keep-raw: test harness, the table name varies per fixture
-				if err := tx.Exec("DELETE FROM `"+t.Table+"` WHERE id = ?", id).Error; err != nil {
-					return fmt.Errorf("fixture table %s row %d: clearing id %v: %w", t.Table, i, id, err)
+				if err := tx.Raw("SELECT COUNT(*) FROM `"+t.Table+"` WHERE id = ?", id).Scan(&found).Error; err != nil {
+					return fmt.Errorf("fixture table %s row %d: looking for id %v: %w", t.Table, i, id, err)
+				}
+				if found > 0 {
+					// keep-raw: test harness, the table name varies per fixture
+					if err := tx.Exec("DELETE FROM `"+t.Table+"` WHERE id = ?", id).Error; err != nil {
+						return fmt.Errorf("fixture table %s row %d: clearing id %v: %w", t.Table, i, id, err)
+					}
 				}
 			}
 			// One statement per row. A batch of maps takes its columns from the first row, and a

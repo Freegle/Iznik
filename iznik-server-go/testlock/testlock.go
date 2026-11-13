@@ -15,8 +15,9 @@ import (
 )
 
 // Hold blocks until no other test process holds the named lock, and releases it when the test ends.
-// Call it before the test first touches what is shared. Where locking is not possible the test runs
-// unlocked, as it did before.
+// Call it before the test first touches what is shared, and once per test: a second Hold of the same name
+// while the first is held (in the same test or a subtest) would wait for itself. Where locking is not
+// possible the test runs unlocked, as it did before.
 func Hold(t testing.TB, name string) {
 	t.Helper()
 	f, err := os.OpenFile(filepath.Join(os.TempDir(), "iznik-testlock-"+name), os.O_CREATE|os.O_RDWR, 0o666)
