@@ -3298,10 +3298,9 @@ class IncomingMailService
 
             // INSERT IGNORE: a redelivery of the same email for the same group must be a
             // no-op, not an error. (msgid, groupid) is unique on messages_groups.
-            DB::statement(
-                'INSERT IGNORE INTO messages_groups (msgid, groupid, msgtype, collection, arrival) VALUES (?, ?, ?, ?, ?)',
-                [$msgid, $group->id, $type, $collection, now()]
-            );
+            DB::table('messages_groups')->insertOrIgnore([
+                'msgid' => $msgid, 'groupid' => $group->id, 'msgtype' => $type, 'collection' => $collection, 'arrival' => now(),
+            ]);
 
             $messageId = ($email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'))).'-'.$group->id;
 
