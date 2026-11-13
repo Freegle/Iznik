@@ -180,6 +180,35 @@ class UpdateSpatialDataCommandTest extends TestCase
     }
 
     /**
+     * Data zones in the Central Belt (Glasgow 55.86, Edinburgh 55.95) are Scotland. They
+     * used to count as England and Wales, which left real Scotland at 2,615 of 6,976 rows
+     * and failed the check.
+     */
+    public function test_csv_validation_counts_central_belt_as_scotland(): void
+    {
+        $lines = ['lat,lng,quintile'];
+        for ($i = 0; $i < 34000; $i++) {
+            $lines[] = '52.0,-1.5,' . (($i % 5) + 1);
+        }
+        for ($i = 0; $i < 4000; $i++) {
+            $lines[] = '55.86,-4.25,' . (($i % 5) + 1);
+        }
+        for ($i = 0; $i < 2600; $i++) {
+            $lines[] = '57.15,-2.1,' . (($i % 5) + 1);
+        }
+        for ($i = 0; $i < 890; $i++) {
+            $lines[] = '54.6,-5.9,' . (($i % 5) + 1);
+        }
+
+        Http::fake($this->buildFakeHttpResponses(implode("\n", $lines) . "\n"));
+
+        $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('Scotland rows: 6600')
+            ->expectsOutputToContain('NI rows: 890')
+            ->assertExitCode(0);
+    }
+
+    /**
      * Test successful CSV generation and validation.
      */
     public function test_valid_csv_passes_validation(): void
@@ -292,7 +321,7 @@ class UpdateSpatialDataCommandTest extends TestCase
     /**
      * Generate a valid UK deprivation CSV (40000 rows) meeting all validation criteria:
      * - Total rows >= 40000
-     * - E&W rows (lat 49-56, lng -6 to 2) >= 30000
+     * - E&W rows (lat 49-55.3, lng -6 to 2) >= 30000
      * - Scotland rows (lat > 55.3, lng < 0) >= 5000
      * - NI rows (lat 54-55.3, lng -8.5 to -5.3) >= 800
      * - Each quintile ~20% (within 15-30% range)

@@ -321,13 +321,17 @@ class UpdateSpatialDataCommand extends Command
                     continue;
                 }
 
-                // Regional classification
-                if ($lat >= 49 && $lat <= 56 && $lng >= -6 && $lng <= 2) {
-                    $ewRows++;
+                // Regional classification, rough by design: the minimums below are loose
+                // enough that the few areas near the Scottish border landing on the wrong side
+                // do not matter. Northern Ireland first, because its box overlaps the England
+                // box between 6 and 5.3 degrees west; then Scotland, from 55.3 degrees north,
+                // so that Glasgow and Edinburgh (about 55.9) count as Scotland.
+                if ($lat >= 54 && $lat <= 55.3 && $lng >= -8.5 && $lng <= -5.3) {
+                    $niRows++;
                 } elseif ($lat > 55.3 && $lng < 0) {
                     $scotRows++;
-                } elseif ($lat >= 54 && $lat <= 55.3 && $lng >= -8.5 && $lng <= -5.3) {
-                    $niRows++;
+                } elseif ($lat >= 49 && $lat <= 55.3 && $lng >= -6 && $lng <= 2) {
+                    $ewRows++;
                 }
 
                 // Quintile validation
