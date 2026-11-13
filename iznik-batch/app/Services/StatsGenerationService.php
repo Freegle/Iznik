@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Database\ReplaceInto;
 use App\Database\Expressions\Alias;
-use App\Database\Expressions\CastAs;
 use App\Database\Expressions\Arithmetic;
 use App\Database\Expressions\Coalesce;
 use App\Database\Expressions\Collate;
@@ -125,7 +124,7 @@ class StatsGenerationService
             ->where('date', '>=', $date)
             ->whereDate('date', $date)
             ->whereNotNull('groups')
-            ->where(new CastAs('groups', 'CHAR'), '!=', '')
+            ->where('groups', '!=', 0)
             ->select('groups')
             ->orderBy('id')
             ->chunk(1000, function ($searches) use (&$searchCounts) {
