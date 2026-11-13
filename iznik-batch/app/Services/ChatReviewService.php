@@ -63,6 +63,7 @@ class ChatReviewService
             ->where('reviewrequired', 1)
             ->whereNull('reviewedby')
             ->update([
+                'reviewrequired' => 0,
                 'reviewedby' => $modbotUserId,
                 'reviewrejected' => 1,
             ]);

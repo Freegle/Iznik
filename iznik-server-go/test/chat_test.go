@@ -1021,6 +1021,57 @@ func TestPostChatRoomTyping(t *testing.T) {
 	assert.NotEqual(t, dateBefore, dateAfter, "Typing should bump recent unmailed message dates")
 }
 
+// Creating a room through the ChatRoom struct, as the LoveJunk path does, must leave groupid NULL: a
+// zero community id would break the foreign key.
+func TestCreateChatRoomStructLeavesGroupidNull(t *testing.T) {
+	prefix := uniquePrefix("room_struct")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+
+	room := chat.ChatRoom{User1: user1ID, User2: user2ID, Chattype: utils.CHAT_TYPE_USER2USER}
+	assert.NoError(t, database.DBConn.Create(&room).Error)
+	assert.NotZero(t, room.ID)
+
+	var withGroup int64
+	database.DBConn.Table("chat_rooms").Where("id = ? AND groupid IS NOT NULL", room.ID).Count(&withGroup)
+	assert.Equal(t, int64(0), withGroup)
+}
+
+func TestPostChatRoomTypingNonParticipant(t *testing.T) {
+	prefix := uniquePrefix("typing_np")
+
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	user3ID := CreateTestUser(t, prefix+"_u3", utils.SYSTEMROLE_USER)
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token3 := CreateTestSession(t, user3ID)
+
+	db := database.DBConn
+	msgid := CreateTestChatMessage(t, chatid, user1ID, "Recent typing msg "+prefix)
+	db.Exec("UPDATE chat_messages SET date = DATE_SUB(NOW(), INTERVAL 10 SECOND), mailedtoall = 0 WHERE id = ?", msgid)
+
+	var dateBefore string
+	db.Raw("SELECT date FROM chat_messages WHERE id = ?", msgid).Scan(&dateBefore)
+
+	// A user who is in neither side of the chat must not be able to signal typing in it.
+	payload := map[string]interface{}{"id": chatid, "action": "Typing"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token3, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	_, leaked := result["count"]
+	assert.False(t, leaked, "A refused typing call must not report how many messages are recent")
+
+	// The other chat's message dates must be left alone.
+	var dateAfter string
+	db.Raw("SELECT date FROM chat_messages WHERE id = ?", msgid).Scan(&dateAfter)
+	assert.Equal(t, dateBefore, dateAfter, "A non-participant must not bump message dates in someone else's chat")
+}
+
 func TestPostChatRoomRosterUpdate(t *testing.T) {
 	prefix := uniquePrefix("roster")
 

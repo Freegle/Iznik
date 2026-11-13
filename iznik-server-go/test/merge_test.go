@@ -87,6 +87,8 @@ func TestCreateMerge(t *testing.T) {
 
 	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
 	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, user1ID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, groupID, utils.ROLE_MEMBER)
 
 	body := fmt.Sprintf(`{"user1":%d,"user2":%d,"email":false}`, user1ID, user2ID)
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/merge?jwt=%s", token), strings.NewReader(body))
@@ -99,6 +101,49 @@ func TestCreateMerge(t *testing.T) {
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Greater(t, result["id"].(float64), float64(0))
 	assert.NotEmpty(t, result["uid"])
+}
+
+// A merge offer, once accepted, merges the two accounts, so offering one follows the moderator
+// merge rules: the moderator must moderate both accounts, either may be their own, and neither may
+// be an Admin or Support account.
+func TestCreateMergeByModeratorFollowsTheModeratorMergeRules(t *testing.T) {
+	prefix := uniquePrefix("MergeCrtRules")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	_, token := CreateTestSession(t, modID)
+
+	memberA := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	memberB := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
+	adminID := CreateTestUser(t, prefix+"_admin", utils.SYSTEMROLE_ADMIN)
+	outsider := CreateTestUser(t, prefix+"_out", utils.SYSTEMROLE_USER)
+	for _, id := range []uint64{memberA, memberB, adminID} {
+		CreateTestMembership(t, id, groupID, utils.ROLE_MEMBER)
+	}
+	CreateTestMembership(t, outsider, otherGroupID, utils.ROLE_MEMBER)
+
+	offer := func(u1, u2 uint64) int {
+		body := fmt.Sprintf(`{"user1":%d,"user2":%d,"email":false}`, u1, u2)
+		req := httptest.NewRequest("PUT", fmt.Sprintf("/api/merge?jwt=%s", token), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		return resp.StatusCode
+	}
+
+	assert.Equal(t, 403, offer(memberA, adminID), "an Admin account")
+	assert.Equal(t, 403, offer(adminID, memberA), "an Admin account, either way round")
+	assert.Equal(t, 403, offer(memberA, outsider), "an account the moderator does not moderate")
+
+	var offers int64
+	db.Raw("SELECT COUNT(*) FROM merges WHERE offeredby = ?", modID).Scan(&offers)
+	assert.Equal(t, int64(0), offers, "a refused offer leaves no merge row to accept")
+
+	assert.Equal(t, 200, offer(memberA, memberB), "two members of the moderator's community")
+	assert.Equal(t, 200, offer(memberA, modID), "the moderator's own account with a member")
+	assert.Equal(t, 200, offer(modID, memberB), "the moderator's own account, either way round")
 }
 
 func TestCreateMergeNotMod(t *testing.T) {
@@ -140,6 +185,61 @@ func TestPostMergeAccept(t *testing.T) {
 	var accepted *string
 	db.Raw("SELECT accepted FROM merges WHERE id = ?", mergeID).Scan(&accepted)
 	assert.NotNil(t, accepted)
+}
+
+// postMergeAction sends the member's answer to a merge offer, as the /merge page does.
+func postMergeAction(t *testing.T, mergeID uint64, uid string, keep uint64, other uint64, action string) int {
+	body := fmt.Sprintf(`{"id":%d,"uid":"%s","user1":%d,"user2":%d,"action":"%s"}`,
+		mergeID, uid, keep, other, action)
+	req := httptest.NewRequest("POST", "/api/merge", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	return resp.StatusCode
+}
+
+// The /merge page tells the member "We've merged your accounts", so Accept must merge them: the
+// account sent as user1 is kept and the other is merged into it.
+func TestPostMergeAcceptMergesTheAccounts(t *testing.T) {
+	prefix := uniquePrefix("MergeAccDo")
+	offered1 := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	offered2 := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	db := database.DBConn
+
+	mergeID, uid := createTestMerge(t, offered1, offered2, modID)
+
+	// The member keeps the second account of the offer.
+	assert.Equal(t, 200, postMergeAction(t, mergeID, uid, offered2, offered1, "Accept"))
+
+	assert.True(t, userExists(offered2), "the chosen account is kept")
+	assert.False(t, userExists(offered1), "the other account is merged away")
+
+	var emails int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND email = ?",
+		offered2, prefix+"_u1@test.com").Scan(&emails)
+	assert.Equal(t, int64(1), emails, "the merged account's email moves to the kept account")
+
+	assert.NotNil(t, findLog(db, "User", "Merged", offered1), "a Merged log row for the discarded account")
+	assert.NotNil(t, findLog(db, "User", "Merged", offered2), "a Merged log row for the kept account")
+
+	// The link in the email cannot be used a second time.
+	assert.Equal(t, 409, postMergeAction(t, mergeID, uid, offered1, offered2, "Accept"))
+}
+
+// A TrashNothing member is never merged with a Freegle account, so accepting such an offer is
+// refused and both accounts stay.
+func TestPostMergeAcceptRefusesTrashNothingWithFreegle(t *testing.T) {
+	prefix := uniquePrefix("MergeAccTN")
+	fd := CreateTestUser(t, prefix+"_fd", utils.SYSTEMROLE_USER)
+	tn := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	stampTN(tn, 991090)
+
+	mergeID, uid := createTestMerge(t, fd, tn, modID)
+
+	assert.Equal(t, 400, postMergeAction(t, mergeID, uid, fd, tn, "Accept"))
+	assert.True(t, userExists(fd))
+	assert.True(t, userExists(tn))
 }
 
 func TestPostMergeReject(t *testing.T) {

@@ -104,6 +104,18 @@ class ChatReviewServiceTest extends TestCase
         $this->assertSame(1, (int) $row->reviewrejected);
     }
 
+    public function test_rejected_message_no_longer_requires_review(): void
+    {
+        // A rejected message must stop holding the messages after it: the hold chain reads
+        // reviewrequired of the message before, so a timed-out message has to clear it.
+        $this->createModbot();
+        [, , , $message] = $this->pendingMessage('-8 days');
+
+        $this->service->processReview();
+
+        $this->assertSame(0, (int) $this->row($message->id)->reviewrequired);
+    }
+
     public function test_nothing_rejected_when_modbot_user_does_not_exist(): void
     {
         [, , , $message] = $this->pendingMessage('-8 days');

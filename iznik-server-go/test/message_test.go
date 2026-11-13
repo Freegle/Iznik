@@ -3480,6 +3480,70 @@ func TestDeleteMessageNotOwnerNotMod(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 }
 
+// Deleting is per community. A moderator who only runs a community the post rippled into
+// removes the post from that community alone; the home copy and the shared post stay.
+func TestDeleteMessageModOfRippledCopyKeepsHomeCopy(t *testing.T) {
+	prefix := uniquePrefix("msgmod_delripple")
+	db := database.DBConn
+
+	homeGroup := CreateTestGroup(t, prefix+"_home")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, homeGroup, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, rippledGroup, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := CreateTestMessage(t, posterID, homeGroup, prefix+" OFFER: rippled item", 51.5, -0.1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)",
+		msgID, rippledGroup)
+
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var homeCopies int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND deleted = 0", msgID, homeGroup).Scan(&homeCopies)
+	assert.Equal(t, int64(1), homeCopies, "the home community's copy is not deleted by a moderator of another community")
+
+	var sharedDeleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&sharedDeleted)
+	assert.Nil(t, sharedDeleted, "the shared post stays while an undeleted community copy remains")
+
+	var rippledCopies int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup).Scan(&rippledCopies)
+	assert.Equal(t, int64(0), rippledCopies, "the moderator's own community's copy is removed, as the POST Delete action removes it")
+}
+
+// A post another moderator is holding cannot be deleted from under them, here as in the
+// POST Delete action.
+func TestDeleteMessageModRefusedWhileHeldByAnotherMod(t *testing.T) {
+	prefix := uniquePrefix("msgmod_delheld")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", utils.SYSTEMROLE_USER)
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_USER)
+	holderID := CreateTestUser(t, prefix+"_holder", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, posterID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, modID, groupID, utils.ROLE_MODERATOR)
+	CreateTestMembership(t, holderID, groupID, utils.ROLE_MODERATOR)
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", holderID, msgID, groupID)
+
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 409, resp.StatusCode, "a post held by another moderator is not deleted")
+
+	var deleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&deleted)
+	assert.Nil(t, deleted, "the held post is still there")
+}
+
 // --- Test: PUT /message ---
 
 func TestPutMessage(t *testing.T) {
@@ -3903,17 +3967,53 @@ func TestPutMessageExistingEmailNoJWT(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req)
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, 401, resp.StatusCode)
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, float64(0), result["ret"])
 
 	// CRITICAL: The response must NOT contain a JWT or persistent session.
 	_, hasJWT := result["jwt"]
 	assert.False(t, hasJWT, "Response must not contain JWT for existing user email")
 	_, hasPersistent := result["persistent"]
 	assert.False(t, hasPersistent, "Response must not contain persistent session for existing user email")
+}
+
+// An unauthenticated PUT /message that names an existing member's email must be
+// refused: knowing an email address is not a login. No post may be made for that
+// member, whether the caller asks for a draft or a direct submission.
+func TestPutMessageExistingEmailLoggedOutPostsNothing(t *testing.T) {
+	prefix := uniquePrefix("msgmod_noimpersonate")
+	db := database.DBConn
+
+	email := prefix + "@test.com"
+	existingUID := CreateTestUserWithEmail(t, prefix+"_existing", email)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, existingUID, groupID, utils.ROLE_MEMBER)
+
+	for _, collection := range []string{"Pending", "Draft"} {
+		body := map[string]interface{}{
+			"type":       "Offer",
+			"item":       "Impersonated sofa",
+			"email":      email,
+			"groupid":    groupID,
+			"collection": collection,
+		}
+		bodyBytes, _ := json.Marshal(body)
+		req := httptest.NewRequest("PUT", "/api/message", bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 401, resp.StatusCode, "logged-out PUT with an existing email must be refused (%s)", collection)
+	}
+
+	var msgCount int64
+	db.Table("messages").Where("fromuser = ?", existingUID).Count(&msgCount)
+	assert.Equal(t, int64(0), msgCount, "no message may be created for the existing member")
+
+	var groupCount int64
+	db.Table("messages_groups").Where("groupid = ?", groupID).Count(&groupCount)
+	assert.Equal(t, int64(0), groupCount, "nothing may be posted to the group on the member's behalf")
 }
 
 func TestPutMessageNewEmailGetsJWT(t *testing.T) {
@@ -4563,6 +4663,73 @@ func TestPostMessageAddBy(t *testing.T) {
 	assert.Equal(t, 3, availNow)
 }
 
+// The chase-up email link records an intended Taken outcome as soon as the page opens, so
+// that a member who walks away is assumed to have meant it. A member who then saves with
+// some left has finished, and their post stays up: the intended outcome must go, or the
+// chase-up batch closes the whole post as Taken 31 minutes later.
+func TestPostMessageAddByClearsTheIntendedTakenOutcome(t *testing.T) {
+	prefix := uniquePrefix("msgw_addby_intended")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	_, ownerToken := CreateTestSession(t, ownerID)
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("UPDATE messages SET availableinitially = 3, availablenow = 3 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_outcomes_intended (msgid, outcome) VALUES (?, 'Taken')", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "AddBy",
+		"userid": takerID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var intended int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes_intended WHERE msgid = ?", msgID).Scan(&intended)
+	assert.Equal(t, int64(0), intended, "a partial save must not leave an intended Taken outcome for the batch to apply")
+}
+
+// When a counted take leaves nothing, the member goes on to mark the post Taken. If that
+// call fails, the intended outcome must still be there for the chase-up batch to apply.
+func TestPostMessageAddByWithNoneLeftKeepsTheIntendedTakenOutcome(t *testing.T) {
+	prefix := uniquePrefix("msgw_addby_noneleft")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	_, ownerToken := CreateTestSession(t, ownerID)
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("UPDATE messages SET availableinitially = 2, availablenow = 2 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_outcomes_intended (msgid, outcome) VALUES (?, 'Taken')", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "AddBy",
+		"userid": takerID,
+		"count":  2,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var intended int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes_intended WHERE msgid = ?", msgID).Scan(&intended)
+	assert.Equal(t, int64(1), intended, "taking the last items leaves the intent for the Outcome call to clear")
+}
+
 // An ordinary post no longer asks how many each person took, so AddBy arrives with no
 // count. Recording a taker must not invent one: the old default of 1 decremented
 // availablenow per taker, which drifted away from reality one person at a time and was
@@ -4712,6 +4879,39 @@ func TestPostMessageRemoveBy(t *testing.T) {
 	var availNow int
 	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availNow)
 	assert.Equal(t, 5, availNow)
+}
+
+// Removing a taker is a member saving the takers list again, so, as with AddBy, it must not
+// leave an intended Taken outcome behind for the chase-up batch to apply.
+func TestPostMessageRemoveByClearsTheIntendedTakenOutcome(t *testing.T) {
+	prefix := uniquePrefix("msgw_rmby_intended")
+	db := database.DBConn
+
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	_, ownerToken := CreateTestSession(t, ownerID)
+	takerID := CreateTestUser(t, prefix+"_taker", utils.SYSTEMROLE_USER)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("UPDATE messages SET availableinitially = 5, availablenow = 3 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_by (userid, msgid, count) VALUES (?, ?, 2)", takerID, msgID)
+	db.Exec("INSERT INTO messages_outcomes_intended (msgid, outcome) VALUES (?, 'Taken')", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "RemoveBy",
+		"userid": takerID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", ownerToken), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var intended int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes_intended WHERE msgid = ?", msgID).Scan(&intended)
+	assert.Equal(t, int64(0), intended, "removing a taker must not leave an intended Taken outcome for the batch to apply")
 }
 
 func TestPostMessageOutcomeTakenOnWanted(t *testing.T) {
@@ -11419,4 +11619,97 @@ func TestPostMessageHoldWithoutGroupStaysOnHoldersOwnGroups(t *testing.T) {
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldB)
 	assert.NotNil(t, heldA, "the copy on the holder's own community is held")
 	assert.Nil(t, heldB, "the copy on a community the holder does not moderate is not held")
+}
+
+// PATCH /message/tn/:tnpostid accepts an ordinary logged-in session as well as a partner key,
+// and only the owner, a moderator or the owning partner may change a post's photos. A member who
+// does not own the post is refused, and the refusal must leave the post's photos alone.
+func TestPatchMessageByTnPostidRefusedForNonOwnerKeepsPhotos(t *testing.T) {
+	prefix := uniquePrefix("patchtn_nonowner")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, ownerID, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, groupID, utils.ROLE_MEMBER)
+	_, otherToken := CreateTestSession(t, otherID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.0, -3.0)
+	tnpostid := fmt.Sprintf("tn-nonowner-%s", prefix)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	plainUID := "freegletusd-plain-" + prefix
+	aiUID := "freegletusd-ai-" + prefix
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{}', 1)", msgID, plainUID)
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{\"ai\":true}', 0)", msgID, aiUID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
+	})
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"textbody": "Changed by someone else"})
+	reqURL := fmt.Sprintf("/api/message/tn/%s?jwt=%s", tnpostid, otherToken)
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var attachments int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msgID).Scan(&attachments)
+	assert.Equal(t, int64(2), attachments, "a refused edit must not delete the post's photos")
+
+	var declined int64
+	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msgID).Scan(&declined)
+	assert.Equal(t, int64(0), declined, "a refused edit must not record an AI image as declined")
+
+	var textbody string
+	db.Raw("SELECT COALESCE(textbody, '') FROM messages WHERE id = ?", msgID).Scan(&textbody)
+	assert.NotEqual(t, "Changed by someone else", textbody)
+}
+
+// A TN post crossposted to several communities is several messages with one tnpostid. A member who
+// owns only some of them is refused before any copy is touched, so the copies they do own keep
+// their photos.
+func TestPatchMessageByTnPostidRefusalOnLaterCopyChangesNoCopy(t *testing.T) {
+	prefix := uniquePrefix("patchtn_cross")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	callerID := CreateTestUser(t, prefix+"_caller", utils.SYSTEMROLE_USER)
+	otherID := CreateTestUser(t, prefix+"_other", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, callerID, groupA, utils.ROLE_MEMBER)
+	CreateTestMembership(t, otherID, groupB, utils.ROLE_MEMBER)
+	_, callerToken := CreateTestSession(t, callerID)
+
+	// The caller's copy is created first, so it has the lower id and is reached first.
+	ownedMsg := CreateTestMessage(t, callerID, groupA, prefix+" Offer A", 55.0, -3.0)
+	otherMsg := CreateTestMessage(t, otherID, groupB, prefix+" Offer B", 55.0, -3.0)
+	tnpostid := fmt.Sprintf("tn-cross-%s", prefix)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, ownedMsg, otherMsg)
+
+	ownedPhoto := CreateTestAttachment(t, ownedMsg)
+	otherPhoto := CreateTestAttachment(t, otherMsg)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE id IN (?, ?)", ownedPhoto, otherPhoto)
+	})
+
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"textbody": "Changed by someone who owns one copy"})
+	reqURL := fmt.Sprintf("/api/message/tn/%s?jwt=%s", tnpostid, callerToken)
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var photos int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id IN (?, ?)", ownedPhoto, otherPhoto).Scan(&photos)
+	assert.Equal(t, int64(2), photos, "a refused edit must not delete the photos of the copies the caller owns")
+
+	var textbody string
+	db.Raw("SELECT COALESCE(textbody, '') FROM messages WHERE id = ?", ownedMsg).Scan(&textbody)
+	assert.NotEqual(t, "Changed by someone who owns one copy", textbody, "the caller's own copy is not edited either")
 }

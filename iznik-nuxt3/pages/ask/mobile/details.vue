@@ -170,26 +170,37 @@ const itemState = computed(() => {
 // catch-all ("anything") is never a valid item, so we flag it as it's typed.
 const itemError = computed(() => unpostableItemMessage(item.value))
 
+// With no real photo the description has to say something: composeStore.messageValid needs at
+// least this many characters, so the same rule is applied here before the member moves on.
+const MIN_DESCRIPTION_LENGTH = 3
+
+const descriptionTooShort = computed(
+  () => (description.value || '').trim().length < MIN_DESCRIPTION_LENGTH
+)
+
 // Description validation state
 const descriptionState = computed(() => {
   if (isNumericOnlyBody(description.value)) {
     return false
   }
-  if (
-    showDescriptionError.value &&
-    (!description.value || !description.value.trim())
-  ) {
+  if (showDescriptionError.value && descriptionTooShort.value) {
     return false
   }
   return null
 })
 
 // Message shown under the description field when it's invalid.
-const descriptionError = computed(() =>
-  isNumericOnlyBody(description.value)
-    ? INVALID_BODY_MESSAGE_WANTED
-    : "Please add a description to help people understand what you'd like."
-)
+const descriptionError = computed(() => {
+  if (isNumericOnlyBody(description.value)) {
+    return INVALID_BODY_MESSAGE_WANTED
+  }
+
+  if ((description.value || '').trim()) {
+    return "Please add a little more, at least 3 characters, to help people understand what you'd like."
+  }
+
+  return "Please add a description to help people understand what you'd like."
+})
 
 // Get attachments
 const attachments = computed(() => {
@@ -372,12 +383,10 @@ function validateAndNext() {
   }
 
   // Check that we have either a real description or real (non-AI) photos.
-  // A purely-numeric description doesn't count. AI-only photos require a
-  // description.
+  // A purely-numeric description doesn't count, and nor does one shorter than
+  // composeStore.messageValid accepts. AI-only photos require a description.
   const hasDescription =
-    description.value &&
-    description.value.trim() &&
-    !isNumericOnlyBody(description.value)
+    !descriptionTooShort.value && !isNumericOnlyBody(description.value)
   const realPhotos = attachments.value
     ? attachments.value.filter(
         (a) => !a.externalmods || a.externalmods.ai !== true

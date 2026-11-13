@@ -65,7 +65,9 @@ For each post you can:
   was placed. The buttons you see describe your community's copy in the same way: a post
   already live on yours does not show the Pending actions just because a neighbouring
   community's copy is still waiting, and a Delete on a copy that is no longer pending is
-  refused with a message saying so rather than reported as done.
+  refused with a message saying so rather than reported as done. An Approve on a copy that
+  is no longer pending (already approved, rejected or withdrawn by the poster) does nothing
+  and says so, so a second click or a stale page cannot put it live again.
 
   A post held by another volunteer shows a "Held by" banner and no action buttons. To keep
   those out of the way, turn on **Hide held posts** at the top of the Pending page. It hides

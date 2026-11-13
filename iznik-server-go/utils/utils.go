@@ -232,6 +232,12 @@ const CHATMODSTATUS_MODERATED = "Moderated"
 const CHATMODSTATUS_UNMODERATED = "Unmoderated"
 const CHATMODSTATUS_FULLY = "Fully"
 
+// users.newsfeedmodstatus - how a member's chitchat posts are handled.
+// 'Suppressed' hides them from everyone else; 'Moderated' holds them for review.
+const NEWSFEEDMODSTATUS_UNMODERATED = "Unmoderated"
+const NEWSFEEDMODSTATUS_MODERATED = "Moderated"
+const NEWSFEEDMODSTATUS_SUPPRESSED = "Suppressed"
+
 const NEARBY = 50
 
 const OUTCOME_TAKEN = "Taken"

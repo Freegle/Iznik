@@ -283,6 +283,40 @@ class PurgeService
     }
 
     /**
+     * Old Pending copies of posts that are Pending only. A post that is live in another
+     * collection survives a stale Pending copy (for example a retired or rippled one).
+     */
+    private function stalePendingQuery($cutoff)
+    {
+        return MessageGroup::where('collection', MessageGroup::COLLECTION_PENDING)
+            ->where('arrival', '<', $cutoff)
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_groups as other')
+                    ->whereColumn('other.msgid', 'messages_groups.msgid')
+                    ->where('other.deleted', 0)
+                    ->where('other.collection', '!=', MessageGroup::COLLECTION_PENDING);
+            });
+    }
+
+    /**
+     * Old copies on non-Freegle groups of posts that are on no Freegle group.
+     */
+    private function nonFreegleOnlyQuery($cutoff)
+    {
+        return MessageGroup::join('groups', 'messages_groups.groupid', '=', 'groups.id')
+            ->where('messages_groups.arrival', '<=', $cutoff)
+            ->where('groups.type', '!=', 'Freegle')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('messages_groups as fg')
+                    ->join('groups as fgroups', 'fg.groupid', '=', 'fgroups.id')
+                    ->whereColumn('fg.msgid', 'messages_groups.msgid')
+                    ->where('fgroups.type', 'Freegle');
+            });
+    }
+
+    /**
      * Purge old pending messages.
      */
     public function purgePendingMessages(int $daysOld = 90, bool $dryRun = false): int
@@ -290,16 +324,13 @@ class PurgeService
         $cutoff = now()->subDays($daysOld);
 
         if ($dryRun) {
-            return MessageGroup::where('collection', MessageGroup::COLLECTION_PENDING)
-                ->where('arrival', '<', $cutoff)
-                ->count();
+            return $this->stalePendingQuery($cutoff)->count();
         }
 
         $total = 0;
 
         do {
-            $pendingMsgIds = MessageGroup::where('collection', MessageGroup::COLLECTION_PENDING)
-                ->where('arrival', '<', $cutoff)
+            $pendingMsgIds = $this->stalePendingQuery($cutoff)
                 ->limit($this->chunkSize)
                 ->pluck('msgid');
 
@@ -362,18 +393,13 @@ class PurgeService
         $cutoff = now()->subDays($daysOld);
 
         if ($dryRun) {
-            return MessageGroup::join('groups', 'messages_groups.groupid', '=', 'groups.id')
-                ->where('messages_groups.arrival', '<=', $cutoff)
-                ->where('groups.type', '!=', 'Freegle')
-                ->count();
+            return $this->nonFreegleOnlyQuery($cutoff)->count();
         }
 
         $total = 0;
 
         do {
-            $msgIds = MessageGroup::join('groups', 'messages_groups.groupid', '=', 'groups.id')
-                ->where('messages_groups.arrival', '<=', $cutoff)
-                ->where('groups.type', '!=', 'Freegle')
+            $msgIds = $this->nonFreegleOnlyQuery($cutoff)
                 ->limit($this->chunkSize)
                 ->pluck('messages_groups.msgid');
 

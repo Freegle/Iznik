@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/paf"
+	"github.com/freegle/iznik-server-go/testlock"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
@@ -32,6 +33,8 @@ func pafRequest(t *testing.T, method string, token string, body string) (int, []
 // clearPafImports empties paf_imports, which holds at most one unfinished import at a time,
 // before and after each test that needs a known starting point.
 func clearPafImports(t *testing.T) {
+	// The handler tests in package paf run at the same time and need the table to themselves too.
+	testlock.Hold(t, "paf_imports")
 	database.DBConn.Table("paf_imports").Where("1 = 1").Delete(nil)
 	t.Cleanup(func() { database.DBConn.Table("paf_imports").Where("1 = 1").Delete(nil) })
 }

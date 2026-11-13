@@ -1363,6 +1363,118 @@ class UnifiedDigestServiceTest extends TestCase
         );
     }
 
+    public function test_a_post_already_sent_is_not_offered_again_when_its_arrival_has_a_fraction_of_a_second(): void
+    {
+        // messages_groups.arrival keeps microseconds, users_digests.lastmsgdate keeps whole
+        // seconds. If the cursor is the arrival cut down to the second, the newest post
+        // sorts after its own cursor and the next day's window offers it again.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: FractionZq (TestLocation)',
+        ]);
+
+        // Set the fraction in SQL: the model formats dates to whole seconds on the way in.
+        $arrival = now()->subHour()->format('Y-m-d H:i:s') . '.400000';
+        DB::table('messages_groups')->where('msgid', $message->id)->update(['arrival' => $arrival]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $tracker = $this->digestTrackerFor($recipient);
+        $this->assertNotNull($tracker->lastmsgdate, 'the first run sent the post and set a cursor');
+
+        // The next day, with nothing new posted.
+        $offered = $this->service
+            ->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY)
+            ->pluck('id')
+            ->all();
+
+        $this->assertNotContains(
+            $message->id,
+            $offered,
+            'a post already mailed was offered again because the stored cursor is earlier than its arrival'
+        );
+    }
+
+    public function test_on_postgresql_a_post_arriving_in_the_same_second_as_the_last_one_sent_is_offered(): void
+    {
+        // PostgreSQL keeps the cursor's microseconds, so the window is everything after the cursor.
+        // Starting it a whole second later, as MySQL must, would lose a post that arrived in between.
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            $this->markTestSkipped('The suite is not running on PostgreSQL.');
+        }
+
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $second = now()->subHour()->format('Y-m-d H:i:s');
+
+        $sent = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: SameSecondSentZq (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $sent->id)->update(['arrival' => $second.'.400000']);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $tracker = $this->digestTrackerFor($recipient);
+        $this->assertSame(400000, $tracker->lastmsgdate->micro, 'the cursor keeps the fraction of the arrival sent');
+
+        $later = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: SameSecondLaterZq (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $later->id)->update(['arrival' => $second.'.700000']);
+
+        $offered = $this->service
+            ->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY)
+            ->pluck('id')
+            ->all();
+
+        $this->assertContains($later->id, $offered, 'a post that arrived in the same second, after the one sent, was lost');
+        $this->assertNotContains($sent->id, $offered, 'the post already sent was offered again');
+    }
+
+    public function test_a_carried_post_with_an_older_copy_on_another_group_is_still_offered(): void
+    {
+        // A carried post is older than the cursor by construction, so a copy of it that
+        // arrived before the cursor looks like "already sent" to the cross-digest check. The
+        // cap left the item out, so nothing of it was sent: it has to be offered again.
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $other = $this->createTestGroup();
+        $this->createMembership($recipient, $other, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($poster, $other);
+
+        $arrival = now()->subHours(3);
+        $carried = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: CarriedCopyZq (TestLocation)',
+            'textbody' => 'A carried item.',
+            'arrival' => $arrival,
+        ]);
+        // The same item, hand cross-posted to the member's other group.
+        $this->createTestMessage($poster, $other, [
+            'subject' => 'OFFER: CarriedCopyZq (TestLocation)',
+            'textbody' => 'A carried item.',
+            'arrival' => $arrival,
+        ]);
+
+        $this->trackerWithCarryover($recipient, [$carried->id], now()->subHours(2));
+
+        // Something new, so the digest goes out whatever happens to the carried post.
+        $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: FreshOtherZq (TestLocation)',
+            'arrival' => now()->subHour(),
+        ]);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $shown = array_map(
+            fn ($p) => (int) $p['msgid'],
+            $this->lastDailyDigest()->mailDescriptor()['posts']
+        );
+        $this->assertContains(
+            (int) $carried->id,
+            $shown,
+            'a carried post was dropped as already covered because a copy of it sits behind the cursor'
+        );
+    }
+
     /**
      * A daily tracker with a carryover list and a cursor, as a run that hit the cap leaves it.
      *
@@ -4927,5 +5039,220 @@ class UnifiedDigestServiceTest extends TestCase
         $this->service->sendReachDigests(null, false, $mine, 2);
         $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
         $this->assertTrue($this->ledgered($msgid, $member->id));
+    }
+
+    /**
+     * Make the next reach evaluation fail the way a database or routing error does, and return
+     * a callable that puts the real service back.
+     */
+    private function breakReachEvaluation(): callable
+    {
+        $real = app(\App\Services\Ripple\ReachService::class);
+        $broken = \Mockery::mock(\App\Services\Ripple\ReachService::class);
+        $broken->shouldReceive('currentBudgetSecs')->andThrow(new \RuntimeException('simulated lock wait timeout'));
+        $this->app->instance(\App\Services\Ripple\ReachService::class, $broken);
+
+        return fn () => $this->app->instance(\App\Services\Ripple\ReachService::class, $real);
+    }
+
+    /**
+     * A post that fails for its own reasons (not routing being unreachable) would fail the same way
+     * next time, and every held pass re-reads the whole window. So it does not hold the mark.
+     */
+    public function test_reach_pass_moves_its_mark_past_a_post_that_fails_for_its_own_reasons(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        $markBefore = DB::table('config')->where('key', $markKey)->value('value');
+
+        $restore = $this->breakReachEvaluation();
+        $stats = $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame(1, $stats['errors'], 'the failure is counted');
+        $this->assertSame(0, $stats['retryable'], 'but it is not a retryable routing failure');
+        $markAfter = DB::table('config')->where('key', $markKey)->value('value');
+        $this->assertNotSame($markBefore, $markAfter, 'the mark moved on');
+        $this->assertTrue(\Illuminate\Support\Carbon::parse($markAfter)->gt(now()->subMinute()), 'to this pass');
+    }
+
+    /**
+     * A queued member is dequeued once evaluated. A member whose evaluation failed has not been
+     * evaluated, so the row stays and the next pass mails them.
+     */
+    public function test_drain_keeps_the_queue_row_when_the_member_evaluation_fails(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $restore = $this->breakReachEvaluation();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame(1, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the queue row survives a failed evaluation');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the retried member is mailed');
+        $this->assertSame(0, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count());
+    }
+
+    /**
+     * A member row that fails for its own reasons goes to the back of the queue, so it cannot sit at
+     * the head of every batch and starve the rows behind it.
+     */
+    public function test_drain_moves_a_failing_member_row_to_the_back_of_the_queue(): void
+    {
+        [, $group] = $this->seedSettledPostOutsideThePostPass();
+        $failing = $this->createTestUser();
+        $this->createMembership($failing, $group);
+        $this->setMyLocation($failing, 51.5, -0.1);
+        $waiting = $this->createTestUser();
+        ReachMemberQueueService::enqueue($failing->id, ReachMemberQueueService::REASON_JOINED);
+        ReachMemberQueueService::enqueue($waiting->id, ReachMemberQueueService::REASON_JOINED);
+        DB::table('rippling_reach_member_pending')->where('userid', $failing->id)->update(['added' => now()->subHour()]);
+        DB::table('rippling_reach_member_pending')->where('userid', $waiting->id)->update(['added' => now()->subMinutes(30)]);
+
+        $restore = $this->breakReachEvaluation();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $rows = DB::table('rippling_reach_member_pending')->orderBy('added')->orderBy('id')->pluck('userid')->map(fn ($v) => (int) $v)->all();
+        $this->assertSame([(int) $failing->id], $rows, 'the member with nothing to evaluate is cleared and the failing one is still queued');
+        $added = \Illuminate\Support\Carbon::parse(DB::table('rippling_reach_member_pending')->where('userid', $failing->id)->value('added'));
+        $this->assertTrue($added->gt(now()->subMinute()), 'and it has moved to the back');
+    }
+
+    /**
+     * The routing server being down does not throw: reachArrivalBatch logs it and returns null.
+     * A pass that reads that as "nobody is reached" moves its mark and the post is never looked
+     * at again, which is the same lost mail as an exception.
+     */
+    private function breakRouting(): callable
+    {
+        $real = app(\App\Services\Ripple\ReachService::class);
+        $this->partialMock(\App\Services\Ripple\ReachService::class, function ($mock) {
+            $mock->shouldReceive('reachArrivalBatch')->andReturn(null);
+        });
+
+        return fn () => $this->app->instance(\App\Services\Ripple\ReachService::class, $real);
+    }
+
+    public function test_reach_pass_does_not_move_its_mark_when_routing_cannot_answer_and_mails_the_member_next_pass(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        $markBefore = DB::table('config')->where('key', $markKey)->value('value');
+
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame($markBefore, DB::table('config')->where('key', $markKey)->value('value'), 'a pass routing could not answer leaves the mark where it was');
+        $this->assertFalse($this->ledgered($msgid, $member->id), 'precondition: the pass mailed nobody');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the next pass, with routing back, mails the member');
+    }
+
+    public function test_drain_keeps_the_queue_row_when_routing_cannot_answer(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        ReachMemberQueueService::enqueue($member->id, ReachMemberQueueService::REASON_JOINED);
+
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+
+        $this->assertSame(1, DB::table('rippling_reach_member_pending')->where('userid', $member->id)->count(), 'the queue row survives a routing outage');
+
+        $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertTrue($this->ledgered($msgid, $member->id), 'the retried member is mailed');
+    }
+
+    /**
+     * Routing being unreachable holds the mark, but only for 15 minutes: after that the mark moves on
+     * to this pass and the failure is logged at error level, once.
+     */
+    public function test_routing_outage_holds_the_mark_for_fifteen_minutes_then_moves_on_with_one_error(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        $this->assertSame(15, UnifiedDigestService::REACH_MARK_MAX_HOLD_MINUTES);
+
+        $holdKey = UnifiedDigestService::reachMailHoldKey(0);
+
+        // The first failing pass, even with a mark that is hours old: held, and the hold starts.
+        $heldAt = now()->subHours(3)->toDateTimeString();
+        DB::table('config')->updateOrInsert(['key' => $markKey], ['value' => $heldAt]);
+        DB::table('config')->where('key', $holdKey)->delete();
+        \Illuminate\Support\Facades\Log::spy();
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+        $this->assertSame($heldAt, DB::table('config')->where('key', $markKey)->value('value'), 'held on the first failing pass');
+        $this->assertNotNull(DB::table('config')->where('key', $holdKey)->value('value'), 'and the hold is timed from now');
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('error');
+
+        // Failing for 10 minutes: still held, no error line.
+        DB::table('config')->where('key', $holdKey)->update(['value' => now()->subMinutes(10)->toDateTimeString()]);
+        \Illuminate\Support\Facades\Log::spy();
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+        $this->assertSame($heldAt, DB::table('config')->where('key', $markKey)->value('value'), 'held inside the window');
+        \Illuminate\Support\Facades\Log::shouldNotHaveReceived('error');
+
+        // Failing for 20 minutes: the mark moves to this pass, one error is logged and the hold clears.
+        DB::table('config')->where('key', $holdKey)->update(['value' => now()->subMinutes(20)->toDateTimeString()]);
+        \Illuminate\Support\Facades\Log::spy();
+        $restore = $this->breakRouting();
+        $this->service->sendReachDigests(null, false, 0, 1);
+        $restore();
+        $mark = \Illuminate\Support\Carbon::parse(DB::table('config')->where('key', $markKey)->value('value'));
+        $this->assertTrue($mark->gt(now()->subMinute()), 'the mark has moved on to this pass');
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('error')->once();
+        $this->assertNull(DB::table('config')->where('key', $holdKey)->value('value'), 'the hold is cleared');
+    }
+
+    /**
+     * A 4xx the routing service uses to reject a request will be rejected again, so it is not a
+     * retryable failure and does not hold the mark.
+     */
+    public function test_routing_rejecting_the_request_does_not_hold_the_mark(): void
+    {
+        [$msgid, $group] = $this->seedSettledPostOutsideThePostPass();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['updated_at' => now()->subMinutes(5)]);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+        $markKey = UnifiedDigestService::reachMailMarkKey(0);
+        $markBefore = DB::table('config')->where('key', $markKey)->value('value');
+
+        \Illuminate\Support\Facades\Http::fake(['*' => \Illuminate\Support\Facades\Http::response(['error' => 'bad label'], 400)]);
+        $stats = $this->service->sendReachDigests(null, false, 0, 1);
+
+        $this->assertSame(0, $stats['retryable']);
+        $this->assertNotSame($markBefore, DB::table('config')->where('key', $markKey)->value('value'), 'the mark moved on');
     }
 }

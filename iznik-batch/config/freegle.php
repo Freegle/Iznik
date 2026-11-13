@@ -553,9 +553,10 @@ return [
         'download_days' => (int) EnvSetting::env('PAYPAL_DOWNLOAD_DAYS', 30),
     ],
 
-    // Doogal UK postcode dataset (V1 cli/doogal.php + cron/doogal wrapper).
-    'doogal' => [
-        'zip_url' => EnvSetting::env('DOOGAL_ZIP_URL', 'https://www.doogal.co.uk/files/postcodes.zip'),
+    // ONS Postcode Directory, for locations:update-postcodes. Blank finds the newest
+    // quarterly release on the ONS ArcGIS portal; set it to pin one release's zip.
+    'postcodes' => [
+        'zip_url' => EnvSetting::env('POSTCODES_ZIP_URL', ''),
     ],
 
     // First-week ONBOARDING tip sequence (mail:reengage). One short tip a day

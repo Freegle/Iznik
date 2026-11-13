@@ -841,6 +841,15 @@ Schedule::command('chats:chaseup-mods')
     ->appendOutputTo(cronLog('chats:chaseup-mods'))
     ->runInBackground();
 
+// Email users who are expected to reply in a User2User chat but have not (WAITING FOR REPLY).
+// V1: cron/chat_chaseup_expected.php (daily 06:00)
+// Capped at 500 a run, oldest first, so a backlog drains over days rather than going out at once.
+Schedule::command('chats:chaseup-expected', ['--limit=500'])
+    ->dailyAt('06:00')
+    ->withoutOverlapping(360)
+    ->appendOutputTo(cronLog('chats:chaseup-expected'))
+    ->runInBackground();
+
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php (every 5 minutes)
 Schedule::command('chats:process-spam')
@@ -1544,8 +1553,8 @@ Schedule::command('notifications:exhort')
     ->appendOutputTo(cronLog('notifications:exhort'))
     ->runInBackground();
 
-// Refresh UK postcodes (add new, update moved lat/lng) from the Doogal dataset.
-// Downloads + unzips the CSV itself. V1: cron/doogal wrapper (daily at 03:00).
+// Refresh UK postcodes (add new, update moved lat/lng) from the ONS Postcode Directory.
+// Finds and downloads the newest quarterly release itself. V1: cron/doogal (daily at 03:00).
 Schedule::command('locations:update-postcodes')
     ->dailyAt('03:00')
     ->withoutOverlapping(360)
@@ -1744,7 +1753,7 @@ Schedule::command('locations:fix-skewed')
     ->runInBackground();
 
 // Nightly full postcode -> nearest-area remap, via the spatial server (MySQL
-// locations_spatial + iznik-spatial-go KNN). No PostgreSQL. DoogalService-imported
+// locations_spatial + iznik-spatial-go KNN). No PostgreSQL. PostcodeDirectoryService-imported
 // postcodes rely on this pass to be mapped onto group areas.
 Schedule::command('locations:remap-postcodes')
     ->dailyAt('01:00')

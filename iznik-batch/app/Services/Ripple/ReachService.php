@@ -98,14 +98,18 @@ class ReachService
             return self::$partitionFpMemo['fp'];
         }
         $raw = DB::table('config')->where('key', self::PARTITION_FP_CONFIG_KEY)->value('value');
-        $fp = null;
-        if ($raw !== null && preg_match('/^\d{1,20}\z/', trim((string) $raw))) {
-            $fp = ltrim(trim((string) $raw), '0');
-            $fp = $fp === '' ? '0' : $fp;
-        }
+        $fp = ($raw !== null && preg_match('/^\d{1,20}\z/', trim((string) $raw))) ? self::fingerprintDigits(trim((string) $raw)) : null;
         self::$partitionFpMemo = ['at' => $now, 'fp' => $fp];
 
         return $fp;
+    }
+
+    /** A fingerprint's digits with no leading zeros, so two spellings of one number compare equal. */
+    private static function fingerprintDigits(string $digits): string
+    {
+        $digits = ltrim($digits, '0');
+
+        return $digits === '' ? '0' : $digits;
     }
 
     /** Tests only. */
@@ -132,9 +136,14 @@ class ReachService
         if ($fp === null) {
             return "{$prefix}reach_labels";
         }
-        $fp = self::fingerprintForDb($fp);
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            // PostgreSQL has no IF(), and holds the fingerprint as a signed number.
+            $fp = self::fingerprintForDb($fp);
 
-        return "COALESCE(CASE WHEN {$prefix}reach_labels_next_fp = {$fp} THEN {$prefix}reach_labels_next END, {$prefix}reach_labels)";
+            return "COALESCE(CASE WHEN {$prefix}reach_labels_next_fp = {$fp} THEN {$prefix}reach_labels_next END, {$prefix}reach_labels)";
+        }
+
+        return "COALESCE(IF({$prefix}reach_labels_next_fp = {$fp}, {$prefix}reach_labels_next, NULL), {$prefix}reach_labels)";
     }
 
     /**
@@ -149,7 +158,7 @@ class ReachService
         $fp = self::livePartitionFingerprint();
         if ($fp !== null
             && isset($row->reach_labels_next_fp, $row->reach_labels_next)
-            && self::fingerprintFromDb($row->reach_labels_next_fp) === $fp) {
+            && self::fingerprintDigits(self::fingerprintFromDb($row->reach_labels_next_fp)) === $fp) {
             return (string) $row->reach_labels_next;
         }
 
@@ -1086,18 +1095,32 @@ class ReachService
         return ['verdicts' => $out, 'discovered' => $discovered];
     }
 
+    /** Whether the last reachArrivalBatch() failure is one that asking again may fix. */
+    private bool $arrivalFailureRetryable = true;
+
+    public function lastArrivalFailureRetryable(): bool
+    {
+        return $this->arrivalFailureRetryable;
+    }
+
     /**
      * Evaluate a stored label blob at many member points in one routing call
      * (POST /v1/reach-arrival): returns per-point ['arrival' => ?float,
      * 'in' => bool] at budget $tSecs (0 < t <= the label's own budget).
-     * Null on any failure - callers fall back to their cell tests.
+     * Null on any failure - callers fall back to their cell tests. After a null,
+     * lastArrivalFailureRetryable() says whether asking again may help.
      *
      * @param  array<int, array{0: float, 1: float}>  $points  [lat, lng]
      * @return ?array<int, array{arrival: ?float, in: bool}>
      */
     public function reachArrivalBatch(string $labelBytes, float $tSecs, array $points): ?array
     {
+        // A null that none of the branches below classify is treated as worth asking again.
+        $this->arrivalFailureRetryable = true;
+
         if ($labelBytes === '' || $points === []) {
+            $this->arrivalFailureRetryable = false;
+
             return null;
         }
         $out = [];
@@ -1113,6 +1136,7 @@ class ReachService
                 ]);
             } catch (\Throwable $e) {
                 Log::warning("ripple: reach-arrival fetch failed: {$e->getMessage()}");
+                $this->arrivalFailureRetryable = true;
 
                 return null;
             }
@@ -1120,11 +1144,17 @@ class ReachService
                 if (!in_array($response->status(), [503, 404], true)) {
                     Log::warning("ripple: reach-arrival HTTP {$response->status()}");
                 }
+                // A server error, "not ready" or "slow down" may clear; a 4xx that rejects the request will not.
+                $this->arrivalFailureRetryable = $response->status() >= 500
+                    || in_array($response->status(), [404, 408, 429], true);
 
                 return null;
             }
             $results = $response->json('results');
             if (!is_array($results) || count($results) !== count($chunk)) {
+                // A malformed answer will be malformed again.
+                $this->arrivalFailureRetryable = false;
+
                 return null;
             }
             $keys = array_keys($chunk);

@@ -45,6 +45,18 @@ func IsDuplicateKeyOn(err error, mysqlKeyMessages []string, pgConstraint string)
 	return errors.As(err, &pe) && pe.Code == pgUniqueViolation && pe.ConstraintName == pgConstraint
 }
 
+// IsLockFailure reports a statement that lost a deadlock or gave up waiting for a lock, by the server's
+// error code: MySQL 1213 and 1205, PostgreSQL 40P01 and 55P03. The wording of the message differs between
+// servers and versions; the code does not.
+func IsLockFailure(err error) bool {
+	var me *mysql.MySQLError
+	if errors.As(err, &me) {
+		return me.Number == 1213 || me.Number == 1205
+	}
+	var pe *pgconn.PgError
+	return errors.As(err, &pe) && (pe.Code == "40P01" || pe.Code == "55P03")
+}
+
 // IsQueryTimeout reports a query stopped by its time limit: MySQL 3024 (MAX_EXECUTION_TIME) or PostgreSQL 57014.
 func IsQueryTimeout(err error) bool {
 	var me *mysql.MySQLError

@@ -14,7 +14,7 @@ use Symfony\Component\Console\Attribute\AsCommand;
  * previous PostGIS copy with the iznik-spatial-go service.
  *
  * Replaces V1 cron/locations_pgsql (locations_pgsql_update.php + locations_pgsql_map.php).
- * DoogalService relies on this nightly pass to map newly-imported postcodes onto
+ * PostcodeDirectoryService relies on this nightly pass to map newly-imported postcodes onto
  * group areas (it deliberately does not remap inline).
  */
 #[AsCommand(name: 'locations:remap-postcodes')]

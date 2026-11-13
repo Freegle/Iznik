@@ -2092,4 +2092,50 @@ describe('PhotoUploader', () => {
       expect(mockImageStore.post).not.toHaveBeenCalled()
     })
   })
+
+  // Photos upload independently. A second upload used to abort the first
+  // through a shared instance; tus abort() fires no callback, so the first
+  // photo stayed uploading:true for good and blocked Next. onSuccess also read
+  // the url from the shared instance, so it could take another photo's uid.
+  describe('two photos uploading at once', () => {
+    it('lets each upload finish with its own uid and aborts neither', async () => {
+      const made = []
+      const TusMock = (await import('tus-js-client')).Upload
+      for (const name of ['aaa', 'bbb']) {
+        TusMock.mockImplementationOnce(function (file, options) {
+          const inst = {
+            abort: vi.fn(),
+            start: vi.fn(),
+            findPreviousUploads: vi.fn().mockResolvedValue([]),
+            resumeFromPreviousUpload: vi.fn(),
+            url: 'https://upload.example.com/files/' + name,
+            _options: options,
+          }
+          made.push(inst)
+          return inst
+        })
+      }
+
+      createWrapper({ modelValue: [] })
+      await flushPromises()
+
+      wrapper.vm.processPhoto('/a.jpg')
+      await flushPromises()
+      wrapper.vm.processPhoto('/b.jpg')
+      await flushPromises()
+
+      expect(made.length).toBe(2)
+      expect(made[0].abort).not.toHaveBeenCalled()
+
+      made[0]._options.onSuccess()
+      made[1]._options.onSuccess()
+      await flushPromises()
+
+      expect(wrapper.vm.photos.length).toBe(2)
+      expect(wrapper.vm.photos[0].uploading).toBe(false)
+      expect(wrapper.vm.photos[0].ouruid).toBe('freegletusd-aaa')
+      expect(wrapper.vm.photos[1].uploading).toBe(false)
+      expect(wrapper.vm.photos[1].ouruid).toBe('freegletusd-bbb')
+    })
+  })
 })

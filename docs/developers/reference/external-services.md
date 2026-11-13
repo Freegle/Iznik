@@ -61,6 +61,7 @@ Visible, annoying, not fatal.
 | **Google Search Console and Ads** | Checked weekly by `google:search-console-check` and `google:ads-check` ([google-housekeeping.md](google-housekeeping.md)) |
 | **Google Tag Manager** | Analytics tags, only when `GTM_ID` is set |
 | **Trustpilot** | Review link |
+| **ONS Postcode Directory** | The UK postcodes and their coordinates in `locations`, refreshed nightly by `locations:update-postcodes` from the newest quarterly release on the ONS ArcGIS portal (`POSTCODES_ZIP_URL` pins one). If the download fails, existing postcodes keep working; new ones stop arriving, and PAF addresses in them wait ([paf-address-data.md](../../ops/runbooks/paf-address-data.md)) |
 
 ## Self-hosted rather than bought
 

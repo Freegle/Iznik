@@ -154,10 +154,11 @@ class ChatSpamService
                 continue;
             }
 
-            // Skip if any of their messages were ever approved (could be spoofed)
+            // Skip if a moderator ever approved one of their messages (could be spoofed).
+            // Approving clears reviewrequired and records the reviewer.
             $hasApproved = DB::table('chat_messages')
                 ->where('userid', $user->userid)
-                ->where('reviewrequired', 1)
+                ->where('reviewrequired', 0)
                 ->whereNotNull('reviewedby')
                 ->where('reviewrejected', 0)
                 ->exists();

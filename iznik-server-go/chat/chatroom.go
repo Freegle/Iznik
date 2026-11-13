@@ -113,6 +113,8 @@ type ChatRoom struct {
 	Chattype string `json:"chattype"`
 	User1    uint64 `json:"user1"`
 	User2    uint64 `json:"user2"`
+	// Read only: a User2User room has no community, and a Create through this struct must leave the column NULL.
+	Groupid uint64 `json:"-" gorm:"column:groupid;->"`
 }
 
 // parseChattypes extracts chattypes from query parameters.
@@ -1605,10 +1607,15 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	}
 
 	// Verify the chat room exists.
-	var roomID uint64
-	db.Table("chat_rooms").Select("id").Where("id = ?", chatid).Scan(&roomID)
-	if roomID == 0 {
+	var room ChatRoom
+	db.Table("chat_rooms").Select("id, chattype, COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", chatid).Scan(&room)
+	if room.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Chat not found")
+	}
+
+	// Typing delays the room's emails, so only someone who may take part in the room can signal it.
+	if !canUseChatRoomPresence(myid, room) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": strconv.FormatUint(chatid, 10) + " Not visible to you"})
 	}
 
 	// Bump date on recent unmailed messages to delay email batching.
@@ -1626,25 +1633,34 @@ func handleTyping(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "count": count})
 }
 
+// canUseChatRoomPresence says whether myid may change presence in the room (roster, typing). A
+// User2User chat is for its two members only, so a moderator cannot insert themselves into it. For
+// a modmail or mod-team chat the caller must be a participant or a moderator of the room's own
+// community (Admin and Support count as moderators of every community) and, for a moderators' chat,
+// an active moderator there. A moderator of some other community the member also belongs to is not
+// enough. Without this any authenticated user could read or forge the roster of an arbitrary modmail
+// or mod-team chat, or hold back another chat's emails, by guessing its (small, sequential) id.
+func canUseChatRoomPresence(myid uint64, room ChatRoom) bool {
+	switch room.Chattype {
+	case utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_GROUP, utils.CHAT_TYPE_MOD2MOD:
+		return (myid == room.User1 || myid == room.User2 || auth.IsModOfGroup(myid, room.Groupid)) &&
+			mod2ModAllowed(myid, room.Chattype, room.Groupid)
+	case utils.CHAT_TYPE_USER2USER:
+		return myid == room.User1 || myid == room.User2
+	}
+
+	return false
+}
+
 func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPostRequest) error {
 	// Verify user can see this chat and is a legitimate member
 	var room ChatRoom
-	db.Table("chat_rooms").Select("id, chattype, user1, user2").Where("id = ?", req.ID).Scan(&room)
+	db.Table("chat_rooms").Select("id, chattype, COALESCE(user1, 0) AS user1, COALESCE(user2, 0) AS user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", req.ID).Scan(&room)
 	if room.ID == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": strconv.FormatUint(req.ID, 10) + " Not visible to you"})
 	}
 
-	// Permission check - prevent client bugs from inserting mods into User2User chats
-	canUpdate := false
-	switch room.Chattype {
-	case utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_GROUP, utils.CHAT_TYPE_MOD2MOD:
-		// SECURITY: the caller must be a participant of the room or a platform (system-role)
-		// moderator. Without this any authenticated user could read/forge the roster of an
-		// arbitrary modmail or mod-team chat simply by guessing its (small, sequential) id.
-		canUpdate = (myid == room.User1 || myid == room.User2 || auth.IsSystemMod(myid))
-	case utils.CHAT_TYPE_USER2USER:
-		canUpdate = (myid == room.User1 || myid == room.User2)
-	}
+	canUpdate := canUseChatRoomPresence(myid, room)
 
 	if !canUpdate {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": strconv.FormatUint(req.ID, 10) + " Not visible to you"})

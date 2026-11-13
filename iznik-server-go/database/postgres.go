@@ -93,18 +93,18 @@ func buildPostgresDSN(host string) string {
 	return u.String()
 }
 
-// Pool sizes for PostgreSQL. A MySQL connection is a thread; a PostgreSQL connection is a whole server
-// process with its own memory, and a stock server accepts 100 of them, so the 200 per pool that suits
-// MySQL (database.go) would be refused under load. The defaults leave room for a replica pool, the batch
-// jobs and a second API process inside 100. PGSQL_MAX_OPEN_CONNS and PGSQL_MAX_IDLE_CONNS override them,
-// per pool: the write pool and the read replica pool each take these sizes. A request that finds the
-// pool full waits for a connection, it does not fail.
 // pgDefaultLockTimeout is how long a statement waits for a lock before it fails with SQLSTATE 55P03.
 const pgDefaultLockTimeout = "50s"
 
+// Pool sizes for PostgreSQL: the same 200 per pool as MySQL (database.go), so a burst that MySQL serves is
+// served here too and does not queue. A PostgreSQL connection is a whole server process, and a stock server
+// accepts only 100 of them, so the server's max_connections must be raised to cover the write pool, the
+// replica pool and the batch jobs (docs/developers/reference/database-engines.md). PGSQL_MAX_OPEN_CONNS and
+// PGSQL_MAX_IDLE_CONNS override the sizes, per pool. A request that finds the pool full waits for a
+// connection, it does not fail.
 const (
-	pgDefaultMaxOpenConns = 30
-	pgDefaultMaxIdleConns = 30
+	pgDefaultMaxOpenConns = 200
+	pgDefaultMaxIdleConns = 200
 )
 
 // pgPoolSizes returns the most connections a pool may open and the most it may keep idle. By default

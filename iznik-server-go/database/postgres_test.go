@@ -7,8 +7,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The pool defaults must fit a stock PostgreSQL server (100 connections) with a replica pool as well, keep
-// no more idle than open, and take sizes from the environment.
+// The pool defaults are the sizes the MySQL pools have, keep no more idle than open, and take sizes from
+// the environment.
 func TestPgPoolSizes(t *testing.T) {
 	t.Setenv("PGSQL_MAX_OPEN_CONNS", "")
 	t.Setenv("PGSQL_MAX_IDLE_CONNS", "")
@@ -19,8 +19,8 @@ func TestPgPoolSizes(t *testing.T) {
 	if idle > open {
 		t.Errorf("idle (%d) must not be above open (%d)", idle, open)
 	}
-	if 2*open >= 100 {
-		t.Errorf("a write pool and a replica pool of %d each do not fit a server that allows 100", open)
+	if open != 200 || idle != 200 {
+		t.Errorf("defaults = %d open, %d idle, want the 200 and 200 the MySQL pools use (database.go)", open, idle)
 	}
 
 	t.Setenv("PGSQL_MAX_OPEN_CONNS", "80")

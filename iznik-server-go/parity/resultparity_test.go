@@ -204,3 +204,34 @@ func TestResultParity_OneEngineStillChecksTheSiteWorksAndGivesTheExpectedRows(t 
 		t.Fatalf("a wrong answer must fail on one engine too")
 	}
 }
+
+// An ordinary row can end up on a fixture id on MySQL (see Fixture.Load). The fixture must still load,
+// and the row must be back once the transaction is rolled back.
+func TestFixtureLoad_MovesAsideARowSittingOnAFixtureID(t *testing.T) {
+	my, err := openEngine(MySQL)
+	if err != nil {
+		t.Skipf("parity: MySQL is not available (%v)", err)
+	}
+	id := ID(999901)
+	if err := my.DB.Exec("INSERT INTO users (id) VALUES (?)", id).Error; err != nil {
+		t.Fatalf("placing a row on the fixture id: %v", err)
+	}
+	defer func() {
+		my.DB.Exec("DELETE FROM users WHERE id = ?", id)
+		// The committed row moved the counter into the fixture range; put it back.
+		my.DB.Exec("ALTER TABLE `users` AUTO_INCREMENT = 1")
+	}()
+
+	tx := my.DB.Begin()
+	err = Fixture{Table("users", Row{"id": id})}.Load(tx)
+	tx.Rollback()
+	if err != nil {
+		t.Fatalf("the fixture must load over a row that sits on its id: %v", err)
+	}
+
+	var n int64
+	my.DB.Table("users").Where("id = ?", id).Count(&n)
+	if n != 1 {
+		t.Fatalf("the row that was moved aside must be back after the rollback, found %d", n)
+	}
+}

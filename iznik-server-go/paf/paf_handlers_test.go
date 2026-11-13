@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/testlock"
 	"github.com/freegle/iznik-server-go/utils"
 )
 
@@ -28,6 +29,8 @@ const goodKey = "ABCDEFGHIJKLMNOPQRSTUVWX"
 // nothing the handlers write (or the fixtures below) survives, and nothing already in the
 // paf_imports or config tables can interfere.
 func withTx(t *testing.T) *gorm.DB {
+	// The API tests in package test commit rows in paf_imports, which this transaction cannot hide.
+	testlock.Hold(t, "paf_imports")
 	orig := database.DBConn
 	tx := orig.Begin()
 	require.NoError(t, tx.Error)

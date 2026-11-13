@@ -266,15 +266,18 @@ index: `messages_bulk_items.name`, `jobs.canonical_title` and `users_donations.P
 with a plain text one is compared as plain text, case-sensitively, with no error.
 
 Server settings the dev container sets in `docker-compose.yml`, and a production server would need too:
-`max_connections=200`, and `random_page_cost=1.1` because the disks are solid state. At the stock value of 4
+`max_connections=600`, and `random_page_cost=1.1` because the disks are solid state. At the stock value of 4
 the planner reads a community's whole posting history where MySQL probes an index once per post. The server
 must be PostgreSQL 18 or later: `crc32` in `functions.sql` calls a built-in that 17 does not have.
 
-There is no connection pooler. The Go API opens at most 30 connections for each pool and the batch jobs a few
-dozen more, which fits inside `max_connections=200` with each connection costing a few megabytes. If more API
-processes are added, raise `max_connections` to match. A transaction pooler only becomes worth its cost at many
-hundreds of connections, and it would need pgbouncer 1.21 or later for prepared statements, and the two Laravel
-jobs that use temporary tables wrapped in a transaction.
+There is no connection pooler; the connection limit is raised instead, to 600 in the dev container and on a
+production server. Production MySQL peaked at 428 connections in November 2026, nearly all of them idle (8 of
+229 were running a query when measured). Each PostgreSQL connection is a process costing a few megabytes, or a
+few tens once it has touched many tables, so count that memory alongside `shared_buffers`. The Go API's pools
+are the size they are on MySQL, 200 each, so the limit must cover every API process's write pool and replica
+pool plus the batch jobs; past it PostgreSQL refuses the connection. A transaction pooler would only be worth
+its cost well beyond this, and it would need pgbouncer 1.21 or later for prepared statements, and
+the two Laravel jobs that use temporary tables wrapped in a transaction.
 
 Two things the converter does to the MySQL keys, for write cost and not for any query:
 
@@ -877,8 +880,8 @@ ratchet list: see the end of this page.
 - **No named prepared statements.** pgx runs in `cache_describe` mode. Several hot statements paste ids into
   their text, so every request is a new text; kept as named statements they cost about 630 kB of server memory
   each, 512 to a connection. Do not switch to the simple protocol: the translator relies on typed parameters.
-- **Pool size** comes from `PGSQL_MAX_OPEN_CONNS` and `PGSQL_MAX_IDLE_CONNS`, 30 each by default, for the write
-  pool and again for the replica pool. PostgreSQL is one process per connection, so MySQL's 200 does not carry over.
+- **Pool size** comes from `PGSQL_MAX_OPEN_CONNS` and `PGSQL_MAX_IDLE_CONNS`, 200 each by default as on MySQL, for the write
+  pool and again for the replica pool. PostgreSQL is one process per connection, so the server's limit is raised to match.
 - **JIT is off** for the API's sessions (`PGSQL_JIT`). Compiling a plan costs more than it saves on short queries.
 - **`/*+ MAX_EXECUTION_TIME(n) */`**, MySQL's hint, sets a statement timeout for that statement on PostgreSQL.
 - **The translator's cache is bounded,** so statement texts that differ per member cannot grow it for ever.

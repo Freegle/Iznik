@@ -382,7 +382,25 @@ function openContactSupport() {
 
 // Route parameters
 const userid = parseInt(route.params.id)
-const confirmed = route.query.confirm
+
+// The emailed link carries ?u=&k=&confirm=1. This page is prerendered (the /unsubscribe**
+// route rule), and on a prerendered page route.query is empty when the page mounts: the router
+// syncs to the real URL later, and replaces the location during hydration. app.vue and
+// donate.vue therefore read the query from window.__initSearch, which an inline head script
+// captures before any of that happens (nuxt.config.ts), and this page must too: with
+// route.query alone the link was never recognised. route.query is the fallback for a render
+// that has no such script (server render, dev).
+function linkQuery() {
+  const params = new URLSearchParams(
+    window.__initSearch || window.location.search || ''
+  )
+
+  return {
+    u: params.get('u') || route.query.u,
+    k: params.get('k') || route.query.k,
+    confirm: params.get('confirm') || route.query.confirm,
+  }
+}
 
 // Computed properties
 const groupCount = computed(() => {
@@ -472,12 +490,50 @@ async function emailConfirm(callback) {
   callback()
 }
 
+// The emailed link logs the member in from its u and k (in app.vue), and a stored session
+// loads its user, both after this page has mounted. So "no member yet" is not "the link was
+// already used" while one of those is still on its way: wait for the member, up to a limit.
+const LOGIN_WAIT_MS = 10000
+
+function loginPending() {
+  const { u, k } = linkQuery()
+
+  return !!((u && k) || authStore.auth?.jwt || authStore.auth?.persistent)
+}
+
+function waitForMember() {
+  return new Promise((resolve) => {
+    if (myid.value || !loginPending()) {
+      resolve(myid.value)
+      return
+    }
+
+    const timer = setTimeout(() => {
+      stop()
+      resolve(null)
+    }, LOGIN_WAIT_MS)
+
+    const stop = watch(myid, (id) => {
+      if (id) {
+        clearTimeout(timer)
+        stop()
+        resolve(id)
+      }
+    })
+  })
+}
+
 // Lifecycle hooks
-onMounted(() => {
-  if (confirmed) {
-    if (userid === myid.value) {
-      forget()
-    } else if (myid.value) {
+onMounted(async () => {
+  if (linkQuery().confirm) {
+    const id = await waitForMember()
+
+    if (userid === id) {
+      // Arriving by the link is not consent. Anyone can have the site send this link to another
+      // person's address, and a mail scanner that runs JavaScript opens it, so the account is
+      // deleted only when the member clicks Delete in the confirmation.
+      showConfirmModal.value = true
+    } else if (id) {
       wrongUser.value = true
     } else {
       // Almost always this means they've clicked on the same link twice. Tell them we've removed the account

@@ -29,7 +29,7 @@ func computeTestHMAC(message, secret string) string {
 
 // generateAMPToken generates an HMAC-based AMP token for testing.
 func generateAMPToken(userID uint64, chatID uint64, exp int64, secret string) string {
-	message := "amp" + strconv.FormatUint(userID, 10) + strconv.FormatUint(chatID, 10) + strconv.FormatInt(exp, 10)
+	message := amp.TokenMessage(strconv.FormatUint(userID, 10), strconv.FormatUint(chatID, 10), strconv.FormatInt(exp, 10))
 	return computeTestHMAC(message, secret)
 }
 

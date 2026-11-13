@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 	"strconv"
@@ -351,7 +352,16 @@ func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult 
 		Limit(1).
 		Scan(&results)
 
+	// Protect the anonymity of the poster: expose the same blurred point as the
+	// message record, the feed and the vector search.
+	blurCoords := make([][2]float64, 0, len(results))
+	for _, r := range results {
+		blurCoords = append(blurCoords, [2]float64{r.Lat, r.Lng})
+	}
+	roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
+
 	for i := range results {
+		results[i].Lat, results[i].Lng = roadblur.RoadBlur(results[i].Lat, results[i].Lng, utils.BLUR_USER)
 		results[i].Matchedon = Matchedon{Type: "id", Word: strconv.FormatUint(msgid, 10)}
 	}
 

@@ -956,6 +956,9 @@ export function convert(dumpText, config = {}, opts = {}) {
           fail(`${narrow.where}: the columns must be the leading columns of ${iname} (${have.join(', ')}), with at least one left off`)
         }
         k.parts = k.parts.slice(0, narrow.columns.length)
+        const twin = t.keys.find((o) => o !== k && !duplicates.has(o) && ['primary', 'unique', 'plain'].includes(o.kind) &&
+          o.parts.length === k.parts.length && o.parts.every((p, i) => p.col === k.parts[i].col && !!p.desc === !!k.parts[i].desc))
+        if (twin) fail(`${narrow.where}: narrowed to (${narrow.columns.join(', ')}), ${iname} would repeat ${twin.kind === 'primary' ? 'the primary key' : 'key ' + twin.name} on ${t.name}; leave it out instead`)
         r.hit('KEY narrowed to its leading columns on PostgreSQL', `${iname} (${narrow.columns.join(', ')})`)
       }
       const parts = k.parts.map((p) => {

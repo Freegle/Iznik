@@ -1215,8 +1215,11 @@ rows, its latest row states its outcome.
   drive it, one per direction, and neither uses a time window:
   - *The post's reach moved.* `UnifiedDigestService::sendReachDigests` resumes from a per-shard
     mark on `rippling_reach.updated_at` (`config` key `reach_mail_mark_shard{N}`), stored as the
-    time the pass started so a row written in the same second is caught next tick. A dry run,
-    a pass stopped early, or a pass with a failed post leaves the mark alone. A cold start reads
+    time the pass started so a row written in the same second is caught next tick. A dry run
+    or a pass stopped early leaves the mark alone. So does a pass in which the routing service
+    was unreachable or returned a retryable error (`RoutingRetryableException`), but only for
+    15 minutes (`REACH_MARK_MAX_HOLD_MINUTES`): after that the mark moves to the pass and one
+    error is logged. A post that fails for any other reason is logged and does not hold the mark. A cold start reads
     the last hour. A repost of a Taken or Received post bumps `updated_at` (`JoinAndPostAs` in
     iznik-server-go), since its reach row survives with its old stamp.
   - *The member changed.* Joining a group, changing postcode, returning after 90 days away, or
@@ -1224,7 +1227,9 @@ rows, its latest row states its outcome.
     through iznik-server-go's `reachqueue` package by `authMiddleware`, `ProcessSettingsUpdate`, `addMemberToGroup`,
     `putMembershipsPartner`, `PutUser`, `PatchMemberships`; and by `ExpandService`'s ripple
     auto-join and `user:add-membership` in PHP - see `ReachMemberQueueService`). The same pass
-    drains the queue, partitioned by `MOD(userid, shards)`, asking `mailNewlyReachedForPost`
+    drains the queue oldest first, partitioned by `MOD(userid, shards)`. A row that fails for its own
+    reasons goes to the back of the queue; a routing outage stops the drain and keeps the rows.
+    It asks `mailNewlyReachedForPost`
     about each candidate post scoped to that one member. `ripple:reconcile-reach-members` runs
     daily at 04:36 UTC (after the backup drain, so the pass it sets off finishes before the digest) and re-queues anyone whose join or postcode change since yesterday has no ledger row
     after it, so a missed hook costs a day, not the mail.

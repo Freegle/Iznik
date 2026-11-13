@@ -28,8 +28,9 @@ use Symfony\Component\Console\Attribute\AsCommand;
  * defaults to --since=4), and a queue that reached maximal_queue_lifetime is
  * five days deep, so every one of these messages has aged out of it and will
  * never be picked up again. The deferral catch-up has no such window - it
- * counts anything newer than lastmsgemailed - but it only runs for members who
- * are owed something. The debt row is what makes it run, and on release they
+ * counts unread messages dated from the debt row's firstat, which is set to the
+ * earliest missed message - but it only runs for members who are owed
+ * something. The debt row is what makes it run, and on release they
  * get one "you have unread messages" summary rather than a replay.
  *
  * Only ever moves the marker BACKWARDS. A chat whose marker is already behind
@@ -82,15 +83,29 @@ class RewindChatEmailedCommand extends Command
         // the window. Rewinding to just before it re-opens every later message
         // in that chat too, which is what we want - they were all equally
         // undeliverable.
-        $rows = DB::table('email_tracking')
-            ->selectRaw("userid,
+        // PostgreSQL has neither SUBSTRING_INDEX nor CAST(... AS UNSIGNED). The domain is the part after
+        // the last @, and a message id that is not a whole number counts as none, as MySQL's cast makes it 0.
+        $pg = DB::connection()->getDriverName() === 'pgsql';
+        $domainSql = $pg
+            ? "(string_to_array(recipient_email::text, '@'))[cardinality(string_to_array(recipient_email::text, '@'))]"
+            : "SUBSTRING_INDEX(recipient_email, '@', -1)";
+        $select = $pg
+            ? "userid,
+                 {$domainSql} AS domain,
+                 metadata::jsonb->>'chat_id' AS chatid,
+                 MIN(CASE WHEN metadata::jsonb->>'message_id' ~ '^[0-9]+$' THEN (metadata::jsonb->>'message_id')::bigint ELSE 0 END) AS firstmsg,
+                 COUNT(*) AS notifications"
+            : "userid,
                  SUBSTRING_INDEX(recipient_email, '@', -1) AS domain,
                  JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.chat_id')) AS chatid,
                  MIN(CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.message_id')) AS UNSIGNED)) AS firstmsg,
-                 COUNT(*) AS notifications")
+                 COUNT(*) AS notifications";
+
+        $rows = DB::table('email_tracking')
+            ->selectRaw($select)
             ->where('email_type', 'ChatNotification')
             ->whereBetween('sent_at', [$start, $end])
-            ->whereIn(DB::raw("SUBSTRING_INDEX(recipient_email, '@', -1)"), $domains)
+            ->whereIn(DB::raw($domainSql), $domains)
             ->whereNotNull('userid')
             ->whereNotNull('metadata')
             ->groupBy('userid', 'domain', 'chatid')
@@ -112,6 +127,12 @@ class RewindChatEmailedCommand extends Command
         // member => notifications we could not deliver, summed across chats.
         $owed = [];
 
+        // When each earliest missed message was written, read in chunks rather than one query a row.
+        $messageDates = [];
+        foreach (array_chunk($rows->pluck('firstmsg')->map(fn ($id) => (int) $id)->filter()->unique()->all(), 1000) as $ids) {
+            $messageDates += DB::table('chat_messages')->whereIn('id', $ids)->pluck('date', 'id')->all();
+        }
+
         foreach ($rows as $row) {
             $chatid = (int) $row->chatid;
             $firstmsg = (int) $row->firstmsg;
@@ -130,6 +151,13 @@ class RewindChatEmailedCommand extends Command
             $uid = (int) $row->userid;
             $owed[$uid]['count'] = ($owed[$uid]['count'] ?? 0) + (int) $row->notifications;
             $owed[$uid]['domain'] = strtolower((string) $row->domain);
+
+            // The catch-up counts from the debt's firstat, so that must be when
+            // the earliest missed message was written, not when we recorded it.
+            $missedAt = (string) ($messageDates[$firstmsg] ?? $start);
+            if (! isset($owed[$uid]['since']) || strcmp($missedAt, $owed[$uid]['since']) < 0) {
+                $owed[$uid]['since'] = $missedAt;
+            }
 
             // Rewind ONLY. A marker already at or behind the target means the
             // member is still due this message by the ordinary route, and
@@ -192,7 +220,7 @@ class RewindChatEmailedCommand extends Command
      * already has a live chat debt is already covered, and overwriting their
      * row would reset counters the catch-up is still accruing.
      *
-     * @param  array<int, array{count:int, domain:string}>  $owed
+     * @param  array<int, array{count:int, domain:string, since:string}>  $owed
      */
     private function recordChatDebt(array $owed, $suppressionByDomain, bool $dryRun): int
     {
@@ -212,7 +240,7 @@ class RewindChatEmailedCommand extends Command
                 'emailtype' => 'chat',
                 'suppressionid' => $suppressionId,
                 'count' => $info['count'],
-                'firstat' => now(),
+                'firstat' => $info['since'],
                 'lastat' => now(),
             ];
         }

@@ -103,7 +103,7 @@ services:
     # More connections than the stock 100, so the API's two pools and the batch workers fit. The disks
     # are solid state, so a random page costs about what a sequential one does: at the stock 4 the planner
     # prefers reading a community's whole history to probing an index once per post.
-    command: ["postgres", "-c", "max_connections=200", "-c", "random_page_cost=1.1"]
+    command: ["postgres", "-c", "max_connections=600", "-c", "random_page_cost=1.1"]
     environment:
       POSTGRES_DB: iznik
       POSTGRES_PASSWORD: iznik

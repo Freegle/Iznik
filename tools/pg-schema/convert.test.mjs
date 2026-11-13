@@ -505,3 +505,10 @@ test('narrowedIndexes keeps only the leading columns of a converted index, with 
   bad({ using: 'gin' }, /unknown setting "using"/)
   assert.throws(() => convert(likesDump, { narrowedIndexes: [narrow, narrow] }), /narrowed twice/)
 })
+
+test('an index narrowed onto the columns of another key is refused', () => {
+  assert.throws(
+    () => convert(dupDump, { narrowedIndexes: [{ index: 'dups_ab', columns: ['a'], why }] }),
+    (err) => err instanceof ConvertError && /dups_ab would repeat key a on dups/.test(err.message)
+  )
+})
