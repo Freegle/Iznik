@@ -68,6 +68,49 @@ class ReachLabelsStagingTest extends TestCase
         $this->assertSame('staged', ReachService::pickLabels($this->row('live', 'staged', self::FP)));
     }
 
+    /**
+     * The fingerprint is a 64-bit hash, so half of all values are above the largest PHP integer. Read as
+     * an integer such a value became the largest integer: the SQL then matched no stamp, and in PHP any
+     * two large fingerprints looked the same. It must be matched exactly in both.
+     */
+    public function testAFingerprintAboveTheLargestIntegerStillPicksTheStagedLabel(): void
+    {
+        $big = '12345678901234567890';
+        $this->setPairing($big);
+
+        $this->assertSame($big, ReachService::livePartitionFingerprint());
+        $this->assertSame(
+            'COALESCE(IF(rr.reach_labels_next_fp = '.$big.', rr.reach_labels_next, NULL), rr.reach_labels)',
+            ReachService::liveLabelsSql('rr.')
+        );
+
+        $row = (object) ['reach_labels' => 'live', 'reach_labels_next' => 'staged', 'reach_labels_next_fp' => $big];
+        $this->assertSame('staged', ReachService::pickLabels($row));
+
+        // Another fingerprint that is also above the largest integer belongs to another layout.
+        $other = (object) ['reach_labels' => 'live', 'reach_labels_next' => 'staged', 'reach_labels_next_fp' => '12345678901234567891'];
+        $this->assertSame('live', ReachService::pickLabels($other));
+
+        // A record typed by hand may end in a newline. It is the same fingerprint, in SQL and in PHP.
+        $this->setPairing($big."\n");
+        $this->assertSame($big, ReachService::livePartitionFingerprint());
+        $this->assertSame('staged', ReachService::pickLabels($row));
+
+        // The SQL picks the same blob from a real unsigned column value. The bind goes through CHAR
+        // because MySQL reads a bare parameter as a signed number, which cannot hold this one.
+        $expr = ReachService::liveLabelsSql();
+        $picked = DB::selectOne(
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, CAST(CAST(? AS CHAR) AS UNSIGNED) AS reach_labels_next_fp) AS t",
+            [$big]
+        );
+        $this->assertSame('staged', $picked->picked);
+        $stale = DB::selectOne(
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, CAST(CAST(? AS CHAR) AS UNSIGNED) AS reach_labels_next_fp) AS t",
+            ['12345678901234567891']
+        );
+        $this->assertSame('live', $stale->picked);
+    }
+
     public function testStaleStampFallsBackToTheLiveColumn(): void
     {
         $this->setPairing((string) self::FP);
