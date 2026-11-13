@@ -14,6 +14,9 @@ class UpdateSpatialDataCommandTest extends TestCase
     /** Highway ways osmium reports per probe area; any area not named reports 50,000. */
     private array $probeWays = [];
 
+    /** An osmium subcommand ("extract", ...) to fail, as osmium does on a file it cannot read. */
+    private ?string $failOsmium = null;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -32,7 +35,14 @@ class UpdateSpatialDataCommandTest extends TestCase
 
                 return Process::result("Number of ways: 50000\n");
             },
-            '*' => Process::result(),
+            '*' => function ($process) {
+                $command = (array) $process->command;
+                if ($this->failOsmium !== null && ($command[1] ?? null) === $this->failOsmium) {
+                    return Process::result('', "Could not detect file format for filename 'x.tmp'.", 1);
+                }
+
+                return Process::result();
+            },
         ]);
         $this->dataDir = storage_path('tests/spatial');
         if (!is_dir($this->dataDir)) {
@@ -131,6 +141,21 @@ class UpdateSpatialDataCommandTest extends TestCase
     }
 
     /**
+     * An osmium failure in the road check is reported as one, not read as a region with
+     * no roads (the first live run read every region as 0 for exactly that reason).
+     */
+    public function test_road_check_reports_an_osmium_failure(): void
+    {
+        $this->failOsmium = 'extract';
+        Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
+
+        $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('Road check for anglesey-GB failed: osmium extract')
+            ->doesntExpectOutputToContain('highway ways (need')
+            ->assertExitCode(1);
+    }
+
+    /**
      * Every region's roads are checked after the merge, from the merged file.
      */
     public function test_checks_roads_in_every_region(): void
@@ -145,7 +170,9 @@ class UpdateSpatialDataCommandTest extends TestCase
             Process::assertRan(function ($process) use ($region) {
                 $command = (array) $process->command;
 
+                // -F pbf: the merged file is still named .tmp, which names no format.
                 return in_array('extract', $command, true)
+                    && in_array('-F', $command, true)
                     && in_array($this->dataDir . "/probe-{$region}.osm.pbf", $command, true)
                     && in_array($this->dataDir . '/uk-latest.osm.pbf.tmp', $command, true);
             });
