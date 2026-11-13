@@ -90,38 +90,3 @@ func TestWeightedRandFromMap_HighWeightBiasTowardsHigher(t *testing.T) {
 	assert.Greater(t, hits["common"], 800,
 		"high-weight key should win the vast majority of draws")
 }
-
-// ---------------------------------------------------------------------------
-// Dead-code branch documentation (Skip tests)
-// ---------------------------------------------------------------------------
-
-// TestWeightedRandFromSlice_FallbackReturnIsDeadCode documents that the final
-// "return len(weights)-1" in weightedRandFromSlice is unreachable with valid
-// non-negative integer weights.
-// TODO: dead code — "return len(weights)-1" is unreachable because
-// n = rand.Int63n(total)+1 ∈ [1,total] and subtracting all weights guarantees
-// the loop fires n≤0 before or at the last element.
-func TestWeightedRandFromSlice_FallbackReturnIsDeadCode(t *testing.T) {
-	t.Skip("dead code — final return in weightedRandFromSlice is unreachable with non-negative weights")
-}
-
-// TestWeightedRandFromMap_FallbackLoopIsDeadCode documents that the second
-// fallback loop and "return """ tail in weightedRandFromMap are unreachable
-// for the same reason as the slice fallback.
-// TODO: dead code — "for k := range weights { return k }" / "return """
-// are unreachable with non-negative weights.
-func TestWeightedRandFromMap_FallbackLoopIsDeadCode(t *testing.T) {
-	t.Skip("dead code — fallback loop in weightedRandFromMap is unreachable with non-negative weights")
-}
-
-// TestRandomUint64_ZeroAfterMaskIsUntestable supplements the skip in
-// utils_gaps_test.go with additional context. The v==0 guard in RandomUint64
-// fires when crypto/rand produces a 64-bit value whose lower 53 bits are all
-// zero — P ≈ 2^-53 per call — and cannot be exercised deterministically
-// without injecting a mock io.Reader, which would require changing the
-// production function signature.
-// TODO: latent coverage gap — the `if v == 0 { v = 1 }` branch in
-// RandomUint64 is untestable without a mock io.Reader.
-func TestRandomUint64_ZeroAfterMaskIsUntestable(t *testing.T) {
-	t.Skip("v==0 branch in RandomUint64 has P≈2^-53; not testable without mocking crypto/rand")
-}

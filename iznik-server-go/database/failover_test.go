@@ -21,7 +21,7 @@ func testFallbackConnector(t *testing.T) driver.Connector {
 	t.Helper()
 	host := os.Getenv("MYSQL_HOST")
 	if host == "" {
-		t.Skip("MYSQL_HOST not set; skipping failover integration test")
+		t.Fatal("MYSQL_HOST is not set: this test needs the test database")
 	}
 	cfg, err := rawmysql.ParseDSN(buildDSN(host))
 	require.NoError(t, err, "parse test DB DSN")
@@ -37,7 +37,7 @@ func testUnreachableConnector(t *testing.T, timeout time.Duration) driver.Connec
 	t.Helper()
 	host := os.Getenv("MYSQL_HOST")
 	if host == "" {
-		t.Skip("MYSQL_HOST not set; skipping failover integration test")
+		t.Fatal("MYSQL_HOST is not set: this test needs the test database")
 	}
 	cfg, err := rawmysql.ParseDSN(buildDSN(host))
 	require.NoError(t, err, "parse DSN for unreachable connector")

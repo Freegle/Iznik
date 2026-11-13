@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,6 +292,72 @@ func TestAMPPostChatReplyExpiredToken(t *testing.T) {
 	json2.Unmarshal(rsp(resp), &response)
 	assert.False(t, response.Success)
 	assert.Equal(t, "Invalid token", response.Message)
+}
+
+// A token that is valid in every respect, for a real member, but for post id 0. The guard on the id is the
+// only thing that stops the reply, and it must.
+func TestAMPDigestReplyWithAValidTokenForPostZeroIsRefused(t *testing.T) {
+	ampSecret := os.Getenv("AMP_SECRET")
+	if ampSecret == "" {
+		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
+	}
+	if ampSecret == "" {
+		t.Fatal("AMP_SECRET not set")
+	}
+
+	userID := CreateTestUser(t, uniquePrefix("ampdigestzero"), utils.SYSTEMROLE_USER)
+	exp := time.Now().Unix() + 3600
+	token := generateAMPToken(userID, 0, exp, ampSecret)
+
+	bodyBytes, _ := json2.Marshal(map[string]string{"message": "Is this still available?"})
+	request := httptest.NewRequest("POST", fmt.Sprintf("/amp/digest/0/reply?rt=%s&uid=%d&exp=%d", token, userID, exp), bytes.NewBuffer(bodyBytes))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, 400, resp.StatusCode)
+
+	var response amp.ReplyResponse
+	json2.Unmarshal(rsp(resp), &response)
+	assert.False(t, response.Success)
+	assert.Equal(t, "Invalid token", response.Message)
+
+	// The same token for a real id passes the check, so it was the zero that was refused, not the token.
+	token = generateAMPToken(userID, 12345, exp, ampSecret)
+	request = httptest.NewRequest("POST", fmt.Sprintf("/amp/digest/12345/reply?rt=%s&uid=%d&exp=%d", token, userID, exp), bytes.NewBuffer([]byte(`{"message": ""}`)))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(request)
+	json2.Unmarshal(rsp(resp), &response)
+	assert.Equal(t, "Please enter a message.", response.Message)
+}
+
+// The shared digest form carries the token in the form body. A good token for a real member gets past the
+// token check, and the same good token for a member who does not exist does not.
+func TestAMPDigestSharedFormChecksTheMemberBehindAValidToken(t *testing.T) {
+	ampSecret := os.Getenv("AMP_SECRET")
+	if ampSecret == "" {
+		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
+	}
+	if ampSecret == "" {
+		t.Fatal("AMP_SECRET not set")
+	}
+
+	post := func(userID uint64) amp.ReplyResponse {
+		exp := time.Now().Unix() + 3600
+		form := fmt.Sprintf("mid=12345&rt=%s&uid=%d&exp=%d&message=", generateAMPToken(userID, 12345, exp, ampSecret), userID, exp)
+		request := httptest.NewRequest("POST", "/amp/digest/reply", strings.NewReader(form))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, _ := getApp().Test(request)
+		assert.Equal(t, 400, resp.StatusCode)
+		var response amp.ReplyResponse
+		json2.Unmarshal(rsp(resp), &response)
+		return response
+	}
+
+	userID := CreateTestUser(t, uniquePrefix("ampdigestshared"), utils.SYSTEMROLE_USER)
+	assert.Equal(t, "Please enter a message.", post(userID).Message, "a real member is let through to the message check")
+
+	var maxID uint64
+	database.DBConn.Raw("SELECT COALESCE(MAX(id), 0) FROM users").Scan(&maxID)
+	assert.Equal(t, "Invalid token", post(maxID+1000000).Message, "a member who does not exist is refused")
 }
 
 func TestAMPPostChatReplyValidToken(t *testing.T) {
