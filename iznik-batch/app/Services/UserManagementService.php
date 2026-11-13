@@ -480,7 +480,7 @@ class UserManagementService
         // A referral to Support that has not been mailed yet still holds the moderator's reason, and
         // perhaps a finished first pass, on its task row. Both go; the referral itself still reaches Support.
         DB::table('background_tasks')->where('task_type', \App\Models\BackgroundTask::TASK_REFER_TO_SUPPORT)
-            ->whereRaw("JSON_EXTRACT(data, '$.memberid') = ?", [$userId])
+            ->where('data->memberid', $userId)
             ->update(['data' => DB::raw("JSON_REMOVE(data, '$.reason', '$.brief', '$.reasonhash')")]);
         DB::table('support_ai_runs')->where('userid', $userId)->update(['analysis' => NULL, 'transcript' => NULL]);
 

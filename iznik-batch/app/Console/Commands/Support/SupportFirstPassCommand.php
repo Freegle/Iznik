@@ -164,9 +164,7 @@ class SupportFirstPassCommand extends Command
 
         // Waited too long, or started as often as it may be: never run the model on it again. The
         // reason an earlier attempt left is more use than "busy" or "interrupted".
-        $tooOld = DB::table('background_tasks')->where('id', $task->id)
-            ->whereRaw('created_at < NOW() - INTERVAL ? MINUTE', [(int) $this->cfg('max_age_minutes', 60)])->exists();
-        if ($tooOld) {
+        if ($this->pastMaxAge((int) $task->id)) {
             $finish(null, $task->error_message ?: FirstPassService::REASON_BUSY);
 
             return false;
@@ -232,13 +230,19 @@ class SupportFirstPassCommand extends Command
         return false;
     }
 
+    /** Whether a referral has waited longer than max_age_minutes. */
+    private function pastMaxAge(int $taskId): bool
+    {
+        return DB::table('background_tasks')->where('id', $taskId)
+            // keep-raw: NOW() must be the database's clock, which also stamps rows queued by the Go API; the builder binds a PHP time instead.
+            ->whereRaw('created_at < NOW() - INTERVAL ? MINUTE', [(int) $this->cfg('max_age_minutes', 60)])
+            ->exists();
+    }
+
     /** Set one key of a task's data, leaving the rest of the row's JSON as it now is. */
     private function setData(int $taskId, string $key, mixed $value): void
     {
-        DB::update(
-            'UPDATE background_tasks SET data = JSON_SET(data, ?, CAST(? AS JSON)) WHERE id = ?',
-            ['$.'.$key, json_encode($value, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR), $taskId]
-        );
+        DB::table('background_tasks')->where('id', $taskId)->update(["data->{$key}" => $value]);
     }
 
     /**
@@ -266,8 +270,7 @@ class SupportFirstPassCommand extends Command
         $failures = (int) ($data['mailfails'] ?? 0);
 
         try {
-            $plainest = $failures >= self::MAX_MAIL_FAILURES && DB::table('background_tasks')->where('id', $task->id)
-                ->whereRaw('created_at < NOW() - INTERVAL ? MINUTE', [(int) $this->cfg('max_age_minutes', 60)])->exists();
+            $plainest = $failures >= self::MAX_MAIL_FAILURES && $this->pastMaxAge((int) $task->id);
             $mail = $plainest
                 ? $service->plainestMail($referral)
                 : $service->referralMail($referral, $brief, $brief === null ? ($reason ?: FirstPassService::REASON_FAILED) : null);

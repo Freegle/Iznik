@@ -1815,24 +1815,21 @@ func referGroup(db *gorm.DB, chatid, chatGroup, user1, user2, referrer uint64) (
 	}
 
 	var groupid uint64
-	err := db.Raw(`SELECT m1.groupid
-		FROM memberships m1
-		INNER JOIN memberships m2 ON m2.groupid = m1.groupid AND m2.userid IN (?, ?) AND m2.userid != ?
-			AND m2.collection = 'Approved'
-		WHERE m1.userid = ? AND m1.role IN (?, ?) AND m1.collection = 'Approved'
-		GROUP BY m1.groupid
-		ORDER BY
-			m1.groupid IN (
+	// The ordering goes in as clause.OrderBy: a bare gorm.Expr passed to Order is silently dropped.
+	err := db.Table("memberships m1").
+		Select("m1.groupid").
+		Joins("INNER JOIN memberships m2 ON m2.groupid = m1.groupid AND m2.userid IN (?, ?) AND m2.userid != ? AND m2.collection = 'Approved'",
+			user1, user2, referrer).
+		Where("m1.userid = ? AND m1.role IN (?, ?) AND m1.collection = 'Approved'", referrer, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Group("m1.groupid").
+		Order(clause.OrderBy{Expression: gorm.Expr(`m1.groupid IN (
 				SELECT mg.groupid FROM messages_groups mg WHERE mg.deleted = 0 AND mg.msgid = (
 					SELECT cm.refmsgid FROM chat_messages cm
 					WHERE cm.chatid = ? AND cm.refmsgid IS NOT NULL ORDER BY cm.id DESC LIMIT 1
 				)
-			) DESC,
-			COUNT(DISTINCT m2.userid) DESC,
-			MAX(m2.added) DESC,
-			m1.groupid
-		LIMIT 1`,
-		user1, user2, referrer, referrer, utils.ROLE_MODERATOR, utils.ROLE_OWNER, chatid).Row().Scan(&groupid)
+			) DESC, COUNT(DISTINCT m2.userid) DESC, MAX(m2.added) DESC, m1.groupid`, chatid)}).
+		Limit(1).
+		Row().Scan(&groupid)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
@@ -1897,11 +1894,11 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64,
 	sum := sha256.Sum256([]byte(reason))
 	reasonHash := hex.EncodeToString(sum[:])
 	var recent int64
-	db.Clauses(dbresolver.Write).Raw(`SELECT COUNT(*) FROM background_tasks
-		WHERE task_type = ? AND created_at >= NOW() - INTERVAL ? SECOND
-		AND JSON_EXTRACT(data, '$.chatid') = ? AND JSON_EXTRACT(data, '$.userid') = ?
-		AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.reasonhash')) = ?`,
-		queue.TaskReferToSupport, repeatReferWindowSeconds, chatid, myid, reasonHash).Scan(&recent)
+	db.Clauses(dbresolver.Write).Table("background_tasks").
+		Where("task_type = ? AND created_at >= NOW() - INTERVAL ? SECOND", queue.TaskReferToSupport, repeatReferWindowSeconds).
+		Where("JSON_EXTRACT(data, '$.chatid') = ? AND JSON_EXTRACT(data, '$.userid') = ?", chatid, myid).
+		Where("JSON_UNQUOTE(JSON_EXTRACT(data, '$.reasonhash')) = ?", reasonHash).
+		Count(&recent)
 	if recent > 0 {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
