@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\YearMonth;
+use App\Database\Sql;
 use App\Support\ClearanceSql;
 use App\Services\Electricals\ItemClusterService;
 use App\Support\ReuseBenefit;
@@ -214,7 +216,7 @@ class ElectricalsStatsService
         // identically, so the plain statement is clearer.
         $row = DB::selectOne(
             'SELECT COUNT(*) AS classified,
-                    SUM(e.is_eee = 1) AS electrical
+                    SUM(CASE WHEN e.is_eee = 1 THEN 1 ELSE 0 END) AS electrical
              FROM messages_eee e
              INNER JOIN messages m ON m.id = e.msgid
              WHERE e.model = ?
@@ -467,7 +469,7 @@ class ElectricalsStatsService
         $rows = DB::select(
             'SELECT e.is_eee AS electrical,
                     COUNT(*) AS total,
-                    SUM(mo.outcome IN (?, ?)) AS taken
+                    SUM(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS taken
              FROM messages_eee e
              INNER JOIN messages m ON m.id = e.msgid
              LEFT JOIN messages_outcomes mo ON mo.msgid = m.id
@@ -510,7 +512,7 @@ class ElectricalsStatsService
         $rows = DB::select(
             'SELECT e.item_condition AS item_condition,
                     COUNT(*) AS n,
-                    SUM(mo.outcome IN (?, ?)) AS taken
+                    SUM(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS taken
              FROM messages_eee e
              INNER JOIN messages m ON m.id = e.msgid
              LEFT JOIN messages_outcomes mo ON mo.msgid = m.id
@@ -544,9 +546,9 @@ class ElectricalsStatsService
         // keep-raw: DATE_FORMAT month bucketing plus a conditional aggregate, grouped and
         // ordered on the derived alias.
         $rows = DB::select(
-            'SELECT DATE_FORMAT(m.arrival, "%Y-%m") AS month,
+            'SELECT ' . Sql::render(new YearMonth(DB::raw('m.arrival'))) . ' AS month,
                     COUNT(*) AS classified,
-                    SUM(e.is_eee = 1) AS electrical
+                    SUM(CASE WHEN e.is_eee = 1 THEN 1 ELSE 0 END) AS electrical
              FROM messages_eee e
              INNER JOIN messages m ON m.id = e.msgid
              WHERE e.model = ?
@@ -564,7 +566,7 @@ class ElectricalsStatsService
         // where the backfill has reached, not of anything real.
         $totals = DB::table('messages as m')
             // keep-raw: DATE_FORMAT month bucketing; no builder form.
-            ->selectRaw('DATE_FORMAT(m.arrival, "%Y-%m") AS month, COUNT(*) AS total')
+            ->selectRaw(Sql::render(new YearMonth(DB::raw('m.arrival'))) . ' AS month, COUNT(*) AS total')
             ->where('m.arrival', '>=', now()->subMonths($months)->startOfMonth()->toDateTimeString())
             ->where('m.type', 'Offer')
             ->whereNull('m.deleted')

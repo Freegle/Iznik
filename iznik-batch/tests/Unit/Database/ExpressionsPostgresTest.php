@@ -20,6 +20,7 @@ use App\Database\Expressions\Round;
 use App\Database\Expressions\TimestampDiff;
 use App\Database\Expressions\Value;
 use App\Database\Expressions\Year;
+use App\Database\Expressions\YearMonth;
 use Illuminate\Database\Grammar;
 use Illuminate\Database\Query\Grammars\MySqlGrammar;
 use Illuminate\Database\Query\Grammars\PostgresGrammar;
@@ -214,5 +215,12 @@ class ExpressionsPostgresTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
         (new SubstringIndex('a', '.', 2))->getValue($this->pg);
+    }
+
+    public function test_year_month_is_the_year_and_month_as_text(): void
+    {
+        $this->assertSame("DATE_FORMAT(`a`, '%Y-%m')", (new YearMonth('a'))->getValue($this->mysql));
+        $this->assertSame("to_char(\"a\", 'YYYY-MM')", (new YearMonth('a'))->getValue($this->pg));
+        $this->assertSame('2026-11', $this->evaluate((new YearMonth(new CastAs(Value::of('2026-11-12 10:00:00'), 'DATETIME')))->getValue($this->pg)));
     }
 }

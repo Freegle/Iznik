@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\AI;
 
+use App\Database\Sql;
 use Illuminate\Console\Command;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
@@ -111,14 +112,19 @@ class UpdateAIImageUsageCountsCommand extends Command
         // (see MySqlGrammar::compileDropIfExists), which would drop a
         // permanent table of this name instead of just the session-local
         // temp table if one ever existed.
-        DB::statement('DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts');
+        DB::statement(Sql::dropTemporaryTable('tmp_ai_usage_counts'));
 
         // Schema DDL is fully expressible via the schema builder (temporary table,
         // explicit VARCHAR/CHARACTER SET/COLLATE, PRIMARY KEY) — verified by diffing
         // SHOW CREATE TABLE against the original raw CREATE TABLE ... AS SELECT.
         Schema::create('tmp_ai_usage_counts', function (Blueprint $table) {
             $table->temporary();
-            $table->string('externaluid', 255)->charset('utf8mb4')->collation('utf8mb4_unicode_ci')->primary();
+            $column = $table->string('externaluid', 255);
+            // MySQL's column character set and collation; PostgreSQL has neither and compares by its database collation.
+            if (DB::connection()->getDriverName() === 'mysql') {
+                $column->charset('utf8mb4')->collation('utf8mb4_unicode_ci');
+            }
+            $column->primary();
             $table->integer('cnt');
         });
 
@@ -172,7 +178,7 @@ class UpdateAIImageUsageCountsCommand extends Command
         } finally {
             // keep-raw: same DROP TEMPORARY TABLE blocker as above — Schema::dropIfExists()
             // has no TEMPORARY-aware compile path (see comment on the earlier drop).
-            DB::statement('DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts');
+            DB::statement(Sql::dropTemporaryTable('tmp_ai_usage_counts'));
         }
 
         $this->info("Full recompute: updated {$totalUpdated} AI images, skipped {$totalSkipped} unchanged.");

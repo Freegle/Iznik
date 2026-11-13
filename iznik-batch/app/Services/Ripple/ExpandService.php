@@ -15,6 +15,7 @@ use App\Database\Expressions\CountDistinct;
 use App\Database\Expressions\In;
 use App\Database\Expressions\Min;
 use App\Database\Expressions\NullIf;
+use App\Database\Expressions\Now;
 use App\Database\Expressions\StArea;
 use App\Database\Expressions\StAsText;
 use App\Database\Expressions\StBuffer;
@@ -2256,7 +2257,7 @@ class ExpandService
                         'groupid' => $g->id,
                         'collection' => 'Pending',
                         'approvedat' => null,
-                        'arrival' => now(),
+                        'arrival' => new Now(),
                         'autoreposts' => 0,
                         'msgtype' => $msg->type,
                         'rippled_in' => 1,
@@ -2272,8 +2273,8 @@ class ExpandService
                         'msgid' => $msgid,
                         'groupid' => $g->id,
                         'collection' => $collection,
-                        'approvedat' => $immediateApprove ? now() : null,
-                        'arrival' => now(),
+                        'approvedat' => $immediateApprove ? new Now() : null,
+                        'arrival' => new Now(),
                         'autoreposts' => 0,
                         'msgtype' => $msg->type,
                         'rippled_in' => 1,
