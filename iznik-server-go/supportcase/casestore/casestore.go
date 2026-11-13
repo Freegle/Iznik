@@ -4,10 +4,9 @@
 package casestore
 
 import (
-	"errors"
 	"fmt"
 
-	"github.com/go-sql-driver/mysql"
+	"github.com/freegle/iznik-server-go/database"
 	"gorm.io/gorm"
 )
 
@@ -42,10 +41,9 @@ func OpenKey(chatid, referrerid uint64) string {
 	return fmt.Sprintf("%d-%d", chatid, referrerid)
 }
 
-// IsDuplicateKey reports a MySQL unique-key violation (error 1062).
+// IsDuplicateKey reports a unique-key violation, on either engine.
 func IsDuplicateKey(err error) bool {
-	var me *mysql.MySQLError
-	return errors.As(err, &me) && me.Number == 1062
+	return database.IsDuplicateKey(err)
 }
 
 // CreateCase inserts a case and returns its id.

@@ -30,7 +30,6 @@ import (
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/utils"
-	"github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
@@ -2232,11 +2231,7 @@ var errNoNewUserID = errors.New("no id returned for the new user")
 // key of users_emails. MySQL 8 names the key "users_emails.email"; MySQL 5.7, Percona and
 // MariaDB name it just "email".
 func isDuplicateEmail(err error) bool {
-	var me *mysql.MySQLError
-	if !errors.As(err, &me) || me.Number != 1062 {
-		return false
-	}
-	return strings.Contains(me.Message, "for key 'email'") || strings.Contains(me.Message, "for key 'users_emails.email'")
+	return database.IsDuplicateKeyOn(err, []string{"for key 'email'", "for key 'users_emails.email'"}, "users_emails_email")
 }
 
 // PutUser creates a new user (signup).

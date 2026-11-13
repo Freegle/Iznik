@@ -2,7 +2,6 @@ package ux
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"regexp"
 	"strconv"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/queue"
-	"github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/plugin/dbresolver"
 )
@@ -411,10 +409,9 @@ func validDesign(d *CreateExperimentDesign) (string, string) {
 	return string(b), ""
 }
 
-// isDuplicateKey is true for MySQL's duplicate entry error (1062), which gorm wraps.
+// isDuplicateKey is true for a unique-key violation on either engine, which gorm wraps.
 func isDuplicateKey(err error) bool {
-	var me *mysql.MySQLError
-	return errors.As(err, &me) && me.Number == 1062
+	return database.IsDuplicateKey(err)
 }
 
 // isHTTPS is true for an address that starts with https://. It is checked on the text as sent, so

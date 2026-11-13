@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // pgTranslatingConnector wraps a connector so that every statement sent on its connections is
@@ -22,6 +23,7 @@ type pgTranslatingConnector struct {
 	idx   map[string][][]string
 	cols  map[string][]string
 	defs  map[string]map[string]any // table -> column -> implicit default of a NOT NULL column
+	lens  map[string]map[string]int // table -> column -> length of a varchar column
 	ready bool
 }
 
@@ -34,8 +36,10 @@ type pgStatement struct {
 
 // nullCol ties a bound parameter to the NOT NULL column it is inserted into.
 type nullCol struct {
-	param int // 1 based
-	def   any
+	param  int // 1 based
+	def    any // the implicit default, when the column is NOT NULL and has one
+	hasDef bool
+	maxLen int // characters the column holds, when it is a varchar; 0 otherwise
 }
 
 func newPgTranslatingConnector(inner driver.Connector) *pgTranslatingConnector {
@@ -94,6 +98,7 @@ func (c *pgTranslatingConnector) load() {
 	c.idx = map[string][][]string{}
 	c.cols = map[string][]string{}
 	c.defs = map[string]map[string]any{}
+	c.lens = map[string]map[string]int{}
 	db := sql.OpenDB(c.inner)
 	defer db.Close()
 	// keep-raw: reads pg_catalog for the translator; PostgreSQL only, nothing MySQL has an equivalent of.
@@ -115,7 +120,8 @@ func (c *pgTranslatingConnector) load() {
 	}
 	// keep-raw: reads pg_catalog for the translator; PostgreSQL only, nothing MySQL has an equivalent of.
 	rows, err = db.Query(`SELECT c.relname, a.attname, a.attnotnull AND a.attidentity = '' AND a.attgenerated = '' AS plain_not_null, t.typname,
-		EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.contype = 'c' AND k.conname = c.relname || '_' || a.attname || '_check') AS has_check
+		EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.contype = 'c' AND k.conname = c.relname || '_' || a.attname || '_check') AS has_check,
+		CASE WHEN t.typname IN ('varchar', 'bpchar') AND a.atttypmod > 4 THEN a.atttypmod - 4 ELSE 0 END AS max_len
 		FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid JOIN pg_type t ON t.oid = a.atttypid
 		WHERE c.relkind IN ('r', 'p') AND c.relnamespace = 'public'::regnamespace AND a.attnum > 0 AND NOT a.attisdropped
 		ORDER BY c.relname, a.attnum`)
@@ -123,8 +129,15 @@ func (c *pgTranslatingConnector) load() {
 		for rows.Next() {
 			var table, col, typ string
 			var notNull, hasCheck bool
-			if rows.Scan(&table, &col, &notNull, &typ, &hasCheck) == nil {
+			var maxLen int
+			if rows.Scan(&table, &col, &notNull, &typ, &hasCheck, &maxLen) == nil {
 				c.cols[table] = append(c.cols[table], col)
+				if maxLen > 0 {
+					if c.lens[table] == nil {
+						c.lens[table] = map[string]int{}
+					}
+					c.lens[table][col] = maxLen
+				}
 				if notNull && !hasCheck {
 					if d, ok := implicitDefault(typ); ok {
 						if c.defs[table] == nil {
@@ -394,7 +407,8 @@ func (c *pgTranslatingConnector) insertNullCols(sql string) []nullCol {
 	}
 	c.load()
 	defs := c.defs[strings.ToLower(table)]
-	if len(defs) == 0 {
+	lens := c.lens[strings.ToLower(table)]
+	if len(defs) == 0 && len(lens) == 0 {
 		return nil
 	}
 	v := topKw(ts, 0, "VALUES")
@@ -430,14 +444,17 @@ func (c *pgTranslatingConnector) insertNullCols(sql string) []nullCol {
 			}
 			idx = idx*10 + int(ch-'0')
 		}
-		if d, ok := defs[strings.ToLower(cols[i])]; ok && idx > 0 {
-			out = append(out, nullCol{param: idx, def: d})
+		d, hasDef := defs[strings.ToLower(cols[i])]
+		n := lens[strings.ToLower(cols[i])]
+		if idx > 0 && (hasDef || n > 0) {
+			out = append(out, nullCol{param: idx, def: d, hasDef: hasDef, maxLen: n})
 		}
 	}
 	return out
 }
 
-// fillNulls replaces a NULL sent to a NOT NULL column by the column's implicit default.
+// fillNulls does for a one-row INSERT what non-strict MySQL does: a NULL sent to a NOT NULL column becomes the
+// column's implicit default, and a string longer than its varchar column is cut to fit.
 func fillNulls(args []driver.NamedValue, cols []nullCol) []driver.NamedValue {
 	var out []driver.NamedValue
 	for _, nc := range cols {
@@ -445,6 +462,16 @@ func fillNulls(args []driver.NamedValue, cols []nullCol) []driver.NamedValue {
 			continue
 		}
 		v := args[nc.param-1].Value
+		if str, ok := v.(string); ok && nc.maxLen > 0 && utf8.RuneCountInString(str) > nc.maxLen {
+			if out == nil {
+				out = append([]driver.NamedValue(nil), args...)
+			}
+			out[nc.param-1].Value = string([]rune(str)[:nc.maxLen])
+			continue
+		}
+		if !nc.hasDef {
+			continue
+		}
 		isNil := v == nil
 		if !isNil {
 			if rv := reflect.ValueOf(v); rv.Kind() == reflect.Ptr && rv.IsNil() {
