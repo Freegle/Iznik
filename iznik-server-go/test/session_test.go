@@ -545,7 +545,7 @@ func TestGetSessionLatLngPrefersMyLocation(t *testing.T) {
 	db.Raw("SELECT id FROM locations WHERE name = ? LIMIT 1", prefix+"_home").Scan(&homeLocID)
 	db.Raw("SELECT id FROM locations WHERE name = ? LIMIT 1", prefix+"_remote").Scan(&remoteLocID)
 	if homeLocID == 0 || remoteLocID == 0 {
-		t.Skip("Could not create test locations")
+		t.Fatal("could not create the test locations")
 	}
 	defer db.Exec("DELETE FROM locations WHERE id IN (?, ?)", homeLocID, remoteLocID)
 
@@ -1059,7 +1059,7 @@ func TestPatchSessionSettingsPostcodeChange(t *testing.T) {
 	var locID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? LIMIT 1", prefix+"_loc").Scan(&locID)
 	if locID == 0 {
-		t.Skip("Could not create test location")
+		t.Fatal("could not create the test location")
 	}
 	defer db.Exec("DELETE FROM locations WHERE id = ?", locID)
 

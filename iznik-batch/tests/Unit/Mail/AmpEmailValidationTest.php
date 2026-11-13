@@ -247,9 +247,7 @@ HTML;
         $instance = $this->createAmpEmailInstance();
 
         $templatePath = resource_path('views/emails/amp/chat/notification.blade.php');
-        if (!file_exists($templatePath)) {
-            $this->markTestSkipped('AMP template not found at: ' . $templatePath);
-        }
+        $this->assertFileExists($templatePath, 'The AMP chat notification template has moved. This test must follow it.');
 
         $template = file_get_contents($templatePath);
 

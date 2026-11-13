@@ -54,9 +54,7 @@ class MatchedPostsIntegrationTest extends TestCase
 
     public function test_matched_posts_email_is_delivered_and_well_formed(): void
     {
-        if (! $this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $group = $this->createTestGroup();
 

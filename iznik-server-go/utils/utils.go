@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"io"
 	"math"
 	"os"
 	"regexp"
@@ -295,8 +296,14 @@ func RandomHex(n int) string {
 // unsigned) where passing a hex string caused MySQL to silently coerce
 // to 0 or MAX uint64.
 func RandomUint64() uint64 {
+	return randomUint64From(rand.Reader)
+}
+
+// randomUint64From is RandomUint64 with the source of bytes passed in, so that a test can supply the
+// bytes that mask to zero.
+func randomUint64From(source io.Reader) uint64 {
 	var b [8]byte
-	rand.Read(b[:])
+	io.ReadFull(source, b[:])
 	// Mask to 53 bits: values in [0, 2^53-1] survive a JSON round-trip
 	// through a JavaScript Number without rounding.
 	v := binary.BigEndian.Uint64(b[:]) & ((uint64(1) << 53) - 1)

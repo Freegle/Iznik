@@ -42,9 +42,7 @@ class VerifyEmailIntegrationTest extends TestCase
      */
     public function test_email_verify_end_to_end(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         // Create a test user.
         $user = $this->createTestUser();
@@ -150,9 +148,7 @@ class VerifyEmailIntegrationTest extends TestCase
      */
     public function test_email_verify_resends_for_existing_unvalidated_email(): void
     {
-        if (!$this->isMailpitAvailable()) {
-            $this->markTestSkipped('Mailpit is not available.');
-        }
+        $this->assertTrue($this->isMailpitAvailable(), 'Mailpit is not reachable. It is part of the test stack, and this test cannot run without it.');
 
         $user = $this->createTestUser();
         $email = $this->uniqueEmail('verify_existing');
