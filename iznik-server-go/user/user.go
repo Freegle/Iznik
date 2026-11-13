@@ -3443,7 +3443,7 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	// account and deletes the other with whatever it held. Two accounts of one TN member are left
 	// apart: the TN address goes to the one holding the id TN names (moveTNAlias), and the other
 	// keeps its posts and chats. Every merge path comes through here, the email-verify one included.
-	if isTrashNothingAccount(db, id1) || isTrashNothingAccount(db, id2) {
+	if IsTrashNothingAccount(db, id1) || IsTrashNothingAccount(db, id2) {
 		return fiber.NewError(fiber.StatusBadRequest, msgMergeTrashNothing)
 	}
 

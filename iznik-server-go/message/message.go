@@ -5314,7 +5314,7 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 	// before any copy is touched.
 	if req.Textbody != nil {
 		for _, msgID := range msgIDs {
-			actingid := actAsOwnerCandidate(db, myid, partnerCandidates, msgID)
+			actingid := actAsOwnerCandidate(db, myid, partnerCandidates, partnerTNId, msgID)
 			var fromuser uint64
 			db.Table("messages").Select("fromuser").Where("id = ?", msgID).Scan(&fromuser)
 			if fromuser != actingid && !isModForMessage(db, actingid, msgID) {
