@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\Console\Attribute\AsCommand;
 
 /**
@@ -51,6 +52,9 @@ class RestoreUserCommand extends Command
         'logs_sql'                 => ['userid'],
         'newsfeed'                 => ['userid'],
     ];
+
+    /** @var array<string, bool> Whether each restored table has an id column, looked up once. */
+    private array $hasIdColumn = [];
 
     /**
      * Columns to strip before inserting (auto-generated server-side).
@@ -284,6 +288,14 @@ class RestoreUserCommand extends Command
                 }
             }
 
+            // A ban records the moderator who made it, and that account may have gone since the dump.
+            // The column is a foreign key that is set to NULL when the moderator is deleted, so a ban
+            // whose moderator is missing is restored with none, not refused and lost.
+            if ($table === 'users_banned' && isset($row['byuser'])
+                && ! DB::table('users')->where('id', $row['byuser'])->exists()) {
+                $row['byuser'] = null;
+            }
+
             // Remap chatid for chat_messages and chat_roster.
             if (in_array($table, ['chat_messages', 'chat_roster']) && isset($row['chatid'])) {
                 $sourceChatId = $row['chatid'];
@@ -341,7 +353,12 @@ class RestoreUserCommand extends Command
 
         // On duplicate, only remap user-ID columns (and keep id stable via LAST_INSERT_ID).
         // This matches V1: "$key = $luid, id = LAST_INSERT_ID(id)".
-        $updateClauses = ['`id` = LAST_INSERT_ID(`id`)'];
+        //
+        // users_banned has no id column: its key is (userid, groupid). Naming id there makes
+        // MySQL refuse the whole statement ("Unknown column 'id'"), so every ban in a dump was
+        // skipped with a warning and never restored.
+        $this->hasIdColumn[$table] ??= Schema::hasColumn($table, 'id');
+        $updateClauses = $this->hasIdColumn[$table] ? ['`id` = LAST_INSERT_ID(`id`)'] : [];
         foreach ($userIdCols as $col) {
             $updateClauses[] = "`$col` = VALUES(`$col`)";
         }
