@@ -66,7 +66,8 @@ If nobody is offering what you need, post a WANTED and let it find you.
    details screen. If you add a photo, **Next** stays greyed out until the photo has finished
    uploading. On the details screen, with no photo of your own, the description needs at least 3
    characters, and the screen says so before you move on.
-3. Enter your postcode. As with an OFFER, Freegle works out your local community for you.
+3. Enter your postcode. As with an OFFER, Freegle works out your local community for you. If
+   the community is closed, a note says so and you cannot post until you change the postcode.
 4. Confirm your email if you are not logged in, then click **Freegle it!**
 
 A WANTED has no delivery or deadline step. People who have the item can reply to you.

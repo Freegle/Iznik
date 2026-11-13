@@ -61,7 +61,7 @@ export const useMessageStore = defineStore('message', {
       // Messages we're in the process of fetching
       this.fetching = {}
       this.fetchingCount = 0
-      this.fetchingMyGroups = null
+      this.fetchingMyGroups = {}
       // Debounced batching state
       this.pendingFetches = []
       this.batchTimer = null
@@ -111,6 +111,13 @@ export const useMessageStore = defineStore('message', {
         } catch (e) {
           this.handleFetchError(id, e)
         }
+
+        // The request we waited for may have been sent before the change that made the caller force
+        // a refetch, so ask again now that it has settled.
+        if (force) {
+          return this.fetch(id, true)
+        }
+
         return this.list[id]
       }
 
@@ -132,17 +139,20 @@ export const useMessageStore = defineStore('message', {
       console.log('Failed to fetch message', e)
       if (e instanceof APIError && e.response.status === 404) {
         console.log('Message deleted, removing from store')
-        delete this.list[id]
-
-        const authStore = useAuthStore()
-        const userUid = authStore.user?.id
-        if (userUid && this.byUserList[userUid]) {
-          this.byUserList[userUid] = this.byUserList[userUid].filter(
-            (message) => message.id !== id
-          )
-        }
+        this.removeFromCache(id)
       } else {
         throw e
+      }
+    },
+    removeFromCache(id) {
+      delete this.list[id]
+
+      const authStore = useAuthStore()
+      const userUid = authStore.user?.id
+      if (userUid && this.byUserList[userUid]) {
+        this.byUserList[userUid] = this.byUserList[userUid].filter(
+          (message) => message.id !== id
+        )
       }
     },
     async processMessageBatch() {
@@ -159,6 +169,19 @@ export const useMessageStore = defineStore('message', {
       const idsToFetch = []
       const forcedIds = new Set()
       const now = Math.round(Date.now() / 1000)
+
+      // A forced fetch must not be dropped because an earlier request for the same id is still out:
+      // that request may predate the change the caller is refetching for. Wait for it, then fetch.
+      for (const { id, force } of pending) {
+        if (force && this.fetching[id]) {
+          try {
+            await this.fetching[id]
+          } catch (e) {
+            // The earlier request's own callers handle its failure.
+          }
+          await nextTick()
+        }
+      }
 
       for (const { id, force } of pending) {
         if (
@@ -239,6 +262,13 @@ export const useMessageStore = defineStore('message', {
             })
 
             if (msgs && msgs.forEach) {
+              // Ids we asked for that the reply leaves out no longer exist for us.
+              const returned = new Set(msgs.map((msg) => msg.id))
+              chunk.forEach((id) => {
+                if (!returned.has(id)) {
+                  this.removeFromCache(id)
+                }
+              })
               msgs.forEach((msg) => {
                 this.list[msg.id] = msg
                 if (this.list[msg.id]) {
@@ -269,6 +299,10 @@ export const useMessageStore = defineStore('message', {
               chunk.forEach((id) => {
                 delete this.fetchFailed[id]
               })
+              // A single id that answers 404 has been deleted.
+              if (chunk.length === 1) {
+                this.removeFromCache(chunk[0])
+              }
             } else {
               chunk.forEach((id) => {
                 this.fetchFailed[id] = true
@@ -359,14 +393,23 @@ export const useMessageStore = defineStore('message', {
     },
     async fetchMyGroups(gid) {
       let ret
+      const key = gid || 0
 
-      if (this.fetchingMyGroups) {
-        ret = await this.fetchingMyGroups
+      if (this.fetchingMyGroups[key]) {
+        ret = await this.fetchingMyGroups[key]
         await nextTick()
       } else {
-        this.fetchingMyGroups = api(this.config).message.mygroups(gid)
-        ret = await this.fetchingMyGroups
-        this.fetchingMyGroups = null
+        const request = api(this.config).message.mygroups(gid)
+        this.fetchingMyGroups[key] = request
+
+        try {
+          ret = await request
+        } finally {
+          // Clear on failure too, or every later call re-awaits the rejected request.
+          if (this.fetchingMyGroups[key] === request) {
+            delete this.fetchingMyGroups[key]
+          }
+        }
       }
       // Keep the combined ("all my communities", gid falsy) feed so the distance slider can
       // scale to it. Skip single-group fetches, which aren't the slider's universe.

@@ -155,6 +155,50 @@ describe('ComposeGroup', () => {
     consoleSpy.mockRestore()
   })
 
+  it('keeps the chosen postcode when the refetch lists a different postcode first', async () => {
+    mockComposeStore.postcode = {
+      id: 10,
+      name: 'SW1A 1',
+      groupsnear: [{ id: 1, namedisplay: 'London Central' }],
+    }
+    mockApi.location.typeahead.mockResolvedValueOnce([
+      { id: 11, name: 'SW1A 1AB', groupsnear: [{ id: 9 }] },
+      { id: 10, name: 'SW1A 1AA', groupsnear: [{ id: 1 }] },
+    ])
+
+    createWrapper()
+    await flushPromises()
+
+    expect(mockComposeStore.setPostcode).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 11 })
+    )
+    expect(mockComposeStore.setPostcode).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 10 })
+    )
+  })
+
+  it('ignores the refetch when the member has chosen another postcode meanwhile', async () => {
+    mockComposeStore.postcode = {
+      id: 10,
+      name: 'SW1A 1AA',
+      groupsnear: [{ id: 1 }],
+    }
+    mockApi.location.typeahead.mockImplementationOnce(async () => {
+      // The member picks a different postcode while the request is out.
+      mockComposeStore.postcode = {
+        id: 20,
+        name: 'EH4 1HY',
+        groupsnear: [{ id: 3 }],
+      }
+      return [{ id: 10, name: 'SW1A 1AA', groupsnear: [{ id: 1 }] }]
+    })
+
+    createWrapper()
+    await flushPromises()
+
+    expect(mockComposeStore.setPostcode).not.toHaveBeenCalled()
+  })
+
   it('renders the finding state and skips the refetch when no postcode is set', async () => {
     mockComposeStore.postcode = null
     const wrapper = createWrapper()

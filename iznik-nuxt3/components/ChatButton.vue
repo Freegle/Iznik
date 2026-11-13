@@ -206,8 +206,17 @@ const openChat = async (
           messageStore.fetch(firstmsgid, true)
         }
 
-        // Refresh the message so that our reply will show.
-        await chatStore.fetchMessages(chatid, true)
+        // Refresh the message so that our reply will show. The reply has already been delivered, so a
+        // failed refresh is logged rather than reported as a failed send, which would invite a duplicate.
+        try {
+          await chatStore.fetchMessages(chatid, true)
+        } catch (e) {
+          action('chat_reply_refresh_failed', {
+            error: e.message,
+            chat_id: chatid,
+            message_id: firstmsgid,
+          })
+        }
 
         emit('sent')
       }

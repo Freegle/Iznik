@@ -605,6 +605,29 @@ describe('compose store', () => {
       store.prune()
       expect(store.messages).toHaveLength(1)
     })
+
+    it('removes the expired draft and keeps the fresh one when stored ids do not match positions', () => {
+      const store = useComposeStore()
+      const oldTime = Date.now() - 8 * 24 * 60 * 60 * 1000
+      store.messages = [
+        { id: 3, type: 'Offer', savedAt: oldTime },
+        { id: 0, type: 'Wanted', savedAt: Date.now() },
+      ]
+      store.prune()
+      expect(store.messages.map((m) => m.type)).toEqual(['Wanted'])
+    })
+
+    it('removes every expired draft, not every other one', () => {
+      const store = useComposeStore()
+      const oldTime = Date.now() - 8 * 24 * 60 * 60 * 1000
+      store.messages = [
+        { id: 0, savedAt: oldTime },
+        { id: 1, savedAt: oldTime },
+        { id: 2, savedAt: oldTime },
+      ]
+      store.prune()
+      expect(store.messages).toHaveLength(0)
+    })
   })
 
   describe('markSubmitted', () => {
@@ -965,6 +988,39 @@ describe('compose store', () => {
       logSpy.mockRestore()
     })
 
+    it('resume clears only the draft it posted, not another unsubmitted draft of the same type', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          attachments: [],
+        },
+        {
+          id: 1,
+          type: 'Offer',
+          item: 'Chair',
+          submitted: false,
+          attachments: [],
+        },
+      ]
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+      store.setPendingSubmit(store.messages[0], 'a@b.com')
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.resumePendingSubmit()
+
+      const remaining = store.messages.filter(Boolean)
+      expect(remaining).toHaveLength(1)
+      expect(remaining[0].item).toBe('Chair')
+      logSpy.mockRestore()
+    })
+
     it('submit() is a no-op while another submit is in flight (no duplicate post)', async () => {
       const store = useComposeStore()
       store.init({ public: {} })
@@ -1039,9 +1095,28 @@ describe('compose store', () => {
       expect(store.pendingSubmit.email).toBe('a@b.com')
       expect(store.pendingSubmit.message.item).toBe('Sofa')
       expect(store.pendingSubmit.options).toEqual({
-        deadline: new Date('2026-07-01').toISOString(),
+        // messages.deadline is a DATE column, so the date goes as YYYY-MM-DD.
+        deadline: '2026-07-01',
         deliverypossible: true,
       })
+    })
+
+    it('resume sends a deadline stored as a full datetime as a plain date', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 42, groupid: 10 })
+      store.setPendingSubmit({ type: 'Offer', item: 'Sofa' }, 'a@b.com', {
+        deadline: '2026-12-01T00:00:00.000Z',
+      })
+
+      await store.resumePendingSubmit()
+
+      expect(mockMessageSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ deadline: '2026-12-01' }),
+        expect.any(Function)
+      )
     })
 
     it('deferSubmit does nothing when there is no matching post', () => {

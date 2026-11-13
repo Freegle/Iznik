@@ -2643,3 +2643,22 @@ describe('flow telemetry', () => {
     )
   })
 })
+
+describe('a reply that failed validation is not left committed for the next page load', () => {
+  it('keeps nothing committed when the email is invalid', async () => {
+    mockMeValue = null
+    const { result } = mountComposable()
+    result.startTyping()
+    result.replyText.value = 'Hello'
+    result.email.value = 'bad-email'
+    result.emailValid.value = false
+    result.setRefs({ form: makeFormRef(true) })
+
+    await result.submit()
+    await flushPromises()
+
+    expect(result.state.value).toBe(ReplyState.COMPOSING)
+    expect(mockReplyMsgId).toBeNull()
+    expect(mockReplyMessage).toBeNull()
+  })
+})
