@@ -1219,7 +1219,7 @@ class TnUserProvisionerTest extends TestCase
 
                 $user = $this->provisioner()->resolveOrCreate($tnId);
             } finally {
-                DB::setDefaultConnection('mysql');
+                DB::setDefaultConnection($this->connectionBeforeLag);
                 DB::connection($lag)->table('users')->where('id', $id)->delete();
             }
 
@@ -1248,7 +1248,7 @@ class TnUserProvisionerTest extends TestCase
                 $provisioner = $this->provisioner();
                 $user = $provisioner->resolveOrCreate($tnId);
             } finally {
-                DB::setDefaultConnection('mysql');
+                DB::setDefaultConnection($this->connectionBeforeLag);
                 if ($winnerId !== null) {
                     DB::connection($lag)->table('users')->where('id', $winnerId)->delete();
                 }

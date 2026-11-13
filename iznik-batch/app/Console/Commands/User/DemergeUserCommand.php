@@ -86,6 +86,18 @@ class DemergeUserCommand extends Command
             'collation' => 'utf8mb4_unicode_ci',
         ];
 
+        // A backup is of the live database, so it is on the same engine. On PostgreSQL the backup connection
+        // is the live one's settings with the backup's address in place of the live address.
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            $backupConfig = array_merge(config('database.connections.pgsql'), [
+                'host' => $backupHost,
+                'port' => (int) $backupPort,
+                'database' => $backupDb,
+                'username' => $backupUser,
+                'password' => $backupPassword,
+            ]);
+        }
+
         config(['database.connections.backup_demerge' => $backupConfig]);
 
         try {

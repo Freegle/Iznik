@@ -294,7 +294,6 @@ class ExhortUsersCommandTest extends TestCase
      */
     public function test_active_user_scan_ignores_the_deleted_index(): void
     {
-        $this->requiresMySql('the index hint is a MySQL optimiser hint and PostgreSQL has no equivalent');
         $seen = [];
         DB::listen(function ($query) use (&$seen) {
             if (stripos($query->sql, 'lastaccess') !== false && stripos($query->sql, 'users') !== false) {
@@ -311,6 +310,15 @@ class ExhortUsersCommandTest extends TestCase
         );
 
         $this->assertNotEmpty($seen, 'the active-user scan did not run');
+
+        if ($this->onPostgres()) {
+            // PostgreSQL has no index hints and refuses the MySQL text, so the scan must reach it without one.
+            // Its planner already reads the table in order for a predicate that matches nearly every row.
+            $this->assertDoesNotMatchRegularExpression('/ignore\s+index/i', $seen[0]);
+
+            return;
+        }
+
         $this->assertMatchesRegularExpression(
             '/ignore\s+index\s*\(\s*`?deleted`?\s*\)/i',
             $seen[0],
@@ -328,7 +336,10 @@ class ExhortUsersCommandTest extends TestCase
      */
     public function test_users_still_has_the_deleted_index_the_scan_hint_names(): void
     {
-        $this->requiresMySql('SHOW INDEX is MySQL syntax, and the index hint it protects is MySQL only');
+        if (! $this->mySqlOnly('the index name matters only to the MySQL index hint; PostgreSQL is sent no hint')) {
+            return;
+        }
+
         $names = array_map(
             static fn ($row) => $row->Key_name,
             DB::select('SHOW INDEX FROM users')

@@ -40,11 +40,6 @@ class DialectBuildingBlocksTest extends TestCase
         $this->mysql = new MySqlGrammar(DB::connection());
     }
 
-    private function onPostgres(): bool
-    {
-        return DB::connection()->getDriverName() === 'pgsql';
-    }
-
     public function test_date_sub_and_add_render_on_both_engines(): void
     {
         $sub = new DateSub(new Now(), 3, 'DAY');
@@ -62,14 +57,13 @@ class DialectBuildingBlocksTest extends TestCase
         new DateSub(new Now(), 1, 'FORTNIGHT');
     }
 
-    public function test_date_sub_moves_a_time_back_on_postgresql(): void
+    public function test_date_sub_moves_a_time_back(): void
     {
-        if (! $this->onPostgres()) {
-            $this->markTestSkipped('The suite is not running on PostgreSQL.');
-        }
+        $live = DB::connection()->getQueryGrammar();
 
+        // Three days back, with the number bound, is earlier than 59 hours back.
         $row = DB::selectOne(
-            'SELECT '.(new DateSub(new Now(), DB::raw('?'), 'DAY'))->getValue($this->pg).' < NOW() - INTERVAL \'59 hours\' AS older',
+            'SELECT '.(new DateSub(new Now(), DB::raw('?'), 'DAY'))->getValue($live).' < '.(new DateSub(new Now(), 59, 'HOUR'))->getValue($live).' AS older',
             [3]
         );
 

@@ -98,6 +98,19 @@ test, both invisible in CI.
 - **Seeding rows with identical timestamps gives non-deterministic order.** Newsfeed replies are
   ordered by `timestamp`, not `added`, so a test can appear to prove an ordering it does not.
 
+## No test is skipped
+
+A skipped test is a test nobody runs, and a report with standing skips hides the new one. The Laravel and Go
+API suites have none, on either database engine. When a test cannot run as written:
+
+- **Fix or improve it** if the intention holds: make it build what it needs instead of relying on seeded rows, or
+  write it for both engines (`Tests\Support\DescribesColumns`, `Tests\Support\LagsTheReadNode`).
+- **Delete it** if it asserts nothing. A placeholder that calls `t.Skip` to "document" untestable code is a comment.
+- **Fail it** when the environment is wrong. Mailpit, the test database and `AMP_SECRET` are part of the test
+  stack, so their absence is a failure (`assertTrue`, `t.Fatal`), not a skip.
+- **Pass it** only when its subject exists on one database engine alone: `if (! $this->mySqlOnly('why')) { return; }`
+  in Laravel, a plain `return` after checking `database.Engine()` in Go. The other engine's run executes it.
+
 ## A count that is not the count you think
 
 - **"Tests failed: 4868 pass, 0 fail"** means errors, not failures. Something died before it

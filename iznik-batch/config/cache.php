@@ -81,8 +81,10 @@ return [
             'driver' => 'database',
             'connection' => env('DB_CACHE_CONNECTION'),
             'table' => env('DB_CACHE_TABLE', 'cache'),
-            // Locks read their owner back on release, so they must read the node they wrote to.
-            'lock_connection' => env('DB_CACHE_LOCK_CONNECTION', 'mysql_write'),
+            // Locks read their owner back on release, so they must read the node they wrote to
+            // (CacheLockWriteNodeTest). mysql_write is the MySQL connection with no read host, and pgsql_write
+            // is its PostgreSQL twin. Each is a connection of its own, outside any transaction the default one is in.
+            'lock_connection' => env('DB_CACHE_LOCK_CONNECTION', env('DB_CONNECTION', 'mysql') === 'pgsql' ? 'pgsql_write' : 'mysql_write'),
             'lock_table' => env('DB_CACHE_LOCK_TABLE'),
         ],
 

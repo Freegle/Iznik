@@ -1745,7 +1745,7 @@ class TNSyncCommandTest extends TestCase
     public function test_a_stored_date_more_than_a_day_behind_reads_both_feeds_to_the_end(): void
     {
         file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
-        $ratingId = 'tn_r_daylimit_' . uniqid();
+        $ratingId = random_int(1000000, 9000000000000);
         $this->dayLimitFake($this->createTestUser()->id, $ratingId);
 
         $this->artisan('tn:sync', ['--to' => '2026-03-23T09:00:00Z'])->assertExitCode(0);
@@ -1757,7 +1757,7 @@ class TNSyncCommandTest extends TestCase
     public function test_a_day_of_ratings_that_cannot_be_read_stops_them_and_holds_the_stored_date(): void
     {
         file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
-        $ratingId = 'tn_r_daylimit_' . uniqid();
+        $ratingId = random_int(1000000, 9000000000000);
         $this->dayLimitFake($this->createTestUser()->id, $ratingId, ratingsDownOn: '2026-03-21');
 
         $this->artisan('tn:sync', ['--to' => '2026-03-23T09:00:00Z'])->assertExitCode(0);

@@ -1401,8 +1401,8 @@ class UnifiedDigestServiceTest extends TestCase
     {
         // PostgreSQL keeps the cursor's microseconds, so the window is everything after the cursor.
         // Starting it a whole second later, as MySQL must, would lose a post that arrived in between.
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('The suite is not running on PostgreSQL.');
+        if (! $this->postgresOnly('MySQL keeps whole seconds, so two arrivals in one second cannot be told apart there')) {
+            return;
         }
 
         [$recipient, $poster, $group] = $this->dailyDigestMembers();

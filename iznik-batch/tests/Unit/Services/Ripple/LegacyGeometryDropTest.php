@@ -28,13 +28,14 @@ class LegacyGeometryDropTest extends TestCase
 {
     private const CLONE = 'rr_droptest';
 
+    private const WHY_MYSQL = 'the drop is an in-place MySQL ALTER sequence (virtual columns, SPATIAL indexes) for a MySQL production table; the PostgreSQL schema never had the legacy columns';
+
     protected function setUp(): void
     {
         parent::setUp();
-        if (DB::connection()->getDriverName() === 'pgsql') {
-            $this->markTestSkipped('MySQL only: the drop is an in-place MySQL ALTER sequence (virtual columns, SPATIAL indexes) run against a MySQL production table.');
+        if (! $this->onPostgres()) {
+            $this->makeClone();
         }
-        $this->makeClone();
     }
 
     protected function tearDown(): void
@@ -162,6 +163,10 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_the_drop_sequence_runs_and_removes_every_legacy_column(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         $issued = (new LegacyGeometryDrop())->run(self::CLONE);
 
         $this->assertNotEmpty($issued, 'the sequence issued no statements at all');
@@ -182,6 +187,10 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_it_takes_exactly_three_operations(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         $issued = (new LegacyGeometryDrop())->run(self::CLONE);
 
         $this->assertCount(3, $issued,
@@ -195,6 +204,10 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_the_columns_and_foreign_keys_go_in_a_single_inplace_alter(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         $issued = (new LegacyGeometryDrop())->run(self::CLONE);
 
         $combined = array_values(array_filter($issued, fn ($s) => str_contains($s, 'DROP COLUMN `polygon`')));
@@ -227,6 +240,10 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_single_column_indexes_are_left_implicit(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         $issued = (new LegacyGeometryDrop())->run(self::CLONE);
         $all = implode(' | ', $issued);
 
@@ -250,6 +267,10 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_the_generated_columns_and_their_indexes_are_regenerated(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         (new LegacyGeometryDrop())->run(self::CLONE);
 
         $cols = $this->columns();
@@ -272,6 +293,10 @@ class LegacyGeometryDropTest extends TestCase
     /** has_overflow must now derive from the cells, not the dropped column. */
     public function test_has_overflow_is_regenerated_over_the_cells(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         (new LegacyGeometryDrop())->run(self::CLONE);
 
         $row = DB::selectOne(
@@ -288,6 +313,10 @@ class LegacyGeometryDropTest extends TestCase
     /** Re-running must be a no-op, not an error: an RSU pass can be repeated. */
     public function test_the_sequence_is_idempotent(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         (new LegacyGeometryDrop())->run(self::CLONE);
         $second = (new LegacyGeometryDrop())->run(self::CLONE);
 
@@ -308,6 +337,10 @@ class LegacyGeometryDropTest extends TestCase
      */
     public function test_the_outer_bound_rtree_survives(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         (new LegacyGeometryDrop())->run(self::CLONE);
 
         $this->assertContains('outer_bound', $this->columns(), 'outer_bound must survive');
@@ -318,6 +351,10 @@ class LegacyGeometryDropTest extends TestCase
     /** Rows survive, with their cell columns intact. */
     public function test_rows_and_their_cells_survive(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         DB::statement(
             'INSERT INTO `'.self::CLONE."` (msgid, lat, lng, polygon, outer_bound, polygon_cells,
                 max_polygon_cells, arrival, mode, tick, total_ticks, total_freeglers, max_drive_min,

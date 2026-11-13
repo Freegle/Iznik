@@ -4,15 +4,12 @@ namespace Tests\Unit\Database;
 
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\DescribesColumns;
 use Tests\TestCase;
 
 class MembershipImplicitColumnTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-        $this->requiresMySql('reads the column definition from MySQL information_schema');
-    }
+    use DescribesColumns;
 
     private function migration(): object
     {
@@ -21,14 +18,10 @@ class MembershipImplicitColumnTest extends TestCase
 
     public function test_memberships_implicit_is_a_not_null_flag_defaulting_to_zero(): void
     {
-        $col = DB::selectOne("SELECT COLUMN_TYPE AS t, IS_NULLABLE AS n, COLUMN_DEFAULT AS d
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'memberships' AND COLUMN_NAME = 'implicit'");
-
-        $this->assertNotNull($col);
-        $this->assertSame('tinyint(1)', $col->t);
-        $this->assertSame('NO', $col->n);
-        $this->assertSame('0', (string) $col->d);
+        $this->assertSame(
+            ['flag' => true, 'nullable' => false, 'default' => '0', 'values' => null],
+            $this->describeColumn('memberships', 'implicit')
+        );
     }
 
     public function test_a_membership_inserted_without_implicit_gets_the_default(): void

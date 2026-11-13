@@ -53,7 +53,7 @@ class PafLookupReadNodeLagTest extends TestCase
                 $result = (new PafService())->applyLines([$line]);
                 $address = $db->table('paf_addresses')->useWritePdo()->where('udprn', $udprn)->first();
             } finally {
-                DB::setDefaultConnection('mysql');
+                DB::setDefaultConnection($this->connectionBeforeLag);
                 $db->table('paf_addresses')->where('udprn', $udprn)->delete();
                 $db->table('paf_departmentname')->where('departmentname', $department)->delete();
                 $db->table('paf_organisationname')->where('organisationname', "Lag Council {$suffix}")->delete();

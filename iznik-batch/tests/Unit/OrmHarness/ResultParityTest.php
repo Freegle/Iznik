@@ -76,8 +76,6 @@ class ResultParityTest extends TestCase
 
     public function test_null_is_not_conflated_with_empty_string_or_zero(): void
     {
-        $this->requiresMySql('it builds a double-quoted string literal, which MySQL reads as a string and PostgreSQL as a column');
-
         // onholidaytill is a nullable date column on users (see
         // 2025_12_10_094529_create_users_table.php); a user who is not on
         // holiday has a real NULL there, not an empty string or an
@@ -93,7 +91,7 @@ class ResultParityTest extends TestCase
             // Deliberately wrong: coalesces NULL to a literal date, which
             // must be detected as a real divergence from the true NULL.
             fn () => DB::table('users')
-                ->selectRaw('id, COALESCE(onholidaytill, "1970-01-01") as onholidaytill')
+                ->selectRaw("id, COALESCE(onholidaytill, '1970-01-01') as onholidaytill")
                 ->where('id', $user->id)
         );
 

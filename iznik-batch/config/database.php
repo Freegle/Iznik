@@ -154,6 +154,25 @@ return [
             'lock_timeout' => env('PGSQL_LOCK_TIMEOUT', '50s'),
         ],
 
+        // The cache locks' connection on PostgreSQL (config/cache.php), as mysql_write is on MySQL. It has
+        // the same settings as pgsql and is a connection of its own, so a lock taken while pgsql is inside a
+        // transaction is committed at once and other processes see it, and a refused lock insert does not
+        // end that transaction.
+        'pgsql_write' => [
+            'driver' => 'pgsql',
+            'host' => env('PGSQL_HOST', 'postgres'),
+            'port' => env('PGSQL_PORT', '5432'),
+            'database' => env('PGSQL_DATABASE', 'iznik'),
+            'username' => env('PGSQL_USERNAME', 'root'),
+            'password' => env('PGSQL_PASSWORD', 'iznik'),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => env('PGSQL_SEARCH_PATH', 'public'),
+            'sslmode' => 'prefer',
+            'lock_timeout' => env('PGSQL_LOCK_TIMEOUT', '50s'),
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),

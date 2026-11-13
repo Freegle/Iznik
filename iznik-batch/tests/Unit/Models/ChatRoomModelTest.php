@@ -390,8 +390,8 @@ class ChatRoomModelTest extends TestCase
      */
     public function test_get_or_create_user2mod_locks_the_pair_on_postgresql(): void
     {
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('PostgreSQL only: on MySQL the locking read itself stops a second creator.');
+        if (! $this->postgresOnly('on MySQL the locking read itself stops a second creator, so there is no advisory lock to find')) {
+            return;
         }
 
         $user = $this->createTestUser();

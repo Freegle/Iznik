@@ -136,8 +136,10 @@ func openEngine(d Dialect) (*Engine, error) {
 	return e, err
 }
 
-// OpenEngines returns MySQL and PostgreSQL for a Layer 2 test, or skips it when an engine is not
-// there. PG_ENGINE=1 turns the PostgreSQL skip into a failure.
+// OpenEngines returns MySQL and PostgreSQL for a Layer 2 test. It never skips. When one engine is not
+// there, or PostgreSQL is switched off with PG_ENGINE=0, the test runs on the other alone and gets every
+// check one engine can have (the result is not empty, and is what Expect says). CI sets PG_ENGINE=1, which
+// makes a missing engine a failure, so there both engines are always compared.
 func OpenEngines(tb testing.TB) []Engine {
 	tb.Helper()
 
@@ -159,23 +161,36 @@ func OpenEngines(tb testing.TB) []Engine {
 		tb.Fatalf("parity: PARITY_ENGINES=%q: use postgres, mysql or leave it unset", only)
 	}
 
-	my, err := openEngine(MySQL)
-	if err != nil {
-		tb.Skipf("parity: MySQL is not available (%v)", err)
-	}
+	my, myErr := openEngine(MySQL)
 
 	mode := os.Getenv("PG_ENGINE")
 	if mode == "0" {
-		tb.Skip("parity: PG_ENGINE=0, PostgreSQL is switched off")
-	}
-	pg, err := openEngine(Postgres)
-	if err != nil {
-		if mode == "1" {
-			tb.Fatalf("parity: PG_ENGINE=1 but PostgreSQL is not reachable: %v", err)
+		if myErr != nil {
+			tb.Fatalf("parity: PG_ENGINE=0 and MySQL is not reachable, so there is no engine to run on: %v", myErr)
 		}
-		tb.Skipf("parity: PostgreSQL is not available (%v). Set PG_ENGINE=1 to make this a failure", err)
+		return []Engine{*my}
 	}
-	return []Engine{*my, *pg}
+
+	pg, pgErr := openEngine(Postgres)
+	if pgErr != nil && mode == "1" {
+		tb.Fatalf("parity: PG_ENGINE=1 but PostgreSQL is not reachable: %v", pgErr)
+	}
+	if myErr != nil && mode == "1" {
+		// PG_ENGINE=1 says both engines are to be compared, so one alone is not enough.
+		tb.Fatalf("parity: PG_ENGINE=1 but MySQL is not reachable: %v", myErr)
+	}
+	switch {
+	case myErr == nil && pgErr == nil:
+		return []Engine{*my, *pg}
+	case myErr == nil:
+		tb.Logf("parity: PostgreSQL is not available (%v), so this runs on MySQL alone. Set PG_ENGINE=1 to make that a failure", pgErr)
+		return []Engine{*my}
+	case pgErr == nil:
+		tb.Logf("parity: MySQL is not available (%v), so this runs on PostgreSQL alone", myErr)
+		return []Engine{*pg}
+	}
+	tb.Fatalf("parity: neither engine is reachable. MySQL: %v. PostgreSQL: %v", myErr, pgErr)
+	return nil
 }
 
 // errorKey carries a recorder in a statement's context.

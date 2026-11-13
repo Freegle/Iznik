@@ -290,8 +290,8 @@ class UserApproxLocServiceTest extends TestCase
      */
     public function test_rerunning_does_not_rewrite_an_unchanged_row_on_postgresql(): void
     {
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('PostgreSQL only: MySQL already writes nothing for an update that changes nothing.');
+        if (! $this->postgresOnly('MySQL already writes nothing for an update that changes nothing, and has no row version to read')) {
+            return;
         }
 
         $same = $this->activeMember();

@@ -48,6 +48,8 @@ class JsonPredicateParityTest extends TestCase
         8 => '{"closed":"0"}',      // string, not number
     ];
 
+    private const WHY_MYSQL = 'pins the MySQL JSON comparison truth table and what the MySQL grammar renders';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -60,7 +62,10 @@ class JsonPredicateParityTest extends TestCase
         // The truth table these tests pin is MySQL's: how its JSON functions compare true, false, null and
         // numbers, and what Laravel's MySQL grammar renders for each builder call. PostgreSQL renders and
         // compares them through its own grammar and functions, which have their own tests.
-        $this->requiresMySql('pins the MySQL JSON comparison truth table and the MySQL grammar\'s rendering');
+        // JsonPredicateBehaviourTest runs the predicates the code uses on both engines with the same expected rows.
+        if ($this->onPostgres()) {
+            return;
+        }
 
         DB::statement('DROP TEMPORARY TABLE IF EXISTS json_parity_fixture');
         DB::statement('CREATE TEMPORARY TABLE json_parity_fixture (id INT PRIMARY KEY, settings JSON NULL)');
@@ -91,6 +96,10 @@ class JsonPredicateParityTest extends TestCase
 
     public function test_not_closed_conversion_selects_the_same_rows(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         $raw = fn ($q) => $q->whereNull('settings')
             ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') IS NULL")
             ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') = false")
@@ -116,6 +125,10 @@ class JsonPredicateParityTest extends TestCase
      */
     public function test_integer_comparison_converts_via_json_contains(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         foreach ([0, 1] as $needle) {
             $this->assertSame(
                 $this->ids(fn ($q) => $q->whereRaw("JSON_EXTRACT(settings, '$.closed') = ?", [$needle])),
@@ -135,6 +148,10 @@ class JsonPredicateParityTest extends TestCase
      */
     public function test_converting_the_integer_arm_would_change_which_rows_match(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         $raw = fn ($q) => $q->whereNull('settings')
             ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') IS NULL")
             ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') = false")
@@ -160,6 +177,10 @@ class JsonPredicateParityTest extends TestCase
      */
     public function test_json_is_null_maps_to_key_absence_not_where_null(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         $raw = fn ($q) => $q->whereRaw("JSON_EXTRACT(settings, '$.closed') IS NULL");
 
         $this->assertSame([1, 2], $this->ids($raw));
@@ -180,6 +201,10 @@ class JsonPredicateParityTest extends TestCase
      */
     public function test_boolean_comparison_is_exact(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         $this->assertSame(
             $this->ids(fn ($q) => $q->whereRaw("JSON_EXTRACT(settings, '$.closed') = false")),
             $this->ids(fn ($q) => $q->where('settings->closed', false))
@@ -198,6 +223,10 @@ class JsonPredicateParityTest extends TestCase
      */
     public function test_active_moderators_scope_conversion_selects_the_same_rows(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         DB::statement('DROP TEMPORARY TABLE IF EXISTS membership_parity_fixture');
         DB::statement('CREATE TEMPORARY TABLE membership_parity_fixture (id INT PRIMARY KEY, settings JSON NULL)');
 

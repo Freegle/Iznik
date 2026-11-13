@@ -45,13 +45,16 @@ func withTx(t *testing.T) *gorm.DB {
 // session creates a user with the given systemrole and a session row, returning the user id and
 // the Authorization2 header value.
 func session(t *testing.T, tx *gorm.DB, role string) (uint64, string) {
-	require.NoError(t, tx.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole) VALUES ('Test', 'Paf', 'Test Paf', ?)", role).Error)
+	// Found by a name of its own. The newest row in users is not always this one: other packages insert
+	// users at the same time.
+	name := fmt.Sprintf("Test Paf %d", time.Now().UnixNano())
+	require.NoError(t, tx.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole) VALUES ('Test', 'Paf', ?, ?)", name, role).Error)
 	var uid uint64
-	tx.Raw("SELECT id FROM users ORDER BY id DESC LIMIT 1").Scan(&uid)
+	tx.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", name).Scan(&uid)
 	require.NotZero(t, uid)
 	require.NoError(t, tx.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'paftoken', NOW(), NOW())", uid, uid).Error)
 	var sid uint64
-	tx.Raw("SELECT id FROM sessions ORDER BY id DESC LIMIT 1").Scan(&sid)
+	tx.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", uid).Scan(&sid)
 	require.NotZero(t, sid)
 	return uid, fmt.Sprintf(`{"id":%d,"series":%d,"token":"paftoken"}`, sid, uid)
 }

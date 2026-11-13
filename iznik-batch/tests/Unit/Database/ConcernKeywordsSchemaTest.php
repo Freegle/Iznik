@@ -4,15 +4,12 @@ namespace Tests\Unit\Database;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Tests\Support\DescribesColumns;
 use Tests\TestCase;
 
 class ConcernKeywordsSchemaTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-        $this->requiresMySql('reads the column definition from MySQL information_schema');
-    }
+    use DescribesColumns;
 
     public function test_table_exists(): void
     {
@@ -49,34 +46,20 @@ class ConcernKeywordsSchemaTest extends TestCase
 
     public function test_category_enum_values(): void
     {
-        $rows = DB::select("
-            SELECT COLUMN_TYPE
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'concern_keywords'
-              AND COLUMN_NAME = 'category'
-        ");
+        $column = $this->describeColumn('concern_keywords', 'category');
 
-        $this->assertNotEmpty($rows);
-        $colType = $rows[0]->COLUMN_TYPE;
-
-        foreach (['substance_regulated', 'substance_reportable', 'substance_medicine', 'scam', 'review', 'allowed', 'safeguarding'] as $val) {
-            $this->assertStringContainsString($val, $colType, "category enum missing value: {$val}");
-        }
+        $this->assertNotNull($column);
+        $this->assertSame(
+            ['substance_regulated', 'substance_reportable', 'substance_medicine', 'scam', 'review', 'allowed', 'safeguarding'],
+            $column['values']
+        );
     }
 
     public function test_scope_enum_values(): void
     {
-        $rows = DB::select("
-            SELECT COLUMN_TYPE
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'concern_keywords'
-              AND COLUMN_NAME = 'scope'
-        ");
+        $column = $this->describeColumn('concern_keywords', 'scope');
 
-        $this->assertNotEmpty($rows);
-        $this->assertStringContainsString('global', $rows[0]->COLUMN_TYPE);
-        $this->assertStringContainsString('group', $rows[0]->COLUMN_TYPE);
+        $this->assertNotNull($column);
+        $this->assertSame(['global', 'group'], $column['values']);
     }
 }

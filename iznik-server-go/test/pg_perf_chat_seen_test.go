@@ -163,13 +163,9 @@ func TestRosterSeenAllowBack(t *testing.T) {
 // TestGetOrCreateUser2ModChatConcurrentCreators starts several creators for a member and
 // community that have no chat yet. PostgreSQL's SELECT ... FOR UPDATE locks nothing when no
 // row exists, so without the advisory lock each creator inserted its own room. MySQL stops
-// that a different way (a gap lock, which fails all but one creator with a deadlock), so the
-// "everyone succeeds with the same room" outcome is only promised on PostgreSQL.
+// that a different way (a gap lock, which fails some creators with a deadlock), so "everyone
+// succeeds" is only promised on PostgreSQL. Exactly one room is promised on both.
 func TestGetOrCreateUser2ModChatConcurrentCreators(t *testing.T) {
-	if database.Engine() != database.EnginePostgres {
-		t.Skip("PostgreSQL only: MySQL resolves this race with a gap lock and a deadlock error")
-	}
-
 	prefix := uniquePrefix("u2m_race")
 	db := database.DBConn
 
@@ -193,10 +189,26 @@ func TestGetOrCreateUser2ModChatConcurrentCreators(t *testing.T) {
 	close(start)
 	wg.Wait()
 
+	// On PostgreSQL every creator succeeds with the same room. On MySQL the gap lock fails some creators with
+	// a deadlock, which the caller retries, so there the promise is that whoever succeeded got the one room
+	// and that somebody did.
+	postgres := database.Engine() == database.EnginePostgres
+	var room uint64
 	for i := 0; i < creators; i++ {
-		assert.NoError(t, errs[i])
-		assert.Equal(t, ids[0], ids[i], "every creator must get the same room")
+		if errs[i] != nil {
+			if postgres {
+				assert.NoError(t, errs[i])
+			} else {
+				assert.True(t, database.IsLockFailure(errs[i]), "a creator may only fail by losing the lock: %v", errs[i])
+			}
+			continue
+		}
+		if room == 0 {
+			room = ids[i]
+		}
+		assert.Equal(t, room, ids[i], "every creator that succeeded must get the same room")
 	}
+	assert.NotZero(t, room, "at least one creator must succeed")
 
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE user1 = ? AND groupid = ? AND chattype = 'User2Mod'",

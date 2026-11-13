@@ -37,8 +37,8 @@ class LockTimeoutPostgresConnectorTest extends TestCase
 
     public function test_a_postgresql_session_has_the_lock_timeout(): void
     {
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('The suite is not running on PostgreSQL.');
+        if (! $this->postgresOnly('lock_timeout is a PostgreSQL session setting; InnoDB has its own 50 second wait')) {
+            return;
         }
 
         $this->assertSame('50s', DB::selectOne('SHOW lock_timeout')->lock_timeout);

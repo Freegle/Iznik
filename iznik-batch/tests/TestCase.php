@@ -385,6 +385,46 @@ abstract class TestCase extends BaseTestCase
         return $user->fresh();
     }
 
+    /** Whether the suite is running on PostgreSQL. */
+    protected function onPostgres(): bool
+    {
+        return \DB::connection()->getDriverName() === 'pgsql';
+    }
+
+    /**
+     * For a test, or the last part of one, whose subject exists on MySQL alone: a MySQL optimiser hint, a state
+     * only MySQL can store, a migration that only ever runs on MySQL. Returns true on MySQL. On PostgreSQL it
+     * returns false and the test must return: there is nothing to run, and the MySQL run of the same pipeline
+     * runs it. The test passes and is never reported as skipped, so a skip in a report always means something
+     * to look at. Say what the MySQL-only thing is.
+     *
+     * Before using this, ask whether the intention holds on PostgreSQL too. If it does, write the test for
+     * both engines instead.
+     */
+    protected function mySqlOnly(string $why): bool
+    {
+        return $this->engineOnly(! $this->onPostgres(), $why);
+    }
+
+    /** As mySqlOnly(), for a subject that exists on PostgreSQL alone. */
+    protected function postgresOnly(string $why): bool
+    {
+        return $this->engineOnly($this->onPostgres(), $why);
+    }
+
+    private function engineOnly(bool $here, string $why): bool
+    {
+        if (trim($why) === '') {
+            $this->fail('Say what the single-engine subject is.');
+        }
+        if (! $here) {
+            // Counted so that a test with nothing else to assert on this engine is not reported as risky.
+            $this->addToAssertionCount(1);
+        }
+
+        return $here;
+    }
+
     /**
      * Create a test Freegle group with auto-generated unique name.
      *
@@ -393,18 +433,6 @@ abstract class TestCase extends BaseTestCase
      *
      * @throws \InvalidArgumentException if nameshort or namefull is provided
      */
-    /**
-     * Skips the test when the suite is running on PostgreSQL. For a test whose subject is a MySQL-only thing:
-     * MySQL's information_schema column types, its connection class, or the statements recorded in the MySQL
-     * golden files. Say what the MySQL-only thing is.
-     */
-    protected function requiresMySql(string $why): void
-    {
-        if (\DB::connection()->getDriverName() === 'pgsql') {
-            $this->markTestSkipped('MySQL only: '.$why);
-        }
-    }
-
     protected function createTestGroup(array $attributes = []): Group
     {
         // Fail fast if caller tries to use hardcoded names - these cause collisions in parallel tests.

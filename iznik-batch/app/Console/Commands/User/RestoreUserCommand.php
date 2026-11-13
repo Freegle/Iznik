@@ -411,6 +411,11 @@ class RestoreUserCommand extends Command
         $quotedTable = $grammar->wrapTable($table);
         $columns = array_keys($row);
 
+        $this->hasIdColumn[$table] ??= Schema::hasColumn($table, 'id');
+        if (! $this->hasIdColumn[$table]) {
+            return $this->upsertRowWithoutIdPostgres($table, $row, $userIdCols);
+        }
+
         // keep-raw: PostgreSQL only, the twin of the generic upsert above. The table and column list vary
         // per call, and ON CONFLICT DO NOTHING with RETURNING has no query builder form.
         $sql = sprintf(
@@ -476,6 +481,45 @@ class RestoreUserCommand extends Command
 
             return NULL;
         }
+    }
+
+    /**
+     * The PostgreSQL write for a table with no id column. users_banned is the only one restored: its key is the
+     * member and the community. A ban that is not there is inserted. One that is there keeps its row and takes
+     * the member columns from the dump, which is what MySQL's ON DUPLICATE KEY UPDATE does.
+     */
+    private function upsertRowWithoutIdPostgres(string $table, array $row, array $userIdCols): ?int
+    {
+        $grammar = DB::connection()->getQueryGrammar();
+        $columns = array_keys($row);
+
+        // keep-raw: PostgreSQL only, the twin of the generic upsert above. The table and column list vary
+        // per call, and ON CONFLICT DO NOTHING with RETURNING has no query builder form.
+        $sql = sprintf(
+            'INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING RETURNING 1 AS inserted',
+            $grammar->wrapTable($table),
+            implode(', ', array_map(fn ($c) => $grammar->wrap($c), $columns)),
+            implode(', ', array_fill(0, count($columns), '?'))
+        );
+
+        try {
+            // In a transaction of its own, so a refused row does not end the transaction the restore is in.
+            DB::transaction(function () use ($sql, $table, $row, $userIdCols) {
+                if (DB::select($sql, array_values($row))) {
+                    return;
+                }
+
+                $remap = array_intersect_key($row, array_flip($userIdCols));
+                if ($table === 'users_banned' && $remap && isset($row['userid'], $row['groupid'])) {
+                    DB::table($table)->where('userid', $row['userid'])->where('groupid', $row['groupid'])->update($remap);
+                }
+            });
+        } catch (\Exception $e) {
+            $this->warn("  Warning: skipped row in $table: ".$e->getMessage());
+            Log::warning('user:restore upsert failed', ['table' => $table, 'error' => $e->getMessage()]);
+        }
+
+        return NULL;
     }
 
     /**

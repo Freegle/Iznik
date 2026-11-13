@@ -797,12 +797,16 @@ class ContentCheckServiceTest extends TestCase
         $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
     }
 
+    /**
+     * A MySQL ENUM accepts a value in any case and stores it as declared, so a membership written as
+     * 'moderated' is MODERATED. PostgreSQL holds the exact values only and refuses the row, so the
+     * lower-case state cannot exist there.
+     */
     public function test_is_user_moderated_case_insensitive_moderated(): void
     {
-        $this->requiresMySql('relies on the MySQL ENUM accepting a value in any case; PostgreSQL stores only the exact values');
         $user  = $this->createTestUser();
         $group = $this->createTestGroup();
-        DB::table('memberships')->insert([
+        $insert = fn () => DB::table('memberships')->insert([
             'userid'  => $user->id,
             'groupid' => $group->id,
             'role'    => Membership::ROLE_MEMBER,
@@ -812,6 +816,19 @@ class ContentCheckServiceTest extends TestCase
             'added'   => now(),
         ]);
 
+        if ($this->onPostgres()) {
+            try {
+                // In a transaction of its own, so the refusal does not end the test's transaction.
+                DB::transaction($insert);
+                $this->fail('PostgreSQL accepted a posting status in the wrong case');
+            } catch (\Illuminate\Database\QueryException $e) {
+                $this->assertSame('23514', $e->getCode(), $e->getMessage());
+            }
+
+            return;
+        }
+
+        $insert();
         $msg = $this->createTestMessage($user, $group);
 
         $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));

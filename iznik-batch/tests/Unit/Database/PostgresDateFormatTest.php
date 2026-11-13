@@ -23,8 +23,8 @@ class PostgresDateFormatTest extends TestCase
 
     public function test_a_date_bound_from_php_is_not_earlier_than_a_stored_now_in_the_same_instant(): void
     {
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('The suite is not running on PostgreSQL.');
+        if (! $this->postgresOnly('MySQL keeps whole seconds, so a bound time there has no microseconds to keep')) {
+            return;
         }
 
         $this->assertTrue((bool) DB::selectOne('SELECT NOW() <= ? AS ok', [now()->addMilliseconds(5)])->ok);

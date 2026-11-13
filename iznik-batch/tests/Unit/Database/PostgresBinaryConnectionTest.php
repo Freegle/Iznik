@@ -3,6 +3,7 @@
 namespace Tests\Unit\Database;
 
 use App\Database\PostgresBinaryConnection;
+use App\Database\Sql;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -15,15 +16,24 @@ class PostgresBinaryConnectionTest extends TestCase
     {
         parent::setUp();
 
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('PostgreSQL only: the connection class is registered for the pgsql driver.');
-        }
+        // The same test on both engines: a blob column on MySQL, a bytea column on PostgreSQL.
+        $binary = $this->onPostgres() ? 'bytea' : 'blob';
+        DB::statement("CREATE TEMPORARY TABLE binary_connection_test (id integer PRIMARY KEY, data {$binary}, note text)");
+    }
 
-        DB::statement('CREATE TEMPORARY TABLE binary_connection_test (id integer PRIMARY KEY, data bytea, note text)');
+    protected function tearDown(): void
+    {
+        DB::statement(Sql::dropTemporaryTable('binary_connection_test'));
+
+        parent::tearDown();
     }
 
     public function test_the_pgsql_driver_uses_this_connection(): void
     {
+        if (! $this->postgresOnly("the connection class is registered for the pgsql driver; DeadlockRetryConnectionTest checks each engine's class")) {
+            return;
+        }
+
         $this->assertInstanceOf(PostgresBinaryConnection::class, DB::connection());
     }
 

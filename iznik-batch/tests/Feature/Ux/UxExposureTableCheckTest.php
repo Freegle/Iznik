@@ -52,7 +52,7 @@ class UxExposureTableCheckTest extends TestCase
                 (new UserManagementService($this->createMock(LokiService::class)))->forgetUser(self::MEMBER, 'Asked to be forgotten');
                 $left = $this->exposureRows($lag);
             } finally {
-                DB::setDefaultConnection('mysql');
+                DB::setDefaultConnection($this->connectionBeforeLag);
                 $this->cleanUp($lag);
             }
 
@@ -70,7 +70,7 @@ class UxExposureTableCheckTest extends TestCase
                 $method = new \ReflectionMethod(UserDataExportService::class, 'getExperiments');
                 $rows = $method->invoke(new UserDataExportService, self::MEMBER);
             } finally {
-                DB::setDefaultConnection('mysql');
+                DB::setDefaultConnection($this->connectionBeforeLag);
                 $this->cleanUp($lag);
             }
 

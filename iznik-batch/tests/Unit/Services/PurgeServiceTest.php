@@ -765,15 +765,32 @@ class PurgeServiceTest extends TestCase
         $this->assertDatabaseMissing('logs', ['id' => $logId]);
     }
 
+    /**
+     * A blank subtype is what the non-strict MySQL ENUM stores for a value it does not know. PostgreSQL refuses
+     * such a row, so there is never one to purge there, and the purge must still run and find nothing of ours.
+     */
     public function test_purge_blank_subtype_logs(): void
     {
-        $this->requiresMySql('a blank subtype is what the non-strict MySQL ENUM stores for an invalid value; PostgreSQL rejects it, so no such row can exist');
-
-        $logId = DB::table('logs')->insertGetId([
+        $insert = fn () => DB::table('logs')->insertGetId([
             'type' => 'User',
             'subtype' => '',
             'timestamp' => now()->subDays(60),
         ]);
+
+        if ($this->onPostgres()) {
+            try {
+                // In a transaction of its own, so the refusal does not end the test's transaction.
+                DB::transaction($insert);
+                $this->fail('PostgreSQL accepted a blank subtype');
+            } catch (\Illuminate\Database\QueryException $e) {
+                $this->assertSame('23514', $e->getCode(), $e->getMessage());
+            }
+            $this->assertSame(0, $this->service->purgeBlankSubtypeLogs());
+
+            return;
+        }
+
+        $logId = $insert();
 
         $count = $this->service->purgeBlankSubtypeLogs();
 

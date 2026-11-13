@@ -14,6 +14,20 @@ class DemergeUserCommandTest extends TestCase
     // We disable it for this class and handle cleanup manually.
     public function beginDatabaseTransaction(): void {}
 
+    /**
+     * The options that make the test database its own backup, on the engine the suite is running on. The
+     * command reads the backup through a second connection.
+     */
+    private function backupIsTheTestDatabase(): string
+    {
+        if (! $this->onPostgres()) {
+            return '--backup-host=percona --backup-port=3306 --backup-password=iznik --backup-db=iznik_batch_test';
+        }
+        $c = config('database.connections.pgsql');
+
+        return "--backup-host={$c['host']} --backup-port={$c['port']} --backup-user={$c['username']} --backup-password={$c['password']} --backup-db=".DB::getDatabaseName();
+    }
+
     protected function tearDown(): void
     {
         if ($this->cleanupUserIds) {
@@ -45,7 +59,7 @@ class DemergeUserCommandTest extends TestCase
     public function test_fails_if_user_not_found_on_backup(): void
     {
         // Using test DB as backup — user won't be found since we use random emails
-        $this->artisan('user:demerge --email=notexists123@example.com --from-email=notexists456@example.com --backup-host=percona --backup-password=iznik --backup-db=iznik_batch_test')
+        $this->artisan("user:demerge --email=notexists123@example.com --from-email=notexists456@example.com {$this->backupIsTheTestDatabase()}")
             ->assertExitCode(1);
     }
 
@@ -63,7 +77,7 @@ class DemergeUserCommandTest extends TestCase
         DB::table('users_emails')->insert(['userid' => $userId, 'email' => $otherEmail, 'added' => now()]);
         $this->cleanupUserIds[] = $userId;
 
-        $this->artisan("user:demerge --email={$email} --from-email={$otherEmail} --backup-host=percona --backup-port=3306 --backup-password=iznik --backup-db=iznik_batch_test")
+        $this->artisan("user:demerge --email={$email} --from-email={$otherEmail} {$this->backupIsTheTestDatabase()}")
             ->assertExitCode(1);
 
         $this->assertEquals(2, DB::table('users_emails')->where('userid', $userId)->count());
@@ -71,8 +85,6 @@ class DemergeUserCommandTest extends TestCase
 
     public function test_runs_without_error_when_no_rows_to_demerge(): void
     {
-        $this->requiresMySql('the command reads a MySQL backup database through a second connection');
-
         // Use the test DB as both live and backup. Since DatabaseTransactions is disabled,
         // rows are auto-committed and visible to the backup connection.
         // The demerge finds the users but deletes 0 rows (IDs don't match across the lookup).
@@ -88,7 +100,7 @@ class DemergeUserCommandTest extends TestCase
         DB::table('users_emails')->insert(['userid' => $fromUserId, 'email' => $fromEmail, 'added' => now()]);
         $this->cleanupUserIds[] = $fromUserId;
 
-        $this->artisan("user:demerge --email={$email} --from-email={$fromEmail} --backup-host=percona --backup-port=3306 --backup-password=iznik --backup-db=iznik_batch_test")
+        $this->artisan("user:demerge --email={$email} --from-email={$fromEmail} {$this->backupIsTheTestDatabase()}")
             ->assertExitCode(0);
     }
 }

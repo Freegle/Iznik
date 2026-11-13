@@ -7,11 +7,12 @@ use Tests\TestCase;
 
 class SafeguardingCategoryMigrationTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-        $this->requiresMySql('checks rows a MySQL migration seeds; the PostgreSQL baseline holds no migration data');
-    }
+    /**
+     * The migration is MySQL-only: it widens a MySQL ENUM in place and seeds the keywords. PostgreSQL never runs
+     * it. Its schema is built from the migrated MySQL schema (ConcernKeywordsSchemaTest checks the category
+     * list on both engines), and its rows arrive with the data copy.
+     */
+    private const WHY_MYSQL = 'the subject is a migration that only ever runs on MySQL, and the rows it seeds';
 
     private const KEYWORDS = [
         'refuge', 'refuges', 'domestic violence', 'domestic abuse', 'dv', 'fleeing',
@@ -32,6 +33,10 @@ class SafeguardingCategoryMigrationTest extends TestCase
 
     public function test_every_safeguarding_keyword_is_global_literal_flag(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         foreach (self::KEYWORDS as $keyword) {
             $row = $this->row($keyword);
             $this->assertNotNull($row, "missing keyword: {$keyword}");
@@ -43,6 +48,10 @@ class SafeguardingCategoryMigrationTest extends TestCase
 
     public function test_shelter_rows_keep_their_exclusion(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         foreach (['shelter', 'shelters'] as $keyword) {
             $this->assertStringContainsString('animal|dog|cat', (string) $this->row($keyword)->exclude);
         }
@@ -56,6 +65,10 @@ class SafeguardingCategoryMigrationTest extends TestCase
      */
     public function test_moves_existing_review_rows_inserts_missing_and_is_idempotent(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         DB::table('concern_keywords')->where('keyword', 'refuge')->update(['category' => 'review']);
         DB::table('concern_keywords')->where('keyword', 'shelter')->update(['category' => 'review', 'exclude' => 'custom\s+shelter']);
         DB::table('concern_keywords')->where('keyword', 'dv')->delete();
@@ -85,6 +98,10 @@ class SafeguardingCategoryMigrationTest extends TestCase
 
     public function test_enum_append_keeps_the_existing_order(): void
     {
+        if (! $this->mySqlOnly(self::WHY_MYSQL)) {
+            return;
+        }
+
         $type = DB::selectOne("SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'concern_keywords' AND COLUMN_NAME = 'category'")->t;
 

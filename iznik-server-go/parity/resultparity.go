@@ -50,7 +50,7 @@ var orderByPattern = regexp.MustCompile(`(?i)\border\s+by\b`)
 //		return myGroupIDs(db, parity.ID(1))
 //	}, parity.Expect([]uint64{parity.ID(10), parity.ID(11)}))
 //
-// The test is skipped when an engine is not there. See OpenEngines.
+// When an engine is not there the test runs on the other alone. See OpenEngines.
 func AssertResultParity(tb testing.TB, siteID string, fixture Fixture, run func(db *gorm.DB) any, opts ...Option) {
 	tb.Helper()
 	engines := OpenEngines(tb)

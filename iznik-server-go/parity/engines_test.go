@@ -12,7 +12,8 @@ type fakeTB struct {
 	message string
 }
 
-func (f *fakeTB) Helper() {}
+func (f *fakeTB) Helper()                         {}
+func (f *fakeTB) Logf(format string, args ...any) {}
 func (f *fakeTB) Skipf(format string, args ...any) {
 	f.skipped = true
 	f.message = format
@@ -81,26 +82,60 @@ func TestOpenEngines_ASingleEngineNeverFallsBackToTheOther(t *testing.T) {
 	}
 }
 
-func TestOpenEngines_NoMySQLMeansSkip(t *testing.T) {
+func TestOpenEngines_NoMySQLRunsOnPostgresAlone(t *testing.T) {
 	t.Setenv("PARITY_ENGINES", "")
-	t.Setenv("MYSQL_HOST", "")
-	opened = map[Dialect]*openResult{} // forget a connection an earlier test made
+	t.Setenv("PG_ENGINE", "")
+	opened = map[Dialect]*openResult{
+		MySQL:    {err: errNotThere},
+		Postgres: {engine: &Engine{Name: "postgres", Dialect: Postgres}},
+	}
+	t.Cleanup(func() { opened = map[Dialect]*openResult{} })
 	f := &fakeTB{}
-	run(f)
-	if !f.skipped {
-		t.Fatalf("with no MySQL there is nothing to compare, so the test is skipped, got %+v", f)
+	engines := run(f)
+	if f.skipped || f.failed || len(engines) != 1 || engines[0].Dialect != Postgres {
+		t.Fatalf("with no MySQL the run is on PostgreSQL alone, got %+v and %+v", engines, f)
 	}
 }
 
-func TestOpenEngines_PgEngineZeroSkipsEvenWhenMySQLIsThere(t *testing.T) {
+func TestOpenEngines_PgEngineOneFailsWhenMySQLIsNotReachable(t *testing.T) {
 	t.Setenv("PARITY_ENGINES", "")
-	t.Setenv("PG_ENGINE", "0")
-	opened = map[Dialect]*openResult{MySQL: {engine: &Engine{Name: "mysql", Dialect: MySQL}}}
+	t.Setenv("PG_ENGINE", "1")
+	opened = map[Dialect]*openResult{
+		MySQL:    {err: errNotThere},
+		Postgres: {engine: &Engine{Name: "postgres", Dialect: Postgres}},
+	}
 	t.Cleanup(func() { opened = map[Dialect]*openResult{} })
 	f := &fakeTB{}
 	run(f)
-	if !f.skipped {
-		t.Fatalf("PG_ENGINE=0 must skip, got %+v", f)
+	if !f.failed || !strings.Contains(f.message, "MySQL is not reachable") {
+		t.Fatalf("PG_ENGINE=1 means both engines are compared, so a missing MySQL fails, got %+v", f)
+	}
+}
+
+func TestOpenEngines_NoEngineAtAllFails(t *testing.T) {
+	t.Setenv("PARITY_ENGINES", "")
+	t.Setenv("PG_ENGINE", "")
+	opened = map[Dialect]*openResult{MySQL: {err: errNotThere}, Postgres: {err: errNotThere}}
+	t.Cleanup(func() { opened = map[Dialect]*openResult{} })
+	f := &fakeTB{}
+	run(f)
+	if !f.failed || !strings.Contains(f.message, "neither engine") {
+		t.Fatalf("with no engine there is nothing to run on, so it fails, got %+v", f)
+	}
+}
+
+func TestOpenEngines_PgEngineZeroRunsOnMySQLAloneEvenWhenPostgresIsThere(t *testing.T) {
+	t.Setenv("PARITY_ENGINES", "")
+	t.Setenv("PG_ENGINE", "0")
+	opened = map[Dialect]*openResult{
+		MySQL:    {engine: &Engine{Name: "mysql", Dialect: MySQL}},
+		Postgres: {engine: &Engine{Name: "postgres", Dialect: Postgres}},
+	}
+	t.Cleanup(func() { opened = map[Dialect]*openResult{} })
+	f := &fakeTB{}
+	engines := run(f)
+	if f.skipped || f.failed || len(engines) != 1 || engines[0].Dialect != MySQL {
+		t.Fatalf("PG_ENGINE=0 must run on MySQL alone, got %+v and %+v", engines, f)
 	}
 }
 
@@ -120,9 +155,9 @@ func TestOpenEngines_PgEngineOneFailsWhenPostgresIsNotReachable(t *testing.T) {
 
 	t.Setenv("PG_ENGINE", "")
 	f = &fakeTB{}
-	run(f)
-	if !f.skipped {
-		t.Fatalf("without PG_ENGINE an unreachable PostgreSQL skips, got %+v", f)
+	engines := run(f)
+	if f.skipped || f.failed || len(engines) != 1 || engines[0].Dialect != MySQL {
+		t.Fatalf("without PG_ENGINE an unreachable PostgreSQL leaves MySQL alone, got %+v and %+v", engines, f)
 	}
 }
 

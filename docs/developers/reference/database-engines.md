@@ -830,11 +830,25 @@ engines, and what to do when you write either:
   MySQL driver does for a blob.
 - **Expressions.** The classes in `app/Database/Expressions` render MySQL, and where PostgreSQL spells a thing
   differently or answers differently they branch on the grammar (`Concerns\PostgresDialect`). The MySQL text never
-  changes, and `tests/Unit/Database/ExpressionsPostgresTest.php` pins the PostgreSQL text and, when the suite runs on
-  PostgreSQL, the answer. A JSON path must be a simple `$.member` or `[index]` path on PostgreSQL.
+  changes. `tests/Unit/Database/ExpressionsPostgresTest.php` and its neighbours pin both texts, then run the text of
+  whichever engine the suite is on and expect the same answer from both. A JSON path must be a simple `$.member` or
+  `[index]` path on PostgreSQL. One answer does differ and is pinned as a difference: `JsonUnquote` of a member holding
+  JSON null is the text `null` on MySQL and SQL NULL on PostgreSQL, so code that must tell JSON null from an absent
+  member does not read it through `JsonUnquote`.
 - **Tests that pin MySQL text.** `ExpressionsTest` and the golden SQL of the parity harness render with a MySQL
-  grammar on either engine. A test whose subject is MySQL-only (information_schema column types, the MySQL connection
-  class) calls `requiresMySql('why')` and is skipped on PostgreSQL.
+  grammar on either engine.
+- **No test is skipped on either engine.** A skip in a report then always means something to look at. A test whose
+  intention holds on both engines is written for both: `Tests\Support\DescribesColumns` reads a column definition in
+  terms that mean the same on each (an ENUM's values, a flag, nullable, the default), `Tests\Support\LagsTheReadNode`
+  makes a read node that is behind (a second database on MySQL, a second schema on PostgreSQL), and a test of a state
+  only MySQL can store (a zero date, a blank ENUM value) asserts on PostgreSQL that the row is refused. A test whose
+  subject exists on one engine alone (an index hint, a migration that only MySQL runs, an advisory lock) starts with
+  `if (! $this->mySqlOnly('why')) { return; }` or `postgresOnly`: it passes on the other engine, and the run on its
+  own engine in the same pipeline executes it. The parity harnesses (`EngineParity`, Go `parity.OpenEngines`) run a
+  site on one engine when the other is switched off or not there. CI sets `PG_ENGINE=1`, so there both always run.
+- **Cache locks.** `cache.stores.database.lock_connection` is `mysql_write` on MySQL and `pgsql_write` on PostgreSQL.
+  A lock is read back on release, so it uses a connection with no read host. It is also a connection of its own, so
+  a lock taken while the default connection is inside a transaction is committed at once.
 - **Foreign keys.** A test that needs them off uses `Tests\Support\ForeignKeyChecks`, which sets the MySQL session
   variable or PostgreSQL's `session_replication_role`.
 

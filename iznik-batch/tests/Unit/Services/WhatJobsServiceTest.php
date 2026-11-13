@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Services\WhatJobsService;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -891,34 +892,49 @@ class WhatJobsServiceTest extends TestCase
      */
     public function test_the_replacement_jobs_table_gets_the_visible_cpc_index(): void
     {
-        $this->requiresMySql('exercises SHOW INDEX and CREATE TABLE ... LIKE, which are MySQL statements');
-
         $svc = new WhatJobsService();
-        $columns = fn () => collect(DB::select('SHOW INDEX FROM jobs_new WHERE Key_name = ?', ['visible_cpc']))
-            ->sortBy('Seq_in_index')
-            ->pluck('Column_name')
-            ->all();
-        $jobsHasIndex = fn () => count(DB::select('SHOW INDEX FROM jobs WHERE Key_name = ?', ['visible_cpc'])) > 0;
+        $jobsHasIndex = fn () => Schema::hasIndex('jobs', ['visible', 'cpc']);
+        // The index is looked up by its columns: PostgreSQL names the copy of an index after the new table.
+        $onReplacement = fn () => count(array_filter(
+            Schema::getIndexes('jobs_new'),
+            fn (array $index) => $index['columns'] === ['visible', 'cpc']
+        ));
+
+        // visible_cpc on MySQL, jobs_visible_cpc on PostgreSQL. A run that died between the drop and the
+        // re-add below leaves jobs without the index, and this run then puts it back.
+        $name = $this->visibleCpcIndexName() ?? ($this->onPostgres() ? 'jobs_visible_cpc' : 'visible_cpc');
 
         try {
             if ($jobsHasIndex()) {
-                DB::statement('ALTER TABLE jobs DROP INDEX visible_cpc');
+                Schema::table('jobs', fn (Blueprint $table) => $table->dropIndex($name));
             }
 
             // Production's state before the first sync: jobs has no index.
             $svc->prepareTempTable();
-            $this->assertSame(['visible', 'cpc'], $columns());
+            $this->assertSame(1, $onReplacement());
 
-            // Every later sync: jobs has it, LIKE copies it, and nothing is added twice.
-            DB::statement('ALTER TABLE jobs ADD INDEX visible_cpc (visible, cpc)');
+            // Every later sync: jobs has it, the copy carries it over, and nothing is added twice.
+            Schema::table('jobs', fn (Blueprint $table) => $table->index(['visible', 'cpc'], $name));
             $svc->prepareTempTable();
-            $this->assertSame(['visible', 'cpc'], $columns());
+            $this->assertSame(1, $onReplacement());
         } finally {
-            DB::statement('DROP TABLE IF EXISTS jobs_new');
+            Schema::dropIfExists('jobs_new');
             if (! $jobsHasIndex()) {
-                DB::statement('ALTER TABLE jobs ADD INDEX visible_cpc (visible, cpc)');
+                Schema::table('jobs', fn (Blueprint $table) => $table->index(['visible', 'cpc'], $name));
             }
         }
+    }
+
+    /** The name the (visible, cpc) index on jobs has on this engine, or null when jobs has none. */
+    private function visibleCpcIndexName(): ?string
+    {
+        foreach (Schema::getIndexes('jobs') as $index) {
+            if ($index['columns'] === ['visible', 'cpc']) {
+                return $index['name'];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -928,19 +944,35 @@ class WhatJobsServiceTest extends TestCase
      */
     public function test_adding_visible_cpc_twice_is_harmless(): void
     {
-        $this->requiresMySql('exercises SHOW INDEX and CREATE TABLE ... LIKE, which are MySQL statements');
-
         $svc = new WhatJobsService();
 
         try {
             $svc->prepareTempTable();
-            $this->assertTrue(Schema::hasIndex('jobs_new', 'visible_cpc'));
+            $this->assertTrue(Schema::hasIndex('jobs_new', ['visible', 'cpc']));
 
-            $svc->addVisibleCpcIndex();
+            // Twice, so the second add meets an index of that name on both engines. On MySQL the copy already
+            // has one called visible_cpc; on PostgreSQL the copy's is named after the new table.
+            //
+            // PostgreSQL ends the transaction a refused statement is in, and the suite holds one open, so the
+            // adds get a savepoint to go back to. The sync itself runs outside any transaction. MySQL commits
+            // at each of these statements, so it has no savepoint to return to.
+            if ($this->onPostgres()) {
+                DB::beginTransaction();
+            }
+            try {
+                $svc->addVisibleCpcIndex();
+                // Whatever the copy brought, there is now an index of this name, on both engines.
+                $this->assertTrue(Schema::hasIndex('jobs_new', 'visible_cpc'));
+                $svc->addVisibleCpcIndex();
+            } finally {
+                if ($this->onPostgres()) {
+                    DB::rollBack();
+                }
+            }
 
-            $this->assertTrue(Schema::hasIndex('jobs_new', 'visible_cpc'));
+            $this->assertTrue(Schema::hasIndex('jobs_new', ['visible', 'cpc']));
         } finally {
-            DB::statement('DROP TABLE IF EXISTS jobs_new');
+            Schema::dropIfExists('jobs_new');
         }
     }
 }

@@ -2,8 +2,8 @@
 
 namespace Tests\Feature\Helper;
 
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Tests\Support\DescribesColumns;
 use Tests\TestCase;
 
 /**
@@ -13,6 +13,8 @@ use Tests\TestCase;
  */
 class HelperSchemaTest extends TestCase
 {
+    use DescribesColumns;
+
     public function test_all_helper_tables_exist(): void
     {
         foreach ([
@@ -36,24 +38,19 @@ class HelperSchemaTest extends TestCase
 
     public function test_repliers_columns_and_fsm_states(): void
     {
-        $this->requiresMySql('it reads the state column definition from MySQL information_schema');
-
         $this->assertTrue(Schema::hasColumns('helper_repliers', [
             'id', 'batchid', 'userid', 'chatid', 'state', 'collection_ok',
             'criteria_met', 'transport_ok', 'distance_miles', 'is_connector',
             'related_to', 'cooldown_until', 'last_processed_chatmsgid', 'knowledge',
         ]));
 
-        // The state ENUM must carry every FSM state the Helper drives.
-        $type = DB::selectOne(
-            "SELECT COLUMN_TYPE AS t FROM information_schema.columns
-             WHERE table_schema = DATABASE() AND table_name = 'helper_repliers' AND column_name = 'state'"
-        );
+        // The state column must allow every FSM state the Helper drives.
+        $states = $this->describeColumn('helper_repliers', 'state')['values'];
         foreach ([
             'NEW', 'GATHERING', 'QUALIFIED', 'ALLOCATED', 'CONFIRMED', 'COLLECTED',
             'PARKED_REPLIED', 'PARKED_QUIET', 'ESCALATED', 'TIMED_OUT', 'WITHDRAWN', 'REJECTED',
         ] as $state) {
-            $this->assertStringContainsString("'$state'", $type->t, "FSM state $state missing from enum");
+            $this->assertContains($state, $states, "FSM state $state missing from the state column");
         }
     }
 

@@ -79,11 +79,6 @@ class PostgresBinaryConnection extends PostgresConnection
         throw $e;
     }
 
-    protected function getDefaultQueryGrammar()
-    {
-        return new PostgresTextJsonGrammar($this);
-    }
-
     public function bindValues($statement, $bindings)
     {
         foreach ($bindings as $key => $value) {

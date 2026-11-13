@@ -19,6 +19,7 @@ use App\Services\ItemService;
 use App\Services\Ripple\RippleReplyService;
 use App\Services\SpatialQueryService;
 use App\Services\UnsubscribeService;
+use App\Support\Savepoint;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -3426,8 +3427,11 @@ class IncomingMailService
         }
 
         try {
-            $user->tnuserid = $tnUserId;
-            $user->save();
+            // Under a savepoint: PostgreSQL ends the transaction a refused statement is in.
+            Savepoint::around(function () use ($user, $tnUserId) {
+                $user->tnuserid = $tnUserId;
+                $user->save();
+            });
         } catch (UniqueConstraintViolationException) {
             $user->tnuserid = null;
             Log::warning('TN user id on a Subscribe mail is held by another account', [

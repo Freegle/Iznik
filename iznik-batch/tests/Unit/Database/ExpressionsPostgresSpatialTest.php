@@ -29,19 +29,20 @@ class ExpressionsPostgresSpatialTest extends TestCase
 
     private Grammar $mysql;
 
+    /** The grammar of the engine the suite is running on. What it renders is what gets run. */
+    private Grammar $live;
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->pg = new PostgresGrammar(DB::connection());
         $this->mysql = new MySqlGrammar(DB::connection());
+        $this->live = DB::connection()->getQueryGrammar();
     }
 
+    /** Runs a scalar expression, rendered for the engine the suite is running on, and gives its value. */
     private function evaluate(string $sql): mixed
     {
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('The suite is not running on PostgreSQL.');
-        }
-
         return DB::selectOne("SELECT {$sql} AS result")->result;
     }
 
@@ -66,11 +67,16 @@ class ExpressionsPostgresSpatialTest extends TestCase
 
     public function test_the_point_and_srid_pair_builds_a_labelled_point_on_postgresql(): void
     {
-        $sql = (new StAsText(new StSrid(new Point(Value::of(1), Value::of(2)), 4326)))->getValue($this->pg);
+        // With the label the application uses on this engine (3857 on MySQL, 4326 on PostgreSQL) the point
+        // reads back as longitude then latitude on both. MySQL reads a point labelled 4326 the other way
+        // round, which is why it is not the label used there.
+        $srid = (int) config('freegle.srid');
+
+        $sql = (new StAsText(new StSrid(new Point(Value::of(1), Value::of(2)), $srid)))->getValue($this->live);
         $this->assertSame('POINT(1 2)', $this->evaluate($sql));
 
-        $sql = (new StSrid(new StSrid(new Point(Value::of(1), Value::of(2)), 4326)))->getValue($this->pg);
-        $this->assertSame(4326, $this->evaluate($sql));
+        $sql = (new StSrid(new StSrid(new Point(Value::of(1), Value::of(2)), $srid)))->getValue($this->live);
+        $this->assertSame($srid, $this->evaluate($sql));
     }
 
     public function test_stdistancesphere_renders_st_distancesphere_on_postgresql(): void
@@ -86,7 +92,7 @@ class ExpressionsPostgresSpatialTest extends TestCase
         $a = new StSrid(new Point(Value::of(0), Value::of(0)), 4326);
         $b = new StSrid(new Point(Value::of(0), Value::of(1)), 4326);
 
-        $this->assertEqualsWithDelta(111195.0, $this->evaluate((new StDistanceSphere($a, $b))->getValue($this->pg)), 100.0);
+        $this->assertEqualsWithDelta(111195.0, $this->evaluate((new StDistanceSphere($a, $b))->getValue($this->live)), 100.0);
     }
 
     public function test_stgeometrytype_renders_geometrytype_on_postgresql_so_the_answer_matches_mysql(): void
@@ -97,7 +103,7 @@ class ExpressionsPostgresSpatialTest extends TestCase
         $this->assertSame('GeometryType("polyindex")', $type->getValue($this->pg));
 
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 4326);
-        $this->assertSame('POINT', $this->evaluate((new StGeometryType($point))->getValue($this->pg)));
+        $this->assertSame('POINT', $this->evaluate((new StGeometryType($point))->getValue($this->live)));
     }
 
     public function test_the_bounding_box_predicates_render_operators_on_postgresql(): void
@@ -116,11 +122,11 @@ class ExpressionsPostgresSpatialTest extends TestCase
         $inner = new StGeomFromText(Value::of('POLYGON((2 2, 2 4, 4 4, 4 2, 2 2))'), 4326);
         $far = new StGeomFromText(Value::of('POLYGON((20 20, 20 30, 30 30, 30 20, 20 20))'), 4326);
 
-        $this->assertTrue($this->evaluate((new MbrContains($outer, $inner))->getValue($this->pg)));
-        $this->assertFalse($this->evaluate((new MbrContains($inner, $outer))->getValue($this->pg)));
-        $this->assertTrue($this->evaluate((new MbrWithin($inner, $outer))->getValue($this->pg)));
-        $this->assertTrue($this->evaluate((new MbrIntersects($outer, $inner))->getValue($this->pg)));
-        $this->assertFalse($this->evaluate((new MbrIntersects($outer, $far))->getValue($this->pg)));
+        $this->assertTrue((bool) $this->evaluate((new MbrContains($outer, $inner))->getValue($this->live)));
+        $this->assertFalse((bool) $this->evaluate((new MbrContains($inner, $outer))->getValue($this->live)));
+        $this->assertTrue((bool) $this->evaluate((new MbrWithin($inner, $outer))->getValue($this->live)));
+        $this->assertTrue((bool) $this->evaluate((new MbrIntersects($outer, $inner))->getValue($this->live)));
+        $this->assertFalse((bool) $this->evaluate((new MbrIntersects($outer, $far))->getValue($this->live)));
     }
 
     public function test_the_null_safe_equality_renders_is_not_distinct_from_on_postgresql(): void

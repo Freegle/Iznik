@@ -35,27 +35,29 @@ class JsonTextPostgresTest extends TestCase
 
     public function test_json_number_reads_numbers_and_booleans_on_postgresql(): void
     {
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('The suite is not running on PostgreSQL.');
-        }
-
         $doc = Value::of('{"n": 7, "z": 0, "t": true, "f": false, "s": "x"}');
         $read = fn (string $path) => DB::selectOne(
             'SELECT '.(new JsonNumber($doc, Value::of($path)))->getValue(DB::connection()->getQueryGrammar()).' AS result'
         )->result;
 
+        // Numbers and an absent member read the same on both engines.
         $this->assertEquals(7, $read('$.n'));
         $this->assertEquals(0, $read('$.z'));
+        $this->assertNull($read('$.missing'));
+
+        if (! $this->postgresOnly('true, false and text are read as 1, 0 and NULL through a PostgreSQL function; MySQL compares the JSON value itself')) {
+            return;
+        }
+
         $this->assertEquals(1, $read('$.t'));
         $this->assertEquals(0, $read('$.f'));
         $this->assertNull($read('$.s'));
-        $this->assertNull($read('$.missing'));
     }
 
     public function test_query_builder_json_path_works_on_a_text_column(): void
     {
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('The suite is not running on PostgreSQL.');
+        if (! $this->postgresOnly('the text-column JSON path is the PostgreSQL grammar\'s work')) {
+            return;
         }
 
         $this->assertInstanceOf(JsonTextPostgresGrammar::class, DB::connection()->getQueryGrammar());
@@ -71,11 +73,8 @@ class JsonTextPostgresTest extends TestCase
         $this->assertSame("JSON_LENGTH(`metadata`, '\$.ids')", $e->getValue(new MySqlGrammar(DB::connection())));
     }
 
-    public function test_json_length_counts_array_elements_and_object_members_on_postgresql(): void
+    public function test_json_length_counts_array_elements_and_object_members(): void
     {
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('The suite is not running on PostgreSQL.');
-        }
 
         $doc = Value::of('{"a": [1, 2, 3], "o": {"x": 1, "y": 2}, "s": "text", "e": []}');
         $length = fn (string $path) => DB::selectOne(
@@ -169,23 +168,23 @@ class JsonTextPostgresTest extends TestCase
         );
     }
 
-    public function test_like_on_a_citext_column_ignores_case_on_postgresql(): void
+    public function test_like_on_a_case_insensitive_column_ignores_case(): void
     {
-        if (DB::connection()->getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('The suite is not running on PostgreSQL.');
-        }
 
         $user = $this->createTestUser();
         $local = 'MixedCase'.uniqid();
         $id = DB::table('users_emails')->insertGetId(['userid' => $user->id, 'email' => $local.'-g123@user.trashnothing.com', 'preferred' => 0]);
 
-        // The grammar reads the real catalogue here: users_emails.email is citext. Only the row made
+        // users_emails.email ignores case on both engines: a _ci collation on MySQL, citext on PostgreSQL, where
+        // the grammar reads the real catalogue. Only the row made
         // above is asked about: the test user has an address of its own as well.
         $query = fn (string $operator, string $pattern) => DB::table('users_emails')
             ->where('id', $id)
             ->where('email', $operator, $pattern);
 
-        $this->assertStringContainsString('lower("email"::text) LIKE lower(?)', $query('LIKE', 'x')->toSql());
+        if ($this->onPostgres()) {
+            $this->assertStringContainsString('lower("email"::text) LIKE lower(?)', $query('LIKE', 'x')->toSql());
+        }
         $this->assertSame(1, $query('LIKE', strtolower($local).'-g%@user.trashnothing.com')->count());
         $this->assertSame(1, $query('LIKE', strtoupper($local).'-G%@USER.TRASHNOTHING.COM')->count());
         $this->assertSame(0, $query('LIKE', strtolower($local).'-h%')->count());

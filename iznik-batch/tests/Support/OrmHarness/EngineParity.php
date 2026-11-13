@@ -94,7 +94,7 @@ final class EngineParity
     }
 
     /**
-     * The engines this run uses, as connection names, or a skip.
+     * The engines this run uses, as connection names.
      *
      * @return list<string>
      */
@@ -111,13 +111,12 @@ final class EngineParity
         }
 
         $mode = (string) getenv('PG_ENGINE');
-        if ($mode === '0') {
-            TestCase::markTestSkipped('parity: PG_ENGINE=0, PostgreSQL is switched off');
-        }
         self::reachable('mysql', true);
-        $why = self::reachable('pgsql', $mode === '1');
-        if ($why !== null) {
-            TestCase::markTestSkipped("parity: PostgreSQL is not available ({$why}). Set PG_ENGINE=1 to make this a failure");
+        // With PostgreSQL switched off (PG_ENGINE=0), or not there and not required, the site still runs on
+        // MySQL and gets every check one engine can have. CI sets PG_ENGINE=1, so there both engines run or
+        // the test fails.
+        if ($mode === '0' || self::reachable('pgsql', $mode === '1') !== null) {
+            return ['mysql'];
         }
 
         return ['mysql', 'pgsql'];

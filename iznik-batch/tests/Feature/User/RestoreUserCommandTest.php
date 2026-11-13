@@ -65,7 +65,7 @@ class RestoreUserCommandTest extends TestCase
         $ban = DB::table('users_banned')->where('userid', $user->id)->where('groupid', $group->id)->first();
         $this->assertNotNull($ban, 'the ban was lost because its moderator no longer exists');
         $this->assertNull($ban->byuser);
-        $this->assertSame('2026-01-02 03:04:05', (string) $ban->date, 'the ban keeps the date it was made');
+        $this->assertSame('2026-01-02 03:04:05', \Illuminate\Support\Carbon::parse($ban->date)->utc()->format('Y-m-d H:i:s'), 'the ban keeps the date it was made');
     }
 
     public function test_restore_brings_a_deleted_post_back_on_its_group(): void

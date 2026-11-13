@@ -795,14 +795,24 @@ class StatsGenerationServiceTest extends TestCase
 
         return array_values(array_filter(
             array_map(fn ($q) => $q['query'], $log),
-            fn ($sql) => str_contains($sql, '`i`.`name` = `bi`.`name`')
+            fn ($sql) => str_contains($sql, $this->onPostgres() ? '"i"."name" = ' : '`i`.`name` = `bi`.`name`')
         ));
+    }
+
+    /**
+     * The join each engine must be sent. MySQL: the bulk item's name forced to the collation of items.name.
+     * PostgreSQL: the bulk item's name cast to citext, the type of items.name, so the two compare without
+     * regard to case as they do on MySQL and the index on items.name can be used.
+     */
+    private function itemNameJoin(): string
+    {
+        return $this->onPostgres()
+            ? '"i"."name" = CAST("bi"."name" AS citext)'
+            : '`i`.`name` = `bi`.`name` COLLATE utf8mb4_unicode_ci';
     }
 
     public function test_bulk_item_name_join_forces_unicode_collation_in_daily_context(): void
     {
-        $this->requiresMySql('asserts the MySQL COLLATE utf8mb4_unicode_ci clause in the join text; PostgreSQL has no such collation');
-
         $group = $this->createTestGroup();
         $owner = $this->createTestUser();
         $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
@@ -821,18 +831,12 @@ class StatsGenerationServiceTest extends TestCase
 
         $this->assertNotEmpty($joins, 'Expected the daily context to run the items-by-name join');
         foreach ($joins as $sql) {
-            $this->assertStringContainsString(
-                '`i`.`name` = `bi`.`name` COLLATE utf8mb4_unicode_ci',
-                $sql,
-                'items-by-name join must force utf8mb4_unicode_ci to match items.name'
-            );
+            $this->assertStringContainsString($this->itemNameJoin(), $sql, 'items-by-name join must compare the two names the way items.name is compared');
         }
     }
 
     public function test_bulk_item_name_join_forces_unicode_collation_in_weight_regen(): void
     {
-        $this->requiresMySql('asserts the MySQL COLLATE utf8mb4_unicode_ci clause in the join text; PostgreSQL has no such collation');
-
         $group = $this->createTestGroup();
         $owner = $this->createTestUser();
         $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
@@ -853,11 +857,7 @@ class StatsGenerationServiceTest extends TestCase
 
         $this->assertNotEmpty($joins, 'Expected weight regeneration to run the items-by-name join');
         foreach ($joins as $sql) {
-            $this->assertStringContainsString(
-                '`i`.`name` = `bi`.`name` COLLATE utf8mb4_unicode_ci',
-                $sql,
-                'items-by-name join must force utf8mb4_unicode_ci to match items.name'
-            );
+            $this->assertStringContainsString($this->itemNameJoin(), $sql, 'items-by-name join must compare the two names the way items.name is compared');
         }
     }
 

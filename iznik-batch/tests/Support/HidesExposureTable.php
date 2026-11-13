@@ -56,7 +56,7 @@ trait HidesExposureTable
     protected function restoreExposureTable(): void
     {
         $side = $this->exposureSide ?? $this->exposureSideConnection();
-        $hidden = $this->onPostgres()
+        $hidden = $this->exposureIsOnPostgres()
             ? $side->query("SELECT to_regclass('".$this->qualified(self::EXPOSURES_HIDDEN)."')")->fetchColumn()
             : $side->query("SHOW TABLES LIKE '".self::EXPOSURES_HIDDEN."'")->fetchColumn();
         if ($hidden !== false && $hidden !== null) {
@@ -82,7 +82,7 @@ trait HidesExposureTable
         }
     }
 
-    private function onPostgres(): bool
+    private function exposureIsOnPostgres(): bool
     {
         return $this->exposureOnPostgres ?? config('database.default') === 'pgsql';
     }
@@ -94,12 +94,12 @@ trait HidesExposureTable
 
     private function renameSql(string $from, string $to): string
     {
-        return $this->onPostgres() ? 'ALTER TABLE '.$this->qualified($from)." RENAME TO {$to}" : "RENAME TABLE {$from} TO {$to}";
+        return $this->exposureIsOnPostgres() ? 'ALTER TABLE '.$this->qualified($from)." RENAME TO {$to}" : "RENAME TABLE {$from} TO {$to}";
     }
 
     private function exposureSideConnection(): \PDO
     {
-        if ($this->onPostgres()) {
+        if ($this->exposureIsOnPostgres()) {
             $c = config('database.connections.pgsql');
             $pdo = new \PDO(
                 "pgsql:host={$c['host']};port={$c['port']};dbname={$c['database']}",

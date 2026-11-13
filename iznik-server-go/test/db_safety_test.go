@@ -25,7 +25,8 @@ func TestDatabaseNameIsTestDatabase(t *testing.T) {
 // which reads PGSQL_DATABASE.
 func TestPostgresDatabaseNameIsTestDatabase(t *testing.T) {
 	if os.Getenv("DB_ENGINE") != "postgres" {
-		t.Skip("not a PostgreSQL run")
+		// A MySQL run never opens PGSQL_DATABASE, so there is no name to check. The test above covers it.
+		return
 	}
 	dbName := os.Getenv("PGSQL_DATABASE")
 	if !strings.HasSuffix(dbName, "_test") {

@@ -44,7 +44,7 @@ class ReachVolunteeringReadNodeLagTest extends TestCase
                 $byId = $service->lookUp('https://elsewhere.example/none', $externalId);
                 $byUrl = $service->lookUp($url, 'reach-none');
             } finally {
-                DB::setDefaultConnection('mysql');
+                DB::setDefaultConnection($this->connectionBeforeLag);
                 $db->table('volunteering')->where('id', $id)->delete();
             }
 
