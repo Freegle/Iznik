@@ -214,6 +214,11 @@ class ChatExpectedService
                 ->where('chatid', $msg->chatid)
                 ->where('id', '>', $msg->id)
                 ->where('userid', $other)
+                // Only a reply the expecter can see counts: one held for review, rejected or not yet processed
+                // is invisible to them (ChatMessage::scopeVisible), and replyreceived is never reset.
+                ->where('reviewrequired', 0)
+                ->where('reviewrejected', 0)
+                ->where('processingsuccessful', 1)
                 // A rippling-held reply hasn't reached the expecter yet, so it must not count as
                 // "reply received" (that would prematurely stop chase-up). Once released it counts.
                 // Inlined equivalent of RippleReplyService::deliveryGateSql('chat_messages.id').
@@ -262,7 +267,11 @@ class ChatExpectedService
 
     /**
      * Chats where a reply could have become deliverable since the last run: one that had a
-     * new message, and one whose held reply was released.
+     * new message, one whose held reply was released, and one with a message written within the
+     * release overlap. A reply counts only once the other member can see it, and nothing marks the
+     * moment it becomes so: it is processed a minute after it is written and may be approved hours
+     * later. The overlap picks up the first within the same run that wrote it; the overnight pass
+     * picks up the rest.
      *
      * @return int[]
      */
@@ -283,7 +292,13 @@ class ChatExpectedService
             ->pluck('chatid')
             ->all();
 
-        return array_values(array_unique(array_merge($chatids, $released)));
+        $recentlyWritten = DB::table('chat_messages')
+            ->where('date', '>=', $releasedSince)
+            ->distinct()
+            ->pluck('chatid')
+            ->all();
+
+        return array_values(array_unique(array_merge($chatids, $released, $recentlyWritten)));
     }
 
     /**

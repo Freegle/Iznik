@@ -998,6 +998,25 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			}
 		}
 
+		// A reply held by rippling is written with its hold, in this transaction: chats:process-incoming takes any
+		// committed reply, so a hold written after the commit leaves a gap in which the reply is delivered first, and a
+		// hold that fails would leave an ordinary reply. A hold that cannot be written fails the send.
+		if holdReply {
+			if err := tx.Table("rippling_held_replies").Create(map[string]interface{}{
+				"chatid":        id,
+				"chatmsgid":     payload.ID,
+				"msgid":         *payload.Refmsgid,
+				"replieruserid": myid,
+				"source":        gorm.Expr("'web'"),
+				"lat":           reach.lat,
+				"lng":           reach.lng,
+				"status":        gorm.Expr("'held'"),
+				"created_at":    gorm.Expr("NOW()"),
+			}).Error; err != nil {
+				return err
+			}
+		}
+
 		if confirm != nil && confirm.asks() {
 			// In a savepoint of its own: a hold that cannot be written leaves the reply as it would have been with
 			// no question, not a reply that failed.
@@ -1029,25 +1048,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
 	}
 
-	// Rippling-out reply HOLD: the replier is outside the post's current reach, so the reply was
-	// created but must not reach the poster yet. Record a rippling_held_replies row (source='web')
-	// — the delivery gate withholds it from the poster until ripple:release-replies releases it
-	// when the post ripples to the replier. Same table and lifecycle as email/TN holds; only the
-	// source differs. Best-effort: an instrumentation failure must not fail the reply, and the
-	// sender still sees their own message. The 'held' metric mirrors RippleReplyService::recordEvent
-	// so web holds appear in the sysadmin rippling dashboard alongside email/TN holds.
+	// A reply held by rippling was written with its rippling_held_replies row above. The delivery gate withholds it
+	// from the poster until ripple:release-replies releases it when the post ripples to the replier. The counter
+	// mirrors RippleReplyService::recordEvent so web holds appear in the sysadmin rippling dashboard beside the
+	// email and TN holds; it is best-effort.
 	if holdReply {
-		db.Table("rippling_held_replies").Create(map[string]interface{}{
-			"chatid":        id,
-			"chatmsgid":     newid,
-			"msgid":         *payload.Refmsgid,
-			"replieruserid": myid,
-			"source":        gorm.Expr("'web'"),
-			"lat":           reach.lat,
-			"lng":           reach.lng,
-			"status":        gorm.Expr("'held'"),
-			"created_at":    gorm.Expr("NOW()"),
-		})
 		db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
 		}).Create(map[string]interface{}{
@@ -1209,6 +1214,18 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
+	// A refused reply changes nothing, so the message and the photo are checked before the membership, the chat and
+	// the roster rows are written.
+	if payload.Message == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Message must be non-empty")
+	}
+
+	if payload.Imageid != nil {
+		if err := checkChatImageUnused(db, *payload.Imageid); err != nil {
+			return err
+		}
+	}
+
 	// Find the user who sent the message we are replying to.
 	type msgInfo struct {
 		Fromuser uint64
@@ -1221,7 +1238,7 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 		Select("fromuser, groupid").
 		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
 		Joins("INNER JOIN users ON users.id = messages.fromuser").
-		Where("messages.id = ? AND users.deleted IS NULL", payload.Refmsgid).
+		Where("messages.id = ? AND messages.deleted IS NULL AND users.deleted IS NULL", payload.Refmsgid).
 		Scan(&m)
 
 	if m.Fromuser == 0 {
@@ -1298,16 +1315,6 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 		chattype = utils.CHAT_MESSAGE_DEFAULT
 	}
 
-	if payload.Message == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "Message must be non-empty")
-	}
-
-	if payload.Imageid != nil {
-		if err := checkChatImageUnused(db, *payload.Imageid); err != nil {
-			return err
-		}
-	}
-
 	// Create a chat message, but flagged as needing processing.
 	var cm ChatMessage
 	cm.Userid = myid
@@ -1317,6 +1324,7 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	cm.Date = time.Now()
 	cm.Message = payload.Message
 	cm.Refmsgid = payload.Refmsgid
+	cm.Imageid = payload.Imageid
 
 	// As in CreateChatMessage, the image claim and the insert succeed or fail together.
 	createErr := db.Transaction(func(tx *gorm.DB) error {
@@ -1339,6 +1347,12 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	if createErr != nil || newid == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Error creating chat message")
+	}
+
+	// A poster who closed the chat sees the reply, as for any other message. Blocked chats are left as they are.
+	if result := db.Table("chat_roster").Where("chatid = ? AND status = ?", chat.ID, utils.CHAT_STATUS_CLOSED).
+		Update("status", utils.CHAT_STATUS_OFFLINE); result.Error != nil {
+		stdlog.Printf("Failed to reopen closed chat roster for chat %d: %v", chat.ID, result.Error)
 	}
 
 	var ret ChatMessageLovejunkResponse
@@ -1672,7 +1686,7 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Chat not found"})
 	}
 
-	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
+	if !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) || !mod2ModAllowed(myid, room.Chattype, room.Groupid) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Permission denied"})
 	}
 
@@ -1785,10 +1799,10 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	ctx, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
-	ctxq := ""
-	if ctx > 0 {
-		ctxq = " AND cm.id < " + strconv.FormatUint(ctx, 10)
-	}
+	// The queue is oldest first and its context is the last row returned, so the next page is what comes after it. With
+	// wider review the queue lists the moderator's own communities first and the others after, each by id, so the
+	// context says which of the two the last row was in (contextwider) as well as its id.
+	ctxWider := c.QueryBool("contextwider", false)
 
 	// Find messages pending review where either participant is in the mod's groups,
 	// or the chat is a User2Mod chat for one of the mod's groups.
@@ -1819,6 +1833,20 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	// Check if this user participates in wider chat review.
 	widerReview := user.HasWiderReview(myid)
+
+	// The conditions that move each part of the queue past the context. A cursor in the own communities leaves the
+	// others whole, and one in the others leaves nothing of the own communities.
+	baseCtx, widerCtx := "", ""
+	if ctx > 0 {
+		after := " AND cm.id > " + strconv.FormatUint(ctx, 10)
+
+		if widerReview && ctxWider {
+			baseCtx = " AND 1 = 0"
+			widerCtx = after
+		} else {
+			baseCtx = after
+		}
+	}
 
 	// A moderator never acts on a chat they are one of the two people in (moderationAccess refuses
 	// it), so those chats are left out of their own queue. user2 is NULL in a User2Mod chat.
@@ -1859,7 +1887,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		"LEFT JOIN chat_images ci ON ci.chatmsgid = cm.id " +
 		"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
 		"LEFT JOIN chat_messages_byemail cme ON cme.chatmsgid = cm.id " +
-		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + ctxq + notMine +
+		"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0" + baseCtx + notMine +
 		" AND (" +
 		// User2Mod: group is one of mod's groups
 		"  (cr.chattype = ? AND cr.groupid IN (?))" +
@@ -1902,7 +1930,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"WHERE JSON_EXTRACT(g.settings, '$.widerchatreview') = 1 " +
 			"AND cmh.id IS NULL " +
 			"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') " +
-			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq + notMine
+			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + widerCtx + notMine
 
 		// Top-level UNION wrapped as a derived table with a trailing GROUP
 		// BY/ORDER BY/LIMIT that applies to the combined result, not either
@@ -2153,6 +2181,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	newCtx := fiber.Map{}
 	if len(msgs) > 0 {
 		newCtx["id"] = msgs[len(msgs)-1].ID
+		newCtx["wider"] = msgs[len(msgs)-1].Widerchatreview > 0
 	}
 
 	return c.JSON(fiber.Map{
@@ -2272,7 +2301,9 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	// identical twin in autoApproveModmails (7631a317a13b).
 	if result := db.Table("chat_messages").Where("id = ?", msgID).
 		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid}); result.Error != nil {
+		// Nothing below may run: the approval log row is what tells the mailer the reply was approved.
 		stdlog.Printf("Failed to approve chat message %d: %v", msgID, result.Error)
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to approve message")
 	}
 
 	// A reply that waited for its sender's answer (the car seat question) and was then held for review has its question

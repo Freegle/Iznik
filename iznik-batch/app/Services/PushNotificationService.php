@@ -419,6 +419,27 @@ class PushNotificationService
                         $sub->from('chat_messages as cm')
                             ->whereColumn('cm.chatid', 'cr.chatid')
                             ->where('cm.userid', '<>', $userId)
+                            // Only what the member can open counts, as in the chat list's unseen column
+                            // (iznik-server-go/chat/chatroom.go): not held for review, not rejected, processed
+                            // (or a question Freegle has asked this member about their own reply), and within
+                            // the list's 31 day window. A message they cannot open can never be marked seen.
+                            ->where('cm.reviewrequired', 0)
+                            ->where('cm.reviewrejected', 0)
+                            ->where('cm.date', '>=', now()->subDays(31)->toDateString())
+                            ->where(function ($visible) use ($userId) {
+                                $visible->where('cm.processingsuccessful', 1)
+                                    ->orWhereExists(function ($asked) use ($userId) {
+                                        $asked->select(DB::raw(1))
+                                            ->from('chat_prompts as cpq')
+                                            ->whereColumn('cpq.chatmsgid', 'cm.id')
+                                            ->where('cpq.kind', 'confirm_reply')
+                                            ->where('cpq.userid', $userId)
+                                            ->whereNull('cpq.answered_at')
+                                            ->where(function ($live) {
+                                                $live->whereNull('cpq.expires_at')->orWhere('cpq.expires_at', '>', now());
+                                            });
+                                    });
+                            })
                             ->whereNotExists(function ($q2) {
                                 $q2->from('rippling_held_replies as cmr')
                                     ->whereColumn('cmr.chatmsgid', 'cm.id')
