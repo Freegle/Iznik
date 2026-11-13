@@ -1,5 +1,6 @@
 ---
 last_reviewed: 2026-11-12
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-server-go/user/merge.go
@@ -64,8 +65,9 @@ Everything runs in one transaction. In order:
    one: messages, references to the room, roster rows and the latest-message time move, then the
    spare room is deleted. The rest are handed to the kept account. Roster rows follow.
 6. **Sessions and logins** move, so the member stays signed in.
-7. **Name, system role, join date, TrashNothing id.** Blank fields on the kept account are filled
-   from the discarded one. The higher system role and the older join date win.
+7. **Name, system role, join date.** Blank fields on the kept account are filled from the
+   discarded one. The higher system role and the older join date win. A TrashNothing id never
+   moves, because an account holding one is never merged (see Refusals).
 8. **About forty other tables** that reference a user: addresses, donations, images, stories,
    ratings, notifications, volunteering, events and so on. The list is in `MergeUsersTx`; the
    V1 comment there says how it was found. One of them, `ux_experiment_exposures` (which experiment
@@ -86,9 +88,22 @@ the foreign key.
 
 ## Refusals
 
-A TrashNothing account is never merged with a Freegle account, and two accounts carrying two
-different TrashNothing ids are two different people. `handleMerge` and `MergeUsersTx` refuse
-both. See `.claude/rules/conventions.md`.
+A TrashNothing account (one holding a TrashNothing id, or with a TrashNothing address as its
+preferred email) is never merged, with another TrashNothing account or with a Freegle account.
+`MergeUsersTx` refuses it, so the moderator merge and the email-verify merge both do. That includes
+a member who renamed on TrashNothing and so has two accounts: only a TrashNothing id says who
+someone is, and `users.tnuserid` is unique, so no two accounts can hold the same one. Their
+TrashNothing address goes to the account holding the id TrashNothing names for it, and the other
+account keeps its posts and chats (`moveTNAlias`, see "Database Linking" in `trashnothing.md`). See
+`.claude/rules/conventions.md`.
+
+An account that is not a TrashNothing account can still hold a TrashNothing address that is not its
+preferred one. Two accounts holding two different TrashNothing usernames may be two people, and a
+merge cannot be undone, so `MergeUsersTx` refuses that too.
+
+The Related Members list and its count leave out a pair with a TrashNothing account in it
+(`MergeableSidesSQL`), and `users:detect-related` does not link one, since the merge would be
+refused.
 
 A member can set `canmerge` to false in their settings. If either account has, the merge is
 refused.
@@ -96,11 +111,18 @@ refused.
 In the email-verify case a refusal is logged and the confirmation still succeeds: the address
 moves to the member's current account and the other account is left as it was.
 
+A TrashNothing address (`@user.trashnothing.com`, bare or a per-group alias) is the exception,
+because it belongs to the account holding the TN id TrashNothing names for it. A member cannot
+add one: `PatchSession` answers `ret: 12` with the reason and sends no mail, and the batch's
+`email_verify` task skips one queued before that. A key already mailed for one is refused when
+it is confirmed (403 with the reason, the key spent), with nothing merged and nothing moved.
+
 ## The PHP copy
 
-`iznik-batch/app/Models/User.php` has `merge()`, a second port of the V1 function in PHP. It
-is used only by the TrashNothing sync command. Nothing checks it against `MergeUsersTx`, so
-when you add a table to one, add it to the other. Compared on 2026-10-15, column by column:
+`iznik-batch/app/Models/User.php` has `merge()`, a second port of the V1 function in PHP.
+Nothing in `app/` calls it now that `tn:sync` no longer merges. Nothing checks it against
+`MergeUsersTx`, so when you add a table to one, add it to the other. Compared on 2026-10-15,
+column by column:
 
 - **Tables.** The same, except that the PHP merge never moves `volunteering` or
   `communityevents`. `volunteering` has no foreign key, so after a PHP merge its rows point at
@@ -116,12 +138,13 @@ when you add a table to one, add it to the other. Compared on 2026-10-15, column
 - **Chat rooms.** PHP has the logic Go had before October 2026: a room between the two accounts
   is left as a chat with oneself, messages that refer to a folded room are not updated, and the
   other person's roster row is lost when rooms are folded.
-- **Refusals.** Go refuses a TrashNothing and Freegle mix and two different TrashNothing ids.
-  PHP has neither check. Both refuse when either account's settings say `canmerge` is false.
+- **Refusals.** Both refuse a TrashNothing account, two different TrashNothing usernames and
+  either account's settings saying `canmerge` is false. PHP reports the first two as a
+  `TnUserIdMergeConflict`. Forcing a PHP merge passes `canmerge` and nothing else.
 - **Log text.** PHP appends the reason in brackets.
 
 Everything else is the same: one transaction, deletion of the discarded account after commit,
-highest role and oldest join date, system role, join date, TrashNothing id, bans, the best Gift
+highest role and oldest join date, system role, join date, bans, the best Gift
 Aid declaration, the two log rows.
 
 ## A moderator's Discourse account

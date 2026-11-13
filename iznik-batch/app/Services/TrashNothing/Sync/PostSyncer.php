@@ -251,6 +251,7 @@ class PostSyncer
 
         $date      = is_array($post) ? ($post['date'] ?? null) : $post->getDate()?->format(self::ISO_UTC);
         $postId    = is_array($post) ? ($post['post_id'] ?? '') : $post->getPostId();
+        $tnUserId  = is_array($post) ? ($post['user_id'] ?? null) : $post->getUserId();
         $type      = is_array($post) ? ($post['type'] ?? '') : $post->getType();
         $groupId   = is_array($post) ? ($post['group_id'] ?? '') : $post->getGroupId();
         $title     = is_array($post) ? ($post['title'] ?? '') : $post->getTitle();
@@ -291,7 +292,7 @@ class PostSyncer
             // No group resolved, so no group context — which matches the shape
             // of the email path's own unknown-group drop (case 1: routing_reason
             // and nothing else).
-            $this->logRoutedPost($postId, $subject, null, RoutingResult::DROPPED, [
+            $this->logRoutedPost($postId, $tnUserId, $subject, null, RoutingResult::DROPPED, [
                 'routing_reason' => self::REASON_NO_COORDINATES,
             ]);
 
@@ -310,7 +311,7 @@ class PostSyncer
             // stream: this is the coverage-regression case Layer 1 of
             // tn:parity-check exists to catch, and it was previously invisible
             // outside the trace logs.
-            $this->logRoutedPost($postId, $subject, null, RoutingResult::DROPPED, [
+            $this->logRoutedPost($postId, $tnUserId, $subject, null, RoutingResult::DROPPED, [
                 'routing_reason' => self::REASON_NOT_IN_ANY_GROUP_BOUNDS,
             ]);
 
@@ -354,6 +355,7 @@ class PostSyncer
             // once instead.
             $this->logRoutedPost(
                 $postId,
+                $tnUserId,
                 $subject,
                 $group,
                 GroupPostIngestionService::outcomeFor($result),
@@ -372,7 +374,7 @@ class PostSyncer
             // which is the opposite of what this stream is for. RoutingResult::
             // FAILURE is the email path's own value for "routing failed", so the
             // vocabulary still lines up even though the email path never emits it.
-            $this->logRoutedPost($postId, $subject, $group, RoutingResult::FAILURE, [
+            $this->logRoutedPost($postId, $tnUserId, $subject, $group, RoutingResult::FAILURE, [
                 'routing_reason' => self::REASON_INGESTION_EXCEPTION,
             ]);
         }
@@ -414,11 +416,13 @@ class PostSyncer
      * the controller has one; the emission still lives in the caller, never in
      * the ingestion service, exactly as on the email path.
      *
+     * @param  mixed  $tnUserId  The TN user id on the post, as TN sent it; null when it sent none
      * @param  Group|null  $group  Null when no group was resolved (pre-ingest skips)
      * @param  array  $context  The ingestion service's accumulated routing context
      */
     private function logRoutedPost(
         string $postId,
+        mixed $tnUserId,
         string $subject,
         ?Group $group,
         RoutingResult $outcome,
@@ -430,6 +434,10 @@ class PostSyncer
         // path. Correlation therefore runs the other way — email-side message_id
         // -> messages.tnpostid. See plans/tn-api-post-ingestion.md section I.5a.
         $context['tn_post_id'] = $postId;
+
+        // API-only too, and the record of who TN said wrote the post. messages keeps no TN id on
+        // purpose, and users.tnuserid only says who holds an id now.
+        $context['tn_user_id'] = $tnUserId ? (int) $tnUserId : null;
 
         if ($this->dryRun) {
             $context['dry_run'] = true;

@@ -3393,13 +3393,8 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "You cannot administer those users")
 	}
 
-	// A TrashNothing member is a partner's member, not one of ours: their account is never merged
-	// with a Freegle account, whoever asks (.claude/rules/conventions.md). ModTools refuses this
-	// too, but only by looking at the email typed in, so a merge by id went straight through.
-	if IsTrashNothingAccount(db, uint64(req.ID1)) != IsTrashNothingAccount(db, uint64(req.ID2)) {
-		return fiber.NewError(fiber.StatusBadRequest, "You can't merge a TrashNothing member with a Freegle account. Add a note to each to say they are the same person.")
-	}
-
+	// MergeUsersTx refuses a TrashNothing account, with another or with a Freegle account, whoever
+	// asks. ModTools refuses it too, but only by looking at the email typed in.
 	if err := MergeUsersTx(db, uint64(req.ID1), uint64(req.ID2), myid); err != nil {
 		return err
 	}
@@ -3435,25 +3430,33 @@ func userOptedOutOfMerge(db *gorm.DB, id uint64) bool {
 // then id1's users row is hard-deleted after commit. byuser is recorded in
 // the merge log entries.
 //
-// This is the only account merge. The moderator merge (handleMerge), the
-// accepted merge offer (merge.PostMerge), the email-verify merge (session.PatchSession,
-// when a member confirms an address that belongs to another of their accounts) and the
-// TN divergence heal
-// (HealTNDivergence) all come through here, so they move the same tables and
-// leave the same log rows. Do not add a cut-down copy for a new caller: the
-// email-verify path had one until October 2026, and it stranded chat rooms
-// and wrote no log row. docs/developers/reference/account-merge.md says what
-// a merge does in plain words.
+// This is the only account merge. The moderator merge (handleMerge) and the
+// email-verify merge (session.PatchSession, when a member confirms an address
+// that belongs to another of their accounts) both come through here, so they
+// move the same tables and leave the same log rows. Do not add a cut-down copy
+// for a new caller: the email-verify path had one until October 2026, and it
+// stranded chat rooms and wrote no log row.
+// docs/developers/reference/account-merge.md says what a merge does in plain words.
 func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
-	// Two different TrashNothing ids are two different TrashNothing members. Merging them keeps one
-	// id and drops the other, which loses that member for good (Discourse: pchide251 and
-	// brianandi170). Every merge path comes through here: the moderator merge and the TN
-	// divergence heal, whose own case - one twin stamped, the other not - is still allowed.
-	var tn1, tn2 *uint64
-	db.Table("users").Select("tnuserid").Where("id = ?", id1).Scan(&tn1)
-	db.Table("users").Select("tnuserid").Where("id = ?", id2).Scan(&tn2)
-	if tn1 != nil && tn2 != nil && *tn1 != *tn2 {
-		return fiber.NewError(fiber.StatusBadRequest, "These accounts belong to two different TrashNothing members and can't be merged.")
+	// TrashNothing accounts are never merged, with each other or with a Freegle account
+	// (.claude/rules/conventions.md). Only a TN id says who a TN member is, and a merge keeps one
+	// account and deletes the other with whatever it held. Two accounts of one TN member are left
+	// apart: the TN address goes to the one holding the id TN names (moveTNAlias), and the other
+	// keeps its posts and chats. Every merge path comes through here, the email-verify one included.
+	if IsTrashNothingAccount(db, id1) || IsTrashNothingAccount(db, id2) {
+		return fiber.NewError(fiber.StatusBadRequest, msgMergeTrashNothing)
+	}
+
+	// Neither is a TrashNothing account, but either can still hold a TN address that is not its
+	// preferred one. Two different usernames may be two members, and a merge cannot be undone.
+	usernames := map[string]bool{}
+	for _, id := range []uint64{id1, id2} {
+		for _, username := range tnUsernames(db, id, tnPartnerDomain) {
+			usernames[username] = true
+		}
+	}
+	if len(usernames) > 1 {
+		return fiber.NewError(fiber.StatusBadRequest, "These accounts hold two different TrashNothing usernames, so they may be two members, and can't be merged.")
 	}
 
 	// A member can set canmerge to false in their settings to stop their account being merged.
@@ -3647,12 +3650,11 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 		Yahooid    *string
 		Systemrole string
 		Added      string
-		Tnuserid   *uint64
 	}
 	var u1Attrs, u2Attrs UserAttrs
-	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
+	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added").
 		Where("id = ?", id1).Scan(&u1Attrs)
-	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added, tnuserid").
+	tx.Table("users").Select("fullname, firstname, lastname, yahooid, systemrole, added").
 		Where("id = ?", id2).Scan(&u2Attrs)
 
 	// fullname: take id1's if id2 is NULL, skip FBUser/-owner placeholder names.
@@ -3698,11 +3700,7 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 	// lastupdated.
 	tx.Table("users").Where("id = ?", id2).Update("lastupdated", gorm.Expr("NOW()"))
 
-	// tnuserid: transfer if id2 doesn't have one.
-	if u1Attrs.Tnuserid != nil && u2Attrs.Tnuserid == nil {
-		tx.Table("users").Where("id = ?", id1).Update("tnuserid", gorm.Expr("NULL"))
-		tx.Table("users").Where("id = ?", id2).Update("tnuserid", *u1Attrs.Tnuserid)
-	}
+	// tnuserid never moves: an account holding one is a TrashNothing account, refused above.
 
 	// Simple UPDATE IGNORE tables (V1 parity — ~25 reference tables).
 	//
@@ -4260,11 +4258,14 @@ func TrashNothingSQL(alias string) string {
 		alias + ".id AND tne.preferred = 1 AND tne.email LIKE '%@user.trashnothing.com'))"
 }
 
+// msgMergeTrashNothing is MergeUsersTx's refusal of a TrashNothing account.
+const msgMergeTrashNothing = "TrashNothing accounts can't be merged, with each other or with a Freegle account. Add a note to each to say they are the same person."
+
 // MergeableSidesSQL is a SQL condition that is true when the users rows aliased a and b
-// could be merged: handleMerge refuses a TrashNothing member with any other account, so a
-// related-members pair across that line is one a moderator can do nothing with.
+// could be merged: MergeUsersTx refuses any merge with a TrashNothing account in it, so a
+// related-members pair with one is a pair a moderator can do nothing with.
 func MergeableSidesSQL(a, b string) string {
-	return "(" + TrashNothingSQL(a) + " = " + TrashNothingSQL(b) + ")"
+	return "(NOT " + TrashNothingSQL(a) + " AND NOT " + TrashNothingSQL(b) + ")"
 }
 
 // IsTrashNothingAccount reports whether the user is a TrashNothing member: stamped with a

@@ -47,6 +47,9 @@
           />
         </slot>
       </b-input-group>
+      <p v-if="emailRefused" class="text-danger small mt-1 mb-0">
+        {{ emailRefused }}
+      </p>
     </b-form-group>
     <b-form-group
       label="Moderation Notifications (Active)"
@@ -186,6 +189,8 @@ const miscStore = useMiscStore()
 const { me } = useMe()
 
 const showEmailConfirmModal = ref(false)
+// Why the server refused the address, e.g. a TrashNothing one (ret 12).
+const emailRefused = ref(null)
 
 const modNotifOptions = [
   { text: 'Daily', value: 24 },
@@ -274,6 +279,8 @@ async function saveName(callback) {
 async function saveEmail(callback) {
   if (me.value.email) {
     const data = await authStore.saveEmail(me.value.email)
+
+    emailRefused.value = data?.ret === 12 ? data.status : null
 
     if (data && data.ret === 10) {
       showEmailConfirmModal.value = true
