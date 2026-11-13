@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-07
+last_reviewed: 2026-11-13
 covers:
   - iznik-batch/app/Services/EeeClassificationService.php
   - iznik-batch/app/Services/EeeComponentService.php

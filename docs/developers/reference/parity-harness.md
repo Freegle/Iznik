@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-13
 owner: Freegle dev team
 covers:
   - iznik-server-go/parity/*
@@ -106,6 +106,11 @@ names its id) and lowers the `raw` count. Commit `manifest.json` and the two `go
 Go and Laravel containers, which cannot read `tools/`. CI runs `extract.mjs check`, which fails when any is
 stale. Laravel's `GoldenSql` still reads the earlier inventory in `tools/orm-migration/services/laravel/` for
 conversions made before; new tests use ids from `manifest.json`.
+
+**Laravel layer 1 on either engine.** The golden text is the MySQL statement. When the Laravel suite runs on
+PostgreSQL, `GoldenSql` renders the statement under test with a MySQL grammar (`MySqlRenderingConnection`, a
+connection that never connects), so the same test pins the same text on both runs. A layer 2 test that runs the recorded
+MySQL statement itself calls `requiresMySql()` and is skipped on PostgreSQL.
 
 ## Layer 2 rules
 
