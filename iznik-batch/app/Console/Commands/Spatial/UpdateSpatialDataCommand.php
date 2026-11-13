@@ -98,17 +98,36 @@ class UpdateSpatialDataCommand extends Command
     }
 
     /**
-     * Geofabrik extracts that, merged, cover the whole Freegle operating area:
-     * Great Britain + Ireland/Northern Ireland.
+     * Geofabrik extracts that, merged, cover the whole Freegle operating area. Four,
+     * because the Crown Dependencies are not part of the United Kingdom and so are
+     * not in great-britain; the same list as iznik-routing-go/scripts/build-osm-pbf.sh.
      */
     private const OSM_EXTRACTS = [
         'great-britain-latest.osm.pbf'                 => 'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf',
         'ireland-and-northern-ireland-latest.osm.pbf'  => 'https://download.geofabrik.de/europe/ireland-and-northern-ireland-latest.osm.pbf',
+        'isle-of-man-latest.osm.pbf'                   => 'https://download.geofabrik.de/europe/isle-of-man-latest.osm.pbf',
+        'guernsey-jersey-latest.osm.pbf'               => 'https://download.geofabrik.de/europe/guernsey-jersey-latest.osm.pbf',
     ];
 
     /**
-     * Download the GB and Ireland/NI OSM extracts and merge them into the single
-     * uk-latest.osm.pbf the routing server loads (OSM_PBF_PATH=/data/uk-latest.osm.pbf).
+     * A piece of land only each extract supplies, as [minLng, minLat, maxLng, maxLat],
+     * and the fewest highway ways a real road network there has. A missing extract
+     * fails nothing on its own: the routing graph simply has no roads there, and every
+     * reach result for that island is empty (the Isle of Man went a year like that).
+     * Thresholds as build-osm-pbf.sh: far above stray spillover, far below real roads.
+     */
+    private const ROAD_PROBES = [
+        'anglesey-GB' => [[-4.71, 53.13, -4.02, 53.43], 2000],
+        'cork-IE'     => [[-8.60, 51.85, -8.35, 51.95], 2000],
+        'isle-of-man' => [[-4.85, 54.03, -4.28, 54.42], 2000],
+        'jersey-CI'   => [[-2.27, 49.16, -2.00, 49.27], 1000],
+        'guernsey-CI' => [[-2.67, 49.42, -2.50, 49.51], 1000],
+    ];
+
+    /**
+     * Download the OSM extracts and merge them into the single uk-latest.osm.pbf the
+     * routing server loads (OSM_PBF_PATH=/data/uk-latest.osm.pbf), refusing a merge
+     * that has no road network somewhere it should.
      *
      * Downloads stream straight to disk — the merged file is ~2.5 GB, so buffering
      * a whole extract in memory would OOM the batch container.
@@ -121,7 +140,7 @@ class UpdateSpatialDataCommand extends Command
             foreach (self::OSM_EXTRACTS as $url) {
                 $this->info("  [DRY RUN] Would download: {$url}");
             }
-            $this->info("  [DRY RUN] Would merge GB + Ireland/NI into: {$mergedPath} (osmium merge)");
+            $this->info("  [DRY RUN] Would merge them into: {$mergedPath} (osmium merge), then check each region has roads");
             return null;
         }
 
@@ -146,6 +165,8 @@ class UpdateSpatialDataCommand extends Command
             @unlink($tmpMerged);
             throw new RuntimeException('osmium merge failed: ' . trim($result->errorOutput() ?: $result->output()));
         }
+        $this->checkRoadNetworks($tmpMerged, $dataDir);
+
         // Atomic publish. (Under Process::fake() in tests no temp is produced;
         // guard the rename so the unit tests don't require osmium.)
         if (file_exists($tmpMerged) && !rename($tmpMerged, $mergedPath)) {
@@ -155,6 +176,34 @@ class UpdateSpatialDataCommand extends Command
 
         Log::info('OSM PBF downloaded and merged', ['path' => $mergedPath, 'inputs' => $inputs]);
         return $mergedPath;
+    }
+
+    /**
+     * Cut each probe area out of the merged file and count its highway ways. Leaves
+     * the existing map in place and throws when any region has too few.
+     */
+    private function checkRoadNetworks(string $mergedPath, string $dataDir): void
+    {
+        $this->line('  Checking every region has a road network...');
+        $missing = [];
+        foreach (self::ROAD_PROBES as $name => [$bbox, $minWays]) {
+            $cut = "{$dataDir}/probe-{$name}.osm.pbf";
+            $roads = "{$dataDir}/probe-{$name}-highways.osm.pbf";
+            Process::timeout(900)->run(['osmium', 'extract', '-b', implode(',', $bbox), '-f', 'pbf', '-o', $cut, '--overwrite', $mergedPath]);
+            Process::timeout(300)->run(['osmium', 'tags-filter', '-f', 'pbf', '-o', $roads, '--overwrite', $cut, 'w/highway']);
+            $info = Process::timeout(300)->run(['osmium', 'fileinfo', '-e', $roads]);
+            @unlink($cut);
+            @unlink($roads);
+            $ways = preg_match('/Number of ways:\s*(\d+)/', $info->output(), $m) ? (int) $m[1] : 0;
+            $this->line(sprintf('    %-12s %8d highway ways (need %d)', $name, $ways, $minWays));
+            if ($ways < $minWays) {
+                $missing[] = "{$name} ({$ways})";
+            }
+        }
+        if ($missing) {
+            @unlink($mergedPath);
+            throw new RuntimeException('Refusing the merged map, no road network in: ' . implode(', ', $missing));
+        }
     }
 
     /**

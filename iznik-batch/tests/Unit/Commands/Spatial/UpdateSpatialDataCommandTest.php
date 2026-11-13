@@ -14,8 +14,13 @@ class UpdateSpatialDataCommandTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        // Don't actually shell out to osmium for the merge in unit tests.
-        Process::fake();
+        // Don't actually shell out to osmium in unit tests. The road check reads
+        // "Number of ways" from osmium fileinfo; report a healthy network by default.
+        // (Symfony quotes each argument, so the pattern matches the quoted word.)
+        Process::fake([
+            "*'fileinfo'*" => Process::result("Number of ways: 50000\n"),
+            '*' => Process::result(),
+        ]);
         $this->dataDir = storage_path('tests/spatial');
         if (!is_dir($this->dataDir)) {
             mkdir($this->dataDir, 0755, true);
@@ -88,13 +93,54 @@ class UpdateSpatialDataCommandTest extends TestCase
 
         $this->artisan('spatial:update-data')->assertExitCode(0);
 
-        $this->assertCount(2, $pbfOptions);
+        // Four extracts: GB, Ireland/NI, the Isle of Man, and Guernsey/Jersey.
+        $this->assertCount(4, $pbfOptions);
         foreach ($pbfOptions as $options) {
             $this->assertSame(UpdateSpatialDataCommand::PBF_DOWNLOAD_TIMEOUT, $options['timeout']);
             $this->assertGreaterThanOrEqual(3600, $options['timeout']);
             $this->assertSame(UpdateSpatialDataCommand::PBF_CONNECT_TIMEOUT, $options['connect_timeout']);
             $this->assertSame(UpdateSpatialDataCommand::PBF_STALL_BYTES_PER_SEC, $options['curl'][CURLOPT_LOW_SPEED_LIMIT]);
             $this->assertSame(UpdateSpatialDataCommand::PBF_STALL_SECONDS, $options['curl'][CURLOPT_LOW_SPEED_TIME]);
+        }
+    }
+
+    /**
+     * A merged map with no roads on an island must not be published: the routing graph
+     * would have nothing there and every reach result for it would be silently empty.
+     */
+    public function test_refuses_a_map_with_no_roads_on_an_island(): void
+    {
+        Process::fake([
+            "*'fileinfo'*probe-isle-of-man-highways*" => Process::result("Number of ways: 12\n"),
+            "*'fileinfo'*" => Process::result("Number of ways: 50000\n"),
+            '*' => Process::result(),
+        ]);
+        Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
+
+        $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('no road network in: isle-of-man (12)')
+            ->doesntExpectOutputToContain('Step 2')
+            ->assertExitCode(1);
+
+        // Every region was still checked, so the error names all that are missing.
+        Process::assertRan(fn ($process) => str_contains($process->command, 'probe-guernsey-CI-highways'));
+    }
+
+    /**
+     * Every region's roads are checked after the merge, from the merged file.
+     */
+    public function test_checks_roads_in_every_region(): void
+    {
+        Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
+
+        $this->artisan('spatial:update-data')
+            ->expectsOutputToContain('Checking every region has a road network')
+            ->assertExitCode(0);
+
+        foreach (['anglesey-GB', 'cork-IE', 'isle-of-man', 'jersey-CI', 'guernsey-CI'] as $region) {
+            Process::assertRan(fn ($process) => str_contains($process->command, "'extract'")
+                && str_contains($process->command, "probe-{$region}.osm.pbf")
+                && str_contains($process->command, 'uk-latest.osm.pbf.tmp'));
         }
     }
 
@@ -314,6 +360,8 @@ class UpdateSpatialDataCommandTest extends TestCase
         return [
             'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response($pbf, 200),
             'https://download.geofabrik.de/europe/ireland-and-northern-ireland-latest.osm.pbf' => Http::response($pbf, 200),
+            'https://download.geofabrik.de/europe/isle-of-man-latest.osm.pbf' => Http::response($pbf, 200),
+            'https://download.geofabrik.de/europe/guernsey-jersey-latest.osm.pbf' => Http::response($pbf, 200),
             'http://localhost:8195/v1/reload' => Http::response(['status' => 'ok'], 200),
         ];
     }
