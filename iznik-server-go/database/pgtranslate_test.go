@@ -112,6 +112,9 @@ func TestTranslatePostgres(t *testing.T) {
 		{"round", "SELECT ROUND(ST_Y(p), 2) FROM t", "SELECT ROUND((ST_Y(p))::numeric, 2) FROM t"},
 		{"window kept", "SELECT a, row_number() OVER (ORDER BY b) AS rn FROM t GROUP BY a", "SELECT a, row_number() OVER (ORDER BY b) AS rn FROM t GROUP BY a"},
 		{"do block untouched", "DO $$ BEGIN IF user THEN END IF; END $$", "DO $$ BEGIN IF user THEN END IF; END $$"},
+		{"question marks", "SELECT 1 FROM t WHERE a = ? AND b = '?' AND c = ?", "SELECT 1 FROM t WHERE a = $1 AND b = '?' AND c = $2"},
+		{"update limit", "UPDATE t SET a = 1 WHERE b = 2 ORDER BY id DESC LIMIT 1", "UPDATE t SET a = 1 WHERE ctid IN (SELECT ctid FROM t WHERE b = 2 ORDER BY id DESC LIMIT 1)"},
+		{"delete limit", "DELETE FROM t WHERE b = 2 LIMIT 5", "DELETE FROM t WHERE ctid IN (SELECT ctid FROM t WHERE b = 2 LIMIT 5)"},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {

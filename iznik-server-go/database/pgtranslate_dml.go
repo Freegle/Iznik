@@ -179,3 +179,68 @@ func translateJoinDML(ts []tok) ([]tok, bool) {
 }
 
 var _ = strings.ToLower
+
+// translateLimitedDML rewrites a single-table UPDATE or DELETE that has ORDER BY or LIMIT, which PostgreSQL
+// does not allow, into one that picks the rows by ctid in a subselect.
+func translateLimitedDML(ts []tok) ([]tok, bool) {
+	first := nextSig(ts, 0)
+	if first < 0 {
+		return ts, false
+	}
+	upd := isKw(ts[first], "UPDATE")
+	if !upd && !isKw(ts[first], "DELETE") {
+		return ts, false
+	}
+	order := topKw(ts, first+1, "ORDER")
+	limit := topKw(ts, first+1, "LIMIT")
+	cut := order
+	if cut < 0 || (limit >= 0 && limit < cut) {
+		cut = limit
+	}
+	if cut < 0 {
+		return ts, false
+	}
+	var table, head []tok
+	var whereAt int
+	if upd {
+		tbl := nextSig(ts, first+1)
+		set := nextSig(ts, tbl+1)
+		if tbl < 0 || set < 0 || !isKw(ts[set], "SET") {
+			return ts, false
+		}
+		table = []tok{ts[tbl]}
+		whereAt = topKw(ts, set+1, "WHERE")
+		end := cut
+		if whereAt >= 0 {
+			end = whereAt
+		}
+		head = concatToks([]tok{word("UPDATE"), sp(), ts[tbl], sp()}, trimToks(ts[set:end]))
+	} else {
+		from := nextSig(ts, first+1)
+		if from < 0 || !isKw(ts[from], "FROM") {
+			return ts, false
+		}
+		tbl := nextSig(ts, from+1)
+		if tbl < 0 {
+			return ts, false
+		}
+		if n := nextSig(ts, tbl+1); n >= 0 && n < cut && !isKw(ts[n], "WHERE") {
+			return ts, false // an alias or a join
+		}
+		table = []tok{ts[tbl]}
+		whereAt = topKw(ts, tbl+1, "WHERE")
+		head = []tok{word("DELETE"), sp(), word("FROM"), sp(), ts[tbl]}
+	}
+	var where []tok
+	if whereAt >= 0 && whereAt < cut {
+		where = trimToks(ts[whereAt+1 : cut])
+	}
+	tail := trimToks(ts[cut:])
+	sub := concatToks([]tok{word("SELECT"), sp(), word("ctid"), sp(), word("FROM"), sp()}, table)
+	if len(where) > 0 {
+		sub = concatToks(sub, []tok{sp(), word("WHERE"), sp()}, where)
+	}
+	sub = concatToks(sub, []tok{sp()}, tail)
+	out := concatToks(head, []tok{sp(), word("WHERE"), sp(), word("ctid"), sp(), word("IN"), sp(), punct("(")}, sub, []tok{punct(")")})
+	return out, true
+}

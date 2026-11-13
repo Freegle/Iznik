@@ -1,6 +1,7 @@
 package database
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -223,6 +224,25 @@ func translatePostgres(sql string, cat catalog) string {
 	}
 	ts := lexSQL(sql)
 	changed := false
+
+	// A statement sent straight to database/sql (not through GORM) has ? placeholders; PostgreSQL wants $n.
+	hasNumbered := false
+	for _, t := range ts {
+		if t.k == tkWord && len(t.s) > 1 && t.s[0] == '$' && t.s[1] >= '0' && t.s[1] <= '9' {
+			hasNumbered = true
+			break
+		}
+	}
+	if !hasNumbered {
+		n := 0
+		for i, t := range ts {
+			if isP(t, "?") {
+				n++
+				ts[i] = tok{tkWord, "$" + strconv.Itoa(n)}
+				changed = true
+			}
+		}
+	}
 
 	// Identifiers.
 	for i, t := range ts {

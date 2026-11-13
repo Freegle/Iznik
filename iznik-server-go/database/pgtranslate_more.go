@@ -529,6 +529,11 @@ func translateMore(ts []tok, cat catalog) ([]tok, bool) {
 		changed = true
 	}
 
+	if t, ok := translateLimitedDML(ts); ok {
+		ts = t
+		changed = true
+	}
+
 	if t, ok := translateJoinDML(ts); ok {
 		ts = t
 		changed = true

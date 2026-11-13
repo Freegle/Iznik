@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -20,13 +21,21 @@ type pgTranslatingConnector struct {
 	cache sync.Map // sql -> pgStatement
 	idx   map[string][][]string
 	cols  map[string][]string
+	defs  map[string]map[string]any // table -> column -> implicit default of a NOT NULL column
 	ready bool
 }
 
 type pgStatement struct {
 	sql      string
-	insertID bool // an INSERT into a table with an id column, no RETURNING
-	jsonArgs bool // has a JSON constructor whose bound arguments need a type
+	insertID bool      // an INSERT into a table with an id column, no RETURNING
+	jsonArgs bool      // has a JSON constructor whose bound arguments need a type
+	nullCols []nullCol // bound parameters of a one-row INSERT that are columns with an implicit default
+}
+
+// nullCol ties a bound parameter to the NOT NULL column it is inserted into.
+type nullCol struct {
+	param int // 1 based
+	def   any
 }
 
 func newPgTranslatingConnector(inner driver.Connector) *pgTranslatingConnector {
@@ -52,6 +61,7 @@ func (c *pgTranslatingConnector) statement(q string) pgStatement {
 	if table, ok := plainInsertTable(t); ok && isColumnOf(c, table, "id") {
 		st.insertID = true
 	}
+	st.nullCols = c.insertNullCols(t)
 	c.cache.Store(q, st)
 	return st
 }
@@ -83,6 +93,7 @@ func (c *pgTranslatingConnector) load() {
 	c.ready = true
 	c.idx = map[string][][]string{}
 	c.cols = map[string][]string{}
+	c.defs = map[string]map[string]any{}
 	db := sql.OpenDB(c.inner)
 	defer db.Close()
 	// keep-raw: reads pg_catalog for the translator; PostgreSQL only, nothing MySQL has an equivalent of.
@@ -103,14 +114,25 @@ func (c *pgTranslatingConnector) load() {
 		rows.Close()
 	}
 	// keep-raw: reads pg_catalog for the translator; PostgreSQL only, nothing MySQL has an equivalent of.
-	rows, err = db.Query(`SELECT c.relname, a.attname FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid
+	rows, err = db.Query(`SELECT c.relname, a.attname, a.attnotnull AND a.attidentity = '' AND a.attgenerated = '' AS plain_not_null, t.typname,
+		EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.contype = 'c' AND k.conname = c.relname || '_' || a.attname || '_check') AS has_check
+		FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid JOIN pg_type t ON t.oid = a.atttypid
 		WHERE c.relkind IN ('r', 'p') AND c.relnamespace = 'public'::regnamespace AND a.attnum > 0 AND NOT a.attisdropped
 		ORDER BY c.relname, a.attnum`)
 	if err == nil {
 		for rows.Next() {
-			var table, col string
-			if rows.Scan(&table, &col) == nil {
+			var table, col, typ string
+			var notNull, hasCheck bool
+			if rows.Scan(&table, &col, &notNull, &typ, &hasCheck) == nil {
 				c.cols[table] = append(c.cols[table], col)
+				if notNull && !hasCheck {
+					if d, ok := implicitDefault(typ); ok {
+						if c.defs[table] == nil {
+							c.defs[table] = map[string]any{}
+						}
+						c.defs[table][col] = d
+					}
+				}
 			}
 		}
 		rows.Close()
@@ -180,6 +202,9 @@ func (p *pgTranslatingConn) ExecContext(ctx context.Context, q string, args []dr
 	if st.jsonArgs {
 		st.sql = typeJSONParams(st.sql, args)
 	}
+	if st.nullCols != nil {
+		args = fillNulls(args, st.nullCols)
+	}
 	if !st.insertID {
 		return p.Conn.(driver.ExecerContext).ExecContext(ctx, st.sql, args)
 	}
@@ -216,6 +241,9 @@ func (p *pgTranslatingConn) QueryContext(ctx context.Context, q string, args []d
 	st := p.c.statement(q)
 	if st.jsonArgs {
 		st.sql = typeJSONParams(st.sql, args)
+	}
+	if st.nullCols != nil {
+		args = fillNulls(args, st.nullCols)
 	}
 	rows, err := p.Conn.(driver.QueryerContext).QueryContext(ctx, st.sql, args)
 	if err != nil {
@@ -287,21 +315,7 @@ func typeJSONParams(sql string, args []driver.NamedValue) string {
 			if idx < 1 || idx > len(args) {
 				continue
 			}
-			typ := "text"
-			switch v := args[idx-1].Value.(type) {
-			case int64:
-				typ = "bigint"
-			case float64:
-				typ = "double precision"
-			case bool:
-				typ = "boolean"
-			case time.Time:
-				typ = "timestamptz"
-			case string, []byte, nil:
-				typ = "text"
-			default:
-				_ = v
-			}
+			typ := jsonParamType(args[idx-1].Value)
 			ts[j].s = t.s + "::" + typ
 			changed = true
 		}
@@ -310,4 +324,129 @@ func typeJSONParams(sql string, args []driver.NamedValue) string {
 		return sql
 	}
 	return joinToks(ts)
+}
+
+// jsonParamType is the PostgreSQL type for a Go value sent as an argument of a JSON constructor.
+func jsonParamType(v any) string {
+	if t, ok := v.(time.Time); ok && !t.IsZero() {
+		return "timestamptz"
+	}
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Ptr && !rv.IsNil() {
+		rv = rv.Elem()
+	}
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "bigint"
+	case reflect.Float32, reflect.Float64:
+		return "double precision"
+	case reflect.Bool:
+		return "boolean"
+	}
+	return "text"
+}
+
+// implicitDefault is the value MySQL, run non-strict, stores in a NOT NULL column of a type when NULL is sent.
+func implicitDefault(typ string) (any, bool) {
+	switch typ {
+	case "int2", "int4", "int8", "numeric", "float4", "float8":
+		return int64(0), true
+	case "text", "varchar", "bpchar", "citext":
+		return "", true
+	case "bool":
+		return false, true
+	case "bytea":
+		return []byte{}, true
+	}
+	return nil, false
+}
+
+// insertNullCols finds, in a one-row INSERT whose values are all bound parameters, the parameters that go
+// to NOT NULL columns with an implicit default. MySQL, run non-strict, stores the default for a NULL sent to
+// such a column; PostgreSQL refuses it, so the connection sends the default.
+func (c *pgTranslatingConnector) insertNullCols(sql string) []nullCol {
+	if !strings.Contains(sql, "$") {
+		return nil
+	}
+	ts := lexSQL(sql)
+	f := nextSig(ts, 0)
+	if f < 0 || !isKw(ts[f], "INSERT") {
+		return nil
+	}
+	table, cols := insertTarget(ts)
+	if table == "" || len(cols) == 0 {
+		return nil
+	}
+	c.load()
+	defs := c.defs[strings.ToLower(table)]
+	if len(defs) == 0 {
+		return nil
+	}
+	v := topKw(ts, 0, "VALUES")
+	if v < 0 {
+		return nil
+	}
+	o := nextSig(ts, v+1)
+	if o < 0 || !isP(ts[o], "(") {
+		return nil
+	}
+	cl := matchClose(ts, o)
+	if cl < 0 {
+		return nil
+	}
+	if n := nextSig(ts, cl+1); n >= 0 && isP(ts[n], ",") {
+		return nil // several rows
+	}
+	vals := splitArgs(ts[o+1 : cl])
+	if len(vals) != len(cols) {
+		return nil
+	}
+	var out []nullCol
+	for i, val := range vals {
+		val = trimToks(val)
+		if len(val) != 1 || val[0].k != tkWord || len(val[0].s) < 2 || val[0].s[0] != '$' {
+			continue
+		}
+		idx := 0
+		for _, ch := range val[0].s[1:] {
+			if ch < '0' || ch > '9' {
+				idx = 0
+				break
+			}
+			idx = idx*10 + int(ch-'0')
+		}
+		if d, ok := defs[strings.ToLower(cols[i])]; ok && idx > 0 {
+			out = append(out, nullCol{param: idx, def: d})
+		}
+	}
+	return out
+}
+
+// fillNulls replaces a NULL sent to a NOT NULL column by the column's implicit default.
+func fillNulls(args []driver.NamedValue, cols []nullCol) []driver.NamedValue {
+	var out []driver.NamedValue
+	for _, nc := range cols {
+		if nc.param > len(args) {
+			continue
+		}
+		v := args[nc.param-1].Value
+		isNil := v == nil
+		if !isNil {
+			if rv := reflect.ValueOf(v); rv.Kind() == reflect.Ptr && rv.IsNil() {
+				isNil = true
+			}
+		}
+		if !isNil {
+			continue
+		}
+		if out == nil {
+			out = append([]driver.NamedValue(nil), args...)
+		}
+		out[nc.param-1].Value = nc.def
+	}
+	if out == nil {
+		return args
+	}
+	return out
 }
