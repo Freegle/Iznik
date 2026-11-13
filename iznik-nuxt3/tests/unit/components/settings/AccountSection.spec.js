@@ -238,5 +238,23 @@ describe('AccountSection', () => {
       await flushPromises()
       expect(wrapper.emitted('show-email-confirm-modal')).toBeTruthy()
     })
+
+    it('says why a TrashNothing address is refused (ret 12)', async () => {
+      mockAuthStore.saveEmail.mockResolvedValueOnce({
+        ret: 12,
+        status: 'That is a TrashNothing address.',
+      })
+      const wrapper = createWrapper()
+      await wrapper.findAll('.spin-button')[0].trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('That is a TrashNothing address.')
+      expect(wrapper.emitted('show-email-confirm-modal')).toBeFalsy()
+
+      // A later save that goes through clears it.
+      mockAuthStore.saveEmail.mockResolvedValueOnce({ ret: 10 })
+      await wrapper.findAll('.spin-button')[0].trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('That is a TrashNothing address.')
+    })
   })
 })

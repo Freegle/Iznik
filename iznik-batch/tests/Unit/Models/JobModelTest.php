@@ -14,6 +14,12 @@ class JobModelTest extends TestCase
 {
     use SeedsSpatialIndex;
 
+    // Open sea. The spatial index is built from the main database, which on a machine holding a
+    // copy of live data has real jobs: at a real place they sit nearer than the seeded ones, fill
+    // the candidate pool, and are not in the test database, so nearLocation() finds nothing.
+    private const LAT = 57.6;
+    private const LNG = -13.7;
+
     /** @var int[] job ids seeded into the spatial index, removed in tearDown. */
     private array $seededJobIds = [];
 
@@ -84,7 +90,7 @@ class JobModelTest extends TestCase
      * points), so we seed a small box around the point. Defaults to the standard
      * London test coords and a cpc above the floor; override via $attrs.
      */
-    private function seedJob(array $attrs = [], float $lat = 51.5074, float $lng = -0.1278): int
+    private function seedJob(array $attrs = [], float $lat = self::LAT, float $lng = self::LNG): int
     {
         $srid = (int) config('freegle.srid', config('freegle.srid'));
         $attrs += [
@@ -155,7 +161,7 @@ class JobModelTest extends TestCase
     public function test_near_location_returns_collection(): void
     {
         // Returns a collection even with nothing seeded for this location.
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertInstanceOf(\Illuminate\Support\Collection::class, $result);
     }
@@ -166,7 +172,7 @@ class JobModelTest extends TestCase
 
         // Nothing in the test DB, so even if the index returns ids the by-id
         // enrich finds nothing.
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertTrue($result->isEmpty());
     }
@@ -180,7 +186,7 @@ class JobModelTest extends TestCase
             $this->seedJob(['title' => 'Test Job ' . $i]);
         }
 
-        $result = Job::nearLocation(51.5074, -0.1278, 3);
+        $result = Job::nearLocation(self::LAT, self::LNG, 3);
 
         $this->assertCount(3, $result);
     }
@@ -192,7 +198,7 @@ class JobModelTest extends TestCase
         $this->seedJob(['title' => 'Low CPC Job', 'cpc' => 0.05]);  // below the 0.08 floor
         $this->seedJob(['title' => 'Good CPC Job', 'cpc' => 0.20]);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertCount(1, $result);
         $this->assertEquals('Good CPC Job', $result->first()->title);
@@ -205,7 +211,7 @@ class JobModelTest extends TestCase
         $this->seedJob(['title' => 'Visible Job', 'visible' => 1]);
         $this->seedJob(['title' => 'Hidden Job', 'visible' => 0]);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertCount(1, $result);
         $this->assertEquals('Visible Job', $result->first()->title);
@@ -229,7 +235,7 @@ class JobModelTest extends TestCase
 
         $allSeen = [];
         for ($call = 0; $call < 8; $call++) {
-            $result = Job::nearLocation(51.5074, -0.1278, $limit);
+            $result = Job::nearLocation(self::LAT, self::LNG, $limit);
             $this->assertCount($limit, $result, 'Result count must always equal limit');
             foreach ($result as $job) {
                 $allSeen[$job->id] = true;
@@ -268,7 +274,7 @@ class JobModelTest extends TestCase
         $floorPicks = 0;
         $seen = [];
         for ($r = 0; $r < $runs; $r++) {
-            $result = Job::nearLocation(51.5074, -0.1278, $limit);
+            $result = Job::nearLocation(self::LAT, self::LNG, $limit);
             $this->assertCount($limit, $result);
             foreach ($result as $job) {
                 $seen[$job->id] = true;
@@ -308,7 +314,7 @@ class JobModelTest extends TestCase
         $this->seedJob(['title' => 'High CPC', 'cpc' => 0.30]);
         $this->seedJob(['title' => 'Medium CPC', 'cpc' => 0.20]);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertEquals('High CPC', $result[0]->title);
         $this->assertEquals('Medium CPC', $result[1]->title);
@@ -326,7 +332,7 @@ class JobModelTest extends TestCase
         $this->seedJob(['title' => 'Well paid', 'cpc' => 0.36, 'clickability' => 1]);
         $this->seedJob(['title' => 'Same pay, low', 'cpc' => 0.20, 'clickability' => 1]);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertEquals('Well paid', $result[0]->title);
         $this->assertEquals('Same pay, low', $result[1]->title);
@@ -334,7 +340,7 @@ class JobModelTest extends TestCase
 
         $this->seedJob(['title' => 'Same pay, high', 'cpc' => 0.20, 'clickability' => 9]);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertEquals('Well paid', $result[0]->title);
         $this->assertEquals('Same pay, high', $result[1]->title);
@@ -359,7 +365,7 @@ class JobModelTest extends TestCase
         $runs = 200;
         $picks = 0;
         for ($r = 0; $r < $runs; $r++) {
-            if (Job::nearLocation(51.5074, -0.1278, $limit)->contains('id', $wellPaid)) {
+            if (Job::nearLocation(self::LAT, self::LNG, $limit)->contains('id', $wellPaid)) {
                 $picks++;
             }
         }
@@ -391,7 +397,7 @@ class JobModelTest extends TestCase
             'posted_at' => date('Y-m-d H:i:s'),
         ]);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertEquals('Fresh', $result[0]->title);
         $this->assertEquals('Stale', $result[1]->title);
@@ -405,7 +411,7 @@ class JobModelTest extends TestCase
 
         $this->seedJob(['title' => 'Test Job', 'location' => 'stoke-on-trent']);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertCount(1, $result);
         $this->assertEquals('Stoke-On-Trent', $result->first()->location);
@@ -419,7 +425,7 @@ class JobModelTest extends TestCase
 
         $this->seedJob(['title' => 'Test Job']);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertCount(1, $result);
         $job = $result->first();
@@ -442,7 +448,7 @@ class JobModelTest extends TestCase
             'externaluid' => 'freegletusd-abc123',
         ]);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertCount(1, $result);
         $job = $result->first();
@@ -503,9 +509,9 @@ class JobModelTest extends TestCase
         // A job ~5.5km north is still within the spatial KNN's search reach.
         $this->clearJobsTable();
 
-        $this->seedJob(['title' => 'Distant Job', 'location' => 'North London'], 51.5074 + 0.05, -0.1278);
+        $this->seedJob(['title' => 'Distant Job', 'location' => 'North London'], self::LAT + 0.05, self::LNG);
 
-        $result = Job::nearLocation(51.5074, -0.1278);
+        $result = Job::nearLocation(self::LAT, self::LNG);
 
         $this->assertCount(1, $result);
     }

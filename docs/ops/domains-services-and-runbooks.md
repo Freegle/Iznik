@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-13
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
@@ -58,11 +58,17 @@ Channel Islands were dark. Build a replacement with
 `iznik-routing-go/scripts/build-osm-pbf.sh`, which fetches all four extracts we need and
 checks every named region has roads in it before it installs anything.
 
+Each month `spatial:update-data` downloads the same four extracts on the Docker host,
+merges them, and publishes the result only when every region has a road network.
+
 Putting the new file on a host is not enough on its own. When `REACH_DIR` is set the
-service loads the saved graph files and never opens the extract, so a refresh takes three
-steps on each host that runs it: copy the new file into place, rebuild the saved graph with
-`./iznik-routing-go reach build`, then restart the service. Budget the warm-up above, and
-agree the restart with whoever is on call first.
+service loads the saved graph and region files and never opens the extract, and every
+post's stored notes belong to one region layout. The `reach` profile of `freegle-maint`
+carries a new map into every routing server the next night: it builds the files, stages
+every post's notes for the new layout, and switches one server at a time
+([automated host maintenance](runbooks/automated-host-maintenance.md#road-map-refresh-reach)).
+Do not rebuild the saved graph on one host by hand: a host serving a different layout
+from the stored notes refuses to answer reach questions.
 
 ## Database
 

@@ -206,8 +206,8 @@ class DetectRelatedAccountsCommandTest extends TestCase
 
     /**
      * Discourse 10238: a LoveJunk account and a TrashNothing account were linked, so ModTools
-     * suggested merging them. A TrashNothing member can only be merged with another
-     * TrashNothing account, so a pair across that line is never linked.
+     * suggested merging them. TrashNothing accounts are never merged, with each other or with a
+     * Freegle account, so a pair with one in it is never linked.
      */
     public function test_does_not_link_a_trashnothing_member_with_any_other_account(): void
     {
@@ -223,7 +223,7 @@ class DetectRelatedAccountsCommandTest extends TestCase
         $this->assertNull($this->pairFor($freegler->id, $tn->id));
     }
 
-    public function test_still_links_two_trashnothing_accounts(): void
+    public function test_does_not_link_two_trashnothing_accounts(): void
     {
         $a = $this->createTestUser();
         $b = $this->createTestUser();
@@ -241,7 +241,7 @@ class DetectRelatedAccountsCommandTest extends TestCase
 
         $this->artisan('users:detect-related --days=30')->assertExitCode(0);
 
-        $this->assertNotNull($this->pairFor($a->id, $b->id), 'two TrashNothing accounts can be merged');
+        $this->assertNull($this->pairFor($a->id, $b->id), 'two TrashNothing accounts are never merged either');
     }
 
     public function test_does_not_link_volunteers(): void

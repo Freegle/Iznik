@@ -7,9 +7,14 @@
 #       One host. A dry run unless --live: the real read-only preflight runs and
 #       every action is printed, nothing is changed.
 #       <host>: db2-internal | db3-internal | db1-internal | ha-internal |
-#               bulk2-internal | docker   (the names are configurable)
+#               bulk2-internal | docker | reach   (the names are configurable)
+#   freegle-maint run reach [--live] [--rollback] [--housekeep-only] [--ignore-window]
+#       Carry a refreshed road map into every routing server: build, stage the
+#       notes, ship, switch one server at a time. --rollback puts the previous
+#       layout back while it is still kept; --housekeep-only makes the last
+#       switch permanent. See lib/reach.sh.
 #   freegle-maint scheduled <slot>
-#       What the systemd timers call. <slot>: db | arbitrator | mail | docker | lb.
+#       What the systemd timers call. <slot>: db | arbitrator | mail | docker | lb | reach.
 #       The db slot picks the data node patched least recently. Live only
 #       for hosts listed in MAINT_LIVE_HOSTS; otherwise a dry run.
 #   freegle-maint resume          at boot, after a Docker-host reboot (systemd)
@@ -38,12 +43,15 @@ MAINT_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 . "$MAINT_HOME/lib/mail-host.sh"
 # shellcheck source=lib/docker-host.sh
 . "$MAINT_HOME/lib/docker-host.sh"
+# shellcheck source=lib/reach.sh
+. "$MAINT_HOME/lib/reach.sh"
 
-usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 profile_of() {
   case "$1" in
     local|docker) echo docker; return;;
+    reach) echo reach; return;;
     "$MAINT_ARBITRATOR") echo arbitrator; return;;
     "$MAINT_LB_HOST") echo lb; return;;
     "$MAINT_MAIL_HOST") echo mail; return;;
@@ -92,6 +100,7 @@ slot_host() {
     mail) echo "$MAINT_MAIL_HOST";;
     lb) echo "$MAINT_LB_HOST";;
     docker) echo docker;;
+    reach) echo reach;;
     *) echo "";;
   esac
 }
@@ -138,9 +147,12 @@ start_run() {  # <host>
   case "$PROFILE" in
     db) WINDOW=$MAINT_WINDOW_DB;; arbitrator) WINDOW=$MAINT_WINDOW_ARBITRATOR;;
     lb) WINDOW=$MAINT_WINDOW_LB; WINDOW_TZ=$MAINT_WINDOW_LB_TZ;; mail) WINDOW=$MAINT_WINDOW_MAIL;; docker) WINDOW=$MAINT_WINDOW_DOCKER;;
+    reach) WINDOW=$MAINT_WINDOW_REACH;;
   esac
   check_window
-  check_gap
+  # The gap keeps host reboots apart. A map refresh reboots nothing, so it
+  # neither waits for one nor holds the next back; the lock still keeps them apart.
+  [ "$PROFILE" = reach ] || check_gap
   check_deploy_quiet
   case "$PROFILE" in
     db) db_run "$TARGET";;
@@ -148,6 +160,7 @@ start_run() {  # <host>
     lb) lb_run;;
     mail) mail_run;;
     docker) docker_run;;
+    reach) reach_run;;
   esac
 }
 
@@ -179,6 +192,8 @@ case "$cmd" in
         --dry-run) DRY=true;;
         --force-reboot) FORCE_REBOOT=true;;
         --ignore-window) IGNORE_WINDOW=true;;
+        --rollback) REACH_ROLLBACK=true;;
+        --housekeep-only) REACH_HOUSEKEEP_ONLY=true;;
         *) usage 64;;
       esac
       shift

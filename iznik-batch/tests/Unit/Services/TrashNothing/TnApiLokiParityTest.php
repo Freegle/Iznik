@@ -198,13 +198,13 @@ class TnApiLokiParityTest extends TestCase
         $this->assertSame($email['labels'], $api['labels'], 'Label sets diverged between the paths');
 
         // The API entry carries every field the email entry does, and exactly
-        // one extra (tn_post_id).
+        // two extras: the TN ids, which the email path never reads from its headers.
         $this->assertSame(
             [],
             array_diff(array_keys($email['message']), array_keys($api['message'])),
             'API entry is missing fields the email path emits'
         );
-        $this->assertSame(['tn_post_id'], array_values(array_diff(
+        $this->assertSame(['tn_post_id', 'tn_user_id'], array_values(array_diff(
             array_keys($api['message']), array_keys($email['message'])
         )));
 
@@ -321,6 +321,7 @@ class TnApiLokiParityTest extends TestCase
 
         $this->assertSame('routed', $entry['labels']['type']);
         $this->assertSame($postId, $entry['message']['tn_post_id']);
+        $this->assertSame((int) $user->tnuserid, $entry['message']['tn_user_id']);
         $this->assertSame($group->id, $entry['message']['group_id']);
         $this->assertSame($user->id, $entry['message']['user_id']);
         $this->assertSame('OFFER: Old wooden bookshelf', $entry['message']['subject']);

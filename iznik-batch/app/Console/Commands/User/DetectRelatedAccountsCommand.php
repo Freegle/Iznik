@@ -177,10 +177,10 @@ class DetectRelatedAccountsCommand extends Command
                         continue;
                     }
 
-                    // A TrashNothing member and an account that is not one can never be
-                    // merged, so linking them only asks a moderator to try something that
-                    // will be refused (Discourse 10238).
-                    if ($eligible[$u1] !== $eligible[$u2]) {
+                    // A TrashNothing account is never merged, with another or with a Freegle
+                    // account, so linking it only asks a moderator to try something that will
+                    // be refused (Discourse 10238).
+                    if ($eligible[$u1] || $eligible[$u2]) {
                         $skippedPartner++;
                         continue;
                     }
@@ -220,7 +220,7 @@ class DetectRelatedAccountsCommand extends Command
         $verb = $dryRun ? 'Would link' : 'Linked';
         $this->info("{$verb} {$created} account pairs by shared contact details "
             . "({$skippedExisting} already known, {$skippedSameChat} were quoting each other, "
-            . "{$skippedPartner} across the TrashNothing line).");
+            . "{$skippedPartner} with a TrashNothing account).");
 
         if (!$dryRun && $created > 0) {
             Log::info('Related members detected by shared contact details', [

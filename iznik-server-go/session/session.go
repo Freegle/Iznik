@@ -1588,7 +1588,7 @@ func GetSession(c *fiber.Ctx) error {
 				// contains a space, so a parenthesized UNION subquery can be given as the
 				// "table name" with its own bind args in Table()'s variadic args.
 				// Counted on the same terms as the Related Members list, which leaves out a
-				// pair across the TrashNothing line because the merge would be refused.
+				// pair with a TrashNothing account because the merge would be refused.
 				mergeable := user.MergeableSidesSQL("u1", "u2")
 				db.Table("(SELECT ur.user1 FROM users_related ur "+
 					"INNER JOIN memberships m ON m.userid = ur.user1 "+
@@ -2092,6 +2092,18 @@ func PatchSession(c *fiber.Ctx) error {
 			})
 		}
 
+		// A TrashNothing address belongs to the account holding the TN id TrashNothing names for
+		// it, so confirming one moves nothing and merges nothing, wherever it is. Adding one is
+		// refused below; this catches a key mailed before that was. The key is spent.
+		for _, mail := range emails {
+			if user.IsTNAddress(mail.Email) {
+				db.Table("users_emails").Where("id = ?", mail.ID).Update("validatekey", gorm.Expr("NULL"))
+				stdlog.Printf("User %d tried to confirm TrashNothing address row %d, held by user %d: refused", myid, mail.ID, mail.UserID)
+
+				return fiber.NewError(fiber.StatusForbidden, user.MsgTNAddressRefused)
+			}
+		}
+
 		for _, mail := range emails {
 			if mail.UserID != 0 && mail.UserID != myid {
 				// The address belongs to another account, so the member has
@@ -2283,6 +2295,15 @@ func PatchSession(c *fiber.Ctx) error {
 		// Queue verification email. Return ret=10 so the frontend shows the
 		// "check your mailbox" modal.
 		wg.Wait()
+
+		// A TrashNothing address belongs to the account holding the TN id TrashNothing names for
+		// it, so nobody adds one here. Refused before any mail is sent, with a reason to show.
+		if user.IsTNAddress(*req.Email) {
+			return c.JSON(fiber.Map{
+				"ret":    12,
+				"status": user.MsgTNAddressRefused,
+			})
+		}
 
 		if err := queue.QueueTask(queue.TaskEmailVerify, map[string]interface{}{
 			"user_id": myid,

@@ -2,15 +2,50 @@ package user
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailhygiene"
+	"github.com/getsentry/sentry-go"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+var (
+	tnAliasReportMu sync.RWMutex
+	tnAliasReporter = reportTNAliasToSentry
+)
+
+// ErrTNIdHeld says a deleted account still holds the tnuserid. users.tnuserid is unique, so no new
+// account can have it until that one is forgotten. TnUserProvisioner skips a post for the same reason.
+var ErrTNIdHeld = errors.New("a deleted account holds this tnuserid")
+
+func reportTNAliasToSentry(msg string) {
+	log.Println(msg)
+	sentry.WithScope(func(scope *sentry.Scope) {
+		scope.SetLevel(sentry.LevelWarning)
+		sentry.CaptureMessage(msg)
+	})
+}
+
+// SetTNAliasReporter replaces where a moved TN alias is reported, for tests, and returns a function
+// that puts the previous one back.
+func SetTNAliasReporter(r func(msg string)) (restore func()) {
+	tnAliasReportMu.Lock()
+	prev := tnAliasReporter
+	tnAliasReporter = r
+	tnAliasReportMu.Unlock()
+
+	return func() {
+		tnAliasReportMu.Lock()
+		tnAliasReporter = prev
+		tnAliasReportMu.Unlock()
+	}
+}
 
 // ValidatePartnerKey validates a partner API key and returns the partner's details.
 // Returns partnerID, partnerName, domain, and any error.
@@ -55,15 +90,20 @@ func FindByTNIdOrEmail(db *gorm.DB, tnuserid uint64, email string) uint64 {
 // belonged to the email twin while tnuserid-first resolution picked the
 // other). Callers acting on a specific message should act as whichever
 // candidate owns it.
+//
+// Only a TN id says who someone is. A call naming a tnuserid resolves to the account
+// holding it and to nothing else, so if none does there are no candidates, whoever
+// holds the address. The address is only matched alone for a partner with no such id.
 func FindTNCandidates(db *gorm.DB, tnuserid uint64, email string) []uint64 {
 	var out []uint64
 
 	if tnuserid > 0 {
 		var userid uint64
 		db.Table("users").Select("id").Where("tnuserid = ? AND deleted IS NULL", tnuserid).Scan(&userid)
-		if userid > 0 {
-			out = append(out, userid)
+		if userid == 0 {
+			return nil
 		}
+		out = append(out, userid)
 	}
 
 	if email != "" {
@@ -80,33 +120,169 @@ func FindTNCandidates(db *gorm.DB, tnuserid uint64, email string) []uint64 {
 	return out
 }
 
-// HealTNDivergence merges a TN member's twin accounts when the partner's
-// identifiers resolved to two different users. TN is asserting both belong to
-// the same member (and the caller has verified the email is in the partner's
-// own domain), so the divergence is a data fault, not ambiguity - typically
-// minted when a TN username rename changed the member's per-group email alias
-// and the mail ingest created a fresh account for it. The email twin is
-// merged INTO the tnuserid twin via the same transaction the moderator merge
-// uses: the stamp stays put, the alias and every message move across, and
-// future mail routes to the merged account - the sync stops the divergence
-// instead of tolerating it forever.
+// HealTNDivergence deals with the partner's identifiers resolving to two different
+// users: the account holding the tnuserid and another holding the address. TN is
+// asserting both belong to the same member (and the caller has verified the email
+// is in the partner's own domain), so the address goes to that member.
 //
-// Returns the updated candidate set: the single surviving id on success, or
-// the original candidates if the merge fails (per-message owner arbitration
-// still copes with the split).
-func HealTNDivergence(db *gorm.DB, candidates []uint64) []uint64 {
+// Only a TN id says who someone is. The other account is never merged, because
+// nothing proves it is this member's, whatever usernames or addresses it holds. It
+// just loses the address. Its posts stay on it. actAsOwnerCandidate lets TN act on one
+// that has another copy on the member's own account; the rest wait for
+// tn:split-shared-account.
+//
+// Returns the updated candidate set: the account holding the tnuserid on success, or
+// the original candidates if it fails (per-message owner arbitration still copes
+// with the split).
+func HealTNDivergence(db *gorm.DB, candidates []uint64, email string) []uint64 {
 	if len(candidates) < 2 {
 		return candidates
 	}
 
-	keep, discard := candidates[0], candidates[1]
-	if err := MergeUsersTx(db, discard, keep, keep); err != nil {
-		log.Printf("TN divergence heal: merging twin %d into %d failed: %v", discard, keep, err)
+	keep, other := candidates[0], candidates[1]
+	if err := moveTNAlias(db, email, other, keep); err != nil {
+		log.Printf("TN divergence heal: moving an alias from %d to %d failed: %v", other, keep, err)
 		return candidates
 	}
 
-	log.Printf("TN divergence heal: merged twin account %d into %d", discard, keep)
 	return []uint64{keep}
+}
+
+// tnUsernames returns the distinct TN usernames among an account's addresses on a partner's domain.
+// A username only ever refuses something. It never says who someone is.
+func tnUsernames(db *gorm.DB, userid uint64, domain string) []string {
+	var emails []string
+	db.Table("users_emails").Where("userid = ?", userid).Pluck("email", &emails)
+
+	seen := map[string]bool{}
+	var usernames []string
+	for _, email := range emails {
+		username, d, ok := TNIdentity(email)
+		if ok && d == domain && !seen[username] {
+			seen[username] = true
+			usernames = append(usernames, username)
+		}
+	}
+
+	return usernames
+}
+
+// TNIdOf returns the TN id an account holds, or 0 if it holds none.
+func TNIdOf(db *gorm.DB, userid uint64) uint64 {
+	var held *uint64
+	db.Table("users").Select("tnuserid").Where("id = ?", userid).Scan(&held)
+	if held == nil {
+		return 0
+	}
+
+	return *held
+}
+
+// NeedsTNId says whether a partner call has to name a tnuserid. TN always has its member's id, so
+// a TN address on its own is a call that has not said who it is about. Other partners have no such
+// id and are matched on the address.
+func NeedsTNId(domain string, tnuserid uint64, email string) bool {
+	return strings.EqualFold(domain, tnPartnerDomain) && tnuserid == 0 && email != ""
+}
+
+// holderOf returns the account holding an address, or 0. A deleted account counts: it proves no
+// more than a live one, and only keeps an address until it is forgotten.
+func holderOf(db *gorm.DB, email string) uint64 {
+	var holder uint64
+	db.Table("users_emails").Select("userid").Where("email = ?", email).Scan(&holder)
+
+	return holder
+}
+
+// ResolvePartnerActor resolves a member acting on a post through the partner API. A member TN names
+// who we have not met, on an address we know, gets an account of their own and takes the address,
+// so that TN can act for them. With neither known there is nobody to act as, and nor is there while
+// a deleted account holds the id.
+func ResolvePartnerActor(db *gorm.DB, tnuserid uint64, email string) ([]uint64, error) {
+	candidates := FindTNCandidates(db, tnuserid, email)
+
+	if len(candidates) == 0 && tnuserid > 0 && email != "" && holderOf(db, email) != 0 {
+		userid, err := CreatePartnerUser(db, tnuserid, email)
+		if errors.Is(err, ErrTNIdHeld) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		return []uint64{userid}, nil
+	}
+
+	return HealTNDivergence(db, candidates, email), nil
+}
+
+// moveTNAlias moves one address to the account of the member TN says owns it, and reports the
+// account it came from. users_emails.email is unique, so it cannot be on both. Posts and chats
+// already filed stay where they are: tn:split-shared-account is the way to move those.
+//
+// The account it came from may hold another TN id. TN's word on whose address it is still stands,
+// so it moves, but the report says so: either TN has given the username to someone else, or one
+// of the ids is wrong, and the other member has lost an address TN gave them before.
+func moveTNAlias(db *gorm.DB, email string, from, to uint64) error {
+	var fromTNId, toTNId uint64
+	err := db.Transaction(func(tx *gorm.DB) error {
+		fromTNId, toTNId = TNIdOf(tx, from), TNIdOf(tx, to)
+
+		var wasPreferred bool
+		if err := tx.Table("users_emails").Select("preferred").
+			Where("email = ? AND userid = ?", email, from).Row().Scan(&wasPreferred); err != nil {
+			return err
+		}
+
+		var preferredOnTo int64
+		if err := tx.Table("users_emails").Where("userid = ? AND preferred = 1", to).Count(&preferredOnTo).Error; err != nil {
+			return err
+		}
+
+		preferred := "0"
+		if preferredOnTo == 0 {
+			preferred = "1"
+		}
+		if err := tx.Table("users_emails").Where("email = ? AND userid = ?", email, from).
+			Updates(map[string]interface{}{"userid": to, "preferred": gorm.Expr(preferred)}).Error; err != nil {
+			return err
+		}
+
+		if !wasPreferred {
+			return nil
+		}
+
+		// isTN() reads the preferred address, so the account it left must keep one.
+		var nextID uint64
+		tx.Table("users_emails").Select("id").Where("userid = ?", from).Order("id ASC").Limit(1).Scan(&nextID)
+		if nextID == 0 {
+			return nil
+		}
+
+		return tx.Table("users_emails").Where("id = ?", nextID).Update("preferred", gorm.Expr("1")).Error
+	})
+	if err != nil {
+		return err
+	}
+
+	tnAliasReportMu.RLock()
+	report := tnAliasReporter
+	tnAliasReportMu.RUnlock()
+	report(tnAliasMoveReport(from, fromTNId, to, toTNId))
+
+	return nil
+}
+
+// tnAliasMoveReport words the report of a moved address, flagging a move off an account that holds
+// another TN id. It names ids, never the address. User::takeTnAddress in iznik-batch words it the same.
+func tnAliasMoveReport(from, fromTNId, to, toTNId uint64) string {
+	if fromTNId != 0 && fromTNId != toTNId {
+		return fmt.Sprintf("TN alias moved from user %d, which holds another TN user id (%d), to user %d (TN user id %d), "+
+			"the member Trash Nothing named: TN has given the username to someone else, or one of the ids is wrong",
+			from, fromTNId, to, toTNId)
+	}
+
+	return fmt.Sprintf("TN alias moved from user %d to user %d, the member Trash Nothing named", from, to)
 }
 
 // FindPartnerOwnerForMessage returns the fromuser of a message when its fromaddr
@@ -121,10 +297,17 @@ func FindPartnerOwnerForMessage(db *gorm.DB, domain string, msgID uint64) uint64
 	}
 
 	var result struct {
-		Fromuser uint64 `gorm:"column:fromuser"`
-		Fromaddr string `gorm:"column:fromaddr"`
+		Fromuser uint64  `gorm:"column:fromuser"`
+		Fromaddr string  `gorm:"column:fromaddr"`
+		Tnpostid *string `gorm:"column:tnpostid"`
 	}
-	db.Table("messages").Select("fromuser, fromaddr").Where("id = ?", msgID).Scan(&result)
+	db.Table("messages").Select("fromuser, COALESCE(fromaddr, '') AS fromaddr, tnpostid").Where("id = ?", msgID).Scan(&result)
+
+	// TN's post id says it is TN's. A post from the posts API has no fromaddr at all.
+	if result.Fromuser != 0 && strings.EqualFold(domain, tnPartnerDomain) && result.Tnpostid != nil && *result.Tnpostid != "" {
+		return result.Fromuser
+	}
+
 	if result.Fromuser == 0 || result.Fromaddr == "" {
 		return 0
 	}
@@ -144,7 +327,64 @@ func FindPartnerOwnerForMessage(db *gorm.DB, domain string, msgID uint64) uint64
 // CreatePartnerUser creates a new user for a partner integration.
 // It extracts a display name from the email prefix (before -g or @),
 // sets the tnuserid, and adds the email to users_emails.
+//
+// The address may already be on another account. Holding it does not make that account this
+// member's, so TN's word stands and the address moves here.
+//
+// Callers come here when no live account holds the tnuserid, so an account that does is a deleted
+// one: ErrTNIdHeld, and nothing is written. An account made anyway could not have the id, so the
+// next call would not find it and would make another.
 func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, error) {
+	if tnuserid > 0 {
+		var held int64
+		db.Table("users").Where("tnuserid = ?", tnuserid).Count(&held)
+		if held > 0 {
+			log.Printf("TN user %d not added: a deleted account holds the id", tnuserid)
+
+			return 0, ErrTNIdHeld
+		}
+	}
+
+	userid, err := createPartnerAccount(db, tnuserid, email)
+	if err != nil {
+		return 0, err
+	}
+
+	if holder := holderOf(db, email); holder != 0 && tnuserid > 0 {
+		if err := moveTNAlias(db, email, holder, userid); err != nil {
+			return 0, err
+		}
+
+		return userid, nil
+	}
+
+	// Add email.
+	// Plain, isolated, literal single-row
+	// INSERT; no id readback needed here.
+	// Observe only. None of the 32 bad addresses on file belong to a partner
+	// account, against partners being 35.7% of members - so this arm is expected
+	// to stay silent, and will say so if that is wrong.
+	emailhygiene.Report(email, "user.partnerCreate", userid)
+	// backwards is REVERSE(canon), not REVERSE(email). V1's User::addEmail writes
+	// strrev(canonMail($email)) at both its insert sites, and canonMail strips the
+	// dots out of the domain on purpose ("the format we have historically used"), so
+	// the canon-derived value is the column's definition and the majority of the
+	// table. Fixing the canon above therefore fixes this too.
+	// See .claude/rules/mail-and-data.md.
+	db.Table("users_emails").Create(map[string]interface{}{
+		"userid":    userid,
+		"email":     email,
+		"preferred": gorm.Expr("1"),
+		"added":     gorm.Expr("NOW()"),
+		"canon":     CanonicalizePartnerEmail(email),
+		"backwards": reverseString(CanonicalizePartnerEmail(email)),
+	})
+
+	return userid, nil
+}
+
+// createPartnerAccount creates the user row, named from the address, with its tnuserid.
+func createPartnerAccount(db *gorm.DB, tnuserid uint64, email string) (uint64, error) {
 	if email == "" {
 		return 0, errors.New("email is required")
 	}
@@ -173,6 +413,10 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 		"fullname": name,
 		"added":    gorm.Expr("NOW()"),
 	}
+	// In the insert, so that losing a race for the unique id leaves no account behind without it.
+	if tnuserid > 0 {
+		row["tnuserid"] = tnuserid
+	}
 	if err := db.Table("users").Create(row).Error; err != nil {
 		return 0, err
 	}
@@ -180,66 +424,31 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 	if lastIDInt == 0 {
 		return 0, errors.New("failed to create user")
 	}
-	userid := uint64(lastIDInt)
 
-	// Set tnuserid.
-	// Plain single-table UPDATE, no id
-	// readback involved.
-	if tnuserid > 0 {
-		db.Table("users").Where("id = ?", userid).Update("tnuserid", tnuserid)
-	}
-
-	// Add email.
-	// Plain, isolated, literal single-row
-	// INSERT; no id readback needed here.
-	// Observe only. None of the 32 bad addresses on file belong to a partner
-	// account, against partners being 35.7% of members - so this arm is expected
-	// to stay silent, and will say so if that is wrong.
-	emailhygiene.Report(email, "user.partnerCreate", userid)
-	// backwards is REVERSE(canon), not REVERSE(email). V1's User::addEmail writes
-	// strrev(canonMail($email)) at both its insert sites, and canonMail strips the
-	// dots out of the domain on purpose ("the format we have historically used"), so
-	// the canon-derived value is the column's definition and the majority of the
-	// table. Fixing the canon above therefore fixes this too.
-	// See .claude/rules/mail-and-data.md.
-	db.Table("users_emails").Create(map[string]interface{}{
-		"userid":    userid,
-		"email":     email,
-		"preferred": gorm.Expr("1"),
-		"added":     gorm.Expr("NOW()"),
-		"canon":     CanonicalizePartnerEmail(email),
-		"backwards": reverseString(CanonicalizePartnerEmail(email)),
-	})
-
-	return userid, nil
+	return uint64(lastIDInt), nil
 }
 
-// EnsurePartnerIdentifiers back-fills whichever of the partner's identifiers
-// the resolved account is missing - the prevention half of stopping TN
-// divergence. After a TN username rename the sync presents the member's NEW
-// per-group email alias alongside the same tnuserid; attaching the alias here
-// means the next inbound mail routes to this account instead of the mail
-// ingest minting a twin. Symmetrically, an account found by email gets the
-// tnuserid stamp if it has none (the stamp is UNIQUE, so an already-claimed
-// stamp is left alone - that split is HealTNDivergence's job; the unique
-// index backstops the check-then-update race).
-func EnsurePartnerIdentifiers(db *gorm.DB, userid, tnuserid uint64, email string) {
+// EnsurePartnerIdentifiers attaches the partner's address to the resolved account -
+// the prevention half of stopping TN divergence. After a TN username rename the
+// sync presents the member's NEW per-group email alias alongside the same tnuserid;
+// attaching the alias here means the next inbound mail routes to this account
+// instead of the mail ingest minting a twin. HealTNDivergence has already moved an
+// alias held by a live account, and one held by a deleted account moves here. An
+// account is never given a tnuserid for holding an address: only a TN id says who
+// someone is.
+func EnsurePartnerIdentifiers(db *gorm.DB, userid uint64, email string) {
 	if userid == 0 {
 		return
 	}
 
-	if tnuserid > 0 {
-		var claimed int64
-		db.Table("users").Where("tnuserid = ?", tnuserid).Count(&claimed)
-		if claimed == 0 {
-			db.Table("users").Where("id = ? AND tnuserid IS NULL", userid).Update("tnuserid", tnuserid)
-		}
-	}
-
 	if email != "" {
-		var count int64
-		db.Table("users_emails").Where("userid = ? AND email = ?", userid, email).Count(&count)
-		if count == 0 {
+		holder := holderOf(db, email)
+		if holder != 0 && holder != userid {
+			if err := moveTNAlias(db, email, holder, userid); err != nil {
+				log.Printf("Moving an alias from %d to %d failed: %v", holder, userid, err)
+			}
+		}
+		if holder == 0 {
 			// See CreatePartnerUser: backwards is REVERSE(canon).
 			db.Clauses(clause.Insert{Modifier: "IGNORE"}).Table("users_emails").Create(map[string]interface{}{
 				"userid":    userid,
@@ -266,6 +475,16 @@ func FindPartnerByName(name string) uint64 {
 // canonicalizeEmail strips a -gNNNN suffix from, so it is the only one where Go
 // may do the same and still agree with it.
 const tnPartnerDomain = "user.trashnothing.com"
+
+// IsTNAddress says whether an address is on TrashNothing's domain, bare or a per-group alias, in
+// any case. Such an address belongs to the account holding the TN id TrashNothing names for it,
+// so a member cannot add or confirm one themselves.
+func IsTNAddress(email string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(email)), "@"+tnPartnerDomain)
+}
+
+// MsgTNAddressRefused is what a member is told when they try to add or confirm a TrashNothing address.
+const MsgTNAddressRefused = "That's a TrashNothing address. Only TrashNothing can link one to an account, so it can't be added here. Please use your own email address."
 
 // tnAliasRegexp matches a partner per-group alias, <username>-g<groupid>@<domain>.
 // Trash Nothing mints one address per TN GROUP, so a member active in several TN
@@ -298,116 +517,6 @@ func TNIdentity(email string) (string, string, bool) {
 	}
 
 	return e[:at], e[at+1:], true
-}
-
-// likeEscape neutralises the LIKE wildcards in a value used as a literal prefix,
-// using MySQL's default backslash escape character.
-func likeEscape(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, "%", `\%`)
-	s = strings.ReplaceAll(s, "_", `\_`)
-	return s
-}
-
-// FindTNSiblings returns the other live accounts holding a per-group alias of the
-// same TN member as the address given, excluding the account that address itself
-// belongs to.
-//
-// A TN member can own more than one Freegle account. Until the alias back-fill
-// landed (2026-08-11) a second TN group's alias arriving for the first time minted
-// a fresh account, and 96 such pairs are still live. A partner call carries only
-// ONE of the member's aliases, so resolving on that alias and the tnuserid alone
-// can miss the account that actually owns the post being acted on - which is how a
-// Promise came back 403 "Not your message" (TN post 47243586, 2026-09-19).
-func FindTNSiblings(db *gorm.DB, email string) []uint64 {
-	username, domain, ok := TNIdentity(email)
-	if !ok {
-		return nil
-	}
-
-	// Indexed prefix scan on the address. The trailing % runs on past the end of
-	// the username, so "bibiana-g%" also matches "bibiana-gomes-g4840@...", a
-	// different member - the LIKE only narrows, the exact-identity test below
-	// decides. iznik-batch merged two unrelated members on 2026-09-13 for want of
-	// that test, so it is not theoretical.
-	like := likeEscape(username) + "-g%@" + likeEscape(domain)
-
-	var rows []struct {
-		Userid uint64 `gorm:"column:userid"`
-		Email  string `gorm:"column:email"`
-	}
-	// On TrashNothing's own domain the bare username@ address is the same member too.
-	bare := ""
-	if domain == tnPartnerDomain {
-		bare = username + "@" + domain
-	}
-	if database.Engine() == database.EnginePostgres {
-		// A prefix LIKE on the case-insensitive email column cannot use an index on PostgreSQL. The
-		// users_emails_email_prefix index holds lower(email::text), so the lowered form is asked.
-		// keep-raw: PostgreSQL only; matches the expression index on lower(email::text).
-		db.Table("users_emails").
-			Select("users_emails.userid, users_emails.email").
-			Joins("INNER JOIN users ON users.id = users_emails.userid").
-			Where("(lower(users_emails.email::text) LIKE ? OR users_emails.email = ?) AND users.deleted IS NULL", strings.ToLower(like), bare).
-			Scan(&rows)
-	} else {
-		db.Table("users_emails").
-			Select("users_emails.userid, users_emails.email").
-			Joins("INNER JOIN users ON users.id = users_emails.userid").
-			Where("(users_emails.email LIKE ? OR users_emails.email = ?) AND users.deleted IS NULL", like, bare).
-			Scan(&rows)
-	}
-
-	self := uint64(0)
-	for _, r := range rows {
-		if strings.EqualFold(strings.TrimSpace(r.Email), strings.TrimSpace(email)) {
-			self = r.Userid
-			break
-		}
-	}
-
-	var out []uint64
-	seen := map[uint64]bool{}
-	for _, r := range rows {
-		u, d, ok := TNIdentity(r.Email)
-		if !ok || u != username || d != domain {
-			continue
-		}
-		if r.Userid == 0 || r.Userid == self || seen[r.Userid] {
-			continue
-		}
-		seen[r.Userid] = true
-		out = append(out, r.Userid)
-	}
-
-	return out
-}
-
-// WithTNSiblings adds the member's other accounts to the partner candidate set.
-//
-// Discovery only. The candidates are used by actAsOwnerCandidate to act as
-// whichever account owns the message; they are deliberately NOT passed to
-// HealTNDivergence, because merging the live backlog is a reviewed, one-way
-// operation belonging to tn:sync, not to an inbound partner request.
-func WithTNSiblings(db *gorm.DB, candidates []uint64, email string) []uint64 {
-	siblings := FindTNSiblings(db, email)
-	if len(siblings) == 0 {
-		return candidates
-	}
-
-	have := map[uint64]bool{}
-	for _, c := range candidates {
-		have[c] = true
-	}
-	for _, s := range siblings {
-		if have[s] {
-			continue
-		}
-		have[s] = true
-		candidates = append(candidates, s)
-	}
-
-	return candidates
 }
 
 // CanonicalizePartnerEmail returns the canon to STORE for a partner address.
