@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Support;
 
+use App\Database\Sql;
 use App\Support\TransactionPolicy;
 use Illuminate\Database\DeadlockException;
 use Illuminate\Database\QueryException;
@@ -303,7 +304,7 @@ class TransactionPolicyTest extends TestCase
         $count = DB::table('test_rollback')->count();
         $this->assertEquals(1, $count);
 
-        DB::statement('DROP TEMPORARY TABLE test_rollback');
+        DB::statement(Sql::dropTemporaryTable('test_rollback'));
     }
 
     public function test_bulk_deadlock_retry_rejects_inside_transaction(): void

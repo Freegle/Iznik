@@ -2,6 +2,12 @@
 
 namespace App\Models;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Concat;
+use App\Database\Expressions\Haversine;
+use App\Database\Expressions\StContains;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use App\Services\SpatialQueryService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -87,29 +93,33 @@ class Location extends Model implements Auditable
             return null;
         }
 
-        $srid  = config('freegle.srid', 3857);
-        $groups = DB::getQueryGrammar()->wrapTable('groups');
-        $order = implode(',', array_map('intval', $ids));
+        $srid = (int) config('freegle.srid', 3857);
 
-        // Point built from the postcode's own lat/lng as POINT(lng lat) SRID 3857,
-        // matching groupsNear()'s containment test (so no dependence on the SRID
-        // stored on locations.geometry). FIELD() preserves the KNN nearest-first order.
-        // keep-raw: ST_Contains/ST_GeomFromText/CONCAT/FIELD() are spatial and
-        // string functions with no builder method.
-        $loc = DB::selectOne(
-            "SELECT p.name AS postcode, a.name AS area
-             FROM locations p
-             LEFT JOIN locations a ON a.id = p.areaid
-             WHERE p.id IN ($order)
-               AND p.lat IS NOT NULL AND p.lng IS NOT NULL
-               AND ST_Contains(
-                     (SELECT polyindex FROM {$groups} WHERE id = ? AND polyindex IS NOT NULL),
-                     ST_GeomFromText(CONCAT('POINT(', p.lng, ' ', p.lat, ')'), ?)
-                   )
-             ORDER BY FIELD(p.id, $order)
-             LIMIT 1",
-            [$groupid, $srid]
-        );
+        // Point built from the postcode's own lat/lng as POINT(lng lat) in the engine's SRID,
+        // matching groupsNear()'s containment test (so no dependence on the SRID stored on
+        // locations.geometry). The KNN nearest-first order is kept by picking in $ids order.
+        $inside = DB::table('locations as p')
+            ->leftJoin('locations as a', 'a.id', '=', 'p.areaid')
+            ->join('groups as g', 'g.id', '=', DB::raw((int) $groupid))
+            ->whereIn('p.id', array_map('intval', $ids))
+            ->whereNotNull('p.lat')
+            ->whereNotNull('p.lng')
+            ->whereNotNull('g.polyindex')
+            ->where(new StContains(
+                'g.polyindex',
+                new StGeomFromText(new Concat(Value::of('POINT('), 'p.lng', Value::of(' '), 'p.lat', Value::of(')')), $srid)
+            ))
+            ->select('p.id', 'p.name as postcode', 'a.name as area')
+            ->get()
+            ->keyBy('id');
+
+        $loc = null;
+        foreach ($ids as $id) {
+            if ($inside->has((int) $id)) {
+                $loc = $inside->get((int) $id);
+                break;
+            }
+        }
 
         if ($loc) {
             return $loc->area ? "{$loc->postcode} ({$loc->area})" : $loc->postcode;
@@ -144,40 +154,35 @@ class Location extends Model implements Auditable
     {
         $srid     = config('freegle.srid', 3857);
         $pointWkt = "POINT($lng $lat)";
-        $groups   = DB::getQueryGrammar()->wrapTable('groups');
 
         // Polygon-containment check: if the point lies inside one or more group
         // polyindex polygons, those groups are authoritative and beat the centroid-
         // distance heuristic (V1 parity; fixes Discourse #9763 where a group with
         // a close centroid but non-containing polyindex shadowed the correct group).
         // keep-raw: ST_Contains/ST_GeomFromText/haversine() have no builder method.
-        $containing = DB::select(
-            "SELECT id
-             FROM {$groups}
-             WHERE publish = 1 AND listable = 1
-               AND ST_Contains(polyindex, ST_GeomFromText(?, ?))
-             ORDER BY haversine(lat, lng, ?, ?) ASC
-             LIMIT ?",
-            [$pointWkt, $srid, $lat, $lng, $limit]
-        );
+        $containing = DB::table('groups')
+            ->where('publish', 1)
+            ->where('listable', 1)
+            ->where(new StContains('polyindex', new StGeomFromText(Value::of($pointWkt), $srid)))
+            ->orderBy(new Haversine('lat', 'lng', Value::of($lat), Value::of($lng)))
+            ->limit($limit)
+            ->pluck('id')
+            ->all();
 
         if (!empty($containing)) {
-            return array_column($containing, 'id');
+            return $containing;
         }
 
         // No group polygon contains the point; fall back to centroid distance.
         // keep-raw: haversine() has no builder method.
-        $rows = DB::select(
-            "SELECT id
-             FROM {$groups}
-             WHERE publish = 1 AND listable = 1
-               AND haversine(lat, lng, ?, ?) < ?
-             ORDER BY haversine(lat, lng, ?, ?) ASC
-             LIMIT ?",
-            [$lat, $lng, $radiusMiles, $lat, $lng, $limit]
-        );
-
-        return array_column($rows, 'id');
+        return DB::table('groups')
+            ->where('publish', 1)
+            ->where('listable', 1)
+            ->where(new Comparison(new Haversine('lat', 'lng', Value::of($lat), Value::of($lng)), '<', Value::of($radiusMiles)))
+            ->orderBy(new Haversine('lat', 'lng', Value::of($lat), Value::of($lng)))
+            ->limit($limit)
+            ->pluck('id')
+            ->all();
     }
 
     /**

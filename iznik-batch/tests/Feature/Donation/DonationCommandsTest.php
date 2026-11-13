@@ -42,7 +42,7 @@ class DonationCommandsTest extends TestCase
             'timestamp' => now(),
             'TransactionType' => 'Donation',
             'GrossAmount' => 10.00,
-            'source' => 'PayPal',
+            'source' => 'DonateWithPayPal',
         ]);
 
         $this->artisan('mail:donations:thank')

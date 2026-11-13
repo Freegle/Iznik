@@ -101,7 +101,7 @@ class TNSplitSharedAccountCommandTest extends TestCase
         $this->assertSame($a, (int) DB::table('memberships')->where('id', $f['memG1'])->value('userid'));
         $copy = DB::table('memberships')->where('userid', $n)->where('groupid', $f['g1'])->first();
         $this->assertNotNull($copy, 'a community both belonged to is copied');
-        $this->assertSame('2017-08-02 09:45:44', (string) $copy->added, 'dated when the moved alias for it first reached us');
+        $this->assertSame('2017-08-02 09:45:44', \Carbon\Carbon::parse($copy->added, 'UTC')->format('Y-m-d H:i:s'), 'dated when the moved alias for it first reached us');
         $this->assertSame(Membership::ROLE_MEMBER, $copy->role);
         $this->assertSame($a, (int) DB::table('memberships')->where('id', $f['memG3'])->value('userid'));
         $this->assertSame($a, (int) DB::table('memberships')->where('id', $f['memG5'])->value('userid'));

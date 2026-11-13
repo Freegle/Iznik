@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\UpsertReturningId;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -54,9 +55,8 @@ class ItemService
             $name = mb_substr($name, 0, self::MAX_ITEM_NAME_LENGTH);
         }
 
-        // The name is unique case-insensitively, so the lookup finds the existing row whatever its case.
-        DB::table('items')->upsert([['name' => $name]], ['name'], ['name' => $name]);
-        $id = (int) DB::table('items')->where('name', $name)->value('id');
+        // The name is unique case-insensitively, so an existing item comes back whatever the case.
+        $id = UpsertReturningId::id('items', ['name' => $name], ['name'], ['name' => $name]);
         if ($id <= 0) {
             return null;
         }

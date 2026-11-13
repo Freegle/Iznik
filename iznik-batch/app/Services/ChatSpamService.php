@@ -135,7 +135,7 @@ class ChatSpamService
                AND (spam_users.collection IS NULL OR spam_users.collection != 'Whitelisted')
                AND users.systemrole = ?
              GROUP BY chat_messages.userid
-             HAVING count > ?
+             HAVING COUNT(*) > ?
              ORDER BY count DESC",
             [$start, User::SYSTEMROLE_USER, self::AUTO_MARK_THRESHOLD]
         );

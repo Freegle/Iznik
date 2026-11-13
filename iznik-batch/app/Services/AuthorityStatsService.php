@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\JsonTable;
 use App\Database\Sql;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\Arithmetic;
@@ -556,7 +557,7 @@ class AuthorityStatsService
                 ->whereBetween('messages.arrival', [$start, $end])
                 ->select(new Alias($partialPc, 'partialpc'), new Alias(new Count(), 'count'))
                 ->groupBy('partialpc')
-                ->orderBy('locations.name')
+                ->orderBy('partialpc')
                 ->useWritePdo()
                 ->get();
             foreach ($rows as $r) {
@@ -576,7 +577,7 @@ class AuthorityStatsService
             ->whereIn('outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
             ->select(new Alias($partialPc, 'partialpc'), new Alias(new Count(), 'count'))
             ->groupBy('partialpc')
-            ->orderBy('locations.name')
+            ->orderBy('partialpc')
             ->useWritePdo()
             ->get();
         foreach ($rows as $r) {
@@ -600,7 +601,7 @@ class AuthorityStatsService
                 new Alias(new Sum(new Coalesce('weight', Value::of($avg))), 'weight'),
             )
             ->groupBy('partialpc')
-            ->orderBy('locations.name')
+            ->orderBy('partialpc')
             ->useWritePdo()
             ->get();
         foreach ($rows as $r) {
@@ -617,7 +618,7 @@ class AuthorityStatsService
             ->whereBetween('search_history.date', [$start, $end])
             ->select(new Alias($partialPc, 'partialpc'), new Alias(new Count(), 'count'))
             ->groupBy('partialpc')
-            ->orderBy('locations.name')
+            ->orderBy('partialpc')
             ->useWritePdo()
             ->get();
         foreach ($rows as $r) {
@@ -818,11 +819,10 @@ class AuthorityStatsService
         // resists structured composition once it's just another FROM source.
         $rows = DB::query()
             ->fromRaw(
-                "JSON_TABLE(?, '\$[*]' COLUMNS ("
-                ."userid BIGINT PATH '\$.userid', "
-                ."lat DOUBLE PATH '\$.lat', "
-                ."lng DOUBLE PATH '\$.lng'"
-                .')) AS jt',
+                JsonTable::from(
+                    ['userid' => ['BIGINT', '$.userid'], 'lat' => ['DOUBLE', '$.lat'], 'lng' => ['DOUBLE', '$.lng']],
+                    'jt'
+                ),
                 [json_encode($points)]
             )
             ->join('authorities as a', function ($join) use ($authorityId) {

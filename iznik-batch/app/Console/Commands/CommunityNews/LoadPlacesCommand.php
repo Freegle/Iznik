@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\CommunityNews;
 
+use App\Database\Sql;
 use App\Database\Spatial;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -94,7 +95,7 @@ class LoadPlacesCommand extends Command
         DB::statement(
             'INSERT INTO places (name, lat, lng, population, position) VALUES '
             . implode(',', $values)
-            . ' ON DUPLICATE KEY UPDATE population = VALUES(population), position = VALUES(position)',
+            . ' ' . Sql::onDuplicateKeyUpdate(['name', 'lat', 'lng'], ['population', 'position']),
             $bind
         );
 

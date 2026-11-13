@@ -1551,19 +1551,14 @@ class ExpandService
                             next_expansion_at, status, density_band, density_radius_miles, max_minutes_cap,
                             overflow_cells, created_at, updated_at)
                          VALUES (?, ?, ?, ?, ' . $outerExpr . ', ' . $innerExpr . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-                         ON DUPLICATE KEY UPDATE
-                            lat = VALUES(lat), lng = VALUES(lng), polygon_cells = VALUES(polygon_cells),
-                            outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound),
-                            arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
-                            total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
-                            max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
-                            reachable_group_ids = VALUES(reachable_group_ids),
-                            next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
-                            density_band = VALUES(density_band),
-                            density_radius_miles = VALUES(density_radius_miles),
-                            max_minutes_cap = VALUES(max_minutes_cap),
-                            overflow_cells = VALUES(overflow_cells),
-                            updated_at = NOW()';
+                         ' . Sql::onDuplicateKeyUpdate(
+                            ['msgid'],
+                            ['lat', 'lng', 'polygon_cells', 'outer_bound', 'inner_bound', 'arrival', 'mode', 'tick',
+                                'total_ticks', 'total_freeglers', 'max_drive_min', 'schedule', 'reachable_group_ids',
+                                'next_expansion_at', 'status', 'density_band', 'density_radius_miles',
+                                'max_minutes_cap', 'overflow_cells'],
+                            ['updated_at = NOW()']
+                        );
                     };
                     $initTail = [
                         $arrival, $this->reach->mode(), $tick, $total,
@@ -2209,7 +2204,7 @@ class ExpandService
                        -- would post it for them anyway.
                        SELECT 1 FROM memberships mp
                        WHERE mp.userid = ? AND mp.groupid = g.id
-                         AND UPPER(mp.ourPostingStatus) = 'PROHIBITED'
+                         AND UPPER(mp." . Sql::column('ourPostingStatus') . ") = 'PROHIBITED'
                    )",
                 // One binding per placeholder, in query order: the reach shape, the
                 // msgid twice (already on the group; turned away by the group), the msgid again
@@ -2229,7 +2224,6 @@ class ExpandService
             // long-standing member of a neighbouring group. PROHIBITED stays a hard stop, in
             // the query above: blocking was always an explicit act.
             $collection = $immediateApprove ? 'Approved' : 'Pending';
-            $approvedAt = $immediateApprove ? 'NOW()' : 'NULL';
 
             // The post was vetted against the rules of the community it was posted on. Each
             // receiving group's OWN rules have never been applied to it, so ask them here: a
@@ -2257,25 +2251,33 @@ class ExpandService
                 $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id, (int) $msgid);
 
                 if (!empty($breaches)) {
-                    $inserted = DB::affectingStatement(
-                        "INSERT IGNORE INTO messages_groups
-                            (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in,
-                             contentcheck_reasons)
-                         VALUES (?, ?, 'Pending', NULL, NOW(), 0, ?, 1, ?)",
-                        [$msgid, $g->id, $msg->type, json_encode($breaches)]
-                    );
+                    $inserted = DB::table('messages_groups')->insertOrIgnore([
+                        'msgid' => $msgid,
+                        'groupid' => $g->id,
+                        'collection' => 'Pending',
+                        'approvedat' => null,
+                        'arrival' => now(),
+                        'autoreposts' => 0,
+                        'msgtype' => $msg->type,
+                        'rippled_in' => 1,
+                        'contentcheck_reasons' => json_encode($breaches),
+                    ]);
 
                     if ($inserted > 0) {
                         $this->recordEvent('rippled_in_held_by_group_rules');
                         Log::info("ripple: held on group rules msgid={$msgid} groupid={$g->id}");
                     }
                 } else {
-                    $inserted = DB::affectingStatement(
-                        "INSERT IGNORE INTO messages_groups
-                            (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
-                         VALUES (?, ?, '$collection', $approvedAt, NOW(), 0, ?, 1)",
-                        [$msgid, $g->id, $msg->type]
-                    );
+                    $inserted = DB::table('messages_groups')->insertOrIgnore([
+                        'msgid' => $msgid,
+                        'groupid' => $g->id,
+                        'collection' => $collection,
+                        'approvedat' => $immediateApprove ? now() : null,
+                        'arrival' => now(),
+                        'autoreposts' => 0,
+                        'msgtype' => $msg->type,
+                        'rippled_in' => 1,
+                    ]);
                 }
 
                 $n += $inserted;

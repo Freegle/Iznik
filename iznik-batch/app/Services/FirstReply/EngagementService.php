@@ -503,34 +503,55 @@ class EngagementService
     private function retireStalePrompts(): int
     {
         try {
-            // keep-raw: JSON_TABLE() is a MySQL table-valued function with no query
-            // builder equivalent - it is what lets this statement join cp.msgids'
-            // JSON array elements against messages/messages_outcomes/chat_messages
-            // in one pass, rather than fetching every candidate row into PHP first.
-            return DB::update(
-                "UPDATE chat_prompts cp
-                 SET cp.expires_at = NOW()
-                 WHERE cp.answered_at IS NULL
-                   AND (cp.expires_at IS NULL OR cp.expires_at > NOW())
-                   AND cp.msgids IS NOT NULL
-                   AND cp.kind <> 'confirm_reply'
-                   AND NOT EXISTS (
-                         SELECT 1
-                         FROM JSON_TABLE(cp.msgids, '$[*]' COLUMNS (mid BIGINT PATH '$')) jt
-                         JOIN messages m ON m.id = jt.mid
-                         WHERE m.deleted IS NULL
-                           AND NOT EXISTS (
-                                 SELECT 1 FROM messages_outcomes mo WHERE mo.msgid = jt.mid
-                               )
-                           AND NOT EXISTS (
-                                 SELECT 1 FROM chat_messages cm
-                                 WHERE cm.refmsgid = jt.mid
-                                   AND cm.type = ?
-                                   AND cm.userid <> m.fromuser
-                               )
-                       )",
-                ['Interested']
-            );
+            // A prompt is stale when none of its posts is still waiting for a first reply: every
+            // one is deleted, has an outcome, or already has an Interested chat from someone other
+            // than its poster. The post ids are a JSON array on the prompt, so they are read here
+            // and judged with one query per batch of prompts, which both engines run (JSON_TABLE is
+            // MySQL only).
+            $retired = 0;
+            DB::table('chat_prompts')
+                ->whereNull('answered_at')
+                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+                ->whereNotNull('msgids')
+                ->where('kind', '<>', 'confirm_reply')
+                ->select('chatmsgid', 'msgids')
+                ->chunkById(500, function ($prompts) use (&$retired) {
+                    $byPrompt = [];
+                    foreach ($prompts as $prompt) {
+                        $ids = json_decode((string) $prompt->msgids, true);
+                        $byPrompt[$prompt->chatmsgid] = is_array($ids) ? array_values(array_unique(array_map('intval', $ids))) : [];
+                    }
+
+                    $all = array_values(array_unique(array_merge([], ...array_values($byPrompt))));
+                    $waiting = [];
+                    foreach (array_chunk($all, 1000) as $chunk) {
+                        $rows = DB::table('messages as m')
+                            ->whereIn('m.id', $chunk)
+                            ->whereNull('m.deleted')
+                            ->whereNotExists(fn ($q) => $q->select(DB::raw('1'))->from('messages_outcomes as mo')->whereColumn('mo.msgid', 'm.id'))
+                            ->whereNotExists(fn ($q) => $q->select(DB::raw('1'))->from('chat_messages as cm')
+                                ->whereColumn('cm.refmsgid', 'm.id')
+                                ->where('cm.type', 'Interested')
+                                ->whereColumn('cm.userid', '<>', 'm.fromuser'))
+                            ->pluck('m.id');
+                        foreach ($rows as $id) {
+                            $waiting[(int) $id] = true;
+                        }
+                    }
+
+                    $stale = [];
+                    foreach ($byPrompt as $id => $ids) {
+                        if (array_intersect_key(array_flip($ids), $waiting) === []) {
+                            $stale[] = $id;
+                        }
+                    }
+
+                    if ($stale !== []) {
+                        $retired += DB::table('chat_prompts')->whereIn('chatmsgid', $stale)->update(['expires_at' => now()]);
+                    }
+                }, 'chatmsgid');
+
+            return $retired;
         } catch (\Throwable $e) {
             Log::warning('firstreply: could not retire stale prompts', ['error' => $e->getMessage()]);
 

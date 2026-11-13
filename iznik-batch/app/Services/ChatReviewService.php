@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Database\Sql;
 use App\Database\Expressions\Rand;
+use App\Database\Sql;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -94,7 +94,7 @@ class ChatReviewService
                AND reviewrejected = 0
                AND chat_messages_held.id IS NULL
              GROUP BY memberships.groupid
-             ORDER BY " . Sql::expr(new Rand()),
+             ORDER BY ".Sql::render(new Rand()),
             [$threshold]
         );
 

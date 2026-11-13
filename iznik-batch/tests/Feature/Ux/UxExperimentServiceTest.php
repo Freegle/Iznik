@@ -208,8 +208,8 @@ class UxExperimentServiceTest extends TestCase
         $exp = $this->service->start($id);
 
         $this->assertSame('running', $exp->status);
-        $this->assertSame('2026-10-14 10:00:00', $exp->started_at);
-        $this->assertSame('2026-10-15 10:00:00', $exp->ends_at);
+        $this->assertSame('2026-10-14 10:00:00', \Carbon\Carbon::parse($exp->started_at, 'UTC')->toDateTimeString());
+        $this->assertSame('2026-10-15 10:00:00', \Carbon\Carbon::parse($exp->ends_at, 'UTC')->toDateTimeString());
         $this->assertEquals(['give-photos-skip' => ['control' => [0, 49], 'b' => [50, 99]]], $this->configArms());
     }
 

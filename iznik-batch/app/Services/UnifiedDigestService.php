@@ -807,8 +807,8 @@ class UnifiedDigestService
 
                     $candidates = DB::table('rippling_reach as mr')
                         ->whereIn('mr.status', ['expanding', 'done'])
-                        ->whereRaw(Spatial::geometryType('mr.outer_bound') . " <> 'POINT'")
-                        ->whereRaw('ST_Contains(mr.outer_bound, ' . Spatial::point('?', '?', $srid) . ')', [$lng, $lat])
+                        ->where(new Comparison(new StGeometryType('mr.outer_bound'), '<>', Value::of('POINT')))
+                        ->where(new StContains('mr.outer_bound', new StSrid(new Point((float) $lng, (float) $lat), $srid)))
                         ->whereExists(function ($q) use ($row) {
                             $q->select(DB::raw(1))
                                 ->from('messages_groups as mg')
@@ -1093,12 +1093,19 @@ class UnifiedDigestService
             // One definition of the member's point, used by the projection, by the reach
             // containment and by any overflow ring - so a member cannot be admitted on one
             // resolution and then measured from another.
-            $locationPath = fn (string $leaf): string => Spatial::sql(new JsonExtract(DB::raw('u.settings'), Value::of('$.mylocation.' . $leaf)));
-            $locationNumber = fn (string $leaf): string => Spatial::sql(new CastAs(DB::raw($locationPath($leaf)), 'DECIMAL', 10, 6));
-            $hasChosenLocation = $locationPath('lat') . ' IS NOT NULL AND ' . $locationPath('lng') . ' IS NOT NULL AND u.tnuserid IS NULL';
-            $latExpr = "CASE WHEN $hasChosenLocation THEN " . $locationNumber('lat') . ' ELSE l.lat END';
-            $lngExpr = "CASE WHEN $hasChosenLocation THEN " . $locationNumber('lng') . ' ELSE l.lng END';
+            $myLat = Sql::jsonExtract('u.settings', '$.mylocation.lat');
+            $myLng = Sql::jsonExtract('u.settings', '$.mylocation.lng');
+            $myNumber = fn (string $json) => Sql::render(new CastAs(DB::raw($json), 'DECIMAL', 10, 6));
+            $latExpr = "CASE WHEN $myLat IS NOT NULL
+                                 AND $myLng IS NOT NULL AND u.tnuserid IS NULL
+                            THEN {$myNumber($myLat)}
+                            ELSE l.lat END";
+            $lngExpr = "CASE WHEN $myLat IS NOT NULL
+                                 AND $myLng IS NOT NULL AND u.tnuserid IS NULL
+                            THEN {$myNumber($myLng)}
+                            ELSE l.lng END";
             $point = Spatial::point($lngExpr, $latExpr, '?');
+            $notPoint = fn (string $column) => Spatial::geometryType($column)." <> 'POINT'";
 
             // The ring WIDENS who this query enumerates, but it does not decide who
             // the ring admits. That decision belongs to the spatial index, and to
@@ -1134,24 +1141,23 @@ class UnifiedDigestService
                 : 0.0;
             $unionSecs = $reachRow->origin_union_secs ?? null;
             $unionActive = $unionSecs !== null && (float) $unionSecs >= 0 && $currentSecs >= (float) $unionSecs;
-            $containSql = '(' . Spatial::geometryType('mr.outer_bound') . " <> 'POINT' AND ST_Contains(mr.outer_bound, $point))";
-            $groupsTable = Sql::table('groups');
-            $polyType = Spatial::geometryType('g2.polyindex');
+            $containSql = "(".$notPoint('mr.outer_bound')." AND ST_Contains(mr.outer_bound, $point))";
             $mrJoin = '';
             $originAreaFlag = '';
             if ($unionActive) {
-                $originAreaFlag = ", COALESCE(ST_Contains((SELECT g2.polyindex FROM messages_groups mg2
+                $groupsTable = Sql::table('groups');
+                $originAreaFlag = ", CASE WHEN ST_Contains((SELECT g2.polyindex FROM messages_groups mg2
                         JOIN $groupsTable g2 ON g2.id = mg2.groupid
                         WHERE mg2.msgid = mr.msgid AND mg2.deleted = 0
-                          AND g2.polyindex IS NOT NULL AND $polyType <> 'POINT'
-                        ORDER BY mg2.arrival ASC LIMIT 1), $point), FALSE) AS in_origin_area";
+                          AND g2.polyindex IS NOT NULL AND ".$notPoint('g2.polyindex')."
+                        ORDER BY mg2.arrival ASC LIMIT 1), $point) THEN 1 ELSE 0 END AS in_origin_area";
             }
 
             // in_primary: from the outer bound, refined by the PHP probe
             // below. density_band rides along for the ring index whenever
             // either consumer needs post-filtering.
             $primaryFlag = ", $containSql AS in_primary"
-                . ', ' . Spatial::sql(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.browseDensityBand')))) . ' AS density_band'
+                . ', '.Sql::jsonText('u.settings', '$.browseDensityBand').' AS density_band'
                 . $originAreaFlag;
             $primaryParams = $unionActive ? [$srid, $srid] : [$srid];
 

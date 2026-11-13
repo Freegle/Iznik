@@ -66,12 +66,22 @@ final class Spatial
      */
     public static function memberPoint(string $settings, string $lng, string $lat, string $sridSql, string $extraCondition = ''): string
     {
-        $path = fn (string $leaf): string => self::sql(new JsonExtract(DB::raw($settings), Value::of('$.mylocation.'.$leaf)));
-        $number = fn (string $leaf): string => self::sql(new CastAs(DB::raw($path($leaf)), 'DECIMAL', 10, 6));
-        $when = $path('lat').' IS NOT NULL AND '.$path('lng').' IS NOT NULL'.$extraCondition;
-        $x = 'CASE WHEN '.$when.' THEN '.$number('lng').' ELSE '.$lng.' END';
-        $y = 'CASE WHEN '.$when.' THEN '.$number('lat').' ELSE '.$lat.' END';
+        $x = self::memberCoordinate($settings, 'lng', $lng, $extraCondition);
+        $y = self::memberCoordinate($settings, 'lat', $lat, $extraCondition);
 
         return self::sql(new StSrid(new Point(DB::raw($x), DB::raw($y)), DB::raw($sridSql)));
+    }
+
+    /**
+     * One coordinate of that point: settings.mylocation.<leaf> ('lat' or 'lng') when both are set (and the
+     * extra condition holds), else the fallback column.
+     */
+    public static function memberCoordinate(string $settings, string $leaf, string $fallback, string $extraCondition = ''): string
+    {
+        $path = fn (string $l): string => self::sql(new JsonExtract(DB::raw($settings), Value::of('$.mylocation.'.$l)));
+        $number = self::sql(new CastAs(DB::raw($path($leaf)), 'DECIMAL', 10, 6));
+
+        return 'CASE WHEN '.$path('lat').' IS NOT NULL AND '.$path('lng').' IS NOT NULL'.$extraCondition
+            .' THEN '.$number.' ELSE '.$fallback.' END';
     }
 }

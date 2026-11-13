@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Database\Sql;
 use App\Database\Expressions\Rand;
+use App\Database\Sql;
 use App\Mail\Chat\ChatReviewPendingMail;
 use App\Mail\Chat\ChatReviewSummaryMail;
 use App\Models\Group;
@@ -93,7 +93,7 @@ class ChatReviewPendingService
                AND chat_messages.reviewrejected = 0
                AND chat_messages_held.id IS NULL
              GROUP BY memberships.groupid
-             ORDER BY " . Sql::expr(new Rand()),
+             ORDER BY ".Sql::render(new Rand()),
             [$cutoff]
         );
 

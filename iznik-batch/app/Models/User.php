@@ -1958,7 +1958,7 @@ class User extends Model implements Auditable
             // Update the field of the message
             $message = Message::find($msgId);
             $message->fromip = NULL;
-            $message->message = NULL;
+            $message->message = ''; // NOT NULL column; MySQL stores its implicit default for a NULL here
             $message->envelopefrom = NULL;
             $message->fromname = NULL;
             $message->fromaddr = NULL;

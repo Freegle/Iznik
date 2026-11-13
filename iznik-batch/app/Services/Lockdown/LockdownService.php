@@ -3,6 +3,7 @@
 namespace App\Services\Lockdown;
 
 use App\Database\Expressions\Arithmetic;
+use App\Database\Expressions\InsertedValue;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -140,7 +141,7 @@ class LockdownService
             DB::table('lockdown_counters')->upsert(
                 [['lockdownid' => $this->incidentId(), 'kind' => substr($kind, 0, 64), 'count' => $by]],
                 ['lockdownid', 'kind'],
-                ['count' => new Arithmetic('lockdown_counters.count', '+', $by)]
+                ['count' => new Arithmetic('lockdown_counters.count', '+', new InsertedValue('count'))]
             );
         } catch (\Throwable $e) {
             // A lost counter costs a number in the report; it must never cost the loop.

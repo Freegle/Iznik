@@ -17,6 +17,16 @@ use Illuminate\Database\Query\Grammars\PostgresGrammar;
  */
 class JsonTextPostgresGrammar extends PostgresGrammar
 {
+    /**
+     * PostgreSQL timestamps keep microseconds (MySQL DATETIME columns here hold whole seconds), so a bound
+     * date keeps them too: otherwise a value stored from NOW() compares as later than the same instant bound
+     * from PHP, which has been truncated to the second.
+     */
+    public function getDateFormat()
+    {
+        return 'Y-m-d H:i:s.u';
+    }
+
     protected function compileIndexHint(Builder $query, $indexHint)
     {
         return '';

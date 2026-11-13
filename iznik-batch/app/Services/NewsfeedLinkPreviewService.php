@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Database\Expressions\Now;
+use App\Database\UpsertReturningId;
 use DOMDocument;
 use DOMXPath;
 use Carbon\Carbon;
@@ -164,13 +164,12 @@ class NewsfeedLinkPreviewService
 
             $data = $this->parseHtml($response->body());
 
-            DB::table('link_previews')->upsert(
-                [['url' => $url, 'title' => $data['title'], 'description' => $data['description'], 'image' => $data['image']]],
+            return UpsertReturningId::id(
+                'link_previews',
+                ['url' => $url, 'title' => $data['title'], 'description' => $data['description'], 'image' => $data['image']],
                 ['url'],
-                ['title' => $data['title'], 'description' => $data['description'], 'image' => $data['image'], 'retrieved' => new Now()]
+                ['title' => $data['title'], 'description' => $data['description'], 'image' => $data['image'], 'retrieved' => DB::raw('NOW()')]
             );
-
-            return (int) DB::table('link_previews')->where('url', $url)->value('id');
         } catch (\Throwable $e) {
             // \Throwable, not \Exception: the parser throws \Error subclasses
             // (ValueError above being the proven case) and an unmarked row
@@ -181,13 +180,7 @@ class NewsfeedLinkPreviewService
 
     protected function upsertInvalid(string $url): int
     {
-        DB::table('link_previews')->upsert(
-            [['url' => $url, 'invalid' => 1]],
-            ['url'],
-            ['retrieved' => new Now()]
-        );
-
-        return (int) DB::table('link_previews')->where('url', $url)->value('id');
+        return UpsertReturningId::id('link_previews', ['url' => $url, 'invalid' => 1], ['url'], ['retrieved' => DB::raw('NOW()')]);
     }
 
     protected function parseHtml(string $html): array

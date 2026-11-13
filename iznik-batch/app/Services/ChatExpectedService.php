@@ -234,7 +234,7 @@ class ChatExpectedService
                 }
 
                 if (($existing[$msg->id] ?? null) !== $value) {
-                    // Against the chatmsgid unique key; a repeat only ever touches value.
+                    // Against the chatmsgid unique key; only the value is ever updated.
                     DB::table('users_expected')->upsert(
                         [['expecter' => $msg->userid, 'expectee' => $other, 'chatmsgid' => $msg->id, 'value' => $value]],
                         ['chatmsgid'],

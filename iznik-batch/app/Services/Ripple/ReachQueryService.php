@@ -185,7 +185,7 @@ class ReachQueryService
             DB::table('rippling_event_metrics')->upsert(
                 [['day' => now()->toDateString(), 'event' => $event, 'count' => 1]],
                 ['day', 'event'],
-                ['count' => DB::raw('count + 1')]
+                ['count' => DB::raw('rippling_event_metrics.count + 1')]
             );
         } catch (\Throwable $e) {
             // Counting must never cost anyone their reply.

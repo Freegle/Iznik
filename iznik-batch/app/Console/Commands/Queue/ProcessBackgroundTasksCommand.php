@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands\Queue;
 
+use App\Database\Expressions\DateAdd;
+use App\Database\Expressions\Now;
 use App\Services\AutoSplit\Crops;
 use App\Support\ClearanceSql;
 use App\Console\Commands\Mail\SendAdminCommand;
@@ -197,8 +199,7 @@ class ProcessBackgroundTasksCommand extends Command
             // A retry is queued with created_at in the future, for when it falls due. Compared on
             // the database clock, which also stamps rows queued by the Go API, so a database
             // timezone that differs from the app's cannot hold ordinary tasks back.
-            // keep-raw: NOW() must be the database's clock, and the builder binds a PHP time instead.
-            ->whereRaw('created_at <= NOW()')
+            ->where('created_at', '<=', new Now())
             ->orderBy('created_at')
             ->limit($limit)
             ->get()
@@ -2173,7 +2174,7 @@ class ProcessBackgroundTasksCommand extends Command
                 'retries' => $retries + 1,
                 'alerted' => $alerted,
             ]),
-            'created_at' => DB::raw('DATE_ADD(NOW(), INTERVAL ' . (int) $delay . ' SECOND)'),
+            'created_at' => new DateAdd(new Now(), (int) $delay, 'SECOND'),
         ]);
     }
 

@@ -2,6 +2,7 @@
 
 namespace App\Services\TrashNothing;
 
+use App\Database\Sql;
 use App\Models\ChatRoom;
 use App\Models\Membership;
 use App\Models\User;
@@ -148,7 +149,9 @@ class SharedAccountSplitter
                 if ($changed !== 1) {
                     throw new RuntimeException("{$table} {$id}: expected one row with {$column} = {$from}, found {$changed}; nothing written");
                 }
-                $undo[] = "UPDATE {$table} SET {$column} = {$from} WHERE id = {$id} AND {$column} = {$to};";
+                // The column is quoted: logs.user is a reserved word on PostgreSQL, and quoting is harmless on MySQL.
+                $quoted = Sql::col($column);
+                $undo[] = "UPDATE {$table} SET {$quoted} = {$from} WHERE id = {$id} AND {$quoted} = {$to};";
             };
 
             foreach ($plan['emails'] as $id) {

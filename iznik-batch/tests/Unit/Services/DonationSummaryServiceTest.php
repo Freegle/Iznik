@@ -28,17 +28,7 @@ class DonationSummaryServiceTest extends TestCase
 
     private function insertDonation(array $attributes = []): void
     {
-        DB::insert(
-            'INSERT INTO users_donations (userid, GrossAmount, TransactionType, Payer, timestamp)
-             VALUES (?, ?, ?, ?, ?)',
-            [
-                $attributes['userid'] ?? null,
-                $attributes['GrossAmount'] ?? 10.00,
-                $attributes['TransactionType'] ?? 'Completed',
-                $attributes['Payer'] ?? 'donor@example.com',
-                $attributes['timestamp'] ?? now(),
-            ]
-        );
+        DB::table('users_donations')->insert(['userid' => $attributes['userid'] ?? null, 'GrossAmount' => $attributes['GrossAmount'] ?? 10.00, 'TransactionType' => $attributes['TransactionType'] ?? 'Completed', 'Payer' => $attributes['Payer'] ?? 'donor@example.com', 'timestamp' => $attributes['timestamp'] ?? now()]);
     }
 
     public function test_no_donations_returns_zero_result_and_sends_nothing(): void

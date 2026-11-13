@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Models;
 
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use App\Models\Job;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -46,6 +48,13 @@ class JobModelTest extends TestCase
      */
     private function clearJobsTable(): void
     {
+        // The lock-wait session variable is an InnoDB one; PostgreSQL has its own lock_timeout and no such flake.
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::table('jobs')->delete();
+
+            return;
+        }
+
         $restore = (int) (DB::selectOne('SELECT @@SESSION.innodb_lock_wait_timeout AS t')->t ?? 50);
         DB::statement('SET SESSION innodb_lock_wait_timeout = 2');
 
@@ -87,7 +96,7 @@ class JobModelTest extends TestCase
             'clickability' => 1,
             'visible' => 1,
         ];
-        $attrs['geometry'] = DB::raw(sprintf("ST_GeomFromText('POINT(%F %F)', %d)", $lng, $lat, $srid));
+        $attrs['geometry'] = new StGeomFromText(Value::of(sprintf('POINT(%F %F)', $lng, $lat)), $srid);
 
         $id = DB::table('jobs')->insertGetId($attrs);
 
@@ -215,7 +224,7 @@ class JobModelTest extends TestCase
         $limit = 4;
         $total = $limit * Job::VARIETY_POOL_MULTIPLIER + 3; // 15
         for ($i = 0; $i < $total; $i++) {
-            $this->seedJob(['title' => 'Job rank ' . $i, 'cpc' => round(1.00 - ($i * 0.01), 4)]);
+            $this->seedJob(['title' => 'Job rank ' . $i, 'cpc' => round(0.9999 - ($i * 0.01), 4)]);
         }
 
         $allSeen = [];
@@ -247,7 +256,7 @@ class JobModelTest extends TestCase
         mt_srand(424242); // deterministic so the statistical assertion can't flake
 
         $limit = 4;
-        $top = $this->seedJob(['title' => 'Top CPC', 'cpc' => 1.00]);
+        $top = $this->seedJob(['title' => 'Top CPC', 'cpc' => 0.9999]);
         $floorIds = [];
         for ($i = 0; $i < 11; $i++) {
             $floorIds[] = $this->seedJob(['title' => 'Floor ' . $i, 'cpc' => 0.11]);

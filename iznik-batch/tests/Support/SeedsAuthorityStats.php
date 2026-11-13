@@ -2,7 +2,8 @@
 
 namespace Tests\Support;
 
-use App\Database\Sql;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -158,11 +159,11 @@ trait SeedsAuthorityStats
 
     private function insertGroup(int $id, string $nameshort, string $namefull, string $wkt): void
     {
-        $this->insertGeom(
-            'INSERT INTO ' . Sql::table('groups') . ' (id, nameshort, namefull, type, publish, onmap, lat, lng, polyindex)
-             VALUES (?, ?, ?, ?, 1, 1, 11, 0, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
-            [$id, $nameshort, $namefull, 'Freegle', $wkt]
-        );
+        DB::table('groups')->insert([
+            'id' => $id, 'nameshort' => $nameshort, 'namefull' => $namefull, 'type' => 'Freegle',
+            'publish' => 1, 'onmap' => 1, 'lat' => 11, 'lng' => 0,
+            'polyindex' => new StGeomFromText(Value::of($wkt), (int) config('freegle.srid')),
+        ]);
     }
 
     private function stat(int $groupid, string $type, string $date, int $count): void

@@ -2,16 +2,12 @@
 
 namespace App\Services;
 
-use Illuminate\Database\Query\Expression as Raw;
-use App\Database\Sql;
-use App\Database\Expressions\Value;
-use App\Database\Expressions\TimestampDiff;
-use App\Database\Expressions\Now;
-use App\Database\Expressions\JsonNumber;
-use App\Database\Expressions\Greatest;
 use App\Database\Expressions\DateSub;
-use App\Database\Expressions\Coalesce;
-use App\Database\Expressions\Arithmetic;
+use App\Database\Expressions\JsonNumber;
+use App\Database\Expressions\Now;
+use App\Database\Expressions\TimestampDiff;
+use App\Database\Expressions\Value;
+use App\Database\Sql;
 use App\Mail\Message\DeadlineReached;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Message;
@@ -280,20 +276,16 @@ class MessageExpiryService
         // The scan is bounded to postings that arrived in the last AGE_EXPIRY_LOOKBACK_DAYS
         // (using the arrival index) and returns at most AGE_EXPIRY_BATCH of the oldest each
         // run, so a backlog drains over a few daily runs rather than in one long statement.
-        $json = fn (string $path) => new JsonNumber('g.settings', Value::of($path));
-        $withDefault = fn (string $path, int $default) => new Coalesce(new Arithmetic($json($path), '+', 0), $default);
-        $groupsTable = Sql::table('groups');
-        $lookbackStart = Sql::expr(new DateSub(new Now(), self::AGE_EXPIRY_LOOKBACK_DAYS, 'DAY'));
-        $oneDayAgo = Sql::expr(new DateSub(new Now(), 1, 'DAY'));
-        $sixDaysAgo = Sql::expr(new DateSub(new Now(), 6, 'DAY'));
-        $daysLive = Sql::expr(new TimestampDiff('DAY', 'mg.arrival', new Now()));
-        $maxAge = Sql::expr($withDefault('$.maxagetoshow', 90));
-        $offerThreshold = Sql::expr(new Arithmetic($withDefault('$.reposts.offer', 3), '*', new Arithmetic($withDefault('$.reposts.max', 5), '+', 1)));
-        $wantedThreshold = Sql::expr(new Arithmetic($withDefault('$.reposts.wanted', 7), '*', new Arithmetic($withDefault('$.reposts.max', 5), '+', 1)));
-        $threshold = Sql::expr(new Greatest(
-            new Raw($maxAge),
-            new Raw("CASE m.type WHEN 'Offer' THEN {$offerThreshold} ELSE {$wantedThreshold} END")
-        ));
+        $num = fn (string $path) => '('.Sql::render(new JsonNumber(DB::raw('g.settings'), Value::of($path))).' + 0)';
+        $jmaxagetoshow = $num('$.maxagetoshow');
+        $jreposts_offer = $num('$.reposts.offer');
+        $jreposts_max = $num('$.reposts.max');
+        $jreposts_wanted = $num('$.reposts.wanted');
+        $lookback = Sql::render(new DateSub(new Now(), DB::raw('?'), 'DAY'));
+        $oneDayAgo = Sql::render(new DateSub(new Now(), 1, 'DAY'));
+        $sixDaysAgo = Sql::render(new DateSub(new Now(), 6, 'DAY'));
+        $groups = Sql::table('groups');
+        $ageDays = Sql::render(new TimestampDiff('DAY', DB::raw('mg.arrival'), new Now()));
         $sql = <<<SQL
 SELECT m.id AS msgid, MIN(live.arrival) AS first_arrival
 FROM messages_groups live
@@ -301,7 +293,7 @@ JOIN messages m ON m.id = live.msgid
 LEFT JOIN messages_promises mp ON mp.msgid = m.id
 WHERE live.collection = 'Approved'
   AND live.deleted = 0
-  AND live.arrival > {$lookbackStart}
+  AND live.arrival > {$lookback}
   AND m.deleted IS NULL
   AND m.type IN ('Offer', 'Wanted')
   AND mp.id IS NULL
@@ -317,11 +309,19 @@ WHERE live.collection = 'Approved'
       )
       AND NOT EXISTS (
         SELECT 1 FROM messages_groups mg
-        JOIN {$groupsTable} g ON g.id = mg.groupid
+        JOIN {$groups} g ON g.id = mg.groupid
         WHERE mg.msgid = m.id
           AND mg.deleted = 0
           AND mg.collection = 'Approved'
-          AND {$daysLive} <= {$threshold}
+          AND {$ageDays} <= GREATEST(
+            COALESCE({$jmaxagetoshow}, 90),
+            CASE m.type
+              WHEN 'Offer' THEN COALESCE({$jreposts_offer}, 3)
+                              * (COALESCE({$jreposts_max}, 5) + 1)
+              ELSE          COALESCE({$jreposts_wanted}, 7)
+                              * (COALESCE({$jreposts_max}, 5) + 1)
+            END
+          )
       )
       AND NOT EXISTS (
         SELECT 1 FROM chat_messages cm
@@ -336,8 +336,9 @@ ORDER BY first_arrival
 LIMIT ?
 SQL;
 
-        // keep-raw: the per-group threshold is arithmetic over JSON values inside GREATEST/CASE in a correlated NOT EXISTS, and the ordering is over an aggregate of the outer join; the builder cannot render either without falling back to raw fragments anyway.
+        // keep-raw: the per-group threshold is arithmetic over JSON_EXTRACT values inside GREATEST/CASE in a correlated NOT EXISTS, and the ordering is over an aggregate of the outer join; the builder cannot render either without falling back to raw fragments anyway.
         return collect(DB::select($sql, [
+            self::AGE_EXPIRY_LOOKBACK_DAYS,
             MessageOutcome::OUTCOME_EXPIRED,
             self::AGE_EXPIRY_BATCH,
         ]))->pluck('msgid');

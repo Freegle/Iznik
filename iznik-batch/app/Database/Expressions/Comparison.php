@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\ConditionExpression;
 use Illuminate\Database\Grammar;
@@ -30,7 +31,9 @@ use InvalidArgumentException;
  */
 final class Comparison implements ConditionExpression
 {
+    use PostgresDialect;
     use RendersOperands;
+    use PostgresDialect;
 
     public const array ALLOWED_OPERATORS = [
         '=', '!=', '<>', '<', '<=', '>', '>=', '<=>', 'LIKE', 'NOT LIKE',
@@ -57,8 +60,11 @@ final class Comparison implements ConditionExpression
 
     public function getValue(Grammar $grammar): string
     {
+        // <=> is MySQL's null-safe equality; PostgreSQL spells it IS NOT DISTINCT FROM.
+        $operator = $this->operator === '<=>' && $this->isPostgres($grammar) ? 'IS NOT DISTINCT FROM' : $this->operator;
+
         return $this->renderOperand($this->left, $grammar)
-            .' '.$this->operator.' '
+            .' '.$operator.' '
             .$this->renderOperand($this->right, $grammar);
     }
 }

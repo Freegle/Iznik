@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Models;
 
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use App\Models\Group;
 use App\Models\Location;
 use Illuminate\Support\Facades\DB;
@@ -51,7 +53,7 @@ class LocationTest extends TestCase
         $areaId = (int) DB::table('locations')->insertGetId(['name' => 'Stoneygate', 'type' => 'Polygon']);
         $pcId   = (int) DB::table('locations')->insertGetId(['name' => 'LE2 3HE', 'type' => 'Postcode', 'areaid' => $areaId]);
         $bareId = (int) DB::table('locations')->insertGetId(['name' => 'ZZ9 9ZY', 'type' => 'Postcode']);
-        $townId = (int) DB::table('locations')->insertGetId(['name' => 'Grantown on Spey', 'type' => 'Place']);
+        $townId = (int) DB::table('locations')->insertGetId(['name' => 'Grantown on Spey', 'type' => 'Polygon']);
         try {
             $this->assertSame('Stoneygate LE2', Location::subjectArea($pcId));
             $this->assertSame('ZZ9', Location::subjectArea($bareId), 'A postcode with no area gives the outward half alone');
@@ -129,10 +131,9 @@ class LocationTest extends TestCase
         // Override the auto-created POINT polyindex with a polygon that covers the event location.
         // WKT uses the same "lat/lng degree coordinates labeled SRID 3857" convention used
         // throughout the codebase for polyindex (ST_GeomFromText(poly, 3857) where poly is WGS84).
-        DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((-0.15 51.46, -0.15 51.52, -0.05 51.52, -0.05 51.46, -0.15 51.46))', $srid, $southwark->id]
-        );
+        DB::table('groups')->where('id', $southwark->id)->update([
+            'polyindex' => new StGeomFromText(Value::of('POLYGON((-0.15 51.46, -0.15 51.52, -0.05 51.52, -0.05 51.46, -0.15 51.46))'), $srid),
+        ]);
 
         // Group B (Tower Hamlets): centroid ~140 m from event (very close), but polyindex is
         // a POINT — ST_Contains(POINT, POINT) returns false for non-identical points.
@@ -183,10 +184,9 @@ class LocationTest extends TestCase
         // Group polygon covering lng 2.95..3.05, lat 56.65..56.75 (empty North Sea,
         // so no real postcode out-competes the seeded sentinels).
         $group = $this->createTestGroup(['lat' => 56.70, 'lng' => 3.00, 'publish' => 1, 'listable' => 1]);
-        DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-            ['POLYGON((2.95 56.65, 2.95 56.75, 3.05 56.75, 3.05 56.65, 2.95 56.65))', $srid, $group->id]
-        );
+        DB::table('groups')->where('id', $group->id)->update([
+            'polyindex' => new StGeomFromText(Value::of('POLYGON((2.95 56.65, 2.95 56.75, 3.05 56.75, 3.05 56.65, 2.95 56.65))'), $srid),
+        ]);
 
         $outId = self::TEST_PC_ID;       // nearest to the point, but OUTSIDE the group
         $inId  = self::TEST_PC_ID + 1;   // slightly farther, INSIDE the group

@@ -25,8 +25,8 @@ class SafeMailTest extends TestCase
         $email = $user->emails->first()->email;
         $emailId = $user->emails->first()->id;
 
-        // Ensure starting bounced=0 so we can detect the increment.
-        DB::table('users_emails')->where('id', $emailId)->update(['bounced' => 0]);
+        // Ensure no bounce is recorded so we can detect one.
+        DB::table('users_emails')->where('id', $emailId)->update(['bounced' => null]);
 
         // Stub Mail::to(...)->send() to throw the same exception Symfony Mailer
         // throws for non-ASCII local-part addresses.
@@ -102,7 +102,7 @@ class SafeMailTest extends TestCase
         $email = $user->emails->first()->email;
         $emailId = $user->emails->first()->id;
 
-        DB::table('users_emails')->where('id', $emailId)->update(['bounced' => 0]);
+        DB::table('users_emails')->where('id', $emailId)->update(['bounced' => null]);
 
         Mail::shouldReceive('to')->once()->andReturnSelf();
         Mail::shouldReceive('send')->once()->andThrow(new SymfonyRfcComplianceException(

@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StSrid;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
@@ -644,7 +646,7 @@ class DailyPostsPushTest extends TestCase
         $msg = $this->createApprovedMessage($other, $group, 'OFFER: Far away item (Aberdeen)');
         DB::table('messages')->where('id', $msg->id)->update(['lat' => 57.15, 'lng' => -2.1]);
         DB::table('messages_spatial')->where('msgid', $msg->id)->update([
-            'point' => DB::raw("ST_SRID(POINT(-2.1, 57.15), " . config('freegle.srid') . ")"),
+            'point' => new StSrid(new Point(-2.1, 57.15), (int) config('freegle.srid')),
         ]);
         $this->createUserPushToken($user->id);
 

@@ -618,7 +618,7 @@ class SupportFirstPassTest extends TestCase
     public function test_a_pending_case_older_than_the_limit_gets_the_plain_mail_and_is_never_run(): void
     {
         Mail::fake();
-        $c = $this->makeCase(['created_at' => DB::raw('NOW() - INTERVAL 2 HOUR')]);
+        $c = $this->makeCase(['created_at' => DB::raw("NOW() - INTERVAL '2' HOUR")]);
 
         $this->runPass();
 
@@ -633,7 +633,7 @@ class SupportFirstPassTest extends TestCase
     public function test_an_aged_case_that_already_failed_an_attempt_keeps_that_reason(): void
     {
         Mail::fake();
-        $c = $this->makeCase(['created_at' => DB::raw('NOW() - INTERVAL 2 HOUR'), 'firstpass_error' => FirstPassService::REASON_CREDIT, 'firstpass_attempts' => 1]);
+        $c = $this->makeCase(['created_at' => DB::raw("NOW() - INTERVAL '2' HOUR"), 'firstpass_error' => FirstPassService::REASON_CREDIT, 'firstpass_attempts' => 1]);
 
         $this->runPass();
 
@@ -675,7 +675,7 @@ class SupportFirstPassTest extends TestCase
     public function test_a_running_case_nobody_is_working_on_is_reaped_and_mailed_plain(): void
     {
         Mail::fake();
-        $stale = $this->makeCase(['firstpass_status' => 'Running', 'updated_at' => DB::raw('NOW() - INTERVAL 2 HOUR')]);
+        $stale = $this->makeCase(['firstpass_status' => 'Running', 'updated_at' => DB::raw("NOW() - INTERVAL '2' HOUR")]);
         $fresh = $this->makeCase(['firstpass_status' => 'Running']);
 
         $this->runPass();
@@ -806,7 +806,7 @@ class SupportFirstPassTest extends TestCase
 
         $msg = fn (array $o) => DB::table('chat_messages')->insertGetId(array_merge([
             'chatid' => $first['chat'], 'userid' => $first['member']->id, 'message' => 'later', 'type' => 'Default',
-            'date' => DB::raw('NOW() + INTERVAL 1 HOUR'), 'reviewrequired' => 0, 'reviewrejected' => 0, 'processingrequired' => 0,
+            'date' => DB::raw("NOW() + INTERVAL '1' HOUR"), 'reviewrequired' => 0, 'reviewrejected' => 0, 'processingrequired' => 0,
             'processingsuccessful' => 1, 'mailedtoall' => 0, 'seenbyall' => 0, 'platform' => 1,
         ], $o));
         $msg(['reviewrequired' => 1]);
@@ -858,7 +858,7 @@ class SupportFirstPassTest extends TestCase
         $this->assertSame('Done', $this->case($differentMember['case'])->firstpass_status);
 
         // The first brief is two days old.
-        DB::table('support_cases')->whereIn('id', [$first['case'], $differentMember['case']])->update(['created_at' => DB::raw('NOW() - INTERVAL 2 DAY')]);
+        DB::table('support_cases')->whereIn('id', [$first['case'], $differentMember['case']])->update(['created_at' => DB::raw("NOW() - INTERVAL '2' DAY")]);
         $third = $this->makeCase(['member' => $first['member'], 'chat' => $first['chat'], 'group' => $first['group']]);
         $this->runPass();
         $this->assertCount(3, $this->helperRequests);
@@ -1120,10 +1120,10 @@ class SupportFirstPassTest extends TestCase
 
     public function test_the_purge_deletes_old_handled_cases_and_clears_old_briefs(): void
     {
-        $oldHandled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'handled_at' => DB::raw('NOW() - INTERVAL 30 month')]);
+        $oldHandled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw("NOW() - INTERVAL '3' YEAR"), 'handled_at' => DB::raw("NOW() - INTERVAL '30' month")]);
         DB::table('support_case_messages')->insert(['caseid' => $oldHandled['case'], 'userid' => $oldHandled['referrer']->id, 'role' => 'Referrer', 'body' => 'hi']);
-        $recentHandled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 18 month'), 'handled_at' => DB::raw('NOW() - INTERVAL 20 day')]);
-        $oldOpen = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 3 YEAR')]);
+        $recentHandled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw("NOW() - INTERVAL '18' month"), 'handled_at' => DB::raw("NOW() - INTERVAL '20' day")]);
+        $oldOpen = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw("NOW() - INTERVAL '3' YEAR")]);
         $fresh = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}']);
 
         $this->artisan('support:purge-cases')->assertSuccessful();
@@ -1142,26 +1142,26 @@ class SupportFirstPassTest extends TestCase
 
     public function test_the_purge_clears_old_run_analysis_and_transcript_deletes_a_deleted_cases_runs_and_old_idle_open_cases(): void
     {
-        $run = fn (string $query, string $age, string $kind = 'FirstPass') => DB::table('support_ai_runs')->insertGetId([
+        $run = fn (string $query, int $amount, string $unit, string $kind = 'FirstPass') => DB::table('support_ai_runs')->insertGetId([
             'kind' => $kind, 'query' => $query, 'analysis' => 'facts', 'transcript' => 'talk', 'status' => 'Success',
-            'created_at' => DB::raw("NOW() - INTERVAL {$age}"),
+            'created_at' => DB::raw("NOW() - INTERVAL '{$amount}' {$unit}"),
         ]);
 
-        $oldRun = $run('First pass for support case 1', '13 month');
-        $newRun = $run('First pass for support case 2', '2 month');
-        $interactive = $run('typed by a volunteer', '13 month', 'Interactive');
+        $oldRun = $run('First pass for support case 1', 13, 'month');
+        $newRun = $run('First pass for support case 2', 2, 'month');
+        $interactive = $run('typed by a volunteer', 13, 'month', 'Interactive');
 
-        $handled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'handled_at' => DB::raw('NOW() - INTERVAL 30 month')]);
-        $ownRun = $run("First pass for support case {$handled['case']}", '1 day');
-        $failedAttempt = $run("First pass for support case {$handled['case']}", '1 day');
-        $replay = $run("Replay of support case {$handled['case']}", '1 day');
-        $other = $run('First pass for support case 999999', '1 day');
+        $handled = $this->makeCase(['status' => 'Handled', 'open_key' => null, 'firstpass_status' => 'Done', 'created_at' => DB::raw("NOW() - INTERVAL '3' YEAR"), 'handled_at' => DB::raw("NOW() - INTERVAL '30' month")]);
+        $ownRun = $run("First pass for support case {$handled['case']}", 1, 'day');
+        $failedAttempt = $run("First pass for support case {$handled['case']}", 1, 'day');
+        $replay = $run("Replay of support case {$handled['case']}", 1, 'day');
+        $other = $run('First pass for support case 999999', 1, 'day');
 
-        $idle = $this->makeCase(['created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'updated_at' => DB::raw('NOW() - INTERVAL 30 month')]);
-        $talked = $this->makeCase(['created_at' => DB::raw('NOW() - INTERVAL 3 YEAR'), 'updated_at' => DB::raw('NOW() - INTERVAL 30 month')]);
+        $idle = $this->makeCase(['created_at' => DB::raw("NOW() - INTERVAL '3' YEAR"), 'updated_at' => DB::raw("NOW() - INTERVAL '30' month")]);
+        $talked = $this->makeCase(['created_at' => DB::raw("NOW() - INTERVAL '3' YEAR"), 'updated_at' => DB::raw("NOW() - INTERVAL '30' month")]);
         DB::table('support_case_messages')->insert(['caseid' => $talked['case'], 'userid' => $talked['referrer']->id, 'role' => 'Referrer', 'body' => 'still here']);
 
-        $briefed = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw('NOW() - INTERVAL 14 month'), 'updated_at' => DB::raw('NOW() - INTERVAL 40 day')]);
+        $briefed = $this->makeCase(['firstpass_status' => 'Done', 'brief' => '{"answer":"x"}', 'created_at' => DB::raw("NOW() - INTERVAL '14' month"), 'updated_at' => DB::raw("NOW() - INTERVAL '40' day")]);
         $before = DB::table('support_cases')->where('id', $briefed['case'])->value('updated_at');
 
         $this->artisan('support:purge-cases')->assertSuccessful();

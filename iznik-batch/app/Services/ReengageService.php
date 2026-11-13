@@ -2,12 +2,7 @@
 
 namespace App\Services;
 
-use App\Database\Expressions\Value;
-use App\Database\Expressions\Max;
-use App\Database\Expressions\JsonUnquote;
-use App\Database\Expressions\JsonExtract;
-use App\Database\Expressions\Coalesce;
-use App\Database\Expressions\Alias;
+use App\Database\Sql;
 use App\Mail\Reengage\ReengageMail;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Group;
@@ -196,7 +191,11 @@ class ReengageService
             ->where('memberships.userid', $userId)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->where('groups.type', Group::TYPE_FREEGLE)
-            ->select(new Alias(new Max(new Coalesce(new JsonUnquote(new JsonExtract('memberships.settings', Value::of('$.engagement'))), Value::of('1'))), 'enabled'))
+            // keep-raw: MAX() of an expression, not a bare column - the builder's
+            // aggregate helpers only take a column name, and the expression itself
+            // combines COALESCE() and JSON_UNQUOTE(), neither of which the builder
+            // has a fluent method for.
+            ->selectRaw("MAX(COALESCE(".Sql::jsonText('memberships.settings', '$.engagement').", '1')) AS enabled")
             ->value('enabled');
 
         if ($engagementEnabled === '0' || $engagementEnabled === 0) {

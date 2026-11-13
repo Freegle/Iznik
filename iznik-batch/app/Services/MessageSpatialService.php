@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Database\Sql;
 use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Not;
 use App\Database\Expressions\Point;
 use App\Database\Expressions\StSrid;
 use App\Database\Expressions\StX;
@@ -261,8 +262,8 @@ class MessageSpatialService
                     ->orWhereColumn('messages_groups.arrival', '!=', 'messages_spatial.arrival')
                     // Null-safe: the type is nullable on both sides, so a plain !=
                     // never matches a row that needs correcting. No builder equivalent
-                    // of <=>, so this one stays raw.
-                    ->orWhereRaw('NOT (messages_spatial.msgtype <=> messages.type)');
+                    // of <=>, so it is a Comparison expression.
+                    ->orWhere(new Not(new Comparison('messages_spatial.msgtype', '<=>', 'messages.type')));
             })
             ->select(
                 'messages.id',

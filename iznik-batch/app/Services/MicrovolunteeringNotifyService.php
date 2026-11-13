@@ -2,6 +2,11 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Concat;
+use App\Database\Expressions\DateSub;
+use App\Database\Expressions\Now;
+use App\Database\Expressions\Value;
+use App\Database\Sql;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -83,12 +88,14 @@ class MicrovolunteeringNotifyService
         // production: 17.03s for the joined form against 1.00s for this one, over 6,209
         // distinct message ids in 7 chunked lookups, returning a result set identical row
         // for row (23,926 rows both ways).
+        $groupsTable = Sql::table('groups');
+        $dayAgo = Sql::render(new DateSub(new Now(), 1, 'DAY'));
         $msgs = DB::select("
             SELECT messages.id, messages.fromuser, messages_groups.groupid, messages.subject, messages_groups.collection
             FROM messages
             INNER JOIN messages_groups ON messages.id = messages_groups.msgid
-            INNER JOIN `groups` ON messages_groups.groupid = groups.id
-            WHERE messages_groups.arrival > DATE_SUB(NOW(), INTERVAL 1 DAY)
+            INNER JOIN $groupsTable ON messages_groups.groupid = groups.id
+            WHERE messages_groups.arrival > $dayAgo
               AND messages.deleted IS NULL
               -- A hold is per-group. Every other predicate here is already
               -- scoped to this messages_groups row (arrival, and groupid via
@@ -329,11 +336,12 @@ class MicrovolunteeringNotifyService
             $urls = array_map(fn ($id) => '/microvolunteering/message/' . $id, $chunk);
             $placeholders = implode(',', array_fill(0, count($urls), '?'));
 
+            $dayAgo = Sql::render(new DateSub(new Now(), 1, 'DAY'));
             $rows = DB::select(
                 "SELECT url
                  FROM users_notifications
                  WHERE type = ?
-                   AND timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+                   AND timestamp >= $dayAgo
                    AND url IN ($placeholders)",
                 array_merge([self::NOTIFICATION_TYPE], $urls)
             );
@@ -421,43 +429,22 @@ class MicrovolunteeringNotifyService
      */
     private function markStaleReviewedNotificationsSeen(bool $dryRun): int
     {
-        // keep-raw: both statements below join on
-        // un.url = CONCAT('/microvolunteering/message/', ma.msgid) - a per-row
-        // correlated string built from the joined microactions.msgid column. There is
-        // no query-builder method that projects CONCAT() over a column, so the join
-        // condition (and therefore the surrounding UPDATE ... JOIN / COUNT ... JOIN)
-        // has to stay raw SQL. The UPDATE also needs its own raw statement rather than
-        // update() with a join, since the query builder has no join-update construct.
-        if ($dryRun) {
-            $row = DB::selectOne(
-                "SELECT COUNT(*) AS count
-                 FROM users_notifications un
-                 INNER JOIN microactions ma
-                     ON ma.userid = un.touser
-                     AND ma.actiontype = 'CheckMessage'
-                     AND un.url = CONCAT('/microvolunteering/message/', ma.msgid)
-                 WHERE un.type = ? AND un.seen = 0
-                   AND un.timestamp >= DATE_SUB(NOW(), INTERVAL " . self::MARK_SEEN_WINDOW_DAYS . " DAY)",
-                [self::NOTIFICATION_TYPE]
-            );
+        // The two statements join on un.url = CONCAT('/microvolunteering/message/', ma.msgid): a string built
+        // per row from the joined microactions.msgid column.
+        $pending = fn () => DB::table('users_notifications as un')
+            ->join('microactions as ma', function ($join) {
+                $join->on('ma.userid', '=', 'un.touser')
+                    ->where('ma.actiontype', 'CheckMessage')
+                    ->on('un.url', '=', new Concat(Value::of('/microvolunteering/message/'), 'ma.msgid'));
+            })
+            ->where('un.type', self::NOTIFICATION_TYPE)
+            ->where('un.seen', 0)
+            ->where('un.timestamp', '>=', new DateSub(new Now(), self::MARK_SEEN_WINDOW_DAYS, 'DAY'));
 
-            return (int) $row->count;
+        if ($dryRun) {
+            return $pending()->count();
         }
 
-        // keep-raw: the join condition un.url = CONCAT('/microvolunteering/message/', ma.msgid)
-        // applies CONCAT() to a column - no builder method projects that, and expressing it
-        // via join()->on()->whereRaw() would still leave a raw fragment (whereRaw is itself a
-        // raw call site), so the whole UPDATE ... JOIN stays as one raw statement.
-        return DB::update(
-            "UPDATE users_notifications un
-             INNER JOIN microactions ma
-                 ON ma.userid = un.touser
-                 AND ma.actiontype = 'CheckMessage'
-                 AND un.url = CONCAT('/microvolunteering/message/', ma.msgid)
-             SET un.seen = 1
-             WHERE un.type = ? AND un.seen = 0
-               AND un.timestamp >= DATE_SUB(NOW(), INTERVAL " . self::MARK_SEEN_WINDOW_DAYS . " DAY)",
-            [self::NOTIFICATION_TYPE]
-        );
+        return $pending()->update(['un.seen' => 1]);
     }
 }

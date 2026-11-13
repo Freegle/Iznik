@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -22,6 +23,7 @@ use Illuminate\Database\Grammar;
 final class Crc32 implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(private readonly mixed $operand)
     {
@@ -29,6 +31,9 @@ final class Crc32 implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
-        return 'CRC32('.$this->renderOperand($this->operand, $grammar).')';
+        $operand = $this->renderOperand($this->operand, $grammar);
+
+        // The stored crc32() on PostgreSQL takes text; MySQL checksums a number's decimal text, so cast it the same way.
+        return $this->isPostgres($grammar) ? 'CRC32(CAST('.$operand.' AS text))' : 'CRC32('.$operand.')';
     }
 }

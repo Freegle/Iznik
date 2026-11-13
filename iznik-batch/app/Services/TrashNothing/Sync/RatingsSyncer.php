@@ -5,6 +5,7 @@ namespace App\Services\TrashNothing\Sync;
 use App\Models\Rating;
 use App\Models\User;
 use App\Services\LokiService;
+use App\Support\Savepoint;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -80,41 +81,44 @@ class RatingsSyncer
                 }
 
                 try {
-                    // Only an absent/null rating means "deleted" — a falsy but
-                    // present value is a real rating, not a deletion.
-                    if (($rating['rating'] ?? null) !== null) {
-                        $ratingModel = Rating::firstOrNew(['tn_rating_id' => $rating['rating_id']]);
-                        $isNew = !$ratingModel->exists;
-                        if ($isNew) {
-                            $ratingModel->ratee   = $rating['ratee_fd_user_id'];
-                            $ratingModel->visible = 1;
-                        }
-                        $ratingModel->rating    = $rating['rating'];
-                        $ratingModel->timestamp = $ratingDate;
-                        Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id=' . $rating['rating_id'] . ' set=ratee=' . $rating['ratee_fd_user_id'] . ',rating=' . $rating['rating'] . ',timestamp=' . ($ratingDate ?? 'null') . ',visible=1');
-                        if (!$this->dryRun) {
-                            $ratingModel->save();
-                        }
-                        $this->loki->logEvent('tn-sync', 'rating-upsert', [
-                            'action'       => $isNew ? 'insert' : 'update',
-                            'tn_rating_id' => $rating['rating_id'],
-                            'user_id'      => $rating['ratee_fd_user_id'],
-                        ]);
-                    } else {
-                        Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee=' . $rating['ratee_fd_user_id'] . ',tn_rating_id=' . $rating['rating_id']);
-                        $existing = Rating::where('ratee', $rating['ratee_fd_user_id'])
-                            ->where('tn_rating_id', $rating['rating_id'])
-                            ->first();
-                        if ($existing) {
-                            if (!$this->dryRun) {
-                                $existing->delete();
+                    // A failed write must not spoil an outer transaction: PostgreSQL aborts it without a savepoint.
+                    Savepoint::around(function () use ($rating, $ratingDate) {
+                        // Only an absent/null rating means "deleted" — a falsy but
+                        // present value is a real rating, not a deletion.
+                        if (($rating['rating'] ?? null) !== null) {
+                            $ratingModel = Rating::firstOrNew(['tn_rating_id' => $rating['rating_id']]);
+                            $isNew = !$ratingModel->exists;
+                            if ($isNew) {
+                                $ratingModel->ratee   = $rating['ratee_fd_user_id'];
+                                $ratingModel->visible = 1;
                             }
-                            $this->loki->logEvent('tn-sync', 'rating-delete', [
+                            $ratingModel->rating    = $rating['rating'];
+                            $ratingModel->timestamp = $ratingDate;
+                            Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id=' . $rating['rating_id'] . ' set=ratee=' . $rating['ratee_fd_user_id'] . ',rating=' . $rating['rating'] . ',timestamp=' . ($ratingDate ?? 'null') . ',visible=1');
+                            if (!$this->dryRun) {
+                                $ratingModel->save();
+                            }
+                            $this->loki->logEvent('tn-sync', 'rating-upsert', [
+                                'action'       => $isNew ? 'insert' : 'update',
                                 'tn_rating_id' => $rating['rating_id'],
                                 'user_id'      => $rating['ratee_fd_user_id'],
                             ]);
+                        } else {
+                            Log::info('TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee=' . $rating['ratee_fd_user_id'] . ',tn_rating_id=' . $rating['rating_id']);
+                            $existing = Rating::where('ratee', $rating['ratee_fd_user_id'])
+                                ->where('tn_rating_id', $rating['rating_id'])
+                                ->first();
+                            if ($existing) {
+                                if (!$this->dryRun) {
+                                    $existing->delete();
+                                }
+                                $this->loki->logEvent('tn-sync', 'rating-delete', [
+                                    'tn_rating_id' => $rating['rating_id'],
+                                    'user_id'      => $rating['ratee_fd_user_id'],
+                                ]);
+                            }
                         }
-                    }
+                    });
                 } catch (\Exception $e) {
                     Log::info('TN-SYNC-TRACE [RATING] id=' . ($rating['rating_id'] ?? 'null') . ' ratee=' . ($rating['ratee_fd_user_id'] ?? 'null') . ' rating=' . ($rating['rating'] ?? 'null') . ' action=error');
                     Log::error('TN sync: ratings sync failed', [
