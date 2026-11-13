@@ -10,7 +10,13 @@ class DonationSummaryCommandTest extends TestCase
 {
     private function insertDonation(array $attributes = []): void
     {
-        DB::table('users_donations')->insert(['userid' => $attributes['userid'] ?? null, 'GrossAmount' => $attributes['GrossAmount'] ?? 10.00, 'TransactionType' => $attributes['TransactionType'] ?? 'Completed', 'Payer' => $attributes['Payer'] ?? 'donor@example.com', 'timestamp' => now()]);
+        DB::table('users_donations')->insert([
+            'userid' => $attributes['userid'] ?? null,
+            'GrossAmount' => $attributes['GrossAmount'] ?? 10.00,
+            'TransactionType' => $attributes['TransactionType'] ?? 'Completed',
+            'Payer' => $attributes['Payer'] ?? 'donor@example.com',
+            'timestamp' => now(),
+        ]);
     }
 
     public function test_smoke_no_donations_today(): void
@@ -57,7 +63,13 @@ class DonationSummaryCommandTest extends TestCase
         Mail::fake();
 
         // Insert donation from yesterday
-        DB::table('users_donations')->insert(['userid' => null, 'GrossAmount' => 50.00, 'TransactionType' => 'Completed', 'Payer' => 'old@example.com', 'timestamp' => now()->subDays(1)]);
+        DB::table('users_donations')->insert([
+            'userid' => null,
+            'GrossAmount' => 50.00,
+            'TransactionType' => 'Completed',
+            'Payer' => 'old@example.com',
+            'timestamp' => now()->subDay(),
+        ]);
 
         $this->artisan('mail:donations:summary')
             ->expectsOutputToContain('No donations today')

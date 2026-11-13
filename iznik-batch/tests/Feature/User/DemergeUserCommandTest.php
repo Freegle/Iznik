@@ -51,6 +51,8 @@ class DemergeUserCommandTest extends TestCase
 
     public function test_runs_without_error_when_no_rows_to_demerge(): void
     {
+        $this->requiresMySql('the command reads a MySQL backup database through a second connection');
+
         // Use the test DB as both live and backup. Since DatabaseTransactions is disabled,
         // rows are auto-committed and visible to the backup connection.
         // The demerge finds the users but deletes 0 rows (IDs don't match across the lookup).

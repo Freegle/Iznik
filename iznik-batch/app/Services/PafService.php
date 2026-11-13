@@ -299,18 +299,29 @@ class PafService
         $updated = 0;
         if ($records) {
             $udprns = array_keys($records);
-            $existing = DB::table('paf_addresses')->whereIn('udprn', $udprns)->count();
             $columns = array_keys(reset($records));
-            $affected = DB::table('paf_addresses')->upsert(
+            $existing = [];
+            foreach (DB::table('paf_addresses')->whereIn('udprn', $udprns)->get($columns) as $row) {
+                $existing[(int) $row->udprn] = $row;
+            }
+
+            DB::table('paf_addresses')->upsert(
                 array_values($records),
                 ['udprn'],
                 array_values(array_diff($columns, ['udprn']))
             );
 
-            // MySQL counts 1 for each row inserted, 2 for each updated, 0 for one already
-            // the same.
-            $inserted = count($records) - $existing;
-            $updated = intdiv(max(0, $affected - $inserted), 2);
+            // An address already held counts as updated only when a value changed, whatever the
+            // engine says it affected (MySQL reports 0 for a row left the same, PostgreSQL 1).
+            $inserted = count($records) - count($existing);
+            foreach ($existing as $udprn => $row) {
+                foreach ($records[$udprn] as $column => $value) {
+                    if (($row->$column === null ? null : (string) $row->$column) !== ($value === null ? null : (string) $value)) {
+                        $updated++;
+                        break;
+                    }
+                }
+            }
         }
 
         return ['inserted' => $inserted, 'updated' => $updated, 'skipped' => $skipped];

@@ -166,14 +166,21 @@ class UserApproxLocService
             ->orderBy('u.id')
             ->limit($take)
             ->select('u.id', 'u.lastaccess', 'l.lat as loc_lat', 'l.lng as loc_lng')
-            // keep-raw: JSON path extraction, which the builder has no expression for. Read as raw
-            // JSON text rather than CAST to DECIMAL because a JSON null casts to 0.000000, not
-            // NULL, which would silently place the member in the Atlantic.
+            // Read as raw JSON text rather than CAST to DECIMAL because a JSON null casts to 0.000000,
+            // not NULL, which would silently place the member in the Atlantic.
             // A Trash Nothing member's mylocation is stale V1 data; TN is the master for their
             // location (User::chosenLatLng), so it is not read for them.
-            ->selectRaw('CASE WHEN u.tnuserid IS NULL THEN '.Sql::render(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.mylocation.lat')))).' END AS myloc_lat')
-            ->selectRaw('CASE WHEN u.tnuserid IS NULL THEN '.Sql::render(new JsonUnquote(new JsonExtract(DB::raw('u.settings'), Value::of('$.mylocation.lng')))).' END AS myloc_lng')
+            ->selectRaw($this->settingsPoint('lat').' AS myloc_lat')
+            ->selectRaw($this->settingsPoint('lng').' AS myloc_lng')
             ->get();
+    }
+
+    /** The member's own settings.mylocation coordinate as JSON text, null for a Trash Nothing member. */
+    private function settingsPoint(string $axis): string
+    {
+        $value = new JsonUnquote(new JsonExtract('u.settings', Value::of('$.mylocation.'.$axis)));
+
+        return 'CASE WHEN u.tnuserid IS NULL THEN '.$value->getValue(DB::getQueryGrammar()).' END';
     }
 
     /**
@@ -236,8 +243,6 @@ class UserApproxLocService
     {
         $srid = (int) config('freegle.srid', 3857);
 
-        // The geometry is built in the same statement (the SPATIAL index on position needs a value),
-        // so the position is an expression among the column values.
         $values = [];
 
         foreach ($rows as [$userid, $lat, $lng, $lastaccess]) {

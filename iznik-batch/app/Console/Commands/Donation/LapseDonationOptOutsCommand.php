@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Donation;
 
+use App\Database\Expressions\JsonSet;
 use App\Models\User;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
@@ -56,9 +57,9 @@ class LapseDonationOptOutsCommand extends Command
 
             $dated = $undated->update(['settings->nodonationasksuntil' => $untilIso]);
 
+            // Both keys in one statement: PostgreSQL does not take two JSON paths of one column in an update.
             $lapsedCount = $lapsed->update([
-                'settings->nodonationasks' => FALSE,
-                'settings->nodonationasksuntil' => NULL,
+                'settings' => new JsonSet('settings', ['$.nodonationasks' => FALSE, '$.nodonationasksuntil' => NULL]),
             ]);
 
             $this->info("Dated {$dated} opt-out(s) to {$untilIso}; lapsed {$lapsedCount}.");

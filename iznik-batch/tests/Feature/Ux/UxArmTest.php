@@ -413,7 +413,7 @@ class UxArmTest extends TestCase
         // A table prefix points the read at a table that does not exist.
         DB::connection()->setTablePrefix('zz_');
         try {
-            $this->assertSame('', UxArm::for(3, self::NAME));
+            $this->recoveringFromDatabaseErrors(fn () => $this->assertSame('', UxArm::for(3, self::NAME)));
         } finally {
             DB::connection()->setTablePrefix('');
         }
@@ -478,7 +478,7 @@ class UxArmTest extends TestCase
         $this->assertSame('promise', $rows[0]->subject_type);
         $this->assertSame(31, (int) $rows[0]->subject_id);
         $this->assertSame('in', $rows[0]->stratum);
-        $this->assertSame('2026-10-20 10:00:00', $rows[0]->exposed_at);
+        $this->assertSame('2026-10-20 10:00:00', \Carbon\Carbon::parse($rows[0]->exposed_at, 'UTC')->toDateTimeString());
         $this->assertEquals(['msgid' => 555, 'hours' => 20], json_decode($rows[0]->detail, true));
     }
 
@@ -628,7 +628,7 @@ class UxArmTest extends TestCase
 
         DB::connection()->setTablePrefix('zz_');
         try {
-            UxArm::expose(7, self::NAME, 'items', 'email', 31);
+            $this->recoveringFromDatabaseErrors(fn () => UxArm::expose(7, self::NAME, 'items', 'email', 31));
         } finally {
             DB::connection()->setTablePrefix('');
         }
