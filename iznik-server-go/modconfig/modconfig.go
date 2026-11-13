@@ -68,6 +68,10 @@ func canModify(myid uint64, cfg *ModConfig) bool {
 	if auth.IsAdminOrSupport(myid) {
 		return true
 	}
+	// Only moderators can modify configs, however visible the config is.
+	if !auth.IsSystemMod(myid) && !auth.IsModOfAnyGroup(myid) {
+		return false
+	}
 	// Moderator can modify if they created it or it's not protected.
 	if cfg.Createdby != nil && *cfg.Createdby == myid {
 		return true

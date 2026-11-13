@@ -96,6 +96,35 @@ func computeHMAC(message, secret string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// TokenMessage is the string an AMP token signs: "amp:" + user id + ":" + resource id + ":" + expiry.
+// The separators keep each (user, resource) pair unambiguous, and it is the same string
+// AmpEmail::generateToken signs in the batch.
+func TokenMessage(uid, resourceID, exp string) string {
+	return "amp:" + uid + ":" + resourceID + ":" + exp
+}
+
+// legacyTokenCutover is the last moment an old-format token is accepted. Before the separators were
+// added, a token signed "amp" + user id + resource id + expiry with no separators. Mail sent in that
+// format carries an expiry within seven days of sending, and all of it was sent before the new format
+// was deployed, so every old-format token expires well before this date. The old-format branch in
+// tokenSignatureValid and this variable can be deleted after 2026-12-01.
+var legacyTokenCutover = time.Date(2026, time.December, 1, 0, 0, 0, 0, time.UTC).Unix()
+
+// tokenSignatureValid reports whether token signs the user id, resource id and expiry under secret. The
+// current format is TokenMessage. An old-format token is accepted only when its expiry is on or before
+// legacyTokenCutover, so that mail sent before the format changed keeps working until it expires and no
+// old-format token can be minted for a later expiry.
+func tokenSignatureValid(token, uid, resourceID, exp string, expTime int64, secret string) bool {
+	current := subtle.ConstantTimeCompare([]byte(token), []byte(computeHMAC(TokenMessage(uid, resourceID, exp), secret))) == 1
+
+	legacy := false
+	if expTime <= legacyTokenCutover {
+		legacy = subtle.ConstantTimeCompare([]byte(token), []byte(computeHMAC("amp"+uid+resourceID+exp, secret))) == 1
+	}
+
+	return current || legacy
+}
+
 // ValidateToken validates HMAC-based tokens for AMP operations (read and write).
 // Tokens are reusable within their expiry period.
 // Returns (userID, resourceID, error). On failure, returns (0, 0, nil) for graceful fallback.
@@ -116,17 +145,13 @@ func ValidateToken(c *fiber.Ctx) (uint64, uint64, error) {
 		return 0, 0, nil
 	}
 
-	// Validate HMAC: "amp" + user_id + resource_id + expiry
+	// Validate HMAC over TokenMessage: user_id, resource_id, expiry
 	secret := getAMPSecret()
 	if secret == "" {
 		return 0, 0, nil
 	}
 
-	message := "amp" + uid + resID + exp
-	expectedMAC := computeHMAC(message, secret)
-
-	// Constant-time comparison to prevent timing attacks
-	if subtle.ConstantTimeCompare([]byte(token), []byte(expectedMAC)) != 1 {
+	if !tokenSignatureValid(token, uid, resID, exp, expTime, secret) {
 		return 0, 0, nil
 	}
 
@@ -547,7 +572,7 @@ func PostDigestReply(c *fiber.Ctx) error {
 // single <amp-form> in the digest template can submit a reply to ANY post by
 // binding mid/rt/exp from the tapped card's state — there's no per-post form.
 //
-// It validates the SAME HMAC as ValidateToken ("amp" + uid + mid + exp) using
+// It validates the SAME HMAC as ValidateToken (TokenMessage of uid, mid, exp) using
 // the body values, then runs the identical reply logic via processDigestReply.
 //
 // @Summary Post reply from AMP digest email (shared form)
@@ -593,7 +618,7 @@ func PostDigestReplyShared(c *fiber.Ctx) error {
 
 // validateBodyToken is the body-based equivalent of ValidateToken: it reads
 // rt/uid/exp/mid from the FORM BODY and validates the same HMAC
-// ("amp" + uid + mid + exp). Returns (userID, messageID) or (0, 0) on any
+// (TokenMessage of uid, mid, exp). Returns (userID, messageID) or (0, 0) on any
 // failure, mirroring ValidateToken's graceful-zero behaviour.
 func validateBodyToken(c *fiber.Ctx) (uint64, uint64) {
 	token := c.FormValue("rt")
@@ -615,9 +640,7 @@ func validateBodyToken(c *fiber.Ctx) (uint64, uint64) {
 		return 0, 0
 	}
 
-	message := "amp" + uid + mid + exp
-	expectedMAC := computeHMAC(message, secret)
-	if subtle.ConstantTimeCompare([]byte(token), []byte(expectedMAC)) != 1 {
+	if !tokenSignatureValid(token, uid, mid, exp, expTime, secret) {
 		return 0, 0
 	}
 

@@ -66,7 +66,7 @@ func pastExp() string {
 
 // validToken computes the correct HMAC for the given uid/resID/exp with AMP_SECRET="test-secret".
 func validToken(uid, resID, exp string) string {
-	return computeHMAC("amp"+uid+resID+exp, "test-secret")
+	return computeHMAC(TokenMessage(uid, resID, exp), "test-secret")
 }
 
 func TestValidateToken_MissingAllParams(t *testing.T) {
@@ -422,7 +422,7 @@ func TestPostDigestReplyShared_WrongHMAC_Returns400(t *testing.T) {
 
 // validateBodyToken with a correctly-computed HMAC reaches the user-existence
 // DB query, which can't run without a live DB. The wrong-HMAC test above
-// exercises the HMAC comparison itself ("amp"+uid+mid+exp via computeHMAC).
+// exercises the HMAC comparison itself (TokenMessage via computeHMAC).
 func TestValidateBodyToken_CorrectHMACRequiresDB(t *testing.T) {
 	t.Skip("user-existence check needs live DB — covered by integration tests")
 }
@@ -483,7 +483,7 @@ func TestValidateToken_TableDriven(t *testing.T) {
 		},
 		{
 			name:   "correct HMAC format but wrong value",
-			pathID: "42", query: "rt=" + computeHMAC("amp"+"7"+"42"+exp, "wrong-secret") + "&uid=7&exp=" + exp,
+			pathID: "42", query: "rt=" + computeHMAC(TokenMessage("7", "42", exp), "wrong-secret") + "&uid=7&exp=" + exp,
 		},
 	}
 
@@ -495,4 +495,60 @@ func TestValidateToken_TableDriven(t *testing.T) {
 			assert.Equal(t, tc.wantRID, rid, "resourceID mismatch for %s", tc.name)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Token formats: the current one, and the old one until the cutover
+// ---------------------------------------------------------------------------
+
+func TestTokenSignatureValid_Formats(t *testing.T) {
+	secret := "test-secret"
+	early := strconv.FormatInt(legacyTokenCutover-3600, 10)
+	onCutover := strconv.FormatInt(legacyTokenCutover, 10)
+	late := strconv.FormatInt(legacyTokenCutover+1, 10)
+
+	newTok := func(uid, res, exp string) string { return computeHMAC(TokenMessage(uid, res, exp), secret) }
+	oldTok := func(uid, res, exp string) string { return computeHMAC("amp"+uid+res+exp, secret) }
+	check := func(tok, uid, res, exp string) bool {
+		n, _ := strconv.ParseInt(exp, 10, 64)
+		return tokenSignatureValid(tok, uid, res, exp, n, secret)
+	}
+
+	assert.True(t, check(newTok("7", "42", early), "7", "42", early), "new format, early expiry")
+	assert.True(t, check(newTok("7", "42", late), "7", "42", late), "new format, expiry after the cutover")
+	assert.True(t, check(oldTok("7", "42", early), "7", "42", early), "old format, expiry before the cutover")
+	assert.True(t, check(oldTok("7", "42", onCutover), "7", "42", onCutover), "old format, expiry on the cutover")
+	assert.False(t, check(oldTok("7", "42", late), "7", "42", late), "old format, expiry after the cutover")
+	assert.False(t, check(oldTok("7", "42", early), "7", "42", late), "an early old-format token with the expiry changed")
+	assert.False(t, check(newTok("7", "42", early), "7", "43", early), "wrong resource")
+	assert.False(t, check("", "7", "42", early), "empty token")
+}
+
+func TestTokenSignatureValid_NewFormatIsUnambiguous(t *testing.T) {
+	// User 1 with resource 23 and user 12 with resource 3 are different tokens in the new format.
+	secret := "test-secret"
+	exp := strconv.FormatInt(legacyTokenCutover+86400, 10)
+	expTime, _ := strconv.ParseInt(exp, 10, 64)
+	tok := computeHMAC(TokenMessage("1", "23", exp), secret)
+
+	assert.True(t, tokenSignatureValid(tok, "1", "23", exp, expTime, secret))
+	assert.False(t, tokenSignatureValid(tok, "12", "3", exp, expTime, secret))
+}
+
+func TestTokenSignatureValid_OldFormatCollisionStopsAtTheCutover(t *testing.T) {
+	// The old format could not tell (1, 23) from (12, 3). That is accepted only for tokens that expire
+	// before the cutover.
+	secret := "test-secret"
+	early := strconv.FormatInt(legacyTokenCutover-60, 10)
+	earlyTime, _ := strconv.ParseInt(early, 10, 64)
+	tok := computeHMAC("amp"+"1"+"23"+early, secret)
+
+	assert.True(t, tokenSignatureValid(tok, "12", "3", early, earlyTime, secret), "old-format collision before the cutover")
+
+	late := strconv.FormatInt(legacyTokenCutover+60, 10)
+	lateTime, _ := strconv.ParseInt(late, 10, 64)
+	lateTok := computeHMAC("amp"+"1"+"23"+late, secret)
+
+	assert.False(t, tokenSignatureValid(lateTok, "12", "3", late, lateTime, secret), "old-format collision after the cutover")
+	assert.False(t, tokenSignatureValid(lateTok, "1", "23", late, lateTime, secret), "old format after the cutover")
 }

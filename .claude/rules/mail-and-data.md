@@ -22,6 +22,10 @@ So a post that was filtered out this run is behind the cursor next run and is ne
 again. Anything that examines posts and then advances a watermark has to advance it over what it
 **sent**, not over what it looked at.
 
+The cursor column keeps whole seconds and `messages_groups.arrival` keeps microseconds, so the
+window starts at the cursor plus one second. Windowing on "after the cursor" offers the newest
+sent post again, because its arrival is a fraction later than its own cursor.
+
 ## Unsubscribe has two arms and both have been broken at once
 
 A member clicked unsubscribe on a digest, believed it worked, got an auto-reply saying the

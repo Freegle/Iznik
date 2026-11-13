@@ -282,17 +282,73 @@ class ChatSpamServiceTest extends TestCase
             ]);
         }
 
-        // 1 previously approved message (reviewedby is set, reviewrejected=0)
+        // 1 previously approved message (review cleared, reviewedby is set, reviewrejected=0)
         $reviewer = $this->createTestUser();
         $this->createTestChatMessage($room, $user, [
-            'reviewrequired'      => 1,
+            'reviewrequired'      => 0,
             'processingsuccessful' => 1,
             'reviewrejected'      => 0,
             'reviewedby'          => $reviewer->id,
         ]);
 
+        // 1 message held for review, which must be left alone.
+        $pending = $this->createTestChatMessage($room, $user, [
+            'reviewrequired'      => 1,
+            'processingrequired'  => 1,
+            'processingsuccessful' => 0,
+            'reviewrejected'      => 0,
+        ]);
+
         $count = $this->service->autoMarkSpam();
 
         $this->assertEquals(0, $count);
+        $this->assertEquals(1, $pending->fresh()->reviewrequired);
+    }
+
+    public function test_auto_mark_spam_skips_users_whose_messages_a_moderator_approved(): void
+    {
+        $user = $this->createTestUser();
+        $other = $this->createTestUser();
+        $room = $this->createTestChatRoom($user, $other);
+        $mod = $this->createTestUser();
+
+        // Approving a message in review clears reviewrequired and records the reviewer.
+        for ($i = 0; $i < 3; $i++) {
+            $this->createTestChatMessage($room, $user, [
+                'date'                => now()->subDays(40),
+                'reviewrequired'      => 0,
+                'processingsuccessful' => 1,
+                'reviewrejected'      => 0,
+                'reviewedby'          => $mod->id,
+            ]);
+        }
+
+        // 6 rejected messages in the lookback window.
+        for ($i = 0; $i < 6; $i++) {
+            $this->createTestChatMessage($room, $user, [
+                'date'                => now()->subDays(5),
+                'reviewrequired'      => 0,
+                'processingsuccessful' => 0,
+                'reviewrejected'      => 1,
+                'reviewedby'          => $mod->id,
+            ]);
+        }
+
+        // 1 message held for review.
+        $pending = $this->createTestChatMessage($room, $user, [
+            'date'                => now()->subDays(1),
+            'reviewrequired'      => 1,
+            'processingrequired'  => 1,
+            'processingsuccessful' => 0,
+            'reviewrejected'      => 0,
+        ]);
+
+        $count = $this->service->autoMarkSpam();
+
+        $this->assertEquals(0, $count);
+
+        $refreshed = $pending->fresh();
+        $this->assertEquals(1, $refreshed->reviewrequired);
+        $this->assertEquals(0, $refreshed->reviewrejected);
     }
 }

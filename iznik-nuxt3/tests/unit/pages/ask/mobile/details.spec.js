@@ -158,6 +158,37 @@ describe('pages/ask/mobile/details.vue', () => {
       expect(mockSetDescription).not.toHaveBeenCalled()
     })
 
+    // composeStore.messageValid needs 3 characters when there is no real photo, so this step says so
+    // rather than letting the member on to a disabled button at the end.
+    it('a 2 character description with no real photo stays and says why', async () => {
+      setState({ item: 'Kids bike', description: 'hi' })
+      const wrapper = mountPage()
+      await pressNext(wrapper)
+      expect(mockRouterPush).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('at least 3 characters')
+    })
+
+    it('a 2 character description with only an AI picture stays', async () => {
+      setState({ item: 'Kids bike', description: 'hi', photos: [AI_PHOTO] })
+      const wrapper = mountPage()
+      await pressNext(wrapper)
+      expect(mockRouterPush).not.toHaveBeenCalled()
+    })
+
+    it('a 3 character description goes on', async () => {
+      setState({ item: 'Kids bike', description: 'any' })
+      const wrapper = mountPage()
+      await pressNext(wrapper)
+      expect(mockRouterPush).toHaveBeenCalledWith('/ask/mobile/whereami')
+    })
+
+    it('a short description goes on when there is a real photo', async () => {
+      setState({ item: 'Kids bike', description: 'hi', photos: [REAL_PHOTO] })
+      const wrapper = mountPage()
+      await pressNext(wrapper)
+      expect(mockRouterPush).toHaveBeenCalledWith('/ask/mobile/whereami')
+    })
+
     it('a description goes on to the next step', async () => {
       setState({ item: 'Kids bike', description: 'Any colour is fine' })
       const wrapper = mountPage()

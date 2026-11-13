@@ -1014,6 +1014,8 @@ func TestReplyConfirm_ApprovingAHeldReplyShowsItsQuestionAndRejectingItDoesNot(t
 		require.Equal(t, 200, f.answer(t, p.Chatmsgid, f.replierToken, "yes"))
 		database.DBConn.Exec("UPDATE chat_messages SET processingrequired = 0, processingsuccessful = 1, reviewrequired = 1, "+
 			"reportreason = 'Spam' WHERE id = ?", replyID)
+		// The poster is on the moderator's community, so the held reply is in the moderator's review queue.
+		CreateTestMembership(t, f.posterID, f.groupID, utils.ROLE_MEMBER)
 		modID := CreateTestUser(t, uniquePrefix("rcmod"), utils.SYSTEMROLE_USER)
 		CreateTestMembership(t, modID, f.groupID, utils.ROLE_MODERATOR)
 		_, modToken := CreateTestSession(t, modID)

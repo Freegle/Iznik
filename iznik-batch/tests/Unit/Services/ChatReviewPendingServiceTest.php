@@ -6,6 +6,7 @@ use App\Mail\Chat\ChatReviewPendingMail;
 use App\Mail\Chat\ChatReviewSummaryMail;
 use App\Models\Group;
 use App\Models\Membership;
+use App\Services\ChatProcessService;
 use App\Services\ChatReviewPendingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -334,5 +335,42 @@ class ChatReviewPendingServiceTest extends TestCase
             'reviewrejected' => 1,
             'reviewedby' => null,
         ]);
+    }
+
+    /**
+     * A rejected message must stop holding the messages after it. A moderator's reject writes
+     * reviewrequired = 0, and the hold chain in ChatProcessService reads reviewrequired of the
+     * message before, so a timed-out message has to clear it too. Left at 1, every later message
+     * in the chat is held for the reason 'Last', and each of those is timed out the same way.
+     */
+    public function test_auto_rejected_message_does_not_hold_the_next_message_in_the_chat(): void
+    {
+        Mail::fake();
+
+        $this->createTestUser(['email_preferred' => ChatReviewPendingService::SYSTEM_MOD_EMAIL]);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Unmoderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $stale = $this->createTestChatMessage($room, $sender, [
+            'date' => now()->subDays(8)->toDateTimeString(),
+            'reviewrequired' => 1,
+            'reviewedby' => null,
+            'reviewrejected' => 0,
+        ]);
+
+        $this->service->processReview();
+
+        $next = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Still keen if it is free',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+        ]);
+
+        (new ChatProcessService())->processIncoming();
+
+        $this->assertSame(1, (int) DB::table('chat_messages')->where('id', $stale->id)->value('reviewrejected'));
+        $this->assertSame(0, (int) DB::table('chat_messages')->where('id', $next->id)->value('reviewrequired'),
+            'a message that has been rejected does not hold the one after it');
     }
 }

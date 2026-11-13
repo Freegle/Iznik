@@ -110,6 +110,58 @@ class RecoverDroppedMergedUserMailCommandTest extends TestCase
         $this->assertStringContainsString('I would love this item!', $chatMsg->message);
     }
 
+    public function test_recovered_message_is_visible_and_deliverable(): void
+    {
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
+        $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        $deletedUser = User::create(['fullname' => 'Deleted Merged User', 'added' => now()]);
+        $fakeOldUid = $deletedUser->id;
+        $deletedUser->delete();
+
+        $oldProxyEmail = "testslug-{$fakeOldUid}@users.ilovefreegle.org";
+        UserEmail::create([
+            'userid' => $poster->id,
+            'email' => $oldProxyEmail,
+            'preferred' => 0,
+            'added' => now(),
+        ]);
+
+        $replierEmail = $replier->emails->first()->email;
+
+        $rawEmail = $this->createMinimalEmail([
+            'From' => $replierEmail,
+            'To' => $oldProxyEmail,
+            'Subject' => 'Re: '.$message->subject,
+            'x-fd-msgid' => (string) $message->id,
+        ], 'Is this still available?');
+
+        $archivePath = $this->createArchiveFile($replierEmail, $oldProxyEmail, $rawEmail);
+
+        $this->artisan('mail:recover-dropped-merged', [
+            '--file' => $archivePath,
+            '--execute' => true,
+        ])->assertExitCode(0);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $replier->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($chatMsg, 'Chat message should be created');
+
+        // The chat API and the notification mailer only show and send messages marked
+        // as successfully processed, and nothing will process this row later.
+        $this->assertEquals(1, $chatMsg->processingsuccessful, 'Recovered message must be marked processed so the recipient sees it');
+        $this->assertTrue(
+            ChatMessage::visible()->where('id', $chatMsg->id)->exists(),
+            'Recovered message must be visible to the recipient'
+        );
+    }
+
     public function test_skips_duplicate_on_second_run(): void
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);

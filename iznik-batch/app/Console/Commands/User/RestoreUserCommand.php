@@ -371,7 +371,8 @@ class RestoreUserCommand extends Command
     }
 
     /**
-     * Restore the deleted/arrival status of messages_groups entries.
+     * Restore the deleted/arrival status of messages_groups entries, re-creating any
+     * that are missing (a demerge removes them along with their message).
      * Mirrors the "undelete messages" section of user_restore.php.
      */
     private function restoreMessagesGroups(array $rows, bool $dryRun): void
@@ -389,13 +390,20 @@ class RestoreUserCommand extends Command
                 continue;
             }
 
-            DB::table('messages_groups')
+            $existing = DB::table('messages_groups')
                 ->where('msgid', $row['msgid'])
-                ->where('groupid', $row['groupid'])
-                ->update([
+                ->where('groupid', $row['groupid']);
+
+            if ($existing->exists()) {
+                $existing->update([
                     'deleted' => $row['deleted'],
                     'arrival' => $row['arrival'],
                 ]);
+            } elseif (DB::table('messages')->where('id', $row['msgid'])->exists()) {
+                // Deleting a message cascades to its messages_groups rows (a demerge does
+                // this), so put the row back from the dump.
+                DB::table('messages_groups')->insertOrIgnore($row);
+            }
 
             $count++;
         }

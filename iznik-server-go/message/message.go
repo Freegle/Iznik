@@ -2252,6 +2252,25 @@ func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
 	return groupid
 }
 
+// linkableAttachments returns, in the order given, those of the named photos that are unattached
+// or already on the post. A photo on another post is dropped.
+func linkableAttachments(db *gorm.DB, msgid uint64, named []uint64) []uint64 {
+	var ok []uint64
+	db.Table("messages_attachments").Select("id").
+		Where("id IN ? AND (msgid IS NULL OR msgid = ?)", named, msgid).Scan(&ok)
+	allowed := make(map[uint64]bool, len(ok))
+	for _, id := range ok {
+		allowed[id] = true
+	}
+	linkable := make([]uint64, 0, len(ok))
+	for _, id := range named {
+		if allowed[id] {
+			linkable = append(linkable, id)
+		}
+	}
+	return linkable
+}
+
 // getAllGroupsForMessage returns all groupids for a message.
 // Returns groups regardless of deleted state, so mods can still moderate and reject
 // messages even after the poster has deleted them.
@@ -2666,14 +2685,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return err
 	}
 
-	// On several communities at once, act only on the copies still waiting for a
-	// moderator. A copy approved meanwhile by somebody else must not get a second
-	// approval logged and pushed to its moderators.
-	if multi {
-		authorizedGroups = copiesAwaitingModeration(db, req.ID, authorizedGroups)
-		if len(authorizedGroups) == 0 {
-			return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not approved"})
-		}
+	// Act only on the copies still waiting for a moderator, on one community or several. A
+	// copy approved meanwhile by somebody else must not get a second approval logged and
+	// pushed to its moderators or a second email sent to the poster, and a copy that was
+	// rejected or that the poster withdrew must not be put live by a stale click.
+	authorizedGroups = copiesAwaitingModeration(db, req.ID, authorizedGroups)
+	if len(authorizedGroups) == 0 {
+		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not approved"})
 	}
 
 	// A copy that rippled in cannot be approved while the post's home community is
@@ -2800,12 +2818,13 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 // where it is how the post first went live). A copy held by somebody else is simply not
 // touched, and, unlike the rest of the approval, its hold is not released afterwards.
 //
-// Guards against double-approve by requiring collection != Approved. heldByOther lists the
+// Guards against double-approve by requiring collection != Approved, and never touches a copy
+// the poster withdrew (deleted = 1). heldByOther lists the
 // groups still Pending under another moderator's hold; approvable is everything else asked
 // for.
 func ApprovePendingCopies(db *gorm.DB, msgid uint64, myid uint64, groups []uint64) (approvable []uint64, heldByOther []uint64) {
 	if result := db.Table("messages_groups").
-		Where("msgid = ? AND groupid IN ? AND collection != ? AND (heldby IS NULL OR heldby = ?)", msgid, groups, utils.COLLECTION_APPROVED, myid).
+		Where("msgid = ? AND groupid IN ? AND collection != ? AND deleted = 0 AND (heldby IS NULL OR heldby = ?)", msgid, groups, utils.COLLECTION_APPROVED, myid).
 		Updates(map[string]interface{}{
 			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
 			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
@@ -4805,7 +4824,14 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// Update attachment ordering if provided.
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
 	// req.Attachments is [] (empty, non-nil) when all attachments are removed (#338).
-	if req.Attachments != nil {
+	//
+	// Only photos that are unattached or already on this post count: another post's photo is
+	// neither linked nor treated as kept. A list naming only such photos changes nothing.
+	attachmentsNamed := len(req.Attachments)
+	if attachmentsNamed > 0 {
+		req.Attachments = linkableAttachments(db, req.ID, req.Attachments)
+	}
+	if req.Attachments != nil && (attachmentsNamed == 0 || len(req.Attachments) > 0) {
 		recordAIDeletions(db, myid, req.ID, req.Attachments, req.BadAIImages)
 
 		if len(req.Attachments) > 0 {
@@ -5255,6 +5281,19 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		}
 	}
 
+	// Nothing is changed for someone who may not edit every copy of the post, so the check runs
+	// before any copy is touched.
+	if req.Textbody != nil {
+		for _, msgID := range msgIDs {
+			actingid := actAsOwnerCandidate(db, myid, partnerCandidates, msgID)
+			var fromuser uint64
+			db.Table("messages").Select("fromuser").Where("id = ?", msgID).Scan(&fromuser)
+			if fromuser != actingid && !isModForMessage(db, actingid, msgID) {
+				return fiber.NewError(fiber.StatusForbidden, "Not allowed to modify this message")
+			}
+		}
+	}
+
 	for _, msgID := range msgIDs {
 		req.ID = msgID
 		// A crossposted TN post's copies all belong to the same TN member, but
@@ -5335,19 +5374,55 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to delete this message")
 	}
 
-	// Identical golden to 73672934d660
-	// (handleSpam); converted together per gate (h).
-	db.Table("messages").Where("id = ?", msgid).Update("deleted", gorm.Expr("NOW()"))
-
-	// Write audit-log entry when a moderator deletes a message. Log against the
-	// group the mod acted on when supplied (?groupid=), else fall back to the
-	// primary group.
+	// A moderator's delete is per community: it removes only the copies on the communities
+	// they moderate, and the shared post goes only once no undeleted copy remains. The
+	// lockdown gate and another moderator's hold apply as they do to the POST Delete action.
+	var modGroups []uint64
+	deleteShared := true
 	if isMod {
-		groupid := uint64(c.QueryInt("groupid", 0))
-		if groupid == 0 {
-			groupid = getPrimaryGroupForMessage(db, msgid)
+		if lockdown.GateMod(c, myid) {
+			return nil
 		}
+
+		reqGid := uint64(c.QueryInt("groupid", 0))
+		holdReq := PostMessageRequest{ID: msgid}
+		if reqGid > 0 {
+			holdReq.Groupid = &reqGid
+		}
+		if holder, holderName := heldByAnotherMod(myid, holdReq); holder != 0 {
+			return heldByAnotherResponse(c, holder, holderName)
+		}
+
+		var err error
+		modGroups, err = resolveAuthorizedGroups(myid, reqGid, getAllGroupsForMessage(db, msgid))
+		if err != nil {
+			return err
+		}
+
+		// Remove the copies, as the POST Delete action does.
+		db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", msgid, modGroups).Delete(nil)
+
+		// Pin to the write host: this gates the shared delete on rows just modified.
+		var remaining int64
+		db.Clauses(dbresolver.Write).Table("messages_groups").Where("msgid = ? AND deleted = 0", msgid).Count(&remaining)
+		deleteShared = remaining == 0
+	}
+
+	if deleteShared {
+		db.Table("messages").Where("id = ?", msgid).Update("deleted", gorm.Expr("NOW()"))
+	}
+
+	// Write an audit-log entry against each community a moderator deleted the post from. A post on
+	// no community (an admin deleting it) is logged with no community.
+	if isMod && len(modGroups) == 0 {
+		modGroups = []uint64{0}
+	}
+	for _, groupid := range modGroups {
 		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupid, fromuser, myid, msgid, 0, "")
+	}
+
+	if !deleteShared {
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
 	// Remove from freebiealerts.app — post is no longer available.
@@ -5676,6 +5751,12 @@ func PutMessageAs(c *fiber.Ctx, author uint64) error {
 				return fiber.NewError(fiber.StatusBadRequest, "Invalid email address")
 			}
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
+		}
+		// SECURITY: an empty JWT means the email belongs to an EXISTING account
+		// while the caller is not logged in. Knowing an email is not a login, so
+		// refuse rather than post, or attach a draft, as that member.
+		if jwtString == "" {
+			return fiber.NewError(fiber.StatusUnauthorized, "Please log in to post with this email")
 		}
 	}
 
@@ -6845,6 +6926,15 @@ func canModifyMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	return modCount > 0
 }
 
+// clearIntendedTaken drops an intended Taken outcome once the member has saved takers with
+// some items left. The chase-up email link records the intent when the page opens so that a
+// member who walks away is assumed to have finished; a member who saves a partial take has
+// finished, and the post stays up, so the batch must not close it as Taken later. Saving
+// with none left goes on to handleOutcome, which clears the row itself.
+func clearIntendedTaken(db *gorm.DB, msgid uint64) {
+	db.Table("messages_outcomes_intended").Where("msgid = ? AND outcome = ?", msgid, utils.OUTCOME_TAKEN).Delete(nil)
+}
+
 // handleAddBy records who is taking items from a message.
 // If userid is omitted or null, records as userid=0 meaning "someone else" (not a known Freegle user).
 func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
@@ -6908,6 +6998,17 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 			Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
 	}
 
+	// When a counted take leaves nothing, the member goes on to mark the post Taken, and
+	// that call clears the intent. Until it succeeds the intent stays, so a failure there
+	// still leaves the chase-up batch able to close the post as the member meant.
+	var left int64 = 1
+	if counted {
+		db.Table("messages").Select("COALESCE(availablenow, 1)").Where("id = ?", req.ID).Scan(&left)
+	}
+	if left > 0 {
+		clearIntendedTaken(db, req.ID)
+	}
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
@@ -6942,6 +7043,8 @@ func handleRemoveBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 			Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", entryCount))
 		db.Table("messages_by").Where("id = ?", entryID).Delete(nil)
 	}
+
+	clearIntendedTaken(db, req.ID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

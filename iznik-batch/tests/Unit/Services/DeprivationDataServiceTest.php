@@ -44,7 +44,7 @@ class DeprivationDataServiceTest extends TestCase
     {
         $defaults = [
             'raw.githubusercontent.com/*' => Http::response("lsoa,UK_IMD_E_pop_quintile\nE01000001,3\n", 200),
-            'services1.arcgis.com/*' => Http::response(['features' => []], 200),
+            'services-eu1.arcgis.com/*' => Http::response(['features' => []], 200),
             'maps.gov.scot/*' => Http::response(['features' => []], 200),
             'admin.opendatani.gov.uk/*' => Http::response(['features' => []], 200),
         ];
@@ -81,10 +81,10 @@ class DeprivationDataServiceTest extends TestCase
 
         $ew = [
             'features' => [
-                ['attributes' => ['lsoa11cd' => 'E01000001'], 'geometry' => ['x' => -0.10, 'y' => 51.50]],
-                ['attributes' => ['lsoa11cd' => 'E01000002'], 'geometry' => ['x' => -1.20, 'y' => 52.10]],
+                ['attributes' => ['CODE' => 'E01000001'], 'geometry' => ['x' => -0.10, 'y' => 51.50]],
+                ['attributes' => ['CODE' => 'E01000002'], 'geometry' => ['x' => -1.20, 'y' => 52.10]],
                 // Quintile 9 was invalid, so this code was never added to the lookup — skipped.
-                ['attributes' => ['lsoa11cd' => 'E01099999'], 'geometry' => ['x' => -2.00, 'y' => 53.00]],
+                ['attributes' => ['CODE' => 'E01099999'], 'geometry' => ['x' => -2.00, 'y' => 53.00]],
             ],
         ];
 
@@ -118,7 +118,7 @@ class DeprivationDataServiceTest extends TestCase
 
         $this->fakeAll([
             'raw.githubusercontent.com/*' => Http::response($imdCsv, 200),
-            'services1.arcgis.com/*' => Http::response($ew, 200),
+            'services-eu1.arcgis.com/*' => Http::response($ew, 200),
             'maps.gov.scot/*' => Http::response($scotland, 200),
             'admin.opendatani.gov.uk/*' => Http::response($ni, 200),
         ]);
@@ -159,23 +159,23 @@ class DeprivationDataServiceTest extends TestCase
     {
         $page1 = [
             'features' => [
-                ['attributes' => ['lsoa11cd' => 'PGA'], 'geometry' => ['x' => -1.0, 'y' => 51.0]],
+                ['attributes' => ['CODE' => 'PGA'], 'geometry' => ['x' => -1.0, 'y' => 51.0]],
                 // No geometry at all — lat/lng resolve to null and the feature is skipped.
-                ['attributes' => ['lsoa11cd' => 'PGX'], 'geometry' => []],
+                ['attributes' => ['CODE' => 'PGX'], 'geometry' => []],
             ],
             'exceededTransferLimit' => true,
         ];
         $page2 = [
             'features' => [
-                ['attributes' => ['lsoa11cd' => 'PGB'], 'geometry' => ['x' => -2.0, 'y' => 52.0]],
+                ['attributes' => ['CODE' => 'PGB'], 'geometry' => ['x' => -2.0, 'y' => 52.0]],
                 // Valid geometry but the code was never in the IMD lookup.
-                ['attributes' => ['lsoa11cd' => 'PGY'], 'geometry' => ['x' => -3.0, 'y' => 53.0]],
+                ['attributes' => ['CODE' => 'PGY'], 'geometry' => ['x' => -3.0, 'y' => 53.0]],
             ],
         ];
 
         $this->fakeAll([
             'raw.githubusercontent.com/*' => Http::response("lsoa,UK_IMD_E_pop_quintile\nPGA,1\nPGB,2\n", 200),
-            'services1.arcgis.com/*' => Http::sequence()->push($page1, 200)->push($page2, 200),
+            'services-eu1.arcgis.com/*' => Http::sequence()->push($page1, 200)->push($page2, 200),
         ]);
 
         $this->service->build($this->outputPath);
@@ -192,6 +192,37 @@ class DeprivationDataServiceTest extends TestCase
         $this->assertSame('2', $qB);
         $this->assertEqualsWithDelta(52.0, (float) $latB, 0.0001);
         $this->assertEqualsWithDelta(-2.0, (float) $lngB, 0.0001);
+    }
+
+    public function test_ew_pagination_moves_on_by_the_rows_the_server_returned(): void
+    {
+        // The server returns fewer rows than were asked for (its own page cap), so the
+        // next request must start straight after them, not a fixed step further on.
+        $page1 = [
+            'features' => [
+                ['attributes' => ['CODE' => 'PGA'], 'geometry' => ['x' => -1.0, 'y' => 51.0]],
+                ['attributes' => ['CODE' => 'PGB'], 'geometry' => ['x' => -2.0, 'y' => 52.0]],
+            ],
+            'exceededTransferLimit' => true,
+        ];
+        $page2 = [
+            'features' => [
+                ['attributes' => ['CODE' => 'PGC'], 'geometry' => ['x' => -3.0, 'y' => 53.0]],
+            ],
+        ];
+
+        $this->fakeAll([
+            'raw.githubusercontent.com/*' => Http::response("lsoa,UK_IMD_E_pop_quintile\nPGA,1\nPGB,2\nPGC,3\n", 200),
+            'services-eu1.arcgis.com/*' => Http::sequence()->push($page1, 200)->push($page2, 200),
+        ]);
+
+        $this->service->build($this->outputPath);
+
+        $this->assertCount(3, $this->readCsvRows());
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'services-eu1.arcgis.com')
+            && str_contains($request->url(), 'resultOffset=2'));
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'services-eu1.arcgis.com')
+            && str_contains($request->url(), 'resultOffset=2000'));
     }
 
     // =========================================================================
@@ -274,15 +305,15 @@ class DeprivationDataServiceTest extends TestCase
 
         $ew = [
             'features' => [
-                ['attributes' => ['lsoa11cd' => 'DECA'], 'geometry' => ['x' => -1.0, 'y' => 51.0]],
-                ['attributes' => ['lsoa11cd' => 'DECB'], 'geometry' => ['x' => -1.1, 'y' => 51.1]],
-                ['attributes' => ['lsoa11cd' => 'DECC'], 'geometry' => ['x' => -1.2, 'y' => 51.2]],
+                ['attributes' => ['CODE' => 'DECA'], 'geometry' => ['x' => -1.0, 'y' => 51.0]],
+                ['attributes' => ['CODE' => 'DECB'], 'geometry' => ['x' => -1.1, 'y' => 51.1]],
+                ['attributes' => ['CODE' => 'DECC'], 'geometry' => ['x' => -1.2, 'y' => 51.2]],
             ],
         ];
 
         $this->fakeAll([
             'raw.githubusercontent.com/*' => Http::response($imdCsv, 200),
-            'services1.arcgis.com/*' => Http::response($ew, 200),
+            'services-eu1.arcgis.com/*' => Http::response($ew, 200),
         ]);
 
         $this->service->build($this->outputPath);
@@ -304,12 +335,12 @@ class DeprivationDataServiceTest extends TestCase
         $imdCsv = "UK_IMD_E_pop_quintile,lsoa\n3,E01000001\n5\n";
 
         $ew = ['features' => [
-            ['attributes' => ['lsoa11cd' => 'E01000001'], 'geometry' => ['x' => -0.1, 'y' => 51.5]],
+            ['attributes' => ['CODE' => 'E01000001'], 'geometry' => ['x' => -0.1, 'y' => 51.5]],
         ]];
 
         $this->fakeAll([
             'raw.githubusercontent.com/*' => Http::response($imdCsv, 200),
-            'services1.arcgis.com/*' => Http::response($ew, 200),
+            'services-eu1.arcgis.com/*' => Http::response($ew, 200),
         ]);
 
         $this->service->build($this->outputPath);
@@ -356,7 +387,7 @@ class DeprivationDataServiceTest extends TestCase
     {
         return [
             'IMD download' => ['raw.githubusercontent.com/*', 'Failed to download IMD CSV'],
-            'England & Wales ArcGIS' => ['services1.arcgis.com/*', 'E&W ArcGIS API failed'],
+            'England & Wales ArcGIS' => ['services-eu1.arcgis.com/*', 'E&W ArcGIS API failed'],
             'Scotland ArcGIS' => ['maps.gov.scot/*', 'Scotland API failed'],
             'Northern Ireland OpenData' => ['admin.opendatani.gov.uk/*', 'NI OpenData API failed'],
         ];
@@ -376,7 +407,7 @@ class DeprivationDataServiceTest extends TestCase
     public function test_ew_api_error_field_throws(): void
     {
         $this->fakeAll([
-            'services1.arcgis.com/*' => Http::response(['error' => ['code' => 400, 'message' => 'bad request']], 200),
+            'services-eu1.arcgis.com/*' => Http::response(['error' => ['code' => 400, 'message' => 'bad request']], 200),
         ]);
 
         $this->expectException(RuntimeException::class);
