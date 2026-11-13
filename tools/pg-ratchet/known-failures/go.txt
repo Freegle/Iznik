@@ -73,7 +73,6 @@ test:TestNearbyReachFeedExcludesHeld
 test:TestPatchGroupConfirmAffiliation
 test:TestPatchGroupMicrovolunteeringoptions
 test:TestPatchGroupSettingsAndRules
-test:TestPostABTestAction
 test:TestPostMatchesReachFilteredForOwner
 test:TestPutUserConcurrentSignupsMakeOneAccount
 test:TestPutUserTakesOverAnAddressWithNoAccount

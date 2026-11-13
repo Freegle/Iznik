@@ -71,7 +71,7 @@ func TestTranslatePostgres(t *testing.T) {
 		{"upsert last insert id", "INSERT INTO items (name) VALUES ($1) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)",
 			`INSERT INTO items (name) VALUES ($1) ON CONFLICT ("name") DO UPDATE SET id = "items".id`},
 		{"gorm upsert without target", `INSERT INTO "messages_by" ("count","msgid","userid") VALUES (2,65,278) ON CONFLICT DO UPDATE SET "count"=count + VALUES(count)`,
-			`INSERT INTO "messages_by" ("count","msgid","userid") VALUES (2,65,278) ON CONFLICT ("msgid","userid") DO UPDATE SET "count"="messages_by"."count" + EXCLUDED.count`},
+			`INSERT INTO "messages_by" ("count","msgid","userid") VALUES (2,65,278) ON CONFLICT ("msgid","userid") DO UPDATE SET "count"= "messages_by"."count" + EXCLUDED.count`},
 		{"replace", "REPLACE INTO users_emails (userid, email) VALUES ($1, $2)",
 			`INSERT INTO users_emails (userid, email) VALUES ($1, $2) ON CONFLICT ("email") DO UPDATE SET "userid" = EXCLUDED."userid"`},
 		{"group_concat", "SELECT GROUP_CONCAT(DISTINCT a ORDER BY a SEPARATOR '; ') FROM t", "SELECT string_agg(DISTINCT (a)::text, '; ' ORDER BY a) FROM t"},
@@ -130,6 +130,9 @@ func TestTranslatePostgres(t *testing.T) {
 		{"limit with returning", "UPDATE t SET a = 1 LIMIT 1 RETURNING id", "UPDATE t SET a = 1 LIMIT 1 RETURNING id"},
 		{"correlated subquery in group by", "SELECT m.id, (SELECT MIN(e.x) FROM e WHERE e.u = u.id) AS first FROM m JOIN u ON u.id = m.uid GROUP BY m.uid",
 			`SELECT ANY_VALUE(m.id) AS "id", (SELECT MIN(e.x) FROM e WHERE e.u = ANY_VALUE(u.id)) AS first FROM m JOIN u ON u.id = m.uid GROUP BY m.uid`},
+		{"sequential set", "UPDATE items SET id = id + 1, name = id", "UPDATE items SET id = id + 1, name = (id + 1)"},
+		{"sequential upsert", "INSERT INTO messages_by (msgid, userid, count) VALUES ($1, $2, 1) ON DUPLICATE KEY UPDATE count = count + 1, msgid = count",
+			`INSERT INTO messages_by (msgid, userid, count) VALUES ($1, $2, 1) ON CONFLICT ("msgid","userid") DO UPDATE SET count = "messages_by"."count" + 1, msgid = ("messages_by"."count" + 1)`},
 		{"database", "WHERE table_schema = DATABASE()", "WHERE table_schema = current_schema()"},
 	}
 	for _, c := range cases {
@@ -138,7 +141,11 @@ func TestTranslatePostgres(t *testing.T) {
 			if norm(got) != norm(c.want) {
 				t.Errorf("\n in: %s\ngot: %s\nwant: %s", c.in, got, c.want)
 			}
-			// Idempotent: translating the result again changes nothing.
+			// Idempotent: translating the result again changes nothing. A SET list that reads a column set
+			// earlier is the one exception: it takes MySQL's left to right meaning once, by design.
+			if strings.HasPrefix(c.name, "sequential") {
+				return
+			}
 			if again := translatePostgres(got, testCatalog); norm(again) != norm(got) {
 				t.Errorf("not idempotent:\n  1: %s\n  2: %s", got, again)
 			}

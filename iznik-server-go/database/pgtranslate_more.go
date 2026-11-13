@@ -650,7 +650,10 @@ func translateStatement(ts []tok, cat catalog) ([]tok, bool) {
 
 	// UPDATE IGNORE t SET c = v WHERE w: rows whose new key would collide are left alone.
 	if isKw(ts[first], "UPDATE") {
-		return translateUpdateIgnore(ts, first, cat)
+		if out, ok := translateUpdateIgnore(ts, first, cat); ok {
+			return out, true
+		}
+		return translateUpdateOrder(ts, first)
 	}
 
 	replace := isKw(ts[first], "REPLACE")
@@ -745,7 +748,8 @@ func translateStatement(ts []tok, cat catalog) ([]tok, bool) {
 		rest := qualifyUpdate(ts[u+1:], table, cat)
 		var assigns []tok
 		assigns = append(assigns, rest...)
-		return concatToks(ts[:i], onConflictHead(target), []tok{sp(), word("SET"), sp()}, trimToks(assigns)), true
+		ordered, _ := sequentialAssignments(trimToks(assigns), table)
+		return concatToks(ts[:i], onConflictHead(target), []tok{sp(), word("SET"), sp()}, trimToks(ordered)), true
 	}
 	return ts, false
 }

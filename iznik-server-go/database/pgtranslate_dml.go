@@ -247,3 +247,86 @@ func translateLimitedDML(ts []tok) ([]tok, bool) {
 	out := concatToks(head, []tok{sp(), word("WHERE"), sp(), word("ctid"), sp(), word("IN"), sp(), punct("(")}, sub, []tok{punct(")")})
 	return out, true
 }
+
+// sequentialAssignments gives a SET list MySQL's meaning: assignments are made left to right, so a later one
+// that names a column set earlier sees the new value. PostgreSQL gives every expression the old row, so
+// the earlier expression is written in place of the column. table is the name a qualified reference may use.
+func sequentialAssignments(assigns []tok, table string) ([]tok, bool) {
+	prior := map[string][]tok{}
+	var out []tok
+	changed := false
+	for n, part := range splitArgs(assigns) {
+		part = trimToks(part)
+		eq := -1
+		for j, t := range part {
+			if isP(t, "=") {
+				eq = j
+				break
+			}
+		}
+		if n > 0 {
+			out = append(out, punct(","), sp())
+		}
+		if eq < 1 {
+			out = append(out, part...)
+			continue
+		}
+		col := strings.ToLower(identName(trimToks(part[:eq])[len(trimToks(part[:eq]))-1]))
+		rhs := trimToks(part[eq+1:])
+		var nr []tok
+		for j := 0; j < len(rhs); j++ {
+			t := rhs[j]
+			if t.k == tkWord || t.k == tkQuote {
+				name := strings.ToLower(identName(t))
+				// table.col
+				if table != "" && name == strings.ToLower(table) && j+2 < len(rhs) && isP(rhs[j+1], ".") {
+					if rep, ok := prior[strings.ToLower(identName(rhs[j+2]))]; ok {
+						nr = append(nr, punct("("))
+						nr = append(nr, rep...)
+						nr = append(nr, punct(")"))
+						j += 2
+						changed = true
+						continue
+					}
+				}
+				p := prevSig(rhs, j-1)
+				nx := nextSig(rhs, j+1)
+				if rep, ok := prior[name]; ok && (p < 0 || !isP(rhs[p], ".")) && (nx < 0 || !isP(rhs[nx], "(") && !isP(rhs[nx], ".")) {
+					nr = append(nr, punct("("))
+					nr = append(nr, rep...)
+					nr = append(nr, punct(")"))
+					changed = true
+					continue
+				}
+			}
+			nr = append(nr, t)
+		}
+		prior[col] = nr
+		out = append(out, part[:eq+1]...)
+		out = append(out, sp())
+		out = append(out, nr...)
+	}
+	return out, changed
+}
+
+// translateUpdateOrder rewrites the SET list of a plain single-table UPDATE with sequentialAssignments.
+func translateUpdateOrder(ts []tok, first int) ([]tok, bool) {
+	tbl := nextSig(ts, first+1)
+	if tbl < 0 {
+		return ts, false
+	}
+	set := nextSig(ts, tbl+1)
+	if set < 0 || !isKw(ts[set], "SET") {
+		return ts, false
+	}
+	where := topKw(ts, set+1, "WHERE")
+	end := len(ts)
+	if where >= 0 {
+		end = where
+	}
+	assigns, changed := sequentialAssignments(ts[set+1:end], identName(ts[tbl]))
+	if !changed {
+		return ts, false
+	}
+	return concatToks(ts[:set+1], []tok{sp()}, assigns, []tok{sp()}, ts[end:]), true
+}
