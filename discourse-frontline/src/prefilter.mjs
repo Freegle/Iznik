@@ -14,8 +14,8 @@ const ME_TOO = /\b(me too|same here|same (?:problem|issue|thing)(?: here| for me
 // "Not working" alone is how a first report reads, so it is not in here: only words
 // that say it was looked at before.
 const STILL_BROKEN = /\b(still (?:not|broken|happening|the same|doing|getting|seeing|can't|cannot|won't|no)|not (?:fixed|resolved)|hasn't (?:worked|fixed|changed)|didn't (?:work|fix)|(?:is|it's|its) back|happening again|same as before|no (?:change|different|better))\b/i
-// Words a report of something broken tends to use. Outside the support categories
-// only posts with one of these are read at all.
+// Words a report of something broken tends to use. A post with one of these is never
+// settled as a thank-you or as too short to read.
 const PROBLEM = /\b(?:error|bug|broken|glitch|crash\w*|fail(?:s|ed|ing)?|stuck|spinn\w+|fr[eo]zen?|freez\w+|(?:blank|white) (?:page|screen)|(?:not|isn't|doesn't|won't|stopped|can't|cannot|couldn't|unable to) (?:\w+ )?(?:work\w*|load\w*|open\w*|send\w*|sent|arriv\w*|receiv\w*|show\w*|log(?:ging)? ?in|sav\w*|post\w*|approv\w*|upload\w*|display\w*)|keeps? (?:crashing|logging|asking|failing))\b/i
 
 export const soundsBroken = (text) => PROBLEM.test(text)
@@ -34,10 +34,11 @@ export function prefilter(post, cfg) {
     // A private message has no category. Those are never read, whoever they are to.
     if (post.archetype === 'private_message' || post.categoryId === null) return { pass: false, why: 'private-message' }
   }
-  // Elsewhere on the forum people mostly talk to each other. The service listens there
-  // for something broken, and never speaks.
+  // Elsewhere on the forum people mostly talk to each other, but they report problems
+  // there too: in ten weeks of history a quarter of the real reports were outside the
+  // support categories. So every category is read. Outside them the service does not
+  // speak for itself: a reply there always waits for a person.
   const listenOnly = !post.edited && cfg.categories.length > 0 && !cfg.categories.includes(post.categoryId)
-  if (listenOnly && !PROBLEM.test(post.text)) return { pass: false, why: 'category-not-watched' }
   if (cfg.staff.includes(author)) return { pass: false, why: 'staff', signal: 'staff' }
 
   const text = post.text

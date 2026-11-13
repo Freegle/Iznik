@@ -25,7 +25,7 @@ test('a replay runs the archive in order, posts nothing and records each outcome
   const file = join(dir, 'posts.jsonl')
   const row = (id, post, user, raw, extra = {}) => JSON.stringify({ id, topic: 1, post, title: 'Help', cat: 3, user, at: `2026-01-05T09:0${post}:00Z`, raw, ...extra })
   writeFileSync(file, [
-    row(12, 2, 'dev_x', 'Looking at it now.', { reply_to: 1, staff: true }),
+    row(12, 2, 'dev_sam', 'Looking at it now.', { reply_to: 1, staff: true }),
     row(11, 1, 'mod_a', 'In ModTools on Chrome, clicking Approve on a pending message spins for ever since this morning. https://modtools.org/x'),
     row(13, 3, 'mod_b', 'Thanks!'),
   ].join('\n'))

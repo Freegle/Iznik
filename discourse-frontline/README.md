@@ -35,8 +35,7 @@ They stay on the machine. Nothing sends them anywhere.
 Cheapest first. Most posts never reach the model.
 
 1. **Rules** (`src/prefilter.mjs`, free). The service's own posts, a developer's, private
-   messages, a bare "thanks", "same here" or "still not working" threaded to a known case. Outside
-   the support categories, anything that does not sound like something broken.
+   messages, a bare "thanks", "same here" or "still not working" threaded to a known case.
 2. **Threading** (`src/pipeline.mjs`, a database read). What the post replies to or quotes, and
    whether its author is someone we are waiting on, says which case it belongs to.
 3. **Facts by rule** (`src/slots.mjs`, free). App or website, device, browser, when, how often,
@@ -135,7 +134,7 @@ re-reads from where it stopped.
 | Setting | Default | |
 |---|---|---|
 | `FRONTLINE_MODE` | `confirm` | See above |
-| `FRONTLINE_CATEGORIES` | all | Support category ids. Elsewhere only posts that sound broken are read, and nothing is posted |
+| `FRONTLINE_CATEGORIES` | all | Support category ids. Every category is read; outside these a reply always waits for a person |
 | `FRONTLINE_BOT_USERNAME` | | The account it posts as; its own posts are never read as reports |
 | `FRONTLINE_STAFF` | | Usernames whose posts are a developer speaking |
 | `FRONTLINE_DISCOURSE_KEY` or `FRONTLINE_PROFILE_PATH` | | The forum API key, or a profile file holding one |

@@ -45,11 +45,11 @@ test('a long post that says "same here" in passing is still read', () => {
   assert.equal(run('Same here, and I also noticed that when I open the member log for anyone who joined this week the page shows a different person entirely, which seems much more serious to me.').pass, true)
 })
 
-test('outside the support categories only something broken is read, and marked listen-only', () => {
+test('every category is read, and outside the support ones a post is marked listen-only', () => {
   const only = { ...cfg, categories: [9] }
   const elsewhere = (text) => prefilter(makePost({ author: 'mod_a', text }, 0), only)
-  assert.equal(elsewhere('I think three days is too long a wait before a repost, and I would vote for two.').why, 'category-not-watched')
   for (const t of [
+    'I think three days is too long a wait before a repost, and I would vote for two.',
     'Since this morning the app shows a white screen when I open Chats on my phone.',
     'Members tell me the digest emails are not arriving this week.',
     'ModTools keeps logging me out every few minutes today.',

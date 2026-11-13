@@ -37,9 +37,9 @@ export function archivePost(r) {
 export async function replay({ db, cfg, ask, file, outFile, log = () => {} }) {
   if (!file) throw new Error('replay needs the path of a posts archive')
   const rows = readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).sort((a, b) => a.id - b.id)
-  // Whoever the archive marks as staff is a developer speaking, as well as any named in the settings.
-  const staff = [...new Set([...cfg.staff, ...rows.filter((r) => r.staff).map((r) => r.user.toLowerCase())])]
-  const runCfg = { ...cfg, mode: 'shadow', staff }
+  // The archive's own staff mark is the forum's (its moderators), not ours: those
+  // people report problems like anyone else. Developers are the ones in the settings.
+  const runCfg = { ...cfg, mode: 'shadow' }
   for (const t of ['post', '"case"', 'case_fts', 'outbound', 'usage', 'kv']) db.exec(`DELETE FROM ${t}`)
 
   let clock = new Date(rows[0]?.at ?? Date.now())

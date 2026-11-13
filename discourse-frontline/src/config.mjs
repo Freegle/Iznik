@@ -48,9 +48,9 @@ export function loadConfig(env = process.env) {
     botUsername: (env.FRONTLINE_BOT_USERNAME || '').toLowerCase(),
     // People whose posts are a developer speaking, not a report.
     staff: list(env.FRONTLINE_STAFF).map((s) => s.toLowerCase()),
-    // Category ids where support happens: the service reads everything there and may
-    // reply. In every other category it reads only posts that sound like something is
-    // broken, and never replies. Empty means every category is a support category.
+    // Category ids where support happens. Every category is read. In these the service
+    // may reply as its mode allows; anywhere else a reply always waits for a person.
+    // Empty means every category is a support category.
     categories: list(env.FRONTLINE_CATEGORIES).map(Number),
     model: env.FRONTLINE_MODEL || 'claude-opus-5-5',
     // 'cli' goes through the Claude Code command line, signed in on the machine or
