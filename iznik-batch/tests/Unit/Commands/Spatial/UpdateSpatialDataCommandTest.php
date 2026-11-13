@@ -44,7 +44,7 @@ class UpdateSpatialDataCommandTest extends TestCase
             ->expectsOutputToContain('no changes will be made')
             ->expectsOutputToContain('Would download: https://')
             ->expectsOutputToContain('Would run: DeprivationDataService')
-            ->expectsOutputToContain('Would signal: http://')
+            ->doesntExpectOutputToContain('Would signal')
             ->assertExitCode(0);
     }
 
