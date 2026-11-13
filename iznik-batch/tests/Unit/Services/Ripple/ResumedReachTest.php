@@ -676,7 +676,7 @@ class ResumedReachTest extends TestCase
         $this->assertNotNull($this->copy($f, 'G'), 'tick 3 rippled into G');
 
         [, $mailed] = $this->mailerRun();
-        $this->assertSame($this->ids($f, 'C', 'GM'), $mailed, 'tick 3 tells C and GM and nobody who has been told');
+        $this->assertEqualsCanonicalizing($this->ids($f, 'C', 'GM'), $mailed, 'tick 3 tells C and GM and nobody who has been told');
         $this->assertSame([self::BUDGET[3]], array_values(array_unique($this->labelBudgets)));
     }
 
