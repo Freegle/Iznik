@@ -27,6 +27,7 @@ class MergeOfferMail extends MjmlMailable
         public readonly string $name2,
         public readonly string $email2,
         public readonly string $mergeUrl,
+        public readonly ?string $intro = null,
     ) {
         parent::__construct();
 
@@ -65,6 +66,7 @@ class MergeOfferMail extends MjmlMailable
                 'name2' => $this->name2,
                 'email2' => $this->email2,
                 'mergeUrl' => $this->mergeUrl,
+                'intro' => $this->intro,
             ], $this->getTrackingData())
         )->to($this->recipientEmail)
             ->applyLogging('MergeOffer');

@@ -484,3 +484,30 @@ func TestStripeIPN_SignedEventIsAcceptedWhenSecretIsSet(t *testing.T) {
 
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
 }
+
+// Stripe delivers an event at least once and retries any non-200 answer. A charge already recorded
+// is acknowledged with a 200, not inserted again, so the second delivery does not fail on the
+// unique TransactionID and keep Stripe retrying.
+func TestStripeIPN_RedeliveredChargeIsAcknowledgedOnce(t *testing.T) {
+	prefix := uniquePrefix("stripedup")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
+	chargeID := "ch_redeliver_" + prefix
+	body := makeChargeEvent(chargeID, 1000, map[string]string{"uid": fmt.Sprint(userID)}, prefix+"_donor@test.com", "")
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		req := httptest.NewRequest("POST", "/api/stripeipn", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode, "delivery %d of the same event is acknowledged", attempt)
+	}
+
+	var donationCount int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE TransactionID = ?", chargeID).Scan(&donationCount)
+	assert.Equal(t, int64(1), donationCount, "the charge is recorded once")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", chargeID)
+	db.Exec("DELETE FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", userID)
+}

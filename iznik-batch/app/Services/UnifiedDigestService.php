@@ -113,6 +113,27 @@ class UnifiedDigestService
     public const CARRYOVER_MAX_AGE_DAYS = 3;
 
     /**
+     * How long a post the reach gate held back stays eligible for a member's daily digest
+     * (users_digests.held_back), counted from the post's arrival.
+     *
+     * The cursor moves past a post the gate excluded, so without this list a post whose reach
+     * grows over the member after that is never mailed. Reach grows on a hazard schedule of
+     * 1, 3, 6, 12, 24, 48, 72, 120 and 168 hours. On production, members enter a post's reach
+     * after the first six hours in about 7% of cases, and 99.7% of entries are within 72
+     * hours; the rest are 120 and 168 hour steps that reach few members. Three days therefore
+     * keeps almost every late entrant, and it is also the age past which a post is no longer
+     * news (the same bound as CARRYOVER_MAX_AGE_DAYS).
+     */
+    public const HELD_BACK_MAX_AGE_DAYS = 3;
+
+    /**
+     * The most held-back ids kept per member (the newest are kept). Each id costs one slot of
+     * DIGEST_LOAD_CAP through the primary-key arm in getPostsForUser(), so the list is bounded
+     * in the same way carryoverFrom() bounds the carryover.
+     */
+    public const HELD_BACK_MAX = 200;
+
+    /**
      * Send unified digests to users who want them.
      *
      * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
@@ -174,7 +195,7 @@ class UnifiedDigestService
                 } elseif ($result['status'] === 'suppressed') {
                     $stats['suppressed']++;
                 }
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 Log::error("UnifiedDigestService: Failed to send digest to user {$user->id}", [
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
@@ -362,6 +383,11 @@ class UnifiedDigestService
             ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->whereNull('users.deleted')
+            ->where('users.bouncing', 0)
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('users.settings->simplemail')
+                  ->orWhere('users.settings->simplemail', '!=', User::SIMPLE_MAIL_NONE);
+            })
             ->where(function ($q) {
                 $q->whereNull('users.lastaccess')
                   ->orWhere('users.lastaccess', '>', now()->subSeconds(365 * 12 * 3600));
@@ -1269,7 +1295,9 @@ class UnifiedDigestService
                          SELECT 1 FROM messages_outcomes mo
                          WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
-                   AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)$onlySql
+                   AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
+                   AND u.bouncing = 0
+                   AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.simplemail')), '') <> 'None'$onlySql
                    AND ($containSql$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n
@@ -1277,7 +1305,7 @@ class UnifiedDigestService
                        )",
                 array_merge(
                     $primaryParams,
-                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90)],
+                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subSeconds(365 * 12 * 3600)],
                     $onlyParams,
                     [$srid],
                     $overflowParams,
@@ -1494,6 +1522,11 @@ class UnifiedDigestService
         $mailed = [];
         foreach ($users as $user) {
             if (!$user->email_preferred) {
+                continue;
+            }
+            // A bouncing address, or a member who turned all our mail off, is not mailed, as in the
+            // daily digest.
+            if ($user->bouncing || $user->getSimpleMail() === User::SIMPLE_MAIL_NONE) {
                 continue;
             }
             if (isset($alreadyHadItem[(int) $user->id])) {
@@ -2092,16 +2125,26 @@ class UnifiedDigestService
 
         // One query for the whole window, carrying has_outcome / has_success
         // flags; partition here rather than re-querying.
-        $allPosts = $this->getPostsForUser($user, $digestTracker, $mode);
+        $loaded = $this->loadPostsForUser($user, $digestTracker, $mode);
+        $allPosts = $loaded['posts'];
+        // What the reach gate held back and the cursor is about to pass. Stored with the
+        // cursor on every exit that moves it, so it is offered again rather than lost.
+        $heldBack = ['ids' => $loaded['held'], 'examined' => $loaded['examined']];
 
         // Pinned posts (paid bulk-offer clearances) are force-included at the TOP of every
         // DAILY digest while they are still open, independent of the cursor window and the
         // per-member reach-gate, so they recur every day until the goods are gone. Fetched and
         // deduplicated separately, and never fed to the cursor (updateDigestTracker uses only
         // $allPosts), so a pinned post never suppresses itself on the next run.
-        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user));
+        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user, $mode));
 
         if ($allPosts->isEmpty() && $pinnedCards->isEmpty()) {
+            // Everything examined was held back by the reach gate (or there was nothing). The
+            // cursor still moves over what was examined, and the held ids go with it, so the
+            // window does not fill with posts the member cannot yet be sent.
+            if (!$dryRun && $heldBack['examined'] !== null) {
+                $this->updateDigestTracker($digestTracker, $allPosts, false, null, $heldBack);
+            }
             return ['status' => 'no_posts', 'count' => 0];
         }
 
@@ -2145,7 +2188,7 @@ class UnifiedDigestService
             // and don't send a completed-only digest. Anything carried over was
             // examined too and did not make it, so it is not carried again.
             if (!$dryRun) {
-                $this->updateDigestTracker($digestTracker, $allPosts, false, []);
+                $this->updateDigestTracker($digestTracker, $allPosts, false, [], $heldBack);
             }
             return ['status' => 'no_posts', 'count' => 0];
         }
@@ -2162,14 +2205,15 @@ class UnifiedDigestService
             $deduplicatedPosts,
             $digestTracker->lastmsgdate,
             $this->digestGroupIdsForUser($user, $mode),
-            array_map('intval', $digestTracker->carryover ?? [])
+            array_map('intval', $digestTracker->carryover ?? []),
+            array_map('intval', $digestTracker->held_back ?? [])
         );
 
         if ($deduplicatedPosts->isEmpty() && $pinnedCards->isEmpty()) {
             // Nothing to send, but still advance the tracker past these posts
             // so the next tick doesn't re-fetch and re-filter the same set.
             if (!$dryRun) {
-                $this->updateDigestTracker($digestTracker, $allPosts, false, []);
+                $this->updateDigestTracker($digestTracker, $allPosts, false, [], $heldBack);
             }
             return ['status' => 'no_posts', 'count' => 0];
         }
@@ -2177,7 +2221,7 @@ class UnifiedDigestService
         // Sponsors. The roll-up spans all the user's groups, so the cross-group union is
         // right. (The immediate paths scope sponsors per-post to that post's group instead -
         // V1 parity, one group's email, one group's sponsors.)
-        $sponsors = $this->getSponsorsForUser($user);
+        $sponsors = $this->getSponsorsForUser($user, $mode);
 
         // Put the pinned posts (paid bulk-offer clearances) at the very TOP of the daily
         // digest, dropping any that also appear in the normal window set so they are not
@@ -2205,7 +2249,8 @@ class UnifiedDigestService
                 $digestTracker,
                 $allPosts,
                 true,
-                $this->carryoverFrom($digest->droppedPostIds(), $deduplicatedPosts)
+                $this->carryoverFrom($digest->droppedPostIds(), $deduplicatedPosts),
+                $heldBack
             );
         }
 
@@ -2338,10 +2383,29 @@ class UnifiedDigestService
      */
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
+        return $this->loadPostsForUser($user, $tracker, $mode)['posts'];
+    }
+
+    /**
+     * getPostsForUser() plus what the daily digest needs to keep the posts the reach gate held
+     * back from being lost when its cursor moves on.
+     *
+     * 'posts' is exactly what getPostsForUser() returns: the posts the member may be sent now.
+     * 'held' is the ids of live posts the gate kept out (the reach does not cover the member yet,
+     * or the reach is frozen) that the cursor is about to pass; the digest stores them in
+     * users_digests.held_back, and the next run offers them again through a primary-key arm that
+     * applies the same gate. 'examined' is the (msgid, arrival) of the newest row looked at,
+     * passing or held back, which is where the cursor goes.
+     *
+     * @return array{posts: Collection, held: int[], examined: ?array{id: int, arrival: mixed}}
+     */
+    public function loadPostsForUser(User $user, UserDigest $tracker, string $mode): array
+    {
+        $none = ['posts' => collect(), 'held' => [], 'examined' => null];
         $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
 
         if ($groupIds->isEmpty()) {
-            return collect();
+            return $none;
         }
 
         // Two outcome flags come back with the posts so the caller can partition in
@@ -2393,15 +2457,23 @@ class UnifiedDigestService
         // moderation. Browse, the badge and search hide it outright, so the daily digest and
         // the daily-posts push (which share this query) must not carry it either.
         //
-        // Written as its own exclusion rather than folded into the reach gate below: that gate
-        // is a NOT EXISTS over reach rows which do NOT contain the member, so adding
-        // "status <> 'held'" inside it would EXCLUDE the frozen row from the rejection set and
+        // Written as its own clause rather than folded into the reach gate below: that gate
+        // is an EXISTS over reach rows which do NOT contain the member, so adding
+        // "status <> 'held'" inside it would take the frozen row OUT of the rejection set and
         // let the post through - the exact opposite of the intent.
-        $exclusions = [[
-            "NOT EXISTS (SELECT 1 FROM rippling_reach rrh
-                WHERE rrh.msgid = messages.id AND rrh.status = 'held')",
-            [],
-        ]];
+        //
+        // Neither is a WHERE clause any more. They are one select column, reach_held_back, and
+        // the caller drops the flagged rows. A WHERE exclusion made the cursor blind to what it
+        // passed: a post held back this run sat behind the cursor next run, so a reach that
+        // later grew over the member never mailed it. As a column the rows come back, the cursor
+        // can be told what it is moving past, and those posts are kept in users_digests.held_back
+        // and offered again (see loadPostsForUser()). The column costs nothing in the plan: it
+        // is the same correlated EXISTS, evaluated for the rows returned rather than as a
+        // filter, and the window is, if anything, simpler for losing two anti-joins.
+        $heldSql = "EXISTS (SELECT 1 FROM rippling_reach rrh
+                WHERE rrh.msgid = messages.id AND rrh.status = 'held')";
+        $gateSql = $heldSql;
+        $gateParams = [];
 
         $latlng = $this->resolveUserLatLng($user);
         if ($latlng !== null) {
@@ -2441,31 +2513,26 @@ class UnifiedDigestService
                 $inSql = ' AND rr.msgid NOT IN (' . implode(',', array_fill(0, count($containing), '?')) . ')';
                 $inParams = $containing;
             }
-            // Exclude a post when a reach row exists, the member is not in
+            // Hold a post back when a reach row exists, the member is not in
             // its containment list, and no ring rescues them.
-            // keep-raw: correlated NOT EXISTS with a spliced ringRescue fragment
+            // keep-raw: correlated EXISTS with a spliced ringRescue fragment
             // (ringRescueIds returns SQL text) - the builder cannot compose
             // another service's fragment.
-            $exclusions[] = [
-                "NOT EXISTS (SELECT 1 FROM rippling_reach rr
-                    WHERE rr.msgid = messages.id$inSql$ringRescue)",
-                array_merge($inParams, $ringParams),
-            ];
+            $gateSql = "($heldSql OR EXISTS (SELECT 1 FROM rippling_reach rr
+                    WHERE rr.msgid = messages.id$inSql$ringRescue))";
+            $gateParams = array_merge($inParams, $ringParams);
         }
 
-        $armFor = function () use ($baseQuery, $exclusions) {
-            $q = $baseQuery();
-            foreach ($exclusions as [$sql, $params]) {
-                $q->whereRaw($sql, $params);
-            }
-
-            return $q;
+        $armFor = function () use ($baseQuery, $gateSql, $gateParams) {
+            // keep-raw: the gate is a correlated EXISTS with a spliced ring fragment, as above.
+            return $baseQuery()->selectRaw("$gateSql AS reach_held_back", $gateParams);
         };
 
-        // TWO ARMS, DELIBERATELY TWO QUERIES.
+        // THREE ARMS, DELIBERATELY THREE QUERIES.
         //
         // The window is everything since the cursor. The carryover is the posts the member's
-        // last digest had to leave out at the post cap, which are older than the cursor by
+        // last digest had to leave out at the post cap, and the held-back arm is the posts the
+        // reach gate kept out of an earlier digest; both are older than the cursor by
         // construction. They used to be one query with the carryover ORed into the window.
         // That cost the groupid(groupid,collection,deleted,arrival) index: the OR puts a
         // predicate on messages.id inside a range whose column is messages_groups.arrival,
@@ -2476,7 +2543,8 @@ class UnifiedDigestService
         // and the run cannot finish inside its window at all.
         //
         // Split, each arm gets the plan it should have: the window is a range on the groupid
-        // index, and the carryover is a primary-key lookup of at most DIGEST_POST_CAP ids.
+        // index, and the carryover and the held-back posts are primary-key lookups of at most
+        // DIGEST_POST_CAP and HELD_BACK_MAX ids.
         $window = $armFor();
         if ($tracker->lastmsgdate) {
             // messages_groups.arrival keeps microseconds but the cursor is stored in whole
@@ -2491,7 +2559,9 @@ class UnifiedDigestService
         // is far behind drains their backlog in DIGEST_LOAD_CAP-sized batches across successive
         // runs (updateDigestTracker advances the cursor past exactly what is returned here)
         // instead of loading days of posts at once and exhausting memory. Normal daily volume
-        // is well under the cap, so steady-state digests are unchanged.
+        // is well under the cap, so steady-state digests are unchanged. The cap counts the rows
+        // the reach gate holds back as well as the ones it passes, because both are examined and
+        // both are moved past.
         $posts = $window->limit(self::DIGEST_LOAD_CAP)->get();
 
         // Loading the carried posts is NOT showing them first: newPostsFirst() sinks them below
@@ -2507,17 +2577,65 @@ class UnifiedDigestService
                 ->concat($posts);
         }
 
+        // The posts the gate held back from an earlier digest. Each is offered again here and
+        // goes through the same gate: one the reach now covers comes back unflagged and is sent
+        // like any other post; one it does not cover comes back flagged and stays held until it
+        // is too old (HELD_BACK_MAX_AGE_DAYS). A post that has gone (outcome, deleted, no longer
+        // approved) is not returned live and drops out of the list.
+        $heldBack = array_values(array_filter(array_map('intval', $tracker->held_back ?? [])));
+        if ($heldBack !== []) {
+            $posts = $armFor()
+                ->whereIn('messages.id', $heldBack)
+                ->limit(self::DIGEST_LOAD_CAP)
+                ->get()
+                // Age is judged here, not in SQL: a range on arrival beside the id list would
+                // let the planner pick the group index for this arm.
+                ->filter(fn ($post) => $post->arrival !== null
+                    && \Illuminate\Support\Carbon::parse($post->arrival) >= now()->subDays(self::HELD_BACK_MAX_AGE_DAYS))
+                ->concat($posts);
+        }
+
         // De-duplicate on the (msgid, groupid) PAIR. A carried post whose arrival is also
         // inside the window satisfies both arms and comes back from both - 234 rows of 1,921
         // in the production sample. It must NOT be collapsed by msgid alone: this query
         // deliberately returns one row per copy of a cross-posted item, and deduplicatePosts()
         // downstream needs all of them to pick the representative copy.
-        return $posts
+        $rows = $posts
             ->unique(fn ($post) => (int) $post->id . ':' . (int) $post->groupid)
             ->sortBy('arrival')
             ->take(self::DIGEST_LOAD_CAP)
+            ->values();
+
+        if ($rows->isEmpty()) {
+            return $none;
+        }
+
+        // The cursor goes to the newest row examined, held back or not. Anything held back that
+        // it passes is kept, newest first and no more than HELD_BACK_MAX, so it is offered again
+        // rather than lost. A held-back post is kept only while it is live and young.
+        $last = $rows->last();
+        $examined = ['id' => (int) $last->id, 'arrival' => $last->arrival];
+        $cutoff = now()->subDays(self::HELD_BACK_MAX_AGE_DAYS);
+        $held = $rows
+            ->filter(fn ($post) => (int) $post->reach_held_back === 1
+                && !$post->has_outcome
+                && $post->arrival !== null
+                && \Illuminate\Support\Carbon::parse($post->arrival) >= $cutoff)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
             ->values()
-            ->load($this->digestPostEagerLoads());
+            ->take(-self::HELD_BACK_MAX)
+            ->all();
+
+        return [
+            'posts' => $rows
+                ->filter(fn ($post) => (int) $post->reach_held_back !== 1)
+                ->values()
+                ->load($this->digestPostEagerLoads()),
+            'held' => $held,
+            'examined' => $examined,
+        ];
     }
 
     /**
@@ -2530,11 +2648,11 @@ class UnifiedDigestService
      *
      * @return Collection of Message (each with ->groupid, ->arrival, and has_outcome/has_success=0)
      */
-    private function getPinnedOpenPostsForUser(User $user): Collection
+    private function getPinnedOpenPostsForUser(User $user, string $mode = self::MODE_DAILY): Collection
     {
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
+        // Only communities on this digest's cadence: one set to no emails sends nothing, and an
+        // immediate one is already mailed per post.
+        $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
 
         if ($groupIds->isEmpty()) {
             return collect();
@@ -3053,7 +3171,11 @@ class UnifiedDigestService
      */
     private function newPostsFirst(Collection $posts, UserDigest $tracker): Collection
     {
-        $carried = array_flip(array_map('intval', $tracker->carryover ?? []));
+        // Posts held back by the reach gate and now admitted are older than the cursor too.
+        $carried = array_flip(array_map('intval', array_merge(
+            $tracker->carryover ?? [],
+            $tracker->held_back ?? []
+        )));
 
         if ($carried === []) {
             return $posts;
@@ -3364,7 +3486,8 @@ class UnifiedDigestService
     public function itemsCoveredBeforeCursor(
         array $msgids,
         \DateTimeInterface|string|null $cursorMsgdate,
-        array $groupIds
+        array $groupIds,
+        array $notSentMsgids = []
     ): array
     {
         if ($cursorMsgdate === null || empty($msgids) || empty($groupIds)) {
@@ -3375,11 +3498,14 @@ class UnifiedDigestService
 
         $siblings = $this->itemSiblingMsgids($msgids);
         $inBatch = array_flip(array_map('intval', $msgids));
+        // Copies the cursor passed without sending them (held back by the reach gate) are not
+        // evidence that the item went out.
+        $notSent = array_flip(array_map('intval', $notSentMsgids));
 
         $olderCopies = [];
         foreach ($siblings as $msgid => $copies) {
             foreach ($copies as $copy) {
-                if ($copy !== $msgid && !isset($inBatch[$copy])) {
+                if ($copy !== $msgid && !isset($inBatch[$copy]) && !isset($notSent[$copy])) {
                     $olderCopies[$copy] = true;
                 }
             }
@@ -3419,12 +3545,15 @@ class UnifiedDigestService
      * @param Collection $cards Entries of ['message' => Message, 'postedToGroups' => int[]]
      * @param int[] $keepMsgids Messages never dropped here: carried over because the cap left
      *     them out, so they were not sent whatever a copy behind the cursor suggests.
+     * @param int[] $notSentMsgids Messages the cursor passed without sending (held back by the
+     *     reach gate): a copy of an item that is one of these does not count as having sent it.
      */
     public function dropCardsAlreadyCovered(
         Collection $cards,
         \DateTimeInterface|string|null $cursorMsgdate,
         array $groupIds,
-        array $keepMsgids = []
+        array $keepMsgids = [],
+        array $notSentMsgids = []
     ): Collection
     {
         if ($cards->isEmpty()) {
@@ -3434,7 +3563,8 @@ class UnifiedDigestService
         $covered = $this->itemsCoveredBeforeCursor(
             $cards->map(fn ($card) => (int) $card['message']->id)->all(),
             $cursorMsgdate,
-            $groupIds
+            $groupIds,
+            $notSentMsgids
         );
 
         if (empty($covered)) {
@@ -3561,7 +3691,7 @@ class UnifiedDigestService
         // normalized bodies, so genuine cross-posts (same tnpostid) AND same-item
         // reposts (different tnpostid, same body) both merge, while two different
         // items that merely share subject+location stay separate (bodies differ).
-        $normalizedSubject = $this->normalizeSubject($message->subject);
+        $normalizedSubject = $this->normalizeSubject($message->subject ?? '');
 
         return implode('|', [
             $message->fromuser,
@@ -3597,12 +3727,31 @@ class UnifiedDigestService
      * @param UserDigest $tracker
      * @param Collection $posts
      */
-    protected function updateDigestTracker(UserDigest $tracker, Collection $posts, bool $emailWasSent = false, ?array $carryover = null): void
+    protected function updateDigestTracker(UserDigest $tracker, Collection $posts, bool $emailWasSent = false, ?array $carryover = null, ?array $heldBack = null): void
     {
         // Posts the digest left out at the post cap: re-offered by getPostsForUser() next
         // run. Null means "leave whatever is stored" (callers that did not examine them).
         $carry = $carryover === null ? [] : ['carryover' => ($carryover === [] ? null : array_values($carryover))];
+
+        // Posts the reach gate held back and the cursor is moving past: stored so the next run
+        // offers them again. The list is replaced whole, so a post that was sent, has gone or
+        // is too old leaves it. Null means the caller did not examine any.
+        $held = [];
+        if ($heldBack !== null) {
+            $held = ['held_back' => $heldBack['ids'] === [] ? null : array_values($heldBack['ids'])];
+        }
+
+        // The cursor goes to the newest row examined. That is the last post sent, unless the
+        // gate held back something newer, in which case it is that: the held ones are in
+        // held_back, so passing them loses nothing, and leaving the cursor behind them would
+        // fill the window with posts the member cannot be sent.
         $lastPost = $posts->last();
+        $examined = $heldBack['examined'] ?? null;
+        if ($examined !== null && ($lastPost === null || $lastPost->arrival === null
+            || ($examined['arrival'] !== null
+                && \Illuminate\Support\Carbon::parse($examined['arrival']) > \Illuminate\Support\Carbon::parse($lastPost->arrival)))) {
+            $lastPost = (object) ['id' => $examined['id'], 'arrival' => $examined['arrival']];
+        }
 
         if ($lastPost) {
             // The cursor only ever moves FORWARD. $posts is arrival-ascending, so last() is
@@ -3616,10 +3765,15 @@ class UnifiedDigestService
                 || $lastPost->arrival === null
                 || $tracker->lastmsgdate <= $lastPost->arrival;
 
+            // lastsent is the "a digest went out" stamp, so it is written only when posts were
+            // sent or considered for sending; a run that examined nothing but held-back posts
+            // moves the cursor and the held list and leaves it alone.
+            $stamp = ($posts->isNotEmpty() || $emailWasSent) ? ['lastsent' => now()] : [];
+
             $tracker->update(($advance ? [
                 'lastmsgid' => $lastPost->id,
                 'lastmsgdate' => $lastPost->arrival,
-            ] : []) + ['lastsent' => now()] + $carry);
+            ] : []) + $stamp + $carry + $held);
         } elseif ($emailWasSent) {
             // A daily email WAS sent but there are no cursor posts to advance past —
             // the digest contained only a pinned post, which is never part of the
@@ -3628,7 +3782,7 @@ class UnifiedDigestService
             // Without this, a pinned-only digest re-sends every minute (incident
             // 2026-07-05: the once-per-day guard never fired, so 67 members received the
             // daily digest up to ~198 times).
-            $tracker->update(['lastsent' => now()] + $carry);
+            $tracker->update(['lastsent' => now()] + $carry + $held);
         }
     }
 
@@ -3662,11 +3816,10 @@ class UnifiedDigestService
      * @param User $user
      * @return Collection Deduplicated sponsor records
      */
-    public function getSponsorsForUser(User $user): Collection
+    public function getSponsorsForUser(User $user, string $mode = self::MODE_DAILY): Collection
     {
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
+        // Only communities on this digest's cadence, as for the posts.
+        $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
 
         if ($groupIds->isEmpty()) {
             return collect();

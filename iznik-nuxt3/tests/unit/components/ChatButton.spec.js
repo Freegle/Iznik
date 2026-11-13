@@ -281,6 +281,20 @@ describe('ChatButton', () => {
     })
   })
 
+  describe('reply already delivered', () => {
+    it('still resolves when the refresh of the chat messages fails afterwards', async () => {
+      mockChatStore.send.mockReset().mockResolvedValue({})
+      mockChatStore.fetchMessages.mockRejectedValueOnce(new Error('offline'))
+      const wrapper = createWrapper({ userid: 2 })
+      // The text has reached the poster, so a failed refresh must not make the
+      // caller think the reply failed and offer to send it again.
+      await expect(
+        wrapper.vm.openChat(null, 'Interested', 42, false, true, 'browse')
+      ).resolves.not.toBe(false)
+      expect(mockChatStore.send).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('new tab support (Control+click, Cmd+click, middle-click)', () => {
     it('calls exposed openChat method with flag for new tab when handler invoked', () => {
       const wrapper = createWrapper({ userid: 2 })

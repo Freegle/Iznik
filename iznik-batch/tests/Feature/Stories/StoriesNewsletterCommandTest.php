@@ -572,4 +572,38 @@ class StoriesNewsletterCommandTest extends TestCase
     {
         $this->artisan('stories:newsletter', ['--dry-run' => true])->assertExitCode(0);
     }
+
+    public function test_one_story_with_three_images_does_not_pass_the_minimum(): void
+    {
+        $storyId = $this->createStory();
+        for ($i = 0; $i < 3; $i++) {
+            DB::table('users_stories_images')->insert(['storyid' => $storyId, 'contenttype' => 'image/jpeg']);
+        }
+        $this->createEligibleUser();
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+
+        $this->assertSame(0, $result['stories']);
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNothingSent();
+    }
+
+    public function test_a_story_with_several_images_appears_once(): void
+    {
+        $storyId = $this->createStory(['headline' => 'Story with pictures']);
+        for ($i = 0; $i < 2; $i++) {
+            DB::table('users_stories_images')->insert(['storyid' => $storyId, 'contenttype' => 'image/jpeg']);
+        }
+        $this->createStory(['headline' => 'Story B']);
+        $this->createStory(['headline' => 'Story C']);
+        $this->createEligibleUser();
+
+        $result = (new StoriesNewsletterService())->generateAndSend();
+
+        $this->assertSame(3, $result['stories']);
+        Mail::assertSent(StoriesNewsletterMail::class, function (StoriesNewsletterMail $mail) {
+            $ids = array_column($mail->stories, 'id');
+            return count($ids) === 3 && count(array_unique($ids)) === 3;
+        });
+    }
 }

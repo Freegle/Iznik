@@ -39,6 +39,16 @@
             </ExternalLink>
           </NoticeMessage>
 
+          <!-- Closed community -->
+          <NoticeMessage
+            v-else-if="postcodeValid && closed"
+            variant="warning"
+            class="mt-3"
+          >
+            Sorry, the community near there is closed, so you can't post to it.
+            Please check your postcode.
+          </NoticeMessage>
+
           <!-- Community selection -->
           <div v-else-if="postcodeValid" class="community-section">
             <div class="community-card">

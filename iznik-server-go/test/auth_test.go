@@ -287,3 +287,24 @@ func TestHasPermission(t *testing.T) {
 	assert.True(t, auth.HasPermission(userMulti, auth.PERM_SPAM_ADMIN))
 	assert.False(t, auth.HasPermission(userMulti, auth.PERM_TEAMS))
 }
+
+// With no JWT secret configured the API refuses every JWT. A token signed with an empty key for a
+// real user and session must not log anyone in.
+func TestJWTSignedWithAnEmptySecretIsRefusedWhenNoSecretIsSet(t *testing.T) {
+	prefix := uniquePrefix("jwt_nosecret")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	sessionID, _ := CreateTestSession(t, userID)
+
+	t.Setenv("JWT_SECRET", "")
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"id":        strconv.FormatUint(userID, 10),
+		"sessionid": strconv.FormatUint(sessionID, 10),
+		"exp":       time.Now().Unix() + 30*60,
+	})
+	forged, err := token.SignedString([]byte(""))
+	assert.NoError(t, err)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/notification/count?jwt="+forged, nil))
+	assert.Equal(t, 401, resp.StatusCode, "a token signed with an empty key must not authenticate")
+}

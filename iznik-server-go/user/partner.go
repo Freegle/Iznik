@@ -8,6 +8,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/emailhygiene"
+	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -100,6 +101,15 @@ func HealTNDivergence(db *gorm.DB, candidates []uint64) []uint64 {
 	}
 
 	keep, discard := candidates[0], candidates[1]
+
+	// A volunteer can hold a TrashNothing alias too, and the merge would give the member the
+	// volunteer's moderator role and delete the volunteer's account. A TrashNothing account never
+	// holds a role, so a twin with one is not a twin of the member: leave both as they are.
+	if holdsModeratorStanding(db, discard) {
+		log.Printf("TN divergence heal: not merging %d into %d, it holds a moderator role", discard, keep)
+		return candidates
+	}
+
 	if err := MergeUsersTx(db, discard, keep, keep); err != nil {
 		log.Printf("TN divergence heal: merging twin %d into %d failed: %v", discard, keep, err)
 		return candidates
@@ -107,6 +117,20 @@ func HealTNDivergence(db *gorm.DB, candidates []uint64) []uint64 {
 
 	log.Printf("TN divergence heal: merged twin account %d into %d", discard, keep)
 	return []uint64{keep}
+}
+
+// holdsModeratorStanding reports whether the user is a moderator, Support or Admin, or moderates
+// or owns any community.
+func holdsModeratorStanding(db *gorm.DB, userid uint64) bool {
+	var systemrole string
+	db.Table("users").Select("systemrole").Where("id = ?", userid).Scan(&systemrole)
+	if systemrole == utils.SYSTEMROLE_MODERATOR || systemrole == utils.SYSTEMROLE_SUPPORT || systemrole == utils.SYSTEMROLE_ADMIN {
+		return true
+	}
+
+	var roles int64
+	db.Table("memberships").Where("userid = ? AND role IN (?, ?)", userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&roles)
+	return roles > 0
 }
 
 // FindPartnerOwnerForMessage returns the fromuser of a message when its fromaddr

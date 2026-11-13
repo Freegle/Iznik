@@ -96,6 +96,17 @@ describe('freegleIt conversion events', () => {
     )
   })
 
+  it('fires nothing and does not navigate when nothing was posted', async () => {
+    // submit() answers [] when another submit is already running or there is no draft.
+    mockSubmitResults = () => Promise.resolve([])
+    const router = makeRouter()
+
+    await freegleIt('Offer', router)
+
+    expect(mockTrackConversion).not.toHaveBeenCalled()
+    expect(router.push).not.toHaveBeenCalled()
+  })
+
   it('fires nothing when submit fails', async () => {
     mockSubmitResults = () => Promise.reject(new Error('server error'))
 

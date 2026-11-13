@@ -77,6 +77,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Electricals and reuse reporting | [./reference/electricals.md](./reference/electricals.md) |
 | Impact figures on the stats pages (benefit, fly-tipping, inflation) | [./reference/impact-figures.md](./reference/impact-figures.md) |
 | Item desirability scoring | [./reference/item-desirability.md](./reference/item-desirability.md) |
+| The daily digest: which posts a member is sent | [./reference/daily-digest.md](./reference/daily-digest.md) |
 | Matched-posts email | [./reference/matched-posts-email.md](./reference/matched-posts-email.md) |
 | New posts from people you have chatted with (experiment) | [./reference/familiar-posts-email.md](./reference/familiar-posts-email.md) |
 | AI item images | [./reference/ai-item-images.md](./reference/ai-item-images.md) |
@@ -99,6 +100,7 @@ Read these directly; the pages above link into them rather than copy them:
 | CookieYes watchdog (cookie banner checks) | [./reference/cookieyes-watchdog.md](./reference/cookieyes-watchdog.md) |
 | Google housekeeping (Search Console and Ads weekly checks) | [./reference/google-housekeeping.md](./reference/google-housekeeping.md) |
 | Chat prompts (Freegle's tappable questions) | [./reference/chat-prompts.md](./reference/chat-prompts.md) |
+| Chat notification emails (what is mailed, and late releases) | [./reference/chat-email-notifications.md](./reference/chat-email-notifications.md) |
 | Google Play technical quality (DEX, memory, zero-tap) | [./reference/play-technical-quality.md](./reference/play-technical-quality.md) |
 | Cloud builders for a token window (Katapult VMs, broker burn pool) | [./reference/cloud-builders.md](./reference/cloud-builders.md) |
 | Improving Freegle from what people do and what they care about (the overview of idea farming and experiments) | [./ux-idea-farming-and-experiments.md](./ux-idea-farming-and-experiments.md) |

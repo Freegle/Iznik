@@ -3,6 +3,7 @@ package test
 import (
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -11,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRelevantOffValidKey: a correct Link key turns off relevantallowed and the
-// GET returns a friendly 200 confirmation page.
+// TestRelevantOffValidKey: a correct Link key turns off relevantallowed when the confirm form
+// POSTs it back, and the member sees a page saying it is done.
 func TestRelevantOffValidKey(t *testing.T) {
 	prefix := uniquePrefix("relevantoff")
 	userID := CreateTestUser(t, prefix, "Member") // role-literal-ok: not a system role, see #2023
@@ -23,9 +24,12 @@ func TestRelevantOffValidKey(t *testing.T) {
 		userID, utils.LOGIN_TYPE_LINK, fmt.Sprintf("%v", userID), key)
 	defer db.Exec("DELETE FROM users_logins WHERE userid = ? AND credentials = ?", userID, key)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET",
-		fmt.Sprintf("/api/user/relevantoff?u=%v&k=%s", userID, key), nil), 60000)
+	form := httptest.NewRequest("POST", "/api/user/relevantoff",
+		strings.NewReader(fmt.Sprintf("u=%v&k=%s&t=relevant&confirm=1", userID, key)))
+	form.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, _ := getApp().Test(form, 60000)
 	require.Equal(t, 200, resp.StatusCode)
+	assert.Contains(t, string(rsp(resp)), "Done")
 
 	var ra int
 	db.Raw("SELECT relevantallowed FROM users WHERE id = ?", userID).Scan(&ra)
@@ -55,4 +59,32 @@ func TestRelevantOffBadKey(t *testing.T) {
 func TestRelevantOffMissingParams(t *testing.T) {
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/relevantoff", nil), 60000)
 	require.Equal(t, 400, resp.StatusCode)
+}
+
+// A GET only asks. Link scanners and mail proxies follow the footer link with nobody having clicked,
+// so it must not opt the member out; the confirm form's POST does that.
+func TestRelevantOffGetOnlyAsksAndPostApplies(t *testing.T) {
+	prefix := uniquePrefix("relevantoffget")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	db := database.DBConn
+	db.Exec("UPDATE users SET relevantallowed = 1 WHERE id = ?", userID)
+	key := fmt.Sprintf("relkey%v", userID)
+	db.Exec("INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, ?, ?, ?)",
+		userID, utils.LOGIN_TYPE_LINK, fmt.Sprintf("%v", userID), key)
+	defer db.Exec("DELETE FROM users_logins WHERE userid = ? AND credentials = ?", userID, key)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/relevantoff?u=%v&k=%s", userID, key), nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+	assert.Contains(t, string(rsp(resp)), "<form", "the page asks before doing anything")
+
+	var ra int
+	db.Raw("SELECT relevantallowed FROM users WHERE id = ?", userID).Scan(&ra)
+	assert.Equal(t, 1, ra, "a GET must not turn relevantallowed off")
+
+	resp, _ = getApp().Test(httptest.NewRequest("POST",
+		fmt.Sprintf("/api/user/relevantoff?u=%v&k=%s", userID, key), nil), 60000)
+	require.Equal(t, 200, resp.StatusCode)
+	db.Raw("SELECT relevantallowed FROM users WHERE id = ?", userID).Scan(&ra)
+	assert.Equal(t, 0, ra, "a POST turns relevantallowed off")
 }

@@ -10,6 +10,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -1808,5 +1809,66 @@ class PushNotificationServiceTest extends TestCase
         ] as $error) {
             $this->assertFalse(PushNotificationService::isDeadTokenError($error), "'$error' must NOT delete the subscription");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // consumerUnreadCounts() chat visibility
+    //
+    // The app-icon badge and the "You have N new messages" push must count what the chat list counts
+    // (iznik-server-go/chat/chatroom.go, the unseen column): a message the member cannot open can never be
+    // marked seen, so counting it leaves the badge stuck.
+    // -----------------------------------------------------------------------
+
+    /**
+     * @return array<string, array{0: array<string, mixed>}>
+     */
+    public static function chatMessagesTheMemberCannotSee(): array
+    {
+        return [
+            'held for review' => [['reviewrequired' => 1]],
+            'rejected' => [['reviewrejected' => 1]],
+            'not processed' => [['processingsuccessful' => 0]],
+            'older than the chat list window' => [['date' => '-40 days']],
+        ];
+    }
+
+    /**
+     * Gives a member a roster row that has seen nothing, and the other member a message in the chat.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    private function unseenChatFor(\App\Models\User $member, array $attributes): void
+    {
+        $other = $this->createTestUser();
+        $room = $this->createTestChatRoom($member, $other, ['latestmessage' => now()]);
+
+        DB::table('chat_roster')->insert(['chatid' => $room->id, 'userid' => $member->id, 'lastmsgseen' => 0]);
+
+        if (isset($attributes['date'])) {
+            $attributes['date'] = now()->modify($attributes['date']);
+        }
+
+        $this->createTestChatMessage($room, $other, $attributes);
+    }
+
+    public function test_consumerUnreadCounts_counts_a_visible_unseen_chat_message(): void
+    {
+        $member = $this->createTestUser();
+        $this->unseenChatFor($member, []);
+
+        [$chatcount] = $this->service->consumerUnreadCounts($member->id);
+
+        $this->assertEquals(1, $chatcount, 'a message the member can open counts, so the cases below are not vacuous');
+    }
+
+    #[DataProvider('chatMessagesTheMemberCannotSee')]
+    public function test_consumerUnreadCounts_does_not_count_a_chat_message_the_member_cannot_see(array $attributes): void
+    {
+        $member = $this->createTestUser();
+        $this->unseenChatFor($member, $attributes);
+
+        [$chatcount] = $this->service->consumerUnreadCounts($member->id);
+
+        $this->assertEquals(0, $chatcount, 'a message the member cannot open must not raise the badge');
     }
 }

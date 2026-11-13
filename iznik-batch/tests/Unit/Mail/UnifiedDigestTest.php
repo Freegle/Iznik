@@ -1643,4 +1643,88 @@ class UnifiedDigestTest extends TestCase
                 "{$key} must use the compact /e/d/i/ tracking route");
         }
     }
+
+    public function test_subject_teaser_does_not_cut_an_item_name_in_the_middle_of_a_character(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        // 21 ASCII characters then a two-byte one: byte 22, where the name is cut, is half of it.
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Set of wooden chairs Épinal style (London)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $subject = $mail->envelope()->subject;
+
+        $this->assertTrue(mb_check_encoding($subject, 'UTF-8'), 'the subject must stay valid UTF-8');
+        $this->assertStringContainsString('Set of wooden chairs É...', $subject, 'the name is cut at 22 characters, not 22 bytes');
+    }
+
+    private function spooledDailyDigestOfOnlyTheRecipientsOwnPost(): array
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $own = $this->createTestMessage($user, $group, [
+            'subject' => 'OFFER: My own lamp (London)',
+        ]);
+        $posts = collect([['message' => $own, 'postedToGroups' => [$group->id]]]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        return $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com');
+    }
+
+    public function test_html_has_no_reply_button_on_the_recipients_own_post_in_either_copy(): void
+    {
+        $html = $this->spooledDailyDigestOfOnlyTheRecipientsOwnPost()['html'] ?? '';
+
+        $this->assertStringContainsString('My own lamp', $html, 'the card rendered');
+        // The in-column copy and the full-width copy for phones both omit it: you cannot reply to
+        // your own post. Nothing else in a digest of one own post is a Reply button.
+        $this->assertStringNotContainsString('>Reply</a>', $html);
+    }
+
+    public function test_text_part_has_no_reply_line_on_the_recipients_own_post(): void
+    {
+        $text = $this->spooledDailyDigestOfOnlyTheRecipientsOwnPost()['text'] ?? '';
+
+        $this->assertStringContainsString('My own lamp', $text, 'the card rendered');
+        $this->assertStringNotContainsString('Reply:', $text);
+    }
+
+    public function test_text_part_prints_apostrophes_and_ampersands_literally_in_came_and_went(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $poster = $this->createTestUser();
+
+        $live = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+        $gone = $this->createTestMessage($poster, $group, ['subject' => "OFFER: Kid's bike & Tom's helmet (London)"]);
+        $gone->load(['groups', 'attachments']);
+
+        $mail = new UnifiedDigest(
+            $user,
+            collect([['message' => $live, 'postedToGroups' => [$group->id]]]),
+            UnifiedDigestService::MODE_DAILY,
+            collect(),
+            collect([$gone])
+        );
+        $text = $this->spoolAndLoad($mail, $user->email_preferred ?? 'r@example.com')['text'] ?? '';
+
+        $this->assertStringContainsString("Kid's bike & Tom's helmet", $text);
+        $this->assertStringNotContainsString('&#039;', $text);
+        $this->assertStringNotContainsString('bike &amp;', $text, 'the ampersand in the item name is not escaped');
+    }
 }

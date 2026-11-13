@@ -87,3 +87,42 @@ func TestPatchMessageAttachmentsOnlyForeignPhotoKeepsOwnPhotos(t *testing.T) {
 	db.Raw("SELECT COALESCE(msgid, 0) FROM messages_attachments WHERE id = ?", attB).Scan(&foreign)
 	assert.Equal(t, msgB, foreign, "the foreign photo stays on its own post")
 }
+
+// A new post may only link photos that are unattached. Naming another post's photo in the
+// attachments list of PUT /message must leave that photo where it is.
+func TestPutMessageAttachmentsCannotTakeAnotherPostsPhoto(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("put_att_own")
+
+	groupID := CreateTestGroup(t, prefix)
+	userA := CreateTestUser(t, prefix+"_a", utils.SYSTEMROLE_USER)
+	userB := CreateTestUser(t, prefix+"_b", utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userA, groupID, utils.ROLE_MEMBER)
+	CreateTestMembership(t, userB, groupID, utils.ROLE_MEMBER)
+	_, tokenA := CreateTestSession(t, userA)
+
+	msgB := CreateTestMessage(t, userB, groupID, "OFFER: put att own B (Test)", 51.5, -1.0)
+	attB := CreateTestAttachment(t, msgB)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE id = ?", attB)
+	})
+
+	body := map[string]interface{}{
+		"type":        "Wanted",
+		"item":        "Test ladder " + prefix,
+		"collection":  "Pending",
+		"groupid":     groupID,
+		"attachments": []uint64{attB},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+tokenA, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var owner uint64
+	db.Raw("SELECT COALESCE(msgid, 0) FROM messages_attachments WHERE id = ?", attB).Scan(&owner)
+	assert.Equal(t, msgB, owner, "another member's photo must stay on their own post")
+}

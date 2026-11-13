@@ -2128,6 +2128,31 @@ class IncomingMailService
         ?string $prependSubject = null,
         bool $skipStripQuoted = false
     ): ?int {
+        // The same email can be delivered twice (a duplicate webhook, a Postfix retry), carrying the same Message-ID.
+        // It is one reply, so an email already stored for a chat message from this sender in this chat is not made
+        // into a second message or a second set of photos. The write host is read: the first delivery may have been
+        // written a moment ago by a sibling process.
+        if ($email->messageId !== null) {
+            $alreadyDelivered = DB::table('chat_messages_byemail as cmb')
+                ->useWritePdo()
+                ->join('messages as em', 'em.id', '=', 'cmb.msgid')
+                ->join('chat_messages as cm', 'cm.id', '=', 'cmb.chatmsgid')
+                ->where('em.messageid', $email->messageId)
+                ->where('cm.chatid', $chat->id)
+                ->where('cm.userid', $userId)
+                ->exists();
+
+            if ($alreadyDelivered) {
+                Log::info('Chat message from email already created, ignoring the repeat', [
+                    'chat_id' => $chat->id,
+                    'user_id' => $userId,
+                    'message_id' => $email->messageId,
+                ]);
+
+                return null;
+            }
+        }
+
         // Get body text, converting HTML to plain text if no text part exists.
         // This handles email clients like Apple Mail that may send HTML-only emails.
         $body = $email->textBody;

@@ -107,6 +107,7 @@ const POSTING_STATUS_DEFAULT = "DEFAULT"
 const SPAM_COLLECTION_SPAMMER = "Spammer"
 const SPAM_COLLECTION_PENDING_ADD = "PendingAdd"
 const SPAM_COLLECTION_PENDING_REMOVE = "PendingRemove"
+const SPAM_COLLECTION_WHITELISTED = "Whitelisted"
 
 // `\\b` is the regex engine's word-boundary. A single `\b` in a normal Go
 // string literal is the backspace character (0x08), which would never match

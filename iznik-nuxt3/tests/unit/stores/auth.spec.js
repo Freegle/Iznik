@@ -14,7 +14,7 @@ import { setActivePinia, createPinia } from 'pinia'
 // ~/stores/auth → tests/unit/mocks/auth-store.js (for component tests).
 // This test needs the real store implementation.
 import { useAuthStore } from '~/stores/auth.js'
-import { abortAllPendingRequests } from '~/api/BaseAPI'
+import { abortAllPendingRequests, exitLogoutMode } from '~/api/BaseAPI'
 import { flowCalls, resetFlowCalls } from '../helpers/flowTelemetryMock'
 import { ROLE_MEMBER, ROLE_OWNER } from '~/constants'
 
@@ -544,6 +544,14 @@ describe('auth store', () => {
       expect(store.loggedInEver).toBe(true)
     })
 
+    it('leaves logout mode when the sign-out call fails, so later requests are not aborted', async () => {
+      mockLogout.mockRejectedValueOnce(new Error('network down'))
+
+      await expect(store.logout()).rejects.toThrow('network down')
+
+      expect(exitLogoutMode).toHaveBeenCalled()
+    })
+
     it('clears the transferable session, so a device restore does not sign us back in', async () => {
       mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
       mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
@@ -714,6 +722,21 @@ describe('auth store', () => {
 
       expect(store.auth.jwt).toBe('valid-jwt')
       expect(store.user.id).toBe(42)
+    })
+  })
+
+  // The server answers a refused validation key with HTTP 200 and ret 11, so the
+  // confirm-email page only sees a failure if saveAndGet turns that into a rejection.
+  describe('saveAndGet with a validation key the server refuses', () => {
+    it('rejects when PATCH /session answers ret 11', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockSave.mockResolvedValue({
+        ret: 11,
+        status: 'Validation key not found',
+      })
+      mockFetchv2.mockResolvedValue({ me: { id: 42 }, groups: [] })
+
+      await expect(store.saveAndGet({ key: 'made-up-key' })).rejects.toThrow()
     })
   })
 

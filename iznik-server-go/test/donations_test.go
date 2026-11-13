@@ -452,3 +452,26 @@ func TestAddDonationPayerFallsBackToAliasWhenNoRealEmail(t *testing.T) {
 	assert.Equal(t, aliasOnly, payer,
 		"Payer should fall back to the alias when no external email exists")
 }
+
+func addDonationRows(userid uint64) int64 {
+	var count int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ?", userid).Scan(&count)
+	return count
+}
+
+// A negative amount is not zero, so adding one needs the GiftAid permission like any other
+// amount. Without it a member could add a donation row against any other member.
+func TestAddDonationNegativeAmountNeedsPermission(t *testing.T) {
+	prefix := uniquePrefix("AddDonNegative")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, userID)
+	targetUserID := CreateTestUser(t, prefix+"Target", utils.SYSTEMROLE_USER)
+
+	body := fmt.Sprintf(`{"userid":%d,"amount":-5.00,"date":"2026-01-15 12:00:00"}`, targetUserID)
+	req := httptest.NewRequest("PUT", "/api/donations?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+	assert.Equal(t, int64(0), addDonationRows(targetUserID), "no donation may be added without the permission")
+}

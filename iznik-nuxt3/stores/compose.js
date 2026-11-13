@@ -318,7 +318,8 @@ export const useComposeStore = defineStore('compose', {
         attachments,
       }
       if (options.deadline) {
-        data.deadline = options.deadline
+        // A deferral stored before login may hold a full datetime; the column is a DATE.
+        data.deadline = String(options.deadline).substring(0, 10)
       }
       if (options.deliverypossible !== undefined) {
         data.deliverypossible = options.deliverypossible
@@ -407,7 +408,8 @@ export const useComposeStore = defineStore('compose', {
       }
       const options = {}
       if (message.deadline) {
-        options.deadline = new Date(message.deadline).toISOString()
+        // messages.deadline is a DATE column, so send YYYY-MM-DD as the normal submit does.
+        options.deadline = String(message.deadline).substring(0, 10)
       }
       if (message.deliveryPossible !== undefined) {
         options.deliverypossible = message.deliveryPossible
@@ -451,7 +453,14 @@ export const useComposeStore = defineStore('compose', {
         // do NOT clear the draft on failure, so the user can retry rather than lose it).
         // Clear just the submitted type so a parallel draft of the other type survives,
         // then land on My Posts.
-        this.clearMessagesOfType(pending.message?.type)
+        if (pending.message?.id !== undefined) {
+          // deferSubmit captured one draft, so only that one is posted and only that one goes.
+          this.messages = this.messages.filter(
+            (m) => m && !m.submitted && m.id !== pending.message.id
+          )
+        } else {
+          this.clearMessagesOfType(pending.message?.type)
+        }
         if (ret?.id) {
           navigateTo({ name: 'myposts' })
         }
@@ -938,23 +947,19 @@ export const useComposeStore = defineStore('compose', {
         // at the new one.  I'm looking at you, Craig.
         //
         // Also remove messages for other users.
-        for (let id = 0; id < this.messages.length; id++) {
-          const m = this.messages[id]
+        const myid = useAuthStore().user?.id
 
+        this.messages = this.messages.filter((m) => {
           if (!m.savedAt) {
             // This can happen for legacy stores.
-            this.messages[id].savedAt = Date.now()
+            m.savedAt = Date.now()
           } else if (Date.now() - m.savedAt > 7 * 24 * 60 * 60 * 1000) {
-            this.deleteMessage(id)
+            return false
           }
 
-          const myid = useAuthStore().user?.id
-
-          if (m.savedBy && (!myid || m.savedBy !== myid)) {
-            // This is probably not ours.
-            this.deleteMessage(id)
-          }
-        }
+          // A message saved by someone else is probably not ours.
+          return !(m.savedBy && (!myid || m.savedBy !== myid))
+        })
       }
     },
     clearMessages() {

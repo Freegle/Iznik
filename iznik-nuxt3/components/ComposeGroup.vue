@@ -97,12 +97,14 @@ onMounted(async () => {
   // Refetch the postcode so its group list is fresh (groups can merge), then lock the origin
   // group to the containing-or-closest community, overriding any pre-set group.
   if (postcode.value) {
+    const chosen = postcode.value
     try {
-      const location = await api(runtimeConfig).location.typeahead(
-        postcode.value.name
-      )
-      if (location?.[0]) {
-        composeStore.setPostcode(location[0])
+      const location = await api(runtimeConfig).location.typeahead(chosen.name)
+      // Refresh the postcode the member chose, not whichever one matches the name first, and
+      // not if they have picked another since the request went out.
+      const fresh = location?.find((l) => l.id === chosen.id)
+      if (fresh && composeStore.postcode?.id === chosen.id) {
+        composeStore.setPostcode(fresh)
       }
     } catch (e) {
       console.error('Failed to refetch postcode', e)

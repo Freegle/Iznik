@@ -86,29 +86,18 @@ type LokiQueryResponse struct {
 // RequireModeratorMiddleware checks that the user has at least Mod role on some group.
 func RequireModeratorMiddleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		userID, sessionID, _ := user.GetJWTFromRequest(c)
+		// The member is recognised as on every other route (JWT or Authorization2) and must have a
+		// live session.
+		userID, systemrole := user.SessionUserRole(c)
 		if userID == 0 {
-			return fiber.NewError(fiber.StatusUnauthorized, "Authentication required")
+			return fiber.NewError(fiber.StatusUnauthorized, "Invalid session")
 		}
 
 		db := database.DBConn
-
-		// Check user exists and session is valid.
 		var userInfo struct {
-			ID         uint64 `json:"id"`
-			Systemrole string `json:"systemrole"`
+			Systemrole string
 		}
-
-		db.Table("sessions").
-			Select("users.id, users.systemrole").
-			Joins("INNER JOIN users ON users.id = sessions.userid").
-			Where("sessions.id = ? AND users.id = ?", sessionID, userID).
-			Limit(1).
-			Scan(&userInfo)
-
-		if userInfo.ID == 0 {
-			return fiber.NewError(fiber.StatusUnauthorized, "Invalid session")
-		}
+		userInfo.Systemrole = systemrole
 
 		// Admin and Support can access everything.
 		if userInfo.Systemrole == utils.SYSTEMROLE_SUPPORT || userInfo.Systemrole == utils.SYSTEMROLE_ADMIN {

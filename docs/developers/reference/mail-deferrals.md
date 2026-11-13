@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-11
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Mail/Deferrals/*.php
@@ -294,7 +294,10 @@ point - so the backlog policy is per type:
 | Chat notifications | One "you have unread messages" summary. Never replayed individually - a stack of days-old notifications arriving at once is its own harm, and is the behaviour that gets a sender deferred in the first place. |
 
 The chat summary counts what arrived while we were holding this member's mail
-and is still unread, in two halves that are read in different places: chats
+and is still unread. It counts only what the member can open and read: not held for review or
+unprocessed, not deleted, not from a deleted sender, not held by rippling, and not in a chat they
+blocked or closed. Those are the notifier's rules, so the figure matches what the site shows. It is
+split in two halves that are read in different places: chats
 with other members (the member site) and a moderator's chats on the
 volunteers' side of their groups, plus mod-to-mod chats (ModTools - the
 member site does not list those at all). Each half gets its own button and a

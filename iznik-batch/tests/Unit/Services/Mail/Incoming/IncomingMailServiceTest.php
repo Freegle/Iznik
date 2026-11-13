@@ -4652,6 +4652,60 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(1, $count, 'should not have written a duplicate messages row');
     }
 
+    /**
+     * The same email can be delivered twice (a duplicate webhook, a Postfix retry), and it carries the same Message-ID.
+     * It is one reply, so it gives one chat message.
+     */
+    public function test_a_reply_to_a_post_delivered_twice_gives_one_chat_message(): void
+    {
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
+        $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        $replierEmail = $replier->emails->first()->email;
+        $to = "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org";
+        $rawEmail = $this->createMinimalEmail([
+            'From' => $replierEmail,
+            'To' => $to,
+            'Subject' => 'Re: '.$message->subject,
+        ], 'Is this still available?');
+
+        $this->service->route($this->parser->parse($rawEmail, $replierEmail, $to));
+        $this->service->route($this->parser->parse($rawEmail, $replierEmail, $to));
+
+        $this->assertEquals(
+            1,
+            DB::table('chat_messages')->where('userid', $replier->id)->where('type', ChatMessage::TYPE_INTERESTED)->count(),
+            'one email is one reply, however many times it is delivered'
+        );
+    }
+
+    public function test_a_reply_to_a_notification_delivered_twice_gives_one_chat_message(): void
+    {
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+
+        $user1Email = $user1->emails->first()->email;
+        $to = "notify-{$chat->id}-{$user1->id}@users.ilovefreegle.org";
+        $rawEmail = $this->createMinimalEmail([
+            'From' => $user1Email,
+            'To' => $to,
+            'Subject' => 'Re: About the item',
+        ], 'Thanks for the reply');
+
+        $this->service->route($this->parser->parse($rawEmail, $user1Email, $to));
+        $this->service->route($this->parser->parse($rawEmail, $user1Email, $to));
+
+        $this->assertEquals(
+            1,
+            DB::table('chat_messages')->where('chatid', $chat->id)->where('userid', $user1->id)->count(),
+            'one email is one message, however many times it is delivered'
+        );
+    }
+
     public function test_notify_reply_stores_raw_email_in_messages_and_chat_messages_byemail(): void
     {
         $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
