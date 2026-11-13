@@ -7,7 +7,6 @@ use App\Database\Expressions\JsonUnquote;
 use App\Database\Expressions\Point;
 use App\Database\Expressions\StSrid;
 use App\Database\Expressions\Value;
-use App\Database\Sql;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
