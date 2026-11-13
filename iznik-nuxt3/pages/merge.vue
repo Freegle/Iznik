@@ -24,6 +24,13 @@
               <strong>{{ merge.user2.name }} <span v-if="merge.user2.email">({{ merge.user2.email }})</span></strong> You have signed in to this with {{ u2logins }}.
           </li>
         </ul>
+        <NoticeMessage v-if="failed" variant="danger" class="mb-2">
+          <p>
+            Sorry, that didn't work, and nothing has been changed. Please try
+            again, or contact our support volunteers at
+            <SupportLink />.
+          </p>
+        </NoticeMessage>
         <div v-if="rejected">
           <NoticeMessage variant="info" class="mb-2">
             Ok, we'll keep them separate. Thanks for letting us know.
@@ -58,7 +65,7 @@
             </option>
           </b-form-select>
           <SpinButton
-            v-if="preferred"
+            v-if="preferred && !mergeComplete"
             class="mt-2"
             variant="primary"
             size="lg"
@@ -120,6 +127,7 @@ const merging = ref(false)
 const rejected = ref(false)
 const preferred = ref(null)
 const mergeComplete = ref(false)
+const failed = ref(false)
 
 // Initial fetch of merge data
 try {
@@ -172,29 +180,42 @@ function mergeit() {
   merging.value = true
 }
 
-function reject() {
-  rejected.value = true
+async function reject() {
+  failed.value = false
 
-  api.merge.reject({
-    id,
-    uid,
-    user1: merge.value.user1.id,
-    user2: merge.value.user2.id,
-  })
+  try {
+    await api.merge.reject({
+      id,
+      uid,
+      user1: merge.value.user1.id,
+      user2: merge.value.user2.id,
+    })
+
+    rejected.value = true
+  } catch (e) {
+    failed.value = true
+  }
 }
 
 async function combine(callback) {
-  await api.merge.accept({
-    id,
-    uid,
-    user1: preferred.value,
-    user2:
-      preferred.value === merge.value.user1.id
-        ? merge.value.user2.id
-        : merge.value.user1.id,
-  })
+  failed.value = false
 
-  mergeComplete.value = true
+  try {
+    await api.merge.accept({
+      id,
+      uid,
+      user1: preferred.value,
+      user2:
+        preferred.value === merge.value.user1.id
+          ? merge.value.user2.id
+          : merge.value.user1.id,
+    })
+
+    mergeComplete.value = true
+  } catch (e) {
+    failed.value = true
+  }
+
   callback()
 }
 </script>

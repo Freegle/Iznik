@@ -6,6 +6,11 @@ covers:
   - iznik-server-go/merge/merge.go
   - iznik-server-go/sso/relink.go
   - iznik-server-go/test/user_merge_test.go
+  - iznik-batch/app/Console/Commands/Merge/CompleteAcceptedMergesCommand.php
+  - iznik-batch/app/Console/Commands/Merge/RemindMergeOffersCommand.php
+  - iznik-batch/app/Services/Merge/MergeOfferMailer.php
+  - iznik-batch/app/Services/Merge/MergeOfferRules.php
+  - scripts/merge-accepts-from-loki.mjs
   - iznik-batch/app/Services/ChatMergedRoomRepairService.php
   - iznik-batch/app/Console/Commands/Chat/RepairMergedRoomsCommand.php
 ---
@@ -33,11 +38,59 @@ The same rules apply when a moderator offers a merge (`CreateMerge`, `PUT /api/m
 accepting the offer merges the accounts. `MayMergeAccounts` in `iznik-server-go/user/user.go`
 holds them for both paths.
 
+The `/merge` page sends the offer's `id` as a JSON string, because it comes from the link's query
+string. `PostMerge` reads `id`, `user1` and `user2` as `utils.FlexUint64`, so a string or a
+number both work. Do not type them as plain integers: the whole body then fails to parse, the
+request is refused as missing parameters, and neither Accept nor Reject is recorded. That was the
+case from April to November 2026. Accepting also refuses a TrashNothing account on either side and
+a member who has set `canmerge` to false.
+
 All four call the same function, `MergeUsersTx` in `iznik-server-go/user/user.go`. Its first
 argument is the account to discard and its second the account to keep. V1 had a single
 `User::merge()`, and `MergeUsersTx` is its port. **Do not write a second merge path.** The Go
 API had a cut-down one for the email-verify case until October 2026, and it is how chats went
 missing (see below).
+
+## Finishing offers that were refused (April to November 2026)
+
+From about 2026-04-02 until the fix, the `/merge` page's Accept and Reject were refused by the API
+(see above), so no offer made in that time was answered. Two batch commands deal with it. Both are
+dry runs unless given `--apply`.
+
+- `merges:complete-accepted --file=FILE` finishes offers the member did try to accept. The file has
+  one line per offer, "offer id,keep user id,other user id", where "keep" is the account the member
+  chose. `scripts/merge-accepts-from-loki.mjs` writes it from the production logs (the refused
+  Accepts, last attempt per offer). Loki keeps 7 days, so run it soon after the deploy. With
+  `--apply` the command posts the Accept to the Go API's merge endpoint
+  (`APIV2_MERGE_URL`, default `http://apiv2:8192/api/merge`), so the merge is the same
+  `MergeUsersTx` merge, not the PHP copy. It refuses, with a reason, an offer that does not exist,
+  was answered, does not match the two accounts, has a missing account, involves a TrashNothing
+  account or a member who opted out of merging, and carries on. A second run reports "already
+  accepted".
+- `merges:remind` re-sends the offer email (the same mailer, `MergeOfferMailer`, with a plain
+  opening line saying the earlier link did not work) for unanswered offers since `--since`
+  (default 2026-04-02), where both accounts exist, neither is a TrashNothing account, neither has
+  opted out of merging or turned email off or is bouncing. It records `merges.reminded` before it
+  sends, so an offer is reminded at most once. The dry run prints counts only.
+
+The input file and the logs hold member ids: do not commit them.
+
+Deploy, in this order:
+
+1. Run the SQL in `iznik-batch/database/migrations/2026_11_12_000001_add_reminded_to_merges_migration.sql`
+   on production before the batch code goes out.
+2. Deploy the Go API, the frontend and batch.
+3. Set `APIV2_MERGE_URL` in the batch-prod environment to the address at which batch-prod reaches the Go
+   API's `/api/merge` on its internal port (the compose default `apiv2:8192` is not reachable from
+   batch-prod). Then, just after the deploy, while the 7 days of logs still hold the refused Accepts, on the host that
+   can reach Loki: `LOKI_URL=<loki> node scripts/merge-accepts-from-loki.mjs > accepts.txt`, then
+   `docker cp accepts.txt batch-prod:/tmp/accepts.txt`, then
+   `docker exec batch-prod php artisan merges:complete-accepted --file=/tmp/accepts.txt` (dry run),
+   read it, then the same with `--apply`. Delete `accepts.txt` afterwards.
+4. Later, `docker exec batch-prod php artisan merges:remind` (dry run, counts), then with
+   `--apply` (use `--limit=50` first if you want to see a few go).
+
+Run step 3 before step 4: an offer completed in step 3 is answered, so it is not reminded.
 
 ## What a merge does
 
