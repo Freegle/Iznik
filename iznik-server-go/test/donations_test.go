@@ -45,7 +45,7 @@ func TestGetDonationsCountsThisMonthOnly(t *testing.T) {
 	prefix := uniquePrefix("DonationsRaised")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
-	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
 	defer db.Exec("DELETE FROM users_donations WHERE userid = ?", userID)
 
 	// No timestamp given: the column default is the current time, on either engine.

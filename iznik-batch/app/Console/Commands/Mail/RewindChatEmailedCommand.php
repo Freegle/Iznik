@@ -103,6 +103,8 @@ class RewindChatEmailedCommand extends Command
                  COUNT(*) AS notifications";
 
         $rows = DB::table('email_tracking')
+            // keep-raw: the domain of an address and a number read out of JSON, grouped; each engine has
+            // its own functions for both, chosen above.
             ->selectRaw($select)
             ->where('email_type', 'ChatNotification')
             ->whereBetween('sent_at', [$start, $end])

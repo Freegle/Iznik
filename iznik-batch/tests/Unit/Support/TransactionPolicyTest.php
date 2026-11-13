@@ -3,6 +3,7 @@
 namespace Tests\Unit\Support;
 
 use App\Database\Sql;
+use App\Models\Membership;
 use App\Support\TransactionPolicy;
 use Illuminate\Database\DeadlockException;
 use Illuminate\Database\QueryException;
@@ -197,7 +198,7 @@ class TransactionPolicyTest extends TestCase
     {
         $pdo = new PDOException('SQLSTATE[40P01]: Deadlock detected: 7 ERROR:  deadlock detected', 0);
         $pdo->errorInfo = ['40P01', 7, "ERROR:  deadlock detected\nDETAIL:  Process 105618 waits for ShareLock on transaction 481478; blocked by process 105601.\nHINT:  See server log for query details.\nCONTEXT:  while updating tuple (0,1) in relation \"memberships\""];
-        $e = new QueryException('pgsql', 'update "memberships" set "role" = ? where "id" = ?', ['Member', 1], $pdo);
+        $e = new QueryException('pgsql', 'update "memberships" set "role" = ? where "id" = ?', [Membership::ROLE_MEMBER, 1], $pdo);
 
         $this->assertTrue(TransactionPolicy::isDeadlock($e));
     }
@@ -206,7 +207,7 @@ class TransactionPolicyTest extends TestCase
     {
         $pdo = new PDOException('SQLSTATE[55P03]: Lock not available: 7 ERROR:  canceling statement due to lock timeout', 0);
         $pdo->errorInfo = ['55P03', 7, "ERROR:  canceling statement due to lock timeout\nCONTEXT:  while updating tuple (0,1) in relation \"memberships\""];
-        $e = new QueryException('pgsql', 'update "memberships" set "role" = ? where "id" = ?', ['Member', 1], $pdo);
+        $e = new QueryException('pgsql', 'update "memberships" set "role" = ? where "id" = ?', [Membership::ROLE_MEMBER, 1], $pdo);
 
         $this->assertTrue(TransactionPolicy::isDeadlock($e));
     }
@@ -215,7 +216,7 @@ class TransactionPolicyTest extends TestCase
     {
         $pdo = new PDOException('SQLSTATE[40001]: Serialization failure: 7 ERROR:  could not serialize access due to concurrent update', 0);
         $pdo->errorInfo = ['40001', 7, 'ERROR:  could not serialize access due to concurrent update'];
-        $e = new QueryException('pgsql', 'update "memberships" set "role" = ? where "id" = ?', ['Member', 1], $pdo);
+        $e = new QueryException('pgsql', 'update "memberships" set "role" = ? where "id" = ?', [Membership::ROLE_MEMBER, 1], $pdo);
 
         $this->assertTrue(TransactionPolicy::isDeadlock($e));
     }
