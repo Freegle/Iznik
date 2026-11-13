@@ -2,7 +2,6 @@ package message
 
 import (
 	"encoding/json"
-	"errors"
 	"log"
 	"strconv"
 	"strings"
@@ -11,7 +10,6 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
-	"github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -384,8 +382,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// slow replica is the usual cause and a retry can succeed (Discourse
 		// 10037). ModTools shows "Nothing found" for any failed search and does
 		// not display the body; the message is there for a client that does.
-		var mysqlErr *mysql.MySQLError
-		if errors.As(listErr, &mysqlErr) && mysqlErr.Number == 3024 && subaction != "" && search != "" {
+		if database.IsQueryTimeout(listErr) && subaction != "" && search != "" {
 			log.Printf("ListMessagesMT: %s search exceeded MAX_EXECUTION_TIME (groups=%d search=%q)", subaction, len(groupIDs), search)
 			return fiber.NewError(fiber.StatusBadRequest, "That search took too long. Try a more specific term, or choose a community.")
 		}

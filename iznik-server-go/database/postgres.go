@@ -77,11 +77,11 @@ func newPostgresFailoverDialector(replicaDSN, sourceDSN string) gorm.Dialector {
 		panic("database: failed to parse source DSN for failover: " + err.Error())
 	}
 	fc := &pgFailoverConnector{
-		primary:    stdlib.GetConnector(*rc),
-		fallback:   stdlib.GetConnector(*sc),
+		primary:    stdlib.GetConnector(*rc, stdlib.OptionAfterConnect(registerLenientTypes)),
+		fallback:   stdlib.GetConnector(*sc, stdlib.OptionAfterConnect(registerLenientTypes)),
 		retryAfter: 30 * time.Second,
 	}
-	return postgres.New(postgres.Config{Conn: sql.OpenDB(fc)})
+	return postgres.New(postgres.Config{Conn: sql.OpenDB(newPgTranslatingConnector(fc))})
 }
 
 type pgFailoverConnector struct {
@@ -132,7 +132,7 @@ func initPostgres() {
 	)
 
 	// Built into a local and published last, for the reason given in InitDatabase.
-	db, err := gorm.Open(postgres.Open(buildPostgresDSN(writeHost)), &gorm.Config{
+	db, err := gorm.Open(newPostgresDialector(buildPostgresDSN(writeHost)), &gorm.Config{
 		Logger: newLogger,
 	})
 	if err != nil {
@@ -167,4 +167,14 @@ func initPostgres() {
 
 	DBConn = db
 	Pool = nil
+}
+
+// newPostgresDialector opens a PostgreSQL connection pool whose statements are translated from MySQL
+// syntax (pgtranslate.go).
+func newPostgresDialector(dsn string) gorm.Dialector {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		panic("database: failed to parse DSN: " + err.Error())
+	}
+	return postgres.New(postgres.Config{Conn: sql.OpenDB(newPgTranslatingConnector(stdlib.GetConnector(*cfg, stdlib.OptionAfterConnect(registerLenientTypes))))})
 }
