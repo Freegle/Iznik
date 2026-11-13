@@ -30,6 +30,9 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv.slice(2))
+// --only <regexp>, or the same text in /tmp/pg-ratchet-only, runs just the big-package tests whose names match: for
+// debugging one failure through the status container, which cannot take the option from its API.
+if (!args.only && fs.existsSync('/tmp/pg-ratchet-only')) args.only = fs.readFileSync('/tmp/pg-ratchet-only', 'utf8').trim()
 if (!args.root || !args.out) {
   console.error('usage: go-suite.mjs --root <dir> --out <dir> [--exec-json <json>] [--chunk N] [--deadline-min N]')
   process.exit(2)
@@ -147,7 +150,7 @@ async function runPackage(pkg, modulePath) {
 }
 
 async function runSmallPackages(pkgs, modulePath) {
-  for (const pkg of pkgs) await runPackage(pkg, modulePath)
+  if (!args.only) for (const pkg of pkgs) await runPackage(pkg, modulePath)
 }
 
 // The big package: compile once, run in chunks, restart after a crash.
@@ -161,7 +164,8 @@ async function runBigPackage(modulePath) {
     return
   }
   const l = await capture(build(dir, [BIN, '-test.list', '.*']), { timeoutMs: 5 * 60000 })
-  const names = l.out.split('\n').map((x) => x.trim()).filter((x) => /^Test\w*$/.test(x))
+  const only = args.only ? new RegExp(args.only) : null
+  const names = l.out.split('\n').map((x) => x.trim()).filter((x) => /^Test\w*$/.test(x) && (!only || only.test(x)))
   if (names.length === 0) {
     record(`${BIG}:[no tests listed]`, 'CRASH')
     note(`the test binary listed no tests (exit ${l.code}):\n${l.out.slice(-3000)}`)

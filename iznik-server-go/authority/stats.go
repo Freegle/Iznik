@@ -92,18 +92,18 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// Query offers and wanteds.
 		for _, msgType := range []string{TypeOffer, TypeWanted} {
 			var stats []struct {
-				PartialPostcode string `gorm:"column:PartialPostcode"`
+				PartialPostcode string `gorm:"column:partialpostcode"`
 				Count           int    `gorm:"column:count"`
 			}
 
 			if err := writer().Table("pc").
-				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
+				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, COUNT(*) as count").
 				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 				Joins("INNER JOIN locations ON messages.locationid = locations.id").
 				Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ?",
 					utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).
-				Group("PartialPostcode").
-				Order("locations.name").
+				Group("partialpostcode").
+				Order("partialpostcode").
 				Scan(&stats).Error; err != nil {
 				return err
 			}
@@ -123,19 +123,19 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// Bulk messages are excluded here; their replies are counted separately below.
 		for _, msgType := range []string{TypeOffer, TypeWanted} {
 			var stats []struct {
-				PartialPostcode string `gorm:"column:PartialPostcode"`
+				PartialPostcode string `gorm:"column:partialpostcode"`
 				Count           int    `gorm:"column:count"`
 			}
 
 			if err := writer().Table("pc").
-				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
+				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, COUNT(*) as count").
 				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 				Joins("INNER JOIN locations ON messages.locationid = locations.id").
 				Joins("INNER JOIN chat_messages cm ON messages.id = cm.refmsgid AND cm.type = ?", utils.CHAT_MESSAGE_INTERESTED).
 				Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ? AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = messages.id)",
 					utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).
-				Group("PartialPostcode").
-				Order("locations.name").
+				Group("partialpostcode").
+				Order("partialpostcode").
 				Scan(&stats).Error; err != nil {
 				return err
 			}
@@ -150,19 +150,19 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// Query replies for bulk messages: structured interest rows.
 		for _, msgType := range []string{TypeOffer, TypeWanted} {
 			var stats []struct {
-				PartialPostcode string `gorm:"column:PartialPostcode"`
+				PartialPostcode string `gorm:"column:partialpostcode"`
 				Count           int    `gorm:"column:count"`
 			}
 
 			if err := writer().Table("pc").
-				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
+				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, COUNT(*) as count").
 				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 				Joins("INNER JOIN locations ON messages.locationid = locations.id").
 				Joins("INNER JOIN messages_bulk_items_interest mbi ON mbi.msgid = messages.id").
 				Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ?",
 					utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).
-				Group("PartialPostcode").
-				Order("locations.name").
+				Group("partialpostcode").
+				Order("partialpostcode").
 				Scan(&stats).Error; err != nil {
 				return err
 			}
@@ -178,19 +178,19 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// interest row exists for that user (free-text replies not via the interest flow).
 		for _, msgType := range []string{TypeOffer, TypeWanted} {
 			var stats []struct {
-				PartialPostcode string `gorm:"column:PartialPostcode"`
+				PartialPostcode string `gorm:"column:partialpostcode"`
 				Count           int    `gorm:"column:count"`
 			}
 
 			if err := writer().Table("pc").
-				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
+				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, COUNT(*) as count").
 				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 				Joins("INNER JOIN locations ON messages.locationid = locations.id").
 				Joins("INNER JOIN chat_messages cm ON messages.id = cm.refmsgid AND cm.type = ?", utils.CHAT_MESSAGE_INTERESTED).
 				Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.type = ? AND messages.arrival BETWEEN ? AND ? AND EXISTS (SELECT 1 FROM messages_bulk_items bi WHERE bi.msgid = messages.id) AND NOT EXISTS ( SELECT 1 FROM messages_bulk_items_interest WHERE msgid = messages.id AND userid = cm.userid )",
 					utils.LOCATION_TYPE_POSTCODE, msgType, startStr, endStr).
-				Group("PartialPostcode").
-				Order("locations.name").
+				Group("partialpostcode").
+				Order("partialpostcode").
 				Scan(&stats).Error; err != nil {
 				return err
 			}
@@ -205,19 +205,19 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// Query outcomes (Taken/Received) for non-bulk messages.
 		// Bulk messages are excluded here; their per-item outcomes are counted separately below.
 		var outcomeStats []struct {
-			PartialPostcode string `gorm:"column:PartialPostcode"`
+			PartialPostcode string `gorm:"column:partialpostcode"`
 			Count           int    `gorm:"column:count"`
 		}
 
 		if err := writer().Table("pc").
-			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) AS count").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, COUNT(*) AS count").
 			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 			Joins("INNER JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
 			Joins("INNER JOIN locations ON messages.locationid = locations.id").
 			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ? AND outcome IN (?, ?) AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE msgid = messages.id)",
 				utils.LOCATION_TYPE_POSTCODE, startStr, endStr, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).
-			Group("PartialPostcode").
-			Order("locations.name").
+			Group("partialpostcode").
+			Order("partialpostcode").
 			Scan(&outcomeStats).Error; err != nil {
 			return err
 		}
@@ -231,19 +231,19 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// Query outcomes for bulk messages: SUM(bi.quantity) for items marked taken
 		// (available=0), one item at a time rather than one per message.
 		var bulkOutcomeStats []struct {
-			PartialPostcode string `gorm:"column:PartialPostcode"`
+			PartialPostcode string `gorm:"column:partialpostcode"`
 			Count           int    `gorm:"column:count"`
 		}
 
 		if err := writer().Table("pc").
-			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, CAST(SUM(bi.quantity) AS SIGNED) AS count").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, CAST(SUM(bi.quantity) AS SIGNED) AS count").
 			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 			Joins("INNER JOIN messages_bulk_items bi ON bi.msgid = messages.id AND bi.available = 0").
 			Joins("INNER JOIN locations ON messages.locationid = locations.id").
 			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ?",
 				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
-			Group("PartialPostcode").
-			Order("locations.name").
+			Group("partialpostcode").
+			Order("partialpostcode").
 			Scan(&bulkOutcomeStats).Error; err != nil {
 			return err
 		}
@@ -260,19 +260,19 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// at the flip; this arm counts what was collected via the interest flow.
 		// Together the two arms sum to the true total with no overlap.
 		var bulkInterestOutcomeStats []struct {
-			PartialPostcode string `gorm:"column:PartialPostcode"`
+			PartialPostcode string `gorm:"column:partialpostcode"`
 			Count           int    `gorm:"column:count"`
 		}
 
 		if err := writer().Table("pc").
-			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, CAST(SUM(mbii.quantity) AS SIGNED) AS count").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, CAST(SUM(mbii.quantity) AS SIGNED) AS count").
 			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 			Joins("INNER JOIN messages_bulk_items_interest mbii ON mbii.msgid = messages.id AND mbii.state = 'Collected'").
 			Joins("INNER JOIN locations ON messages.locationid = locations.id").
 			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ?",
 				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
-			Group("PartialPostcode").
-			Order("locations.name").
+			Group("partialpostcode").
+			Order("partialpostcode").
 			Scan(&bulkInterestOutcomeStats).Error; err != nil {
 			return err
 		}
@@ -300,7 +300,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// Weight for non-bulk messages: existing per-message-item join.
 		// Bulk messages are excluded here; their per-item weight is counted separately below.
 		var weightStats []struct {
-			PartialPostcode string  `gorm:"column:PartialPostcode"`
+			PartialPostcode string  `gorm:"column:partialpostcode"`
 			Weight          float64 `gorm:"column:weight"`
 		}
 
@@ -323,7 +323,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// this site instead of leaving it raw; a kilogram-scale answer would
 		// have meant staying raw instead.
 		if err := writer().Table("pc").
-			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, SUM(COALESCE(weight, ?)) AS weight", avg).
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, SUM(COALESCE(weight, ?)) AS weight", avg).
 			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 			Joins("INNER JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
 			Joins("INNER JOIN messages_items mi ON messages.id = mi.msgid").
@@ -331,8 +331,8 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Joins("INNER JOIN locations ON messages.locationid = locations.id").
 			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ? AND outcome IN (?, ?) AND NOT EXISTS (SELECT 1 FROM messages_bulk_items WHERE msgid = messages.id)",
 				utils.LOCATION_TYPE_POSTCODE, startStr, endStr, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED).
-			Group("PartialPostcode").
-			Order("locations.name").
+			Group("partialpostcode").
+			Order("partialpostcode").
 			Scan(&weightStats).Error; err != nil {
 			return err
 		}
@@ -347,7 +347,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// (available=0). Matches by item name to the items catalogue; falls back to the
 		// global average weight when there is no name match or the matched weight is 0.
 		var bulkWeightStats []struct {
-			PartialPostcode string  `gorm:"column:PartialPostcode"`
+			PartialPostcode string  `gorm:"column:partialpostcode"`
 			Weight          float64 `gorm:"column:weight"`
 		}
 
@@ -355,15 +355,15 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// 6d50d3895aa7 above; see that site's comment and
 		// authority/stats_precision_test.go.
 		if err := writer().Table("pc").
-			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity) AS weight", avg).
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity) AS weight", avg).
 			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 			Joins("INNER JOIN messages_bulk_items bi ON bi.msgid = messages.id AND bi.available = 0").
 			Joins("LEFT JOIN items i ON i.name = bi.name").
 			Joins("INNER JOIN locations ON messages.locationid = locations.id").
 			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ?",
 				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
-			Group("PartialPostcode").
-			Order("locations.name").
+			Group("partialpostcode").
+			Order("partialpostcode").
 			Scan(&bulkWeightStats).Error; err != nil {
 			return err
 		}
@@ -377,7 +377,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// Weight for bulk messages collected in-app: mirrors the interest-Collected
 		// outcomes arm above. Uses the same items-table name match and average fallback.
 		var bulkInterestWeightStats []struct {
-			PartialPostcode string  `gorm:"column:PartialPostcode"`
+			PartialPostcode string  `gorm:"column:partialpostcode"`
 			Weight          float64 `gorm:"column:weight"`
 		}
 
@@ -385,7 +385,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		// 6d50d3895aa7 above; see that site's comment and
 		// authority/stats_precision_test.go.
 		if err := writer().Table("pc").
-			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbii.quantity) AS weight", avg).
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbii.quantity) AS weight", avg).
 			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
 			Joins("INNER JOIN messages_bulk_items_interest mbii ON mbii.msgid = messages.id AND mbii.state = 'Collected'").
 			Joins("INNER JOIN messages_bulk_items bi ON bi.id = mbii.bulkitemid").
@@ -393,8 +393,8 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Joins("INNER JOIN locations ON messages.locationid = locations.id").
 			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND messages.arrival BETWEEN ? AND ?",
 				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
-			Group("PartialPostcode").
-			Order("locations.name").
+			Group("partialpostcode").
+			Order("partialpostcode").
 			Scan(&bulkInterestWeightStats).Error; err != nil {
 			return err
 		}
@@ -407,18 +407,18 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 
 		// Query searches.
 		var searchStats []struct {
-			PartialPostcode string `gorm:"column:PartialPostcode"`
+			PartialPostcode string `gorm:"column:partialpostcode"`
 			Count           int    `gorm:"column:count"`
 		}
 
 		if err := writer().Table("pc").
-			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) AS count").
+			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS partialpostcode, COUNT(*) AS count").
 			Joins("INNER JOIN search_history ON search_history.locationid = pc.locationid").
 			Joins("INNER JOIN locations ON search_history.locationid = locations.id").
 			Where("locations.type = ? AND LOCATE(' ', locations.name) > 0 AND search_history.date BETWEEN ? AND ?",
 				utils.LOCATION_TYPE_POSTCODE, startStr, endStr).
-			Group("PartialPostcode").
-			Order("locations.name").
+			Group("partialpostcode").
+			Order("partialpostcode").
 			Scan(&searchStats).Error; err != nil {
 			return err
 		}

@@ -9,7 +9,6 @@ test:TestAnswerChatPrompt_DeadlineSetsADate
 test:TestAuthorReachCapResolution
 test:TestBulkDonations_SkipsDuplicates
 test:TestBulkDonations_UpdatesChanged
-test:TestBulkOfferAuthorityStats
 test:TestBulkUploadDonations
 test:TestClipReachForRejectedGroup
 test:TestClipReachForRejectedGroupClipsTheCellSet
@@ -18,7 +17,6 @@ test:TestClipReachForRejectedGroupNullsInnerBound
 test:TestDeleteOnRippledInGroupRecordsItSoItCannotRippleBack
 test:TestForgetPartnerFlow
 test:TestInitDatabase_FailLeavesExistingConnection
-test:TestListGiftAid
 test:TestMergeKeepsBanDates
 test:TestMessageEditRecordsAllColumns
 test:TestMessageReachAsMod
@@ -36,7 +34,6 @@ test:TestReviewChatOwnGroupFirst
 test:TestScrollDepthCurve
 test:TestSentinelSurvivesTheDecimalCast
 test:TestServerArmBothRowsAreReadInOneQuery
-test:TestSetGiftAidDeclineThenRedeclareRejoinsQueueWithCurrentDate
 test:TestTownNearNamesReachablePlaces
 test:TestTownNearNearestPlaceCarriesItsDistance
 test:TestTownNearNearestPlaceWithoutRoadDistance
