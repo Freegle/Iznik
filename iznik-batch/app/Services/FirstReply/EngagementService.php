@@ -2,6 +2,8 @@
 
 namespace App\Services\FirstReply;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Now;
 use App\Models\Message;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -511,7 +513,7 @@ class EngagementService
             $retired = 0;
             DB::table('chat_prompts')
                 ->whereNull('answered_at')
-                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere(new Comparison('expires_at', '>', new Now())))
                 ->whereNotNull('msgids')
                 ->where('kind', '<>', 'confirm_reply')
                 ->select('chatmsgid', 'msgids')
@@ -547,7 +549,7 @@ class EngagementService
                     }
 
                     if ($stale !== []) {
-                        $retired += DB::table('chat_prompts')->whereIn('chatmsgid', $stale)->update(['expires_at' => now()]);
+                        $retired += DB::table('chat_prompts')->whereIn('chatmsgid', $stale)->update(['expires_at' => new Now()]);
                     }
                 }, 'chatmsgid');
 
