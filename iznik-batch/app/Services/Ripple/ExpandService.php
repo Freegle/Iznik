@@ -2,6 +2,9 @@
 
 namespace App\Services\Ripple;
 
+use Illuminate\Database\Query\Expression as Raw;
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\AnyValue;
 use App\Database\Expressions\Arithmetic;
@@ -12,6 +15,7 @@ use App\Database\Expressions\CountDistinct;
 use App\Database\Expressions\In;
 use App\Database\Expressions\Min;
 use App\Database\Expressions\NullIf;
+use App\Database\Expressions\Now;
 use App\Database\Expressions\StArea;
 use App\Database\Expressions\StAsText;
 use App\Database\Expressions\StBuffer;
@@ -70,7 +74,11 @@ class ExpandService
         return $this->runDeadline !== null && now()->greaterThan($this->runDeadline);
     }
 
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
 
     /** Metres to blur a poster's origin before it drives the reach (matches Utils::BLUR_USER). */
     private const BLUR_USER = 400;
@@ -116,10 +124,10 @@ class ExpandService
     private function recordEvent(string $event, int $by = 1): void
     {
         try {
-            DB::statement(
-                'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
-                . 'ON DUPLICATE KEY UPDATE count = count + ?',
-                [$event, $by, $by]
+            DB::table('rippling_event_metrics')->upsert(
+                [['day' => new Raw('CURRENT_DATE'), 'event' => $event, 'count' => $by]],
+                ['day', 'event'],
+                ['count' => new Arithmetic('rippling_event_metrics.count', '+', $by)]
             );
         } catch (\Throwable $e) {
             // best-effort; never affect the expander
@@ -214,7 +222,7 @@ class ExpandService
      */
     private function boundsSetSql(string $storeWkt): array
     {
-        $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
+        $poly = 'ST_GeomFromText(?, ' . self::srid() . ')';
 
         return [
             ', outer_bound = ' . ReachBoundsService::outerExpr($poly)
@@ -234,7 +242,7 @@ class ExpandService
     private function boundsEnvelopeSql(string $storeWkt): array
     {
         return [
-            ', outer_bound = ST_Envelope(ST_GeomFromText(?, ' . self::SRID . ')), inner_bound = NULL',
+            ', outer_bound = ST_Envelope(ST_GeomFromText(?, ' . self::srid() . ')), inner_bound = NULL',
             [$storeWkt],
         ];
     }
@@ -245,7 +253,7 @@ class ExpandService
     /**
      * @param int|null    $onlyMsgid     Restrict the whole run to one message ID (controlled testing).
      * @param string|null $withinPolyWkt Restrict the whole run to posts whose origin point falls within
-     *                                   this WKT polygon (SRID self::SRID) — the area test (e.g. ripple
+     *                                   this WKT polygon (SRID self::srid()) — the area test (e.g. ripple
      *                                   the recent posts near Edinburgh). The go-live arrival cutoff
      *                                   still applies (an area scope filters where, not when).
      */
@@ -527,14 +535,14 @@ class ExpandService
         // builder can render neither.
         $row = DB::selectOne(
             "SELECT COUNT(*) AS c
-             FROM `groups` g
+             FROM " . Sql::table('groups') . " g
              WHERE g.id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")
                AND g.publish = 1
                AND g.type = 'Freegle'
                AND g.onhere = 1
                AND g.nameshort NOT LIKE '%playground%'
                AND g.polyindex IS NOT NULL
-               AND ST_GeometryType(g.polyindex) <> 'POINT'"
+               AND " . Spatial::geometryType('g.polyindex') . " <> 'POINT'"
             . $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN),
             $ids
         );
@@ -557,7 +565,7 @@ class ExpandService
             ->where('g.nameshort', 'NOT LIKE', '%playground%')
             ->whereNotNull('g.polyindex')
             ->where(new Comparison(new StGeometryType('g.polyindex'), '<>', Value::of('POINT')))
-            ->where(new StIntersects('g.polyindex', new StGeomFromText(Value::of($wkt), self::SRID)))
+            ->where(new StIntersects('g.polyindex', new StGeomFromText(Value::of($wkt), self::srid())))
             ->when(!empty($excluded), fn ($q) => $q->whereNotIn('g.id', $excluded))
             ->count();
     }
@@ -1257,7 +1265,7 @@ class ExpandService
             // cutoff still applies, so an area run ripples only the recent (post-cutoff) posts inside
             // the polygon rather than the whole historical backlog there.
             if ($withinPolyWkt !== null) {
-                $q->where(new StContains(new StGeomFromText(Value::of($withinPolyWkt), self::SRID), 'ms.point'));
+                $q->where(new StContains(new StGeomFromText(Value::of($withinPolyWkt), self::srid()), 'ms.point'));
             }
             if (!empty($enabledAt)) {
                 $q->where('ms.arrival', '>=', $enabledAt);
@@ -1536,27 +1544,26 @@ class ExpandService
                     // derivation - but on the SCRATCH WKT parameter, which is
                     // never stored.
                     $overflowCellsJson = $this->overflowCellsJson($schedule);
-                    $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
-                    $initSql = function (string $outerExpr, string $innerExpr): string {
+                    $poly = 'ST_GeomFromText(?, ' . self::srid() . ')';
+                    // The database's clock at this statement. PostgreSQL's own NOW() is the time the transaction
+                    // started, which can be earlier than the mailer's pass mark, and the mailer would then never
+                    // look at the row. The Now expression is NOW() on MySQL, unchanged.
+                    $nowSql = Sql::render(new Now());
+                    $initSql = function (string $outerExpr, string $innerExpr) use ($nowSql): string {
                         return 'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon_cells, outer_bound, inner_bound, arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, reachable_group_ids,
                             next_expansion_at, status, density_band, density_radius_miles, max_minutes_cap,
                             overflow_cells, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ' . $outerExpr . ', ' . $innerExpr . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-                         ON DUPLICATE KEY UPDATE
-                            lat = VALUES(lat), lng = VALUES(lng), polygon_cells = VALUES(polygon_cells),
-                            outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound),
-                            arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
-                            total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
-                            max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
-                            reachable_group_ids = VALUES(reachable_group_ids),
-                            next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
-                            density_band = VALUES(density_band),
-                            density_radius_miles = VALUES(density_radius_miles),
-                            max_minutes_cap = VALUES(max_minutes_cap),
-                            overflow_cells = VALUES(overflow_cells),
-                            updated_at = NOW()';
+                         VALUES (?, ?, ?, ?, ' . $outerExpr . ', ' . $innerExpr . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ' . $nowSql . ', ' . $nowSql . ')
+                         ' . Sql::onDuplicateKeyUpdate(
+                            ['msgid'],
+                            ['lat', 'lng', 'polygon_cells', 'outer_bound', 'inner_bound', 'arrival', 'mode', 'tick',
+                                'total_ticks', 'total_freeglers', 'max_drive_min', 'schedule', 'reachable_group_ids',
+                                'next_expansion_at', 'status', 'density_band', 'density_radius_miles',
+                                'max_minutes_cap', 'overflow_cells'],
+                            ['updated_at = ' . $nowSql]
+                        );
                     };
                     $initTail = [
                         $arrival, $this->reach->mode(), $tick, $total,
@@ -1649,7 +1656,7 @@ class ExpandService
             ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
             // keep-raw: ST_Contains/ST_GeomFromText are spatial functions the builder cannot render
             ->when($withinPolyWkt !== null, fn ($q) => $q->whereRaw(
-                'ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(lng, lat), ' . self::SRID . '))',
+                'ST_Contains(ST_GeomFromText(?, ' . self::srid() . '), ' . Spatial::point('lng', 'lat', self::srid()) . ')',
                 [$withinPolyWkt]
             ))
             ->limit($limit)
@@ -1864,8 +1871,10 @@ class ExpandService
                     // ~19KB bounds cannot approach the 16KB-per-column undo
                     // page problem megabyte polygons had.
                     $gridSet = ', polygon_cells = ?';
+                    // The statement's own time, for the same reason as in the insert above.
+                    $advanceNow = Sql::render(new Now());
                     $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
-                         SET updated_at = NOW()' . $gridSet . $set . ',
+                         SET updated_at = ' . $advanceNow . $gridSet . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?
                          WHERE msgid = ? AND status <> \'held\'';
@@ -1955,6 +1964,25 @@ class ExpandService
     }
 
     /**
+     * The member's join and leave log rows, oldest first. The statement is built and run here, not
+     * inline, so the parity test runs the same method and sees the statement that is sent.
+     *
+     * @internal
+     *
+     * @return \Illuminate\Support\Collection<int, \stdClass>
+     */
+    public static function optOutLogRows(int $userid): \Illuminate\Support\Collection
+    {
+        return DB::table('logs')
+            ->select('groupid', 'subtype', 'text')
+            ->where('user', $userid)
+            ->where('type', 'Group')
+            ->whereIn('subtype', ['Joined', 'Left'])
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
      * The groups this member has opted out of rippling by leaving a ripple-join.
      *
      * "Most recent join wins": a group blocks rippling only when the member's LATEST
@@ -1979,12 +2007,7 @@ class ExpandService
 
         // Ordered by id, so the stream replays the member's history oldest-first and the last
         // verdict written for a group is the one that stands.
-        foreach (DB::select(
-            "SELECT groupid, subtype, text FROM logs
-             WHERE user = ? AND type = 'Group' AND subtype IN ('Joined', 'Left')
-             ORDER BY id",
-            [$userid]
-        ) as $l) {
+        foreach (self::optOutLogRows($userid) as $l) {
             if ($l->subtype === 'Joined') {
                 $latestJoinText[$l->groupid] = $l->text;
                 // Any later join (manual or rippled) supersedes an earlier block:
@@ -2124,14 +2147,14 @@ class ExpandService
             // keep-raw: ST_Intersects/ST_GeometryType plus the correlated logs/ban NOT EXISTS arms the builder cannot render
             $targetGroups = DB::select(
                 "SELECT g.id
-                 FROM `groups` g
+                 FROM " . Sql::table('groups') . " g
                  WHERE g.publish = 1
                    AND g.type = 'Freegle'
                    AND g.onhere = 1
                    AND g.nameshort NOT LIKE '%playground%'" . $inOptOut . "
                    AND g.polyindex IS NOT NULL
-                   AND ST_GeometryType(g.polyindex) <> 'POINT'
-                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))" . $reachableGate . "
+                   AND " . Spatial::geometryType('g.polyindex') . " <> 'POINT'
+                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::srid() . "))" . $reachableGate . "
                    AND NOT EXISTS (
                        SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
                    )
@@ -2143,7 +2166,7 @@ class ExpandService
                        -- moderator's decision.
                        SELECT 1 FROM rippling_reach rr
                        WHERE rr.msgid = ?
-                         AND JSON_CONTAINS(COALESCE(rr.rejected_groups, JSON_ARRAY()), CAST(g.id AS JSON))
+                         AND " . Sql::jsonArrayHas('rr.rejected_groups', 'g.id') . "
                    )
                    {$leftAfterRippleSql}
                    AND NOT EXISTS (
@@ -2188,7 +2211,7 @@ class ExpandService
                        -- would post it for them anyway.
                        SELECT 1 FROM memberships mp
                        WHERE mp.userid = ? AND mp.groupid = g.id
-                         AND UPPER(mp.ourPostingStatus) = 'PROHIBITED'
+                         AND UPPER(mp." . Sql::column('ourPostingStatus') . ") = 'PROHIBITED'
                    )",
                 // One binding per placeholder, in query order: the reach shape, the
                 // msgid twice (already on the group; turned away by the group), the msgid again
@@ -2208,7 +2231,6 @@ class ExpandService
             // long-standing member of a neighbouring group. PROHIBITED stays a hard stop, in
             // the query above: blocking was always an explicit act.
             $collection = $immediateApprove ? 'Approved' : 'Pending';
-            $approvedAt = $immediateApprove ? 'NOW()' : 'NULL';
 
             // The post was vetted against the rules of the community it was posted on. Each
             // receiving group's OWN rules have never been applied to it, so ask them here: a
@@ -2236,25 +2258,33 @@ class ExpandService
                 $breaches = $this->contentCheck->checkGroupOwnRules($subject, $textbody, (int) $g->id, (int) $msgid);
 
                 if (!empty($breaches)) {
-                    $inserted = DB::affectingStatement(
-                        "INSERT IGNORE INTO messages_groups
-                            (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in,
-                             contentcheck_reasons)
-                         VALUES (?, ?, 'Pending', NULL, NOW(), 0, ?, 1, ?)",
-                        [$msgid, $g->id, $msg->type, json_encode($breaches)]
-                    );
+                    $inserted = DB::table('messages_groups')->insertOrIgnore([
+                        'msgid' => $msgid,
+                        'groupid' => $g->id,
+                        'collection' => 'Pending',
+                        'approvedat' => null,
+                        'arrival' => new Now(),
+                        'autoreposts' => 0,
+                        'msgtype' => $msg->type,
+                        'rippled_in' => 1,
+                        'contentcheck_reasons' => json_encode($breaches),
+                    ]);
 
                     if ($inserted > 0) {
                         $this->recordEvent('rippled_in_held_by_group_rules');
                         Log::info("ripple: held on group rules msgid={$msgid} groupid={$g->id}");
                     }
                 } else {
-                    $inserted = DB::affectingStatement(
-                        "INSERT IGNORE INTO messages_groups
-                            (msgid, groupid, collection, approvedat, arrival, autoreposts, msgtype, rippled_in)
-                         VALUES (?, ?, '$collection', $approvedAt, NOW(), 0, ?, 1)",
-                        [$msgid, $g->id, $msg->type]
-                    );
+                    $inserted = DB::table('messages_groups')->insertOrIgnore([
+                        'msgid' => $msgid,
+                        'groupid' => $g->id,
+                        'collection' => $collection,
+                        'approvedat' => $immediateApprove ? new Now() : null,
+                        'arrival' => new Now(),
+                        'autoreposts' => 0,
+                        'msgtype' => $msg->type,
+                        'rippled_in' => 1,
+                    ]);
                 }
 
                 $n += $inserted;
@@ -2273,6 +2303,23 @@ class ExpandService
             $stats['errors']++;
             Log::warning("ripple: ripple-into-groups failed for msg {$msgid}: {$e->getMessage()}");
         }
+    }
+
+    /**
+     * The poster's first membership anywhere, organic ones before ripple-created ones and the newest
+     * first, with the settings a rippled-into membership copies. The statement is built and run
+     * here, not inline, so the parity test runs the same method and sees the statement that is sent.
+     *
+     * @internal
+     */
+    public static function organicMembership(int $userid): ?\stdClass
+    {
+        return DB::table('memberships')
+            ->select('emailfrequency', 'eventsallowed', 'volunteeringallowed')
+            ->where('userid', $userid)
+            ->orderBy('rippled')
+            ->orderByDesc('added')
+            ->first();
     }
 
     /**
@@ -2332,13 +2379,7 @@ class ExpandService
             // previous ripple's guess - otherwise a wrong default propagates itself forward every time
             // another post ripples.
             if (!$home) {
-                $home = DB::selectOne(
-                    'SELECT emailfrequency, eventsallowed, volunteeringallowed
-                     FROM memberships WHERE userid = ?
-                     ORDER BY rippled ASC, added DESC
-                     LIMIT 1',
-                    [$posterId]
-                );
+                $home = self::organicMembership((int) $posterId);
             }
             // Email frequency: preserve the poster's setting, but DOWNGRADE ONLY immediate (-1) to
             // daily (24). A rippled-into group is a lower-priority, unrequested membership, so we never
@@ -2691,8 +2732,8 @@ class ExpandService
             // unchanged - the same outcome the exception path produced, minus
             // the exception.
             $result = $this->intersectionFraction(
-                new StGeomFromText(Value::of($wkt), self::SRID),
-                new StGeomFromText(Value::of($groupWkt), self::SRID)
+                new StGeomFromText(Value::of($wkt), self::srid()),
+                new StGeomFromText(Value::of($groupWkt), self::srid())
             );
 
             if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
@@ -2709,8 +2750,8 @@ class ExpandService
                 }
 
                 $result = $this->intersectionFraction(
-                    new StBuffer(new StGeomFromText(Value::of($wkt), self::SRID), 0),
-                    new StBuffer(new StGeomFromText(Value::of($groupWkt), self::SRID), 0)
+                    new StBuffer(new StGeomFromText(Value::of($wkt), self::srid()), 0),
+                    new StBuffer(new StGeomFromText(Value::of($groupWkt), self::srid()), 0)
                 );
 
                 if ($result !== null && ($result->frac ?? 0) >= 0.90 && !empty($result->u)) {
@@ -3137,10 +3178,10 @@ class ExpandService
             $groupRow = DB::selectOne(
                 'SELECT ST_AsText(g.polyindex) AS group_wkt
                  FROM messages_groups mg
-                 JOIN `groups` g ON g.id = mg.groupid
+                 JOIN ' . Sql::table('groups') . ' g ON g.id = mg.groupid
                  WHERE mg.msgid = ? AND mg.deleted = 0
                    AND g.polyindex IS NOT NULL
-                   AND ST_GeometryType(g.polyindex) <> \'POINT\'
+                   AND ' . Spatial::geometryType('g.polyindex') . ' <> \'POINT\'
                  ORDER BY mg.arrival ASC
                  LIMIT 1',
                 [$msgid]
@@ -3149,7 +3190,7 @@ class ExpandService
                 return $wkt;
             }
             $result = DB::selectOne(
-                'SELECT ST_AsText(ST_Union(ST_GeomFromText(?, ' . self::SRID . '), ST_GeomFromText(?, ' . self::SRID . '))) AS u',
+                'SELECT ST_AsText(ST_Union(ST_GeomFromText(?, ' . self::srid() . '), ST_GeomFromText(?, ' . self::srid() . '))) AS u',
                 [$wkt, $groupRow->group_wkt]
             );
 

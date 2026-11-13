@@ -217,7 +217,7 @@ class CommunityNewsChitChatServiceTest extends TestCase
             'userid' => $sys->id,
             'timestamp' => now(),
         ]);
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::table('newsfeed')->insert([
             'type' => 'Message',
             'userid' => $sys->id,

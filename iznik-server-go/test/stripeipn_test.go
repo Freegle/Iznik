@@ -330,7 +330,7 @@ func TestStripeIPN_GiftAid_SoftDeletedDeclarationGetsNotification(t *testing.T) 
 
 	// Insert a soft-deleted 'All' declaration: the donor previously opted in for
 	// ongoing gift aid but the record has since been removed.
-	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress, deleted) VALUES (?, 'All', 'Test', 'Test', NOW())",
+	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress, deleted) VALUES (?, 'Future', 'Test', 'Test', NOW())",
 		userID)
 
 	chargeID := "ch_test_sfdel_" + prefix
@@ -365,7 +365,7 @@ func TestStripeIPN_GiftAid_LiveDeclarationSuppressesNotification(t *testing.T) {
 	email := prefix + "_donor@test.com"
 
 	// Live 'All' declaration — donor has an ongoing gift aid agreement.
-	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'All', 'Test', 'Test')",
+	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'Future', 'Test', 'Test')",
 		userID)
 
 	chargeID := "ch_test_sflive_" + prefix

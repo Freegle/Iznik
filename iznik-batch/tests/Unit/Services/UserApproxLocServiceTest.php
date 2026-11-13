@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StSrid;
 use App\Models\Group;
 use App\Models\User;
 use App\Services\UserApproxLocService;
@@ -227,7 +229,7 @@ class UserApproxLocServiceTest extends TestCase
 
         $this->assertEquals(
             $lastaccess->format('Y-m-d H:i:s'),
-            $this->row($user)->timestamp,
+            \Illuminate\Support\Carbon::parse($this->row($user)->timestamp)->format('Y-m-d H:i:s'),
             'timestamp carries lastaccess - the prune and the readers key off it'
         );
     }
@@ -244,7 +246,7 @@ class UserApproxLocServiceTest extends TestCase
             ->selectRaw('ST_SRID(position) AS srid, ST_X(position) AS x, ST_Y(position) AS y, lat, lng')
             ->first();
 
-        $this->assertEquals(3857, (int) $geom->srid);
+        $this->assertEquals(config('freegle.srid'), (int) $geom->srid);
         $this->assertEquals((float) $geom->lng, round((float) $geom->x, 4), 'ST_X must be lng');
         $this->assertEquals((float) $geom->lat, round((float) $geom->y, 4), 'ST_Y must be lat');
     }
@@ -262,6 +264,57 @@ class UserApproxLocServiceTest extends TestCase
         $this->assertEquals(1, DB::table('users_approxlocs')->where('userid', $user->id)->count());
         [$expectedLat] = $this->blurred(53.4084, -2.9916);
         $this->assertEquals($expectedLat, (float) $this->row($user)->lat);
+    }
+
+    public function test_rerunning_after_a_visit_carries_the_new_lastaccess(): void
+    {
+        $user = $this->activeMember(['lastaccess' => now()->subDays(10)->startOfSecond()]);
+        $this->setMyLocation($user, ['lat' => 51.5010, 'lng' => -0.1416]);
+        $this->service->updateLocations();
+
+        // The member visits again without moving: only the timestamp differs.
+        $visited = now()->subDay()->startOfSecond();
+        DB::table('users')->where('id', $user->id)->update(['lastaccess' => $visited]);
+        $this->service->updateLocations();
+
+        $this->assertEquals(
+            $visited->format('Y-m-d H:i:s'),
+            \Illuminate\Support\Carbon::parse($this->row($user)->timestamp)->format('Y-m-d H:i:s')
+        );
+    }
+
+    /**
+     * PostgreSQL writes a new row version for every row an upsert touches, changed or not, so the refresh
+     * leaves out members whose row is already right. xmin is the transaction that wrote the row version and
+     * ctid is where it is stored: both stay the same only when the row was not written again.
+     */
+    public function test_rerunning_does_not_rewrite_an_unchanged_row_on_postgresql(): void
+    {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            $this->markTestSkipped('PostgreSQL only: MySQL already writes nothing for an update that changes nothing.');
+        }
+
+        $same = $this->activeMember();
+        $this->setMyLocation($same, ['lat' => 51.5010, 'lng' => -0.1416]);
+        $moved = $this->activeMember();
+        $this->setMyLocation($moved, ['lat' => 52.2053, 'lng' => 0.1218]);
+        $this->service->updateLocations();
+
+        $version = fn (User $user) => DB::table('users_approxlocs')
+            ->where('userid', $user->id)
+            // keep-raw: PostgreSQL system columns that identify a row version.
+            ->selectRaw('ctid::text AS ctid, lat, lng, "timestamp"')
+            ->first();
+        $sameBefore = $version($same);
+        $movedBefore = $version($moved);
+
+        $this->setMyLocation($moved, ['lat' => 53.4084, 'lng' => -2.9916]);
+        $this->service->updateLocations();
+
+        $this->assertEquals($sameBefore, $version($same), 'an unchanged member must not be written again');
+        $this->assertNotEquals($movedBefore->ctid, $version($moved)->ctid, 'a member who moved must be written');
+        [$expectedLat] = $this->blurred(53.4084, -2.9916);
+        $this->assertEquals($expectedLat, (float) $this->row($moved)->lat);
     }
 
     // --- Blur parity with V1 Utils::blur ---
@@ -314,7 +367,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $stale->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), 3857)"),
+            'position' => new StSrid(new Point(-0.1, 51.5), (int) config('freegle.srid')),
             'timestamp' => now()->subDays(250),
         ]);
 
@@ -331,7 +384,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $fresh->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), 3857)"),
+            'position' => new StSrid(new Point(-0.1, 51.5), (int) config('freegle.srid')),
             'timestamp' => now()->subDays(30),
         ]);
 
@@ -362,7 +415,7 @@ class UserApproxLocServiceTest extends TestCase
             'userid' => $stale->id,
             'lat' => 51.5,
             'lng' => -0.1,
-            'position' => DB::raw("ST_SRID(POINT(-0.1, 51.5), 3857)"),
+            'position' => new StSrid(new Point(-0.1, 51.5), (int) config('freegle.srid')),
             'timestamp' => now()->subDays(250),
         ]);
 

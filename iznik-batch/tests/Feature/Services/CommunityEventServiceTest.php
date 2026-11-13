@@ -105,8 +105,8 @@ class CommunityEventServiceTest extends TestCase
 
         $rows = DB::table('communityevents_dates')->where('eventid', $id)->get();
         $this->assertCount(1, $rows);
-        $this->assertEquals($start, $rows[0]->start);
-        $this->assertEquals($expectedEnd, $rows[0]->end);
+        $this->assertEquals($start, \Illuminate\Support\Carbon::parse($rows[0]->start)->format('Y-m-d H:i:s'));
+        $this->assertEquals($expectedEnd, \Illuminate\Support\Carbon::parse($rows[0]->end)->format('Y-m-d H:i:s'));
     }
 
     public function test_remove_dates_only_affects_given_event(): void

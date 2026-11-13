@@ -2,7 +2,11 @@ package database
 
 import (
 	"errors"
+	"fmt"
 	"testing"
+
+	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -34,6 +38,20 @@ func TestIsConnectionError_DeadlockIsNot(t *testing.T) {
 	assert.False(t, isConnectionError(errors.New("Deadlock found when trying to get lock")))
 	assert.False(t, isConnectionError(errors.New("Error 1213: Deadlock")))
 	assert.False(t, isConnectionError(errors.New("Lock wait timeout exceeded")))
+}
+
+func TestIsDeadlockOrLockTimeout_PostgresCodes(t *testing.T) {
+	// PostgreSQL's wording for a lock timeout matches none of the MySQL phrases; its code does.
+	lockTimeout := &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout"}
+	assert.True(t, IsDeadlockOrLockTimeout(lockTimeout))
+	assert.True(t, IsDeadlockOrLockTimeout(fmt.Errorf("wrapped: %w", lockTimeout)))
+	assert.True(t, IsDeadlockOrLockTimeout(&pgconn.PgError{Code: "40P01", Message: "deadlock detected"}))
+	assert.True(t, IsRetryableDBError(lockTimeout))
+	assert.False(t, IsDeadlockOrLockTimeout(&pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}))
+	assert.False(t, IsDeadlockOrLockTimeout(&pgconn.PgError{Code: "57014", Message: "canceling statement due to statement timeout"}))
+	assert.True(t, IsLockFailure(&mysql.MySQLError{Number: 1205, Message: "Lock wait timeout exceeded"}))
+	assert.False(t, IsLockFailure(&mysql.MySQLError{Number: 1062, Message: "Duplicate entry"}))
+	assert.False(t, IsLockFailure(nil))
 }
 
 func TestIsConnectionError_RegularError(t *testing.T) {

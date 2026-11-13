@@ -90,6 +90,9 @@ Read these directly; the pages above link into them rather than copy them:
 | Notification chase-up email | [./reference/notification-chaseup-email.md](./reference/notification-chaseup-email.md) |
 | Volunteering renewal email | [./reference/volunteering-renewal-email.md](./reference/volunteering-renewal-email.md) |
 | Browser testing with Chrome DevTools | [./reference/browser-testing.md](./reference/browser-testing.md) |
+| Database engines: MySQL and PostgreSQL (baseline, converter, routing spike) | [./reference/database-engines.md](./reference/database-engines.md) |
+| Test fixtures: the seeded data, in a format both engines load | [./reference/test-fixtures.md](./reference/test-fixtures.md) |
+| The parity harness: proving a raw SQL site still does what it did, on both engines | [./reference/parity-harness.md](./reference/parity-harness.md) |
 | Worktrees / parallel instances | [./reference/worktrees.md](./reference/worktrees.md) |
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |

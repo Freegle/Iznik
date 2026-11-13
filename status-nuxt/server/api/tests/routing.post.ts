@@ -29,9 +29,13 @@ export default defineEventHandler(async (event) => {
   // Targets the iznik-routing-go container (compose service "spatial").
   // Tests use the small committed testdata PBFs (bristol/rutland) baked into the
   // image — no MySQL DB and no UK PBF needed.
+  // On CI both engines must be reachable: ROUTING_REQUIRE_DB=all makes a missing MySQL or
+  // PostgreSQL server fail the engine tests instead of skipping them. Locally they skip, so a
+  // stack without the postgres container still runs the rest.
+  const requireDb = process.env.CI ? 'ROUTING_REQUIRE_DB=all ' : ''
   const testCmd = withCoverage
-    ? `go test -v -race -timeout 10m -coverprofile=coverage.out ./... -coverpkg ./...`
-    : `go test -count=1 ./... -v`
+    ? `${requireDb}go test -v -race -timeout 10m -coverprofile=coverage.out ./... -coverpkg ./...`
+    : `${requireDb}go test -count=1 ./... -v`
 
   // Sync current host source into the (baked-source) container so the suite runs
   // against the working tree. SOURCE ONLY — never testdata/, which can hold
@@ -44,6 +48,12 @@ export default defineEventHandler(async (event) => {
       docker cp "${src}/go.sum" ${prefix}-spatial:/app/ || true
       for f in "${src}"/*.go; do docker cp "$f" ${prefix}-spatial:/app/ || true; done
       [ -d "${src}/cmd" ] && docker cp "${src}/cmd" ${prefix}-spatial:/app/ || true
+      # The packages the main package and its tests import: dbengine, and internal (dbtest with
+      # its embedded pg_schema.sql). Without them go test cannot compile.
+      [ -d "${src}/dbengine" ] && docker cp "${src}/dbengine" ${prefix}-spatial:/app/ || true
+      [ -d "${src}/internal" ] && docker cp "${src}/internal" ${prefix}-spatial:/app/ || true
+      # An image built before a dependency was added lacks it in the module cache.
+      docker exec -w /app ${prefix}-spatial go mod download || true
     fi
     echo "Running routing server tests..."
     docker exec -w /app ${prefix}-spatial sh -c "${testCmd} 2>&1"

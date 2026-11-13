@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Spatial;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
@@ -28,7 +29,11 @@ class ReengageContentService
      * MySQL treats 3857 as Cartesian, which is what the containment test and
      * ST_Area comparison below rely on.
      */
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
 
     /**
      * Build the full template data for a given new member and day (1..TIPS).
@@ -249,8 +254,8 @@ class ReengageContentService
             // real area, so exclude those rather than let them match nothing
             // noisily. Same guard the rippling code uses.
             $containsSql = "(groups.polyindex IS NOT NULL"
-                . " AND ST_GeometryType(groups.polyindex) <> 'POINT'"
-                . " AND ST_Contains(groups.polyindex, ST_SRID(POINT(?, ?), " . self::SRID . ')))';
+                . " AND " . Spatial::geometryType('groups.polyindex') . " <> 'POINT'"
+                . " AND ST_Contains(groups.polyindex, " . Spatial::point('?', '?', self::srid()) . '))';
 
             // Recorded so the sysadmin dashboard can show how often the home
             // group was genuinely known rather than guessed at by distance.

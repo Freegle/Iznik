@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -22,6 +23,7 @@ use InvalidArgumentException;
 final class Concat implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     /** @var array<int, mixed> */
     private readonly array $operands;
@@ -41,6 +43,11 @@ final class Concat implements ExpressionContract
             fn (mixed $operand) => $this->renderOperand($operand, $grammar),
             $this->operands
         );
+
+        if ($this->isPostgres($grammar)) {
+            // PostgreSQL's CONCAT() skips NULLs; || gives NULL if any operand is NULL, as MySQL's CONCAT() does.
+            return '('.implode(' || ', array_map(fn (string $r) => 'CAST('.$r.' AS text)', $rendered)).')';
+        }
 
         return 'CONCAT('.implode(', ', $rendered).')';
     }

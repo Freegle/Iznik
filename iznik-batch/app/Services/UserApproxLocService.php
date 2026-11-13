@@ -2,6 +2,11 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\JsonUnquote;
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StSrid;
+use App\Database\Expressions\Value;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -160,14 +165,23 @@ class UserApproxLocService
             ->orderBy('u.id')
             ->limit($take)
             ->select('u.id', 'u.lastaccess', 'l.lat as loc_lat', 'l.lng as loc_lng')
-            // keep-raw: JSON path extraction, which the builder has no expression for. Read as raw
-            // JSON text rather than CAST to DECIMAL because a JSON null casts to 0.000000, not
-            // NULL, which would silently place the member in the Atlantic.
+            // Read as raw JSON text rather than CAST to DECIMAL because a JSON null casts to 0.000000,
+            // not NULL, which would silently place the member in the Atlantic.
             // A Trash Nothing member's mylocation is stale V1 data; TN is the master for their
             // location (User::chosenLatLng), so it is not read for them.
-            ->selectRaw("CASE WHEN u.tnuserid IS NULL THEN JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lat')) END AS myloc_lat")
-            ->selectRaw("CASE WHEN u.tnuserid IS NULL THEN JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.mylocation.lng')) END AS myloc_lng")
+            // keep-raw: Dialect-rendered JSON setting read (settingsPoint) in the select list.
+            ->selectRaw($this->settingsPoint('lat').' AS myloc_lat')
+            // keep-raw: Dialect-rendered JSON setting read (settingsPoint) in the select list.
+            ->selectRaw($this->settingsPoint('lng').' AS myloc_lng')
             ->get();
+    }
+
+    /** The member's own settings.mylocation coordinate as JSON text, null for a Trash Nothing member. */
+    private function settingsPoint(string $axis): string
+    {
+        $value = new JsonUnquote(new JsonExtract('u.settings', Value::of('$.mylocation.'.$axis)));
+
+        return 'CASE WHEN u.tnuserid IS NULL THEN '.$value->getValue(DB::getQueryGrammar()).' END';
     }
 
     /**
@@ -230,27 +244,63 @@ class UserApproxLocService
     {
         $srid = (int) config('freegle.srid', 3857);
 
-        $placeholders = implode(', ', array_fill(0, count($rows), '(?, ?, ?, ST_SRID(POINT(?, ?), ?), ?)'));
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            $rows = $this->dropUnchanged($rows);
 
-        $bindings = [];
-
-        foreach ($rows as [$userid, $lat, $lng, $lastaccess]) {
-            array_push($bindings, $userid, $lat, $lng, $lng, $lat, $srid, $lastaccess);
+            if (! $rows) {
+                return;
+            }
         }
 
-        // keep-raw: the builder's upsert() binds column values only, so it cannot put the
-        // ST_SRID(POINT(...)) spatial constructor in the VALUES list, and the SPATIAL index on
-        // position means the geometry has to be built in the same statement.
-        DB::statement(
-            "INSERT INTO users_approxlocs (userid, lat, lng, position, timestamp)
-             VALUES $placeholders AS new
-             ON DUPLICATE KEY UPDATE
-               lat = new.lat,
-               lng = new.lng,
-               position = new.position,
-               timestamp = new.timestamp",
-            $bindings
-        );
+        $values = [];
+
+        foreach ($rows as [$userid, $lat, $lng, $lastaccess]) {
+            $values[] = [
+                'userid' => $userid,
+                'lat' => $lat,
+                'lng' => $lng,
+                'position' => new StSrid(new Point((float) $lng, (float) $lat), $srid),
+                'timestamp' => $lastaccess,
+            ];
+        }
+
+        DB::table('users_approxlocs')->upsert($values, ['userid'], ['lat', 'lng', 'position', 'timestamp']);
+    }
+
+    /**
+     * PostgreSQL only: leave out the members whose row already says exactly this.
+     *
+     * Most members have not moved or visited since yesterday's run. MySQL notices that an update changes
+     * nothing and writes nothing. PostgreSQL writes a whole new row version for every row an upsert touches,
+     * and a new entry in each index unless the page has room, so the daily refresh rewrote the table and
+     * grew the spatial index the reach query drives from. Reading the chunk's current rows first and sending
+     * only the ones that differ leaves the unchanged rows alone entirely, without even a row lock.
+     *
+     * The position is not compared: it is built from the same lat and lng, so it only differs when they do.
+     * The timestamps are compared as the text PostgreSQL returned for both, which is equal exactly when the
+     * instants are. A row that only looks different is written as before, so the worst case is today's
+     * behaviour.
+     *
+     * @param  list<array{0:int,1:float,2:float,3:string}>  $rows
+     * @return list<array{0:int,1:float,2:float,3:string}>
+     */
+    private function dropUnchanged(array $rows): array
+    {
+        $existing = DB::table('users_approxlocs')
+            ->whereIn('userid', array_column($rows, 0))
+            ->get(['userid', 'lat', 'lng', 'timestamp'])
+            ->keyBy('userid');
+
+        return array_values(array_filter($rows, function (array $row) use ($existing) {
+            [$userid, $lat, $lng, $lastaccess] = $row;
+            $current = $existing->get($userid);
+
+            // The columns hold six decimal places, so anything closer than half of the last one is the same.
+            return $current === null
+                || abs((float) $current->lat - (float) $lat) >= 0.0000005
+                || abs((float) $current->lng - (float) $lng) >= 0.0000005
+                || (string) $current->timestamp !== (string) $lastaccess;
+        }));
     }
 
     /**

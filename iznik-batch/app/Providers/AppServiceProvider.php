@@ -44,6 +44,16 @@ class AppServiceProvider extends ServiceProvider
             return new DeadlockRetryConnection($connection, $database, $prefix, $config);
         });
 
+        // PostgreSQL: a statement that waits for a lock gives up, as InnoDB does, where PostgreSQL's own
+        // default is to wait for ever.
+        $this->app->bind('db.connector.pgsql', \App\Database\LockTimeoutPostgresConnector::class);
+
+        // PostgreSQL: binary data behaves as it does on MySQL (strings that are not text go in as binary
+        // parameters, bytea comes back as a string), and JSON paths work on text columns holding JSON.
+        \Illuminate\Database\Connection::resolverFor('pgsql', function ($connection, $database, $prefix, $config) {
+            return new \App\Database\JsonTextPostgresConnection($connection, $database, $prefix, $config);
+        });
+
         // Past mail with the support and info mailboxes for the support case first pass. Unconfigured
         // until mailbox access is set up; bind another implementation here when it is.
         $this->app->bind(\App\Services\Support\MailboxHistory::class, \App\Services\Support\UnconfiguredMailboxHistory::class);

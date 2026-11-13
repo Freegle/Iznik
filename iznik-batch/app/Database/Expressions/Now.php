@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
 
@@ -20,8 +21,13 @@ use Illuminate\Database\Grammar;
  */
 final class Now implements ExpressionContract
 {
+    use PostgresDialect;
+
     public function getValue(Grammar $grammar): string
     {
-        return 'NOW()';
+        // MySQL's NOW() is the time the statement started. PostgreSQL's NOW() is the time the transaction started,
+        // which inside a long transaction is earlier than a time written by the same transaction a moment ago.
+        // statement_timestamp() is the PostgreSQL clock that behaves like MySQL's NOW().
+        return $this->isPostgres($grammar) ? 'statement_timestamp()' : 'NOW()';
     }
 }

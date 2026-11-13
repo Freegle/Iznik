@@ -45,6 +45,15 @@ func TestMessagesOutcomesFeedbackColumn(t *testing.T) {
 func TestMessagesOutcomesFeedbackIndexAvailable(t *testing.T) {
 	db := database.DBConn
 
+	if database.Engine() == database.EnginePostgres {
+		// PostgreSQL's EXPLAIN has no possible_keys column, so the index is looked up by name.
+		var n int64
+		db.Raw("SELECT COUNT(*) FROM pg_indexes WHERE tablename = 'messages_outcomes' " +
+			"AND indexname = 'messages_outcomes_feedback_reviewed_timestamp'").Scan(&n)
+		assert.Equal(t, int64(1), n, "the feedback_reviewed_timestamp index exists")
+		return
+	}
+
 	var rows []struct {
 		PossibleKeys *string `gorm:"column:possible_keys"`
 	}

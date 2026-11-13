@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Browse;
 
+use App\Database\Sql;
 use App\Models\User;
 use App\Services\Ripple\DensityService;
 use Illuminate\Console\Command;
@@ -295,7 +296,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
 
         // keep-raw: JSON_EXTRACT path predicates have no query-builder equivalent;
         // whereJsonContains tests containment, not presence of a key.
-        $hasSetting = "(JSON_EXTRACT(settings, '$.browseMaxMinutes') IS NOT NULL OR JSON_EXTRACT(settings, '$.browseMaxDistance') IS NOT NULL)";
+        $hasSetting = '(' . Sql::jsonExtract('settings', '$.browseMaxMinutes') . ' IS NOT NULL OR ' . Sql::jsonExtract('settings', '$.browseMaxDistance') . ' IS NOT NULL)';
 
         // --missing-only: just the members with NOTHING holding them to a band - neither the
         // default nor a choice of their own. Everyone else is already consistent or is a
@@ -308,8 +309,8 @@ class BackfillBrowseMaxDistanceCommand extends Command
         // to their own - a member with no band default is on "no limit" inbound until a pass
         // reaches them.
         if ($missingOnly) {
-            $query->whereRaw("JSON_EXTRACT(settings, '$.".self::DEFAULT_KEY."') IS NULL")
-                ->whereRaw("JSON_EXTRACT(settings, '$.browseMaxDistance') IS NULL");
+            $query->whereRaw(Sql::jsonExtract('settings', '$.' . self::DEFAULT_KEY) . ' IS NULL')
+                ->whereRaw(Sql::jsonExtract('settings', '$.browseMaxDistance') . ' IS NULL');
 
             // Recency still applies: there is no point deriving a band for someone who has
             // not been near the place in months, and it is what keeps this pass cheap.

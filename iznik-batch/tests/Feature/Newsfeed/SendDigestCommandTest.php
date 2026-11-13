@@ -70,7 +70,7 @@ class SendDigestCommandTest extends TestCase
             'message' => self::LONG_MESSAGE,
             'added' => now()->subDay(),
             'timestamp' => now()->subDay(),
-            'position' => DB::raw("ST_GeomFromText('POINT(-0.1278 51.5074)', 3857)"),
+            'position' => DB::raw("ST_GeomFromText('POINT(-0.1278 51.5074)', " . config('freegle.srid') . ")"),
         ], $attributes));
 
         // The digest now selects nearby posts via the spatial 'newsfeed' index

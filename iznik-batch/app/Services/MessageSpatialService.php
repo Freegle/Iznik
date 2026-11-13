@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Database\Sql;
 use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Not;
 use App\Database\Expressions\Point;
 use App\Database\Expressions\StSrid;
 use App\Database\Expressions\StX;
@@ -19,7 +21,11 @@ class MessageSpatialService
     // features (e.g. the matched-posts backfill) can bound themselves to the same
     // open-age window that governs messages_spatial membership.
     public const RECENT_DAYS = 31;
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
 
     /**
      * Ranking that decides which single membership represents a post in
@@ -158,7 +164,7 @@ class MessageSpatialService
         return '(SELECT msgid, groupid, arrival, rippled_in, collection, deleted, '
             . 'ROW_NUMBER() OVER (PARTITION BY msgid ORDER BY ' . implode(', ', $order) . ') '
             . 'AS representative_rank '
-            . 'FROM messages_groups FORCE INDEX (arrival) '
+            . 'FROM messages_groups' . Sql::forceIndex('arrival') . ' '
             . "WHERE arrival >= '" . $cutoff . "' "
             . "AND collection = '" . MessageGroup::COLLECTION_APPROVED . "' "
             . 'AND deleted = 0'
@@ -256,8 +262,8 @@ class MessageSpatialService
                     ->orWhereColumn('messages_groups.arrival', '!=', 'messages_spatial.arrival')
                     // Null-safe: the type is nullable on both sides, so a plain !=
                     // never matches a row that needs correcting. No builder equivalent
-                    // of <=>, so this one stays raw.
-                    ->orWhereRaw('NOT (messages_spatial.msgtype <=> messages.type)');
+                    // of <=>, so it is a Comparison expression.
+                    ->orWhere(new Not(new Comparison('messages_spatial.msgtype', '<=>', 'messages.type')));
             })
             ->select(
                 'messages.id',
@@ -286,7 +292,7 @@ class MessageSpatialService
                 DB::table('messages_spatial')->upsert(
                     [[
                         'msgid' => $msg->id,
-                        'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::SRID),
+                        'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::srid()),
                         'groupid' => $msg->groupid,
                         'msgtype' => $msg->msgtype,
                         'arrival' => $msg->arrival,
@@ -543,7 +549,7 @@ class MessageSpatialService
         DB::table('messages_spatial')->upsert(
             [[
                 'msgid' => $msg->id,
-                'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::SRID),
+                'point' => new StSrid(new Point((float) $msg->lng, (float) $msg->lat), self::srid()),
                 'groupid' => $msg->groupid,
                 'msgtype' => $msg->msgtype,
                 'arrival' => $msg->arrival,

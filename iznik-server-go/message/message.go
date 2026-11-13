@@ -3157,7 +3157,7 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 	// Dedup the id; ignored (best-effort) if the rejected_groups column is not present yet.
 	db.Table("rippling_reach").
 		Where("msgid = ? AND (rejected_groups IS NULL OR JSON_CONTAINS(rejected_groups, CAST(? AS JSON)) = 0)", msgid, gid).
-		Update("rejected_groups", gorm.Expr("JSON_ARRAY_APPEND(COALESCE(rejected_groups, JSON_ARRAY()), '$', ?)", gid))
+		Update("rejected_groups", gorm.Expr("JSON_ARRAY_APPEND(COALESCE(rejected_groups, JSON_ARRAY()), '$', CAST(? AS JSON))", gid))
 
 	// The whole clip is grid arithmetic - read the row's cells and the
 	// group's area, subtract, write back (or delete the row when nothing

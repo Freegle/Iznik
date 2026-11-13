@@ -21,11 +21,11 @@ class VolunteeringMaintenanceServiceTest extends TestCase
         // The service queries volunteering / users globally. Hide any rows that
         // leak from parallel test classes by deleting inside this test's
         // transaction (rolled back on tearDown). Mirrors VolunteeringDigestCommandTest.
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        \Tests\Support\ForeignKeyChecks::disable();
         foreach (['volunteering_dates', 'volunteering_images', 'volunteering_groups', 'volunteering', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
             DB::table($table)->delete();
         }
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        \Tests\Support\ForeignKeyChecks::enable();
     }
 
     private function service(): VolunteeringMaintenanceService

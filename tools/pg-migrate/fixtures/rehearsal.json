@@ -1,0 +1,487 @@
+{
+  "_comment": "Made-up rows for the migration rehearsal. Coordinates are WGS84 degrees stored under the 3857 label, as in the application. No member data. A table's \"types\" object gives the MySQL CAST type of a column, so the derived table has real DATETIME, DECIMAL, JSON and integer columns. messages_spatial is left untyped because two of its dates are zero dates, which cannot be cast.",
+  "tables": {
+    "authorities": {
+      "columns": [
+        "id",
+        "name",
+        "polygon",
+        "area_code",
+        "simplified"
+      ],
+      "rows": [
+        [
+          1,
+          "Testshire Council",
+          {
+            "wkt": "POLYGON((-2.6 51.4,-2.4 51.4,-2.4 51.6,-2.6 51.6,-2.6 51.4))"
+          },
+          "UTW",
+          {
+            "wkt": "POLYGON((-2.58 51.42,-2.42 51.42,-2.42 51.58,-2.58 51.58,-2.58 51.42))"
+          }
+        ],
+        [
+          2,
+          "Bowtie Ward",
+          {
+            "wkt": "POLYGON((-1 52,-0.8 52.2,-0.8 52,-1 52.2,-1 52))"
+          },
+          "DIW",
+          null
+        ],
+        [
+          3,
+          "Duplicate Point Ward",
+          {
+            "wkt": "POLYGON((10 50,10.2 50,10.2 50,10.2 50.1,10 50.1,10 50))"
+          },
+          "DIW",
+          null
+        ],
+        [
+          4,
+          "Two Islands",
+          {
+            "wkt": "MULTIPOLYGON(((-4 53,-3.8 53,-3.8 53.2,-4 53.2,-4 53)),((-3.5 53,-3.3 53,-3.3 53.2,-3.5 53.2,-3.5 53)))"
+          },
+          "CTY",
+          null
+        ],
+        [
+          5,
+          "Ring Road Ward",
+          {
+            "wkt": "POLYGON((0 55,0.4 55,0.4 55.4,0 55.4,0 55),(0.1 55.1,0.1 55.3,0.3 55.3,0.3 55.1,0.1 55.1))"
+          },
+          "UTW",
+          null
+        ],
+        [
+          6,
+          "Hole Outside Ward",
+          {
+            "wkt": "POLYGON((2 54,2.1 54,2.1 54.1,2 54.1,2 54),(2.5 54.5,2.6 54.5,2.6 54.6,2.5 54.6,2.5 54.5))"
+          },
+          "MTW",
+          null
+        ],
+        [
+          7,
+          "Cafe\tWard \"North\"\nline two \\ slash",
+          {
+            "wkt": "POLYGON((1 50,1.1 50,1.1 50.1,1 50.1,1 50))"
+          },
+          null,
+          null
+        ]
+      ],
+      "types": {
+        "id": "SIGNED"
+      }
+    },
+    "messages_spatial": {
+      "columns": [
+        "id",
+        "msgid",
+        "point",
+        "successful",
+        "promised",
+        "groupid",
+        "msgtype",
+        "arrival",
+        "modified"
+      ],
+      "rows": [
+        [
+          1,
+          101,
+          {
+            "wkt": "POINT(-2.5 51.5)"
+          },
+          0,
+          0,
+          11,
+          "Offer",
+          "2026-10-01 09:30:00",
+          "2026-10-01 09:30:00"
+        ],
+        [
+          2,
+          102,
+          {
+            "wkt": "POINT(-2.45 51.45)"
+          },
+          1,
+          0,
+          11,
+          "Wanted",
+          "2026-10-02 10:00:00",
+          "2026-10-02 10:00:00"
+        ],
+        [
+          3,
+          103,
+          {
+            "wkt": "POINT(-0.9 52.1)"
+          },
+          0,
+          1,
+          12,
+          "Offer",
+          "0000-00-00 00:00:00",
+          "2026-10-03 11:00:00"
+        ],
+        [
+          4,
+          104,
+          {
+            "wkt": "POINT(0.2 55.2)"
+          },
+          0,
+          0,
+          null,
+          "Taken",
+          "2026-10-04 12:00:00",
+          "2026-00-00 00:00:00"
+        ],
+        [
+          5,
+          105,
+          {
+            "wkt": "POINT(0.2 55.05)"
+          },
+          0,
+          0,
+          13,
+          "Other",
+          null,
+          null
+        ],
+        [
+          6,
+          106,
+          {
+            "wkt": "POINT(-3.9 53.1)"
+          },
+          0,
+          0,
+          14,
+          "Received",
+          "2026-10-06 13:00:00",
+          "2026-10-06 13:00:00"
+        ]
+      ]
+    },
+    "rippling_reach_overflow": {
+      "columns": [
+        "msgid",
+        "bbox",
+        "updated_at"
+      ],
+      "rows": [
+        [
+          101,
+          {
+            "wkt": "POLYGON((-2.7 51.3,-2.2 51.3,-2.2 51.8,-2.7 51.8,-2.7 51.3))"
+          },
+          "2026-10-01 09:31:00"
+        ],
+        [
+          102,
+          {
+            "wkt": "POLYGON((-1.2 51.9,-0.7 51.9,-0.7 52.4,-1.2 52.4,-1.2 51.9))"
+          },
+          "2026-10-02 10:01:00"
+        ]
+      ],
+      "types": {
+        "msgid": "SIGNED",
+        "updated_at": "DATETIME"
+      }
+    },
+    "os_county_electoral_division_region": {
+      "columns": [
+        "OGR_FID",
+        "SHAPE"
+      ],
+      "rows": [
+        [
+          1,
+          {
+            "wkt": "MULTIPOLYGON(((5 50,5.2 50,5.2 50.2,5 50.2,5 50)),((5.5 50,5.7 50,5.7 50.2,5.5 50.2,5.5 50)))"
+          }
+        ],
+        [
+          2,
+          {
+            "wkt": "POLYGON((6 50,6.2 50.2,6.2 50,6 50.2,6 50))"
+          }
+        ]
+      ]
+    },
+    "users_approxlocs": {
+      "columns": [
+        "id",
+        "userid",
+        "lat",
+        "lng",
+        "position",
+        "timestamp"
+      ],
+      "rows": [
+        [
+          1,
+          9001,
+          51.5,
+          -2.5,
+          {
+            "wkt": "POINT(-2.5 51.5)"
+          },
+          "2026-09-01 08:00:00"
+        ],
+        [
+          2,
+          9002,
+          52.1,
+          -0.9,
+          {
+            "wkt": "POINT(-0.9 52.1)"
+          },
+          "2026-09-02 08:00:00"
+        ],
+        [
+          3,
+          9003,
+          55.2,
+          0.2,
+          {
+            "wkt": "POINT(0.2 55.2)"
+          },
+          "2026-09-03 08:00:00"
+        ],
+        [
+          4,
+          9004,
+          40,
+          10,
+          {
+            "wkt": "POINT(10 40)"
+          },
+          "2026-09-04 08:00:00"
+        ]
+      ],
+      "types": {
+        "id": "SIGNED",
+        "userid": "SIGNED",
+        "lat": "DECIMAL(10,6)",
+        "lng": "DECIMAL(10,6)",
+        "timestamp": "DATETIME"
+      }
+    },
+    "messages_outcomes": {
+      "columns": [
+        "id",
+        "timestamp",
+        "msgid",
+        "userid",
+        "outcome",
+        "happiness",
+        "comments",
+        "reviewed"
+      ],
+      "rows": [
+        [
+          1,
+          "2026-10-01 10:00:00",
+          101,
+          9001,
+          "Taken",
+          "Happy",
+          "Lovely, thanks!\nCollected today.\tSee you",
+          0
+        ],
+        [
+          2,
+          "2026-10-02 10:00:00",
+          102,
+          null,
+          "Withdrawn",
+          null,
+          "Thanks, this has now been taken.",
+          1
+        ],
+        [
+          3,
+          "2026-10-03 10:00:00",
+          103,
+          9002,
+          "Received",
+          "Fine",
+          "Café ☃ snowman and 😀",
+          0
+        ],
+        [
+          4,
+          "2026-10-04 10:00:00",
+          104,
+          9003,
+          "Expired",
+          null,
+          null,
+          0
+        ]
+      ],
+      "types": {
+        "id": "SIGNED",
+        "timestamp": "DATETIME",
+        "msgid": "SIGNED",
+        "reviewed": "SIGNED"
+      }
+    },
+    "helper_batches": {
+      "columns": [
+        "id",
+        "msgid",
+        "offereruserid",
+        "status",
+        "automode",
+        "briefing",
+        "lastpolledat",
+        "lastrunat",
+        "pausedat",
+        "created_at",
+        "updated_at"
+      ],
+      "rows": [
+        [
+          1,
+          101,
+          9001,
+          "active",
+          "automatic",
+          "{\"items\": [\"sofa\", \"chair\"], \"note\": \"back \\\\ slash and \\\"quote\\\"\"}",
+          "2026-10-01 11:00:00",
+          null,
+          null,
+          "2026-10-01 09:00:00",
+          "2026-10-01 11:00:00"
+        ],
+        [
+          2,
+          102,
+          9002,
+          "paused",
+          "approve",
+          null,
+          null,
+          null,
+          "2026-10-02 12:00:00",
+          "2026-10-02 09:00:00",
+          "2026-10-02 12:00:00"
+        ]
+      ],
+      "types": {
+        "id": "SIGNED",
+        "msgid": "SIGNED",
+        "offereruserid": "SIGNED",
+        "briefing": "JSON",
+        "lastpolledat": "DATETIME",
+        "lastrunat": "DATETIME",
+        "pausedat": "DATETIME",
+        "created_at": "DATETIME",
+        "updated_at": "DATETIME"
+      }
+    },
+    "partnerships_statsfiles": {
+      "columns": [
+        "id",
+        "jobid",
+        "authorityid",
+        "filename",
+        "size",
+        "content"
+      ],
+      "rows": [
+        [
+          1,
+          7,
+          1,
+          "stats.csv",
+          6,
+          {
+            "hex": "00ff10800a09"
+          }
+        ],
+        [
+          2,
+          7,
+          null,
+          "empty.csv",
+          0,
+          null
+        ]
+      ],
+      "types": {
+        "id": "SIGNED",
+        "size": "SIGNED"
+      }
+    }
+  },
+  "probes": [
+    {
+      "name": "inside-testshire",
+      "x": -2.5,
+      "y": 51.5,
+      "radius": 0.1
+    },
+    {
+      "name": "inside-ring-hole",
+      "x": 0.2,
+      "y": 55.2,
+      "radius": 0.05
+    },
+    {
+      "name": "inside-ring-road",
+      "x": 0.05,
+      "y": 55.05,
+      "radius": 0.05
+    },
+    {
+      "name": "inside-bowtie-left-lobe",
+      "x": -0.95,
+      "y": 52.1,
+      "radius": 0.1
+    },
+    {
+      "name": "inside-bowtie-right-lobe",
+      "x": -0.85,
+      "y": 52.1,
+      "radius": 0.1
+    },
+    {
+      "name": "between-islands",
+      "x": -3.65,
+      "y": 53.1,
+      "radius": 0.3
+    },
+    {
+      "name": "far-away",
+      "x": 30,
+      "y": 30,
+      "radius": 0.5
+    },
+    {
+      "name": "in-misplaced-hole",
+      "x": 2.55,
+      "y": 54.55,
+      "radius": 0.01
+    },
+    {
+      "name": "on-an-edge",
+      "x": -2.6,
+      "y": 51.5,
+      "radius": 0.001
+    }
+  ]
+}

@@ -8,6 +8,12 @@ use Tests\TestCase;
 
 class DeadlockRetryConnectionTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->requiresMySql('the deadlock retry connection wraps the MySQL connection');
+    }
+
     public function test_connection_is_deadlock_retry_instance(): void
     {
         // Verify the service provider registered our custom connection.

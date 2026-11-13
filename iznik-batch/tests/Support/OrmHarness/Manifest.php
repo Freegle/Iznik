@@ -3,6 +3,17 @@
 namespace Tests\Support\OrmHarness;
 
 /**
+ * Finds a site by id for the parity harness. Two sources, tried in this order:
+ *
+ *  1. tests/fixtures/orm-parity/goldens.json, the golden store `node tools/orm-migration/extract.mjs
+ *     update` writes from the raw SQL manifest (tools/orm-migration/manifest.json). It sits inside
+ *     iznik-batch because the batch container holds nothing above it. Its approvedDiff is an object
+ *     with the SQL and the reason; this class hands the harness the SQL.
+ *  2. The earlier Laravel inventory, below, which the conversions made before the manifest was
+ *     regenerated are still proven against.
+ *
+ * Everything below describes the second source.
+ *
  * Loads tools/orm-migration/services/laravel/manifest.json, which the ORM
  * migration extractor generated. This is the ONE place the harness reads
  * it from, so GoldenSql and ResultParity agree on the path and on caching.
@@ -55,6 +66,9 @@ final class Manifest
     /** @var array<string,array<string,mixed>>|null */
     private static ?array $sites = null;
 
+    /** @var array<string,array<string,mixed>>|null */
+    private static ?array $goldens = null;
+
     /**
      * @return array<string,array<string,mixed>> sites keyed by id
      */
@@ -97,15 +111,48 @@ final class Manifest
      */
     public static function site(string $siteId): array
     {
+        $current = self::goldens();
+        if (isset($current[$siteId])) {
+            $site = $current[$siteId];
+            $diff = $site['approvedDiff'] ?? null;
+            $site['approvedDiff'] = is_array($diff) ? (string) ($diff['sql'] ?? '') : '';
+
+            return $site;
+        }
+
         $sites = self::sites();
         if (! isset($sites[$siteId])) {
             throw new \RuntimeException(
                 "ormharness: no manifest entry for site \"{$siteId}\"; this must be a real site id from ".
-                'tools/orm-migration/services/laravel/manifest.json'
+                'tools/orm-migration/manifest.json (run node tools/orm-migration/extract.mjs update if the manifest is '.
+                'newer than tests/fixtures/orm-parity/goldens.json) or from tools/orm-migration/services/laravel/manifest.json'
             );
         }
 
         return $sites[$siteId];
+    }
+
+    /**
+     * The golden store for iznik-batch, keyed by site id. Fails loudly when the file is missing: a
+     * harness that cannot find its goldens must never quietly check nothing.
+     *
+     * @return array<string,array<string,mixed>>
+     */
+    private static function goldens(): array
+    {
+        if (self::$goldens !== null) {
+            return self::$goldens;
+        }
+
+        $path = __DIR__.'/../../fixtures/orm-parity/goldens.json';
+        $raw = @file_get_contents($path);
+        if ($raw === false) {
+            throw new \RuntimeException("ormharness: could not read the golden store {$path}; run node tools/orm-migration/extract.mjs update");
+        }
+        $decoded = json_decode($raw, true, flags: JSON_THROW_ON_ERROR);
+        self::$goldens = $decoded['sites'] ?? [];
+
+        return self::$goldens;
     }
 
     /**
@@ -164,5 +211,14 @@ final class Manifest
     public static function resetCacheForTest(): void
     {
         self::$sites = null;
+        self::$goldens = null;
+    }
+
+    /**
+     * @param  array<string,array<string,mixed>>  $goldens
+     */
+    public static function setGoldensForTest(array $goldens): void
+    {
+        self::$goldens = $goldens;
     }
 }

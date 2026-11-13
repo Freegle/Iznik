@@ -2,6 +2,10 @@
 
 namespace App\Console\Commands\Dedup;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Count;
+use App\Database\Sql;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -97,12 +101,15 @@ class TnMergeCrosspostsCommand extends Command
      */
     private function messageReferences(): array
     {
-        $database = DB::connection()->getDatabaseName();
+        // MySQL's schema is the database; PostgreSQL's is the schema the connection searches first.
+        $database = DB::connection()->getDriverName() === 'pgsql'
+            ? DB::selectOne('select current_schema() as name')->name
+            : DB::connection()->getDatabaseName();
 
-        $rows = DB::table('information_schema.COLUMNS')
-            ->select('TABLE_NAME as table_name', 'COLUMN_NAME as column_name')
-            ->where('TABLE_SCHEMA', $database)
-            ->where('COLUMN_NAME', 'msgid')
+        $rows = DB::table('information_schema.columns')
+            ->select('table_name as table_name', 'column_name as column_name')
+            ->where('table_schema', $database)
+            ->where('column_name', 'msgid')
             ->get();
 
         $references = [];
@@ -117,10 +124,10 @@ class TnMergeCrosspostsCommand extends Command
         }
 
         foreach (self::EXTRA_REFERENCES as $table => $column) {
-            $exists = DB::table('information_schema.COLUMNS')
-                ->where('TABLE_SCHEMA', $database)
-                ->where('TABLE_NAME', $table)
-                ->where('COLUMN_NAME', $column)
+            $exists = DB::table('information_schema.columns')
+                ->where('table_schema', $database)
+                ->where('table_name', $table)
+                ->where('column_name', $column)
                 ->exists();
 
             if ($exists) {
@@ -144,7 +151,7 @@ class TnMergeCrosspostsCommand extends Command
             ->where('tnpostid', '!=', '')
             ->whereNull('deleted')
             ->groupBy('tnpostid')
-            ->having('copies', '>', 1);
+            ->having(new Comparison(new Count(), '>', 1));
 
         if ($days > 0) {
             // Only what can still be seen. A post outside the recent window is not in
@@ -162,6 +169,128 @@ class TnMergeCrosspostsCommand extends Command
     }
 
     /**
+     * PostgreSQL has no UPDATE IGNORE, so the rows that can move are moved in one statement: every row of the
+     * copy except those the canonical message already has an equivalent of under one of the table's unique
+     * keys. Those are left where they are, which is what MySQL's IGNORE does row by row, and the caller then
+     * deletes them.
+     *
+     * This used to move each row in its own savepoint. A post with a few hundred referencing rows (reach
+     * notifications, views) then opened more subtransactions than PostgreSQL tracks per session (64), which
+     * slows every other session down while the transaction is open, and cost three round trips a row.
+     *
+     * Two rows of the copy cannot collide with each other once moved: they already share a message id and
+     * are already distinct under every unique key.
+     */
+    private function moveRowsPostgres(string $table, string $column, int $copyId, int $canonicalId): void
+    {
+        $wrappedTable = Sql::table($table);
+        $wrappedColumn = Sql::col($column);
+
+        $keys = $this->uniqueKeysPostgres($table, $column);
+
+        $bindings = [$canonicalId, $copyId];
+        $notHeld = '';
+        foreach ($keys['columns'] as $key) {
+            $match = ["o.{$wrappedColumn} = ?"];
+            $bindings[] = $canonicalId;
+            foreach ($key['columns'] as $other) {
+                if ($other !== $column) {
+                    $wrappedOther = Sql::col($other);
+                    // A unique key lets any number of NULLs in, unless it was declared NULLS NOT DISTINCT.
+                    $match[] = $key['nulls_equal']
+                        ? "o.{$wrappedOther} IS NOT DISTINCT FROM t.{$wrappedOther}"
+                        : "o.{$wrappedOther} = t.{$wrappedOther}";
+                }
+            }
+            $notHeld .= " AND NOT EXISTS (SELECT 1 FROM {$wrappedTable} AS o WHERE ".implode(' AND ', $match).')';
+        }
+
+        // keep-raw: PostgreSQL only; UPDATE IGNORE as an anti-join against the table's unique keys, which the builder cannot write.
+        $move = fn () => DB::statement(
+            "UPDATE {$wrappedTable} AS t SET {$wrappedColumn} = ? WHERE t.{$wrappedColumn} = ?{$notHeld}",
+            $bindings
+        );
+
+        if (! $keys['columns'] && ! $keys['other']) {
+            // No unique key holds this column, so no row can collide and no savepoint is needed.
+            $move();
+
+            return;
+        }
+
+        try {
+            // One savepoint for the table. It is there for what the anti-join cannot see: a unique index on
+            // an expression or with a WHERE clause, or a row another session inserts in between.
+            Sql::attempt($move);
+        } catch (UniqueConstraintViolationException) {
+            $this->moveRowsOneByOnePostgres($table, $column, $copyId, $canonicalId);
+        }
+    }
+
+    /**
+     * The unique keys of a table that changing the column could collide with. 'columns' are the keys made
+     * only of plain columns, which the anti-join can test. 'other' is true when there is also a unique index
+     * on an expression or with a WHERE clause, which it cannot.
+     *
+     * @return array{columns: array<int, array{columns: array<int, string>, nulls_equal: bool}>, other: bool}
+     */
+    private function uniqueKeysPostgres(string $table, string $column): array
+    {
+        // keep-raw: PostgreSQL catalogue lookup of a table's unique indexes and their key columns, no builder equivalent.
+        $indexes = DB::select(
+            'SELECT (i.indpred IS NOT NULL OR i.indexprs IS NOT NULL) AS other,
+                    i.indnullsnotdistinct AS nulls_equal,
+                    (SELECT json_agg(a.attname ORDER BY k.ord)
+                       FROM unnest(CAST(i.indkey AS int2[])) WITH ORDINALITY AS k(attnum, ord)
+                       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+                      WHERE k.ord <= i.indnkeyatts) AS key_columns
+               FROM pg_index i
+              WHERE i.indisunique
+                AND i.indrelid = CAST(quote_ident(current_schema()) || \'.\' || quote_ident(CAST(? AS text)) AS regclass)',
+            [$table]
+        );
+
+        $keys = ['columns' => [], 'other' => false];
+
+        foreach ($indexes as $index) {
+            $columns = json_decode($index->key_columns ?? '[]', true) ?: [];
+
+            if ($index->other) {
+                // Cannot tell whether an expression reads the column, so assume it might.
+                $keys['other'] = true;
+            } elseif (in_array($column, $columns, true)) {
+                $keys['columns'][] = ['columns' => $columns, 'nulls_equal' => (bool) $index->nulls_equal];
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * The fallback when the one-statement move hits a unique key it could not test for: each row is moved by
+     * itself in a savepoint, and one that collides is left where it is.
+     */
+    private function moveRowsOneByOnePostgres(string $table, string $column, int $copyId, int $canonicalId): void
+    {
+        $wrappedTable = Sql::table($table);
+        $wrappedColumn = Sql::col($column);
+
+        // keep-raw: PostgreSQL only; ctid names a row in a table that may have no id column.
+        $rows = DB::select("SELECT ctid::text AS rowid FROM {$wrappedTable} WHERE {$wrappedColumn} = ?", [$copyId]);
+        foreach ($rows as $row) {
+            try {
+                // keep-raw: PostgreSQL only; one row by its ctid.
+                Sql::attempt(fn () => DB::statement(
+                    "UPDATE {$wrappedTable} SET {$wrappedColumn} = ? WHERE ctid = ?::tid",
+                    [$canonicalId, $row->rowid]
+                ));
+            } catch (UniqueConstraintViolationException) {
+                // The canonical message already has this row's equivalent.
+            }
+        }
+    }
+
+    /**
      * @param  array<int, array{table: string, column: string}>  $references
      */
     private function mergeCopy(int $copyId, int $canonicalId, array $references): void
@@ -173,19 +302,29 @@ class TnMergeCrosspostsCommand extends Command
 
                 // Move what can move. A row that cannot is one the canonical already has
                 // an equivalent of, because the only thing stopping it is a unique key.
-                DB::statement(
-                    "UPDATE IGNORE `{$table}` SET `{$column}` = ? WHERE `{$column}` = ?",
-                    [$canonicalId, $copyId]
-                );
+                if (DB::connection()->getDriverName() === 'pgsql') {
+                    $this->moveRowsPostgres($table, $column, $copyId, $canonicalId);
+                } else {
+                    // keep-raw: MySQL only; UPDATE IGNORE has no builder form.
+                    DB::statement(
+                        "UPDATE IGNORE `{$table}` SET `{$column}` = ? WHERE `{$column}` = ?",
+                        [$canonicalId, $copyId]
+                    );
+                }
 
                 // Anything still pointing at the copy would be orphaned by the soft-delete
                 // below - notably a messages_spatial row, which the browse feed reads and
                 // whose msgid is UNIQUE, so it can never move onto an already-indexed
                 // canonical message.
-                DB::statement(
-                    "DELETE FROM `{$table}` WHERE `{$column}` = ?",
-                    [$copyId]
-                );
+                if (DB::connection()->getDriverName() === 'pgsql') {
+                    DB::table($table)->where($column, $copyId)->delete();
+                } else {
+                    // keep-raw: MySQL only; kept as the statement it has always sent.
+                    DB::statement(
+                        "DELETE FROM `{$table}` WHERE `{$column}` = ?",
+                        [$copyId]
+                    );
+                }
             }
 
             // Clear tnpostid so the copy can never be picked as canonical again, and

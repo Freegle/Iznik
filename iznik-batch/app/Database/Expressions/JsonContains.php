@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\ConditionExpression;
 use Illuminate\Database\Grammar;
@@ -32,6 +33,7 @@ use Illuminate\Database\Grammar;
 final class JsonContains implements ConditionExpression
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(
         private readonly mixed $target,
@@ -41,6 +43,11 @@ final class JsonContains implements ConditionExpression
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            return '(CAST('.$this->renderOperand($this->target, $grammar).' AS jsonb) @> CAST('
+                .$this->renderOperand($this->candidate, $grammar).' AS jsonb))';
+        }
+
         return 'JSON_CONTAINS('
             .$this->renderOperand($this->target, $grammar).', '
             .$this->renderOperand($this->candidate, $grammar)

@@ -216,6 +216,9 @@ abstract class TestCase extends BaseTestCase
 
         parent::tearDown();
 
+        // Counters a MySQL parity fixture moved (a no-op for any other test). The test's transaction has ended.
+        \Tests\Support\OrmHarness\EngineParity::resetAutoIncrement();
+
         // After Laravel's flushHandlersState() wiped and re-created handlers,
         // restore the exact stack PHPUnit snapshotted before this test.
         if ($this->phpunitErrorHandlers !== null) {
@@ -390,6 +393,18 @@ abstract class TestCase extends BaseTestCase
      *
      * @throws \InvalidArgumentException if nameshort or namefull is provided
      */
+    /**
+     * Skips the test when the suite is running on PostgreSQL. For a test whose subject is a MySQL-only thing:
+     * MySQL's information_schema column types, its connection class, or the statements recorded in the MySQL
+     * golden files. Say what the MySQL-only thing is.
+     */
+    protected function requiresMySql(string $why): void
+    {
+        if (\DB::connection()->getDriverName() === 'pgsql') {
+            $this->markTestSkipped('MySQL only: '.$why);
+        }
+    }
+
     protected function createTestGroup(array $attributes = []): Group
     {
         // Fail fast if caller tries to use hardcoded names - these cause collisions in parallel tests.
@@ -412,7 +427,7 @@ abstract class TestCase extends BaseTestCase
             'nameshort' => 'TestGroup_'.$uniqueId,
             'namefull' => 'Test Freegle Group '.$uniqueId,
             'type' => Group::TYPE_FREEGLE,
-            'region' => 'TestRegion',
+            'region' => 'South East',
             'lat' => 51.5074,
             'lng' => -0.1278,
             'onhere' => 1,

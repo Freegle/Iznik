@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -26,6 +27,7 @@ use Illuminate\Database\Grammar;
 final class JsonExtract implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(
         private readonly mixed $operand,
@@ -35,6 +37,12 @@ final class JsonExtract implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            // The column may be text holding JSON (settings) or jsonb. The result is jsonb, and null when the path is absent.
+            return '(CAST('.$this->renderOperand($this->operand, $grammar).' AS jsonb) #> '
+                .$grammar->escape($this->jsonPathArray($this->path)).'::text[])';
+        }
+
         return 'JSON_EXTRACT('.$this->renderOperand($this->operand, $grammar)
             .', '.$this->renderOperand($this->path, $grammar).')';
     }

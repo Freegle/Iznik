@@ -43,17 +43,23 @@ func chunkWindows(ids []uint64, size int) [][]uint64 {
 	return windows
 }
 
+// viewedMessageIDsQuery is the lookup viewedMessageIDs runs for one chunk, before its terminal call.
+func viewedMessageIDsQuery(db *gorm.DB, chunk []uint64, userid uint64, likeType string) *gorm.DB {
+	return db.Table("messages_likes").Select("msgid").
+		Where("userid = ? AND type = ? AND msgid IN (?)", userid, likeType, chunk)
+}
+
 // viewedMessageIDs returns the subset of ids that have a messages_likes row for (userid, type),
-// batching the lookup in boundsLikesChunk-sized IN (...) queries. Only the existing `userid`
+// batching the lookup in boundsLikesChunk-sized IN (...) queries. On MySQL only the existing `userid`
 // secondary index on messages_likes is needed (InnoDB appends the clustering key
-// (msgid,userid,type) to it, so this is a covering scan) - no new index required.
+// (msgid,userid,type) to it, so this is a covering scan). PostgreSQL appends nothing, so its schema
+// has messages_likes_userid_type_msgid (userid, type, msgid) in place of the userid index.
 func viewedMessageIDs(db *gorm.DB, ids []uint64, userid uint64, likeType string) map[uint64]bool {
 	viewed := make(map[uint64]bool, len(ids))
 
 	for _, chunk := range chunkWindows(ids, boundsLikesChunk) {
 		var chunkIDs []uint64
-		db.Raw("SELECT msgid FROM messages_likes WHERE userid = ? AND type = ? AND msgid IN (?)",
-			userid, likeType, chunk).Scan(&chunkIDs)
+		viewedMessageIDsQuery(db, chunk, userid, likeType).Scan(&chunkIDs)
 
 		for _, id := range chunkIDs {
 			viewed[id] = true

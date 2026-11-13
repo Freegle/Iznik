@@ -199,7 +199,7 @@ class ScanDeferralsCommandTest extends TestCase
         $this->artisan('mail:deferrals:scan')->assertSuccessful();
 
         $row = DB::table('mail_suppressions')->where('scope', 'mxgroup')->first();
-        $this->assertSame('2026-08-15 16:38:00', (string) $row->deferred_since);
+        $this->assertSame('2026-08-15 16:38:00', \Illuminate\Support\Carbon::parse($row->deferred_since)->format('Y-m-d H:i:s'));
     }
 
     public function test_gmail_keeps_getting_mail_while_yahoo_is_blocked(): void

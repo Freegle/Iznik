@@ -801,6 +801,8 @@ class StatsGenerationServiceTest extends TestCase
 
     public function test_bulk_item_name_join_forces_unicode_collation_in_daily_context(): void
     {
+        $this->requiresMySql('asserts the MySQL COLLATE utf8mb4_unicode_ci clause in the join text; PostgreSQL has no such collation');
+
         $group = $this->createTestGroup();
         $owner = $this->createTestUser();
         $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
@@ -829,6 +831,8 @@ class StatsGenerationServiceTest extends TestCase
 
     public function test_bulk_item_name_join_forces_unicode_collation_in_weight_regen(): void
     {
+        $this->requiresMySql('asserts the MySQL COLLATE utf8mb4_unicode_ci clause in the join text; PostgreSQL has no such collation');
+
         $group = $this->createTestGroup();
         $owner = $this->createTestUser();
         $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
@@ -864,10 +868,16 @@ class StatsGenerationServiceTest extends TestCase
      */
     public function test_every_generated_type_is_a_legal_stats_type_value(): void
     {
-        $column = DB::selectOne(
-            "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS
-             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stats' AND COLUMN_NAME = 'type'"
-        );
+        // The legal values are the ENUM on MySQL and the CHECK constraint that replaces it on PostgreSQL.
+        $column = DB::connection()->getDriverName() === 'pgsql'
+            ? DB::selectOne(
+                "SELECT pg_get_constraintdef(oid) AS t FROM pg_constraint
+                 WHERE conrelid = 'stats'::regclass AND conname = 'stats_type_check'"
+            )
+            : DB::selectOne(
+                "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stats' AND COLUMN_NAME = 'type'"
+            );
         preg_match_all("/'([^']+)'/", $column->t, $m);
         $allowed = $m[1];
 

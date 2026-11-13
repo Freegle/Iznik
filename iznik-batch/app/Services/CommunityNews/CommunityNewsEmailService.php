@@ -2,6 +2,8 @@
 
 namespace App\Services\CommunityNews;
 
+use App\Database\Spatial;
+use App\Database\Sql;
 use App\Mail\CommunityNews\CommunityNewsMail;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\CommunityNewsArea;
@@ -220,7 +222,7 @@ class CommunityNewsEmailService
             ->orderByDesc('users_stories.date')
             ->distinct()
             ->limit(10)
-            ->get(['users_stories.id', 'users_stories.headline', 'users_stories.story', 'users.firstname', 'users.fullname']);
+            ->get(['users_stories.id', 'users_stories.headline', 'users_stories.story', 'users.firstname', 'users.fullname', 'users_stories.date']);
 
         if ($candidates->isEmpty()) {
             return null;
@@ -284,16 +286,7 @@ class CommunityNewsEmailService
     {
         $srid = (int) config('freegle.srid', 3857);
 
-        $memberPoint = "ST_SRID(POINT(" .
-            "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
-            "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lng') AS DECIMAL(10,6))" .
-            "     ELSE lastloc.lng END, " .
-            "CASE WHEN JSON_EXTRACT(users.settings, '$.mylocation.lat') IS NOT NULL" .
-            "          AND JSON_EXTRACT(users.settings, '$.mylocation.lng') IS NOT NULL" .
-            "     THEN CAST(JSON_EXTRACT(users.settings, '$.mylocation.lat') AS DECIMAL(10,6))" .
-            "     ELSE lastloc.lat END" .
-            "), {$srid})";
+        $memberPoint = Spatial::memberPoint('users.settings', 'lastloc.lng', 'lastloc.lat', (string) $srid);
 
         return User::query()
             ->join('memberships', 'memberships.userid', '=', 'users.id')
@@ -324,7 +317,7 @@ class CommunityNewsEmailService
             // stricter than StoriesNewsletterService's default-on — so a group
             // is mailed only when its mods have newsletters explicitly enabled.
             // keep-raw: COALESCE() over a JSON_EXTRACT() has no builder method.
-            ->whereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 0) != 0")
+            ->whereRaw(Sql::jsonSettingEnabled('groups.settings', '$.newsletter'))
             // Home group: this membership's group must actually cover where
             // the member lives.
             // keep-raw: ST_Contains() is a spatial function with no builder method.

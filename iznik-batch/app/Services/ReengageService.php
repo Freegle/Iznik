@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Sql;
 use App\Mail\Reengage\ReengageMail;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Group;
@@ -194,7 +195,7 @@ class ReengageService
             // aggregate helpers only take a column name, and the expression itself
             // combines COALESCE() and JSON_UNQUOTE(), neither of which the builder
             // has a fluent method for.
-            ->selectRaw('MAX(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(memberships.settings, "$.engagement")), 1)) AS enabled')
+            ->selectRaw("MAX(COALESCE(".Sql::jsonText('memberships.settings', '$.engagement').", '1')) AS enabled")
             ->value('enabled');
 
         if ($engagementEnabled === '0' || $engagementEnabled === 0) {

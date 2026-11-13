@@ -39,7 +39,7 @@ class ArchiveProfileImagesCommand extends Command
             'SELECT userid, MAX(id) AS max, COUNT(*) AS count
              FROM users_images
              WHERE userid IS NOT NULL
-             GROUP BY userid HAVING count > 1'
+             GROUP BY userid HAVING COUNT(*) > 1'
         );
 
         $duplicatesDeleted = 0;

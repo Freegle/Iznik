@@ -36,6 +36,44 @@ func TestGetDonations(t *testing.T) {
 	assert.GreaterOrEqual(t, raised, float64(0), "raised should be >= 0")
 }
 
+// A donation made this month by a member of the community is in "raised", and one from an earlier year is
+// not. The community is new, so the figure is exact whatever other tests are doing. This is the check that
+// the month filter really runs: when the statement failed on PostgreSQL the endpoint still answered 200
+// with raised 0, and a test that only asked for a number that is not negative passed.
+func TestGetDonationsCountsThisMonthOnly(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("DonationsRaised")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	CreateTestMembership(t, userID, groupID, utils.ROLE_MEMBER)
+	defer db.Exec("DELETE FROM users_donations WHERE userid = ?", userID)
+
+	// No timestamp given: the column default is the current time, on either engine.
+	res := db.Exec("INSERT INTO users_donations (type, userid, Payer, PayerDisplayName, TransactionID, GrossAmount, source) VALUES ('Stripe', ?, ?, 'Donor', ?, 7.31, 'Stripe')",
+		userID, prefix+"@example.com", prefix+"_now")
+	assert.NoError(t, res.Error)
+	res = db.Exec("INSERT INTO users_donations (type, userid, Payer, PayerDisplayName, timestamp, TransactionID, GrossAmount, source) VALUES ('Stripe', ?, ?, 'Donor', '2019-01-01 10:00:00', ?, 100.00, 'Stripe')",
+		userID, prefix+"@example.com", prefix+"_old")
+	assert.NoError(t, res.Error)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/donations?groupid=%d", groupID), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	raised, ok := result["raised"].(float64)
+	assert.True(t, ok, "raised should be a number")
+	assert.InDelta(t, 7.31, raised, 0.001, "this month's donation is counted and the 2019 one is not")
+
+	// Without a community the same donation is part of the site-wide figure.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/donations", nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	result = map[string]interface{}{}
+	json2.Unmarshal(rsp(resp), &result)
+	raised, ok = result["raised"].(float64)
+	assert.True(t, ok, "raised should be a number")
+	assert.GreaterOrEqual(t, raised, 7.31, "the site-wide figure includes this month's donation")
+}
+
 func TestGetDonationsWithGroupID(t *testing.T) {
 	// Test with a valid group ID
 	// Note: This will return 0 for raised if no donations exist for this group

@@ -3299,7 +3299,7 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         \Illuminate\Support\Facades\Http::assertSent(fn ($request) => $request->url() === 'https://db.yeybu.com/feeds/v1/freegle/post/create'
             && $request->header('Key')[0] === 'yeybu-key');
 
-        $task = DB::table('background_tasks')->where('task_type', 'freebie_alerts_add')->first();
+        $task = DB::table('background_tasks')->where('task_type', 'freebie_alerts_add')->orderBy('id')->first();
         $this->assertNotNull($task->processed_at);
     }
 

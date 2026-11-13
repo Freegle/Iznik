@@ -88,7 +88,7 @@ class TNSyncCommandTest extends TestCase
         Http::fake([
             '*/ratings*' => Http::response([
                 'ratings' => [[
-                    'rating_id' => 'tn_r_' . uniqid(),
+                    'rating_id' => random_int(1000000, 9000000000000),
                     'ratee_fd_user_id' => $user->id,
                     'rating' => 'Up',
                     'date' => self::DATE_SYNC,
@@ -107,7 +107,7 @@ class TNSyncCommandTest extends TestCase
     public function test_sync_updates_existing_rating(): void
     {
         $user = $this->createTestUser();
-        $tnRatingId = 'tn_r_update_' . uniqid();
+        $tnRatingId = random_int(1000000, 9000000000000);
 
         DB::table('ratings')->insert([
             'ratee' => $user->id,
@@ -138,7 +138,7 @@ class TNSyncCommandTest extends TestCase
     public function test_sync_deletes_rating_when_null(): void
     {
         $user = $this->createTestUser();
-        $tnRatingId = 'tn_r_delete_' . uniqid();
+        $tnRatingId = random_int(1000000, 9000000000000);
 
         DB::table('ratings')->insert([
             'ratee' => $user->id,
@@ -236,7 +236,7 @@ class TNSyncCommandTest extends TestCase
         Http::fake([
             '*/ratings*' => Http::response([
                 'ratings' => [[
-                    'rating_id' => 'tn_r_no_user_' . uniqid(),
+                    'rating_id' => random_int(1000000, 9000000000000),
                     'ratee_fd_user_id' => null,
                     'rating' => 'Up',
                     'date' => self::DATE_SYNC,
@@ -254,7 +254,7 @@ class TNSyncCommandTest extends TestCase
         Http::fake([
             '*/ratings*' => Http::response([
                 'ratings' => [[
-                    'rating_id' => 'tn_r_ghost_' . uniqid(),
+                    'rating_id' => random_int(1000000, 9000000000000),
                     'ratee_fd_user_id' => 999999999,
                     'rating' => 'Up',
                     'date' => self::DATE_SYNC,
@@ -664,7 +664,7 @@ class TNSyncCommandTest extends TestCase
         $pcId = 99000201;
         $lat = 55.9533;
         $lng = -3.1883;
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::table('locations')->updateOrInsert(['id' => $pcId], [
             'name' => 'EH1 1AA',
             'type' => 'Postcode',
@@ -706,7 +706,7 @@ class TNSyncCommandTest extends TestCase
         $pcId = 99000203;
         $lat = 51.5502;
         $lng = 0.1350;
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::table('locations')->updateOrInsert(['id' => $pcId], [
             'name' => 'RM9 5ZZ',
             'type' => 'Postcode',
@@ -760,7 +760,7 @@ class TNSyncCommandTest extends TestCase
         $pcId = 99000202;
         $lat = 55.94439;
         $lng = -2.95412;
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         DB::table('locations')->updateOrInsert(['id' => $pcId], [
             'name' => 'EH33 1LH',
             'type' => 'Postcode',
@@ -1385,7 +1385,7 @@ class TNSyncCommandTest extends TestCase
         Http::fake([
             '*/ratings*' => Http::response([
                 'ratings' => [[
-                    'rating_id' => 'tn_r_date_' . uniqid(),
+                    'rating_id' => random_int(1000000, 9000000000000),
                     'ratee_fd_user_id' => $user->id,
                     'rating' => 'Up',
                     'date' => '2026-03-20T15:00:00+00:00',
@@ -1436,7 +1436,7 @@ class TNSyncCommandTest extends TestCase
         Http::fake([
             '*/ratings*' => Http::response([
                 'ratings' => [[
-                    'rating_id' => 'tn_r_stall_' . uniqid(),
+                    'rating_id' => random_int(1000000, 9000000000000),
                     'ratee_fd_user_id' => $user->id,
                     'rating' => 'Up',
                     'date' => '2026-03-20T15:00:00Z',
@@ -1461,7 +1461,7 @@ class TNSyncCommandTest extends TestCase
         Http::fake([
             '*/ratings*' => Http::response([
                 'ratings' => [[
-                    'rating_id' => 'tn_r_stall2_' . uniqid(),
+                    'rating_id' => random_int(1000000, 9000000000000),
                     'ratee_fd_user_id' => $user->id,
                     'rating' => 'Up',
                     'date' => '2026-03-20T15:00:00Z',
@@ -1486,7 +1486,7 @@ class TNSyncCommandTest extends TestCase
         Http::fake([
             '*/ratings*' => Http::response([
                 'ratings' => [[
-                    'rating_id' => 'tn_r_nostall_' . uniqid(),
+                    'rating_id' => random_int(1000000, 9000000000000),
                     'ratee_fd_user_id' => $user->id,
                     'rating' => 'Up',
                     'date' => '2026-03-20T15:00:00Z',
@@ -1510,7 +1510,7 @@ class TNSyncCommandTest extends TestCase
     {
         file_put_contents($this->dateFile, '2026-03-20T10:00:00Z');
         $user     = $this->createTestUser();
-        $ratingId = 'tn_r_feedfail_' . uniqid();
+        $ratingId = random_int(1000000, 9000000000000);
 
         Http::fake([
             '*/ratings*' => Http::response([
@@ -1789,7 +1789,7 @@ class TNSyncCommandTest extends TestCase
             'rating' => 'Up',
             'timestamp' => $knownDate,
             'visible' => 1,
-            'tn_rating_id' => 'tn_r_fallback_' . uniqid(),
+            'tn_rating_id' => random_int(1000000, 9000000000000),
         ]);
 
         Http::fake([
@@ -1847,7 +1847,7 @@ class TNSyncCommandTest extends TestCase
         $page1Ratings = [];
         for ($i = 0; $i < 100; $i++) {
             $page1Ratings[] = [
-                'rating_id' => 'tn_r_page1_' . uniqid() . '_' . $i,
+                'rating_id' => random_int(1000000, 9000000000000),
                 'ratee_fd_user_id' => $user->id,
                 'rating' => 'Up',
                 'date' => self::DATE_SYNC,
@@ -1855,7 +1855,7 @@ class TNSyncCommandTest extends TestCase
         }
 
         // Page 2: 1 additional rating.
-        $page2RatingId = 'tn_r_page2_' . uniqid();
+        $page2RatingId = random_int(1000000, 9000000000000);
         $page2Ratings = [[
             'rating_id' => $page2RatingId,
             'ratee_fd_user_id' => $user->id,
@@ -1898,7 +1898,7 @@ class TNSyncCommandTest extends TestCase
         Http::fake([
             '*/ratings*' => Http::response([
                 'ratings' => [[
-                    'rating_id' => 'tn_r_loki_' . uniqid(),
+                    'rating_id' => random_int(1000000, 9000000000000),
                     'ratee_fd_user_id' => $user->id,
                     'rating' => 'Up',
                     'date' => self::DATE_SYNC,
@@ -1913,7 +1913,7 @@ class TNSyncCommandTest extends TestCase
     public function test_loki_logs_rating_update(): void
     {
         $user = $this->createTestUser();
-        $tnRatingId = 'tn_r_loki_update_' . uniqid();
+        $tnRatingId = random_int(1000000, 9000000000000);
 
         DB::table('ratings')->insert([
             'ratee' => $user->id,
@@ -1949,7 +1949,7 @@ class TNSyncCommandTest extends TestCase
     public function test_loki_logs_rating_delete(): void
     {
         $user = $this->createTestUser();
-        $tnRatingId = 'tn_r_loki_del_' . uniqid();
+        $tnRatingId = random_int(1000000, 9000000000000);
 
         DB::table('ratings')->insert([
             'ratee' => $user->id,
@@ -2285,7 +2285,7 @@ class TNSyncCommandTest extends TestCase
 
         $row = DB::table('background_tasks')
             ->where('task_type', 'tn_sync_command')
-            ->whereRaw("JSON_EXTRACT(data, '$.run_id') = ?", [$runId])
+            ->where('data->run_id', $runId)
             ->first();
 
         $this->assertNotNull($row);
@@ -2307,7 +2307,7 @@ class TNSyncCommandTest extends TestCase
         Http::fake([
             '*/ratings*' => Http::response([
                 'ratings' => [[
-                    'rating_id' => 'tn_r_' . uniqid(),
+                    'rating_id' => random_int(1000000, 9000000000000),
                     'ratee_fd_user_id' => $user->id,
                     'rating' => 'Up',
                     'date' => self::DATE_SYNC,
@@ -2459,7 +2459,7 @@ class TNSyncCommandTest extends TestCase
     public function test_overlap_window_does_not_duplicate_ratings(): void
     {
         $user       = $this->createTestUser();
-        $tnRatingId = 'tn_r_overlap_' . uniqid();
+        $tnRatingId = random_int(1000000, 9000000000000);
 
         $ratingPayload = [
             'rating_id'        => $tnRatingId,

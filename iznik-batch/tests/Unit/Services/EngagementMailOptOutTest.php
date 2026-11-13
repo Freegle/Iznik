@@ -2,6 +2,9 @@
 
 namespace Tests\Unit\Services;
 
+use App\Database\Expressions\CastAs;
+use App\Database\Expressions\Value;
+use App\Database\Sql;
 use App\Models\User;
 use Tests\TestCase;
 
@@ -68,8 +71,9 @@ class EngagementMailOptOutTest extends TestCase
         $matched = User::query()
             ->whereIn('id', [$optedOut->id, $optedIn->id, $absent->id])
             ->where(function ($q) {
-                $q->whereRaw("JSON_EXTRACT(users.settings, '$.engagement') IS NULL")
-                    ->orWhereRaw("JSON_EXTRACT(users.settings, '$.engagement') != CAST('false' AS JSON)");
+                $engagement = Sql::jsonExtract('users.settings', '$.engagement');
+                $q->whereRaw($engagement.' IS NULL')
+                    ->orWhereRaw($engagement.' != '.Sql::render(new CastAs(Value::of('false'), 'JSON')));
             })
             ->pluck('id')
             ->all();

@@ -25,7 +25,7 @@ class SyncGroupsCommandTest extends TestCase
         // Near the equator, away from any UK group other tests leave in the shared database.
         $this->authorityId = (int) DB::table('authorities')->insertGetId([
             'name' => 'Sync Test Council ' . uniqid(),
-            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-31 10, -29 10, -29 12, -31 12, -31 10))', 3857)"),
+            'polygon' => DB::raw("ST_GeomFromText('POLYGON((-31 10, -29 10, -29 12, -31 12, -31 10))', " . config('freegle.srid') . ")"),
         ]);
 
         // Park other live deals so each test only syncs its own.
@@ -50,7 +50,7 @@ class SyncGroupsCommandTest extends TestCase
             'type' => 'Freegle',
             'publish' => 1,
             'onmap' => 1,
-            'polyindex' => DB::raw("ST_GeomFromText('" . $wkt . "', 3857)"),
+            'polyindex' => DB::raw("ST_GeomFromText('" . $wkt . "', " . config('freegle.srid') . ")"),
         ]);
     }
 

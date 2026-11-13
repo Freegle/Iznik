@@ -2,6 +2,7 @@
 
 namespace App\Services\FirstReply;
 
+use App\Database\Spatial;
 use App\Services\Ripple\ReachService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -29,7 +30,11 @@ use Illuminate\Support\Facades\Schema;
  */
 class MaxReachService
 {
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
 
     public function __construct(private ReachService $reach)
     {
@@ -275,8 +280,8 @@ class MaxReachService
         foreach ($withGeometry as $entry) {
             try {
                 $row = DB::selectOne(
-                    'SELECT ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), '
-                    . 'ST_SRID(POINT(?, ?), ' . self::SRID . ')) AS inside',
+                    'SELECT ST_Contains(ST_GeomFromText(?, ' . self::srid() . '), '
+                    . Spatial::point('?', '?', self::srid()) . ') AS inside',
                     [(string) $entry['wkt'], $lng, $lat]
                 );
                 if ((int) ($row->inside ?? 0) === 1) {

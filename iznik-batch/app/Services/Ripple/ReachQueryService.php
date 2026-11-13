@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Sql;
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Point;
 use App\Database\Expressions\StContains;
@@ -22,7 +23,11 @@ use Illuminate\Support\Facades\Http;
  */
 class ReachQueryService
 {
-    private const SRID = 3857;
+    /** The SRID label geometry columns carry: 3857 on MySQL, 4326 on PostgreSQL (config freegle.srid). */
+    private static function srid(): int
+    {
+        return (int) config('freegle.srid');
+    }
 
     /** The routing server put this location inside the post's reach. */
     public const VERDICT_IN = 'in';
@@ -180,7 +185,7 @@ class ReachQueryService
             DB::table('rippling_event_metrics')->upsert(
                 [['day' => now()->toDateString(), 'event' => $event, 'count' => 1]],
                 ['day', 'event'],
-                ['count' => DB::raw('count + 1')]
+                ['count' => DB::raw('rippling_event_metrics.count + 1')]
             );
         } catch (\Throwable $e) {
             // Counting must never cost anyone their reply.
@@ -301,7 +306,7 @@ class ReachQueryService
             $selects = [];
             $params = [];
             foreach ($paths as $i => $path) {
-                $selects[] = "JSON_CONTAINS_PATH($laneColumn, 'one', ?) AS p$i";
+                $selects[] = Sql::jsonHasPath($laneColumn, '?') . " AS p$i";
                 $params[] = $path;
             }
             $params[] = $msgid;

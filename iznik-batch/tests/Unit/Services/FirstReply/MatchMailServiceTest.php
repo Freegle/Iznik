@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\FirstReply;
 
+use App\Database\Spatial;
 use App\Models\Message;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\FreegleApiClient;
@@ -175,7 +176,7 @@ class MatchMailServiceTest extends TestCase
 
         DB::statement(
             'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), 0, 0, ?, ?, NOW())',
+             VALUES (?, ' . Spatial::point('-0.1', '51.5', config('freegle.srid')) . ', 0, 0, ?, ?, NOW())',
             [$message->id, $group->id, $type]
         );
 
@@ -188,7 +189,7 @@ class MatchMailServiceTest extends TestCase
             "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)),
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, " . config('freegle.srid') . ")),
                      NOW(), 'drive', 1, 3, 4000, 30, ?, NOW(), 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor(self::TICK1), self::TICK1, $schedule]
         );
@@ -741,7 +742,7 @@ class MatchMailServiceTest extends TestCase
         ]);
         DB::statement(
             'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
-             VALUES (?, ST_SRID(POINT(?, ?), 3857), 0, 0, ?, ?, NOW())',
+             VALUES (?, ' . Spatial::point('?', '?', config('freegle.srid')) . ', 0, 0, ?, ?, NOW())',
             [$post->id, $lng, $lat, $group->id, $type]
         );
 
@@ -875,7 +876,7 @@ class MatchMailServiceTest extends TestCase
             "INSERT INTO rippling_reach
                (msgid, lat, lng, reach_labels, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ?, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 2,
+             VALUES (?, 51.5, -0.1, ?, ST_GeomFromText(?, " . config('freegle.srid') . "), NOW(), 'drive', 1, 2,
                      0, 30, ?, NOW(), 'expanding', NOW(), NOW())",
             [$message->id, 'label-bytes', self::TICK1, $schedule]
         );
@@ -912,7 +913,7 @@ class MatchMailServiceTest extends TestCase
                (msgid, lat, lng, reach_labels, polygon_cells, max_polygon_cells, outer_bound, arrival,
                 mode, tick, total_ticks, total_freeglers, max_drive_min, schedule, next_expansion_at,
                 status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ?, ?, ?, ST_GeomFromText(?, 3857), NOW(),
+             VALUES (?, 51.5, -0.1, ?, ?, ?, ST_GeomFromText(?, " . config('freegle.srid') . "), NOW(),
                      'drive', 1, 2, 0, 30, NULL, NOW(), 'expanding', NOW(), NOW())",
             [$message->id, 'label-bytes', $this->reachCellsFor(self::TICK1),
                 $this->reachCellsFor(self::TICK3), self::TICK1]
@@ -946,7 +947,7 @@ class MatchMailServiceTest extends TestCase
             "INSERT INTO rippling_reach
                (msgid, lat, lng, reach_labels, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ?, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 1,
+             VALUES (?, 51.5, -0.1, ?, ST_GeomFromText(?, " . config('freegle.srid') . "), NOW(), 'drive', 1, 1,
                      0, 30, ?, NOW(), 'expanding', NOW(), NOW())",
             [$message->id, 'label-bytes', self::TICK1, $schedule]
         );

@@ -29,11 +29,11 @@ class StoriesNewsletterServiceLockdownTest extends TestCase
         parent::setUp();
         Mail::fake();
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        \Tests\Support\ForeignKeyChecks::disable();
         foreach (['newsletters', 'users_stories_likes', 'users_stories_images', 'users_stories', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
             DB::table($table)->delete();
         }
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        \Tests\Support\ForeignKeyChecks::enable();
 
         DB::table('lockdowns')->delete();
         DB::table('lockdown_counters')->delete();

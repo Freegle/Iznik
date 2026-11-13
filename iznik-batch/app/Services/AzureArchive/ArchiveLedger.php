@@ -2,6 +2,10 @@
 
 namespace App\Services\AzureArchive;
 
+use App\Database\Expressions\Arithmetic;
+use App\Database\Expressions\CastAs;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\Greatest;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
@@ -271,7 +275,11 @@ class ArchiveLedger
     {
         DB::table(self::TABLE)->where('blobname', $blobName)->update(array_merge($fields, [
             'status' => $status,
-            'azurebytes' => DB::raw('GREATEST(CAST(COALESCE(azurebytes, 0) AS SIGNED) - ' . self::UNKNOWN_FETCH_BYTES . ', 0) + ' . max(0, $bytes)),
+            'azurebytes' => new Arithmetic(
+                new Greatest(new Arithmetic(new CastAs(new Coalesce('azurebytes', 0), 'SIGNED'), '-', self::UNKNOWN_FETCH_BYTES), 0),
+                '+',
+                max(0, $bytes)
+            ),
         ]));
     }
 

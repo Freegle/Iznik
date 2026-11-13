@@ -100,6 +100,7 @@ Multiplier: `1 + W × (5 − q) / 4` where q is the IMD quintile (1 = most depri
 | `MYSQL_USER` | `root` | MySQL username |
 | `MYSQL_PASSWORD` | *(empty)* | MySQL password |
 | `MYSQL_DBNAME` | `iznik` | Database name |
+| `DB_ENGINE` | `mysql` | `mysql` or `postgres`. With `postgres` the service reads PostgreSQL through pgx, using `PGSQL_HOST`, `PGSQL_PORT` (5432), `PGSQL_USERNAME` (root), `PGSQL_PASSWORD`, `PGSQL_DATABASE` (iznik) and `PGSQL_SSLMODE` (prefer) instead of the `MYSQL_*` settings. See [database-engines.md](../docs/developers/reference/database-engines.md) |
 
 ---
 

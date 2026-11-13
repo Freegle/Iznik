@@ -37,7 +37,7 @@ class ReachLabelsTest extends TestCase
                (msgid, lat, lng, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1,
-                     ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857),
+                     ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', " . config('freegle.srid') . "),
                      NOW(), 'drive', 1, 3, 0, 45, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id]
         );
@@ -169,7 +169,7 @@ class ReachLabelsTest extends TestCase
         $leaves = DB::table('rippling_reach_leaves')->where('msgid', $msgid)->orderBy('leaf')->get();
         $this->assertSame([7, 42, 88], $leaves->pluck('leaf')->map(fn ($l) => (int) $l)->all());
         foreach ($leaves as $leaf) {
-            $this->assertSame('12345678901234567890', (string) $leaf->fp);
+            $this->assertSame('12345678901234567890', ReachService::fingerprintFromDb($leaf->fp));
         }
         // The request asked with the msgid, so the server could resolve the
         // origin group.

@@ -182,7 +182,7 @@ class PurgeServiceTest extends TestCase
 
         $deletes = 0;
         DB::listen(function ($query) use (&$deletes) {
-            if (stripos($query->sql, 'delete from `chat_messages`') === 0) {
+            if (stripos(str_replace(['`', '"'], '', $query->sql), 'delete from chat_messages') === 0) {
                 $deletes++;
             }
         });
@@ -767,6 +767,8 @@ class PurgeServiceTest extends TestCase
 
     public function test_purge_blank_subtype_logs(): void
     {
+        $this->requiresMySql('a blank subtype is what the non-strict MySQL ENUM stores for an invalid value; PostgreSQL rejects it, so no such row can exist');
+
         $logId = DB::table('logs')->insertGetId([
             'type' => 'User',
             'subtype' => '',
@@ -1093,7 +1095,7 @@ class PurgeServiceTest extends TestCase
         $watermarks = [];
         foreach ($chunkSelects as $select) {
             $this->assertMatchesRegularExpression(
-                '/`?chat_rooms`?\.`?id`?\s*>\s*\?/i',
+                '/[`"]?chat_rooms[`"]?\.[`"]?id[`"]?\s*>\s*\?/i',
                 $select['sql'],
                 'each chunk must be bounded by an id watermark so it resumes instead of rescanning'
             );

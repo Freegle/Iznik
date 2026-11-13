@@ -56,6 +56,11 @@ func IsDeadlockOrLockTimeout(err error) bool {
 	if err == nil {
 		return false
 	}
+	// PostgreSQL's lock timeout reads "canceling statement due to lock timeout", which none of the MySQL
+	// wordings below match, so the engines' own error codes are checked first.
+	if IsLockFailure(err) {
+		return true
+	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "deadlock") ||
 		strings.Contains(msg, "error 1213") ||

@@ -31,11 +31,20 @@ class LegacyGeometryDropTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            $this->markTestSkipped('MySQL only: the drop is an in-place MySQL ALTER sequence (virtual columns, SPATIAL indexes) run against a MySQL production table.');
+        }
         $this->makeClone();
     }
 
     protected function tearDown(): void
     {
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            parent::tearDown();
+
+            return;
+        }
+
         DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'`');
         DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'_geom`');
         parent::tearDown();
@@ -82,8 +91,8 @@ class LegacyGeometryDropTest extends TestCase
 
         DB::statement(
             'ALTER TABLE `'.self::CLONE.'`
-                ADD COLUMN polygon GEOMETRY NOT NULL SRID 3857,
-                ADD COLUMN max_polygon GEOMETRY NULL SRID 3857,
+                ADD COLUMN polygon GEOMETRY NOT NULL SRID ' . config('freegle.srid') . ',
+                ADD COLUMN max_polygon GEOMETRY NULL SRID ' . config('freegle.srid') . ',
                 ADD COLUMN overflow_bounds JSON NULL,
                 ADD COLUMN polygon_hash BINARY(16) NULL,
                 ADD COLUMN max_polygon_hash BINARY(16) NULL,
@@ -110,7 +119,7 @@ class LegacyGeometryDropTest extends TestCase
         DB::statement(
             'CREATE TABLE `'.self::CLONE.'_geom` (
                 hash BINARY(16) NOT NULL PRIMARY KEY,
-                geometry GEOMETRY NOT NULL SRID 3857)'
+                geometry GEOMETRY NOT NULL SRID ' . config('freegle.srid') . ')'
         );
         DB::statement(
             'ALTER TABLE `'.self::CLONE.'`
@@ -314,8 +323,8 @@ class LegacyGeometryDropTest extends TestCase
                 max_polygon_cells, arrival, mode, tick, total_ticks, total_freeglers, max_drive_min,
                 status, created_at, updated_at)
              VALUES (1, 51.5, -0.1,
-                ST_GeomFromText('POLYGON((-0.1 51.5,-0.09 51.5,-0.09 51.51,-0.1 51.51,-0.1 51.5))', 3857),
-                ST_GeomFromText('POLYGON((-0.2 51.4,0 51.4,0 51.6,-0.2 51.6,-0.2 51.4))', 3857),
+                ST_GeomFromText('POLYGON((-0.1 51.5,-0.09 51.5,-0.09 51.51,-0.1 51.51,-0.1 51.5))', " . config('freegle.srid') . "),
+                ST_GeomFromText('POLYGON((-0.2 51.4,0 51.4,0 51.6,-0.2 51.6,-0.2 51.4))', " . config('freegle.srid') . "),
                 'cellbytes', 'maxbytes', NOW(), 'drive', 1, 1, 0, 30, 'done', NOW(), NOW())"
         );
 

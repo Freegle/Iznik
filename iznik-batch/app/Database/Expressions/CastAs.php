@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -26,6 +27,7 @@ use InvalidArgumentException;
 final class CastAs implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public const array TYPES = [
         'BINARY', 'CHAR', 'DATE', 'DATETIME', 'DECIMAL', 'DOUBLE', 'FLOAT',
@@ -83,6 +85,10 @@ final class CastAs implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            return 'CAST('.$this->renderOperand($this->operand, $grammar).' AS '.$this->postgresType().')';
+        }
+
         $type = $this->type;
 
         if ($this->params !== []) {
@@ -90,5 +96,22 @@ final class CastAs implements ExpressionContract
         }
 
         return 'CAST('.$this->renderOperand($this->operand, $grammar).' AS '.$type.')';
+    }
+
+    /** The PostgreSQL type for the MySQL CAST target. */
+    private function postgresType(): string
+    {
+        return match ($this->type) {
+            'SIGNED', 'SIGNED INTEGER', 'UNSIGNED', 'UNSIGNED INTEGER' => 'bigint',
+            'CHAR', 'NCHAR' => $this->params !== [] ? 'varchar('.$this->params[0].')' : 'text',
+            'BINARY' => 'bytea',
+            'DATETIME' => 'timestamp',
+            'DOUBLE' => 'double precision',
+            'FLOAT' => 'real',
+            'YEAR' => 'integer',
+            'JSON' => 'jsonb',
+            'DECIMAL' => $this->params !== [] ? 'numeric('.implode(', ', $this->params).')' : 'numeric',
+            default => strtolower($this->type),
+        };
     }
 }

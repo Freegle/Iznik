@@ -33,6 +33,8 @@ use App\Database\Expressions\StX;
 use App\Database\Expressions\StY;
 use App\Database\Expressions\Value;
 use Illuminate\Database\Grammar;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\Grammars\MySqlGrammar;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use LogicException;
@@ -62,12 +64,25 @@ use Tests\TestCase;
  */
 class ExpressionsTest extends TestCase
 {
+    /** The MySQL grammar: the rendering tests pin the text MySQL receives, whichever engine the suite runs on. */
     private Grammar $grammar;
+
+    /** The grammar of the connection the suite runs on, for the tests that execute what they render. */
+    private Grammar $liveGrammar;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->grammar = DB::connection()->getQueryGrammar();
+        $this->liveGrammar = DB::connection()->getQueryGrammar();
+        $this->grammar = new MySqlGrammar(DB::connection());
+    }
+
+    /** A query builder that renders MySQL, for the tests that pin the text of a whole statement. */
+    private function mysqlTable(string $table): Builder
+    {
+        $connection = DB::connection();
+
+        return (new Builder($connection, $this->grammar, $connection->getPostProcessor()))->from($table);
     }
 
     /**
@@ -79,6 +94,18 @@ class ExpressionsTest extends TestCase
     private function evaluate(string $sql): mixed
     {
         return DB::selectOne("SELECT {$sql} AS result")->result;
+    }
+
+    /** A spatial predicate answers 1 or 0 on MySQL and true or false on PostgreSQL. */
+    private function flag(bool $value): bool|int
+    {
+        return DB::connection()->getDriverName() === 'pgsql' ? $value : (int) $value;
+    }
+
+    /** A NULL geometry operand: PostgreSQL needs it typed to pick a function overload. */
+    private function nullGeometry(): mixed
+    {
+        return DB::connection()->getDriverName() === 'pgsql' ? DB::raw('CAST(NULL AS geometry)') : Value::of(null);
     }
 
     // ------------------------------------------------------------------
@@ -109,7 +136,7 @@ class ExpressionsTest extends TestCase
     public function test_value_escapes_quotes_safely_and_is_not_bound(): void
     {
         $evil = "'; DROP TABLE users; --";
-        $sql = (new Value($evil))->getValue($this->grammar);
+        $sql = (new Value($evil))->getValue($this->liveGrammar);
 
         // The literal is embedded directly in the SQL text (this is the
         // documented "escaped, not bound" behaviour). MySQL's PDO driver
@@ -119,7 +146,11 @@ class ExpressionsTest extends TestCase
         // safety is that the embedded quote is backslash-escaped (so it
         // cannot terminate the string early) and that the value round-trips
         // exactly when the SQL is actually executed.
-        $this->assertStringContainsString("\\'; DROP TABLE", $sql);
+        // PostgreSQL doubles an embedded quote instead.
+        $this->assertStringContainsString(
+            DB::connection()->getDriverName() === 'pgsql' ? "''; DROP TABLE" : "\\'; DROP TABLE",
+            $sql
+        );
         $this->assertSame($evil, $this->evaluate($sql));
     }
 
@@ -141,7 +172,7 @@ class ExpressionsTest extends TestCase
 
     public function test_coalesce_via_real_query_builder(): void
     {
-        $query = DB::table('users')->select(new Coalesce('firstname', Value::of('n/a')));
+        $query = $this->mysqlTable('users')->select(new Coalesce('firstname', Value::of('n/a')));
 
         $this->assertSame(
             "select COALESCE(`firstname`, 'n/a') from `users`",
@@ -152,13 +183,13 @@ class ExpressionsTest extends TestCase
 
     public function test_coalesce_semantics_skips_nulls(): void
     {
-        $sql = (new Coalesce(Value::of(null), Value::of(null), Value::of(3)))->getValue($this->grammar);
+        $sql = (new Coalesce(Value::of(null), Value::of(null), Value::of(3)))->getValue($this->liveGrammar);
         $this->assertSame(3, $this->evaluate($sql));
     }
 
     public function test_coalesce_semantics_all_null_is_null(): void
     {
-        $sql = (new Coalesce(Value::of(null), Value::of(null)))->getValue($this->grammar);
+        $sql = (new Coalesce(Value::of(null), Value::of(null)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -174,7 +205,7 @@ class ExpressionsTest extends TestCase
 
     public function test_nullif_via_real_query_builder(): void
     {
-        $query = DB::table('users')->select(new NullIf('firstname', Value::of('')));
+        $query = $this->mysqlTable('users')->select(new NullIf('firstname', Value::of('')));
 
         $this->assertSame("select NULLIF(`firstname`, '') from `users`", $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -182,13 +213,13 @@ class ExpressionsTest extends TestCase
 
     public function test_nullif_semantics_equal_is_null(): void
     {
-        $sql = (new NullIf(Value::of(5), Value::of(5)))->getValue($this->grammar);
+        $sql = (new NullIf(Value::of(5), Value::of(5)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
     public function test_nullif_semantics_not_equal_returns_left(): void
     {
-        $sql = (new NullIf(Value::of(5), Value::of(6)))->getValue($this->grammar);
+        $sql = (new NullIf(Value::of(5), Value::of(6)))->getValue($this->liveGrammar);
         $this->assertSame(5, $this->evaluate($sql));
     }
 
@@ -210,7 +241,7 @@ class ExpressionsTest extends TestCase
 
     public function test_concat_via_real_query_builder(): void
     {
-        $query = DB::table('users')->select(new Concat('firstname', Value::of(' '), 'lastname'));
+        $query = $this->mysqlTable('users')->select(new Concat('firstname', Value::of(' '), 'lastname'));
 
         $this->assertSame(
             "select CONCAT(`firstname`, ' ', `lastname`) from `users`",
@@ -223,13 +254,13 @@ class ExpressionsTest extends TestCase
     {
         // MySQL: CONCAT() returns NULL if ANY argument is NULL - unlike
         // CONCAT_WS(), which merely skips NULL arguments (see below).
-        $sql = (new Concat(Value::of('a'), Value::of(null), Value::of('b')))->getValue($this->grammar);
+        $sql = (new Concat(Value::of('a'), Value::of(null), Value::of('b')))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
     public function test_concat_semantics_no_nulls(): void
     {
-        $sql = (new Concat(Value::of('a'), Value::of('b')))->getValue($this->grammar);
+        $sql = (new Concat(Value::of('a'), Value::of('b')))->getValue($this->liveGrammar);
         $this->assertSame('ab', $this->evaluate($sql));
     }
 
@@ -251,7 +282,7 @@ class ExpressionsTest extends TestCase
 
     public function test_concatws_via_real_query_builder(): void
     {
-        $query = DB::table('users')->select(new ConcatWs(Value::of(' '), 'firstname', 'lastname'));
+        $query = $this->mysqlTable('users')->select(new ConcatWs(Value::of(' '), 'firstname', 'lastname'));
 
         $this->assertSame(
             "select CONCAT_WS(' ', `firstname`, `lastname`) from `users`",
@@ -265,13 +296,13 @@ class ExpressionsTest extends TestCase
         // Unlike CONCAT(), a NULL operand (not the separator) is silently
         // skipped rather than making the whole result NULL.
         $sql = (new ConcatWs(Value::of(','), Value::of('a'), Value::of(null), Value::of('b')))
-            ->getValue($this->grammar);
+            ->getValue($this->liveGrammar);
         $this->assertSame('a,b', $this->evaluate($sql));
     }
 
     public function test_concatws_semantics_null_separator_is_null(): void
     {
-        $sql = (new ConcatWs(Value::of(null), Value::of('a'), Value::of('b')))->getValue($this->grammar);
+        $sql = (new ConcatWs(Value::of(null), Value::of('a'), Value::of('b')))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -293,7 +324,7 @@ class ExpressionsTest extends TestCase
 
     public function test_greatest_via_real_query_builder(): void
     {
-        $query = DB::table('users')->orderBy(new Greatest(Value::of(1), Value::of(2)));
+        $query = $this->mysqlTable('users')->orderBy(new Greatest(Value::of(1), Value::of(2)));
 
         $this->assertSame(
             'select * from `users` order by GREATEST(1, 2) asc',
@@ -306,13 +337,13 @@ class ExpressionsTest extends TestCase
     {
         // Opposite of Coalesce: GREATEST()/LEAST() return NULL if ANY
         // argument is NULL, rather than skipping it.
-        $sql = (new Greatest(Value::of(1), Value::of(null), Value::of(3)))->getValue($this->grammar);
+        $sql = (new Greatest(Value::of(1), Value::of(null), Value::of(3)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
     public function test_greatest_semantics_picks_max(): void
     {
-        $sql = (new Greatest(Value::of(1), Value::of(5), Value::of(3)))->getValue($this->grammar);
+        $sql = (new Greatest(Value::of(1), Value::of(5), Value::of(3)))->getValue($this->liveGrammar);
         $this->assertSame(5, $this->evaluate($sql));
     }
 
@@ -330,13 +361,13 @@ class ExpressionsTest extends TestCase
 
     public function test_least_semantics_any_null_makes_result_null(): void
     {
-        $sql = (new Least(Value::of(1), Value::of(null), Value::of(3)))->getValue($this->grammar);
+        $sql = (new Least(Value::of(1), Value::of(null), Value::of(3)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
     public function test_least_semantics_picks_min(): void
     {
-        $sql = (new Least(Value::of(1), Value::of(5), Value::of(3)))->getValue($this->grammar);
+        $sql = (new Least(Value::of(1), Value::of(5), Value::of(3)))->getValue($this->liveGrammar);
         $this->assertSame(1, $this->evaluate($sql));
     }
 
@@ -358,7 +389,7 @@ class ExpressionsTest extends TestCase
 
     public function test_round_via_real_query_builder(): void
     {
-        $query = DB::table('users')->select(new Round(Value::of(3.14159), 2));
+        $query = $this->mysqlTable('users')->select(new Round(Value::of(3.14159), 2));
 
         $this->assertSame('select ROUND(3.14159, 2) from `users`', $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -372,7 +403,7 @@ class ExpressionsTest extends TestCase
 
     public function test_round_semantics_null_operand_is_null(): void
     {
-        $sql = (new Round(Value::of(null)))->getValue($this->grammar);
+        $sql = (new Round(Value::of(null)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -388,7 +419,7 @@ class ExpressionsTest extends TestCase
 
     public function test_length_via_real_query_builder(): void
     {
-        $query = DB::table('users')->orderBy(new Length('firstname'), 'desc');
+        $query = $this->mysqlTable('users')->orderBy(new Length('firstname'), 'desc');
 
         $this->assertSame(
             'select * from `users` order by LENGTH(`firstname`) desc',
@@ -405,7 +436,7 @@ class ExpressionsTest extends TestCase
 
     public function test_length_semantics_null_is_null(): void
     {
-        $sql = (new Length(Value::of(null)))->getValue($this->grammar);
+        $sql = (new Length(Value::of(null)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -469,7 +500,7 @@ class ExpressionsTest extends TestCase
 
     public function test_castas_via_real_query_builder(): void
     {
-        $query = DB::table('users')->select(new CastAs('id', 'CHAR'));
+        $query = $this->mysqlTable('users')->select(new CastAs('id', 'CHAR'));
 
         $this->assertSame('select CAST(`id` AS CHAR) from `users`', $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -477,25 +508,25 @@ class ExpressionsTest extends TestCase
 
     public function test_castas_semantics_signed_string_to_int(): void
     {
-        $sql = (new CastAs(Value::of('42'), 'SIGNED'))->getValue($this->grammar);
+        $sql = (new CastAs(Value::of('42'), 'SIGNED'))->getValue($this->liveGrammar);
         $this->assertSame(42, $this->evaluate($sql));
     }
 
     public function test_castas_semantics_char_truncates_to_length(): void
     {
-        $sql = (new CastAs(Value::of(12345), 'CHAR', 3))->getValue($this->grammar);
+        $sql = (new CastAs(Value::of(12345), 'CHAR', 3))->getValue($this->liveGrammar);
         $this->assertSame('123', $this->evaluate($sql));
     }
 
     public function test_castas_semantics_decimal_precision(): void
     {
-        $sql = (new CastAs(Value::of('3.14159'), 'DECIMAL', 10, 2))->getValue($this->grammar);
+        $sql = (new CastAs(Value::of('3.14159'), 'DECIMAL', 10, 2))->getValue($this->liveGrammar);
         $this->assertSame('3.14', $this->evaluate($sql));
     }
 
     public function test_castas_semantics_null_operand_is_null(): void
     {
-        $sql = (new CastAs(Value::of(null), 'SIGNED'))->getValue($this->grammar);
+        $sql = (new CastAs(Value::of(null), 'SIGNED'))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -526,7 +557,7 @@ class ExpressionsTest extends TestCase
         // Query\Builder::where() special-cases ConditionExpression as the
         // sole ($column) argument - this is the real call path a caller
         // will use, distinct from Grammar-level rendering alone.
-        $query = DB::table('users')->where(new Comparison('id', '>', Value::of(5)));
+        $query = $this->mysqlTable('users')->where(new Comparison('id', '>', Value::of(5)));
 
         $this->assertSame('select * from `users` where `id` > 5', $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -534,7 +565,7 @@ class ExpressionsTest extends TestCase
 
     public function test_comparison_composes_with_native_where_calls(): void
     {
-        $query = DB::table('users')
+        $query = $this->mysqlTable('users')
             ->where(new Comparison('id', '>', Value::of(5)))
             ->where('systemrole', '=', User::SYSTEMROLE_ADMIN);
 
@@ -549,13 +580,13 @@ class ExpressionsTest extends TestCase
 
     public function test_comparison_semantics_true(): void
     {
-        $sql = 'CASE WHEN '.(new Comparison(Value::of(5), '=', Value::of(5)))->getValue($this->grammar).' THEN 1 ELSE 0 END';
+        $sql = 'CASE WHEN '.(new Comparison(Value::of(5), '=', Value::of(5)))->getValue($this->liveGrammar).' THEN 1 ELSE 0 END';
         $this->assertSame(1, $this->evaluate($sql));
     }
 
     public function test_comparison_semantics_false(): void
     {
-        $sql = 'CASE WHEN '.(new Comparison(Value::of(5), '=', Value::of(6)))->getValue($this->grammar).' THEN 1 ELSE 0 END';
+        $sql = 'CASE WHEN '.(new Comparison(Value::of(5), '=', Value::of(6)))->getValue($this->liveGrammar).' THEN 1 ELSE 0 END';
         $this->assertSame(0, $this->evaluate($sql));
     }
 
@@ -618,7 +649,7 @@ class ExpressionsTest extends TestCase
             ->when(new Comparison('systemrole', '=', Value::of(User::SYSTEMROLE_ADMIN)))->then(Value::of('admin'))
             ->otherwise(Value::of('member'));
 
-        $query = DB::table('users')->select($case)->where(new Comparison('id', '>', Value::of(1)));
+        $query = $this->mysqlTable('users')->select($case)->where(new Comparison('id', '>', Value::of(1)));
 
         $this->assertSame(
             "select CASE WHEN `systemrole` = '" . User::SYSTEMROLE_ADMIN . "' THEN 'admin' ELSE 'member' END from `users` where `id` > 1",
@@ -634,7 +665,7 @@ class ExpressionsTest extends TestCase
             ->when(new Comparison(Value::of(5), '=', Value::of(5)))->then(Value::of('five'))
             ->otherwise(Value::of('other'));
 
-        $this->assertSame('five', $this->evaluate($case->getValue($this->grammar)));
+        $this->assertSame('five', $this->evaluate($case->getValue($this->liveGrammar)));
     }
 
     public function test_casewhen_semantics_falls_through_to_else(): void
@@ -643,14 +674,14 @@ class ExpressionsTest extends TestCase
             ->when(new Comparison(Value::of(5), '=', Value::of(1)))->then(Value::of('one'))
             ->otherwise(Value::of('other'));
 
-        $this->assertSame('other', $this->evaluate($case->getValue($this->grammar)));
+        $this->assertSame('other', $this->evaluate($case->getValue($this->liveGrammar)));
     }
 
     public function test_casewhen_semantics_no_matching_branch_no_else_is_null(): void
     {
         $case = (new CaseWhen())->when(new Comparison(Value::of(5), '=', Value::of(1)))->then(Value::of('one'));
 
-        $this->assertNull($this->evaluate($case->getValue($this->grammar)));
+        $this->assertNull($this->evaluate($case->getValue($this->liveGrammar)));
     }
 
     // ------------------------------------------------------------------
@@ -667,7 +698,7 @@ class ExpressionsTest extends TestCase
     {
         // Query\Builder::where() special-cases ConditionExpression as the
         // sole ($column) argument - the real call path a caller will use.
-        $query = DB::table('groups')->select('id')->where(new StContains('polyindex', 'polyindex'));
+        $query = $this->mysqlTable('groups')->select('id')->where(new StContains('polyindex', 'polyindex'));
 
         $this->assertSame(
             'select `id` from `groups` where ST_Contains(`polyindex`, `polyindex`)',
@@ -678,7 +709,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stcontains_composes_with_native_where_calls(): void
     {
-        $query = DB::table('groups')
+        $query = $this->mysqlTable('groups')
             ->where(new StContains('polyindex', 'polyindex'))
             ->where('type', '=', 'Freegle');
 
@@ -693,22 +724,22 @@ class ExpressionsTest extends TestCase
     {
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
-        $sql = (new StContains($poly, $point))->getValue($this->grammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $sql = (new StContains($poly, $point))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stcontains_semantics_point_outside_polygon_is_false(): void
     {
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(50 50)'), 3857);
-        $sql = (new StContains($poly, $point))->getValue($this->grammar);
-        $this->assertSame(0, $this->evaluate($sql));
+        $sql = (new StContains($poly, $point))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(false), $this->evaluate($sql));
     }
 
     public function test_stcontains_semantics_null_operand_is_null(): void
     {
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
-        $sql = (new StContains(Value::of(null), $point))->getValue($this->grammar);
+        $sql = (new StContains(Value::of(null), $point))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -720,8 +751,9 @@ class ExpressionsTest extends TestCase
         // same expression in a SELECT list and an ORDER BY CASE WHEN.
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
-        $sql = (new Coalesce(new StContains($poly, $point), Value::of(0)))->getValue($this->grammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $pg = DB::connection()->getDriverName() === 'pgsql';
+        $sql = (new Coalesce(new StContains($poly, $point), Value::of($pg ? false : 0)))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stwithin_renders_both_operands(): void
@@ -732,7 +764,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stwithin_via_real_where_clause(): void
     {
-        $query = DB::table('groups')->select('id')->where(new StWithin('polyindex', 'polyindex'));
+        $query = $this->mysqlTable('groups')->select('id')->where(new StWithin('polyindex', 'polyindex'));
 
         $this->assertSame(
             'select `id` from `groups` where ST_Within(`polyindex`, `polyindex`)',
@@ -745,16 +777,16 @@ class ExpressionsTest extends TestCase
     {
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
-        $sql = (new StWithin($point, $poly))->getValue($this->grammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $sql = (new StWithin($point, $poly))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stwithin_semantics_outside_is_false(): void
     {
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(50 50)'), 3857);
-        $sql = (new StWithin($point, $poly))->getValue($this->grammar);
-        $this->assertSame(0, $this->evaluate($sql));
+        $sql = (new StWithin($point, $poly))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(false), $this->evaluate($sql));
     }
 
     public function test_stwithin_semantics_shrunk_buffer_is_within_original(): void
@@ -763,8 +795,8 @@ class ExpressionsTest extends TestCase
         // buffered (shrunk) polygon must remain within its own source.
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $shrunk = new StBuffer($poly, -1);
-        $sql = (new StWithin($shrunk, $poly))->getValue($this->grammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $sql = (new StWithin($shrunk, $poly))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stintersects_renders_both_operands(): void
@@ -775,7 +807,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stintersects_via_real_where_clause(): void
     {
-        $query = DB::table('groups')->select('id')->where(new StIntersects('polyindex', 'polyindex'));
+        $query = $this->mysqlTable('groups')->select('id')->where(new StIntersects('polyindex', 'polyindex'));
 
         $this->assertSame(
             'select `id` from `groups` where ST_Intersects(`polyindex`, `polyindex`)',
@@ -788,22 +820,22 @@ class ExpressionsTest extends TestCase
     {
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
-        $sql = (new StIntersects($poly, $point))->getValue($this->grammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $sql = (new StIntersects($poly, $point))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stintersects_semantics_disjoint_geometries_is_false(): void
     {
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
         $point = new StGeomFromText(Value::of('POINT(50 50)'), 3857);
-        $sql = (new StIntersects($poly, $point))->getValue($this->grammar);
-        $this->assertSame(0, $this->evaluate($sql));
+        $sql = (new StIntersects($poly, $point))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(false), $this->evaluate($sql));
     }
 
     public function test_stintersects_semantics_null_operand_is_null(): void
     {
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
-        $sql = (new StIntersects($poly, Value::of(null)))->getValue($this->grammar);
+        $sql = (new StIntersects($poly, Value::of(null)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -837,7 +869,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stgeomfromtext_semantics_roundtrips_via_stastext(): void
     {
-        $sql = (new StAsText(new StGeomFromText(Value::of('POINT(1 2)'), 3857)))->getValue($this->grammar);
+        $sql = (new StAsText(new StGeomFromText(Value::of('POINT(1 2)'), 3857)))->getValue($this->liveGrammar);
         $this->assertSame('POINT(1 2)', $this->evaluate($sql));
     }
 
@@ -853,7 +885,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stastext_via_real_query_builder(): void
     {
-        $query = DB::table('groups')->select(new StAsText('polyindex'))->limit(1);
+        $query = $this->mysqlTable('groups')->select(new StAsText('polyindex'))->limit(1);
 
         $this->assertSame('select ST_AsText(`polyindex`) from `groups` limit 1', $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -862,13 +894,13 @@ class ExpressionsTest extends TestCase
     public function test_stastext_semantics_renders_polygon_wkt(): void
     {
         $geom = new StGeomFromText(Value::of('POLYGON((0 0,0 10,10 10,10 0,0 0))'), 3857);
-        $sql = (new StAsText($geom))->getValue($this->grammar);
+        $sql = (new StAsText($geom))->getValue($this->liveGrammar);
         $this->assertSame('POLYGON((0 0,0 10,10 10,10 0,0 0))', $this->evaluate($sql));
     }
 
     public function test_stastext_semantics_null_operand_is_null(): void
     {
-        $sql = (new StAsText(Value::of(null)))->getValue($this->grammar);
+        $sql = (new StAsText(Value::of(null)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -890,7 +922,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stsrid_via_real_query_builder(): void
     {
-        $query = DB::table('locations')->select(new StSrid('geometry'))->limit(1);
+        $query = $this->mysqlTable('locations')->select(new StSrid('geometry'))->limit(1);
 
         $this->assertSame('select ST_SRID(`geometry`) from `locations` limit 1', $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -899,7 +931,7 @@ class ExpressionsTest extends TestCase
     public function test_stsrid_semantics_getter_reads_the_labelled_srid(): void
     {
         $geom = new StGeomFromText(Value::of('POINT(5 5)'), 0);
-        $sql = (new StSrid($geom))->getValue($this->grammar);
+        $sql = (new StSrid($geom))->getValue($this->liveGrammar);
         $this->assertSame(0, $this->evaluate($sql));
     }
 
@@ -908,13 +940,13 @@ class ExpressionsTest extends TestCase
         // PostcodeDirectoryService::fixSpatialIndex() relies on exactly this: ST_SRID's
         // 2-arg setter form must NOT move the point, only relabel it.
         $geom = new StGeomFromText(Value::of('POINT(5 5)'), 0);
-        $sql = (new StAsText(new StSrid($geom, 3857)))->getValue($this->grammar);
+        $sql = (new StAsText(new StSrid($geom, 3857)))->getValue($this->liveGrammar);
         $this->assertSame('POINT(5 5)', $this->evaluate($sql));
     }
 
     public function test_stsrid_semantics_null_operand_is_null(): void
     {
-        $sql = (new StSrid(Value::of(null)))->getValue($this->grammar);
+        $sql = (new StSrid($this->nullGeometry()))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -933,7 +965,7 @@ class ExpressionsTest extends TestCase
         // ST_GeometryType is not itself a ConditionExpression - it composes
         // into one via Comparison, exactly as ReengageContentService and
         // several Ripple services use it: `ST_GeometryType(...) <> 'POINT'`.
-        $query = DB::table('groups')->select('id')
+        $query = $this->mysqlTable('groups')->select('id')
             ->where(new Comparison(new StGeometryType('polyindex'), '<>', Value::of('POINT')));
 
         $this->assertSame(
@@ -946,20 +978,20 @@ class ExpressionsTest extends TestCase
     public function test_stgeometrytype_semantics_polygon(): void
     {
         $geom = new StGeomFromText(Value::of('POLYGON((0 0,0 10,10 10,10 0,0 0))'), 3857);
-        $sql = (new StGeometryType($geom))->getValue($this->grammar);
+        $sql = (new StGeometryType($geom))->getValue($this->liveGrammar);
         $this->assertSame('POLYGON', $this->evaluate($sql));
     }
 
     public function test_stgeometrytype_semantics_point(): void
     {
         $geom = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
-        $sql = (new StGeometryType($geom))->getValue($this->grammar);
+        $sql = (new StGeometryType($geom))->getValue($this->liveGrammar);
         $this->assertSame('POINT', $this->evaluate($sql));
     }
 
     public function test_stgeometrytype_semantics_null_operand_is_null(): void
     {
-        $sql = (new StGeometryType(Value::of(null)))->getValue($this->grammar);
+        $sql = (new StGeometryType($this->nullGeometry()))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -975,7 +1007,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stx_via_real_query_builder(): void
     {
-        $query = DB::table('messages_spatial')->select(new StX('point'))->limit(1);
+        $query = $this->mysqlTable('messages_spatial')->select(new StX('point'))->limit(1);
 
         $this->assertSame('select ST_X(`point`) from `messages_spatial` limit 1', $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -984,13 +1016,13 @@ class ExpressionsTest extends TestCase
     public function test_stx_semantics_reads_the_x_coordinate(): void
     {
         $geom = new StGeomFromText(Value::of('POINT(5 7)'), 3857);
-        $sql = (new StX($geom))->getValue($this->grammar);
+        $sql = (new StX($geom))->getValue($this->liveGrammar);
         $this->assertEquals(5, $this->evaluate($sql));
     }
 
     public function test_stx_semantics_null_operand_is_null(): void
     {
-        $sql = (new StX(Value::of(null)))->getValue($this->grammar);
+        $sql = (new StX(Value::of(null)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1000,7 +1032,7 @@ class ExpressionsTest extends TestCase
         // operand rather than returning NULL - see the class docblock.
         $this->expectException(\Illuminate\Database\QueryException::class);
         $geom = new StGeomFromText(Value::of('POLYGON((0 0,0 1,1 1,1 0,0 0))'), 3857);
-        $this->evaluate((new StX($geom))->getValue($this->grammar));
+        $this->evaluate((new StX($geom))->getValue($this->liveGrammar));
     }
 
     public function test_sty_renders_operand(): void
@@ -1011,7 +1043,7 @@ class ExpressionsTest extends TestCase
 
     public function test_sty_via_real_query_builder(): void
     {
-        $query = DB::table('messages_spatial')->select(new StY('point'))->limit(1);
+        $query = $this->mysqlTable('messages_spatial')->select(new StY('point'))->limit(1);
 
         $this->assertSame('select ST_Y(`point`) from `messages_spatial` limit 1', $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -1020,13 +1052,13 @@ class ExpressionsTest extends TestCase
     public function test_sty_semantics_reads_the_y_coordinate(): void
     {
         $geom = new StGeomFromText(Value::of('POINT(5 7)'), 3857);
-        $sql = (new StY($geom))->getValue($this->grammar);
+        $sql = (new StY($geom))->getValue($this->liveGrammar);
         $this->assertEquals(7, $this->evaluate($sql));
     }
 
     public function test_sty_semantics_null_operand_is_null(): void
     {
-        $sql = (new StY(Value::of(null)))->getValue($this->grammar);
+        $sql = (new StY(Value::of(null)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1042,7 +1074,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stdistancesphere_via_real_orderby(): void
     {
-        $query = DB::table('groups')->select('id')
+        $query = $this->mysqlTable('groups')->select('id')
             ->orderBy(new StDistanceSphere('point_a', 'point_b'));
 
         $this->assertSame(
@@ -1056,21 +1088,21 @@ class ExpressionsTest extends TestCase
     {
         $a = new StGeomFromText(Value::of('POINT(0 0)'), 4326);
         $b = new StGeomFromText(Value::of('POINT(0 1)'), 4326);
-        $sql = (new StDistanceSphere($a, $b))->getValue($this->grammar);
+        $sql = (new StDistanceSphere($a, $b))->getValue($this->liveGrammar);
         $this->assertEqualsWithDelta(111195.08, $this->evaluate($sql), 1.0);
     }
 
     public function test_stdistancesphere_semantics_same_point_is_zero(): void
     {
         $a = new StGeomFromText(Value::of('POINT(0 0)'), 4326);
-        $sql = (new StDistanceSphere($a, $a))->getValue($this->grammar);
+        $sql = (new StDistanceSphere($a, $a))->getValue($this->liveGrammar);
         $this->assertEquals(0, $this->evaluate($sql));
     }
 
     public function test_stdistancesphere_semantics_null_operand_is_null(): void
     {
         $a = new StGeomFromText(Value::of('POINT(0 0)'), 4326);
-        $sql = (new StDistanceSphere(Value::of(null), $a))->getValue($this->grammar);
+        $sql = (new StDistanceSphere($this->nullGeometry(), $a))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1086,7 +1118,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stenvelope_via_real_query_builder(): void
     {
-        $query = DB::table('groups')->select(new StAsText(new StEnvelope('polyindex')))->limit(1);
+        $query = $this->mysqlTable('groups')->select(new StAsText(new StEnvelope('polyindex')))->limit(1);
 
         $this->assertSame(
             'select ST_AsText(ST_Envelope(`polyindex`)) from `groups` limit 1',
@@ -1098,20 +1130,24 @@ class ExpressionsTest extends TestCase
     public function test_stenvelope_semantics_bounding_rectangle_of_a_diagonal_line(): void
     {
         $geom = new StGeomFromText(Value::of('LINESTRING(0 0, 10 10)'), 3857);
-        $sql = (new StAsText(new StEnvelope($geom)))->getValue($this->grammar);
-        $this->assertSame('POLYGON((0 0,10 0,10 10,0 10,0 0))', $this->evaluate($sql));
+        $sql = (new StAsText(new StEnvelope($geom)))->getValue($this->liveGrammar);
+        // The ring starts at the same corner on both engines but runs the other way round on PostgreSQL.
+        $this->assertSame(
+            DB::connection()->getDriverName() === 'pgsql' ? 'POLYGON((0 0,0 10,10 10,10 0,0 0))' : 'POLYGON((0 0,10 0,10 10,0 10,0 0))',
+            $this->evaluate($sql)
+        );
     }
 
     public function test_stenvelope_semantics_single_point_is_unchanged(): void
     {
         $geom = new StGeomFromText(Value::of('POINT(3 4)'), 3857);
-        $sql = (new StAsText(new StEnvelope($geom)))->getValue($this->grammar);
+        $sql = (new StAsText(new StEnvelope($geom)))->getValue($this->liveGrammar);
         $this->assertSame('POINT(3 4)', $this->evaluate($sql));
     }
 
     public function test_stenvelope_semantics_null_operand_is_null(): void
     {
-        $sql = (new StAsText(new StEnvelope(Value::of(null))))->getValue($this->grammar);
+        $sql = (new StAsText(new StEnvelope(Value::of(null))))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1134,7 +1170,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stbuffer_via_real_query_builder(): void
     {
-        $query = DB::table('groups')->select(new StAsText(new StBuffer('polyindex', 2)))->limit(1);
+        $query = $this->mysqlTable('groups')->select(new StAsText(new StBuffer('polyindex', 2)))->limit(1);
 
         $this->assertSame(
             'select ST_AsText(ST_Buffer(`polyindex`, 2)) from `groups` limit 1',
@@ -1146,8 +1182,8 @@ class ExpressionsTest extends TestCase
     public function test_stbuffer_semantics_grown_polygon_contains_the_original(): void
     {
         $poly = new StGeomFromText(Value::of('POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))'), 3857);
-        $sql = (new StContains(new StBuffer($poly, 1), $poly))->getValue($this->grammar);
-        $this->assertSame(1, $this->evaluate($sql));
+        $sql = (new StContains(new StBuffer($poly, 1), $poly))->getValue($this->liveGrammar);
+        $this->assertSame($this->flag(true), $this->evaluate($sql));
     }
 
     public function test_stbuffer_semantics_zero_distance_repair_idiom_preserves_area(): void
@@ -1156,14 +1192,14 @@ class ExpressionsTest extends TestCase
         // ST_Buffer(geom, 0) to repair possible self-intersections. On an
         // already-valid polygon this must be an area-preserving no-op.
         $poly = new StGeomFromText(Value::of('POLYGON((0 0,0 10,10 10,10 0,0 0))'), 3857);
-        $before = "ST_Area({$poly->getValue($this->grammar)})";
-        $after = 'ST_Area('.(new StBuffer($poly, 0))->getValue($this->grammar).')';
+        $before = "ST_Area({$poly->getValue($this->liveGrammar)})";
+        $after = 'ST_Area('.(new StBuffer($poly, 0))->getValue($this->liveGrammar).')';
         $this->assertSame($this->evaluate($before), $this->evaluate($after));
     }
 
     public function test_stbuffer_semantics_null_operand_is_null(): void
     {
-        $sql = (new StAsText(new StBuffer(Value::of(null), 2)))->getValue($this->grammar);
+        $sql = (new StAsText(new StBuffer(Value::of(null), 2)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1179,7 +1215,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stsimplify_via_real_query_builder(): void
     {
-        $query = DB::table('groups')->select(new StAsText(new StSimplify('polyindex', 1)))->limit(1);
+        $query = $this->mysqlTable('groups')->select(new StAsText(new StSimplify('polyindex', 1)))->limit(1);
 
         $this->assertSame(
             'select ST_AsText(ST_Simplify(`polyindex`, 1)) from `groups` limit 1',
@@ -1193,10 +1229,10 @@ class ExpressionsTest extends TestCase
         // (5 0) sits exactly on the line from (0 0) to (10 0) and is removed
         // by Douglas-Peucker simplification at tolerance 1.
         $line = new StGeomFromText(Value::of('LINESTRING(0 0, 5 0, 10 0, 10 10)'), 3857);
-        $originalPoints = $this->evaluate("ST_NumPoints({$line->getValue($this->grammar)})");
+        $originalPoints = $this->evaluate("ST_NumPoints({$line->getValue($this->liveGrammar)})");
         $this->assertSame(4, $originalPoints);
 
-        $sql = "ST_NumPoints(".(new StSimplify($line, 1))->getValue($this->grammar).')';
+        $sql = "ST_NumPoints(".(new StSimplify($line, 1))->getValue($this->liveGrammar).')';
         $this->assertSame(3, $this->evaluate($sql));
     }
 
@@ -1207,13 +1243,13 @@ class ExpressionsTest extends TestCase
         // explains why its tolerance ladder must stay degree-scale, not
         // metre-scale, for exactly this reason.
         $small = new StGeomFromText(Value::of('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'), 3857);
-        $sql = (new StAsText(new StSimplify($small, 1000)))->getValue($this->grammar);
+        $sql = (new StAsText(new StSimplify($small, 1000)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
     public function test_stsimplify_semantics_null_operand_is_null(): void
     {
-        $sql = (new StAsText(new StSimplify(Value::of(null), 1)))->getValue($this->grammar);
+        $sql = (new StAsText(new StSimplify(Value::of(null), 1)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1229,7 +1265,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stunion_via_real_query_builder(): void
     {
-        $query = DB::table('groups')->select(new StAsText(new StUnion('polyindex', 'polyindex')))->limit(1);
+        $query = $this->mysqlTable('groups')->select(new StAsText(new StUnion('polyindex', 'polyindex')))->limit(1);
 
         $this->assertSame(
             'select ST_AsText(ST_Union(`polyindex`, `polyindex`)) from `groups` limit 1',
@@ -1242,7 +1278,7 @@ class ExpressionsTest extends TestCase
     {
         $a = new StGeomFromText(Value::of('POINT(1 1)'), 3857);
         $b = new StGeomFromText(Value::of('POINT(2 2)'), 3857);
-        $sql = (new StAsText(new StUnion($a, $b)))->getValue($this->grammar);
+        $sql = (new StAsText(new StUnion($a, $b)))->getValue($this->liveGrammar);
         $this->assertSame('MULTIPOINT((1 1),(2 2))', $this->evaluate($sql));
     }
 
@@ -1256,14 +1292,14 @@ class ExpressionsTest extends TestCase
         $a = new StGeomFromText(Value::of('POINT(1 1)'), 3857);
         $b = new StGeomFromText(Value::of('POINT(2 2)'), 3857);
         $c = new StGeomFromText(Value::of('POINT(3 3)'), 3857);
-        $sql = (new StAsText(new StUnion($a, new StUnion($b, $c))))->getValue($this->grammar);
+        $sql = (new StAsText(new StUnion($a, new StUnion($b, $c))))->getValue($this->liveGrammar);
         $this->assertSame('MULTIPOINT((1 1),(2 2),(3 3))', $this->evaluate($sql));
     }
 
     public function test_stunion_semantics_null_operand_is_null(): void
     {
         $a = new StGeomFromText(Value::of('POINT(1 1)'), 3857);
-        $sql = (new StAsText(new StUnion(Value::of(null), $a)))->getValue($this->grammar);
+        $sql = (new StAsText(new StUnion(Value::of(null), $a)))->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1279,7 +1315,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stcollect_via_real_query_builder(): void
     {
-        $query = DB::table('groups')->select(new StCollect('polyindex'));
+        $query = $this->mysqlTable('groups')->select(new StCollect('polyindex'));
 
         $this->assertSame('select ST_Collect(`polyindex`) from `groups`', $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -1290,7 +1326,7 @@ class ExpressionsTest extends TestCase
         // Not expressible via the shared evaluate() helper (no FROM clause)
         // since aggregation genuinely needs rows to aggregate over - built
         // as a UNION ALL derived table instead.
-        $collect = (new StCollect('g'))->getValue($this->grammar);
+        $collect = (new StCollect('g'))->getValue($this->liveGrammar);
         $sql = "SELECT ST_AsText($collect) AS result FROM ("
             ."SELECT ST_GeomFromText('POINT(1 1)', 3857) AS g "
             ."UNION ALL SELECT ST_GeomFromText('POINT(2 2)', 3857)"
@@ -1300,7 +1336,7 @@ class ExpressionsTest extends TestCase
 
     public function test_stcollect_semantics_empty_group_is_null(): void
     {
-        $collect = (new StCollect('g'))->getValue($this->grammar);
+        $collect = (new StCollect('g'))->getValue($this->liveGrammar);
         $sql = "SELECT ST_AsText($collect) AS result FROM ("
             ."SELECT ST_GeomFromText('POINT(1 1)', 3857) AS g LIMIT 0"
             .') t';
@@ -1322,7 +1358,7 @@ class ExpressionsTest extends TestCase
         // Mirrors ReengageContentService::resolveVolunteer()'s tiebreak:
         // ORDER BY haversine(?, ?, groups.lat, groups.lng) with a literal
         // reference point and column operands for the target.
-        $query = DB::table('groups')->select('id')
+        $query = $this->mysqlTable('groups')->select('id')
             ->orderBy(new Haversine(Value::of(51.5), Value::of(-0.1), 'lat', 'lng'));
 
         $this->assertSame(
@@ -1335,7 +1371,7 @@ class ExpressionsTest extends TestCase
     public function test_haversine_semantics_same_point_is_zero(): void
     {
         $sql = (new Haversine(Value::of(51.5), Value::of(-0.1), Value::of(51.5), Value::of(-0.1)))
-            ->getValue($this->grammar);
+            ->getValue($this->liveGrammar);
         $this->assertEquals(0, $this->evaluate($sql));
     }
 
@@ -1344,14 +1380,14 @@ class ExpressionsTest extends TestCase
         // Returns DEGREES, not metres/miles - see the class docblock. This
         // is a sanity bound, not a precise distance assertion.
         $sql = (new Haversine(Value::of(51.5), Value::of(-0.1), Value::of(55.9), Value::of(-3.2)))
-            ->getValue($this->grammar);
+            ->getValue($this->liveGrammar);
         $this->assertEqualsWithDelta(328.868, $this->evaluate($sql), 0.01);
     }
 
     public function test_haversine_semantics_null_operand_is_null(): void
     {
         $sql = (new Haversine(Value::of(null), Value::of(-0.1), Value::of(51.5), Value::of(-0.1)))
-            ->getValue($this->grammar);
+            ->getValue($this->liveGrammar);
         $this->assertNull($this->evaluate($sql));
     }
 
@@ -1367,7 +1403,7 @@ class ExpressionsTest extends TestCase
 
     public function test_getmaxdimension_via_real_query_builder(): void
     {
-        $query = DB::table('locations')->select(new GetMaxDimension('geometry'))->limit(1);
+        $query = $this->mysqlTable('locations')->select(new GetMaxDimension('geometry'))->limit(1);
 
         $this->assertSame('select GetMaxDimension(`geometry`) from `locations` limit 1', $query->toSql());
         $this->assertSame([], $query->getBindings());
@@ -1376,14 +1412,14 @@ class ExpressionsTest extends TestCase
     public function test_getmaxdimension_semantics_point_is_zero(): void
     {
         $geom = new StGeomFromText(Value::of('POINT(5 5)'), 3857);
-        $sql = (new GetMaxDimension($geom))->getValue($this->grammar);
+        $sql = (new GetMaxDimension($geom))->getValue($this->liveGrammar);
         $this->assertEquals(0, $this->evaluate($sql));
     }
 
     public function test_getmaxdimension_semantics_polygon_is_positive(): void
     {
         $geom = new StGeomFromText(Value::of('POLYGON((0 0,0 10,10 10,10 0,0 0))'), 3857);
-        $sql = (new GetMaxDimension($geom))->getValue($this->grammar);
+        $sql = (new GetMaxDimension($geom))->getValue($this->liveGrammar);
         $this->assertEqualsWithDelta(7.9788, $this->evaluate($sql), 0.001);
     }
 
@@ -1393,7 +1429,7 @@ class ExpressionsTest extends TestCase
         // one function in the whole namespace that does NOT propagate NULL:
         // ST_Dimension(NULL) > 1 is neither true nor an error, so the
         // stored function's IF falls through to its ELSE 0 branch.
-        $sql = (new GetMaxDimension(Value::of(null)))->getValue($this->grammar);
+        $sql = (new GetMaxDimension(Value::of(null)))->getValue($this->liveGrammar);
         $this->assertEquals(0, $this->evaluate($sql));
     }
 

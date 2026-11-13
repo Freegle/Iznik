@@ -537,6 +537,15 @@ type refUserCount struct {
 	Count    int
 }
 
+// repliesForBatchQuery counts the interested replies per message and replier for one batch of
+// msgids, before its terminal call.
+func repliesForBatchQuery(db *gorm.DB, batch []uint64) *gorm.DB {
+	return db.Table("chat_messages").
+		Select("refmsgid, userid, COUNT(*) AS count").
+		Where("refmsgid IN (?) AND type = ?", batch, utils.CHAT_MESSAGE_INTERESTED).
+		Group("refmsgid, userid")
+}
+
 // repliesForMessages batches the msgids in multiplicity into dashboardBatch-sized IN (...)
 // lookups against chat_messages (existing refmsgid index), so no single statement grows with the
 // number of messages the date range/group scope matched.
@@ -549,9 +558,7 @@ func repliesForMessages(db *gorm.DB, multiplicity map[uint64]int) []refUserCount
 	var rows []refUserCount
 	for _, batch := range chunkUint64s(msgids, dashboardBatch) {
 		var batchRows []refUserCount
-		if err := db.Raw("SELECT refmsgid, userid, COUNT(*) AS count FROM chat_messages "+
-			"WHERE refmsgid IN (?) AND type = ? GROUP BY refmsgid, userid",
-			batch, utils.CHAT_MESSAGE_INTERESTED).Scan(&batchRows).Error; err != nil {
+		if err := repliesForBatchQuery(db, batch).Scan(&batchRows).Error; err != nil {
 			// All-or-nothing, matching the replaced single statement's
 			// fail-empty behaviour.
 			return nil

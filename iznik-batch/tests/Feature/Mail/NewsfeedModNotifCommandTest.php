@@ -20,11 +20,11 @@ class NewsfeedModNotifCommandTest extends TestCase
         // any committed rows left by a previous test method cause count mismatches.
         // Deleting inside the current transaction hides committed leaked data from
         // this test's perspective without affecting other test classes.
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        \Tests\Support\ForeignKeyChecks::disable();
         foreach (['newsfeed_users', 'newsfeed', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
             DB::table($table)->delete();
         }
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        \Tests\Support\ForeignKeyChecks::enable();
     }
 
     private function createNewsfeedPost(int $userId, int $groupId, array $attributes = []): int
@@ -36,7 +36,7 @@ class NewsfeedModNotifCommandTest extends TestCase
             'message'   => 'A chitchat post message.',
             'added'     => now()->subHours(1),
             'timestamp' => now()->subHours(1),
-            'position'  => DB::raw("ST_GeomFromText('POINT(-0.1278 51.5074)', 3857)"),
+            'position'  => DB::raw("ST_GeomFromText('POINT(-0.1278 51.5074)', " . config('freegle.srid') . ")"),
         ], $attributes));
     }
 

@@ -799,6 +799,7 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_is_user_moderated_case_insensitive_moderated(): void
     {
+        $this->requiresMySql('relies on the MySQL ENUM accepting a value in any case; PostgreSQL stores only the exact values');
         $user  = $this->createTestUser();
         $group = $this->createTestGroup();
         DB::table('memberships')->insert([
@@ -1146,7 +1147,7 @@ class ContentCheckServiceTest extends TestCase
         $group = $this->createTestGroup();
         $msg   = $this->createTestMessage($user, $group);
 
-        $hash = 'testhash_' . uniqid();
+        $hash = substr('testhash_' . uniqid(), 0, 16); // hash is VARCHAR(16)
         DB::table('messages_attachments')->insert([
             'msgid' => $msg->id,
             'hash'  => $hash,
@@ -1187,7 +1188,7 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_image_spam_old_occurrences_not_counted(): void
     {
-        $hash = 'oldhash_' . uniqid();
+        $hash = substr('oldhash_' . uniqid(), 0, 16); // hash is VARCHAR(16)
         $user  = $this->createTestUser();
         $group = $this->createTestGroup();
 

@@ -733,9 +733,15 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		// order is not load-bearing and GORM's alphabetical Updates(map) order is
 		// safe; see the retired check-set-order.sh / setOrderIsLoadBearing
 		// (removed in d22ba1d6c).
+		// messages.message is NOT NULL. MySQL, which is not strict here, stores the empty string for the
+		// NULL below; PostgreSQL refuses the whole statement, so it is given the empty string itself.
+		blankMessage := gorm.Expr("NULL")
+		if database.Engine() == database.EnginePostgres {
+			blankMessage = gorm.Expr("''")
+		}
 		db.Table("messages").Where("fromuser = ?", targetID).Updates(map[string]interface{}{
 			"fromip":       gorm.Expr("NULL"),
-			"message":      gorm.Expr("NULL"),
+			"message":      blankMessage,
 			"envelopefrom": gorm.Expr("NULL"),
 			"fromname":     gorm.Expr("NULL"),
 			"fromaddr":     gorm.Expr("NULL"),

@@ -38,7 +38,7 @@ class MicrovolunteeringNotifyServiceTest extends TestCase
             'publish'           => 1,
             'onhere'            => 1,
             'microvolunteering' => $microvolunteering ? 1 : 0,
-            'polyindex'         => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
+            'polyindex'         => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . ")"),
         ]);
     }
 

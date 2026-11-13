@@ -25,6 +25,9 @@ const testStates = new Map<string, TestState>([
   ['go', initialTestState()],
   ['spatial', initialTestState()],
   ['laravel', initialTestState()],
+  ['go-pg', initialTestState()],
+  ['laravel-pg', initialTestState()],
+  ['pgtools', initialTestState()],
   ['playwright', initialTestState()],
   ['vitest', initialTestState()],
 ])

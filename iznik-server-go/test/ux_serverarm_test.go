@@ -369,9 +369,16 @@ func TestServerArmBothRowsAreReadInOneQuery(t *testing.T) {
 		ux.ExperimentArm(counting, member, serverArmName)
 	}
 
+	// GORM quotes the table name with backticks on MySQL and double quotes on PostgreSQL. The column
+	// names are written in the code with backticks and reach the recorder that way on both.
+	quote := "`"
+	if database.Engine() == database.EnginePostgres {
+		quote = `"`
+	}
+
 	reads := 0
 	for _, q := range queries {
-		if strings.Contains(q, "FROM `config`") {
+		if strings.Contains(q, "FROM "+quote+"config"+quote) {
 			reads++
 			assert.Contains(t, q, "`key` IN (")
 			assert.Contains(t, q, "ux_experiments")

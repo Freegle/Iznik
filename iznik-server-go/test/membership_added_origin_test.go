@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -45,9 +46,24 @@ func recordOriginReports(t *testing.T, needle string) *[]string {
 
 // Production runs without strict mode, so a value ForInsert accepts but the ENUM lacks is stored
 // as an empty string with no error. Both tables' ENUMs must list exactly addedorigin's values, in order.
+//
+// PostgreSQL has no ENUM here: the list is the column's CHECK constraint, which refuses any other value.
+// It must list the same values in the same order.
 func TestAddedOriginEnumMatchesTheGoList(t *testing.T) {
 	want := "enum('" + strings.Join(addedorigin.All(), "','") + "')"
 	for _, table := range []string{"memberships", "memberships_history"} {
+		if database.Engine() == database.EnginePostgres {
+			var def string
+			database.DBConn.Raw("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = ?",
+				table+"_added_origin_check").Scan(&def)
+			values := []string{}
+			for _, m := range regexp.MustCompile(`'([^']*)'::`).FindAllStringSubmatch(def, -1) {
+				values = append(values, m[1])
+			}
+			assert.Equal(t, addedorigin.All(), values, table)
+			continue
+		}
+
 		var colType string
 		database.DBConn.Raw("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "+
 			"AND TABLE_NAME = ? AND COLUMN_NAME = 'added_origin'", table).Scan(&colType)

@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -22,6 +23,7 @@ use InvalidArgumentException;
 final class Greatest implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     /** @var array<int, mixed> */
     private readonly array $operands;
@@ -41,6 +43,11 @@ final class Greatest implements ExpressionContract
             fn (mixed $operand) => $this->renderOperand($operand, $grammar),
             $this->operands
         );
+
+        if ($this->isPostgres($grammar)) {
+            // MySQL gives NULL if any operand is NULL; PostgreSQL ignores NULLs.
+            return '(CASE WHEN num_nulls('.implode(', ', $rendered).') > 0 THEN NULL ELSE GREATEST('.implode(', ', $rendered).') END)';
+        }
 
         return 'GREATEST('.implode(', ', $rendered).')';
     }

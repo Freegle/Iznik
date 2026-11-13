@@ -26,8 +26,14 @@ const maxGroupsForConstantList = 50
 // narrowing here would silently change which posts the browse feed shows.
 func myGroupIDs(db *gorm.DB, myid uint64) []uint64 {
 	var ids []uint64
-	db.Raw("SELECT groupid FROM memberships WHERE userid = ?", myid).Scan(&ids)
+	myGroupIDsQuery(db, myid).Scan(&ids)
 	return ids
+}
+
+// myGroupIDsQuery is the statement myGroupIDs runs, before its terminal call, so the parity test
+// renders the chain that runs.
+func myGroupIDsQuery(db *gorm.DB, myid uint64) *gorm.DB {
+	return db.Table("memberships").Select("groupid").Where("userid = ?", myid)
 }
 
 // approvedInMyGroupsPredicate renders "this post is approved in one of the viewer's groups" as a

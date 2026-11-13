@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services;
 
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use App\Services\LoveJunkService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -34,15 +36,11 @@ class LoveJunkServiceTest extends TestCase
         $onlovejunk = $attrs['onlovejunk'] ?? 1;
 
         // polyindex is NOT NULL spatial — must be set in the INSERT statement
-        DB::statement("
-            INSERT INTO `groups`
-                (nameshort, namefull, type, onlovejunk, onhere, publish, lat, lng, polyindex)
-            VALUES
-                (?, 'Test LoveJunk Group', 'Freegle', ?, 1, 1, 51.5, -0.1,
-                 ST_GeomFromText('POLYGON((-1 51,-1 52,0 52,0 51,-1 51))',3857))
-        ", [$nameshort, $onlovejunk]);
-
-        return (int) DB::getPdo()->lastInsertId();
+        return (int) DB::table('groups')->insertGetId([
+            'nameshort' => $nameshort, 'namefull' => 'Test LoveJunk Group', 'type' => 'Freegle',
+            'onlovejunk' => $onlovejunk, 'onhere' => 1, 'publish' => 1, 'lat' => 51.5, 'lng' => -0.1,
+            'polyindex' => new StGeomFromText(Value::of('POLYGON((-1 51,-1 52,0 52,0 51,-1 51))'), (int) config('freegle.srid')),
+        ]);
     }
 
     private function createUser(array $attrs = []): int

@@ -10,9 +10,10 @@ use PHPUnit\Framework\Assert;
 /**
  * Layer 1 of the Laravel ORM migration harness (plan section 7.2): renders
  * the replacement query-builder call and checks it against the goldenSql
- * recorded for that site in tools/orm-migration/services/laravel/manifest.json,
+ * recorded for that site in the raw SQL manifest, tools/orm-migration/manifest.json
+ * (read through Manifest.php, which holds a copy in tests/fixtures/orm-parity/goldens.json),
  * via Canonical (Canonical.php). The Go counterpart is
- * iznik-server-go/ormharness/golden.go's AssertGoldenSQL; this is the design
+ * iznik-server-go/parity/golden.go's AssertGoldenSQL; this is the design
  * ported to Laravel, not reinvented - read that file's own doc comment for
  * the parts that transfer unchanged (Gate 2's contract: a site cannot be
  * marked converted without a parity test bearing its ID; the approvedDiff
@@ -94,6 +95,11 @@ final class GoldenSql
      */
     public static function assert(string $siteId, callable $build): void
     {
+        self::onMySql(fn () => self::doAssert($siteId, $build));
+    }
+
+    private static function doAssert(string $siteId, callable $build): void
+    {
         $query = self::normaliseBuiltQuery($siteId, $build());
         self::compareAndAssert($siteId, $query->toSql(), $query->getBindings());
     }
@@ -110,6 +116,11 @@ final class GoldenSql
      * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array}  $build
      */
     public static function assertInsertOrIgnore(string $siteId, callable $build): void
+    {
+        self::onMySql(fn () => self::doAssertInsertOrIgnore($siteId, $build));
+    }
+
+    private static function doAssertInsertOrIgnore(string $siteId, callable $build): void
     {
         [$built, $values] = $build();
         $query = self::normaliseBuiltQuery($siteId, $built);
@@ -128,6 +139,11 @@ final class GoldenSql
      * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array,2:array,3:array}  $build
      */
     public static function assertUpsert(string $siteId, callable $build): void
+    {
+        self::onMySql(fn () => self::doAssertUpsert($siteId, $build));
+    }
+
+    private static function doAssertUpsert(string $siteId, callable $build): void
     {
         [$built, $rows, $uniqueBy, $update] = $build();
         $query = self::normaliseBuiltQuery($siteId, $built);
@@ -155,12 +171,87 @@ final class GoldenSql
     }
 
     /**
+     * Layer 1 for a site converted to ->count(). $build returns the query carrying table, joins
+     * and WHERE, un-executed. The aggregate is set on a copy, which is what ->count() does before
+     * it runs, so the statement compared is the one ->count() sends.
+     *
+     * @param  callable(): QueryBuilder|EloquentBuilder  $build
+     */
+    public static function assertCount(string $siteId, callable $build): void
+    {
+        self::onMySql(fn () => self::doAssertCount($siteId, $build));
+    }
+
+    private static function doAssertCount(string $siteId, callable $build): void
+    {
+        $query = self::normaliseBuiltQuery($siteId, $build())->clone();
+        $query->aggregate = ['function' => 'count', 'columns' => ['*']];
+
+        self::compareAndAssert($siteId, $query->toSql(), $query->getBindings());
+    }
+
+    /**
+     * Layer 1 for a site that runs through a method that builds and runs its statement, such as
+     * one that ends in ->first(), ->count() or ->delete(). $run calls that method, the same one
+     * production calls. The statement is captured with the connection's pretend mode, so nothing
+     * reaches the database and the terminal call is the one that runs in production.
+     *
+     * @param  callable(): mixed  $run
+     */
+    public static function assertExecuted(string $siteId, callable $run): void
+    {
+        self::onMySql(fn () => self::doAssertExecuted($siteId, $run));
+    }
+
+    private static function doAssertExecuted(string $siteId, callable $run): void
+    {
+        // The query log in pretend mode holds the statement with its values already substituted,
+        // so the placeholders and the bindings are read from the event instead.
+        $queries = [];
+        DB::listen(function ($executed) use (&$queries) {
+            $queries[] = ['query' => $executed->sql, 'bindings' => $executed->bindings];
+        });
+        DB::pretend($run);
+        if (count($queries) !== 1) {
+            Assert::fail(sprintf(
+                'ormharness: site "%s": the method sent %d statement(s), expected exactly 1',
+                $siteId,
+                count($queries)
+            ));
+        }
+
+        self::compareAndAssert($siteId, $queries[0]['query'], $queries[0]['bindings']);
+    }
+
+    /**
+     * Laravel names every aggregate column "aggregate" and reads the first column by position, so
+     * the name is not an output the caller depends on. When the reference statement does not use
+     * that name, the rendered statement takes the reference's own alias, or none. A select-list
+     * alias of any other kind is an output name and is left alone.
+     */
+    private static function alignAggregateAlias(string $reference, string $rendered): string
+    {
+        $internal = '/ as `?aggregate`?(?= from )/i';
+        if (! preg_match($internal, $rendered) || preg_match($internal, $reference)) {
+            return $rendered;
+        }
+        $alias = preg_match('/\bas\s+`?(\w+)`?\s+from\b/i', $reference, $m) ? ' as '.$m[1] : '';
+
+        return preg_replace($internal, $alias, $rendered);
+    }
+
+    /**
      * Layer 1 for a site converted to ->exists(). $build returns the query
      * carrying table and WHERE, un-executed.
      *
      * @param  callable(): QueryBuilder|EloquentBuilder  $build
      */
     public static function assertExists(string $siteId, callable $build): void
+    {
+        self::onMySql(fn () => self::doAssertExists($siteId, $build));
+    }
+
+    private static function doAssertExists(string $siteId, callable $build): void
     {
         $query = self::normaliseBuiltQuery($siteId, $build());
         $sql = $query->getGrammar()->compileExists($query);
@@ -182,6 +273,11 @@ final class GoldenSql
      * @param  callable(): array{0:QueryBuilder|EloquentBuilder,1:array}  $build
      */
     public static function assertUpdate(string $siteId, callable $build): void
+    {
+        self::onMySql(fn () => self::doAssertUpdate($siteId, $build));
+    }
+
+    private static function doAssertUpdate(string $siteId, callable $build): void
     {
         [$built, $values] = $build();
         $query = self::normaliseBuiltQuery($siteId, $built);
@@ -230,6 +326,11 @@ final class GoldenSql
      */
     public static function assertInsert(string $siteId, callable $build): void
     {
+        self::onMySql(fn () => self::doAssertInsert($siteId, $build));
+    }
+
+    private static function doAssertInsert(string $siteId, callable $build): void
+    {
         [$built, $values] = $build();
         $query = self::normaliseBuiltQuery($siteId, $built);
         $grammar = $query->getGrammar();
@@ -254,6 +355,11 @@ final class GoldenSql
      */
     public static function assertDelete(string $siteId, callable $build): void
     {
+        self::onMySql(fn () => self::doAssertDelete($siteId, $build));
+    }
+
+    private static function doAssertDelete(string $siteId, callable $build): void
+    {
         $query = self::normaliseBuiltQuery($siteId, $build());
         $grammar = $query->getGrammar();
 
@@ -263,6 +369,29 @@ final class GoldenSql
         $bindings = $query->cleanBindings($grammar->prepareBindingsForDelete($query->getRawBindings()));
 
         self::compareAndAssert($siteId, $sql, $bindings);
+    }
+
+    /**
+     * Runs $run with a MySQL rendering connection as the default when the suite runs on another engine. The golden text is the MySQL statement, so the statement
+     * under test is rendered by the MySQL grammar whichever engine the suite runs on. Nothing is sent: every
+     * layer-1 check only renders (or runs in pretend mode).
+     */
+    private static function onMySql(callable $run): void
+    {
+        $previous = DB::getDefaultConnection();
+        if (DB::connection()->getDriverName() === 'mysql') {
+            $run();
+
+            return;
+        }
+
+        MySqlRenderingConnection::register();
+        DB::setDefaultConnection(MySqlRenderingConnection::NAME);
+        try {
+            $run();
+        } finally {
+            DB::setDefaultConnection($previous);
+        }
     }
 
     private static function normaliseBuiltQuery(string $siteId, mixed $built): QueryBuilder
@@ -349,7 +478,7 @@ final class GoldenSql
                 ));
             }
             $approvedRaw = $grammar->substituteBindingsIntoRawSql($approvedDiff, $bindings);
-            if (Canonical::normalise($approvedRaw) === Canonical::normalise($renderedRaw)) {
+            if (Canonical::normalise($approvedRaw) === Canonical::normalise(self::alignAggregateAlias($approvedRaw, $renderedRaw))) {
                 Assert::assertTrue(true); // a reviewer already recorded and justified exactly this divergence
                 return;
             }
@@ -377,7 +506,7 @@ final class GoldenSql
         $goldenRaw = $grammar->substituteBindingsIntoRawSql($goldenSql, $bindings);
 
         $wantCanon = Canonical::normalise($goldenRaw);
-        $gotCanon = Canonical::normalise($renderedRaw);
+        $gotCanon = Canonical::normalise(self::alignAggregateAlias($goldenRaw, $renderedRaw));
 
         if ($wantCanon === $gotCanon) {
             Assert::assertSame($wantCanon, $gotCanon); // real assertion, so PHPUnit does not flag the test as risky

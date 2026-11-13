@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Models\Membership;
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Ripple\RippleIntroMail;
@@ -178,7 +180,7 @@ class ResumedReachTest extends TestCase
     {
         $group = $this->createTestGroup();
         DB::statement(
-            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET publish = 1, polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             [$wkt, $group->id]
         );
 
@@ -244,7 +246,7 @@ class ResumedReachTest extends TestCase
         ]);
         DB::insert(
             'INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-             VALUES (?, ST_GeomFromText(?, 3857), ?, ?, ?)',
+             VALUES (?, ST_GeomFromText(?, ' . config('freegle.srid') . '), ?, ?, ?)',
             [$f->msgid, 'POINT(-0.10 51.50)', $f->home->id, Message::TYPE_OFFER, $arrival]
         );
 
@@ -287,7 +289,7 @@ class ResumedReachTest extends TestCase
             "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, ripple_intro_sent, created_at, updated_at)
-             VALUES (?, 51.5, -0.10, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', ?, 3, 90, 15, ?, NULL, 'held', 1, ?, ?)",
+             VALUES (?, 51.5, -0.10, ?, ST_Envelope(ST_GeomFromText(?, " . config('freegle.srid') . ")), ?, 'drive', ?, 3, 90, 15, ?, NULL, 'held', 1, ?, ?)",
             [
                 $f->msgid, $shape === 'grid' ? $this->reachCellsFor($polygon) : null, $polygon, $arrival,
                 $tick, $schedule, $arrival, $frozenAt,
@@ -409,7 +411,7 @@ class ResumedReachTest extends TestCase
     private function outerBoundContains(\stdClass $f, array $at): bool
     {
         return (bool) DB::selectOne(
-            'SELECT ST_Contains(outer_bound, ST_SRID(POINT(?, ?), 3857)) AS inside FROM rippling_reach WHERE msgid = ?',
+            'SELECT ST_Contains(outer_bound, ' . Spatial::point('?', '?', config('freegle.srid')) . ') AS inside FROM rippling_reach WHERE msgid = ?',
             [$at[1], $at[0], $f->msgid]
         )->inside;
     }
@@ -674,7 +676,7 @@ class ResumedReachTest extends TestCase
         $this->assertNotNull($this->copy($f, 'G'), 'tick 3 rippled into G');
 
         [, $mailed] = $this->mailerRun();
-        $this->assertSame($this->ids($f, 'C', 'GM'), $mailed, 'tick 3 tells C and GM and nobody who has been told');
+        $this->assertEqualsCanonicalizing($this->ids($f, 'C', 'GM'), $mailed, 'tick 3 tells C and GM and nobody who has been told');
         $this->assertSame([self::BUDGET[3]], array_values(array_unique($this->labelBudgets)));
     }
 

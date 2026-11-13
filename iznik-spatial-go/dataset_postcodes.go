@@ -32,12 +32,12 @@ func (d *PostcodesDataset) RebuildInterval() time.Duration { return 24 * time.Ho
 // reconciles deletions/exclusions.
 func (d *PostcodesDataset) DeltaInterval() time.Duration { return 1 * time.Hour }
 
-func (d *PostcodesDataset) Load(mysqlDB *sql.DB, idx *Index) error {
-	return loadPostcodes(mysqlDB, idx, "")
+func (d *PostcodesDataset) Load(srcDB *sql.DB, idx *Index) error {
+	return loadPostcodes(srcDB, idx, "")
 }
 
-func (d *PostcodesDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
-	return loadPostcodes(mysqlDB, idx, fmt.Sprintf(
+func (d *PostcodesDataset) ApplyDelta(srcDB *sql.DB, idx *Index, since time.Time) error {
+	return loadPostcodes(srcDB, idx, fmt.Sprintf(
 		" AND locations.timestamp > '%s'", since.UTC().Format("2006-01-02 15:04:05")))
 }
 
@@ -62,7 +62,8 @@ func (d *PostcodesDataset) Within(idx *Index, params QueryParams) ([]int64, erro
 	return ids, nil
 }
 
-func loadPostcodes(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
+func loadPostcodes(srcDB *sql.DB, idx *Index, extraWhere string) error {
+	dl := dialectOf(srcDB)
 	query := `
 		SELECT locations.id,
 		       ST_X(ST_Centroid(COALESCE(ourgeometry, geometry))) AS lng,
@@ -71,11 +72,11 @@ func loadPostcodes(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 		LEFT JOIN locations_excluded le ON locations.id = le.locationid
 		WHERE le.locationid IS NULL
 		  AND locations.type = 'Postcode'
-		  AND LOCATE(' ', locations.name) > 0
-		  AND COALESCE(ourgeometry, geometry) IS NOT NULL
+		  AND ` + dl.strpos("' '", "locations.name") + ` > 0
+		  AND COALESCE(ourgeometry, geometry) IS NOT NULL` + dl.notEmptyGuard("COALESCE(ourgeometry, geometry)") + `
 	` + extraWhere
 
-	rows, err := mysqlDB.Query(query)
+	rows, err := srcQuery(srcDB, query)
 	if err != nil {
 		return fmt.Errorf("postcodes load query: %w", err)
 	}

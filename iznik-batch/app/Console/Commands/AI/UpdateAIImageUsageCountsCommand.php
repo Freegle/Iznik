@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\AI;
 
+use App\Database\Sql;
 use Illuminate\Console\Command;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
@@ -111,14 +112,19 @@ class UpdateAIImageUsageCountsCommand extends Command
         // (see MySqlGrammar::compileDropIfExists), which would drop a
         // permanent table of this name instead of just the session-local
         // temp table if one ever existed.
-        DB::statement('DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts');
+        DB::statement(Sql::dropTemporaryTable('tmp_ai_usage_counts'));
 
         // Schema DDL is fully expressible via the schema builder (temporary table,
         // explicit VARCHAR/CHARACTER SET/COLLATE, PRIMARY KEY) — verified by diffing
         // SHOW CREATE TABLE against the original raw CREATE TABLE ... AS SELECT.
         Schema::create('tmp_ai_usage_counts', function (Blueprint $table) {
             $table->temporary();
-            $table->string('externaluid', 255)->charset('utf8mb4')->collation('utf8mb4_unicode_ci')->primary();
+            $column = $table->string('externaluid', 255);
+            // MySQL's column character set and collation; PostgreSQL has neither and compares by its database collation.
+            if (DB::connection()->getDriverName() === 'mysql') {
+                $column->charset('utf8mb4')->collation('utf8mb4_unicode_ci');
+            }
+            $column->primary();
             $table->integer('cnt');
         });
 
@@ -154,6 +160,21 @@ class UpdateAIImageUsageCountsCommand extends Command
                 ->lazyById(500);
 
             foreach ($rows as $row) {
+                if (DB::connection()->getDriverName() === 'pgsql') {
+                    // PostgreSQL has no UPDATE with a join, and Laravel's stand-in for one leaves the joined
+                    // table out of reach of the SET clause. The count is read by a subquery instead. A row
+                    // with no count gets 0, as the left join gives it on MySQL.
+                    // keep-raw: PostgreSQL only; a correlated subquery inside COALESCE has no builder form.
+                    $count = DB::raw('COALESCE((SELECT t.cnt FROM tmp_ai_usage_counts t WHERE t.externaluid = ai_images.externaluid), 0)');
+                    $affected = DB::table('ai_images')
+                        ->where('id', $row->id)
+                        ->where('usage_count', '!=', $count)
+                        ->update(['usage_count' => $count]);
+                    $affected > 0 ? $totalUpdated++ : $totalSkipped++;
+
+                    continue;
+                }
+
                 // The JOIN and WHERE ai.id predicate are expressed via the query builder.
                 $affected = DB::table('ai_images as ai')
                     ->leftJoin('tmp_ai_usage_counts as t', 't.externaluid', '=', 'ai.externaluid')
@@ -172,7 +193,7 @@ class UpdateAIImageUsageCountsCommand extends Command
         } finally {
             // keep-raw: same DROP TEMPORARY TABLE blocker as above — Schema::dropIfExists()
             // has no TEMPORARY-aware compile path (see comment on the earlier drop).
-            DB::statement('DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts');
+            DB::statement(Sql::dropTemporaryTable('tmp_ai_usage_counts'));
         }
 
         $this->info("Full recompute: updated {$totalUpdated} AI images, skipped {$totalSkipped} unchanged.");

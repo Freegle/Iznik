@@ -23,7 +23,7 @@ class SyncWhatJobsClickabilityTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->srid = config('freegle.srid', 3857);
+        $this->srid = config('freegle.srid', config('freegle.srid'));
         $this->geom = WhatJobsService::boxPoly(53.8, -1.5, 53.9, -1.4);
         $this->cleanupTestData();
     }

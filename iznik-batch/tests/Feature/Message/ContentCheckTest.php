@@ -570,8 +570,25 @@ class ContentCheckTest extends TestCase
             'a copy locked by the home community stays Pending after an edit');
     }
 
+    /**
+     * The safeguarding keywords are seeded by a migration. A database built from the PostgreSQL baseline holds
+     * no seeded rows, so a test that needs one makes sure it is there.
+     */
+    private function ensureSafeguardingKeyword(string $keyword, ?string $exclude = null): void
+    {
+        if (DB::table('concern_keywords')->where('keyword', $keyword)->where('scope', 'global')->exists()) {
+            return;
+        }
+
+        DB::table('concern_keywords')->insert([
+            'keyword' => $keyword, 'category' => 'safeguarding', 'match_mode' => 'literal', 'exclude' => $exclude,
+            'scope' => 'global', 'group_id' => 0, 'action' => 'flag',
+        ]);
+    }
+
     public function test_safeguarding_keywords_flag_with_their_own_category(): void
     {
+        $this->ensureSafeguardingKeyword('domestic abuse');
         $group = $this->createTestGroup();
 
         $result = $this->service->checkConcernKeywords(
@@ -585,6 +602,7 @@ class ContentCheckTest extends TestCase
 
     public function test_safeguarding_shelter_exclusion_still_applies(): void
     {
+        $this->ensureSafeguardingKeyword('shelter', '(animal|dog|cat|bus|garden|bike|cycle|log|smoking|rain|pet|rescue|wood|bin|chicken|rabbit|beach|sun|tent|fishing)\\s+shelters?');
         $group = $this->createTestGroup();
 
         $this->assertNull(
@@ -1548,7 +1566,7 @@ class ContentCheckTest extends TestCase
 
         $after = DB::table('background_tasks')
             ->where('task_type', 'freebie_alerts_add')
-            ->whereRaw("JSON_EXTRACT(data, '$.msgid') = ?", [$msgid])
+            ->where('data->msgid', $msgid)
             ->count();
 
         $this->assertGreaterThanOrEqual(1, $after);
@@ -1586,7 +1604,7 @@ class ContentCheckTest extends TestCase
 
         $taskCount = DB::table('background_tasks')
             ->where('task_type', 'push_notify_group_mods')
-            ->whereRaw("JSON_EXTRACT(data, '$.group_id') = ?", [$group->id])
+            ->where('data->group_id', $group->id)
             ->whereNull('processed_at')
             ->count();
 
@@ -2680,7 +2698,7 @@ class ContentCheckTest extends TestCase
         ]);
 
         // Attach same hash to the message being checked
-        $testHash = 'hash_' . uniqid();
+        $testHash = 'h_' . uniqid();
         DB::table('messages_attachments')->insert([
             'msgid' => $msgid,
             'hash'  => $testHash,
@@ -2718,7 +2736,7 @@ class ContentCheckTest extends TestCase
         ]);
 
         // Insert 5 messages (threshold is > 5, so 5 is OK)
-        $testHash = 'hash_' . uniqid();
+        $testHash = 'h_' . uniqid();
         for ($i = 0; $i < 5; $i++) {
             $otherMsgid = DB::table('messages')->insertGetId([
                 'subject'  => "OFFER: Item $i",
@@ -2749,7 +2767,7 @@ class ContentCheckTest extends TestCase
         ]);
 
         // Insert 6 messages but older than 24 hours
-        $testHash = 'hash_' . uniqid();
+        $testHash = 'h_' . uniqid();
         for ($i = 0; $i < 6; $i++) {
             $otherMsgid = DB::table('messages')->insertGetId([
                 'subject'  => "OFFER: Item $i",
@@ -3069,7 +3087,7 @@ class ContentCheckTest extends TestCase
         $this->assertTrue(
             DB::table('background_tasks')
                 ->where('task_type', \App\Models\BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS)
-                ->whereRaw("JSON_EXTRACT(data, '$.group_id') = ?", [$group->id])
+                ->where('data->group_id', $group->id)
                 ->exists(),
             'Mods must be notified about a flagged approved post'
         );
@@ -3151,7 +3169,7 @@ class ContentCheckTest extends TestCase
         $this->assertEquals(1, $stats['approved']);
         $this->assertEquals(1, DB::table('background_tasks')
             ->where('task_type', 'freebie_alerts_add')
-            ->whereRaw("JSON_EXTRACT(data, '$.msgid') = ?", [$msgid])
+            ->where('data->msgid', $msgid)
             ->count(), 'an automatically split post is an ordinary Offer for freebiealerts.app');
     }
 
@@ -3198,7 +3216,7 @@ class ContentCheckTest extends TestCase
 
         $count = DB::table('background_tasks')
             ->where('task_type', 'freebie_alerts_add')
-            ->whereRaw("JSON_EXTRACT(data, '$.msgid') = ?", [$msgid])
+            ->where('data->msgid', $msgid)
             ->count();
 
         $this->assertEquals(0, $count, 'freebie_alerts_add must not be queued for a clearance/bulk-offer post');

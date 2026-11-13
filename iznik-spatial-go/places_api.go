@@ -93,7 +93,7 @@ func lookupPostcode(name string) *placeFeature {
 
 	var id int64
 	var lat, lng float64
-	err := placesDB.QueryRow(
+	err := srcQueryRow(placesDB,
 		`SELECT locations.id,
 		        ST_Y(ST_Centroid(COALESCE(ourgeometry, geometry))),
 		        ST_X(ST_Centroid(COALESCE(ourgeometry, geometry)))

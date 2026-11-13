@@ -30,10 +30,7 @@ class BackfillItemPopularityCommandTest extends TestCase
 
         for ($i = 0; $i < $count; $i++) {
             $message = $this->createTestMessage($this->createTestUser(), $group);
-            DB::statement(
-                'INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)',
-                [$message->id, $itemid]
-            );
+            DB::table('messages_items')->insertOrIgnore(['msgid' => $message->id, 'itemid' => $itemid]);
         }
     }
 

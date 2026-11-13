@@ -21,11 +21,11 @@ class EventsDigestCommandTest extends TestCase
         // isolation. Delete inside the current transaction so leaked rows are
         // hidden without affecting other test classes (the DELETE rolls back with
         // this test's transaction).
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        \Tests\Support\ForeignKeyChecks::disable();
         foreach (['communityevents_images', 'communityevents_dates', 'communityevents_groups', 'communityevents', 'users_digests', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
             DB::table($table)->delete();
         }
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        \Tests\Support\ForeignKeyChecks::enable();
     }
 
     private function createEvent(int $groupId, string $title = 'Test Event', int $daysFromNow = 7, array $fields = []): int
@@ -803,7 +803,8 @@ class EventsDigestCommandTest extends TestCase
         DB::table('communityevents_dates')->insert([
             'eventid' => $eventId,
             'start'   => now()->addDays(7),
-            'end'     => '0000-00-00 00:00:00',  // sentinel for "no end time" — column is NOT NULL
+            // Sentinel for "no end time" - the column is NOT NULL. PostgreSQL has no zero date, so it is the epoch there.
+            'end'     => DB::connection()->getDriverName() === 'pgsql' ? '1970-01-01 00:00:00' : '0000-00-00 00:00:00',
         ]);
 
         $this->artisan('mail:events-digest')->assertExitCode(0);

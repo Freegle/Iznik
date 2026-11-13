@@ -2,6 +2,9 @@
 
 namespace App\Console\Commands\Message;
 
+use App\Database\Expressions\StDistanceSphere;
+use App\Database\Expressions\Point;
+use App\Database\Expressions\Alias;
 use App\Models\Group;
 use App\Models\Location;
 use App\Models\User;
@@ -432,11 +435,10 @@ class BulkPostCommand extends Command
             ->whereNotNull('lat')
             ->whereNotNull('lng')
             ->select('*')
-            // keep-raw: ST_Distance_Sphere() is a spatial function with no builder method.
-            ->selectRaw(
-                'ST_Distance_Sphere(POINT(lng, lat), POINT(?, ?)) AS distance',
-                [$location->lng, $location->lat]
-            )
+            ->addSelect(new Alias(
+                new StDistanceSphere(new Point('lng', 'lat'), new Point((float) $location->lng, (float) $location->lat)),
+                'distance'
+            ))
             ->orderBy('distance')
             ->first();
 

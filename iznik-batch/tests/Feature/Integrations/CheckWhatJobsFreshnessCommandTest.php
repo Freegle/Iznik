@@ -21,7 +21,7 @@ class CheckWhatJobsFreshnessCommandTest extends TestCase
         DB::statement(
             'INSERT INTO jobs (job_reference, title, url, geometry, visible, clickability, posted_at)
              VALUES (?, ?, ?, ST_GeomFromText(?, ?), 1, 0, ?)',
-            ['fresh-test-'.uniqid(), 'Driver', 'https://jobs.example/1', WhatJobsService::boxPoly(53.8, -1.5, 53.9, -1.4), config('freegle.srid', 3857), $postedAt]
+            ['fresh-test-'.uniqid(), 'Driver', 'https://jobs.example/1', WhatJobsService::boxPoly(53.8, -1.5, 53.9, -1.4), config('freegle.srid', config('freegle.srid')), $postedAt]
         );
     }
 

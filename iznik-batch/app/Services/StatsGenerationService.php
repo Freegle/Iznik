@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\ReplaceInto;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\Arithmetic;
 use App\Database\Expressions\Coalesce;
@@ -123,7 +124,7 @@ class StatsGenerationService
             ->where('date', '>=', $date)
             ->whereDate('date', $date)
             ->whereNotNull('groups')
-            ->where('groups', '!=', '')
+            ->where('groups', '!=', 0)
             ->select('groups')
             ->orderBy('id')
             ->chunk(1000, function ($searches) use (&$searchCounts) {
@@ -870,15 +871,13 @@ class StatsGenerationService
                 continue;
             }
 
-            $placeholders = [];
-            $values = [];
+            $rows = [];
             foreach ($weightByGroup as $gid => $w) {
-                $placeholders[] = '(?, ?, ?, ?)';
-                array_push($values, $date, $gid, self::TYPE_WEIGHT, $w);
+                $rows[] = ['date' => $date, 'groupid' => $gid, 'type' => self::TYPE_WEIGHT, 'count' => $w];
             }
 
-            if (!empty($placeholders)) {
-                // keep-raw: REPLACE INTO, verified NOT reproducible by upsert().
+            if (!empty($rows)) {
+                // REPLACE INTO, verified NOT reproducible by upsert().
                 // `stats` has a NOT NULL `end` column with no default that this
                 // statement never sets; the app connection runs with strict mode
                 // off (config/database.php 'strict' => false), so that's not a
@@ -892,12 +891,8 @@ class StatsGenerationService
                 // ON DUPLICATE KEY UPDATE would instead leave an existing row's
                 // `end` untouched on overwrite - an observable behaviour change
                 // for exactly the backfill-rerun case this method exists for.
-                DB::statement(
-                    'REPLACE INTO stats (date, groupid, type, count) VALUES '
-                    . implode(', ', $placeholders),
-                    $values
-                );
-                $rowsWritten += count($placeholders);
+                ReplaceInto::rows('stats', $rows, ['date', 'groupid', 'type']);
+                $rowsWritten += count($rows);
             }
         }
 
@@ -932,15 +927,12 @@ class StatsGenerationService
             return 1;
         }
 
-        // keep-raw: REPLACE INTO, verified NOT reproducible by upsert() - see
+        // REPLACE INTO (App\Database\ReplaceInto), verified NOT reproducible by upsert() - see
         // the identical REPLACE in regenerateWeightForRange() for the full
         // finding (the NOT NULL, no-default `end` column that REPLACE
         // silently re-zeroes on every write, which upsert()'s
         // ON DUPLICATE KEY UPDATE would instead leave untouched on overwrite).
-        DB::statement(
-            'REPLACE INTO stats (date, groupid, type, count) VALUES (?, ?, ?, ?)',
-            [$date, $groupId, $type, $val]
-        );
+        ReplaceInto::rows('stats', [['date' => $date, 'groupid' => $groupId, 'type' => $type, 'count' => $val]], ['date', 'groupid', 'type']);
 
         return 1;
     }
@@ -956,15 +948,12 @@ class StatsGenerationService
             return 1;
         }
 
-        // keep-raw: REPLACE INTO, verified NOT reproducible by upsert() - see
+        // REPLACE INTO (App\Database\ReplaceInto), verified NOT reproducible by upsert() - see
         // the identical REPLACE in regenerateWeightForRange() for the full
         // finding (the NOT NULL, no-default `end` column that REPLACE
         // silently re-zeroes on every write, which upsert()'s
         // ON DUPLICATE KEY UPDATE would instead leave untouched on overwrite).
-        DB::statement(
-            'REPLACE INTO stats (date, groupid, type, breakdown) VALUES (?, ?, ?, ?)',
-            [$date, $groupId, $type, json_encode($map, JSON_UNESCAPED_UNICODE)]
-        );
+        ReplaceInto::rows('stats', [['date' => $date, 'groupid' => $groupId, 'type' => $type, 'breakdown' => json_encode($map, JSON_UNESCAPED_UNICODE)]], ['date', 'groupid', 'type']);
 
         return 1;
     }

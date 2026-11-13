@@ -127,19 +127,7 @@ func queryActiveMembersInBox(db *sql.DB, minLat, maxLat, minLng, maxLng float64)
 	bboxWKT := fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
 		minLng, maxLng, minLat, maxLat)
 	rows, err := db.Query(
-		`SELECT STRAIGHT_JOIN DISTINCT m.groupid,
-		        COALESCE(pl.lat, ual.lat), COALESCE(pl.lng, ual.lng)
-		 FROM users_approxlocs ual
-		 INNER JOIN memberships m ON m.userid = ual.userid AND m.collection = 'Approved'
-		 INNER JOIN users u ON u.id = ual.userid AND u.lastaccess >= NOW() - INTERVAL 90 DAY
-		 INNER JOIN `+"`groups`"+` g ON g.id = m.groupid
-		     AND g.publish = 1 AND g.listable = 1
-		     AND ST_GeometryType(g.polyindex) IN ('POLYGON', 'MULTIPOLYGON')
-		 LEFT JOIN locations pl ON pl.id = u.lastlocation
-		     AND pl.type = 'Postcode' AND NOT (pl.lat = 0 AND pl.lng = 0)
-		 WHERE MBRContains(ST_GeomFromText(?, 3857), ual.position)
-		   AND ST_Contains(g.polyindex,
-		         ST_SRID(POINT(COALESCE(pl.lng, ual.lng), COALESCE(pl.lat, ual.lat)), 3857))`,
+		sqlActiveMembersInBox(),
 		bboxWKT)
 	if err != nil {
 		return nil, err

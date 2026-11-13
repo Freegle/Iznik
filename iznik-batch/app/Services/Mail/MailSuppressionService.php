@@ -2,6 +2,9 @@
 
 namespace App\Services\Mail;
 
+use Illuminate\Database\Query\Expression as Raw;
+use App\Database\Expressions\Now;
+use App\Database\Sql;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -133,6 +136,8 @@ class MailSuppressionService
         }
 
         try {
+            // The same clock as the Now expression in the inserted rows below: NOW() on MySQL.
+            $now = Sql::render(new Now());
             if ($mailKey !== null) {
                 // Count MAILS, not attempts. The chat notifier skips a suppressed
                 // recipient without advancing chat_roster.lastmsgemailed, so the same
@@ -141,39 +146,44 @@ class MailSuppressionService
                 // as a catastrophic backlog and was really a handful of messages seen
                 // over and over. Identities increase, so only one that exceeds the
                 // highest already counted is a mail we have not counted yet.
-                DB::statement(
-                    'INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, `count`, firstat, lastat, lastkey)
-                     VALUES (?, ?, ?, 1, NOW(), NOW(), ?)
-                     ON DUPLICATE KEY UPDATE
-                        `count` = IF(caughtup_at IS NULL,
-                                     `count` + IF(lastkey IS NULL OR VALUES(lastkey) > lastkey, 1, 0),
-                                     1),
-                        lastat = NOW(),
-                        suppressionid = VALUES(suppressionid),
-                        firstat = IF(caughtup_at IS NULL, firstat, NOW()),
-                        lastkey = IF(caughtup_at IS NULL,
-                                     GREATEST(COALESCE(lastkey, 0), VALUES(lastkey)),
-                                     VALUES(lastkey)),
-                        caughtup_at = NULL',
-                    [$userId, substr($emailType, 0, 32), $suppressionId, $mailKey]
+                // Every assignment reads the row as it was before this statement, so the
+                // order of the assignments does not matter.
+                $c = fn (string $column) => Sql::col('mail_suppressed_counts.'.$column);
+                $key = (int) $mailKey;
+                DB::table('mail_suppressed_counts')->upsert(
+                    [[
+                        'userid' => $userId, 'emailtype' => substr($emailType, 0, 32), 'suppressionid' => $suppressionId,
+                        'count' => 1, 'firstat' => new Now(), 'lastat' => new Now(), 'lastkey' => $key,
+                    ]],
+                    ['userid', 'emailtype'],
+                    [
+                        'count' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('count')} + CASE WHEN {$c('lastkey')} IS NULL OR {$key} > {$c('lastkey')} THEN 1 ELSE 0 END ELSE 1 END"),
+                        'lastat' => new Now(),
+                        'suppressionid' => $suppressionId,
+                        'firstat' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('firstat')} ELSE {$now} END"),
+                        'lastkey' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN GREATEST(COALESCE({$c('lastkey')}, 0), {$key}) ELSE {$key} END"),
+                        'caughtup_at' => null,
+                    ]
                 );
 
                 return;
             }
 
-            DB::statement(
-                'INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, `count`, firstat, lastat)
-                 VALUES (?, ?, ?, 1, NOW(), NOW())
-                 ON DUPLICATE KEY UPDATE
-                    `count` = `count` + 1,
-                    lastat = NOW(),
-                    suppressionid = VALUES(suppressionid),
-                    -- A fresh episode after a catch-up starts counting again
-                    -- rather than resuming the old total.
-                    firstat = IF(caughtup_at IS NULL, firstat, NOW()),
-                    `count` = IF(caughtup_at IS NULL, `count`, 1),
-                    caughtup_at = NULL',
-                [$userId, substr($emailType, 0, 32), $suppressionId]
+            // A fresh episode after a catch-up starts counting again rather than resuming the old total.
+            $c = fn (string $column) => Sql::col('mail_suppressed_counts.'.$column);
+            DB::table('mail_suppressed_counts')->upsert(
+                [[
+                    'userid' => $userId, 'emailtype' => substr($emailType, 0, 32), 'suppressionid' => $suppressionId,
+                    'count' => 1, 'firstat' => new Now(), 'lastat' => new Now(),
+                ]],
+                ['userid', 'emailtype'],
+                [
+                    'count' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('count')} + 1 ELSE 1 END"),
+                    'lastat' => new Now(),
+                    'suppressionid' => $suppressionId,
+                    'firstat' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('firstat')} ELSE {$now} END"),
+                    'caughtup_at' => null,
+                ]
             );
         } catch (\Throwable $e) {
             // Losing a counter costs us accuracy in one catch-up email. It

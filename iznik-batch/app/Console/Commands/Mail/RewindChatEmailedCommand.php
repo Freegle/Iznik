@@ -83,15 +83,32 @@ class RewindChatEmailedCommand extends Command
         // the window. Rewinding to just before it re-opens every later message
         // in that chat too, which is what we want - they were all equally
         // undeliverable.
-        $rows = DB::table('email_tracking')
-            ->selectRaw("userid,
+        // PostgreSQL has neither SUBSTRING_INDEX nor CAST(... AS UNSIGNED). The domain is the part after
+        // the last @, lowered because MySQL's comparison ignores case and PostgreSQL's does not, and a
+        // message id that is not a whole number counts as none, as MySQL's cast makes it 0.
+        $pg = DB::connection()->getDriverName() === 'pgsql';
+        $domainSql = $pg
+            ? "lower((string_to_array(recipient_email::text, '@'))[cardinality(string_to_array(recipient_email::text, '@'))])"
+            : "SUBSTRING_INDEX(recipient_email, '@', -1)";
+        $select = $pg
+            ? "userid,
+                 {$domainSql} AS domain,
+                 metadata::jsonb->>'chat_id' AS chatid,
+                 MIN(CASE WHEN metadata::jsonb->>'message_id' ~ '^[0-9]+$' THEN (metadata::jsonb->>'message_id')::bigint ELSE 0 END) AS firstmsg,
+                 COUNT(*) AS notifications"
+            : "userid,
                  SUBSTRING_INDEX(recipient_email, '@', -1) AS domain,
                  JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.chat_id')) AS chatid,
                  MIN(CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.message_id')) AS UNSIGNED)) AS firstmsg,
-                 COUNT(*) AS notifications")
+                 COUNT(*) AS notifications";
+
+        $rows = DB::table('email_tracking')
+            // keep-raw: the domain of an address and a number read out of JSON, grouped; each engine has
+            // its own functions for both, chosen above.
+            ->selectRaw($select)
             ->where('email_type', 'ChatNotification')
             ->whereBetween('sent_at', [$start, $end])
-            ->whereIn(DB::raw("SUBSTRING_INDEX(recipient_email, '@', -1)"), $domains)
+            ->whereIn(DB::raw($domainSql), $pg ? array_map('mb_strtolower', $domains) : $domains)
             ->whereNotNull('userid')
             ->whereNotNull('metadata')
             ->groupBy('userid', 'domain', 'chatid')

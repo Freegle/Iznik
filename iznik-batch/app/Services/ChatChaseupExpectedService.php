@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\TimestampDiff;
+use App\Database\Expressions\Comparison;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
@@ -69,10 +71,7 @@ class ChatChaseupExpectedService
             // A member who closed the chat is not notified of it by the normal notifier either.
             ->where('chat_roster.status', '!=', ChatRoster::STATUS_CLOSED)
             ->whereNull('users.deleted')
-            // keep-raw: TIMESTAMPDIFF over two COLUMNS (not NOW()) has no builder
-            // equivalent - the now()->subX() rewrite only works when one side is
-            // the current timestamp.
-            ->whereRaw('TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?', [self::EXPECTED_GRACE_MINUTES])
+            ->where(new Comparison(new TimestampDiff('MINUTE', 'chat_messages.date', 'users.lastaccess'), '>=', self::EXPECTED_GRACE_MINUTES))
             ->where('chat_rooms.chattype', ChatRoom::TYPE_USER2USER)
             // The chase-up shows the message to the expectee, so it must pass the
             // delivery gates of ChatNotificationService::getUnmailedMessages. A

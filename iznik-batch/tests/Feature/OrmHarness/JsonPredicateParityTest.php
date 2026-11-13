@@ -57,6 +57,11 @@ class JsonPredicateParityTest extends TestCase
         // why every read below is pinned with useWritePdo(): with the
         // read/write split in play a plain select goes to the reader, which
         // cannot see it.
+        // The truth table these tests pin is MySQL's: how its JSON functions compare true, false, null and
+        // numbers, and what Laravel's MySQL grammar renders for each builder call. PostgreSQL renders and
+        // compares them through its own grammar and functions, which have their own tests.
+        $this->requiresMySql('pins the MySQL JSON comparison truth table and the MySQL grammar\'s rendering');
+
         DB::statement('DROP TEMPORARY TABLE IF EXISTS json_parity_fixture');
         DB::statement('CREATE TEMPORARY TABLE json_parity_fixture (id INT PRIMARY KEY, settings JSON NULL)');
 
@@ -67,7 +72,7 @@ class JsonPredicateParityTest extends TestCase
 
     protected function tearDown(): void
     {
-        DB::statement('DROP TEMPORARY TABLE IF EXISTS json_parity_fixture');
+        DB::statement(\App\Database\Sql::dropTemporaryTable('json_parity_fixture'));
 
         parent::tearDown();
     }

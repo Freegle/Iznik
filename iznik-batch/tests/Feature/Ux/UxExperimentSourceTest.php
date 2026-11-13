@@ -341,7 +341,7 @@ class UxExperimentSourceTest extends TestCase
 
         $this->assertSame($intake, $design['intake_hours'], 'the resolved intake is stored');
         $this->assertSame($max, $design['max_hours'], 'and the resolved run');
-        $this->assertSame(Carbon::now('UTC')->addHours($max)->toDateTimeString(), $exp->ends_at);
+        $this->assertSame(Carbon::now('UTC')->addHours($max)->toDateTimeString(), Carbon::parse($exp->ends_at, 'UTC')->toDateTimeString());
     }
 
     /** @return array<string, array{0: string, 1: array<string, mixed>}> */
@@ -401,7 +401,7 @@ class UxExperimentSourceTest extends TestCase
 
         $exp = $this->service->start($id);
 
-        $this->assertSame('2026-10-21 10:00:00', $exp->ends_at);
+        $this->assertSame('2026-10-21 10:00:00', \Carbon\Carbon::parse($exp->ends_at, 'UTC')->toDateTimeString());
         $this->assertSame(Carbon::parse('2026-10-21 11:00:00', 'UTC')->getTimestamp(), $this->configEntry('web-run')['until']);
     }
 
@@ -410,7 +410,7 @@ class UxExperimentSourceTest extends TestCase
         $this->started(['window_hours' => 24]); // server: intake 168, run 192
 
         $this->assertSame(Carbon::parse('2026-10-20 10:00:00', 'UTC')->addHours(168)->getTimestamp() + 3600, $this->configEntry()['until']);
-        $this->assertSame('2026-10-28 10:00:00', $this->service->find('srv-test')->ends_at);
+        $this->assertSame('2026-10-28 10:00:00', \Carbon\Carbon::parse($this->service->find('srv-test')->ends_at, 'UTC')->toDateTimeString());
     }
 
     public function test_a_channel_experiment_with_no_source_keeps_the_run_of_the_web(): void
@@ -419,7 +419,7 @@ class UxExperimentSourceTest extends TestCase
 
         $exp = $this->service->start($id);
 
-        $this->assertSame('2026-10-21 10:00:00', $exp->ends_at);
+        $this->assertSame('2026-10-21 10:00:00', \Carbon\Carbon::parse($exp->ends_at, 'UTC')->toDateTimeString());
         $this->assertSame(Carbon::parse('2026-10-21 11:00:00', 'UTC')->getTimestamp(), $this->configEntry('no-source')['until']);
     }
 

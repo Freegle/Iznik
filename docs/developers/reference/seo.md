@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-23
+last_reviewed: 2026-11-13
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/server/utils/sitemap.ts

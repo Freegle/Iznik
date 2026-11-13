@@ -445,7 +445,7 @@ func TestDeleteOnRippledInGroupRecordsItSoItCannotRippleBack(t *testing.T) {
 	assert.Equal(t, fiber.StatusOK, status)
 
 	var recorded int
-	db.Raw("SELECT COALESCE(JSON_CONTAINS(rejected_groups, CAST(? AS JSON)), 0) FROM rippling_reach WHERE msgid = ?",
+	db.Raw("SELECT CASE WHEN JSON_CONTAINS(rejected_groups, CAST(? AS JSON)) THEN 1 ELSE 0 END FROM rippling_reach WHERE msgid = ?",
 		rippled, msgID).Scan(&recorded)
 	assert.Equal(t, 1, recorded,
 		"the community that removed the post is recorded, so the expander does not send it back")

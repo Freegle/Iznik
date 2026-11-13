@@ -2,7 +2,7 @@
  * "I'm interested" button
  *
  * A signed-in member looking at someone else's offer gets an "I'm interested" button beside Reply when the
- * server puts them in the arm button of the experiment interested-button. scripts/test-fixtures-extra.sql
+ * server puts them in the arm button of the experiment interested-button. scripts/fixtures/extra-steps.json
  * serves that arm to everyone. Pressing it saves the post, shows a one-line note, and the post then appears
  * under "Posts you're interested in" on My Posts, where Remove takes it off again. The API keeps its copy of
  * the experiment config rows for up to a minute, and a run resets the database as it starts, so this case

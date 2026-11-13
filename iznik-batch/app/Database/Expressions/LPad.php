@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -23,6 +24,7 @@ use Illuminate\Database\Grammar;
 final class LPad implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(
         private readonly mixed $operand,
@@ -33,8 +35,14 @@ final class LPad implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        // PostgreSQL's lpad() takes text, not a number: MySQL converts the number itself.
+        $operand = $this->renderOperand($this->operand, $grammar);
+        if ($this->isPostgres($grammar)) {
+            $operand = 'CAST('.$operand.' AS text)';
+        }
+
         return 'LPAD('
-            .$this->renderOperand($this->operand, $grammar).', '
+            .$operand.', '
             .$this->renderOperand($this->length, $grammar).', '
             .$this->renderOperand($this->pad, $grammar)
             .')';

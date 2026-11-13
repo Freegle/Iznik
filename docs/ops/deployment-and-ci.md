@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -33,6 +33,10 @@ flowchart LR
    New raw SQL is kept out by the `.claude/check-raw-sql.sh` hook while editing and by the
    `check-raw-sql` CircleCI job, which runs the same script in `--diff origin/master` mode
    over the branch. A line marked `// keep-raw: <reason>` is allowed.
+   The `check-raw-sql-ratchet` job holds the whole inventory: `tools/orm-migration/manifest.json`
+   lists every raw SQL site in production Go and Laravel code, and the job fails a branch that adds
+   a site the manifest does not list, changes a listed site's SQL without updating its entry, or
+   raises the count of raw and in-progress sites. It needs only Node.
    A role (User, Moderator, Support, Admin, Member, Owner) written as a string is refused by
    `.claude/check-role-literals.sh`, as an editor hook and as the `check-role-literals` job,
    which runs it in `--all` mode over the whole tree, so a role literal anywhere fails it, not only
@@ -158,6 +162,13 @@ The same delta gate can go red on the other suites for the same reason. The chea
 is whether the failing suite's language appears in the diff at all: a Go-only commit that
 turns `Coveralls - vitest` red has not changed any JavaScript, so the number moved without
 the code moving.
+
+## The second database engine
+
+`build-and-test` also runs the Go API and Laravel suites, and the PostgreSQL tooling tests, on PostgreSQL. The MySQL runs are
+unchanged and required. Each PostgreSQL run starts when the MySQL run of the same suite finishes and is compared with a
+committed list of known failures, so a new failure fails the job and a known one does not. How it works and how to
+regenerate the lists is in [database engines](../developers/reference/database-engines.md#both-engines-in-ci).
 
 ## Rollback
 

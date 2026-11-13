@@ -378,7 +378,7 @@ class MessageExpiryServiceTest extends TestCase
         // Spatial index entry waiting for cleanup.
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -434,7 +434,7 @@ class MessageExpiryServiceTest extends TestCase
         // message up after the deadline path marks it Expired.
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -472,7 +472,7 @@ class MessageExpiryServiceTest extends TestCase
 
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -556,7 +556,7 @@ class MessageExpiryServiceTest extends TestCase
 
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -604,7 +604,7 @@ class MessageExpiryServiceTest extends TestCase
         foreach ([$youngMsg, $oldMsg] as $m) {
             DB::table('messages_spatial')->insert([
                 'msgid' => $m->id,
-                'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+                'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
                 'successful' => 0,
             ]);
         }
@@ -636,7 +636,7 @@ class MessageExpiryServiceTest extends TestCase
 
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -679,7 +679,7 @@ class MessageExpiryServiceTest extends TestCase
 
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -711,7 +711,7 @@ class MessageExpiryServiceTest extends TestCase
 
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -739,7 +739,7 @@ class MessageExpiryServiceTest extends TestCase
 
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -792,7 +792,7 @@ class MessageExpiryServiceTest extends TestCase
         foreach ([$offer, $wanted] as $m) {
             DB::table('messages_spatial')->insert([
                 'msgid' => $m->id,
-                'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+                'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
                 'successful' => 0,
             ]);
         }
@@ -851,7 +851,7 @@ class MessageExpiryServiceTest extends TestCase
 
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -913,7 +913,7 @@ class MessageExpiryServiceTest extends TestCase
 
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
-            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
             'successful' => 0,
         ]);
 
@@ -956,7 +956,7 @@ class MessageExpiryServiceTest extends TestCase
 
             DB::table('messages_spatial')->insert([
                 'msgid' => $message->id,
-                'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+                'point' => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
                 'successful' => 0,
             ]);
         }

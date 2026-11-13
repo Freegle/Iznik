@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -21,6 +22,7 @@ use Illuminate\Database\Grammar;
 final class Length implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(private readonly mixed $operand)
     {
@@ -28,6 +30,11 @@ final class Length implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            // MySQL's LENGTH() counts bytes; PostgreSQL's counts characters. octet_length() counts bytes.
+            return 'octet_length('.$this->renderOperand($this->operand, $grammar).')';
+        }
+
         return 'LENGTH('.$this->renderOperand($this->operand, $grammar).')';
     }
 }

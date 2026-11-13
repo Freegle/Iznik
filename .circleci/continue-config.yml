@@ -100,7 +100,10 @@ orbs:
   # repo already carries the fix (large + the improved logs): publish it as 1.1.386
   # from a machine with a CircleCI token (this host has none) and move this pin
   # forward again.
-  freegle: freegle/tests@1.1.409
+  #
+  # 1.1.411 adds start-pg-suite-tests: the Go and Laravel suites and the tooling tests run on
+  # PostgreSQL after the MySQL run of the same suite, and collect-background-checks waits for them.
+  freegle: freegle/tests@1.1.411
 
 jobs:
   # The CI half of the raw-SQL guard. The Claude Code PreToolUse hook only sees
@@ -122,6 +125,45 @@ jobs:
           command: |
             git fetch --no-tags --depth=100 origin master
             .claude/check-raw-sql.sh --diff origin/master
+
+  # The inventory half of the raw-SQL guard. check-raw-sql above judges the lines a branch
+  # adds and accepts a written reason as the way out. This job holds the whole inventory:
+  # tools/orm-migration/manifest.json lists every raw SQL site in production Go and
+  # Laravel code with a status, and the job fails when a site is in the code and not in the
+  # manifest, when a site's SQL changed without its entry, or when the count of raw and
+  # in-progress sites rose. It runs on Node alone, as the other lightweight checks do.
+  check-raw-sql-ratchet:
+    docker:
+      - image: cimg/node:22.23.2
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Self-test the extractor and ratchet
+          command: node --test tools/orm-migration/test/*.test.mjs
+      - run:
+          name: Every raw SQL site is in the manifest
+          command: |
+            git fetch --no-tags --depth=100 origin master
+            node tools/orm-migration/extract.mjs check --base origin/master
+
+  # The portable-migration convention (docs/developers/reference/database-engines.md): a migration
+  # a branch adds is written with Blueprint, and a raw statement in it carries a
+  # "// mysql-only: <reason>" marker. The existing migrations are not held to it. Node alone.
+  check-portable-migrations:
+    docker:
+      - image: cimg/node:22.23.2
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Self-test the check
+          command: node --test scripts/check-portable-migrations.test.mjs
+      - run:
+          name: New migrations are portable
+          command: |
+            git fetch --no-tags --depth=100 origin master
+            node scripts/check-portable-migrations.mjs --base origin/master
 
   # The role-literal guard: a role (User, Moderator, Support, Admin, Member, Owner) is read
   # from a constant, never written as a string. The editor hook catches it at authoring
@@ -234,6 +276,8 @@ workflows:
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - check-raw-sql
+      - check-raw-sql-ratchet
+      - check-portable-migrations
       - check-role-literals
       - check-licences
       - check-ux-cleanups
@@ -309,6 +353,8 @@ workflows:
         - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - check-raw-sql
+      - check-raw-sql-ratchet
+      - check-portable-migrations
       - check-role-literals
       - check-licences
       - check-ux-cleanups
@@ -517,6 +563,8 @@ workflows:
         - not: << pipeline.parameters.run_apple_agreement_check >>
     jobs:
       - check-raw-sql
+      - check-raw-sql-ratchet
+      - check-portable-migrations
       - check-role-literals
       - check-licences
       - check-ux-cleanups

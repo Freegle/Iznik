@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\CommunityNews;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Models\CommunityNewsArea;
 use App\Services\CommunityNews\CommunityNewsAreaService;
 use Illuminate\Support\Facades\DB;
@@ -19,9 +21,11 @@ class CommunityNewsAreaServiceTest extends TestCase
         // suite ships with must be explicitly opted out or they flood every
         // count (31 areas where a test built 2). Each test then opts its own
         // groups in or out deliberately.
-        DB::statement(
-            "UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.communitynews', 0)"
-        );
+        foreach (DB::table('groups')->get(['id', 'settings']) as $g) {
+            $settings = json_decode($g->settings ?? '{}', true) ?: [];
+            $settings['communitynews'] = 0;
+            DB::table('groups')->where('id', $g->id)->update(['settings' => json_encode($settings)]);
+        }
     }
 
     private function svc(): CommunityNewsAreaService
@@ -57,7 +61,7 @@ class CommunityNewsAreaServiceTest extends TestCase
             'lat' => $lat,
             'lng' => $lng,
             'population' => $population,
-            'position' => DB::raw('ST_SRID(POINT(' . $lng . ', ' . $lat . '), 3857)'),
+            'position' => DB::raw('' . Spatial::point('' . $lng . '', '' . $lat . '', config('freegle.srid')) . ''),
         ]);
     }
 
@@ -66,7 +70,7 @@ class CommunityNewsAreaServiceTest extends TestCase
         return (int) DB::table('authorities')->insertGetId([
             'name' => $name,
             'area_code' => $code,
-            'polygon' => DB::raw("ST_GeomFromText('$wkt', 3857)"),
+            'polygon' => DB::raw("ST_GeomFromText('$wkt', " . config('freegle.srid') . ")"),
         ]);
     }
 

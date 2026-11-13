@@ -2,6 +2,9 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Value;
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\CastAs;
 use App\Mail\Tryst\TrystCalendarInviteMail;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -26,7 +29,7 @@ class TrystService
         $trysts = DB::table('trysts')
             ->where('icssent', 0)
             ->where('arrangedfor', '>=', $tomorrow)
-            ->where('arrangedfor', 'NOT LIKE', '% 00:00:00')
+            ->where(new Comparison(new CastAs('arrangedfor', 'TIME'), '!=', Value::of('00:00:00')))
             ->whereNotNull('user1')
             ->whereNotNull('user2')
             ->get(['id', 'user1', 'user2', 'arrangedfor']);

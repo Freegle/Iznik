@@ -586,6 +586,20 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 	var chatID uint64
 
 	err := db.Transaction(func(tx *gorm.DB) error {
+		if database.Engine() == database.EnginePostgres {
+			// The locked SELECT below only stops a second creator when there is a row to lock.
+			// When there is none, MySQL locks the gap in the index, so two creators cannot both
+			// insert. PostgreSQL locks nothing and both would create a room. So PostgreSQL
+			// takes a lock on the member and community themselves, held to the end of this
+			// transaction: the second creator waits here, then finds the first one's room.
+			// The Laravel twin (ChatRoom::getOrCreateUser2Mod) must build the same key.
+			// keep-raw: PostgreSQL only, an advisory lock has no builder form.
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+				fmt.Sprintf("u2m:%d:%d", userID, groupID)).Error; err != nil {
+				return fmt.Errorf("failed to lock chat room creation: %w", err)
+			}
+		}
+
 		// Lock any existing row to close the timing window. Preserves the
 		// original's exact corner-case behaviour of falling through to the
 		// create branch below on ANY Scan failure, not just "no rows found" -
@@ -1724,8 +1738,15 @@ func handleRosterUpdate(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPost
 	// Update lastmsgseen if provided
 	if req.Lastmsgseen > 0 {
 		if req.Allowback {
-			db.Table("chat_roster").Where("chatid = ? AND userid = ?", req.ID, myid).
-				Update("lastmsgseen", req.Lastmsgseen)
+			seenTx := db.Table("chat_roster").Where("chatid = ? AND userid = ?", req.ID, myid)
+			if database.Engine() == database.EnginePostgres {
+				// MySQL writes nothing when the value is already the one being set. PostgreSQL
+				// would write a whole new row and an entry in every index, so it is told to
+				// leave such a row alone. The row ends up the same either way.
+				// keep-raw: PostgreSQL only, IS DISTINCT FROM also covers a NULL lastmsgseen.
+				seenTx = seenTx.Where("lastmsgseen IS DISTINCT FROM ?", req.Lastmsgseen)
+			}
+			seenTx.Update("lastmsgseen", req.Lastmsgseen)
 		} else {
 			// Only update forward (don't go backwards)
 			db.Table("chat_roster").
@@ -1971,6 +1992,20 @@ func handleReportNoGroup(c *fiber.Ctx, db *gorm.DB, myid uint64, req ChatRoomPos
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// skipSeen narrows a "mark all read" update of chat_roster, on PostgreSQL only, to the rows
+// whose lastmsgseen is not already the newest message of their chat. Most of a member's chats
+// are already read when they press the button. MySQL writes nothing for those rows, but
+// PostgreSQL would write a whole new row and an entry in every index for each one. The rows
+// end up the same either way, and nothing reads how many rows the update touched. On MySQL
+// the update is returned as it was given, so its statement is unchanged.
+func skipSeen(tx *gorm.DB) *gorm.DB {
+	if database.Engine() != database.EnginePostgres {
+		return tx
+	}
+	// keep-raw: PostgreSQL only, IS DISTINCT FROM also covers a NULL lastmsgseen.
+	return tx.Where("lastmsgseen IS DISTINCT FROM (SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid)")
+}
+
 func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error {
 	// Mark chat messages as seen, scoped to the chats the caller's client actually
 	// shows. The ModTools "Mark all read" button sits above a list of moderator
@@ -1989,8 +2024,8 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error 
 			// as any other IN-list conversion in this codebase - rather than
 			// spliced as literal decimal text via joinIDs, which had no fixed
 			// golden for the extractor to record.
-			db.Table("chat_roster").
-				Where("userid = ? AND chatid IN ?", myid, modChatIDs).
+			skipSeen(db.Table("chat_roster").
+				Where("userid = ? AND chatid IN ?", myid, modChatIDs)).
 				Update("lastmsgseen", gorm.Expr("(SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid)"))
 
 			// The sibling UPDATE above
@@ -2012,9 +2047,9 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64, modtools bool) error 
 		// FD: chats the user participates in - User2User, plus User2Mod chats they
 		// opened. Mod-side roster rows (Mod2Mod, or User2Mod where the user is the
 		// moderator rather than user1) are left alone.
-		db.Table("chat_roster").
+		skipSeen(db.Table("chat_roster").
 			Where("userid = ? AND chatid IN (SELECT id FROM chat_rooms WHERE (user1 = ? OR user2 = ?) AND chattype IN (?, ?))",
-				myid, myid, myid, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD).
+				myid, myid, myid, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD)).
 			Update("lastmsgseen", gorm.Expr("(SELECT COALESCE(MAX(id), 0) FROM chat_messages WHERE chatid = chat_roster.chatid)"))
 
 		// V1 parity: chats with no roster row yet (e.g. a brand-new conversation the

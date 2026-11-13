@@ -25,15 +25,15 @@ func (d *LocationsDataset) Name() string { return "locations" }
 func (d *LocationsDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *LocationsDataset) DeltaInterval() time.Duration   { return 15 * time.Minute }
 
-// Load populates idx from MySQL with all eligible locations (areas and postcodes).
-func (d *LocationsDataset) Load(mysqlDB *sql.DB, idx *Index) error {
-	return loadLocations(mysqlDB, idx, "")
+// Load populates idx from the source database with all eligible locations (areas and postcodes).
+func (d *LocationsDataset) Load(srcDB *sql.DB, idx *Index) error {
+	return loadLocations(srcDB, idx, "")
 }
 
 // ApplyDelta loads locations modified since `since` and updates idx.
-func (d *LocationsDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
+func (d *LocationsDataset) ApplyDelta(srcDB *sql.DB, idx *Index, since time.Time) error {
 	// Remove excluded locations.
-	excluded, err := queryExcludedLocationIDs(mysqlDB)
+	excluded, err := queryExcludedLocationIDs(srcDB)
 	if err != nil {
 		return err
 	}
@@ -44,7 +44,7 @@ func (d *LocationsDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Ti
 	}
 
 	// Load rows modified since last sync.
-	return loadLocations(mysqlDB, idx, fmt.Sprintf(" AND locations.timestamp > '%s'", since.UTC().Format("2006-01-02 15:04:05")))
+	return loadLocations(srcDB, idx, fmt.Sprintf(" AND locations.timestamp > '%s'", since.UTC().Format("2006-01-02 15:04:05")))
 }
 
 // Query returns KNN results for the locations dataset using polygon buffer expansion.
@@ -93,16 +93,16 @@ func (d *LocationsDataset) Within(idx *Index, params QueryParams) ([]int64, erro
 	return ids, nil
 }
 
-// loadLocations loads locations from MySQL into the index.
+// loadLocations loads locations from the source database into the index.
 // extraWhere is an optional SQL snippet appended to the WHERE clause.
-func loadLocations(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
+func loadLocations(srcDB *sql.DB, idx *Index, extraWhere string) error {
 	query := `
 		SELECT
 			locations.id,
 			locations.name,
 			locations.type,
 			ST_Area(COALESCE(ourgeometry, geometry))  AS area,
-			ST_AsWKB(COALESCE(ourgeometry, geometry)) AS wkb
+			` + dialectOf(srcDB).asWKB("COALESCE(ourgeometry, geometry)") + ` AS wkb
 		FROM locations
 		LEFT JOIN locations_excluded le ON locations.id = le.locationid
 		WHERE le.locationid IS NULL
@@ -111,16 +111,16 @@ func loadLocations(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 		  AND ST_Area(COALESCE(ourgeometry, geometry)) BETWEEN ? AND ?
 	` + extraWhere
 
-	rows, err := mysqlDB.Query(query, areaMin, areaMax)
+	rows, err := srcQuery(srcDB, query, areaMin, areaMax)
 	if err != nil {
-		return fmt.Errorf("mysql query: %w", err)
+		return fmt.Errorf("locations load query: %w", err)
 	}
 	defer rows.Close()
 
 	var locs []Item
 	var scanned, skipped int
 
-	log.Printf("spatial-loader: scanning locations from MySQL...")
+	log.Printf("spatial-loader: scanning locations from the source database...")
 	for rows.Next() {
 		var item Item
 		var name, locType string
@@ -147,7 +147,7 @@ func loadLocations(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 		locs = append(locs, item)
 		scanned++
 		if scanned%10000 == 0 {
-			log.Printf("spatial-loader: scanned %d rows from MySQL...", scanned)
+			log.Printf("spatial-loader: scanned %d rows from the source database...", scanned)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -176,8 +176,8 @@ func loadLocations(mysqlDB *sql.DB, idx *Index, extraWhere string) error {
 }
 
 // queryExcludedLocationIDs returns all location IDs currently in locations_excluded.
-func queryExcludedLocationIDs(mysqlDB *sql.DB) ([]int64, error) {
-	rows, err := mysqlDB.Query(`SELECT locationid FROM locations_excluded`)
+func queryExcludedLocationIDs(srcDB *sql.DB) ([]int64, error) {
+	rows, err := srcQuery(srcDB, `SELECT locationid FROM locations_excluded`)
 	if err != nil {
 		return nil, fmt.Errorf("query locations_excluded: %w", err)
 	}

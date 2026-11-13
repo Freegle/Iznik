@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mail;
 
+use App\Database\Sql;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
@@ -22,14 +23,14 @@ use Tests\TestCase;
  */
 class ReengageVolunteerResolutionTest extends TestCase
 {
-    private const SRID = 3857;
+
 
     /** Give a group a real catchment polygon (WKT is "lng lat", SRID 3857). */
     private function setCatchment(int $groupId, string $polygonWkt): void
     {
         DB::statement(
-            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
-            [$polygonWkt, self::SRID, $groupId]
+            'UPDATE ' . Sql::table('groups') . ' SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
+            [$polygonWkt, config('freegle.srid'), $groupId]
         );
     }
 

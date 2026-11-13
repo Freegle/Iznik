@@ -1,0 +1,7 @@
+{"table":"paf_addresses","columns":["id","postcodeid","posttownid","dependentlocalityid","doubledependentlocalityid","thoroughfaredescriptorid","dependentthoroughfaredescriptorid","buildingnumber","buildingnameid","subbuildingnameid","poboxid","departmentnameid","organisationnameid","udprn","postcodetype","suorganisationindicator","deliverypointsuffix"]}
+[1,2,null,null,null,null,null,null,null,null,null,null,null,50464671,null,null,null]
+[2,2,null,null,null,null,null,null,null,null,null,null,null,50464672,null,null,null]
+[3,2,null,null,null,null,null,null,null,null,null,null,null,50464673,null,null,null]
+[4,2,null,null,null,null,null,null,null,null,null,null,null,50464674,null,null,null]
+[5,2,null,null,null,null,null,null,null,null,null,null,null,50464675,null,null,null]
+[102367696,1687412,null,null,null,null,null,null,null,null,null,null,null,102367696,null,null,null]

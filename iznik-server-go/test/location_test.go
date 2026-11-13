@@ -111,6 +111,9 @@ func TestTypeahead_MissingQuery(t *testing.T) {
 
 func TestLatLngGroupsNearOntn(t *testing.T) {
 	// LatLng should return groupsnear with the ontn field
+	// The test makes its own community about a mile away. It used to rely on one left by the fixtures or
+	// by an earlier test, which a schema-only database (the PostgreSQL run) does not always have.
+	CreateTestGroup(t, uniquePrefix("ontnnear"))
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/location/latlng?lat=55.957571&lng=-3.205333", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 

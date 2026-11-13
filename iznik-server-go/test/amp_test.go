@@ -645,7 +645,7 @@ func TestAMPPostChatReplyIsHeldForProcessing(t *testing.T) {
 	assert.Equal(t, 0, processingsuccessful, "not delivered until processed")
 
 	var latest string
-	db.Raw("SELECT COALESCE(latestmessage, '') FROM chat_rooms WHERE id = ?", chatID).Scan(&latest)
+	db.Raw("SELECT COALESCE(DATE_FORMAT(latestmessage, '%Y-%m-%d %H:%i:%s'), '') FROM chat_rooms WHERE id = ?", chatID).Scan(&latest)
 	assert.Equal(t, "2020-01-01 00:00:00", latest, "latestmessage is bumped by the processor when it delivers, not by the handler")
 
 	// The other party's own AMP view of the chat shows nothing yet.

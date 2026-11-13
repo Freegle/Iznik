@@ -20,6 +20,8 @@ namespace Tests\Support;
  */
 trait HidesExposureTable
 {
+    use RecoversFromDatabaseErrors;
+
     private const EXPOSURES = 'ux_experiment_exposures';
 
     private const EXPOSURES_HIDDEN = 'ux_experiment_exposures_hidden';
@@ -30,18 +32,35 @@ trait HidesExposureTable
      */
     private ?\PDO $exposureSide = null;
 
+    /** Whether the suite runs on PostgreSQL, fixed when the table is hidden because config() is gone by the put-back. */
+    private ?bool $exposureOnPostgres = null;
+
+    private ?string $exposureSchema = null;
+
+    private ?string $exposureSearchPath = null;
+
     protected function hideExposureTable(): void
     {
+        $this->exposureOnPostgres = config('database.default') === 'pgsql';
+        // The schema the test's own connection works in: another connection must rename that one's table, not another's.
+        $this->exposureSchema = $this->exposureOnPostgres ? \Illuminate\Support\Facades\DB::selectOne('select current_schema() as s')->s : null;
         $this->exposureSide = $this->exposureSideConnection();
-        $this->exposureSide->exec('RENAME TABLE '.self::EXPOSURES.' TO '.self::EXPOSURES_HIDDEN);
+        if ($this->exposureOnPostgres) {
+            // The shared schema also holds the table: without this the lookup would fall through to it.
+            $this->exposureSearchPath = \Illuminate\Support\Facades\DB::selectOne('show search_path')->search_path;
+            \Illuminate\Support\Facades\DB::unprepared('SET search_path TO "'.$this->exposureSchema.'"');
+        }
+        $this->exposureSide->exec($this->renameSql(self::EXPOSURES, self::EXPOSURES_HIDDEN));
     }
 
     protected function restoreExposureTable(): void
     {
         $side = $this->exposureSide ?? $this->exposureSideConnection();
-        $hidden = $side->query("SHOW TABLES LIKE '".self::EXPOSURES_HIDDEN."'")->fetchColumn();
-        if ($hidden !== false) {
-            $side->exec('RENAME TABLE '.self::EXPOSURES_HIDDEN.' TO '.self::EXPOSURES);
+        $hidden = $this->onPostgres()
+            ? $side->query("SELECT to_regclass('".$this->qualified(self::EXPOSURES_HIDDEN)."')")->fetchColumn()
+            : $side->query("SHOW TABLES LIKE '".self::EXPOSURES_HIDDEN."'")->fetchColumn();
+        if ($hidden !== false && $hidden !== null) {
+            $side->exec($this->renameSql(self::EXPOSURES_HIDDEN, self::EXPOSURES));
         }
     }
 
@@ -53,14 +72,47 @@ trait HidesExposureTable
         $this->hideExposureTable();
 
         try {
-            return $work();
+            return $this->recoveringFromDatabaseErrors($work);
         } finally {
+            if ($this->exposureSearchPath !== null) {
+                \Illuminate\Support\Facades\DB::unprepared('SET search_path TO '.$this->exposureSearchPath);
+                $this->exposureSearchPath = null;
+            }
             $this->restoreExposureTable();
         }
     }
 
+    private function onPostgres(): bool
+    {
+        return $this->exposureOnPostgres ?? config('database.default') === 'pgsql';
+    }
+
+    private function qualified(string $table): string
+    {
+        return $this->exposureSchema === null ? $table : '"'.$this->exposureSchema.'".'.$table;
+    }
+
+    private function renameSql(string $from, string $to): string
+    {
+        return $this->onPostgres() ? 'ALTER TABLE '.$this->qualified($from)." RENAME TO {$to}" : "RENAME TABLE {$from} TO {$to}";
+    }
+
     private function exposureSideConnection(): \PDO
     {
+        if ($this->onPostgres()) {
+            $c = config('database.connections.pgsql');
+            $pdo = new \PDO(
+                "pgsql:host={$c['host']};port={$c['port']};dbname={$c['database']}",
+                $c['username'],
+                $c['password'],
+                [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]
+            );
+            // A rename that cannot get its lock fails in seconds instead of waiting for a year.
+            $pdo->exec("SET lock_timeout = '5s'");
+
+            return $pdo;
+        }
+
         $c = config('database.connections.mysql');
         $host = $c['write']['host'] ?? [$c['host'] ?? '127.0.0.1'];
         $host = is_array($host) ? reset($host) : $host;

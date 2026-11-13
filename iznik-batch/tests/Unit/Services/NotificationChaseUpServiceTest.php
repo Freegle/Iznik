@@ -54,7 +54,7 @@ class NotificationChaseUpServiceTest extends TestCase
             'timestamp' => now(),
             'deleted'   => null,
             'replyto'   => null,
-            'position'  => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'position'  => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
         ], $attributes));
 
         return DB::table('newsfeed')->where('id', $id)->first();

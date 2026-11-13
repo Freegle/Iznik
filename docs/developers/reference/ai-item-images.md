@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-10-25
+last_reviewed: 2026-11-13
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/MessageIllustrationsService.php

@@ -36,6 +36,8 @@ class HelperSchemaTest extends TestCase
 
     public function test_repliers_columns_and_fsm_states(): void
     {
+        $this->requiresMySql('it reads the state column definition from MySQL information_schema');
+
         $this->assertTrue(Schema::hasColumns('helper_repliers', [
             'id', 'batchid', 'userid', 'chatid', 'state', 'collection_ok',
             'criteria_met', 'transport_ok', 'distance_miles', 'is_connector',

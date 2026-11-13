@@ -66,7 +66,7 @@ class PostDropEraTest extends TestCase
                (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1, ?,
-                     ST_Buffer(ST_Simplify(ST_GeomFromText(?, 3857), 0.002), 0.002),
+                     ST_Buffer(ST_Simplify(ST_GeomFromText(?, " . config('freegle.srid') . "), 0.002), 0.002),
                      NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $cells, self::POLY]
         );
@@ -188,7 +188,7 @@ class PostDropEraTest extends TestCase
     public function test_bounds_are_derived_from_the_traced_grid(): void
     {
         $msgid = $this->seedReach();
-        DB::statement('UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL WHERE msgid = ?',
+        DB::statement('UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, ' . config('freegle.srid') . '), inner_bound = NULL WHERE msgid = ?',
             ['POLYGON((-0.01 51.49, 0.0 51.49, 0.0 51.5, -0.01 51.5, -0.01 51.49))', $msgid]);
 
         (new ReachBoundsService())->syncFromPolygon($msgid);
@@ -196,7 +196,7 @@ class PostDropEraTest extends TestCase
         // Whatever it derived, the outer bound must CONTAIN the reach: that is
         // the superset guarantee every degraded read path depends on.
         $row = DB::selectOne(
-            'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS ok FROM rippling_reach WHERE msgid = ?',
+            'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS ok FROM rippling_reach WHERE msgid = ?',
             [self::POLY, $msgid]
         );
         $this->assertSame(1, (int) $row->ok, 'outer_bound must be a superset of the reach after re-derivation');
@@ -210,7 +210,7 @@ class PostDropEraTest extends TestCase
     public function test_bounds_derivation_clears_the_inner_when_it_cannot_measure(): void
     {
         $msgid = $this->seedReach();
-        DB::statement('UPDATE rippling_reach SET polygon_cells = NULL, inner_bound = ST_GeomFromText(?, 3857) WHERE msgid = ?',
+        DB::statement('UPDATE rippling_reach SET polygon_cells = NULL, inner_bound = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE msgid = ?',
             [self::INNER_POLY, $msgid]);
 
         (new ReachBoundsService())->syncFromPolygon($msgid);

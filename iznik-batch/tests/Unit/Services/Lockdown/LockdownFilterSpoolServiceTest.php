@@ -67,7 +67,7 @@ class LockdownFilterSpoolServiceTest extends TestCase
 
     private function makeNewsfeedPost(User $user, bool $hidden = false, bool $deleted = false): int
     {
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
 
         return (int) DB::table('newsfeed')->insertGetId([
             'type' => 'Message',

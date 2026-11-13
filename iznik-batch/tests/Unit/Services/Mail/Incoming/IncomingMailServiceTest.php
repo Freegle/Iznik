@@ -329,14 +329,14 @@ class IncomingMailServiceTest extends TestCase
         $group = $this->createTestGroup();
         $orphan = $this->uniqueEmail('orphan');
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        \Tests\Support\ForeignKeyChecks::disable();
         DB::table('users_emails')->insert([
             'userid' => 0,
             'email' => $orphan,
             'preferred' => 0,
             'added' => now(),
         ]);
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        \Tests\Support\ForeignKeyChecks::enable();
 
         $usersBefore = DB::table('users')->count();
 
@@ -1531,7 +1531,7 @@ class IncomingMailServiceTest extends TestCase
         DB::insert(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, rejected_groups, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, " . config('freegle.srid') . ")), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))'), 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))']
         );
 
@@ -3945,7 +3945,7 @@ class IncomingMailServiceTest extends TestCase
         $tracking = DB::table('email_tracking')
             ->where('email_type', 'ChatNotification')
             ->where('userid', $user1->id)
-            ->whereRaw("JSON_EXTRACT(metadata, '$.chat_id') = ?", [$chat->id])
+            ->where('metadata->chat_id', $chat->id)
             ->first();
 
         $this->assertNotNull($tracking->replied_at, 'replied_at should be set');
@@ -4820,6 +4820,7 @@ class IncomingMailServiceTest extends TestCase
         // Mark message as having outcome (TAKEN/RECEIVED)
         DB::table('messages_outcomes')->insert([
             'msgid' => $message->id,
+            'outcome' => 'Taken',
             'timestamp' => now(),
         ]);
 

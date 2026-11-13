@@ -157,7 +157,7 @@ class UserForgetTest extends TestCase
 
         DB::table('sessions')->insert([
             'userid' => $user->id,
-            'series' => bin2hex(random_bytes(16)),
+            'series' => random_int(1, PHP_INT_MAX),
             'token' => bin2hex(random_bytes(16)),
             'date' => now(),
         ]);

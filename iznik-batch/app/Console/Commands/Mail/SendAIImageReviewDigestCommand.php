@@ -90,6 +90,27 @@ class SendAIImageReviewDigestCommand extends Command
      */
     public function getOutlierVoterIds(): array
     {
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            // PostgreSQL does not let HAVING name a column of the select list, and it divides two whole
+            // numbers into a whole number. So the sums are written out again, and compared multiplied
+            // through instead of divided: approve / total > 0.9 is approve * 10 > total * 9.
+            $approve = new Sum(new Comparison('result', '=', Value::of('Approve')));
+            $reject = new Sum(new Comparison('result', '=', Value::of('Reject')));
+            $total = new Count();
+
+            return DB::table('microactions')
+                ->select('userid')
+                ->where('actiontype', 'AIImageReview')
+                ->groupBy('userid')
+                ->having($total, '>=', 10)
+                ->having(function ($query) use ($approve, $reject, $total) {
+                    $query->having(new Comparison(new Arithmetic($approve, '*', 10), '>', new Arithmetic($total, '*', 9)))
+                        ->orHaving(new Comparison(new Arithmetic($reject, '*', 10), '>', new Arithmetic($total, '*', 9)));
+                })
+                ->pluck('userid')
+                ->toArray();
+        }
+
         return DB::table('microactions')
             ->select('userid')
             ->addSelect(new Alias(new Count(), 'total_votes'))

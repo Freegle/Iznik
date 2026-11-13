@@ -5,8 +5,8 @@ namespace Tests\Unit\Commands\Message;
 use App\Services\Embedding\EmbedderContract;
 use App\Services\EmbeddingService;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\FakeEmbedder;
 use Tests\TestCase;
-use Tests\Unit\Services\FakeEmbedder;
 
 class RegenerateEmbeddingsCommandTest extends TestCase
 {
@@ -113,7 +113,7 @@ class RegenerateEmbeddingsCommandTest extends TestCase
 
         DB::statement(
             'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
-             VALUES (?, ?, ?, ?, ?, ?, ST_GeomFromText(?, 3857))',
+             VALUES (?, ?, ?, ?, ?, ?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [$message->id, $group->id, 'Offer', $successful, $promised, now(),
              sprintf('POINT(%F %F)', $group->lng, $group->lat)]
         );

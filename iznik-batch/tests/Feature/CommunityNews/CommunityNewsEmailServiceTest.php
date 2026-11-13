@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\CommunityNews;
 
+use App\Database\Sql;
 use App\Mail\CommunityNews\CommunityNewsMail;
 use App\Models\CommunityNewsArea;
 use App\Models\CommunityNewsItem;
@@ -49,7 +50,7 @@ class CommunityNewsEmailServiceTest extends TestCase
      */
     private function catchment($group, float $delta = 0.05): void
     {
-        $srid = (int) config('freegle.srid', 3857);
+        $srid = (int) config('freegle.srid', config('freegle.srid'));
         $lat = (float) $group->lat;
         $lng = (float) $group->lng;
         $w = $lng - $delta;
@@ -57,7 +58,7 @@ class CommunityNewsEmailServiceTest extends TestCase
         $s = $lat - $delta;
         $n = $lat + $delta;
         DB::statement(
-            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?',
             ["POLYGON(($w $s, $e $s, $e $n, $w $n, $w $s))", $srid, $group->id]
         );
     }

@@ -29,7 +29,7 @@ class GenerateLinkPreviewsCommandTest extends TestCase
             'type'      => 'Message',
             'timestamp' => now(),
             'added'     => now(),
-            'position'  => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'position'  => DB::raw("ST_GeomFromText('POINT(0 0)', " . config('freegle.srid') . ")"),
         ], $attrs));
     }
 

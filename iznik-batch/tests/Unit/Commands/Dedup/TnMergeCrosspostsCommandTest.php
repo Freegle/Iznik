@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\Dedup;
 
+use App\Database\Spatial;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -47,12 +48,16 @@ class TnMergeCrosspostsCommandTest extends TestCase
      */
     private function messageReferences(): array
     {
-        $database = DB::connection()->getDatabaseName();
+        // The same catalogue read as the command: lower-case names are found on both engines, and
+        // PostgreSQL's schema is the one the connection searches, not the database's name.
+        $database = DB::connection()->getDriverName() === 'pgsql'
+            ? DB::selectOne('select current_schema() as name')->name
+            : DB::connection()->getDatabaseName();
 
-        $refs = DB::table('information_schema.COLUMNS')
-            ->select('TABLE_NAME as table_name', 'COLUMN_NAME as column_name')
-            ->where('TABLE_SCHEMA', $database)
-            ->where('COLUMN_NAME', 'msgid')
+        $refs = DB::table('information_schema.columns')
+            ->select('table_name as table_name', 'column_name as column_name')
+            ->where('table_schema', $database)
+            ->where('column_name', 'msgid')
             ->get()
             ->reject(fn ($r) => $r->table_name === 'messages')
             ->map(fn ($r) => ['table' => $r->table_name, 'column' => $r->column_name])
@@ -79,7 +84,7 @@ class TnMergeCrosspostsCommandTest extends TestCase
         // (messages_spatial - what the browse feed reads).
         DB::table('messages_history')->insert([
             'groupid' => $groupB->id,
-            'source' => 'Email',
+            'source' => 'Platform',
             'fromuser' => $user->id,
             'subject' => 'OFFER: Singular Merge Fixture (London)',
             'msgid' => $copy,
@@ -95,7 +100,7 @@ class TnMergeCrosspostsCommandTest extends TestCase
         foreach ([$canonical, $copy] as $id) {
             DB::statement(
                 'INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival)
-                 VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), 0, ?, ?, ?)',
+                 VALUES (?, ' . Spatial::point('-0.1', '51.5', (int) config('freegle.srid')) . ', 0, ?, ?, ?)',
                 [$id, $id === $canonical ? $groupA->id : $groupB->id, 'Offer', now()]
             );
         }
@@ -129,6 +134,50 @@ class TnMergeCrosspostsCommandTest extends TestCase
         // canonical's own row intact - one feed entry for the item, which is the point.
         $spatial = DB::table('messages_spatial')->whereIn('msgid', [$canonical, $copy])->pluck('msgid')->all();
         $this->assertSame([$canonical], $spatial);
+    }
+
+    /**
+     * A table whose unique key has more columns than the message id (messages_likes: message, member, type).
+     * Rows the canonical message has no equivalent of move onto it; the one it already has is dropped. The
+     * result is the same on both engines: MySQL does it with UPDATE IGNORE, PostgreSQL with one statement
+     * that leaves the colliding rows out.
+     */
+    public function test_rows_under_a_wider_unique_key_move_unless_the_canonical_has_them(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmerge')]);
+        $viewerBoth = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmerge')]);
+        $viewerCopy = $this->createTestUser(['email_preferred' => $this->uniqueEmail('tnmerge')]);
+
+        $tnPostId = 'tn-merge-'.uniqid();
+        $canonical = $this->createTnMessage($tnPostId, $groupA->id, $poster->id);
+        $copy = $this->createTnMessage($tnPostId, $groupB->id, $poster->id);
+
+        DB::table('messages_likes')->insert([
+            // Seen on both copies: the copy's row collides and must be dropped, not moved.
+            ['msgid' => $canonical, 'userid' => $viewerBoth->id, 'type' => 'View', 'count' => 5],
+            ['msgid' => $copy, 'userid' => $viewerBoth->id, 'type' => 'View', 'count' => 2],
+            // The same member, another type, on the copy only: it moves.
+            ['msgid' => $copy, 'userid' => $viewerBoth->id, 'type' => 'Love', 'count' => 1],
+            // Another member, on the copy only: it moves.
+            ['msgid' => $copy, 'userid' => $viewerCopy->id, 'type' => 'View', 'count' => 3],
+        ]);
+
+        $this->artisan('tn:merge-crossposts')->assertSuccessful();
+
+        $this->assertSame(0, DB::table('messages_likes')->where('msgid', $copy)->count());
+
+        $rows = DB::table('messages_likes')->where('msgid', $canonical)
+            ->get()
+            ->map(fn ($r) => "{$r->userid}:{$r->type}:{$r->count}")
+            ->sort()->values()->all();
+        $expected = collect([
+            "{$viewerBoth->id}:View:5",
+            "{$viewerBoth->id}:Love:1",
+            "{$viewerCopy->id}:View:3",
+        ])->sort()->values()->all();
+        $this->assertSame($expected, $rows);
     }
 
     public function test_dry_run_changes_nothing(): void

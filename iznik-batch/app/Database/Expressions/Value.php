@@ -35,6 +35,12 @@ final class Value implements ExpressionContract
         return new self($value);
     }
 
+    /** The literal as given, for classes that need to inspect it (a JSON path) rather than render it. */
+    public function literal(): string|int|float|bool|null
+    {
+        return $this->value;
+    }
+
     public function getValue(Grammar $grammar): string
     {
         return (string) $grammar->escape($this->value);

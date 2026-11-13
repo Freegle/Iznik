@@ -1,7 +1,12 @@
 import { spawn } from 'child_process'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+import { checkContainersReady, containersNotReadyMessage } from '../../utils/requiredContainers'
 
 const prefix = process.env.COMPOSE_PROJECT_NAME || 'freegle'
+
+// The suite runs in spatial-knn and builds a scratch database on each source engine, so both
+// databases must be up. Without them the run waits a minute per engine and then fails.
+const REQUIRED_CONTAINERS = ['percona', 'postgres', 'spatial-knn']
 
 export default defineEventHandler(async (event) => {
   console.log('Starting spatial server tests...')
@@ -16,6 +21,22 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  // Refuse to start rather than produce a red run that blames the code.
+  const readiness = checkContainersReady(prefix, REQUIRED_CONTAINERS)
+  if (!readiness.ok) {
+    const message = containersNotReadyMessage('spatial server', readiness)
+    setTestState('spatial', {
+      status: 'failed',
+      success: false,
+      message,
+      logs: message + '\n',
+      progress: { completed: 0, total: 0, passed: 0, failed: 0, current: '' },
+      startTime: Date.now(),
+      endTime: Date.now(),
+    })
+    throw createError({ statusCode: 503, message })
+  }
+
   setTestState('spatial', {
     status: 'running',
     message: 'Running spatial server tests...',
@@ -26,8 +47,9 @@ export default defineEventHandler(async (event) => {
     withCoverage,
   })
 
-  // Tests use in-memory SQLite — no external PBF data needed.
-  // Targets spatial-knn (iznik-spatial-go) which has SQLite R-tree index tests.
+  // The index tests use in-memory SQLite; the loader tests read scratch databases on percona and
+  // postgres. No external PBF data is needed.
+  // Targets spatial-knn (iznik-spatial-go).
   const testCmd = withCoverage
     ? `go test -v -race -timeout 10m -coverprofile=coverage.out ./... -coverpkg ./...`
     : `go test -count=1 ./... -v`

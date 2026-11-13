@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Database\Expressions\CastAs;
+use App\Database\Sql;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -62,7 +64,9 @@ class ReachLabelsStagingTest extends TestCase
 
         $this->assertSame(self::FP, ReachService::livePartitionFp());
         $this->assertSame(
-            'COALESCE(IF(rr.reach_labels_next_fp = '.self::FP.', rr.reach_labels_next, NULL), rr.reach_labels)',
+            DB::connection()->getDriverName() === 'pgsql'
+                ? 'COALESCE(CASE WHEN rr.reach_labels_next_fp = '.self::FP.' THEN rr.reach_labels_next END, rr.reach_labels)'
+                : 'COALESCE(IF(rr.reach_labels_next_fp = '.self::FP.', rr.reach_labels_next, NULL), rr.reach_labels)',
             ReachService::liveLabelsSql('rr.')
         );
         $this->assertSame('staged', ReachService::pickLabels($this->row('live', 'staged', self::FP)));
@@ -77,18 +81,25 @@ class ReachLabelsStagingTest extends TestCase
     {
         $big = '12345678901234567890';
         $this->setPairing($big);
+        $pg = DB::connection()->getDriverName() === 'pgsql';
+        // What the fp column holds: the digits on MySQL, the same 64 bits as a signed number on PostgreSQL.
+        $stored = ReachService::fingerprintForDb($big);
+        $otherStored = ReachService::fingerprintForDb('12345678901234567891');
 
         $this->assertSame($big, ReachService::livePartitionFingerprint());
+        $this->assertSame($big, ReachService::fingerprintFromDb($stored));
         $this->assertSame(
-            'COALESCE(IF(rr.reach_labels_next_fp = '.$big.', rr.reach_labels_next, NULL), rr.reach_labels)',
+            $pg
+                ? 'COALESCE(CASE WHEN rr.reach_labels_next_fp = '.$stored.' THEN rr.reach_labels_next END, rr.reach_labels)'
+                : 'COALESCE(IF(rr.reach_labels_next_fp = '.$big.', rr.reach_labels_next, NULL), rr.reach_labels)',
             ReachService::liveLabelsSql('rr.')
         );
 
-        $row = (object) ['reach_labels' => 'live', 'reach_labels_next' => 'staged', 'reach_labels_next_fp' => $big];
+        $row = (object) ['reach_labels' => 'live', 'reach_labels_next' => 'staged', 'reach_labels_next_fp' => $stored];
         $this->assertSame('staged', ReachService::pickLabels($row));
 
         // Another fingerprint that is also above the largest integer belongs to another layout.
-        $other = (object) ['reach_labels' => 'live', 'reach_labels_next' => 'staged', 'reach_labels_next_fp' => '12345678901234567891'];
+        $other = (object) ['reach_labels' => 'live', 'reach_labels_next' => 'staged', 'reach_labels_next_fp' => $otherStored];
         $this->assertSame('live', ReachService::pickLabels($other));
 
         // A record typed by hand may end in a newline. It is the same fingerprint, in SQL and in PHP.
@@ -96,17 +107,18 @@ class ReachLabelsStagingTest extends TestCase
         $this->assertSame($big, ReachService::livePartitionFingerprint());
         $this->assertSame('staged', ReachService::pickLabels($row));
 
-        // The SQL picks the same blob from a real unsigned column value. The bind goes through CHAR
+        // The SQL picks the same blob from a real column value. On MySQL the bind goes through CHAR
         // because MySQL reads a bare parameter as a signed number, which cannot hold this one.
         $expr = ReachService::liveLabelsSql();
+        $column = $pg ? 'CAST(? AS bigint)' : 'CAST(CAST(? AS CHAR) AS UNSIGNED)';
         $picked = DB::selectOne(
-            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, CAST(CAST(? AS CHAR) AS UNSIGNED) AS reach_labels_next_fp) AS t",
-            [$big]
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, {$column} AS reach_labels_next_fp) AS t",
+            [$stored]
         );
         $this->assertSame('staged', $picked->picked);
         $stale = DB::selectOne(
-            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, CAST(CAST(? AS CHAR) AS UNSIGNED) AS reach_labels_next_fp) AS t",
-            ['12345678901234567891']
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, {$column} AS reach_labels_next_fp) AS t",
+            [$otherStored]
         );
         $this->assertSame('live', $stale->picked);
     }
@@ -137,20 +149,22 @@ class ReachLabelsStagingTest extends TestCase
         // The SQL and PHP forms must agree, or a digest could probe one blob
         // while the reply gate decodes another.
         $expr = ReachService::liveLabelsSql();
+        $fpBind = Sql::render(new CastAs(DB::raw('?'), 'SIGNED'));
+        $nullFp = Sql::render(new CastAs(DB::raw('NULL'), 'SIGNED'));
         $picked = DB::selectOne(
-            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, ? AS reach_labels_next_fp) AS t",
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, {$fpBind} AS reach_labels_next_fp) AS t",
             [self::FP]
         );
         $this->assertSame('staged', $picked->picked);
 
         $stale = DB::selectOne(
-            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, ? AS reach_labels_next_fp) AS t",
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, 'staged' AS reach_labels_next, {$fpBind} AS reach_labels_next_fp) AS t",
             [42]
         );
         $this->assertSame('live', $stale->picked);
 
         $unstaged = DB::selectOne(
-            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, NULL AS reach_labels_next, NULL AS reach_labels_next_fp) AS t"
+            "SELECT {$expr} AS picked FROM (SELECT 'live' AS reach_labels, NULL AS reach_labels_next, {$nullFp} AS reach_labels_next_fp) AS t"
         );
         $this->assertSame('live', $unstaged->picked);
     }

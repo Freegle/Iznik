@@ -1,0 +1,5 @@
+# Tests of the laravel suite known to fail on PostgreSQL. Generated, one name per line.
+# The PostgreSQL run fails when a test outside this list fails. A test that passes can be removed:
+# the run lists them. Regenerate from a CI run with tools/pg-ratchet/ratchet.mjs update; see
+# docs/developers/reference/database-engines.md.
+# total-results: 9910

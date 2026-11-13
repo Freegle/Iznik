@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mail;
 
+use App\Database\Sql;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Services\EmailSpoolerService;
@@ -149,7 +150,7 @@ class ReengageEmailsCommandTest extends TestCase
         // resolveVolunteer query (covered separately).
         $group = $this->createFreegleGroup();
         DB::statement(
-            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            'UPDATE ' . Sql::table('groups') . ' SET polyindex = ST_GeomFromText(?, ' . config('freegle.srid') . ') WHERE id = ?',
             ['POLYGON((-0.25 51.40, 0.00 51.40, 0.00 51.60, -0.25 51.60, -0.25 51.40))', $group->id]
         );
 

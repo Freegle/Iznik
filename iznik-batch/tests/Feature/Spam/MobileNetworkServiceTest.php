@@ -295,7 +295,9 @@ class MobileNetworkServiceTest extends TestCase
         DB::table('spam_whitelist_ips')->insert([
             ['ip' => '10.200.0.0/16', 'comment' => 'UK mobile: Old (AS1) — stale', 'date' => now()],
             ['ip' => '10.201.0.0/16', 'comment' => 'Manually added office', 'date' => now()],
-            ['ip' => '10.202.0.0/16', 'comment' => null, 'date' => now()],
+            // No comment. The column is NOT NULL: MySQL stores the empty string for a NULL in a row of
+            // several, and PostgreSQL refuses it, so the empty string is given.
+            ['ip' => '10.202.0.0/16', 'comment' => '', 'date' => now()],
             ['ip' => '10.203.0.0/16', 'comment' => 'Mentions UK mobile: but not a prefix', 'date' => now()],
         ]);
         Http::fake([

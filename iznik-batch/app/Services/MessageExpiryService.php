@@ -2,12 +2,19 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\DateSub;
+use App\Database\Expressions\JsonNumber;
+use App\Database\Expressions\Now;
+use App\Database\Expressions\TimestampDiff;
+use App\Database\Expressions\Value;
+use App\Database\Sql;
 use App\Mail\Message\DeadlineReached;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Models\User;
+use Illuminate\Database\Query\Grammars\PostgresGrammar;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -102,7 +109,8 @@ class MessageExpiryService
         $ids = Message::query()
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
-            ->whereRaw('messages.deadline < CURDATE()')
+            // keep-raw: Compares a datetime column with the current date: CURRENT_DATE is the same on both engines and the builder has no form for it.
+            ->whereRaw('messages.deadline < CURRENT_DATE')
             ->whereNull('messages.deleted')
             // A post with no live approved posting is not on the site, so it cannot
             // expire off it. A retracted rippled copy keeps collection = Approved and
@@ -270,14 +278,33 @@ class MessageExpiryService
         // The scan is bounded to postings that arrived in the last AGE_EXPIRY_LOOKBACK_DAYS
         // (using the arrival index) and returns at most AGE_EXPIRY_BATCH of the oldest each
         // run, so a backlog drains over a few daily runs rather than in one long statement.
-        $sql = <<<'SQL'
+        //
+        // PostgreSQL only: groups.settings is text, and every JsonNumber over it parses the whole document as
+        // jsonb again, about five times for each (post, group) row the threshold test looks at. That was most
+        // of the statement's time. A lateral subquery parses it once per row and the JsonNumbers read the
+        // parsed copy. OFFSET 0 stops the planner folding the subquery back into the expressions, which
+        // would put the parse back in each of them. MySQL's statement is the same text as before.
+        $postgres = DB::getQueryGrammar() instanceof PostgresGrammar;
+        $settings = $postgres ? 'js.doc' : 'g.settings';
+        $parseOnce = $postgres ? "\n        CROSS JOIN LATERAL (SELECT CAST(g.settings AS jsonb) AS doc OFFSET 0) js" : '';
+        $num = fn (string $path) => '('.Sql::render(new JsonNumber(DB::raw($settings), Value::of($path))).' + 0)';
+        $jmaxagetoshow = $num('$.maxagetoshow');
+        $jreposts_offer = $num('$.reposts.offer');
+        $jreposts_max = $num('$.reposts.max');
+        $jreposts_wanted = $num('$.reposts.wanted');
+        $lookback = Sql::render(new DateSub(new Now(), DB::raw('?'), 'DAY'));
+        $oneDayAgo = Sql::render(new DateSub(new Now(), 1, 'DAY'));
+        $sixDaysAgo = Sql::render(new DateSub(new Now(), 6, 'DAY'));
+        $groups = Sql::table('groups');
+        $ageDays = Sql::render(new TimestampDiff('DAY', DB::raw('mg.arrival'), new Now()));
+        $sql = <<<SQL
 SELECT m.id AS msgid, MIN(live.arrival) AS first_arrival
 FROM messages_groups live
 JOIN messages m ON m.id = live.msgid
 LEFT JOIN messages_promises mp ON mp.msgid = m.id
 WHERE live.collection = 'Approved'
   AND live.deleted = 0
-  AND live.arrival > DATE_SUB(NOW(), INTERVAL ? DAY)
+  AND live.arrival > {$lookback}
   AND m.deleted IS NULL
   AND m.type IN ('Offer', 'Wanted')
   AND mp.id IS NULL
@@ -287,23 +314,23 @@ WHERE live.collection = 'Approved'
       WHERE mo.msgid = m.id AND mo.outcome = ?
     )
     OR (
-      live.arrival < DATE_SUB(NOW(), INTERVAL 1 DAY)
+      live.arrival < {$oneDayAgo}
       AND NOT EXISTS (
         SELECT 1 FROM messages_outcomes mo2 WHERE mo2.msgid = m.id
       )
       AND NOT EXISTS (
         SELECT 1 FROM messages_groups mg
-        JOIN `groups` g ON g.id = mg.groupid
+        JOIN {$groups} g ON g.id = mg.groupid{$parseOnce}
         WHERE mg.msgid = m.id
           AND mg.deleted = 0
           AND mg.collection = 'Approved'
-          AND TIMESTAMPDIFF(DAY, mg.arrival, NOW()) <= GREATEST(
-            COALESCE(JSON_EXTRACT(g.settings, '$.maxagetoshow') + 0, 90),
+          AND {$ageDays} <= GREATEST(
+            COALESCE({$jmaxagetoshow}, 90),
             CASE m.type
-              WHEN 'Offer' THEN COALESCE(JSON_EXTRACT(g.settings, '$.reposts.offer')  + 0, 3)
-                              * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
-              ELSE          COALESCE(JSON_EXTRACT(g.settings, '$.reposts.wanted') + 0, 7)
-                              * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
+              WHEN 'Offer' THEN COALESCE({$jreposts_offer}, 3)
+                              * (COALESCE({$jreposts_max}, 5) + 1)
+              ELSE          COALESCE({$jreposts_wanted}, 7)
+                              * (COALESCE({$jreposts_max}, 5) + 1)
             END
           )
       )
@@ -311,7 +338,7 @@ WHERE live.collection = 'Approved'
         SELECT 1 FROM chat_messages cm
         JOIN chat_messages cm2 ON cm2.chatid = cm.chatid
         WHERE cm.refmsgid = m.id AND cm.type != 'ModMail'
-          AND cm2.date > DATE_SUB(NOW(), INTERVAL 6 DAY)
+          AND cm2.date > {$sixDaysAgo}
       )
     )
   )

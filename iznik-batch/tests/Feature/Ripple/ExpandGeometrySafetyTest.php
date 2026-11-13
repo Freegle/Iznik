@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Ripple;
 
+use App\Database\Spatial;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -38,13 +39,13 @@ class ExpandGeometrySafetyTest extends TestCase
         $grp = 'POLYGON((1 0,2 0,2 1,1 1,1 0))';
 
         $row = DB::selectOne(
-            'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
+            'SELECT CASE WHEN ' . Spatial::geometryType('inter') . ' IN (\'POLYGON\', \'MULTIPOLYGON\')
                          THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
                     END AS frac,
                     ST_AsText(ST_Union(iso, grp)) AS u
              FROM (SELECT ST_Intersection(iso, grp) AS inter, iso, grp
-                   FROM (SELECT ST_GeomFromText(?, 3857) AS iso,
-                                ST_GeomFromText(?, 3857) AS grp) s) t',
+                   FROM (SELECT ST_GeomFromText(?, ' . config('freegle.srid') . ') AS iso,
+                                ST_GeomFromText(?, ' . config('freegle.srid') . ') AS grp) s) t',
             [$iso, $grp]
         );
 
@@ -60,12 +61,12 @@ class ExpandGeometrySafetyTest extends TestCase
         $grp = 'POLYGON((0 0,2 0,2 2,0 2,0 0))';
 
         $row = DB::selectOne(
-            'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
+            'SELECT CASE WHEN ' . Spatial::geometryType('inter') . ' IN (\'POLYGON\', \'MULTIPOLYGON\')
                          THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
                     END AS frac
              FROM (SELECT ST_Intersection(iso, grp) AS inter, grp
-                   FROM (SELECT ST_GeomFromText(?, 3857) AS iso,
-                                ST_GeomFromText(?, 3857) AS grp) s) t',
+                   FROM (SELECT ST_GeomFromText(?, ' . config('freegle.srid') . ') AS iso,
+                                ST_GeomFromText(?, ' . config('freegle.srid') . ') AS grp) s) t',
             [$iso, $grp]
         );
 

@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Database\Sql;
+use App\Database\Spatial;
 use App\Mail\Newsfeed\NewsfeedModNotifMail;
 use App\Mail\Traits\AvatarResolver;
 use App\Models\Group;
@@ -109,14 +111,15 @@ class NewsfeedModNotifService
             $placeholders = implode(',', array_fill(0, count($groupIds), '?'));
 
             // Find unseen newsfeed posts across all moderated groups (direct match or spatial containment).
-            // keep-raw: MBRContains() is a spatial function with no builder method.
+            // keep-raw: a spatial containment test inside a join condition.
+            $groupsTable = Sql::table('groups');
             $posts = DB::select(
                 "SELECT DISTINCT newsfeed.id, newsfeed.userid, newsfeed.type, newsfeed.message, newsfeed.added
                  FROM newsfeed
-                 INNER JOIN `groups` ON (
+                 INNER JOIN {$groupsTable} ON (
                      newsfeed.groupid = groups.id
                      OR (newsfeed.position IS NOT NULL AND groups.polyindex IS NOT NULL
-                         AND MBRContains(groups.polyindex, newsfeed.position))
+                         AND " . Spatial::mbrContains('groups.polyindex', 'newsfeed.position') . ")
                  )
                  WHERE newsfeed.added >= ?
                    AND newsfeed.id > ?

@@ -11,7 +11,7 @@ use Tests\TestCase;
 /**
  * Self-tests for GoldenSql, proving it actually FAILS on a genuine
  * divergence and not just passes on a correct one - the same discipline
- * iznik-server-go/ormharness/golden_test.go applies (its own header note:
+ * iznik-server-go/parity/golden_test.go applies (its own header note:
  * "expected failure" cases exist because a harness that only demonstrates
  * passing has not demonstrated it catches anything). Scenarios mirror that
  * file's synthetic-manifest tests one for one, via Manifest::setSitesForTest.
@@ -250,5 +250,40 @@ class GoldenSqlTest extends TestCase
         ]);
 
         $this->assertFalse($passed, 'expected a SET clause with columns in a different order to fail, not be silently reordered into matching');
+    }
+
+    /**
+     * A select-list alias is an output column name that the code reading the result depends on, so
+     * renaming it is a change and must fail.
+     */
+    public function test_renamed_select_list_alias_fails(): void
+    {
+        Manifest::setSitesForTest([
+            'site1' => ['goldenSql' => 'SELECT groupid AS gid FROM memberships WHERE userid = ?'],
+        ]);
+
+        [$passed] = $this->runAssertion('site1', fn () => DB::table('memberships')->selectRaw('groupid as groupref')->where('userid', 5));
+
+        $this->assertFalse($passed, 'expected a renamed output column to fail, not be treated as an alias to ignore');
+    }
+
+    /**
+     * ->count() names its column "aggregate" and reads it by position, so the golden's own alias for
+     * a count is not an output the caller depends on.
+     */
+    public function test_count_aggregate_alias_is_not_an_output_name(): void
+    {
+        Manifest::setSitesForTest([
+            'site1' => ['goldenSql' => 'SELECT COUNT(*) AS cnt FROM memberships WHERE userid = ?'],
+        ]);
+
+        [$passed, $why] = $this->runAssertion('site1', function () {
+            $q = DB::table('memberships')->where('userid', 5);
+            $q->aggregate = ['function' => 'count', 'columns' => ['*']];
+
+            return $q;
+        });
+
+        $this->assertTrue($passed, $why);
     }
 }

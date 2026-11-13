@@ -10,36 +10,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// dbUserEnv names the setting that holds the database user for the engine the suite runs on.
+func dbUserEnv() string {
+	if database.Engine() == database.EnginePostgres {
+		return "PGSQL_USERNAME"
+	}
+	return "MYSQL_USER"
+}
+
 func TestInitDatabase_Fail(t *testing.T) {
 	// Save the current DB connection and env var so we can restore after the
 	// intentional panic.
-	user := os.Getenv("MYSQL_USER")
+	user := os.Getenv(dbUserEnv())
 	savedConn := database.DBConn
 	savedPool := database.Pool
 
 	defer func() {
-		os.Setenv("MYSQL_USER", user)
+		os.Setenv(dbUserEnv(), user)
 		database.DBConn = savedConn
 		database.Pool = savedPool
 		recover()
 	}()
 
-	os.Setenv("MYSQL_USER", "nonexistent_user_that_does_not_exist")
+	os.Setenv(dbUserEnv(), "nonexistent_user_that_does_not_exist")
 	database.InitDatabase()
 }
 
 func TestInitDatabase_FailLeavesExistingConnection(t *testing.T) {
-	user := os.Getenv("MYSQL_USER")
+	user := os.Getenv(dbUserEnv())
 	savedConn := database.DBConn
 	savedPool := database.Pool
 
 	defer func() {
-		os.Setenv("MYSQL_USER", user)
+		os.Setenv(dbUserEnv(), user)
 		database.DBConn = savedConn
 		database.Pool = savedPool
 	}()
 
-	os.Setenv("MYSQL_USER", "nonexistent_user_that_does_not_exist")
+	os.Setenv(dbUserEnv(), "nonexistent_user_that_does_not_exist")
 	func() {
 		defer func() { recover() }()
 		database.InitDatabase()

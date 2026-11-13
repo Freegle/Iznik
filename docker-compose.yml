@@ -95,8 +95,15 @@ services:
       - database
     networks:
       - default
-    image: postgis/postgis:13-3.1
+    # PostgreSQL 18 with PostGIS 3.6. This is the second engine the code is being made to run on; the
+    # stack still runs on percona. scripts/setup-test-database.sh builds the PostgreSQL schema here only
+    # when PG_ENGINE=1 is set (see docs/developers/reference/database-engines.md).
+    image: postgis/postgis:18-3.6
     restart: "no"
+    # More connections than the stock 100, so the API's two pools and the batch workers fit. The disks
+    # are solid state, so a random page costs about what a sequential one does: at the stock 4 the planner
+    # prefers reading a community's whole history to probing an index once per post.
+    command: ["postgres", "-c", "max_connections=600", "-c", "random_page_cost=1.1"]
     environment:
       POSTGRES_DB: iznik
       POSTGRES_PASSWORD: iznik
@@ -842,6 +849,19 @@ services:
       - MYSQL_PORT=3306
       - MYSQL_USER=root
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      # The second engine, for the parity harness's result tests (iznik-server-go/parity). The
+      # database defaults to iznik_go_test. Nothing in the API reads these yet.
+      - PGSQL_HOST=${PGSQL_HOST:-postgres}
+      - PGSQL_PORT=${PGSQL_PORT:-5432}
+      - PGSQL_USERNAME=${PGSQL_USERNAME:-root}
+      - PGSQL_PASSWORD=${PGSQL_PASSWORD:-iznik}
+      # Pool sizes and JIT for DB_ENGINE=postgres. Empty means the defaults in iznik-server-go/database/postgres.go.
+      - PGSQL_MAX_OPEN_CONNS=${PGSQL_MAX_OPEN_CONNS:-}
+      - PGSQL_MAX_IDLE_CONNS=${PGSQL_MAX_IDLE_CONNS:-}
+      - PGSQL_JIT=${PGSQL_JIT:-}
+      - PGSQL_LOCK_TIMEOUT=${PGSQL_LOCK_TIMEOUT:-}
+      # 1 makes a parity test fail, not skip, when PostgreSQL is unreachable. CI sets it.
+      - PG_ENGINE=${PG_ENGINE:-}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd:8080/tus
       # In dev, uploaded photos live in the local tusd, not the production
@@ -927,12 +947,25 @@ services:
       percona:
         condition: service_healthy
         required: false
+      # Waited for so a PostgreSQL-sourced service does not build its first indexes before the
+      # database accepts connections. Absent when the database profile is not running.
+      postgres:
+        condition: service_healthy
+        required: false
     restart: "no"
     environment:
       - MYSQL_HOST=percona
       - MYSQL_PORT=3306
       - MYSQL_USER=root
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      # The database the indexes are built from: mysql, or postgres which reads the PGSQL_* settings
+      # below. The service's tests run against both engines and read both sets.
+      - SPATIAL_SOURCE_ENGINE=${SPATIAL_SOURCE_ENGINE:-mysql}
+      - PGSQL_HOST=${PGSQL_HOST:-postgres}
+      - PGSQL_PORT=${PGSQL_PORT:-5432}
+      - PGSQL_DATABASE=${PGSQL_DATABASE:-iznik}
+      - PGSQL_USERNAME=${PGSQL_USERNAME:-root}
+      - PGSQL_PASSWORD=${PGSQL_PASSWORD:-iznik}
       - SPATIAL_INDEX_DIR=/data
       - SPATIAL_PORT=8194
       - SPATIAL_ADMIN_PORT=8195
@@ -996,6 +1029,13 @@ services:
       - MYSQL_USER=root
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
       - MYSQL_DBNAME=iznik
+      # The service reads MySQL unless this is "postgres", which switches it to the PGSQL_* settings.
+      - DB_ENGINE=${ROUTING_DB_ENGINE:-mysql}
+      - PGSQL_HOST=postgres
+      - PGSQL_PORT=5432
+      - PGSQL_USERNAME=root
+      - PGSQL_PASSWORD=iznik
+      - PGSQL_DATABASE=iznik
       - JWT_SECRET=${JWT_SECRET:-secret}
     volumes:
       - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
@@ -1765,6 +1805,8 @@ services:
       - PGSQL_DATABASE=iznik
       - PGSQL_USERNAME=root
       - PGSQL_PASSWORD=iznik
+      # 1 makes a parity test fail, not skip, when PostgreSQL is unreachable. CI sets it.
+      - PG_ENGINE=${PG_ENGINE:-}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - CACHE_STORE=redis

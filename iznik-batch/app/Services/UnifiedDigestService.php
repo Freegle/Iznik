@@ -2,6 +2,9 @@
 
 namespace App\Services;
 
+use App\Database\Sql;
+use App\Database\Spatial;
+use App\Database\Expressions\JsonUnquote;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\Arithmetic;
 use App\Database\Expressions\CaseWhen;
@@ -832,8 +835,8 @@ class UnifiedDigestService
 
                     $candidates = DB::table('rippling_reach as mr')
                         ->whereIn('mr.status', ['expanding', 'done'])
-                        ->whereRaw("ST_GeometryType(mr.outer_bound) <> 'POINT'")
-                        ->whereRaw('ST_Contains(mr.outer_bound, ST_SRID(POINT(?, ?), ?))', [$lng, $lat, $srid])
+                        ->where(new Comparison(new StGeometryType('mr.outer_bound'), '<>', Value::of('POINT')))
+                        ->where(new StContains('mr.outer_bound', new StSrid(new Point((float) $lng, (float) $lat), $srid)))
                         ->whereExists(function ($q) use ($row) {
                             $q->select(DB::raw(1))
                                 ->from('messages_groups as mg')
@@ -1163,15 +1166,19 @@ class UnifiedDigestService
             // One definition of the member's point, used by the projection, by the reach
             // containment and by any overflow ring - so a member cannot be admitted on one
             // resolution and then measured from another.
-            $latExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
-                            THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
+            $myLat = Sql::jsonExtract('u.settings', '$.mylocation.lat');
+            $myLng = Sql::jsonExtract('u.settings', '$.mylocation.lng');
+            $myNumber = fn (string $json) => Sql::render(new CastAs(DB::raw($json), 'DECIMAL', 10, 6));
+            $latExpr = "CASE WHEN $myLat IS NOT NULL
+                                 AND $myLng IS NOT NULL AND u.tnuserid IS NULL
+                            THEN {$myNumber($myLat)}
                             ELSE l.lat END";
-            $lngExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                 AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL AND u.tnuserid IS NULL
-                            THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
+            $lngExpr = "CASE WHEN $myLat IS NOT NULL
+                                 AND $myLng IS NOT NULL AND u.tnuserid IS NULL
+                            THEN {$myNumber($myLng)}
                             ELSE l.lng END";
-            $point = "ST_SRID(POINT($lngExpr, $latExpr), ?)";
+            $point = Spatial::point($lngExpr, $latExpr, '?');
+            $notPoint = fn (string $column) => Spatial::geometryType($column)." <> 'POINT'";
 
             // The ring WIDENS who this query enumerates, but it does not decide who
             // the ring admits. That decision belongs to the spatial index, and to
@@ -1209,22 +1216,23 @@ class UnifiedDigestService
                 : 0.0;
             $unionSecs = $reachRow->origin_union_secs ?? null;
             $unionActive = $unionSecs !== null && (float) $unionSecs >= 0 && $currentSecs >= (float) $unionSecs;
-            $containSql = "(ST_GeometryType(mr.outer_bound) <> 'POINT' AND ST_Contains(mr.outer_bound, $point))";
+            $containSql = "(".$notPoint('mr.outer_bound')." AND ST_Contains(mr.outer_bound, $point))";
             $mrJoin = '';
             $originAreaFlag = '';
             if ($unionActive) {
-                $originAreaFlag = ", COALESCE(ST_Contains((SELECT g2.polyindex FROM messages_groups mg2
-                        JOIN `groups` g2 ON g2.id = mg2.groupid
+                $groupsTable = Sql::table('groups');
+                $originAreaFlag = ", CASE WHEN ST_Contains((SELECT g2.polyindex FROM messages_groups mg2
+                        JOIN $groupsTable g2 ON g2.id = mg2.groupid
                         WHERE mg2.msgid = mr.msgid AND mg2.deleted = 0
-                          AND g2.polyindex IS NOT NULL AND ST_GeometryType(g2.polyindex) <> 'POINT'
-                        ORDER BY mg2.arrival ASC LIMIT 1), $point), 0) AS in_origin_area";
+                          AND g2.polyindex IS NOT NULL AND ".$notPoint('g2.polyindex')."
+                        ORDER BY mg2.arrival ASC LIMIT 1), $point) THEN 1 ELSE 0 END AS in_origin_area";
             }
 
             // in_primary: from the outer bound, refined by the PHP probe
             // below. density_band rides along for the ring index whenever
             // either consumer needs post-filtering.
             $primaryFlag = ", $containSql AS in_primary"
-                . ", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band"
+                . ', '.Sql::jsonText('u.settings', '$.browseDensityBand').' AS density_band'
                 . $originAreaFlag;
             $primaryParams = $unionActive ? [$srid, $srid] : [$srid];
 
@@ -1251,8 +1259,7 @@ class UnifiedDigestService
             // Withdrawn joins Taken/Received: all three mean the post is gone, and a member
             // newly inside the reach of a withdrawn post has nothing to reply to.
             //
-            // keep-raw: spatial predicates (ST_Contains, ST_SRID, ST_GeomFromText) and the
-            // JSON_EXTRACT point resolution have no query-builder equivalent.
+            // keep-raw: spatial predicates (ST_Contains) and the JSON point resolution have no query-builder equivalent.
             $recipientRows = collect(DB::select(
                 "SELECT DISTINCT u.id AS id,
                        $latExpr AS resolved_lat,
@@ -2482,7 +2489,16 @@ class UnifiedDigestService
             // messages_groups.arrival keeps microseconds but the cursor is stored in whole
             // seconds, cut down from the newest arrival sent. Windowing on "after the cursor"
             // would offer that newest post again, so the window starts at the next whole second.
-            $window->where('messages_groups.arrival', '>=', $tracker->lastmsgdate->copy()->addSecond());
+            //
+            // PostgreSQL keeps the cursor's microseconds, so there the cursor is the newest arrival
+            // itself and the window is everything after it: starting a second later would never
+            // offer a post that arrived within that second. A cursor with no fraction was copied
+            // from MySQL, already cut down, and is treated as MySQL treats it.
+            if (DB::connection()->getDriverName() === 'pgsql' && $tracker->lastmsgdate->micro !== 0) {
+                $window->where('messages_groups.arrival', '>', $tracker->lastmsgdate);
+            } else {
+                $window->where('messages_groups.arrival', '>=', $tracker->lastmsgdate->copy()->addSecond());
+            }
         } else {
             $window->where('messages_groups.arrival', '>=', now()->subDay());
         }

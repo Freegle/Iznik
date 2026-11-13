@@ -2,6 +2,10 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Concat;
+use App\Database\Expressions\GroupConcat;
+use App\Database\Expressions\Value;
 use App\Models\Membership;
 use App\Mail\Housekeeper\DiscourseReportMail;
 use Carbon\Carbon;
@@ -202,7 +206,14 @@ class DiscourseNotSignedUpService
             ->get([
                 'users.id',
                 'users.fullname',
-                DB::raw("GROUP_CONCAT(CONCAT(groups.nameshort, ' (', memberships.role, ')') ORDER BY groups.nameshort SEPARATOR ', ') AS roles"),
+                new Alias(
+                    new GroupConcat(
+                        new Concat('groups.nameshort', Value::of(' ('), 'memberships.role', Value::of(')')),
+                        ', ',
+                        'groups.nameshort'
+                    ),
+                    'roles'
+                ),
             ]);
     }
 

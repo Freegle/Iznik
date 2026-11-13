@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Services\Embedding\EmbedderContract;
 use App\Services\EmbeddingService;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\FakeEmbedder;
 use Tests\TestCase;
 
 class EmbeddingServiceTest extends TestCase
@@ -173,58 +174,10 @@ class EmbeddingServiceTest extends TestCase
 
         DB::statement(
             'INSERT INTO messages_spatial (msgid, groupid, msgtype, successful, promised, arrival, point)
-             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, 3857))',
+             VALUES (?, ?, ?, 0, 0, ?, ST_GeomFromText(?, ' . config('freegle.srid') . '))',
             [$message->id, $group->id, 'Offer', now(), sprintf('POINT(%F %F)', $group->lng, $group->lat)]
         );
 
         return (int) $message->id;
-    }
-}
-
-/**
- * Deterministic id-keyed fake embedder.
- */
-class FakeEmbedder implements EmbedderContract
-{
-    public array $textsSeen = []; // id => text
-
-    public function __construct(
-        private float $seed = 0.0,
-        private bool $fail = false,
-    ) {}
-
-    public function embed(array $texts): array|false
-    {
-        if ($this->fail) {
-            return false;
-        }
-
-        $out = [];
-        foreach ($texts as $id => $text) {
-            $this->textsSeen[$id] = $text;
-            $out[$id] = $this->vectorFor($text);
-        }
-
-        return $out;
-    }
-
-    private function vectorFor(string $text): array
-    {
-        $h = hash('sha256', $text.'|'.$this->seed, true);
-        $v = [];
-        for ($i = 0; $i < 256; $i++) {
-            $byte = ord($h[$i % 32]) + (($i >> 5) * 13);
-            $v[] = (($byte % 256) / 255.0) - 0.5;
-        }
-        $norm = 0.0;
-        foreach ($v as $x) {
-            $norm += $x * $x;
-        }
-        $norm = sqrt($norm) ?: 1.0;
-        foreach ($v as $i => $x) {
-            $v[$i] = $x / $norm;
-        }
-
-        return $v;
     }
 }

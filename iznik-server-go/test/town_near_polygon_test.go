@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/roadblur"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -41,8 +42,8 @@ const townNearTownID = 990001
 func seedTownNearEdinburgh(t *testing.T) {
 	t.Helper()
 	db := database.DBConn
-	db.Exec("INSERT IGNORE INTO places (id, name, lat, lng, population, position) VALUES (?, ?, ?, ?, ?, ST_SRID(POINT(?, ?), 3857))",
-		townNearTownID, "Testburgh", 55.95, -3.19, 50000, -3.19, 55.95)
+	db.Exec("INSERT IGNORE INTO places (id, name, lat, lng, population, position) VALUES (?, ?, ?, ?, ?, ST_SRID(POINT(?, ?), ?))",
+		townNearTownID, "Testburgh", 55.95, -3.19, 50000, -3.19, 55.95, utils.SRID)
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM places WHERE id = ?", townNearTownID)
 	})

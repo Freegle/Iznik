@@ -325,7 +325,10 @@ class AutoSplitServiceTest extends TestCase
         $taken = $this->newPost();
         DB::table('messages_outcomes')->insert(['msgid' => $taken, 'outcome' => 'Taken']);
         $rejected = $this->newPost([], 'Rejected');
-        $draft = $this->newPost([], 'Draft');
+        // A draft is on no community yet: the API keeps it in messages_drafts, with no messages_groups row.
+        $draft = $this->newPost();
+        DB::table('messages_groups')->where('msgid', $draft)->delete();
+        DB::table('messages_drafts')->insert(['msgid' => $draft]);
         $removed = $this->newPost();
         DB::table('messages_groups')->where('msgid', $removed)->update(['deleted' => 1]);
         $live = $this->newPost([], MessageGroup::COLLECTION_APPROVED);

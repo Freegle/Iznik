@@ -1,0 +1,2 @@
+{"table":"batch_email_progress","columns":["id","job_type","last_processed_id","last_processed_at","started_at"]}
+[1,"welcome",74,"2026-07-09 10:02:03","2026-07-09 10:02:00"]

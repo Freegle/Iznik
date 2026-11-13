@@ -145,16 +145,17 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
     `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
     900000
   )
-  // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding).
+  // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding). The loader
+  // writes the neutral files in scripts/fixtures as MySQL SQL, as setup-test-database.sh does.
   runStep(
     'load test fixtures',
-    `docker cp /project/scripts/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
+    `node /project/tools/fixtures/load.mjs --engine mysql --part captured > /tmp/test-fixtures.sql && docker cp /tmp/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
     300000
   )
-  // Hand-written additions that survive regenerating test-fixtures.sql (see its header).
+  // Hand-written additions that survive regenerating the captured tables (scripts/fixtures/extra-steps.json).
   runStep(
     'load extra test fixtures',
-    `docker cp /project/scripts/test-fixtures-extra.sql ${pfx}-percona:/tmp/test-fixtures-extra.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures-extra.sql"`,
+    `node /project/tools/fixtures/load.mjs --engine mysql --part extra > /tmp/test-fixtures-extra.sql && docker cp /tmp/test-fixtures-extra.sql ${pfx}-percona:/tmp/test-fixtures-extra.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures-extra.sql"`,
     300000
   )
   // Roll the fixture post dates forward, exactly as scripts/setup-test-database.sh does

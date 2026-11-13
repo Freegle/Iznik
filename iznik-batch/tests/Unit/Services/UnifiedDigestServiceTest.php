@@ -2,6 +2,11 @@
 
 namespace Tests\Unit\Services;
 
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StEnvelope;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\StSrid;
+use App\Database\Expressions\Value;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
@@ -330,14 +335,7 @@ class UnifiedDigestServiceTest extends TestCase
         $message = $this->createTestMessage($poster, $group);
 
         // A reach that DOES cover the recipient, so only the frozen status can exclude it.
-        DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
-             VALUES (?, 51.5, -0.1, ?,
-                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
-                'held', NOW())
-             ON DUPLICATE KEY UPDATE status = VALUES(status)",
-            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
-        );
+        $this->putReach($message->id, 'POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 51.5, -0.1, 'held');
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
         $this->assertEquals(0, $stats['emails_sent'], 'a post under moderation must not be digested');
@@ -368,14 +366,7 @@ class UnifiedDigestServiceTest extends TestCase
         $message = $this->createTestMessage($poster, $group);
 
         // Cells that DO cover the recipient at (51.5, -0.1).
-        DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
-             VALUES (?, 51.5, -0.1, ?,
-                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
-                'expanding', NOW())
-             ON DUPLICATE KEY UPDATE status = VALUES(status)",
-            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
-        );
+        $this->putReach($message->id, 'POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 51.5, -0.1, 'expanding');
 
         Http::fake(['*/v1/reach-eval*' => Http::response([
             'results' => [['msgid' => $message->id, 'verdict' => 'out']],
@@ -406,14 +397,7 @@ class UnifiedDigestServiceTest extends TestCase
 
         $message = $this->createTestMessage($poster, $group);
 
-        DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
-             VALUES (?, 51.5, -0.1, ?,
-                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
-                'expanding', NOW())
-             ON DUPLICATE KEY UPDATE status = VALUES(status)",
-            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
-        );
+        $this->putReach($message->id, 'POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 51.5, -0.1, 'expanding');
 
         Http::fake(['*/v1/reach-eval*' => Http::response([
             'results' => [['msgid' => $message->id, 'verdict' => 'nolabels']],
@@ -447,14 +431,7 @@ class UnifiedDigestServiceTest extends TestCase
         $message = $this->createTestMessage($poster, $group);
 
         // Cells well away from the recipient at (51.5, -0.1).
-        DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
-             VALUES (?, 51.5, 0.7, ?,
-                ST_Envelope(ST_GeomFromText('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))', 3857)),
-                'expanding', NOW())
-             ON DUPLICATE KEY UPDATE status = VALUES(status)",
-            [$message->id, $this->reachCellsFor('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))')]
-        );
+        $this->putReach($message->id, 'POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))', 51.5, 0.7, 'expanding');
 
         Http::fake(['*/v1/reach-eval*' => Http::response([
             'results' => [],
@@ -1287,8 +1264,10 @@ class UnifiedDigestServiceTest extends TestCase
 
         // Exact, not approximate: the window arm carries the arrival range and the carryover
         // arm carries the id list. Only the ORed form has both in one statement.
-        $isWindow = fn ($sql) => str_contains($sql, '`messages_groups`.`arrival` >');
-        $hasIdList = fn ($sql) => (bool) preg_match('/`messages`\.`id`\s+in\s*\(/i', $sql);
+        // Identifier quoting differs by engine, so compare with the quotes taken out.
+        $unquoted = fn ($sql) => str_replace(['`', '"'], '', $sql);
+        $isWindow = fn ($sql) => str_contains($unquoted($sql), 'messages_groups.arrival >');
+        $hasIdList = fn ($sql) => (bool) preg_match('/messages\.id\s+in\s*\(/i', $unquoted($sql));
 
         foreach ($queries as $sql) {
             $this->assertFalse(
@@ -1416,6 +1395,37 @@ class UnifiedDigestServiceTest extends TestCase
             $offered,
             'a post already mailed was offered again because the stored cursor is earlier than its arrival'
         );
+    }
+
+    public function test_on_postgresql_a_post_arriving_in_the_same_second_as_the_last_one_sent_is_offered(): void
+    {
+        // PostgreSQL keeps the cursor's microseconds, so the window is everything after the cursor.
+        // Starting it a whole second later, as MySQL must, would lose a post that arrived in between.
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            $this->markTestSkipped('The suite is not running on PostgreSQL.');
+        }
+
+        [$recipient, $poster, $group] = $this->dailyDigestMembers();
+        $second = now()->subHour()->format('Y-m-d H:i:s');
+
+        $sent = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: SameSecondSentZq (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $sent->id)->update(['arrival' => $second.'.400000']);
+
+        Mail::fake();
+        $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $tracker = $this->digestTrackerFor($recipient);
+        $this->assertSame(400000, $tracker->lastmsgdate->micro, 'the cursor keeps the fraction of the arrival sent');
+
+        $later = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: SameSecondLaterZq (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $later->id)->update(['arrival' => $second.'.700000']);
+
+        $offered = $this->service
+            ->getPostsForUser($recipient, $tracker, UnifiedDigestService::MODE_DAILY)
+            ->pluck('id')
+            ->all();
+
+        $this->assertContains($later->id, $offered, 'a post that arrived in the same second, after the one sent, was lost');
+        $this->assertNotContains($sent->id, $offered, 'the post already sent was offered again');
     }
 
     public function test_a_carried_post_with_an_older_copy_on_another_group_is_still_offered(): void
@@ -1735,8 +1745,9 @@ class UnifiedDigestServiceTest extends TestCase
         // The reach grows to cover B (the label now admits B's point; the
         // outer bound grows as every writer keeps it growing). The re-run
         // mails B and does NOT re-mail A (ledger dedup).
-        DB::statement('UPDATE rippling_reach SET outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
-            ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update([
+            'outer_bound' => new StEnvelope(new StGeomFromText(Value::of('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'), (int) config('freegle.srid'))),
+        ]);
         $this->reachArrivalBox = $this->wktBounds('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
         $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
         $this->service->mailNewlyReachedForPost($msg->id);
@@ -1995,11 +2006,10 @@ class UnifiedDigestServiceTest extends TestCase
         $this->seedReach($taken->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::table('messages_outcomes')->insert(['msgid' => $taken->id, 'outcome' => Message::OUTCOME_TAKEN]);
         // Degraded bounds, as completion pruning writes them.
-        DB::statement(
-            "UPDATE rippling_reach SET outer_bound = ST_SRID(POINT(-0.1, 51.5), 3857), inner_bound = NULL
-              WHERE msgid = ?",
-            [$taken->id]
-        );
+        DB::table('rippling_reach')->where('msgid', $taken->id)->update([
+            'outer_bound' => new StSrid(new Point(-0.1, 51.5), (int) config('freegle.srid')),
+            'inner_bound' => null,
+        ]);
 
         $tracker = UserDigest::create([
             'userid' => $member->id,
@@ -2052,15 +2062,26 @@ class UnifiedDigestServiceTest extends TestCase
         $user->save();
     }
 
+    /** A reach row whose outer bound is the envelope of the WKT and whose cells cover the same rectangle. */
+    private function putReach(int $msgid, string $wkt, float $lat, float $lng, string $status): void
+    {
+        DB::table('rippling_reach')->upsert([[
+            'msgid' => $msgid, 'lat' => $lat, 'lng' => $lng, 'polygon_cells' => $this->reachCellsFor($wkt),
+            'outer_bound' => new StEnvelope(new StGeomFromText(Value::of($wkt), (int) config('freegle.srid'))),
+            'status' => $status, 'arrival' => now(),
+        ]], ['msgid'], ['status']);
+    }
+
     /** Seed a rippling_reach row for a post whose reach is the given rectangle WKT. */
     protected function seedReach(int $msgid, string $wkt): void
     {
-        DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
-            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$msgid, $this->reachCellsFor($wkt), $wkt]
-        );
+        DB::table('rippling_reach')->insert([
+            'msgid' => $msgid, 'lat' => 51.5, 'lng' => -0.1, 'polygon_cells' => $this->reachCellsFor($wkt),
+            'outer_bound' => new StEnvelope(new StGeomFromText(Value::of($wkt), (int) config('freegle.srid'))),
+            'arrival' => now(), 'mode' => 'drive', 'tick' => 1, 'total_ticks' => 3, 'total_freeglers' => 0,
+            'max_drive_min' => 30, 'schedule' => null, 'next_expansion_at' => null, 'status' => 'expanding',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
         DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
 
         // The newly-reached mail evaluates the stored label per candidate
@@ -2442,11 +2463,11 @@ class UnifiedDigestServiceTest extends TestCase
 
         $locA = DB::table('locations')->insertGetId([
             'name' => 'DedupTestLocA', 'type' => 'Postcode', 'lat' => 51.5, 'lng' => -0.1,
-            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
+            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', " . config('freegle.srid') . ")"),
         ]);
         $locB = DB::table('locations')->insertGetId([
             'name' => 'DedupTestLocB', 'type' => 'Postcode', 'lat' => 51.6, 'lng' => -0.2,
-            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.2 51.6)', 3857)"),
+            'geometry' => DB::raw("ST_GeomFromText('POINT(-0.2 51.6)', " . config('freegle.srid') . ")"),
         ]);
 
         foreach ([$locA, $locB] as $locid) {
@@ -3678,12 +3699,13 @@ class UnifiedDigestServiceTest extends TestCase
             'arrival' => now()->subHours(1),
         ]);
         // Reach (status 'expanding', just updated) covering the member's location.
-        DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
-            . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
-        );
+        DB::table('rippling_reach')->insert([
+            'msgid' => $message->id, 'lat' => 51.5, 'lng' => -0.1, 'polygon_cells' => $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'),
+            'outer_bound' => new StEnvelope(new StGeomFromText(Value::of('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), (int) config('freegle.srid'))),
+            'arrival' => now(), 'mode' => 'drive', 'tick' => 3, 'total_ticks' => 3, 'total_freeglers' => 0,
+            'max_drive_min' => 30, 'schedule' => null, 'next_expansion_at' => null, 'status' => 'expanding',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
         DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
 
         // The stored label admits every asked point: the reach-mail pass is

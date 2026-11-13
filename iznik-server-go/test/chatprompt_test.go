@@ -52,14 +52,17 @@ func ensureFirstReplyTables(t *testing.T) {
 	// unaffected (it migrates fresh); long-lived dev databases are not.
 	addColumnIfMissing("chat_prompts", "msgids", "JSON NULL")
 
-	// The 'Prompt' enum value likewise.
-	var colType string
-	db.Raw("SELECT column_type FROM information_schema.columns WHERE table_schema = DATABASE() " +
-		"AND table_name = 'chat_messages' AND column_name = 'type'").Scan(&colType)
-	if colType != "" && !strings.Contains(colType, "Prompt") {
-		db.Exec("ALTER TABLE chat_messages MODIFY COLUMN `type` ENUM('Default','System','ModMail'," +
-			"'Interested','Promised','Reneged','ReportedUser','Completed','Image','Address','Nudge'," +
-			"'Schedule','ScheduleUpdated','Reminder','Prompt') NOT NULL DEFAULT 'Default'")
+	// The 'Prompt' enum value likewise. This is about a MySQL database migrated before the value
+	// existed: a PostgreSQL database is always built from the current baseline, and has no column_type.
+	if database.Engine() == database.EngineMySQL {
+		var colType string
+		db.Raw("SELECT column_type FROM information_schema.columns WHERE table_schema = DATABASE() " +
+			"AND table_name = 'chat_messages' AND column_name = 'type'").Scan(&colType)
+		if colType != "" && !strings.Contains(colType, "Prompt") {
+			db.Exec("ALTER TABLE chat_messages MODIFY COLUMN `type` ENUM('Default','System','ModMail'," +
+				"'Interested','Promised','Reneged','ReportedUser','Completed','Image','Address','Nudge'," +
+				"'Schedule','ScheduleUpdated','Reminder','Prompt') NOT NULL DEFAULT 'Default'")
+		}
 	}
 }
 
@@ -161,7 +164,7 @@ func TestAnswerChatPrompt_DeadlineSetsADate(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var deadline string
-	db.Raw("SELECT COALESCE(deadline, '') FROM messages WHERE id = ?", msgID).Scan(&deadline)
+	db.Raw("SELECT COALESCE(DATE_FORMAT(deadline, '%Y-%m-%d'), '') FROM messages WHERE id = ?", msgID).Scan(&deadline)
 	assert.NotEmpty(t, deadline, "answering with a timescale should set a deadline on the post")
 }
 

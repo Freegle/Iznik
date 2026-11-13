@@ -10,6 +10,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	logger2 "gorm.io/gorm/logger"
 )
@@ -41,6 +42,10 @@ func TestIsDeadlock(t *testing.T) {
 	assert.False(t, IsDeadlock(errors.New("Error 1213 (40001): Deadlock found")))
 	assert.False(t, IsDeadlock(&mysql.MySQLError{Number: 1062, Message: "Duplicate entry 'deadlock' for key 'email'"}))
 	assert.False(t, IsDeadlock(context.DeadlineExceeded))
+	// PostgreSQL, by code.
+	assert.True(t, IsDeadlock(&pgconn.PgError{Code: "40P01", Message: "deadlock detected"}))
+	assert.True(t, IsDeadlock(fmt.Errorf("wrapped: %w", &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout"})))
+	assert.False(t, IsDeadlock(&pgconn.PgError{Code: "23505", Message: "duplicate key value mentions deadlock"}))
 	assert.False(t, IsDeadlock(nil))
 }
 

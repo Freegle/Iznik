@@ -21,7 +21,8 @@ package main
 // (msgid, leaf, fp). Under the original (msgid, leaf) key an INSERT IGNORE of
 // a new-partition row colliding with an old one is silently dropped and the
 // post goes undiscoverable after the switch - so the command checks the key
-// shape from information_schema and refuses a table without it. The leaf
+// shape from the catalogue (information_schema on MySQL, pg_index on PostgreSQL)
+// and refuses a table without it. The leaf
 // loader already filters by fp, so the old rows are invisible to the new
 // engine and vice versa; nothing else needs to change.
 //
@@ -129,7 +130,7 @@ func reachLabelsApplyCmd(args []string) {
 		if dsn == "" {
 			log.Fatalf("labels-apply: no database configuration (MYSQL_HOST etc.)")
 		}
-		if db, err = sql.Open("mysql", dsn); err != nil {
+		if db, err = openGroupsDB(dsn); err != nil {
 			log.Fatalf("labels-apply: db open: %v", err)
 		}
 		defer db.Close()
@@ -146,12 +147,7 @@ func reachLabelsApplyCmd(args []string) {
 			// before the widening is not.
 			var n int
 			if err := db.QueryRow(
-				"SELECT COUNT(*) FROM information_schema.statistics s "+
-					"WHERE s.table_schema = DATABASE() AND s.table_name = ? AND s.non_unique = 0 "+
-					"AND s.index_name <> 'PRIMARY' "+
-					"AND (SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index) FROM information_schema.statistics "+
-					"     WHERE table_schema = s.table_schema AND table_name = s.table_name AND index_name = s.index_name) "+
-					"    = 'msgid,leaf,fp'",
+				sqlLabelsUniqueKey(),
 				*leavesTable).Scan(&n); err != nil {
 				log.Fatalf("labels-apply: inspect %s: %v", *leavesTable, err)
 			}
@@ -168,12 +164,11 @@ func reachLabelsApplyCmd(args []string) {
 	// walks the (msgid, leaf, fp) key per post rather than scanning the table.
 	preStaged := map[uint64]struct{}{}
 	if *skipStaged && !*dryRun {
-		q := "SELECT msgid FROM rippling_reach WHERE reach_labels_next_fp = ?"
-		argv := []any{fileFP}
+		q := sqlStagedPosts()
+		argv := []any{fpArg(fileFP)}
 		if *leavesTable != "" {
-			q = "SELECT rr.msgid FROM rippling_reach rr WHERE rr.reach_labels_next_fp = ? " +
-				"AND EXISTS (SELECT 1 FROM " + *leavesTable + " l WHERE l.msgid = rr.msgid AND l.fp = ?)"
-			argv = append(argv, fileFP)
+			q = sqlStagedPostsWithLeaves(*leavesTable)
+			argv = append(argv, fpArg(fileFP))
 		}
 		rows, err := db.Query(q, argv...)
 		if err != nil {
@@ -193,8 +188,8 @@ func reachLabelsApplyCmd(args []string) {
 		log.Printf("labels-apply: %d posts already staged for partition %d will be passed without database work", len(preStaged), fileFP)
 	}
 
-	const labelQ = "UPDATE rippling_reach SET reach_labels_next = ?, reach_labels_next_fp = ? " +
-		"WHERE msgid = ? AND (reach_labels_next_fp IS NULL OR reach_labels_next_fp <> ?)"
+	labelQ := sqlStageLabel()
+	fpVal := fpArg(fileFP)
 
 	var (
 		seen, written, skipped, missing, leafRows, leafInserted uint64
@@ -243,7 +238,7 @@ func reachLabelsApplyCmd(args []string) {
 			continue
 		}
 
-		res, err := db.Exec(labelQ, blob, fileFP, msgid, fileFP)
+		res, err := db.Exec(labelQ, blob, fpVal, msgid, fpVal)
 		if err != nil {
 			log.Fatalf("labels-apply: msgid %d: %v", msgid, err)
 		}
@@ -253,7 +248,7 @@ func reachLabelsApplyCmd(args []string) {
 			// Either already stamped with this fp, or the post is gone (purged
 			// since the export). Only tell them apart when it happens.
 			var exists int
-			if err := db.QueryRow("SELECT 1 FROM rippling_reach WHERE msgid = ?", msgid).Scan(&exists); err == sql.ErrNoRows {
+			if err := db.QueryRow(sqlPostExists(), msgid).Scan(&exists); err == sql.ErrNoRows {
 				missing++
 				continue // no leaves for a post that no longer exists
 			}
@@ -271,10 +266,9 @@ func reachLabelsApplyCmd(args []string) {
 				argv := make([]any, 0, len(chunk)*3)
 				for k, leaf := range chunk {
 					vals[k] = "(?, ?, ?)"
-					argv = append(argv, msgid, leaf, fileFP)
+					argv = append(argv, msgid, leaf, fpVal)
 				}
-				ins, err := db.Exec("INSERT IGNORE INTO "+*leavesTable+" (msgid, leaf, fp) VALUES "+
-					strings.Join(vals, ","), argv...)
+				ins, err := db.Exec(sqlInsertLeaves(*leavesTable, strings.Join(vals, ",")), argv...)
 				if err != nil {
 					log.Fatalf("labels-apply: leaves for msgid %d: %v", msgid, err)
 				}
@@ -299,13 +293,13 @@ func reachLabelsApplyCmd(args []string) {
 
 	// Verify from the database, not from our own counters.
 	var staged uint64
-	if err := db.QueryRow("SELECT COUNT(*) FROM rippling_reach WHERE reach_labels_next_fp = ?", fileFP).Scan(&staged); err != nil {
+	if err := db.QueryRow(sqlCountStaged(), fpVal).Scan(&staged); err != nil {
 		log.Fatalf("labels-apply: verify: %v", err)
 	}
 	msg := fmt.Sprintf("%d posts carry partition %d in reach_labels_next", staged, fileFP)
 	if *leavesTable != "" {
 		var lr, lp uint64
-		if err := db.QueryRow("SELECT COUNT(*), COUNT(DISTINCT msgid) FROM "+*leavesTable+" WHERE fp = ?", fileFP).Scan(&lr, &lp); err != nil {
+		if err := db.QueryRow(sqlCountLeaves(*leavesTable), fpVal).Scan(&lr, &lp); err != nil {
 			log.Fatalf("labels-apply: verify leaves: %v", err)
 		}
 		msg += fmt.Sprintf("; %s holds %d leaf rows for %d posts", *leavesTable, lr, lp)

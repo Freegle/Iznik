@@ -20,3 +20,18 @@ func TestDatabaseNameIsTestDatabase(t *testing.T) {
 		)
 	}
 }
+
+// TestPostgresDatabaseNameIsTestDatabase is the same check for a run on PostgreSQL (DB_ENGINE=postgres),
+// which reads PGSQL_DATABASE.
+func TestPostgresDatabaseNameIsTestDatabase(t *testing.T) {
+	if os.Getenv("DB_ENGINE") != "postgres" {
+		t.Skip("not a PostgreSQL run")
+	}
+	dbName := os.Getenv("PGSQL_DATABASE")
+	if !strings.HasSuffix(dbName, "_test") {
+		t.Fatalf(
+			"Safety check: tests must run against a database ending in '_test'. Current PGSQL_DATABASE=%q. Run with PGSQL_DATABASE=iznik_go_test.",
+			dbName,
+		)
+	}
+}

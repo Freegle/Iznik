@@ -304,7 +304,7 @@ class RestoreUserCommand extends Command
                 continue;
             }
 
-            $this->upsertRow($table, $row, $userIdCols);
+            $restoredId = $this->upsertRow($table, $row, $userIdCols);
             $count++;
 
             // After inserting a chat_room, update the map with the real target ID.
@@ -312,7 +312,10 @@ class RestoreUserCommand extends Command
                 $sourceRoomId = $row['id'];
 
                 if (($chatRoomMap[$sourceRoomId] ?? null) === null) {
-                    $chatRoomMap[$sourceRoomId] = DB::getPdo()->lastInsertId() ?: $sourceRoomId;
+                    // PostgreSQL has no LAST_INSERT_ID(id): there the upsert hands back the row's id.
+                    $chatRoomMap[$sourceRoomId] = DB::connection()->getDriverName() === 'pgsql'
+                        ? ($restoredId ?? $sourceRoomId)
+                        : (DB::getPdo()->lastInsertId() ?: $sourceRoomId);
                 }
             }
         }
@@ -329,10 +332,14 @@ class RestoreUserCommand extends Command
      *
      * @param  string[]  $userIdCols  Columns holding user IDs (e.g. ['userid'])
      */
-    private function upsertRow(string $table, array $row, array $userIdCols): void
+    private function upsertRow(string $table, array $row, array $userIdCols): ?int
     {
         if (empty($row)) {
-            return;
+            return null;
+        }
+
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            return $this->upsertRowPostgres($table, $row, $userIdCols);
         }
 
         $columns = array_keys($row);
@@ -368,6 +375,90 @@ class RestoreUserCommand extends Command
             $this->warn("  Warning: skipped row in $table: ".$e->getMessage());
             Log::warning('user:restore upsert failed', ['table' => $table, 'error' => $e->getMessage()]);
         }
+
+        return null;
+    }
+
+    /**
+     * The same upsert on PostgreSQL, which has no ON DUPLICATE KEY UPDATE over "whichever key clashed".
+     * The row is inserted unless a unique key refuses it. When one does, the row already there keeps its
+     * data and only its user-ID columns are remapped, as on MySQL: it is found by id, or for a chat room by
+     * its two members and type. Returns the id of the row inserted or found.
+     *
+     * It runs in a savepoint, because on PostgreSQL a failed statement (a foreign key to something deleted
+     * since the dump) would otherwise end the whole transaction and not just skip the row.
+     */
+    private function upsertRowPostgres(string $table, array $row, array $userIdCols): ?int
+    {
+        $grammar = DB::connection()->getQueryGrammar();
+        $quotedTable = $grammar->wrapTable($table);
+        $columns = array_keys($row);
+
+        // keep-raw: PostgreSQL only, the twin of the generic upsert above. The table and column list vary
+        // per call, and ON CONFLICT DO NOTHING with RETURNING has no query builder form.
+        $sql = sprintf(
+            'INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING RETURNING id',
+            $quotedTable,
+            implode(', ', array_map(fn ($c) => $grammar->wrap($c), $columns)),
+            implode(', ', array_fill(0, count($columns), '?'))
+        );
+
+        try {
+            return DB::transaction(function () use ($sql, $table, $quotedTable, $row, $userIdCols) {
+                $inserted = DB::select($sql, array_values($row));
+
+                if ($inserted) {
+                    $id = (int) $inserted[0]->id;
+                    if (isset($row['id'])) {
+                        // A row inserted with its own id does not move the id sequence on PostgreSQL, so a
+                        // later ordinary insert would be handed an id that is now taken. The sequence only
+                        // ever moves forward: setval is not undone by a rollback, and moving it back would
+                        // hand out an id another session has already been given.
+                        // keep-raw: PostgreSQL only, sequence upkeep has no query builder form.
+                        DB::select(
+                            "SELECT setval(s.seq, ?) FROM (SELECT pg_get_serial_sequence(?, 'id') AS seq) s
+                             WHERE s.seq IS NOT NULL AND ? > COALESCE((
+                                 SELECT ps.last_value FROM pg_sequences ps
+                                 WHERE format('%I.%I', ps.schemaname, ps.sequencename)::regclass = s.seq::regclass
+                             ), 0)",
+                            [$id, $table, $id]
+                        );
+                    }
+
+                    return $id;
+                }
+
+                $existing = NULL;
+                if (isset($row['id'])) {
+                    $existing = DB::table($table)->where('id', $row['id'])->value('id');
+                }
+                // A room with a member missing cannot clash: a unique key never matches on a NULL.
+                if ($existing === NULL && $table === 'chat_rooms' && isset($row['chattype'], $row['user1'], $row['user2'])) {
+                    $existing = DB::table($table)
+                        ->where('user1', $row['user1'])
+                        ->where('user2', $row['user2'])
+                        ->where('chattype', $row['chattype'])
+                        ->value('id');
+                }
+                if ($existing === NULL) {
+                    $this->warn("  Warning: skipped row in $table: it clashes with a row that could not be found by id");
+
+                    return NULL;
+                }
+
+                $remap = array_intersect_key($row, array_flip($userIdCols));
+                if ($remap) {
+                    DB::table($table)->where('id', $existing)->update($remap);
+                }
+
+                return (int) $existing;
+            });
+        } catch (\Exception $e) {
+            $this->warn("  Warning: skipped row in $table: ".$e->getMessage());
+            Log::warning('user:restore upsert failed', ['table' => $table, 'error' => $e->getMessage()]);
+
+            return NULL;
+        }
     }
 
     /**
@@ -399,7 +490,10 @@ class RestoreUserCommand extends Command
                     'deleted' => $row['deleted'],
                     'arrival' => $row['arrival'],
                 ]);
-            } elseif (DB::table('messages')->where('id', $row['msgid'])->exists()) {
+            } elseif (DB::table('messages')->where('id', $row['msgid'])->exists()
+                && DB::table('groups')->where('id', $row['groupid'])->exists()) {
+                // The community may have gone since the dump. MySQL's INSERT IGNORE skips that row
+                // silently; PostgreSQL's ON CONFLICT DO NOTHING does not cover a foreign key.
                 // Deleting a message cascades to its messages_groups rows (a demerge does
                 // this), so put the row back from the dump.
                 DB::table('messages_groups')->insertOrIgnore($row);

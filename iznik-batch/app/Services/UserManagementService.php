@@ -403,7 +403,8 @@ class UserManagementService
         foreach ($messageIds as $msgId) {
             DB::table('messages')->where('id', $msgId)->update([
                 'fromip' => NULL,
-                'message' => NULL,
+                // NOT NULL column: MySQL stores its implicit default for a NULL here.
+                'message' => '',
                 'envelopefrom' => NULL,
                 'fromname' => NULL,
                 'fromaddr' => NULL,

@@ -26,7 +26,7 @@ class LoveJunkService
 
         $edited = DB::table('messages')
             ->distinct()
-            ->select('messages.id', 'lovejunk.status')
+            ->select('messages.id', 'lovejunk.status', 'messages.arrival')
             ->join('lovejunk', 'lovejunk.msgid', '=', 'messages.id')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->join('messages_edits', 'messages_edits.msgid', '=', 'messages.id')
@@ -88,7 +88,7 @@ class LoveJunkService
 
         $withOutcomes = DB::table('messages_outcomes')
             ->distinct()
-            ->select('messages.id')
+            ->select('messages.id', 'messages.arrival')
             ->join('messages', 'messages.id', '=', 'messages_outcomes.msgid')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->join('lovejunk', 'lovejunk.msgid', '=', 'messages_outcomes.msgid')

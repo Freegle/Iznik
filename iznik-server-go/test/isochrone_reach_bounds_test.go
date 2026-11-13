@@ -8,6 +8,7 @@ import (
 	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -42,8 +43,8 @@ func setOuterBound(mid uint64, outerWkt string) {
 // degradeBounds collapses the outer bound to the completion POINT sentinel.
 func degradeBounds(mid uint64) {
 	db := database.DBConn
-	db.Exec("UPDATE rippling_reach SET outer_bound = ST_SRID(POINT(lng, lat), 3857), inner_bound = NULL "+
-		"WHERE msgid = ?", mid)
+	db.Exec("UPDATE rippling_reach SET outer_bound = ST_SRID(POINT(lng, lat), ?), inner_bound = NULL "+
+		"WHERE msgid = ?", utils.SRID, mid)
 }
 
 const coversViewerWkt = "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"

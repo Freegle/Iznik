@@ -2,6 +2,7 @@
 
 namespace App\Database\Expressions;
 
+use App\Database\Expressions\Concerns\PostgresDialect;
 use App\Database\Expressions\Concerns\RendersOperands;
 use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
@@ -31,6 +32,7 @@ use InvalidArgumentException;
 final class Collate implements ExpressionContract
 {
     use RendersOperands;
+    use PostgresDialect;
 
     public function __construct(
         private readonly mixed $operand,
@@ -43,6 +45,23 @@ final class Collate implements ExpressionContract
 
     public function getValue(Grammar $grammar): string
     {
+        if ($this->isPostgres($grammar)) {
+            // MySQL's _ci collations compare without regard to case; _bin collations compare bytes.
+            //
+            // A _ci operand is cast to citext, the type the PostgreSQL schema gives MySQL's case-insensitive
+            // text columns. Compared with a citext column (items.name), that is citext = citext: it ignores
+            // case on both sides and can use the column's own index. LOWER(operand) did neither: the citext
+            // column was cast to text and compared case-sensitively with the lowered value, so 'Sofa' in
+            // items never matched, and items_name could not be used.
+            //
+            // The other side has to be citext as well (a citext column, or another _ci Collate). citext
+            // compared with plain text or varchar is resolved by PostgreSQL as text = text, which is
+            // case-sensitive again.
+            $operand = $this->renderOperand($this->operand, $grammar);
+
+            return str_ends_with($this->collation, '_ci') ? 'CAST('.$operand.' AS citext)' : $operand.' COLLATE "C"';
+        }
+
         return $this->renderOperand($this->operand, $grammar).' COLLATE '.$this->collation;
     }
 }

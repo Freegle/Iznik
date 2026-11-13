@@ -201,7 +201,7 @@ func ListGiftAid(c *fiber.Ctx) error {
 		Select("giftaid.*, SUM(users_donations.GrossAmount) AS donations").
 		Joins("LEFT JOIN users_donations ON users_donations.userid = giftaid.userid").
 		Where("giftaid.reviewed IS NULL AND giftaid.deleted IS NULL AND giftaid.period != 'Declined'").
-		Group("giftaid.userid").
+		Group("giftaid.id").
 		Order("giftaid.timestamp DESC").
 		Scan(&giftaids)
 

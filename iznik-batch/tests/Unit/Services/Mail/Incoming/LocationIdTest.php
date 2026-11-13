@@ -174,7 +174,7 @@ class LocationIdTest extends TestCase
         $this->seedSpatialPoint('postcodes', self::PC_ID, 56.700, 3.100);
         DB::table('locations')->insert([
             'id' => self::PC_ID, 'name' => 'ZZ9 9ZZ', 'type' => 'Postcode', 'lat' => 56.700, 'lng' => 3.100,
-            'geometry' => DB::raw("ST_GeomFromText('POINT(3.1 56.7)', ".(int) config('freegle.srid', 3857).')'),
+            'geometry' => DB::raw("ST_GeomFromText('POINT(3.1 56.7)', ".(int) config('freegle.srid', config('freegle.srid')).')'),
         ]);
         $homeId = self::HOME_PC_ID;
         DB::table('locations')->insert([

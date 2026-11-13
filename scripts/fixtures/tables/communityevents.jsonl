@@ -1,0 +1,2 @@
+{"table":"communityevents","columns":["id","userid","pending","title","location","contactname","contactphone","contactemail","contacturl","description","added","deleted","legacyid","heldby","deletedcovid","externalid"]}
+[1,null,0,"Test Event","Edinburgh","Test Contact",null,"event@test.com","http://test.com","Test community event","2026-07-09 10:01:21",0,null,null,0,null]

@@ -163,6 +163,10 @@ class TransactionPolicy
      * PDO SQLSTATE:
      * - 40001: Serialization failure (deadlock)
      *
+     * PostgreSQL SQLSTATE (its driver code is always 7, so only the state tells errors apart):
+     * - 40P01: deadlock detected
+     * - 55P03: lock not available (lock_timeout expired)
+     *
      * Laravel also wraps deadlocks in DeadlockException.
      *
      * @param Throwable $e The exception to check
@@ -182,6 +186,14 @@ class TransactionPolicy
         // log too big, ...) must NOT be retried as a deadlock.
         for ($t = $e; $t !== null; $t = $t->getPrevious()) {
             $info = $t instanceof PDOException ? ($t->errorInfo ?? null) : null;
+
+            // PostgreSQL: PDO's pgsql driver always puts 7 in the driver-code slot, so the SQLSTATE is the
+            // only thing that says what went wrong. 40P01 is deadlock_detected and 55P03 is lock_not_available
+            // (a lock_timeout expiring), the twins of MySQL's 1213 and 1205. MySQL never reports either state,
+            // so this test changes nothing there.
+            if (is_array($info) && in_array($info[0] ?? null, ['40P01', '55P03'], true)) {
+                return true;
+            }
 
             if (is_array($info) && isset($info[1]) && is_numeric($info[1])) {
                 return ($info[0] ?? null) === '40001'

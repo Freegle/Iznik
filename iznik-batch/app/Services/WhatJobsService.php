@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\TableSwap;
 use App\Database\Expressions\Alias;
 use App\Database\Expressions\Arithmetic;
 use App\Database\Expressions\Avg;
@@ -1606,7 +1607,7 @@ class WhatJobsService
     public function prepareTempTable(): void
     {
         Schema::dropIfExists('jobs_new');
-        // keep-raw: CREATE TABLE ... LIKE clones the full structure (columns,
+        // CREATE TABLE ... LIKE clones the full structure (columns,
         // indexes, spatial SRID attribute) of the live `jobs` table verbatim.
         // Verified there is no Schema Blueprint equivalent: Blueprint has no
         // like()/clone() method (confirmed live - calling
@@ -1617,7 +1618,7 @@ class WhatJobsService
         // grammar path that copies another table's structure. Hand-redefining
         // the columns would fork from the jobs migration and silently drift
         // out of sync with it.
-        DB::statement('CREATE TABLE jobs_new LIKE jobs');
+        TableSwap::createLike('jobs_new', 'jobs');
 
         // visible_cpc (visible, cpc) covers the spatial server's jobs count. It is added here, on
         // the empty replacement table, rather than by ALTER on the live 0.5 GB jobs table under
@@ -1628,7 +1629,8 @@ class WhatJobsService
         // node can lag it - badly while db2 donates the nightly backup, which is exactly when the
         // 04:40 sync runs - so a read-node check saw no index and the add then failed on the write
         // node with 1061. Schema::hasIndex reads through the write connection.
-        if (! Schema::hasIndex('jobs_new', 'visible_cpc')) {
+        // Looked up by its columns: PostgreSQL names the copy of an index after the new table, not 'visible_cpc'.
+        if (! Schema::hasIndex('jobs_new', ['visible', 'cpc'])) {
             $this->addVisibleCpcIndex();
         }
     }
@@ -1642,7 +1644,8 @@ class WhatJobsService
         try {
             Schema::table('jobs_new', fn (Blueprint $table) => $table->index(['visible', 'cpc'], 'visible_cpc'));
         } catch (QueryException $e) {
-            if ((int) ($e->errorInfo[1] ?? 0) !== 1061) {
+            // MySQL 1061 and PostgreSQL 42P07: the index already exists.
+            if ((int) ($e->errorInfo[1] ?? 0) !== 1061 && ($e->errorInfo[0] ?? '') !== '42P07') {
                 throw $e;
             }
         }
@@ -1657,8 +1660,9 @@ class WhatJobsService
      * is what lets sync() stream straight from XML into the DB without
      * holding ~180k job dicts in memory at once.
      */
-    public function insertJobs(iterable $jobs, int $srid = 3857): int
+    public function insertJobs(iterable $jobs, ?int $srid = null): int
     {
+        $srid ??= (int) config('freegle.srid');
         // Preserve existing auto-increment IDs so email links (e.g. /jobs/12345) don't break
         $existingIds = DB::table('jobs')->pluck('id', 'job_reference')->all();
 
@@ -1712,7 +1716,8 @@ class WhatJobsService
                 // Builder::cleanBindings() drops it back out of the bindings
                 // array that PDO receives, so nothing is left mismatched.
                 $rows[] = [
-                    'id' => $id,
+                    // A new job takes the next id: DEFAULT does that on both engines, where NULL only does on MySQL.
+                    'id' => $id ?? DB::raw('DEFAULT'),
                     'location' => $j['location'],
                     'title' => $j['title'],
                     'city' => $j['city'],
@@ -1755,7 +1760,7 @@ class WhatJobsService
     public function swapTables(): void
     {
         Schema::dropIfExists('jobs_old');
-        // keep-raw: a single multi-table RENAME TABLE is atomic - both renames
+        // A single multi-table RENAME TABLE (a transaction of two renames on PostgreSQL) is atomic - both renames
         // take effect together, so `jobs` is never missing. Verified
         // Schema\Builder::rename() only ever builds a Blueprint for one
         // table ($from) and calls $blueprint->rename($to) on it - there is no
@@ -1764,7 +1769,7 @@ class WhatJobsService
         // would open a window where the `jobs` table doesn't exist at all,
         // which concurrently-running reads/serving code would hit - the exact
         // "never split an atomic statement into read-then-write" case.
-        DB::statement('RENAME TABLE jobs TO jobs_old, jobs_new TO jobs');
+        TableSwap::exchange('jobs', 'jobs_new', 'jobs_old');
         Schema::dropIfExists('jobs_old');
     }
 

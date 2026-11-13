@@ -1,9 +1,14 @@
 ---
-last_reviewed: 2026-11-10
+last_reviewed: 2026-11-12
 owner: Freegle dev team
 covers:
   - docs/developers/reference/coding-standards.md
   - iznik-nuxt3/tests/e2e/README.md
+  - tools/orm-migration/extract.mjs
+  - tools/orm-migration/lib/**
+  - tools/orm-migration/rules.json
+  - tools/orm-migration/README.md
+  - scripts/fixtures/extra-steps.json
 ---
 
 # Testing
@@ -94,11 +99,12 @@ from Laravel migrations - see [APIs and data](apis-and-data.md)). After adding a
 migration, rerun the test-database setup so the test schema matches. The seeded data is
 FreeglePlayground around Edinburgh (postcode EH3 6SS).
 
-`scripts/test-fixtures.sql` is a dump from the retired V1 seeders and is replaced wholesale if
-it is ever regenerated, so rows added by hand go in `scripts/test-fixtures-extra.sql`, which is
-loaded straight after it (by `setup-test-database.sh` and by the status container's Playwright
-database reset). Keep it idempotent: explicit ids and `INSERT IGNORE`, or `ON DUPLICATE KEY UPDATE`
-for a row that must be refreshed.
+The seeded rows are in `scripts/fixtures/tables`, captured from the retired V1 seeders, in a format that
+loads into MySQL and PostgreSQL alike (see [Test fixtures](reference/test-fixtures.md)). They are replaced
+wholesale if they are ever regenerated, so rows added by hand go in `scripts/fixtures/extra-steps.json`,
+which loads straight after them (by `setup-test-database.sh` and by the status container's Playwright
+database reset). Keep each step safe to run twice: an `ignore` step for a row with an explicit id, or an
+`upsert` step for a row that must be refreshed.
 
 The extra fixtures also offer a child car seat (990101), whose replies are always asked about, and switch
 `ux_server_arms` on and serve the arm `button` of the experiment `interested-button` to everyone. The config row
@@ -119,3 +125,13 @@ CircleCI runs the full suite on every push to master, via a shared reusable orb.
 change tests, remember to update the orb too. The operational view of CI is in
 [../ops/deployment-and-ci.md](../ops/deployment-and-ci.md), and the reference is
 [../ops/reference/circleci.md](../ops/reference/circleci.md).
+
+## The raw SQL inventory
+
+`tools/orm-migration/` lists every raw SQL site in production Go and Laravel code in
+`manifest.json`, and the `check-raw-sql-ratchet` job fails a branch that adds one the manifest does
+not know or raises the count of `raw` sites. Its self-tests run with
+`node --test tools/orm-migration/test/*.test.mjs`. The README there says what counts as a site and
+what the scanner does not see. A site that is converted needs a parity test naming its id: see
+[the parity harness](reference/parity-harness.md), which also says how the golden stores that `extract.mjs update`
+writes into `iznik-server-go/parity/` and `iznik-batch/tests/fixtures/orm-parity/` are kept in step.

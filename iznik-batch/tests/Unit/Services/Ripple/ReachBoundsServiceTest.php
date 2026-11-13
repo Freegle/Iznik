@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Ripple;
 
+use App\Database\Spatial;
 use App\Models\Message;
 use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Support\Facades\DB;
@@ -64,7 +65,7 @@ class ReachBoundsServiceTest extends TestCase
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, " . config('freegle.srid') . ")), NOW(), 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor($wkt), $wkt]
         );
         $this->seededWkt[(int) $message->id] = $wkt;
@@ -76,7 +77,7 @@ class ReachBoundsServiceTest extends TestCase
     {
         return DB::selectOne(
             'SELECT msgid,
-                    ST_GeometryType(outer_bound) AS outer_type,
+                    ' . Spatial::geometryType('outer_bound') . ' AS outer_type,
                     inner_bound IS NULL AS inner_null
                FROM rippling_reach WHERE msgid = ?',
             [$msgid]
@@ -95,8 +96,8 @@ class ReachBoundsServiceTest extends TestCase
         // The safety invariants: outer contains the exact polygon; inner (when present)
         // is contained by it.
         $check = DB::selectOne(
-            'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o,
-                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, 3857), inner_bound)) AS i
+            'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS o,
+                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, ' . config('freegle.srid') . '), inner_bound)) AS i
                FROM rippling_reach WHERE msgid = ?',
             [$this->seededWkt[$msgid], $this->seededWkt[$msgid], $msgid]
         );
@@ -140,7 +141,7 @@ class ReachBoundsServiceTest extends TestCase
             // MBR containment is well-defined even for invalid geometry: the stored
             // outer bound must at least cover the polygon's extent.
             $check = DB::selectOne(
-                'SELECT MBRContains(outer_bound, ST_GeomFromText(?, 3857)) AS o
+                'SELECT ' . Spatial::mbrContains('outer_bound', 'ST_GeomFromText(?, ' . config('freegle.srid') . ')') . ' AS o
                    FROM rippling_reach WHERE msgid = ?',
                 [$this->seededWkt[$msgid], $msgid]
             );
@@ -190,8 +191,8 @@ class ReachBoundsServiceTest extends TestCase
         $this->service()->sync($msgid, $outer, $inner);
 
         $check = DB::selectOne(
-            'SELECT ST_Equals(outer_bound, ST_GeomFromText(?, 3857)) AS oe,
-                    ST_Equals(inner_bound, ST_GeomFromText(?, 3857)) AS ie
+            'SELECT ST_Equals(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS oe,
+                    ST_Equals(inner_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS ie
                FROM rippling_reach WHERE msgid = ?',
             [$outer, $inner, $msgid]
         );
@@ -211,7 +212,7 @@ class ReachBoundsServiceTest extends TestCase
         $this->service()->sync($msgid, $badOuter, null);
 
         $ok = DB::selectOne(
-            'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o
+            'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS o
                FROM rippling_reach WHERE msgid = ?',
             [$this->seededWkt[$msgid], $msgid]
         );
@@ -251,7 +252,7 @@ class ReachBoundsServiceTest extends TestCase
     private function innerRatio(int $msgid): float
     {
         return (float) DB::selectOne(
-            'SELECT COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(ST_GeomFromText(?, 3857)), 0), 0) AS r
+            'SELECT COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(ST_GeomFromText(?, ' . config('freegle.srid') . ')), 0), 0) AS r
                FROM rippling_reach WHERE msgid = ?',
             [$this->seededWkt[$msgid], $msgid]
         )->r;
@@ -277,8 +278,8 @@ class ReachBoundsServiceTest extends TestCase
             'a verified-but-tiny provided inner is replaced by a polygon-derived one'
         );
         $check = DB::selectOne(
-            'SELECT ST_Contains(ST_GeomFromText(?, 3857), inner_bound) AS i,
-                    ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o
+            'SELECT ST_Contains(ST_GeomFromText(?, ' . config('freegle.srid') . '), inner_bound) AS i,
+                    ST_Contains(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS o
                FROM rippling_reach WHERE msgid = ?',
             [$this->seededWkt[$msgid], $this->seededWkt[$msgid], $msgid]
         );
@@ -317,9 +318,9 @@ class ReachBoundsServiceTest extends TestCase
 
         $check = DB::selectOne(
             'SELECT inner_bound IS NULL AS inner_null,
-                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, 3857), inner_bound)) AS i,
-                    ST_Equals(inner_bound, ST_GeomFromText(?, 3857)) AS still_bad,
-                    ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o
+                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, ' . config('freegle.srid') . '), inner_bound)) AS i,
+                    ST_Equals(inner_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS still_bad,
+                    ST_Contains(outer_bound, ST_GeomFromText(?, ' . config('freegle.srid') . ')) AS o
                FROM rippling_reach WHERE msgid = ?',
             [$this->seededWkt[$msgid], $badInner, $this->seededWkt[$msgid], $msgid]
         );

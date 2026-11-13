@@ -8,6 +8,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type tagsKey struct{}
@@ -38,12 +39,16 @@ func TagsFrom(ctx context.Context) map[string]string {
 	return t
 }
 
-// IsDeadlock reports whether err is a MySQL deadlock (1213) or lock wait timeout (1205), by
-// the server's error number. The wording of the message differs between servers and
-// versions; the number does not.
+// IsDeadlock reports whether err is a deadlock or lock wait timeout, by the server's error code: MySQL
+// 1213 and 1205, PostgreSQL 40P01 and 55P03. The wording of the message differs between servers and
+// versions; the code does not.
 func IsDeadlock(err error) bool {
 	var me *mysql.MySQLError
-	return errors.As(err, &me) && (me.Number == 1213 || me.Number == 1205)
+	if errors.As(err, &me) {
+		return me.Number == 1213 || me.Number == 1205
+	}
+	var pe *pgconn.PgError
+	return errors.As(err, &pe) && (pe.Code == "40P01" || pe.Code == "55P03")
 }
 
 var (

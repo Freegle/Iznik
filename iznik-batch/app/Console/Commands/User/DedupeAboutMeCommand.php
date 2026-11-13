@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands\User;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Sha2;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -65,8 +67,7 @@ class DedupeAboutMeCommand extends Command
             // A hash of the text, not the text, one row at a time: one member has
             // over 400,000 rows, and their full text alone filled the 1 GB memory limit.
             $rows = DB::table('users_aboutme')
-                // keep-raw: the builder has no way to select a SQL function of a column
-                ->selectRaw('id, userid, SHA2(text, 256) AS hash')
+                ->select('id', 'userid', new Alias(new Sha2('text'), 'hash'))
                 ->whereIn('userid', $userids)
                 ->orderBy('userid')
                 ->orderBy('timestamp')

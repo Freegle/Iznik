@@ -2,6 +2,10 @@
 
 namespace App\Services\Hosting;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\CountDistinct;
+use App\Database\Expressions\SubstringIndex;
+use App\Database\Sql;
 use App\Models\DomainHosting;
 use Carbon\Carbon;
 use Illuminate\Http\Client\ConnectionException;
@@ -78,9 +82,9 @@ class DomainHostingService
             ->where('u.lastaccess', '>', $now->copy()->subDays(self::ACTIVE_DAYS))
             ->where('e.email', 'like', '%@%')
             // keep-raw: the domain is an expression over the email, not a column, and the count is grouped by it
-            ->selectRaw("LOWER(SUBSTRING_INDEX(e.email, '@', -1)) AS domain, COUNT(DISTINCT e.userid) AS n")
+            ->selectRaw('LOWER('.Sql::render(new SubstringIndex(DB::raw('e.email'), '@', -1)).') AS domain, COUNT(DISTINCT e.userid) AS n')
             ->groupBy('domain')
-            ->having('n', '<=', self::MAX_USERS)
+            ->having(new Comparison(new CountDistinct('e.userid'), '<=', self::MAX_USERS))
             ->get();
 
         $domains = [];

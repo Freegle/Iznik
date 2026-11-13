@@ -750,7 +750,7 @@ class EmailApiParityTest extends TestCase
         return Group::firstOrCreate(['nameshort' => $nameshort], [
             'namefull' => 'TN Parity Test Group ' . $nameshort,
             'type'     => Group::TYPE_FREEGLE,
-            'region'   => 'TestRegion',
+            'region'   => 'South East',
             'lat'      => $lat,
             'lng'      => $lng,
             'onhere'   => 1,

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -120,4 +121,44 @@ func TestTypeaheadWhitespaceNormalisation(t *testing.T) {
 		"/api/location/typeahead?q="+url.QueryEscape("   ")+"&limit=5", nil))
 	assert.Equal(t, 404, resp3.StatusCode,
 		"all-whitespace query must return 404 after normalisation to empty string")
+}
+
+// TestTypeaheadIgnoresCase verifies that the postcode typeahead finds a location whatever
+// case the member types and whatever case the name is stored in. MySQL gets this from its
+// case-insensitive collation. PostgreSQL gets it from a separate predicate on the lower-cased
+// name (so that an index can serve the prefix), which is the branch this test protects: it
+// would fail there if the prefix stopped being lower-cased or the predicate stopped matching.
+func TestTypeaheadIgnoresCase(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("ta_case")
+
+	// A mixed-case name with a space, e.g. "Zq12 34567", so both the stored value and the
+	// typed prefix have to be folded for every query below to match.
+	locName := fmt.Sprintf("Zq%s %s", prefix[len(prefix)-7:len(prefix)-5], prefix[len(prefix)-5:])
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Postcode', 55.9533, -3.1883)", locName)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", locName).Scan(&locID)
+	assert.Greater(t, locID, uint64(0))
+	defer db.Exec("DELETE FROM locations WHERE id = ?", locID)
+
+	// All but the last two characters, typed three ways.
+	typed := locName[:len(locName)-2]
+	for _, q := range []string{typed, strings.ToUpper(typed), strings.ToLower(typed)} {
+		resp, _ := getApp().Test(httptest.NewRequest("GET",
+			"/api/location/typeahead?q="+url.QueryEscape(q)+"&limit=10", nil))
+		assert.Equal(t, 200, resp.StatusCode, "typeahead for %q", q)
+
+		var locs []location.Location
+		json2.Unmarshal(rsp(resp), &locs)
+
+		found := false
+		for _, l := range locs {
+			if l.ID == locID {
+				found = true
+				// The name comes back as stored, not as typed or folded.
+				assert.Equal(t, locName, l.Name)
+			}
+		}
+		assert.True(t, found, "typeahead for %q must find %q", q, locName)
+	}
 }

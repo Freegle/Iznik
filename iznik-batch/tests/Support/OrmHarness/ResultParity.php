@@ -14,7 +14,7 @@ use PHPUnit\Framework\Assert;
  * seeded test database and diffs the result sets. Catches what Layer 1's
  * string comparison cannot - collation, NULL handling, implicit-cast
  * semantics that only show up once a query hits the engine. Design ported
- * from iznik-server-go/ormharness/resultparity.go's AssertResultParity;
+ * from iznik-server-go/parity/resultparity.go's AssertResultParity;
  * read that file's own doc comment for the parts that transfer unchanged
  * (order-sensitive comparison only when the original SQL contains ORDER BY,
  * unordered/canonical-sorted comparison otherwise, because without ORDER BY

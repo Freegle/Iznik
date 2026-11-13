@@ -91,7 +91,7 @@ class UserMergeTest extends TestCase
             ->where('groupid', $group->id)
             ->value('added');
 
-        $this->assertEquals(self::OLDER_DATE, $added);
+        $this->assertEquals(self::OLDER_DATE, \Illuminate\Support\Carbon::parse($added)->format('Y-m-d H:i:s'));
     }
 
     public function test_merge_takes_the_older_rows_origin_and_the_lower_implicit(): void
@@ -208,7 +208,7 @@ class UserMergeTest extends TestCase
         $this->assertSame(Membership::ADDED_ORIGIN_TN_UNADDRESSED, $m->added_origin);
         $this->assertSame(1, (int) $m->implicit);
         $this->assertSame(0, (int) $m->rippled);
-        $this->assertEquals(self::OLDER_DATE, $m->added);
+        $this->assertEquals(self::OLDER_DATE, \Illuminate\Support\Carbon::parse($m->added)->format('Y-m-d H:i:s'));
     }
 
     /** Two ripple joins stay a ripple join, with the older row's flags. */
@@ -504,7 +504,7 @@ class UserMergeTest extends TestCase
         $this->assertTrue(User::merge($user1->id, $user2->id, self::MERGE_REASON));
 
         $added = DB::table('users')->where('id', $user1->id)->value('added');
-        $this->assertEquals(self::OLDER_DATE, $added);
+        $this->assertEquals(self::OLDER_DATE, \Illuminate\Support\Carbon::parse($added)->format('Y-m-d H:i:s'));
     }
 
     public function test_merge_takes_non_null_fullname_from_user2(): void
