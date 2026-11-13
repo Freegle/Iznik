@@ -135,7 +135,7 @@ re-reads from where it stopped.
 |---|---|---|
 | `FRONTLINE_MODE` | `confirm` | See above |
 | `FRONTLINE_CATEGORIES` | all | Support category ids. Every category is read; outside these a reply always waits for a person |
-| `FRONTLINE_SKIP_CATEGORIES` | none | Category ids never read at all, for private or staff-only ones |
+| `FRONTLINE_SKIP_CATEGORIES` | `4,6` | Category ids never read at all. The default is the two private ones, Staff and Discourse Mods; `none` reads everything |
 | `FRONTLINE_BOT_USERNAME` | | The account it posts as; its own posts are never read as reports |
 | `FRONTLINE_STAFF` | | Usernames whose posts are a developer speaking |
 | `FRONTLINE_DISCOURSE_KEY` or `FRONTLINE_PROFILE_PATH` | | The forum API key, or a profile file holding one |

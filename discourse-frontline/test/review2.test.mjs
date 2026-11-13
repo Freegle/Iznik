@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb, setKv } from '../src/db.mjs'
 import { prefilter } from '../src/prefilter.mjs'
+import { loadConfig } from '../src/config.mjs'
 import { confirmSend, pendingDrafts, refusal } from '../src/outbound.mjs'
 import { rawToParts } from '../src/text.mjs'
 import { replay } from '../eval/replay.mjs'
@@ -39,6 +40,12 @@ test('an edited post outside the support categories still needs a person', async
   await h.pipeline.lap()
   assert.equal(h.forum.sent.length, 1, 'only the question a person confirmed went out')
   assert.equal(pendingDrafts(h.db)[0].reason, 'outside-support-categories')
+})
+
+test('the private categories are never read unless that is switched off', () => {
+  assert.deepEqual(loadConfig({}).skipCategories, [4, 6])
+  assert.deepEqual(loadConfig({ FRONTLINE_SKIP_CATEGORIES: 'none' }).skipCategories, [])
+  assert.equal(prefilter(makePost({ author: 'mod_a', categoryId: 4, text: 'ModTools is broken for everyone this morning.' }, 0), testConfig()).why, 'category-never-read')
 })
 
 test('a category marked never-read is not read', () => {
