@@ -1,6 +1,5 @@
 ---
-last_reviewed: 2026-11-12
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-13
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -14,7 +13,7 @@ covers:
   - iznik-nuxt3/modtools/components/ModRelatedMember.vue
   - iznik-nuxt3/modtools/components/ModSupportUser.vue
   - iznik-nuxt3/modtools/components/ModChatFooter.vue
-  - iznik-nuxt3/modtools/pages/support/cases/[[id]].vue
+  - iznik-nuxt3/modtools/components/ModChatFooter.vue
   - iznik-batch/app/Services/ChatProcessService.php
   - iznik-batch/app/Console/Commands/User/DetectRelatedAccountsCommand.php
   # cross-stack behaviour tests (change when the behaviour changes)
@@ -304,22 +303,21 @@ If a chat needs more help than you can give, refer it to Support.
 
 1. Open the member's chat and press **Refer to Support**.
 2. If you like, say what you need help with in the box. It is optional, but it helps.
-3. Confirm. You will see a link to your case.
+3. Confirm. You will see a note that it has gone.
 
-Support will look at the chat and reply in the case. You also get an email to say there is a reply. Open
-the case from the link and reply there. Replying to the email does not reach Support.
+Support get an email from your community's volunteers address. They look at the chat and reply by
+email. Their reply arrives in ModTools **Chats**, like any other email to your volunteers address, so
+every moderator of the community can see it and answer.
 
-The case shows its status, what you asked and the replies. Support's own notes, including the AI's, are
-for Support only, and you will not see them. Nothing is sent to the member. If they need to be told
-something, Support will tell you and you can tell them.
+Nothing is sent to the member. If they need to be told something, Support will tell you and you can
+tell them.
 
-If you refer the same chat again while the case is open, your new note is added to the same case.
+If you refer the same chat again, Support get another email. Say what has changed in the box.
 
-For Support volunteers: referred chats are on the **Cases** tab of Support Tools. The red number on the
-Support menu item and on that tab is the cases waiting for a reply from Support. A case stops counting
-when Support replies, and counts again if the moderator writes back. When the AI helper has written a
-reply, it is already in the reply box, marked as a suggestion: check it, change what you need, then send.
-It goes to the moderator, not the member.
+For Support volunteers: each referral is one email in the Support mailbox. It says who referred
+which chat and why, links to the chat and the member, and holds what the AI helper found when it
+looked into the question, with a suggested reply. Check it before relying on it. Reply to the email
+to answer the volunteers. Your reply goes to the moderators, not the member.
 
 ## Banning and removing
 

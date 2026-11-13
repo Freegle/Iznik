@@ -61,14 +61,14 @@ test('key mode sends the key and case in headers, never in the URL, and writes a
       return okResponse(framedBody(data))
     },
     async () => {
-      file = await fetchUserDump({ userId: 42, since: '30d', include: 'db', key: 'secret-key-value', caseId: 9 })
+      file = await fetchUserDump({ userId: 42, since: '30d', include: 'db', key: 'secret-key-value', referralId: 9 })
     }
   )
   try {
     assert.match(seen.url, /\/api\/modtools\/user\/42\/dump\?format=framed&include=db&since=30d$/)
     assert.ok(!seen.url.includes('secret-key-value') && !/jwt|key=/.test(seen.url))
     assert.strictEqual(seen.init.headers['X-Dump-Key'], 'secret-key-value')
-    assert.strictEqual(seen.init.headers['X-Freegle-Case'], '9')
+    assert.strictEqual(seen.init.headers['X-Freegle-Referral'], '9')
     assert.strictEqual(seen.init.headers['accept-encoding'], 'identity')
     assert.match(file, /fp-[0-9a-f]{8}-dump-42-/)
     assert.strictEqual(fs.readFileSync(file).toString(), 'sqlite-bytes')

@@ -5,7 +5,6 @@ namespace Tests\Unit\Queue;
 use App\Console\Commands\Queue\ProcessBackgroundTasksCommand;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Chat\ChatSpamReportMail;
-use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
 use App\Mail\Session\ForgotPasswordMail;
@@ -2150,51 +2149,6 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $task = DB::table('background_tasks')->first();
         $this->assertNotNull($task->failed_at, 'Unknown task type should be permanently failed');
         $this->assertStringContains('Unknown task type', $task->error_message ?? '');
-    }
-
-    public function test_refer_to_support_sends_plain_text_email(): void
-    {
-        Mail::fake();
-
-        $user = $this->createTestUser(['fullname' => 'Alice Mod']);
-        $otherUser = $this->createTestUser(['fullname' => 'Bob Member']);
-        $group = $this->createTestGroup();
-
-        $chatId = DB::table('chat_rooms')->insertGetId([
-            'chattype' => 'User2User',
-            'user1' => $otherUser->id,
-            'user2' => $user->id,
-            'groupid' => $group->id,
-        ]);
-
-        DB::table('background_tasks')->insert([
-            'task_type' => 'refer_to_support',
-            'data' => json_encode([
-                'chatid' => $chatId,
-                'userid' => $user->id,
-            ]),
-            'created_at' => now(),
-        ]);
-
-        $this->mock(PushNotificationService::class);
-
-        $this->artisan('queue:background-tasks', [
-            '--max-iterations' => 1,
-            '--sleep' => 0,
-        ])->assertSuccessful();
-
-        // Flush the spool so Mail::fake intercepts the actual SMTP send.
-        $this->artisan('mail:spool:process')->assertSuccessful();
-
-        Mail::assertSent(ReferToSupportMail::class, function (ReferToSupportMail $mail) use ($user, $chatId) {
-            $this->assertEquals('Alice Mod', $mail->userName);
-            $this->assertEquals($user->id, $mail->userId);
-            $this->assertEquals($chatId, $mail->chatId);
-            return TRUE;
-        });
-
-        $task = DB::table('background_tasks')->first();
-        $this->assertNotNull($task->processed_at);
     }
 
     public function test_processes_email_chat_spam_report_task(): void

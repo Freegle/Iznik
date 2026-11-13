@@ -242,7 +242,6 @@
           v-if="supportOrAdmin"
           link="/support"
           name="Support"
-          :count="['supportcases']"
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft

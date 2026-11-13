@@ -4,11 +4,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import ReferPage from '~/modtools/pages/support/refer/[[id]].vue'
 
-const mockFetchCases = vi.fn().mockResolvedValue([])
-vi.mock('~/api', () => ({
-  default: () => ({ supportcases: { fetchCases: mockFetchCases } }),
-}))
-
 // Mock chat store
 const mockChatStore = {
   byChatId: vi.fn().mockReturnValue(null),
@@ -103,48 +98,23 @@ describe('support/refer/[[id]].vue page', () => {
     setActivePinia(createPinia())
     mockRouteParams.value = { id: undefined }
     mockChatStore.byChatId.mockReturnValue(null)
-    mockFetchCases.mockResolvedValue([])
   })
 
-  describe('link to the case', () => {
-    it('links to the newest case for the chat when there is one', async () => {
-      mockFetchCases.mockResolvedValue([{ id: 9 }, { id: 4 }])
-      mockChatStore.byChatId.mockReturnValue({ id: 123, user1: { id: 456 } })
-      mockRouteParams.value = { id: '123' }
-      const wrapper = mountComponent()
-      await flushPromises()
-
-      expect(mockFetchCases).toHaveBeenCalledWith({ chatid: 123 })
-      expect(
-        wrapper.find('[data-test="refer-case-link"] a').attributes('href')
-      ).toBe('/support/cases/9')
-      expect(wrapper.find('.mod-chat-modal').exists()).toBe(true)
-    })
-
-    it('shows no link when the chat has no case', async () => {
+  describe('no case link', () => {
+    it('shows the chat and nothing about a case', async () => {
       mockChatStore.byChatId.mockReturnValue({ id: 123, user1: { id: 456 } })
       mockRouteParams.value = { id: '123' }
       const wrapper = mountComponent()
       await flushPromises()
       expect(wrapper.find('[data-test="refer-case-link"]').exists()).toBe(false)
+      expect(wrapper.find('.mod-chat-modal').exists()).toBe(true)
     })
 
-    it('fetches the chat without waiting for a slow case lookup', async () => {
-      mockFetchCases.mockReturnValue(new Promise(() => {}))
+    it('fetches the chat', async () => {
       mockRouteParams.value = { id: '123' }
       mountComponent()
       await flushPromises()
       expect(mockChatStore.fetchChat).toHaveBeenCalledWith(123)
-    })
-
-    it('still opens the chat when the case lookup fails', async () => {
-      mockFetchCases.mockRejectedValue(new Error('500'))
-      mockChatStore.byChatId.mockReturnValue({ id: 123, user1: { id: 456 } })
-      mockRouteParams.value = { id: '123' }
-      const wrapper = mountComponent()
-      await flushPromises()
-      expect(wrapper.find('[data-test="refer-case-link"]').exists()).toBe(false)
-      expect(wrapper.find('.mod-chat-modal').exists()).toBe(true)
     })
   })
 

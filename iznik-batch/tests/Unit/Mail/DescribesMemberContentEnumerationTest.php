@@ -97,6 +97,7 @@ class DescribesMemberContentEnumerationTest extends TestCase
         \App\Mail\Group\WelcomeReviewMail::class => "quotes a group's custom welcome text (groups.welcomemail), moderator-authored, no author id threaded through",
         \App\Mail\Welcome\GroupWelcomeMail::class => 'same gap as WelcomeReviewMail - quotes groups.welcomemail, no author id threaded through',
         \App\Mail\Chat\ChaseupModsMail::class => 'textSummary/chatUrl describe chat content in prose, no chatId threaded through',
+        \App\Mail\Chat\ReferToSupportMail::class => "carries a moderator's free-text reason and the AI first pass about a member, to the Support mailbox only; it quotes no chat message, so there is no content id to check",
         \App\Mail\Chat\ChatReviewSummaryMail::class => 'summary is prose built from chat content, no per-message ids threaded through',
         \App\Mail\Chat\SpamWarningMail::class => 'messageSubject is prose, no numeric message id threaded through',
         \App\Mail\CommunityNews\CommunityNewsMail::class => 'quotes a users_stories entry via CommunityNewsEmailService::pickStory(), neither story id nor author id threaded through',

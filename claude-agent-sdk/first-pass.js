@@ -15,7 +15,7 @@
  * and only Node built-ins and require-free modules load at the top, so CI's bare `node --test` can run
  * first-pass.test.js. The SDK and the tools are required lazily, when a real run needs them.
  *
- * Request and response shapes: plans/active/2026-11-07-referral-first-pass.md.
+ * The flow around it: docs/developers/reference/refer-to-support.md.
  */
 
 const crypto = require('node:crypto')
@@ -36,7 +36,6 @@ const MAX_MESSAGES = 50
 const MAX_TEXT = 2000
 const MAX_REASON = 2000
 const MAX_MAIL_ENTRIES = 20
-const MAX_RECENT_CASES = 20
 const TRANSCRIPT_CAP = 200000
 // An investigation takes longer than one model call: a dump, a few queries, a log search.
 const DEFAULT_DEADLINE_MS = 480000
@@ -75,8 +74,8 @@ function cleanFirstPassRequest(body) {
   const b = body && typeof body === 'object' && !Array.isArray(body) ? body : null
   if (!b) return { error: 'the body must be an object' }
 
-  const caseid = posInt(b.caseid)
-  if (!caseid) return { error: 'caseid must be a positive integer' }
+  const referralid = posInt(b.referralid)
+  if (!referralid) return { error: 'referralid must be a positive integer' }
 
   let memberid = null
   if (b.memberid !== null && b.memberid !== undefined) {
@@ -159,24 +158,7 @@ function cleanFirstPassRequest(body) {
   // image messages beyond those sent are taken to be the skipped ones.
   const imagesSkipped = Number.isInteger(b.imagesSkipped) && b.imagesSkipped >= 0 ? Math.min(b.imagesSkipped, 1000) + imagesDropped : null
 
-  // Recent support cases, so a referral that is one of many about the same thing is answered from
-  // what support already found rather than investigated again.
-  const recentCases = Array.isArray(b.recentCases)
-    ? b.recentCases
-        .slice(0, MAX_RECENT_CASES)
-        .map((r) => (r && typeof r === 'object' ? r : {}))
-        .filter((r) => posInt(r.id) && posInt(r.id) !== caseid)
-        .map((r) => ({
-          id: r.id,
-          created: str(r.created, 40),
-          classification: str(r.classification, 20),
-          question: str(r.question, 400),
-          summary: str(r.summary, 400),
-          supportReply: str(r.supportReply, 600),
-        }))
-    : []
-
-  return { caseid, memberid, source, chat: { id: chatid, type: c.type, group, messages }, images, imagesSkipped, imagesDropped, mailHistory, recentCases }
+  return { referralid, memberid, source, chat: { id: chatid, type: c.type, group, messages }, images, imagesSkipped, imagesDropped, mailHistory }
 }
 
 // ---------------------------------------------------------------------------
@@ -272,13 +254,11 @@ const list = (v, max, itemMax) => (Array.isArray(v) ? v.map((x) => plain(x, item
 
 
 /**
- * Check the model's answer and turn it into the brief's fields. A related case that is not one of the
- * recent cases it was given is dropped. Anything unusable is BAD_OUTPUT.
+ * Check the model's answer and turn it into the brief's fields. Anything unusable is BAD_OUTPUT.
  *
  * @param {object} answer
- * @param {number[]} recentIds - the ids of the recent cases in the request.
  */
-function validateAnswer(answer, recentIds = []) {
+function validateAnswer(answer) {
   if (!answer || typeof answer !== 'object') throw fail('BAD_OUTPUT')
   const question = plain(answer.question, 400)
   const found = plain(answer.answer, 4000)
@@ -288,7 +268,6 @@ function validateAnswer(answer, recentIds = []) {
   if (!CLASSIFICATIONS.includes(answer.classification)) throw fail('BAD_OUTPUT')
   if (!CONFIDENCE_LEVELS.includes(confidence.level)) throw fail('BAD_OUTPUT')
 
-  const related = Array.isArray(answer.related_cases) ? answer.related_cases.filter((id) => recentIds.includes(id)) : []
   return {
     question,
     answer: found,
@@ -296,7 +275,6 @@ function validateAnswer(answer, recentIds = []) {
     confidence: { level: confidence.level, reason: plain(confidence.reason, 300) },
     checks: list(answer.checks, 12, 200),
     open_questions: list(answer.open_questions, 3, 300),
-    related_cases: [...new Set(related)].slice(0, 10),
     draft: draftText,
   }
 }
@@ -333,7 +311,7 @@ async function investigate({ request, prompt, model, maxTurns, codebase, key, si
   const { tools, names, cleanup } = makeTools({
     jwt: null,
     dumpKey: key,
-    caseId: request.caseid,
+    referralId: request.referralid,
     signal,
     userId: request.memberid || 0,
     modId: 'first-pass',
@@ -440,7 +418,7 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
   // A member to look up but no key is a server set up wrongly, not a reason to pass on a thinner brief.
   if (request.memberid && !env.USERDUMP_INTERNAL_KEY) throw fail('DUMP_AUTH')
 
-  auditFn({ tool: 'first_pass', caseid: request.caseid, target: request.memberid || 0, images: request.images.length })
+  auditFn({ tool: 'first_pass', referralid: request.referralid, target: request.memberid || 0, images: request.images.length })
 
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), deadlineMs)
@@ -460,7 +438,7 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
     const nonce = deps.nonce || crypto.randomBytes(8).toString('hex')
     const prompt = buildUserPrompt({ request, nonce })
     const run = await investigate({ request, prompt, model, maxTurns, codebase, key: env.USERDUMP_INTERNAL_KEY, signal, abort, deps })
-    const judged = validateAnswer(run.answer, request.recentCases.map((c) => c.id))
+    const judged = validateAnswer(run.answer)
 
     const chatImages = request.chat.messages.filter((m) => m.type === 'Image').length
     const brief = {
@@ -471,7 +449,6 @@ async function runFirstPass(request, { signal: callerSignal, deps = {} } = {}) {
       confidence: judged.confidence,
       checks: judged.checks,
       open_questions: judged.open_questions,
-      related_cases: judged.related_cases,
       draft: { to: 'referrer', text: judged.draft, link_warnings: checkDraftLinks(judged.draft, pagesDir) },
       images: {
         sent: request.images.length,
