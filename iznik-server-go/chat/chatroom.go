@@ -1,7 +1,9 @@
 package chat
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	stdlog "log"
@@ -58,7 +60,7 @@ type ChatRoomListEntry struct {
 	// The client uses it to show a different header: most of what Freegle says is
 	// not a conversation, so rating, blocking or reporting it is nonsense, and
 	// "this is automated" belongs there once instead of on every message.
-	Systemchat bool `json:"systemchat,omitempty" gorm:"-"`
+	Systemchat     bool            `json:"systemchat,omitempty" gorm:"-"`
 	Snippet        string          `json:"snippet"`
 	Unseen         uint64          `json:"unseen"`
 	Chatmsg        string          `json:"-"`
@@ -1816,7 +1818,8 @@ func referGroup(db *gorm.DB, chatid, chatGroup, user1, user2, referrer uint64) (
 	err := db.Raw(`SELECT m1.groupid
 		FROM memberships m1
 		INNER JOIN memberships m2 ON m2.groupid = m1.groupid AND m2.userid IN (?, ?) AND m2.userid != ?
-		WHERE m1.userid = ? AND m1.role IN (?, ?)
+			AND m2.collection = 'Approved'
+		WHERE m1.userid = ? AND m1.role IN (?, ?) AND m1.collection = 'Approved'
 		GROUP BY m1.groupid
 		ORDER BY
 			m1.groupid IN (
@@ -1888,22 +1891,28 @@ func handleReferToSupport(c *fiber.Ctx, db *gorm.DB, myid uint64, chatid uint64,
 
 	// A double-click lands here within moments with the same reason: it is the same referral, so it
 	// queues nothing and Support gets one mail. Read from the primary, where the first click wrote.
+	// The comparison is on a hash of the reason, because the batch takes the reason itself out of the
+	// task once it has mailed it. Two requests in the same instant can both get through; Support then
+	// gets two mails, which is the worst of it.
+	sum := sha256.Sum256([]byte(reason))
+	reasonHash := hex.EncodeToString(sum[:])
 	var recent int64
 	db.Clauses(dbresolver.Write).Raw(`SELECT COUNT(*) FROM background_tasks
 		WHERE task_type = ? AND created_at >= NOW() - INTERVAL ? SECOND
 		AND JSON_EXTRACT(data, '$.chatid') = ? AND JSON_EXTRACT(data, '$.userid') = ?
-		AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(data, '$.reason')), '') = ?`,
-		queue.TaskReferToSupport, repeatReferWindowSeconds, chatid, myid, reason).Scan(&recent)
+		AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.reasonhash')) = ?`,
+		queue.TaskReferToSupport, repeatReferWindowSeconds, chatid, myid, reasonHash).Scan(&recent)
 	if recent > 0 {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 	}
 
 	if err := queue.QueueTask(queue.TaskReferToSupport, map[string]interface{}{
-		"chatid":   chatid,
-		"userid":   myid,
-		"memberid": referMember(room.Chattype, room.User1, room.User2, myid),
-		"groupid":  groupid,
-		"reason":   reason,
+		"chatid":     chatid,
+		"userid":     myid,
+		"memberid":   referMember(room.Chattype, room.User1, room.User2, myid),
+		"groupid":    groupid,
+		"reason":     reason,
+		"reasonhash": reasonHash,
 	}); err != nil {
 		stdlog.Printf("[ReferToSupport] queue failed for chat %d by %d: %v", chatid, myid, err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Couldn't refer this chat, please try again")

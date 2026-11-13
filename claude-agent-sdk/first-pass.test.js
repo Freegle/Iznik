@@ -323,12 +323,31 @@ test('the system prompt holds the first pass method and the extra playbook', () 
   assert.match(p, /ONE thing that needs answering/)
   assert.doesNotMatch(p, /recent support cases/)
   assert.match(p, /after about twelve tool calls/)
+  // The numbered steps run 1 to 7 with none missing.
+  for (let n = 1; n <= 7; n++) assert.match(p, new RegExp(`\\n${n}\\. \\*\\*`), `step ${n}`)
+  assert.doesNotMatch(p, /\n8\. \*\*/)
   assert.match(p, /who is not a developer/)
   assert.match(p, /from the support team \("we"\) to the referring moderator, not to the member/)
   assert.match(p, /Nothing goes to the member from here/)
   assert.match(p, /More cases that come in as referrals/)
   assert.match(p, /Photos will not attach/)
   assert.match(p, /Citizens Advice/)
+})
+
+test('a question about something not working is answered by finding the cause, not by guessing', () => {
+  const p = systemPrompt(22, '/code')
+  assert.match(p, /find the cause before you explain it/)
+  assert.match(p, /Read the evidence exactly/)
+  assert.match(p, /the last step that is right and the first that is wrong/)
+  assert.match(p, /Ask what changed/)
+  assert.match(p, /Compare with a case that works/)
+  assert.match(p, /Hold one explanation at a time/)
+  assert.match(p, /the one that could prove it wrong/)
+  assert.match(p, /Do not suggest a fix for a cause you did not find/)
+  assert.match(p, /High means a check showed the cause or the fact, not that the story fits/)
+  // It sits inside the investigation step, before the instruction to stop.
+  assert.ok(p.indexOf('find the cause before you explain it') > p.indexOf('Investigate only that question'))
+  assert.ok(p.indexOf('find the cause before you explain it') < p.indexOf('Stop as soon as you can answer'))
 })
 
 test('the answer schema forces the brief fields', () => {

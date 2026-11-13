@@ -119,6 +119,29 @@ const FIRST_PASS_PLAYBOOK =
   `that a moderator should judge) - say so in the answer, classify it Other, and in the draft suggest who can help ` +
   `(Citizens Advice for welfare and benefits) or what the moderator could decide.\n`
 
+// The discipline for a "why is this not working" question: cause before explanation, one explanation at a
+// time, and an honest line between what a check showed and what only fits. It is written for a run that
+// can read but not change anything, so "test" always means a check that could prove the explanation wrong.
+const FIRST_PASS_CAUSE =
+  `   **When the question is why something is not working, find the cause before you explain it.** A symptom ` +
+  `said again in other words is not an answer, and advice that does not follow from a cause you found is a guess.\n` +
+  `   - **Read the evidence exactly**: the member's own words, the error text, the picture, the time it happened. ` +
+  `Do not turn one error into a more familiar one.\n` +
+  `   - **Find where it breaks.** Follow the thing through its steps (what the member did, what the site recorded, ` +
+  `what was sent, what arrived) and find the last step that is right and the first that is wrong. Look there, not ` +
+  `everywhere.\n` +
+  `   - **Ask what changed** just before it started: on the account (an email address, a setting, a merge, a ban), ` +
+  `on the device or the app version, or in the code (commits around that time).\n` +
+  `   - **Compare with a case that works**: the same member doing it earlier, or how the code and the logs show ` +
+  `it working in general. The cause is in a difference between the two. This is not a reason to look up other ` +
+  `members.\n` +
+  `   - **Hold one explanation at a time**, and make the next check the one that could prove it wrong. If it does, ` +
+  `drop that explanation and form another. Do not pile a second guess on top of the first.\n` +
+  `   - **Keep what you confirmed apart from what you suspect.** If the checks run out before the cause is found, ` +
+  `say plainly that it was not found, say what was ruled out, and put the one check that would settle it in ` +
+  `"open_questions". Do not suggest a fix for a cause you did not find, and do not give the moderator a list of ` +
+  `things to try at random: give the one next step that follows from the cause, or that would show it.\n`
+
 const FIRST_PASS_METHOD =
   `## This run: a first pass on a referral\n` +
   `A volunteer moderator has referred a chat with a member to Freegle's support team. You run before a support ` +
@@ -129,6 +152,7 @@ const FIRST_PASS_METHOD =
   `chat often holds old, settled exchanges from months or years ago; ignore them unless they bear on this question.\n` +
   `2. **Investigate only that question.** Choose the cheapest check that could answer it, then the next. Do not build ` +
   `a general profile of the member: no list of bans, posts, devices or errors unless the question turns on them.\n` +
+  FIRST_PASS_CAUSE +
   `3. **Stop as soon as you can answer**, and in any case after about twelve tool calls. A confident partial answer ` +
   `with the one thing still to check is better than running out of time.\n` +
   `4. **Write the answer** for a support volunteer, who is not a developer. Start with the conclusion in one plain ` +
@@ -139,10 +163,11 @@ const FIRST_PASS_METHOD =
   `5. **Write the draft** from the support team ("we") to the referring moderator, not to the member. Answer the ` +
   `moderator's question in plain words, and say what they could tell the member or ask them. Nothing goes to the ` +
   `member from here: the moderator deals with the member. Greet the moderator without assuming their name.\n` +
-  `7. **classification**: Bug (something in Freegle is not working), Usage (how something works, or the rules), ` +
+  `6. **classification**: Bug (something in Freegle is not working), Usage (how something works, or the rules), ` +
   `Suggestion (a request for a change), Incident (bad behaviour, safety, or one problem affecting many members), ` +
-  `Other (not something Freegle support can fix). **confidence**: High, Medium or Low, with one line saying why.\n` +
-  `8. **checks**: what you looked at, one short line each.\n`
+  `Other (not something Freegle support can fix). **confidence**: High, Medium or Low, with one line saying why. ` +
+  `High means a check showed the cause or the fact, not that the story fits.\n` +
+  `7. **checks**: what you looked at, one short line each.\n`
 
 const FIRST_PASS_STYLE =
   `## Style of the answer and the draft\n` +

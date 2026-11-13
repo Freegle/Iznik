@@ -1963,6 +1963,17 @@ func TestReferToSupportDoubleClickQueuesOnce(t *testing.T) {
 
 	assert.Equal(t, fiber.StatusOK, referChat(t, token, chatid, "Something else").StatusCode)
 	assert.Len(t, referTasks(t, chatid), 2)
+
+	// The batch takes the reason out of a task once it has mailed it. The check still tells that
+	// referral from a new one with no reason, and still catches a repeat of it.
+	database.DBConn.Exec("UPDATE background_tasks SET processed_at = NOW(), data = JSON_REMOVE(data, '$.reason') WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ?", chatid)
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chatid, "Something else").StatusCode)
+	assert.Len(t, referTasks(t, chatid), 2, "the same reason again is still a repeat")
+	chat2 := CreateTestChatRoom(t, user2ID, &user1ID, nil, "User2User")
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chat2, "Only this").StatusCode)
+	database.DBConn.Exec("UPDATE background_tasks SET processed_at = NOW(), data = JSON_REMOVE(data, '$.reason') WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ?", chat2)
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chat2, "").StatusCode)
+	assert.Len(t, referTasks(t, chat2), 2, "no reason is a different referral from one that had a reason")
 }
 
 // A member-to-member chat has no community of its own, so the referral is for a community the

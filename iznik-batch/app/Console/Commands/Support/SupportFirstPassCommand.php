@@ -35,6 +35,9 @@ class SupportFirstPassCommand extends Command
     /** A pass is started at most this many times for one referral (a busy helper does not count). */
     public const MAX_ATTEMPTS = 3;
 
+    /** After this many failures to build or spool a referral's mail, the plainest mail is sent instead. */
+    public const MAX_MAIL_FAILURES = 3;
+
     protected $signature = 'support:first-pass';
 
     protected $description = 'Run the AI first pass for chats referred to Support and mail Support';
@@ -112,8 +115,12 @@ class SupportFirstPassCommand extends Command
         $referrerId = (int) ($data['userid'] ?? 0);
         if ($chatId === 0 || $referrerId === 0) {
             // Nobody to say referred what, so there is nothing to mail.
-            DB::table('background_tasks')->where('id', $task->id)
-                ->update(['failed_at' => DB::raw('NOW()'), 'error_message' => 'refer_to_support requires chatid and userid']);
+            // The free text goes: nothing will mail it, and a failed row is never tidied later.
+            unset($data['reason'], $data['brief']);
+            DB::table('background_tasks')->where('id', $task->id)->update([
+                'failed_at' => DB::raw('NOW()'), 'error_message' => 'refer_to_support requires chatid and userid',
+                'data' => json_encode($data),
+            ]);
 
             return false;
         }
@@ -128,7 +135,10 @@ class SupportFirstPassCommand extends Command
             'reason' => is_string($data['reason'] ?? null) ? $data['reason'] : null,
             'created_at' => $task->created_at,
         ];
-        $finish = fn (?array $brief, ?string $reason) => $this->mail($task, $data, $referral, $brief, $reason, $service, $spooler);
+        // $data by reference: a finished brief is added to it below, and the mail step must see that.
+        $finish = function (?array $brief, ?string $reason) use (&$data, $task, $referral, $service, $spooler): void {
+            $this->mail($task, $data, $referral, $brief, $reason, $service, $spooler);
+        };
 
         if (! $chat) {
             $finish(null, FirstPassService::REASON_NO_CHAT);
@@ -219,8 +229,13 @@ class SupportFirstPassCommand extends Command
 
     /**
      * Send the referral's one mail and mark the task processed. The mail is built first, then the
-     * task is claimed, then the mail is spooled: the claim is what decides, so it goes once, and a
-     * failure after the claim puts the task back for the next run.
+     * task is claimed, then the mail is spooled: the claim is what decides, so it goes once. A mail
+     * that was not spooled (the spooler threw, or answered that it sent nothing) puts the task back
+     * for the next run.
+     *
+     * A mail that fails MAX_MAIL_FAILURES times is one that cannot be built from this referral, so
+     * the plainest mail goes instead: from the no-reply address, with no community and no first
+     * pass. If even that cannot be sent the task is marked failed, loudly.
      *
      * Once the mail has gone, the moderator's reason and the brief are taken out of the task row:
      * they are about a member, and nothing reads them again.
@@ -231,25 +246,57 @@ class SupportFirstPassCommand extends Command
     private function mail(object $task, array $data, object $referral, ?array $brief, ?string $reason, FirstPassService $service, EmailSpoolerService $spooler): void
     {
         $recipients = array_values(array_filter(array_map('trim', explode(',', (string) config('freegle.mail.support_addr', 'support@ilovefreegle.org')))));
+        $failures = (int) ($data['mailfails'] ?? 0);
+        $plainest = $failures >= self::MAX_MAIL_FAILURES;
         $claimed = false;
+        $sent = false;
 
         try {
-            $mail = $service->referralMail($referral, $brief, $brief === null ? ($reason ?: FirstPassService::REASON_FAILED) : null);
+            $mail = $plainest
+                ? $service->plainestMail($referral)
+                : $service->referralMail($referral, $brief, $brief === null ? ($reason ?: FirstPassService::REASON_FAILED) : null);
 
             $claimed = DB::table('background_tasks')->where('id', $task->id)->whereNull('processed_at')
                 ->update(['processed_at' => DB::raw('NOW()')]) === 1;
             if (! $claimed) {
                 return;
             }
-            $spooler->spool($mail, $recipients);
+            // The spooler answers '' when it sent nothing without throwing (the recipient's provider
+            // is deferring our mail, or the address is refused).
+            $sent = $spooler->spool($mail, $recipients) !== '';
+            if (! $sent) {
+                DB::table('background_tasks')->where('id', $task->id)->update(['processed_at' => null]);
+                Log::warning('support:first-pass mail not spooled', ['task_id' => $task->id]);
 
-            unset($data['reason'], $data['brief']);
+                return;
+            }
+        } catch (\Throwable $e) {
+            Log::error('support:first-pass mail failed', ['task_id' => $task->id, 'error' => get_class($e).': '.$e->getMessage()]);
+            if ($plainest) {
+                // Nothing more can be tried. The free text goes, and the error log is the alarm.
+                unset($data['reason'], $data['brief']);
+                DB::table('background_tasks')->where('id', $task->id)->update([
+                    'processed_at' => null, 'failed_at' => DB::raw('NOW()'),
+                    'error_message' => 'The mail to Support could not be sent', 'data' => json_encode($data),
+                ]);
+
+                return;
+            }
+            $data['mailfails'] = $failures + 1;
+            DB::table('background_tasks')->where('id', $task->id)->update([
+                'processed_at' => null,
+                'data' => json_encode($data, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
+            ]);
+
+            return;
+        }
+
+        // The mail has gone. A failure tidying up must not put the task back, or it would go twice.
+        try {
+            unset($data['reason'], $data['brief'], $data['mailfails']);
             DB::table('background_tasks')->where('id', $task->id)->update(['data' => json_encode($data)]);
         } catch (\Throwable $e) {
-            if ($claimed) {
-                DB::table('background_tasks')->where('id', $task->id)->update(['processed_at' => null]);
-            }
-            Log::error('support:first-pass mail failed', ['task_id' => $task->id, 'error' => get_class($e).': '.$e->getMessage()]);
+            Log::error('support:first-pass tidy-up failed', ['task_id' => $task->id, 'error' => get_class($e).': '.$e->getMessage()]);
         }
     }
 }

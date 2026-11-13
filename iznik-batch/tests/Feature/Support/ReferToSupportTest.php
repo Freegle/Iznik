@@ -727,6 +727,102 @@ class ReferToSupportTest extends TestCase
         $this->assertSame(1, DB::table('support_ai_runs')->where('modid', $c['referrer']->id)->count());
     }
 
+    public function test_a_mail_the_spooler_did_not_send_leaves_the_referral_for_the_next_run(): void
+    {
+        Mail::fake();
+        config()->set('freegle.support.first_pass.enabled', false);
+        $c = $this->refer(['data' => ['reason' => 'Please look']]);
+        $real = app(\App\Services\EmailSpoolerService::class);
+        // The spooler answers '' and does not throw when the recipient's provider is deferring our mail.
+        $spooler = \Mockery::mock(\App\Services\EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->andReturn('');
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $spooler);
+
+        $this->artisan('support:first-pass')->assertSuccessful();
+
+        $task = $this->task($c['task']);
+        $this->assertNull($task->processed_at, 'nothing was sent, so it is not done');
+        $this->assertSame('Please look', json_decode($task->data, true)['reason']);
+
+        $this->app->instance(\App\Services\EmailSpoolerService::class, $real);
+        $this->runPass();
+        $this->assertCount(1, $this->mailsFrom($c['referrer']));
+    }
+
+    public function test_a_mail_that_can_never_be_built_gives_way_to_the_plainest_mail(): void
+    {
+        Mail::fake();
+        $c = $this->refer(['data' => ['reason' => 'Please look']]);
+        $broken = new class(app(MailboxHistory::class)) extends FirstPassService {
+            public function referralMail(object $referral, ?array $brief, ?string $skipReason): ReferToSupportMail
+            {
+                throw new \RuntimeException('cannot build');
+            }
+        };
+        $this->app->instance(FirstPassService::class, $broken);
+
+        for ($i = 0; $i < \App\Console\Commands\Support\SupportFirstPassCommand::MAX_MAIL_FAILURES; $i++) {
+            $this->runPass();
+            $this->assertNull($this->task($c['task'])->processed_at);
+        }
+        $this->assertCount(1, $this->helperRequests, 'the pass is not run again for a mail that will not build');
+        $this->assertCount(0, $this->mailsFrom($c['referrer']));
+
+        $this->runPass();
+
+        $mail = $this->mailsFrom($c['referrer'])->first();
+        $this->assertNotNull($mail, 'Support is still told');
+        $this->assertSame(config('freegle.mail.noreply_addr'), $mail->envelope()->from->address);
+        $text = $this->textOf($mail);
+        $this->assertStringContainsString("Chat: #{$c['chat']}", $text);
+        $this->assertStringContainsString('No AI first pass: The full mail for this referral could not be built', $text);
+        $this->assertStringNotContainsString('Please look', $text);
+        $task = $this->task($c['task']);
+        $this->assertNotNull($task->processed_at);
+        $left = json_decode($task->data, true);
+        $this->assertArrayNotHasKey('reason', $left);
+        $this->assertArrayNotHasKey('brief', $left);
+        $this->assertArrayNotHasKey('mailfails', $left);
+    }
+
+    public function test_a_community_whose_short_name_makes_no_address_is_treated_as_no_community(): void
+    {
+        Mail::fake();
+        config()->set('freegle.support.first_pass.enabled', false);
+        $c = $this->refer();
+        DB::table('groups')->where('id', $c['group']->id)->update(['nameshort' => 'Two Words '.uniqid()]);
+
+        $this->runPass();
+
+        $envelope = $this->mailsFrom($c['referrer'])->first()->envelope();
+        $this->assertSame(config('freegle.mail.noreply_addr'), $envelope->from->address);
+        $this->assertSame($c['referrer']->email_preferred, $envelope->replyTo[0]->address);
+    }
+
+    public function test_forgetting_a_member_takes_the_reason_and_brief_off_their_waiting_referral_only(): void
+    {
+        $mine = $this->refer(['data' => ['reason' => 'about them', 'brief' => ['answer' => 'facts']]]);
+        $theirs = $this->refer(['data' => ['reason' => 'about another']]);
+
+        app(\App\Services\UserManagementService::class)->forgetUser($mine['member']->id, 'Test reason');
+
+        $left = json_decode($this->task($mine['task'])->data, true);
+        $this->assertArrayNotHasKey('reason', $left);
+        $this->assertArrayNotHasKey('brief', $left);
+        $this->assertSame($mine['chat'], $left['chatid'], 'the referral itself still reaches Support');
+        $this->assertSame('about another', json_decode($this->task($theirs['task'])->data, true)['reason']);
+    }
+
+    public function test_a_task_that_names_no_chat_keeps_no_free_text(): void
+    {
+        $id = DB::table('background_tasks')->insertGetId(['task_type' => BackgroundTask::TASK_REFER_TO_SUPPORT, 'data' => json_encode(['chatid' => 0, 'reason' => 'free text'])]);
+
+        $this->artisan('support:first-pass')->assertSuccessful();
+
+        $this->assertNotNull($this->task($id)->failed_at);
+        $this->assertArrayNotHasKey('reason', json_decode($this->task($id)->data, true));
+    }
+
     public function test_the_general_task_queue_leaves_a_referral_alone(): void
     {
         Mail::fake();

@@ -499,7 +499,11 @@ Support gets, is in [refer-to-support.md](refer-to-support.md). This section is 
   read-only tools as the interactive helper (the member's dump in key mode, the live read-only database,
   logs, the error tracker, the forum and the code) and its playbook. Added to that is a first-pass method:
   find the one question the moderator needs answered, investigate only that
-  question, and stop after about twelve tool calls. No facts are built by code; the agent looks at what
+  question, and stop after about twelve tool calls. For a question about something not working it must find the
+  cause before it explains: read the evidence exactly, find the step where it breaks, ask what changed, compare
+  with a case that works, hold one explanation at a time and check what could prove it wrong, and keep what a
+  check showed apart from what only fits. Confidence is High only for the first. With no cause found it says so,
+  and suggests no fix. No facts are built by code; the agent looks at what
   the question needs. The answer is forced into a fixed shape (`first-pass-prompt.js`) and the chat
   images travel with the prompt. There is no review turn.
 - **The shared options.** `agent-options.js` builds the `query()` options for both the interactive agent

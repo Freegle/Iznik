@@ -335,9 +335,11 @@ class FirstPassService
 
         $group = $this->group($referral, $chat);
         $short = (string) ($group->nameshort ?? '');
-        if ($short !== '') {
+        $volunteers = $short.'-volunteers@'.config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        // A community whose short name does not make an address is treated as no community.
+        if ($short !== '' && filter_var($volunteers, FILTER_VALIDATE_EMAIL)) {
             $groupName = (string) ($group->namefull ?: $short);
-            $fromAddress = $replyToAddress = $short.'-volunteers@'.config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+            $fromAddress = $replyToAddress = $volunteers;
             $fromName = $replyToName = $groupName.' Volunteers';
         } elseif ($referrer && $referrer->email_preferred) {
             $replyToAddress = (string) $referrer->email_preferred;
@@ -359,6 +361,31 @@ class FirstPassService
             reason: $referral->reason !== null && $referral->reason !== '' ? (string) $referral->reason : null,
             brief: $brief,
             skipReason: $skipReason,
+        );
+    }
+
+    /**
+     * The plainest mail for a referral, for when the full one cannot be built: ids only, from the
+     * no-reply address, with no names, no community, no reason and no first pass.
+     */
+    public function plainestMail(object $referral): ReferToSupportMail
+    {
+        $noreply = (string) config('freegle.mail.noreply_addr');
+        $name = (string) config('freegle.branding.name');
+
+        return new ReferToSupportMail(
+            referrerName: 'A volunteer',
+            referrerId: (int) ($referral->referrerid ?? 0),
+            chatId: $referral->chatid ? (int) $referral->chatid : null,
+            chatType: null,
+            memberName: 'Member',
+            memberId: (int) ($referral->userid ?? 0),
+            groupName: null,
+            fromAddress: $noreply,
+            fromName: $name,
+            replyToAddress: $noreply,
+            replyToName: $name,
+            skipReason: 'The full mail for this referral could not be built',
         );
     }
 

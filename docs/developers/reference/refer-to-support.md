@@ -48,7 +48,9 @@ cannot be referred: a referral spends a model pass and mails Support, so it is n
 
 The same moderator referring the same chat with the same reason within two minutes is a
 double-click: nothing more is queued and Support gets one mail. A different reason, or a later
-click, is a new referral and a new mail.
+click, is a new referral and a new mail. The check compares a hash of the reason kept on the task,
+because the reason itself leaves the task once it is mailed. Two requests in the same instant can
+both get through, and Support then gets two mails.
 
 ## Which community it comes from
 
@@ -56,11 +58,12 @@ The mail is From and Reply-To `<nameshort>-volunteers@` the group domain, named 
 Volunteers". `referGroup` in `chatroom.go` chooses the community when the referral is queued:
 
 - **A member-to-mods chat** has a community of its own, and that is used.
-- **A member-to-member chat** has none. It is a community the referrer moderates that a
-  participant belongs to, which is also what lets the referrer see the chat. With several: the
+- **A member-to-member chat** has none. It is a community the referrer moderates that another
+  participant belongs to (approved memberships only), which is also what lets the referrer see the chat. With several: the
   community of the latest post the chat is about, then one both participants belong to, then the
   one a participant joined most recently.
-- **No community fits** (Support or Admin referring a chat outside their own communities): the mail
+- **No community fits** (Support or Admin referring a chat outside their own communities, or a
+  community whose short name does not make an email address): the mail
   comes from the no-reply address and Reply-To is the referrer's own email, so a reply still reaches
   someone.
 
@@ -107,8 +110,13 @@ time, until none are left or `run_minutes` (10) has passed. For each:
   the helper is asked, so a run that is killed mid-pass still counts.
 
 Every referral therefore ends in exactly one mail, within about an hour whatever the helper is
-doing. The mail is built first, then the task is claimed (`processed_at`), then the mail is spooled,
-and a failure after the claim puts it back. A finished brief is kept on the task until its mail has
+doing. The mail is built first, then the task is claimed (`processed_at`), then the mail is spooled.
+A mail that was not spooled, because the spooler threw or answered that it sent nothing, puts the
+task back; a failure tidying up after a sent mail does not, so it cannot go twice. A mail that fails
+three times (`MAX_MAIL_FAILURES`) cannot be built from this referral, so the plainest mail goes
+instead: ids only, from the no-reply address, with no first pass. If that cannot be sent either,
+the task is marked failed and the error log says so. A support address whose provider is deferring
+our mail is not counted as a failure: the referral waits, and the 70-minute check reports it. A finished brief is kept on the task until its mail has
 gone, so a mail that fails is sent by the next run without another pass. Once the mail has gone, the
 moderator's reason and the brief are taken out of the task row, because they are about a member and
 nothing reads them again.
@@ -152,7 +160,8 @@ prompt cache.
   FirstPass: tokens, cost, model, pool state, and on success the brief as markdown and the
   transcript. It is what the daily cap counts, and it shows with the helper's other runs in SysAdmin.
 - **Retention.** `support:purge-runs` runs daily and clears the analysis and transcript of first
-  pass runs more than a year old. Forgetting a member clears them on every run about that member.
+  pass runs more than a year old. Forgetting a member clears them on every run about that member,
+  and takes the reason and any brief off a referral about them that has not been mailed yet.
   The stored transcript has image bytes removed and is capped. No request or response body is logged.
 - **Nothing else.** The mail is in the Support mailbox. The task row keeps the chat, referrer,
   member and community ids.
