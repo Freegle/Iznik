@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-11-12
+last_reviewed: 2026-11-13
 owner: Freegle ops
 covers:
   - scripts/maintenance/**
@@ -49,9 +49,11 @@ outside its start window.
 | `mail` | Wednesday 02:15 | bulk2 | The overnight low in outgoing mail, clear of the relay's own 05:00 log rotation. |
 | `docker` | Wednesday 23:35 | the Docker host | After the 23:00 jobs and before the 00:30 log rotation and 01:00 postcode remap. Wednesday has no 23:00 digest. |
 | `arbitrator` | Friday 04:40 | db1 | Three days clear of the data-node slot. |
+| `reach` | the 2nd of each month, 01:00 (start window 00:30–06:00) | every routing server | The night after `spatial:update-data` downloads the month's map. See [Road map refresh](#road-map-refresh-reach). |
 
-Nothing runs at the weekend, the busiest time. Slots start at least 21 hours apart. A
-run refuses when the last live run finished less than 20 hours before, so a long run can
+Nothing runs at the weekend, the busiest time, except a `reach` refresh that falls on one.
+Slots start at least 21 hours apart. A host run refuses when the last live host run
+finished less than 20 hours before, so a long run can
 push the next slot to the following week; the Cron Jobs tab then shows it failed.
 
 The `db` slot takes the data node whose last live run finished longest ago, so a slot
@@ -218,6 +220,52 @@ The loopback hop to the warm instance logs like a delivery and is excluded on bo
 tag and its address. A warm instance with no delivery yet is reported but is not a
 failure, because it carries only the providers we pace.
 
+## Road map refresh (reach)
+
+`spatial:update-data` downloads the map and rebuilds the deprivation file on the Docker
+host each month. The routing servers do not read the map: they load a saved road network
+and region layout (the reach artifacts), and every post's stored notes are tied to one
+layout by its fingerprint ([spatial servers](../../developers/reference/spatial-servers.md#the-artifacts-and-the-stored-notes-are-one-versioned-pair)).
+The `reach` profile carries a new map into all of them: the spatial container on the
+Docker host, which the batch calls, and the routing servers on db2 and db3, which serve
+members. It is the procedure of the 3 September 2026 layout change, automated with the
+same gates.
+
+1. **Preflight.** The pairing record (`config.reach_partition_fp`), the Docker host's
+   artifacts and every routing server agree on one layout; each node's routing source
+   matches the Docker host's checkout (otherwise: deploy routing first); there is room
+   for a second artifact set on every machine.
+2. **Housekeep the previous refresh.** Copy each staged note into the live column, delete
+   the previous layout's leaf rows one post at a time, and drop the kept previous
+   artifacts. It refuses within 7 days of a switch (`MAINT_REACH_HOUSEKEEP_MIN_DAYS`),
+   which is how long a cheap rollback stays possible. It must run before the next
+   staging, which overwrites the staged column. A run on an unchanged map does only this.
+3. **Build.** Rebuild the spatial image from the checkout, then in a throwaway container
+   build the road network from the map and deprivation file, divide it into regions and
+   build the region tables, into `iznik-routing-go/data/reach.next`. The new layout's
+   fingerprint is read from the tables' header.
+4. **Stage.** Work out every post's notes under the new layout (`reach labels-export`)
+   and write them beside the live ones (`reach labels-apply`: `reach_labels_next` and
+   leaf rows stamped with the new fingerprint), one post per statement. Members see
+   nothing yet.
+5. **Ship.** Copy the artifacts and the deprivation file to each node, beside the live
+   ones, and check the copy carries the new fingerprint.
+6. **Switch**, back to back: a top-up export and apply for the posts that arrived since
+   step 4; the pairing record set to the new layout; then the Docker host's container,
+   db2, db3, each stopped, swapped (the live artifacts kept as `reach.prev`), started
+   through monit and required to serve the new fingerprint, with the reach engine and a
+   route answering, before the next is touched.
+7. **Strand pass.** Posts labelled by the old engine between the top-up and the switch
+   have their note cleared and are labelled again by `ripple:backfill-reach-labels`.
+
+A failure before step 6 changes nothing members see; the next run starts again. A
+failure during step 6 stops where it is and holds the lock as FAILED, with the ledger.
+
+To roll back, before the next housekeep: `freegle-maint run reach --rollback --live`. It
+sets the pairing record back, swaps `reach.prev` back on every server, restarts them in
+the same order, and relabels any post written by the rolled-back layout. Its state is in
+`/var/lib/freegle-maint/reach/`.
+
 ## The gates
 
 Preflight refuses, and changes nothing, if any of these holds:
@@ -334,12 +382,13 @@ Each step is deliberate, and each machine is turned on separately.
    to `/etc/freegle-maint/freegle-maint.env`. Leave `MAINT_LIVE_HOSTS` empty.
 3. `systemctl enable freegle-maint-resume.service`.
 4. Enable the timers:
-   `systemctl enable --now freegle-maint-{db,mail,arbitrator,docker,lb}.timer`.
+   `systemctl enable --now freegle-maint-{db,mail,arbitrator,docker,lb,reach}.timer`.
    Every run is now a dry run. Each mails what it would have done.
 5. After a week of clean dry runs, add one machine to `MAINT_LIVE_HOSTS`, for example
    `db2-internal` (the read node). Watch its first live run.
 6. Add the rest one at a time, a week apart. The names are `db2-internal`,
-   `db3-internal`, `db1-internal`, `bulk2-internal`, `ha-internal` and `docker`.
+   `db3-internal`, `db1-internal`, `bulk2-internal`, `ha-internal`, `docker` and
+   `reach`. Run the first live `reach` refresh by hand and watch it.
 
 To run one machine by hand, as root on the Docker host:
 
@@ -362,6 +411,9 @@ cadence.
 | Stop all maintenance from starting | `freegle-maint pause <reason>` (writes `/etc/freegle-maint/PAUSE`) |
 | Allow it again | `freegle-maint unpause` |
 | Release a failed run's lock, after dealing with it | `freegle-maint clear-failed` |
+| Refresh the road map by hand (dry run first) | `freegle-maint run reach`, then `--live` |
+| Make the last road map switch permanent now | `freegle-maint run reach --housekeep-only --live` |
+| Put the previous road map back | `freegle-maint run reach --rollback --live` |
 
 A run checks the pause file when it starts, before its first change, and again just
 before the drain, so pausing stops a run in progress at the next of those points. Once

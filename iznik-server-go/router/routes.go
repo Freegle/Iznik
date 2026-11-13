@@ -77,7 +77,6 @@ import (
 	"github.com/freegle/iznik-server-go/stdmsg"
 	"github.com/freegle/iznik-server-go/story"
 	"github.com/freegle/iznik-server-go/supportai"
-	"github.com/freegle/iznik-server-go/supportcase"
 	"github.com/freegle/iznik-server-go/systemlogs"
 	"github.com/freegle/iznik-server-go/team"
 	"github.com/freegle/iznik-server-go/town"
@@ -1989,42 +1988,6 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/supportai/runs", supportai.Record)
 		rg.Patch("/supportai/runs", supportai.Rate)
 		rg.Get("/supportai/runs/:id", supportai.Get)
-
-		// Support cases: chats moderators have referred to Support (list and full view Support/Admin
-		// only; the referring moderator sees their own case without the first pass)
-		// @Router /supportcases [get]
-		// @Summary List support cases, newest first
-		// @Tags supportcase
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {array} supportcase.Row
-		rg.Get("/supportcases", supportcase.List)
-
-		// @Router /supportcases [patch]
-		// @Summary Mark a support case Handled or Open
-		// @Tags supportcase
-		// @Accept json
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {object} map[string]interface{}
-		rg.Patch("/supportcases", supportcase.Patch)
-
-		// @Router /supportcases/{id} [get]
-		// @Summary Get a support case
-		// @Tags supportcase
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {object} supportcase.SupportView
-		rg.Get("/supportcases/:id", supportcase.Get)
-
-		// @Router /supportcases/{id}/messages [post]
-		// @Summary Reply on a support case
-		// @Tags supportcase
-		// @Accept json
-		// @Produce json
-		// @Security BearerAuth
-		// @Success 200 {object} map[string]interface{}
-		rg.Post("/supportcases/:id/messages", supportcase.PostMessage)
 
 		// GDPR Data Export
 		rg.Post("/export", export.PostExport)

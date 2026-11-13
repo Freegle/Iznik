@@ -1007,10 +1007,15 @@ describe('MessageExpanded', () => {
 
       const thumbnails = wrapper.findAll('.thumbnail-item')
       await thumbnails[1].trigger('click')
-      await flushPromises()
 
-      // Second thumbnail should now be active
-      expect(thumbnails[1].classes()).toContain('active')
+      // Second thumbnail should now be active. Read the DOM again rather than the wrappers taken
+      // before the click, and wait for it: this passes alone every time but not always in a
+      // loaded full run, where the update was not yet visible one tick after the click.
+      await vi.waitFor(() =>
+        expect(wrapper.findAll('.thumbnail-item')[1].classes()).toContain(
+          'active'
+        )
+      )
     })
   })
 

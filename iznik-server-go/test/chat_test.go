@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	url2 "net/url"
 	"os"
@@ -1889,45 +1890,134 @@ func TestAllSeenFDDoesNotTouchModChats(t *testing.T) {
 // ReferToSupport tests
 // =============================================================================
 
+// referTasks returns the data of every refer_to_support task queued for a chat, oldest first.
+func referTasks(t *testing.T, chatid uint64) []map[string]interface{} {
+	t.Helper()
+	var rows []string
+	database.DBConn.Raw("SELECT data FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ? ORDER BY id", chatid).Pluck("data", &rows)
+	t.Cleanup(func() {
+		database.DBConn.Exec("DELETE FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ?", chatid)
+	})
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, r := range rows {
+		var d map[string]interface{}
+		assert.NoError(t, json2.Unmarshal([]byte(r), &d))
+		out = append(out, d)
+	}
+	return out
+}
+
+func referChat(t *testing.T, token string, chatid uint64, reason string) *http.Response {
+	t.Helper()
+	payload := map[string]interface{}{"id": chatid, "action": "ReferToSupport", "modtools": true}
+	if reason != "" {
+		payload["reason"] = reason
+	}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	return resp
+}
+
+// A referral is one queued task and nothing else: support:first-pass in the batch takes it from there.
 func TestReferToSupport(t *testing.T) {
 	prefix := uniquePrefix("refersupport")
-	db := database.DBConn
 	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_MODERATOR)
 	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
 	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	CreateTestChatMessage(t, chatid, user1ID, "Hello")
 	_, token := CreateTestSession(t, user1ID)
 
-	payload := map[string]interface{}{"id": chatid, "action": "ReferToSupport"}
-	s, _ := json2.Marshal(payload)
-	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
-	request.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(request)
+	resp := referChat(t, token, chatid, "  Why can't they post?  ")
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 	var result map[string]interface{}
 	json2.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Equal(t, "Success", result["status"])
+	_, hasCase := result["caseid"]
+	assert.False(t, hasCase, "there is no case any more")
 
-	// A new referral is a case row, not a background task: the case is the queue for the first pass.
-	caseid := uint64(result["caseid"].(float64))
-	assert.Greater(t, caseid, uint64(0))
-	t.Cleanup(func() { cleanupSupportCase(caseid) })
-	var taskCount int64
-	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ?", chatid).Scan(&taskCount)
-	assert.Equal(t, int64(0), taskCount)
-
-	var status, fp string
-	var referrer, member uint64
-	db.Raw("SELECT status, firstpass_status, referrerid, userid FROM support_cases WHERE id = ?", caseid).Row().Scan(&status, &fp, &referrer, &member)
-	assert.Equal(t, "Open", status)
-	assert.Equal(t, "Pending", fp)
-	assert.Equal(t, user1ID, referrer)
-	assert.Equal(t, user2ID, member, "a member-to-member chat is about the other participant")
+	tasks := referTasks(t, chatid)
+	if assert.Len(t, tasks, 1) {
+		assert.Equal(t, float64(user1ID), tasks[0]["userid"])
+		assert.Equal(t, float64(user2ID), tasks[0]["memberid"], "a member-to-member chat is about the other participant")
+		assert.Equal(t, float64(0), tasks[0]["groupid"], "the referrer moderates no community a participant is in")
+		assert.Equal(t, "Why can't they post?", tasks[0]["reason"])
+	}
 }
 
-// A plain member who is a participant may not open a case: each one spends a model pass.
+// A double-click is one referral: the second identical request queues nothing. A different reason
+// is a new referral.
+func TestReferToSupportDoubleClickQueuesOnce(t *testing.T) {
+	prefix := uniquePrefix("refersupport_dbl")
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_MODERATOR)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chatid, "").StatusCode)
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chatid, "").StatusCode)
+	assert.Len(t, referTasks(t, chatid), 1)
+
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chatid, "Something else").StatusCode)
+	assert.Len(t, referTasks(t, chatid), 2)
+
+	// The batch takes the reason out of a task once it has mailed it. The check still tells that
+	// referral from a new one with no reason, and still catches a repeat of it.
+	database.DBConn.Exec("UPDATE background_tasks SET processed_at = NOW(), data = JSON_REMOVE(data, '$.reason') WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ?", chatid)
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chatid, "Something else").StatusCode)
+	assert.Len(t, referTasks(t, chatid), 2, "the same reason again is still a repeat")
+	chat2 := CreateTestChatRoom(t, user2ID, &user1ID, nil, "User2User")
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chat2, "Only this").StatusCode)
+	database.DBConn.Exec("UPDATE background_tasks SET processed_at = NOW(), data = JSON_REMOVE(data, '$.reason') WHERE task_type = 'refer_to_support' AND JSON_EXTRACT(data, '$.chatid') = ?", chat2)
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chat2, "").StatusCode)
+	assert.Len(t, referTasks(t, chat2), 2, "no reason is a different referral from one that had a reason")
+}
+
+// A member-to-member chat has no community of its own, so the referral is for a community the
+// referrer moderates that a participant belongs to: first the one the chat's post is on, then one both
+// participants are in.
+func TestReferToSupportChoosesTheCommunity(t *testing.T) {
+	prefix := uniquePrefix("refersupport_grp")
+	db := database.DBConn
+	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
+	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
+	user2ID := CreateTestUser(t, prefix+"_u2", utils.SYSTEMROLE_USER)
+	oneOnly := CreateTestGroup(t, prefix+"_one")
+	both := CreateTestGroup(t, prefix+"_both")
+	notMod := CreateTestGroup(t, prefix+"_notmod")
+	for _, g := range []uint64{oneOnly, both} {
+		CreateTestMembership(t, modID, g, utils.ROLE_MODERATOR)
+	}
+	CreateTestMembership(t, modID, notMod, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user1ID, oneOnly, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user1ID, both, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, both, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user1ID, notMod, utils.ROLE_MEMBER)
+	CreateTestMembership(t, user2ID, notMod, utils.ROLE_MEMBER)
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, modID)
+
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chatid, "first").StatusCode)
+	tasks := referTasks(t, chatid)
+	if assert.Len(t, tasks, 1) {
+		assert.Equal(t, float64(both), tasks[0]["groupid"], "the community both participants are in")
+		assert.Equal(t, float64(0), tasks[0]["memberid"], "the referrer is not in the chat, so it is about no single member")
+	}
+
+	// Once the chat is about a post on the other community, that community wins.
+	msgID := CreateTestMessage(t, user1ID, oneOnly, "Test Offer "+prefix, 55.9533, -3.1883)
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date, seenbyall, mailedtoall) VALUES (?, ?, 'Interested', 'Interested', ?, NOW(), 1, 1)", chatid, user2ID, msgID)
+	assert.Equal(t, fiber.StatusOK, referChat(t, token, chatid, "second").StatusCode)
+	tasks = referTasks(t, chatid)
+	if assert.Len(t, tasks, 2) {
+		assert.Equal(t, float64(oneOnly), tasks[1]["groupid"], "the community the chat's post is on")
+	}
+}
+
+// A plain member who is a participant may not refer a chat: each referral spends a model pass.
 func TestReferToSupportPlainMemberParticipantRefused(t *testing.T) {
 	prefix := uniquePrefix("refersupport_plain")
 	user1ID := CreateTestUser(t, prefix+"_u1", utils.SYSTEMROLE_USER)
@@ -1944,9 +2034,7 @@ func TestReferToSupportPlainMemberParticipantRefused(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	assert.Contains(t, string(body), "Only moderators can refer a chat to Support")
 
-	var cases int64
-	database.DBConn.Raw("SELECT COUNT(*) FROM support_cases WHERE chatid = ?", chatid).Scan(&cases)
-	assert.Equal(t, int64(0), cases)
+	assert.Len(t, referTasks(t, chatid), 0)
 }
 
 func TestReferToSupportNotMember(t *testing.T) {
@@ -1970,7 +2058,6 @@ func TestReferToSupportNotMember(t *testing.T) {
 // every one of these with a 403 (Discourse 10199, 2026-09-25).
 func TestReferToSupportByGroupModerator(t *testing.T) {
 	prefix := uniquePrefix("refersupport_mod")
-	db := database.DBConn
 	memberID := CreateTestUser(t, prefix+"_m", utils.SYSTEMROLE_USER)
 	modID := CreateTestUser(t, prefix+"_mod", utils.SYSTEMROLE_MODERATOR)
 	groupID := CreateTestGroup(t, prefix)
@@ -1987,15 +2074,12 @@ func TestReferToSupportByGroupModerator(t *testing.T) {
 	resp, _ := getApp().Test(request)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
-	var out map[string]interface{}
-	json2.NewDecoder(resp.Body).Decode(&out)
-	caseid := uint64(out["caseid"].(float64))
-	t.Cleanup(func() { cleanupSupportCase(caseid) })
-
-	var referrer, member uint64
-	db.Raw("SELECT referrerid, userid FROM support_cases WHERE id = ?", caseid).Row().Scan(&referrer, &member)
-	assert.Equal(t, modID, referrer, "the referral must be recorded under the moderator who asked")
-	assert.Equal(t, memberID, member)
+	tasks := referTasks(t, chatid)
+	if assert.Len(t, tasks, 1) {
+		assert.Equal(t, float64(modID), tasks[0]["userid"], "the referral must be recorded under the moderator who asked")
+		assert.Equal(t, float64(memberID), tasks[0]["memberid"])
+		assert.Equal(t, float64(groupID), tasks[0]["groupid"], "a member-to-mods chat is referred for its own community")
+	}
 }
 
 // A moderator of some other community, whose members are not in this chat, still may not.

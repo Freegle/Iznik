@@ -19,7 +19,6 @@ import (
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/maildeferral"
 	"github.com/freegle/iznik-server-go/queue"
-	"github.com/freegle/iznik-server-go/supportcase/casestore"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/ux"
@@ -1158,7 +1157,6 @@ func GetSession(c *fiber.Ctx) error {
 		var emailin, emailout int64
 		var maildeferrals int64
 		var helperEscalated int64
-		var supportCases int64
 
 		var wg2 sync.WaitGroup
 
@@ -1531,17 +1529,6 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- Support cases waiting for Support (Support and Admin) ---
-		// The Cases tab of Support Tools, which only Support and Admin see. A referring moderator
-		// follows their own case by mail and the case link, so they get no count for it.
-		if userRow.Systemrole == utils.SYSTEMROLE_SUPPORT || userRow.Systemrole == utils.SYSTEMROLE_ADMIN {
-			wg2.Add(1)
-			go func() {
-				defer wg2.Done()
-				supportCases, _ = casestore.CountAwaitingSupport(db)
-			}()
-		}
-
 		// --- Gift aid (global) ---
 		wg2.Add(1)
 		go func() {
@@ -1582,7 +1569,7 @@ func GetSession(c *fiber.Ctx) error {
 				// contains a space, so a parenthesized UNION subquery can be given as the
 				// "table name" with its own bind args in Table()'s variadic args.
 				// Counted on the same terms as the Related Members list, which leaves out a
-				// pair across the TrashNothing line because the merge would be refused.
+				// pair with a TrashNothing account because the merge would be refused.
 				mergeable := user.MergeableSidesSQL("u1", "u2")
 				db.Table("(SELECT ur.user1 FROM users_related ur "+
 					"INNER JOIN memberships m ON m.userid = ur.user1 "+
@@ -1671,7 +1658,7 @@ func GetSession(c *fiber.Ctx) error {
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
-			emailin + emailout + helperEscalated + supportCases + maildeferrals + uxExperimentsConfirm + uxExperimentsRemove
+			emailin + emailout + helperEscalated + maildeferrals + uxExperimentsConfirm + uxExperimentsRemove
 
 		work = fiber.Map{
 			"pending":                  pending,
@@ -1692,7 +1679,6 @@ func GetSession(c *fiber.Ctx) error {
 			"chatreviewother":          chatreviewother,
 			"newsletterstories":        newsletterstories,
 			"helperEscalated":          helperEscalated,
-			"supportcases":             supportCases,
 			"giftaid":                  giftaid,
 			"happiness":                happiness,
 			"relatedmembers":           relatedmembers,
@@ -2086,6 +2072,18 @@ func PatchSession(c *fiber.Ctx) error {
 			})
 		}
 
+		// A TrashNothing address belongs to the account holding the TN id TrashNothing names for
+		// it, so confirming one moves nothing and merges nothing, wherever it is. Adding one is
+		// refused below; this catches a key mailed before that was. The key is spent.
+		for _, mail := range emails {
+			if user.IsTNAddress(mail.Email) {
+				db.Table("users_emails").Where("id = ?", mail.ID).Update("validatekey", gorm.Expr("NULL"))
+				stdlog.Printf("User %d tried to confirm TrashNothing address row %d, held by user %d: refused", myid, mail.ID, mail.UserID)
+
+				return fiber.NewError(fiber.StatusForbidden, user.MsgTNAddressRefused)
+			}
+		}
+
 		for _, mail := range emails {
 			if mail.UserID != 0 && mail.UserID != myid {
 				// The address belongs to another account, so the member has
@@ -2277,6 +2275,15 @@ func PatchSession(c *fiber.Ctx) error {
 		// Queue verification email. Return ret=10 so the frontend shows the
 		// "check your mailbox" modal.
 		wg.Wait()
+
+		// A TrashNothing address belongs to the account holding the TN id TrashNothing names for
+		// it, so nobody adds one here. Refused before any mail is sent, with a reason to show.
+		if user.IsTNAddress(*req.Email) {
+			return c.JSON(fiber.Map{
+				"ret":    12,
+				"status": user.MsgTNAddressRefused,
+			})
+		}
 
 		if err := queue.QueueTask(queue.TaskEmailVerify, map[string]interface{}{
 			"user_id": myid,

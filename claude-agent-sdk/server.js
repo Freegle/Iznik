@@ -546,7 +546,7 @@ app.post(
     clean: cleanFirstPassRequest,
     run: (request, { signal }) => runFirstPass(request, { signal, deps: { audit, fetchDump: fetchUserDump, pagesDir: path.join(CODEBASE_DIR, 'iznik-nuxt3', 'pages') } }),
     summary: (result, request) =>
-      `case=${request.caseid} classification=${result.brief.classification} confidence=${result.brief.confidence.level} images=${result.brief.images.sent}`,
+      `referral=${request.referralid} classification=${result.brief.classification} confidence=${result.brief.confidence.level} images=${result.brief.images.sent}`,
   })
 )
 

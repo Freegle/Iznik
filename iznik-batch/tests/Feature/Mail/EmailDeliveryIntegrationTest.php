@@ -319,13 +319,18 @@ class EmailDeliveryIntegrationTest extends TestCase
         $replyToEmail = $this->uniqueEmail('modreply');
 
         $mail = new ReferToSupportMail(
-            userName: 'Alice Tester',
-            userId: 111,
+            referrerName: 'Alice Tester',
+            referrerId: 111,
             chatId: 222,
-            otherUserName: 'Bob Helper',
-            otherUserId: 333,
+            chatType: 'User2Mod',
+            memberName: 'Bob Helper',
+            memberId: 333,
+            groupName: 'Test Community',
+            fromAddress: $replyToEmail,
+            fromName: 'Test Community Volunteers',
             replyToAddress: $replyToEmail,
-            replyToName: 'Alice Tester',
+            replyToName: 'Test Community Volunteers',
+            reason: 'Why can they not post?',
         );
         Mail::to($supportEmail)->send($mail);
 

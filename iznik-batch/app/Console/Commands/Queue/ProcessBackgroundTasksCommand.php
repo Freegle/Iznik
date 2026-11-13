@@ -9,8 +9,6 @@ use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Charity\CharitySignupMail;
 use App\Mail\Chat\ChatSpamReportMail;
-use App\Mail\Chat\ReferToSupportMail;
-use App\Mail\Chat\SupportCaseMessageMail;
 use App\Mail\Donation\DonateExternalMail;
 use App\Mail\Newsfeed\ChitchatReportMail;
 use App\Mail\Session\ForgotPasswordMail;
@@ -194,6 +192,9 @@ class ProcessBackgroundTasksCommand extends Command
             ->whereNull('processed_at')
             ->whereNull('failed_at')
             ->where('attempts', '<', self::MAX_ATTEMPTS)
+            // A referral to Support is support:first-pass's: its AI pass can take minutes, which would
+            // hold every other task up here.
+            ->where('task_type', '!=', BackgroundTask::TASK_REFER_TO_SUPPORT)
             // A retry is queued with created_at in the future, for when it falls due. Compared on
             // the database clock, which also stamps rows queued by the Go API, so a database
             // timezone that differs from the app's cannot hold ordinary tasks back.
@@ -298,8 +299,6 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_EMAIL_MOD_STDMSG        => $this->handleModStdMessageForMember($taskType, $data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_MERGE             => $this->handleEmailMerge($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_VERIFY            => $this->handleEmailVerify($data, $spooler, $shouldSpool),
-            BackgroundTask::TASK_REFER_TO_SUPPORT        => $this->handleReferToSupport($data, $spooler, $shouldSpool),
-            BackgroundTask::TASK_SUPPORT_CASE_MESSAGE    => $this->handleSupportCaseMessage($data, $spooler),
             BackgroundTask::TASK_MESSAGE_OUTCOME         => $this->handleMessageOutcome($data),
             BackgroundTask::TASK_MESSAGE_PROMISED        => $this->handleMessagePromised($data),
             BackgroundTask::TASK_FREEBIE_ALERTS_ADD      => $this->handleFreebieAlertsAdd($data),
@@ -1343,6 +1342,14 @@ class ProcessBackgroundTasksCommand extends Command
             return;
         }
 
+        // A TrashNothing address belongs to the account holding the TN id TrashNothing names for
+        // it, so nobody adds one in their settings. The API refuses it; a task queued before that
+        // refusal gets no key and no mail, so there is nothing to confirm.
+        if (User::tnUsernameFromEmail($email) !== NULL) {
+            Log::info('Email verify skipped: a TrashNothing address is not added by a member', ['user_id' => $userId]);
+            return;
+        }
+
         // Check if this email is already one of the user's emails.
         $canon = strtolower(trim($email));
         $existingRow = DB::table('users_emails')
@@ -1418,145 +1425,6 @@ class ProcessBackgroundTasksCommand extends Command
         Log::info('Sent email verification', [
             'user_id' => $userId,
             'email' => $email,
-        ]);
-    }
-
-    /**
-     * Tell the other side of a support case about a new message in its ModTools thread.
-     *
-     * A Support message goes to the referring moderator; a Referrer message goes to the support
-     * address. The author is never mailed their own message, and nothing from the first pass is
-     * included. Replies are made in ModTools, so a missing case or message is logged and dropped.
-     */
-    protected function handleSupportCaseMessage(array $data, EmailSpoolerService $spooler): void
-    {
-        $caseId = (int) ($data['caseid'] ?? 0);
-        $messageId = (int) ($data['messageid'] ?? 0);
-
-        if ($caseId === 0 || $messageId === 0) {
-            throw new \RuntimeException('support_case_message requires caseid and messageid');
-        }
-
-        $message = DB::table('support_case_messages')->where('id', $messageId)->where('caseid', $caseId)->first();
-        $case = DB::table('support_cases')->where('id', $caseId)->first();
-
-        if (! $message || ! $case) {
-            Log::warning('Support case message not found', ['case_id' => $caseId, 'message_id' => $messageId]);
-            return;
-        }
-
-        $author = $message->userid ? User::find($message->userid) : null;
-        $authorEmails = $author
-            ? DB::table('users_emails')->where('userid', $author->id)->pluck('email')->map(fn ($e) => strtolower((string) $e))->all()
-            : [];
-
-        if ($message->role === 'Support') { // role-literal-ok: support case message role
-            $referrer = $case->referrerid ? User::find($case->referrerid) : null;
-            $email = $referrer?->email_preferred;
-
-            if (! $referrer || ! $email || (int) $referrer->id === (int) $message->userid) {
-                return;
-            }
-
-            $recipients = [$email];
-        } else {
-            $supportAddr = (string) config('freegle.mail.support_addr', 'support@ilovefreegle.org');
-            $recipients = array_values(array_filter(
-                array_map('trim', explode(',', $supportAddr)),
-                fn ($r) => $r !== '' && ! in_array(strtolower($r), $authorEmails, true)
-            ));
-        }
-
-        if (! $recipients) {
-            return;
-        }
-
-        $mail = new SupportCaseMessageMail(
-            caseId: $caseId,
-            role: (string) $message->role,
-            authorName: $author ? ($author->fullname ?: 'Someone') : 'Someone',
-            body: (string) $message->body,
-        );
-
-        $spooler->spool($mail, $recipients);
-
-        Log::info('Sent support case message email', ['case_id' => $caseId, 'message_id' => $messageId]);
-    }
-
-    /**
-     * Handle refer-to-support — sends a plain text email to the support team.
-     *
-     * V1 parity: ChatRoom::referToSupport() lines 2266-2284.
-     */
-    protected function handleReferToSupport(
-        array $data,
-        EmailSpoolerService $spooler,
-        bool $shouldSpool
-    ): void {
-        // A support case is mailed by support:first-pass, with its brief; this is only the legacy task.
-        if (! empty($data['caseid'])) {
-            return;
-        }
-
-        $chatId = (int) ($data['chatid'] ?? 0);
-        $userId = (int) ($data['userid'] ?? 0);
-
-        if ($chatId === 0 || $userId === 0) {
-            throw new \RuntimeException('refer_to_support requires chatid and userid');
-        }
-
-        $chat = DB::table('chat_rooms')->where('id', $chatId)->first();
-
-        if (! $chat) {
-            Log::warning("Chat not found for refer_to_support: {$chatId}");
-            return;
-        }
-
-        $user = User::find($userId);
-
-        if (! $user) {
-            Log::warning("User not found for refer_to_support: {$userId}");
-            return;
-        }
-
-        // The "other" user in the chat.
-        $otherUserId = $chat->user1 == $userId ? $chat->user2 : $chat->user1;
-        $otherUser = $otherUserId ? User::find($otherUserId) : null;
-        $otherUserName = $otherUser ? ($otherUser->fullname ?: 'Unknown') : 'Unknown';
-
-        // Get group mods email for reply-to.
-        $groupId = $chat->groupid;
-        $replyToAddress = config('freegle.mail.noreply_addr');
-        $replyToName = config('freegle.branding.name');
-
-        if ($groupId) {
-            $group = DB::table('groups')->where('id', $groupId)->first();
-
-            if ($group) {
-                $groupNameShort = $group->nameshort ?? '';
-                $replyToAddress = $groupNameShort . '-volunteers@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-                $replyToName = ($group->namefull ?: $groupNameShort) . ' Volunteers';
-            }
-        }
-
-        $mail = new ReferToSupportMail(
-            userName: $user->fullname ?: 'Unknown',
-            userId: $userId,
-            chatId: $chatId,
-            otherUserName: $otherUserName,
-            otherUserId: (int) ($otherUserId ?? 0),
-            replyToAddress: $replyToAddress,
-            replyToName: $replyToName,
-        );
-
-        $supportAddr = config('freegle.mail.support_addr', 'support@ilovefreegle.org');
-        $recipients = array_map('trim', explode(',', $supportAddr));
-
-        $spooler->spool($mail, $recipients);
-
-        Log::info('Sent refer to support email', [
-            'chat_id' => $chatId,
-            'user_id' => $userId,
         ]);
     }
 

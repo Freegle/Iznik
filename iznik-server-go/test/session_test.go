@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,8 +19,10 @@ import (
 	"github.com/freegle/iznik-server-go/group"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/session"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func postSession(body string) *http.Response {
@@ -1292,6 +1295,86 @@ func TestPatchSessionConfirmEmailMergesUser(t *testing.T) {
 
 	// Cleanup.
 	db.Exec("DELETE FROM users_emails WHERE email = ?", testEmail)
+}
+
+// A TrashNothing address belongs to the account holding the TN id TrashNothing names for it, so
+// a member cannot add one in their settings. It is refused at once, with a reason, and no
+// verification mail is queued, whoever holds it and whatever case it is typed in.
+func TestPatchSessionRefusesATrashNothingAddress(t *testing.T) {
+	prefix := uniquePrefix("add_tn_email")
+	userID := CreateTestUser(t, prefix, utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, userID)
+	db := database.DBConn
+
+	for _, email := range []string{
+		prefix + "-g12@user.trashnothing.com",
+		prefix + "@user.trashnothing.com",
+		" " + prefix + "-g7@User.TrashNothing.com ",
+	} {
+		body, _ := json.Marshal(map[string]interface{}{"email": email})
+		req := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		require.Equal(t, 200, resp.StatusCode, email)
+
+		var result map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&result)
+		assert.Equal(t, float64(12), result["ret"], email)
+		assert.Contains(t, result["status"], "TrashNothing", "the member is told why: %s", email)
+
+		var queued int64
+		db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_verify' "+
+			"AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.email')) = ?", strings.TrimSpace(email)).Scan(&queued)
+		assert.Zero(t, queued, "no verification mail for %s", email)
+	}
+}
+
+// A key already mailed for a TrashNothing address (before adding one was refused) is the
+// backstop: confirming it merges nothing and moves nothing, because the address belongs to the
+// account holding the TN id, and the key is spent.
+func TestPatchSessionConfirmEmailLeavesATrashNothingAddressWhereItIs(t *testing.T) {
+	prefix := uniquePrefix("confirm_tn")
+	db := database.DBConn
+
+	freegler := CreateTestUser(t, prefix+"_fd", utils.SYSTEMROLE_USER)
+	_, token := CreateTestSession(t, freegler)
+	tn := CreateTestUser(t, prefix+"_tn", utils.SYSTEMROLE_USER)
+	stampTN(tn, 991101)
+
+	tnEmail := prefix + "-g3@user.trashnothing.com"
+	validateKey := prefix[:24] // validatekey column is varchar(32)
+	db.Exec("UPDATE users_emails SET preferred = 0 WHERE userid = ?", tn)
+	db.Exec("INSERT INTO users_emails (email, canon, backwards, validatekey, userid, preferred) VALUES (?, ?, ?, ?, ?, 1)",
+		tnEmail, user.CanonicalizePartnerEmail(tnEmail), reverseString(user.CanonicalizePartnerEmail(tnEmail)), validateKey, tn)
+	t.Cleanup(func() { db.Exec("DELETE FROM users_emails WHERE email = ?", tnEmail) })
+
+	var preferredBefore string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND preferred = 1", freegler).Scan(&preferredBefore)
+
+	body, _ := json.Marshal(map[string]interface{}{"key": validateKey})
+	req := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	// The test app has fiber's default error handler, which writes the message as plain text;
+	// main.go's wraps it as {"error", "message"}, which the confirm page reads. Either way the
+	// reason is in the body.
+	raw, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(raw), "TrashNothing", "the confirm page can say why")
+
+	var row struct {
+		Userid      uint64
+		Validatekey *string
+	}
+	db.Raw("SELECT userid, validatekey FROM users_emails WHERE email = ?", tnEmail).Scan(&row)
+	assert.Equal(t, tn, row.Userid, "the address stays on the TrashNothing account")
+	assert.Nil(t, row.Validatekey, "the key is spent")
+	assert.True(t, userExists(tn), "nothing is merged")
+
+	var preferredAfter string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? AND preferred = 1", freegler).Scan(&preferredAfter)
+	assert.Equal(t, preferredBefore, preferredAfter, "the member's own preferred address is untouched")
 }
 
 // TestPatchSessionConfirmEmailMergeConsolidatesChatRooms covers the account

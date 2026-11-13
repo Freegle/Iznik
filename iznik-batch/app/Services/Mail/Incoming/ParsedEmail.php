@@ -395,6 +395,17 @@ class ParsedEmail
         return $this->getHeader('x-trash-nothing-secret');
     }
 
+    /**
+     * Get the member's TN user id from the mail, or null if it is absent or not an id. Anyone can
+     * write this header, so it counts only alongside TN's secret.
+     */
+    public function getTrashNothingUserId(): ?int
+    {
+        $id = trim((string) $this->getHeader('x-trash-nothing-user-id'));
+
+        return ctype_digit($id) && (int) $id > 0 ? (int) $id : null;
+    }
+
     // ========================================
     // Serialization for Validation/Comparison
     // ========================================

@@ -494,6 +494,7 @@ var cronJobs = []CronJob{
 	{Command: "freegle-maint mail", Name: "OS Patching: Mail Relay", Description: "Patches and, when needed, reboots the mail relay (bulk2)", Schedule: "Weekly (Wed 2:15am UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
 	{Command: "freegle-maint docker", Name: "OS Patching: Docker Host", Description: "Patches and, when needed, reboots this Docker host; the run is recorded after the reboot", Schedule: "Weekly (Wed 11:35pm UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
 	{Command: "freegle-maint arbitrator", Name: "OS Patching: Arbitrator", Description: "Patches and, when needed, reboots the Galera arbitrator (db1), stopping garbd first", Schedule: "Weekly (Fri 4:40am UTC)", IntervalMinutes: 10080, Category: "Host Maintenance", Active: true},
+	{Command: "freegle-maint reach", Name: "Road Map Refresh", Description: "Carries the month's new road map into every routing server: builds the road network and regions, stages every post's notes, switches one server at a time", Schedule: "Monthly (2nd, 1am UTC)", IntervalMinutes: 46080, Category: "Host Maintenance", Active: true},
 	{Command: "freegle-maint rollout", Name: "OS Patching: Turn On Every Host", Description: "Which hosts are live and which still dry runs; overdue when no host has been made live for 14 days", Schedule: "When the live hosts change", IntervalMinutes: 20160, Category: "Host Maintenance", Active: true},
 
 	// Patch freshness - written by the batch host monitor (HostPatchTracker), not
