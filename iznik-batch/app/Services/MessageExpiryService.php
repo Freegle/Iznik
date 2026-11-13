@@ -108,6 +108,7 @@ class MessageExpiryService
         $ids = Message::query()
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
+            // keep-raw: Compares a datetime column with the current date: CURRENT_DATE is the same on both engines and the builder has no form for it.
             ->whereRaw('messages.deadline < CURRENT_DATE')
             ->whereNull('messages.deleted')
             // A post with no live approved posting is not on the site, so it cannot

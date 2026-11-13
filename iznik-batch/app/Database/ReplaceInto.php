@@ -32,6 +32,7 @@ final class ReplaceInto
                 }
             }
 
+            // keep-raw: REPLACE INTO has no query-builder form; this class renders it for each engine.
             DB::statement(
                 'REPLACE INTO '.$table.' ('.implode(', ', $columns).') VALUES '.implode(', ', array_fill(0, count($rows), $one)),
                 $bindings

@@ -169,7 +169,9 @@ class UserApproxLocService
             // not NULL, which would silently place the member in the Atlantic.
             // A Trash Nothing member's mylocation is stale V1 data; TN is the master for their
             // location (User::chosenLatLng), so it is not read for them.
+            // keep-raw: Dialect-rendered JSON setting read (settingsPoint) in the select list.
             ->selectRaw($this->settingsPoint('lat').' AS myloc_lat')
+            // keep-raw: Dialect-rendered JSON setting read (settingsPoint) in the select list.
             ->selectRaw($this->settingsPoint('lng').' AS myloc_lng')
             ->get();
     }

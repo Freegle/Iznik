@@ -61,6 +61,7 @@ class DigestPositionsRollupService
                 ->leftJoin('users as u', 'e.userid', '=', 'u.id')
                 ->select('e.email_type as email_type')
                 ->addSelect(new Alias($postCount(), 'num_posts'))
+                // keep-raw: Aggregate with an alias in a grouped select, written as one text on both engines.
                 ->selectRaw('COUNT(*) AS cnt')
         )->groupBy('e.email_type', 'num_posts')->get();
 
@@ -69,7 +70,9 @@ class DigestPositionsRollupService
                 ->join('email_tracking as e', 'c.email_tracking_id', '=', 'e.id')
                 ->leftJoin('users as u', 'e.userid', '=', 'u.id')
                 ->select('e.email_type as email_type', 'c.link_position as link_position')
+                // keep-raw: Distinct aggregate with an alias in a grouped select, written as one text on both engines.
                 ->selectRaw('COUNT(DISTINCT c.email_tracking_id) AS emails_clicked')
+                // keep-raw: Aggregate with an alias in a grouped select, written as one text on both engines.
                 ->selectRaw('COUNT(*) AS clicks')
         )->where(new Regexp('c.link_position', Value::of('^(post_[0-9]+|p[0-9]+)$')))
             ->groupBy('e.email_type', 'c.link_position')->get();

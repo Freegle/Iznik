@@ -108,8 +108,10 @@ class MicroVolunteeringScoreService
             ->groupBy('microactions.userid')
             // 100 * SUM(score_positive) / (SUM(score_positive) + SUM(score_negative)): arithmetic over two aggregates.
             // 100.0 keeps the division fractional and NULLIF turns a zero total into NULL (not an error), as MySQL does.
+            // keep-raw: A computed score from several aggregates, one text for both engines.
             ->selectRaw('microactions.userid, '.self::SCORE_SQL.' AS score')
             // HAVING repeats the expression: PostgreSQL does not resolve a SELECT alias in HAVING.
+            // keep-raw: HAVING on the computed score, one text for both engines.
             ->havingRaw(self::SCORE_SQL.' >= ?', [self::PROMOTE_THRESHOLD])
             ->pluck('microactions.userid');
 

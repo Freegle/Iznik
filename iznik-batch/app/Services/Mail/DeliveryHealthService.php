@@ -95,13 +95,18 @@ class DeliveryHealthService
         // One pass over the sent_at range, splitting the two windows with conditional sums.
         $rows = DB::table('email_tracking')
             ->select(new Alias(new SubstringIndex('recipient_email', '@', -1), 'domain'))
+            // keep-raw: Conditional aggregate: the builder has no SUM over a CASE.
             ->selectRaw('SUM(CASE WHEN sent_at >= ? THEN 1 ELSE 0 END) AS recent_sent', [$recentStart])
+            // keep-raw: Conditional aggregate: the builder has no SUM over a CASE.
             ->selectRaw('SUM(CASE WHEN sent_at >= ? AND opened_at IS NOT NULL THEN 1 ELSE 0 END) AS recent_opened', [$recentStart])
+            // keep-raw: Conditional aggregate: the builder has no SUM over a CASE.
             ->selectRaw('SUM(CASE WHEN sent_at < ? THEN 1 ELSE 0 END) AS baseline_sent', [$recentStart])
+            // keep-raw: Conditional aggregate: the builder has no SUM over a CASE.
             ->selectRaw('SUM(CASE WHEN sent_at < ? AND opened_at IS NOT NULL THEN 1 ELSE 0 END) AS baseline_opened', [$recentStart])
             ->where('sent_at', '>=', $baselineStart)
             ->where('sent_at', '<', $recentEnd)
             ->groupBy('domain')
+            // keep-raw: HAVING on a conditional aggregate: the builder has no SUM over a CASE.
             ->havingRaw('SUM(CASE WHEN sent_at >= ? THEN 1 ELSE 0 END) >= ?', [$recentStart, self::MIN_RECENT_SENDS])
             ->get();
 

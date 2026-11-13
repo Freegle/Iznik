@@ -20,11 +20,13 @@ final class TableSwap
         $grammar = DB::getSchemaGrammar();
 
         if (DB::connection()->getDriverName() === 'pgsql') {
+            // keep-raw: DDL: CREATE TABLE ... LIKE has no builder form.
             DB::statement('CREATE TABLE '.$grammar->wrapTable($new).' (LIKE '.$grammar->wrapTable($like).' INCLUDING ALL)');
 
             return;
         }
 
+        // keep-raw: DDL: CREATE TABLE ... LIKE has no builder form.
         DB::statement('CREATE TABLE '.$grammar->wrapTable($new).' LIKE '.$grammar->wrapTable($like));
     }
 
@@ -35,13 +37,16 @@ final class TableSwap
 
         if (DB::connection()->getDriverName() === 'pgsql') {
             DB::transaction(function () use ($live, $new, $old, $grammar) {
+                // keep-raw: DDL: the rename of a live table has no builder form.
                 DB::statement('ALTER TABLE '.$grammar->wrapTable($live).' RENAME TO '.$grammar->wrap($old));
+                // keep-raw: DDL: the rename of a live table has no builder form.
                 DB::statement('ALTER TABLE '.$grammar->wrapTable($new).' RENAME TO '.$grammar->wrap($live));
             });
 
             return;
         }
 
+        // keep-raw: DDL: RENAME TABLE swaps two tables atomically, no builder form.
         DB::statement('RENAME TABLE '.$grammar->wrapTable($live).' TO '.$grammar->wrapTable($old).', '.$grammar->wrapTable($new).' TO '.$grammar->wrapTable($live));
     }
 

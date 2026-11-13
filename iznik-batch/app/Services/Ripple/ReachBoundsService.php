@@ -89,6 +89,7 @@ class ReachBoundsService
         try {
             // Bad geometry fails here and the fallback below carries on; see Sql::attempt.
             Sql::attempt(function () use ($outerWkt, $innerWkt, $msgid) {
+                // keep-raw: UPDATE with spatial functions and an optional column, built per call.
                 DB::update(
                     'UPDATE rippling_reach
                         SET outer_bound = ST_GeomFromText(?, ' . config('freegle.srid') . '), '

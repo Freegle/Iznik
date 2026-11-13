@@ -171,6 +171,7 @@ final class Sql
     public static function foreignKeysReferencing(string $table): array
     {
         if (DB::getQueryGrammar() instanceof PostgresGrammar) {
+            // keep-raw: PostgreSQL catalog lookup of foreign keys, no builder equivalent.
             return DB::select(
                 'SELECT cl.relname AS "TABLE_NAME", a.attname AS "COLUMN_NAME"
                    FROM pg_constraint c
