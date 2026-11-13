@@ -11,14 +11,27 @@ class UpdateSpatialDataCommandTest extends TestCase
 {
     private string $dataDir;
 
+    /** Highway ways osmium reports per probe area; any area not named reports 50,000. */
+    private array $probeWays = [];
+
     protected function setUp(): void
     {
         parent::setUp();
         // Don't actually shell out to osmium in unit tests. The road check reads
-        // "Number of ways" from osmium fileinfo; report a healthy network by default.
-        // (Symfony quotes each argument, so the pattern matches the quoted word.)
+        // "Number of ways" from osmium fileinfo: report $probeWays for the area the
+        // command names, a healthy network otherwise. (Symfony quotes each argument,
+        // so the pattern matches the quoted word.)
         Process::fake([
-            "*'fileinfo'*" => Process::result("Number of ways: 50000\n"),
+            "*'fileinfo'*" => function ($process) {
+                $command = implode(' ', (array) $process->command);
+                foreach ($this->probeWays as $area => $ways) {
+                    if (str_contains($command, "probe-{$area}-highways")) {
+                        return Process::result("Number of ways: {$ways}\n");
+                    }
+                }
+
+                return Process::result("Number of ways: 50000\n");
+            },
             '*' => Process::result(),
         ]);
         $this->dataDir = storage_path('tests/spatial');
@@ -105,11 +118,7 @@ class UpdateSpatialDataCommandTest extends TestCase
      */
     public function test_refuses_a_map_with_no_roads_on_an_island(): void
     {
-        Process::fake([
-            "*'fileinfo'*probe-isle-of-man-highways*" => Process::result("Number of ways: 12\n"),
-            "*'fileinfo'*" => Process::result("Number of ways: 50000\n"),
-            '*' => Process::result(),
-        ]);
+        $this->probeWays = ['isle-of-man' => 12];
         Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
 
         $this->artisan('spatial:update-data')
@@ -118,7 +127,7 @@ class UpdateSpatialDataCommandTest extends TestCase
             ->assertExitCode(1);
 
         // Every region was still checked, so the error names all that are missing.
-        Process::assertRan(fn ($process) => str_contains($process->command, 'probe-guernsey-CI-highways'));
+        Process::assertRan(fn ($process) => str_contains(implode(' ', (array) $process->command), 'probe-guernsey-CI-highways'));
     }
 
     /**
@@ -133,9 +142,13 @@ class UpdateSpatialDataCommandTest extends TestCase
             ->assertExitCode(0);
 
         foreach (['anglesey-GB', 'cork-IE', 'isle-of-man', 'jersey-CI', 'guernsey-CI'] as $region) {
-            Process::assertRan(fn ($process) => str_contains($process->command, "'extract'")
-                && str_contains($process->command, "probe-{$region}.osm.pbf")
-                && str_contains($process->command, 'uk-latest.osm.pbf.tmp'));
+            Process::assertRan(function ($process) use ($region) {
+                $command = (array) $process->command;
+
+                return in_array('extract', $command, true)
+                    && in_array($this->dataDir . "/probe-{$region}.osm.pbf", $command, true)
+                    && in_array($this->dataDir . '/uk-latest.osm.pbf.tmp', $command, true);
+            });
         }
     }
 
