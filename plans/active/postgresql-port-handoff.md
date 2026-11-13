@@ -92,3 +92,34 @@ Run in the `pg-port` stack through the status API, MySQL first.
   - One test outside the list fails: the `ResumedReachTest` case in open item 1. It fails here as it
     does in CI, so it can be reproduced in the stack. It is not a matter of timing on the CI runner.
 - The 17 failures of the earlier local run are gone now that the MySQL test databases exist.
+
+## State at the pause, 2026-11-13 about 09:50 (uncommitted work in this worktree)
+
+Nothing here is pushed. Do not push until all four local suites pass (Edward, 2026-11-13).
+The stack on this machine answers on status port 12020. Spatial runs on the Bristol extract (set in `.env`).
+
+Last full results: Go MySQL 5436 pass. Laravel MySQL 9911 pass. Go PostgreSQL 26 fail. Laravel PostgreSQL 19 fail.
+Since then, uncommitted and only partly run:
+
+- Go: all 25 listed tests plus the merge tests passed in a filtered PostgreSQL run (64 of 64). Needs a full
+  run on MySQL then PostgreSQL, then prune `tools/pg-ratchet/known-failures/go.txt`.
+- The `ON UPDATE` triggers now leave alone a column the statement names (`SET ts = ts`), as MySQL does:
+  `tools/pg-schema/convert.mjs`, regenerated baseline, `check-triggers.sql`, docs row. Converter unit tests
+  pass. `/api/tests/pgtools` has not been run.
+- The baseline was stale after the hand edit (the migrations row was missing). Regenerated; `--check` passes.
+- Laravel: AutoSplit and Lockdown fixes are in and pass on both engines. The other 16 are diagnosed but
+  not edited; causes are in the session notes below.
+- `ResumedReachTest`: cause found. PostgreSQL's `NOW()` is the transaction's start time and MySQL's is the
+  statement's. `ExpandService.php` lines 1554, 1561 and 1871 write `updated_at = NOW()`, so inside a
+  transaction the row can be stamped earlier than the mailer's pass mark and is skipped. It fails about one
+  run in seven. Fix not yet made: render those with the `Now` expression. The same gap exists for every raw
+  `NOW()` in Laravel (about 40) and Go (273, no translator rule), and for `DEFAULT CURRENT_TIMESTAMP` and
+  the triggers in the baseline. That wider change needs Edward's decision.
+- Laravel causes not yet fixed: JsonPredicateParity (MySQL truth table: `requiresMySql` in setUp);
+  MobileNetwork (test inserts NULL into NOT NULL `comment`); AI image digest (`having` on a select alias);
+  AI usage counts (first error hidden by the `finally` drop: find it); TnMergeCrossposts (test uses raw
+  `ST_SRID(POINT())`, use `Spatial::point`); Paf and TnUserProvisioner (case-insensitive match);
+  CheckBoundaries, SponsorshipReminders, SupportFirstPass, ReachLabels (not yet read).
+- Debug filters: a regexp in `/tmp/pg-ratchet-only` (Go) or `/tmp/pg-ratchet-laravel-only` in the status
+  container narrows a PostgreSQL run. Both are empty now. Failure logs now keep each failing Go test's own
+  output and 40 lines of a PHPUnit message.

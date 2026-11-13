@@ -43,7 +43,33 @@ class ReachService
      */
     public const PARTITION_FP_CONFIG_KEY = 'reach_partition_fp';
 
-    /** @var array{at:float, fp:?int}|null process-local memo of the pairing record */
+    /**
+     * The routing server's fingerprint in the form the fp columns hold. It is a 64-bit hash and uses every
+     * bit. MySQL keeps it in BIGINT UNSIGNED as it is. PostgreSQL has only a signed bigint, so there it is
+     * the same 64 bits read as a signed number, which is what the routing service writes and compares
+     * (dbengine FingerprintArg in iznik-routing-go). Equal fingerprints stay equal.
+     */
+    public static function fingerprintForDb(string $fp): string
+    {
+        if (DB::connection()->getDriverName() === 'pgsql' && bccomp($fp, '9223372036854775807') > 0) {
+            return bcsub($fp, '18446744073709551616');
+        }
+
+        return $fp;
+    }
+
+    /** The fingerprint as the routing server sent it, from a value read out of an fp column. */
+    public static function fingerprintFromDb(string|int $stored): string
+    {
+        $stored = (string) $stored;
+        if (DB::connection()->getDriverName() === 'pgsql' && bccomp($stored, '0') < 0) {
+            return bcadd($stored, '18446744073709551616');
+        }
+
+        return $stored;
+    }
+
+    /** @var array{at:float, fp:?string}|null process-local memo of the pairing record */
     private static ?array $partitionFpMemo = null;
 
     /**
@@ -55,12 +81,28 @@ class ReachService
      */
     public static function livePartitionFp(): ?int
     {
+        $fp = self::livePartitionFingerprint();
+
+        return $fp === null ? null : (int) $fp;
+    }
+
+    /**
+     * The same fingerprint as its digits. It is a 64-bit hash, and half of all values are above what a
+     * PHP integer holds: read as an integer, such a value becomes the largest integer and matches no
+     * stamp. The label choice below therefore compares the digits.
+     */
+    public static function livePartitionFingerprint(): ?string
+    {
         $now = microtime(true);
         if (self::$partitionFpMemo !== null && $now - self::$partitionFpMemo['at'] < 60) {
             return self::$partitionFpMemo['fp'];
         }
         $raw = DB::table('config')->where('key', self::PARTITION_FP_CONFIG_KEY)->value('value');
-        $fp = ($raw !== null && preg_match('/^\d{1,20}$/', (string) $raw)) ? (int) $raw : null;
+        $fp = null;
+        if ($raw !== null && preg_match('/^\d{1,20}\z/', trim((string) $raw))) {
+            $fp = ltrim(trim((string) $raw), '0');
+            $fp = $fp === '' ? '0' : $fp;
+        }
         self::$partitionFpMemo = ['at' => $now, 'fp' => $fp];
 
         return $fp;
@@ -86,10 +128,11 @@ class ReachService
      */
     public static function liveLabelsSql(string $prefix = ''): string
     {
-        $fp = self::livePartitionFp();
+        $fp = self::livePartitionFingerprint();
         if ($fp === null) {
             return "{$prefix}reach_labels";
         }
+        $fp = self::fingerprintForDb($fp);
 
         return "COALESCE(CASE WHEN {$prefix}reach_labels_next_fp = {$fp} THEN {$prefix}reach_labels_next END, {$prefix}reach_labels)";
     }
@@ -103,10 +146,10 @@ class ReachService
         if ($row === null) {
             return null;
         }
-        $fp = self::livePartitionFp();
+        $fp = self::livePartitionFingerprint();
         if ($fp !== null
             && isset($row->reach_labels_next_fp, $row->reach_labels_next)
-            && (int) $row->reach_labels_next_fp === $fp) {
+            && self::fingerprintFromDb($row->reach_labels_next_fp) === $fp) {
             return (string) $row->reach_labels_next;
         }
 
@@ -730,7 +773,7 @@ class ReachService
                         collect($chunk)->map(function ($leaf) use ($msgid, $fp) {
                             $row = ['msgid' => $msgid, 'leaf' => (int) $leaf];
                             if ($fp !== null) {
-                                $row['fp'] = $fp;
+                                $row['fp'] = self::fingerprintForDb($fp);
                             }
 
                             return $row;
@@ -797,14 +840,14 @@ class ReachService
             DB::transaction(function () use ($msgid, $secs, $unionLeaves, $fp) {
                 DB::table('rippling_reach')->where('msgid', $msgid)->update(['origin_union_secs' => $secs]);
                 if ($fp !== null) {
-                    DB::table('rippling_reach_leaves')->where('msgid', $msgid)->whereNull('fp')->update(['fp' => $fp]);
+                    DB::table('rippling_reach_leaves')->where('msgid', $msgid)->whereNull('fp')->update(['fp' => self::fingerprintForDb($fp)]);
                 }
                 foreach (array_chunk($unionLeaves, 500) as $chunk) {
                     DB::table('rippling_reach_leaves')->insertOrIgnore(
                         collect($chunk)->map(function ($leaf) use ($msgid, $fp) {
                             $row = ['msgid' => $msgid, 'leaf' => (int) $leaf];
                             if ($fp !== null) {
-                                $row['fp'] = $fp;
+                                $row['fp'] = self::fingerprintForDb($fp);
                             }
 
                             return $row;

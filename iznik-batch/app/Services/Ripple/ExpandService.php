@@ -1545,20 +1545,24 @@ class ExpandService
                     // never stored.
                     $overflowCellsJson = $this->overflowCellsJson($schedule);
                     $poly = 'ST_GeomFromText(?, ' . self::srid() . ')';
-                    $initSql = function (string $outerExpr, string $innerExpr): string {
+                    // The database's clock at this statement. PostgreSQL's own NOW() is the time the transaction
+                    // started, which can be earlier than the mailer's pass mark, and the mailer would then never
+                    // look at the row. The Now expression is NOW() on MySQL, unchanged.
+                    $nowSql = Sql::render(new Now());
+                    $initSql = function (string $outerExpr, string $innerExpr) use ($nowSql): string {
                         return 'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon_cells, outer_bound, inner_bound, arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, reachable_group_ids,
                             next_expansion_at, status, density_band, density_radius_miles, max_minutes_cap,
                             overflow_cells, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ' . $outerExpr . ', ' . $innerExpr . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                         VALUES (?, ?, ?, ?, ' . $outerExpr . ', ' . $innerExpr . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ' . $nowSql . ', ' . $nowSql . ')
                          ' . Sql::onDuplicateKeyUpdate(
                             ['msgid'],
                             ['lat', 'lng', 'polygon_cells', 'outer_bound', 'inner_bound', 'arrival', 'mode', 'tick',
                                 'total_ticks', 'total_freeglers', 'max_drive_min', 'schedule', 'reachable_group_ids',
                                 'next_expansion_at', 'status', 'density_band', 'density_radius_miles',
                                 'max_minutes_cap', 'overflow_cells'],
-                            ['updated_at = NOW()']
+                            ['updated_at = ' . $nowSql]
                         );
                     };
                     $initTail = [
@@ -1867,8 +1871,10 @@ class ExpandService
                     // ~19KB bounds cannot approach the 16KB-per-column undo
                     // page problem megabyte polygons had.
                     $gridSet = ', polygon_cells = ?';
+                    // The statement's own time, for the same reason as in the insert above.
+                    $advanceNow = Sql::render(new Now());
                     $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
-                         SET updated_at = NOW()' . $gridSet . $set . ',
+                         SET updated_at = ' . $advanceNow . $gridSet . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?
                          WHERE msgid = ? AND status <> \'held\'';

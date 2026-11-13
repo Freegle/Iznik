@@ -292,6 +292,12 @@ class LockdownCommandsTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($sender, $group);
         $room = $this->createTestChatRoom($sender, $this->createTestUser());
+
+        // Pressed before the message is written: a hold is for a message dated at or after the press.
+        // PostgreSQL keeps microseconds, so a message written first would be earlier than the press; on
+        // MySQL, which keeps whole seconds, it would only tie with it.
+        $this->lockdown->press(null, 'test reason');
+
         DB::table('chat_messages')->insert([
             'chatid' => $room->id,
             'userid' => $sender->id,
@@ -300,8 +306,6 @@ class LockdownCommandsTest extends TestCase
             'type' => 'Default',
             'processingrequired' => 1,
         ]);
-
-        $this->lockdown->press(null, 'test reason');
 
         $this->artisan('lockdown:tick')->assertSuccessful();
 

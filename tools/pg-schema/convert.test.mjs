@@ -78,8 +78,14 @@ test('ON UPDATE CURRENT_TIMESTAMP becomes a trigger that skips an explicit chang
   )
   assert.match(sql, /CREATE FUNCTION iznik_on_update_t\(\) RETURNS trigger/)
   assert.match(sql, /IF ROW\(NEW\.id, NEW\.ts\) IS DISTINCT FROM ROW\(OLD\.id, OLD\.ts\) THEN/)
-  assert.match(sql, /IF NEW\.ts IS NOT DISTINCT FROM OLD\.ts THEN NEW\.ts := CURRENT_TIMESTAMP/)
+  assert.match(sql, /IF NEW\.ts IS NOT DISTINCT FROM OLD\.ts AND position\(',ts,' in coalesce\(current_setting\('iznik\.named_t', true\), ''\)\) = 0 THEN NEW\.ts := CURRENT_TIMESTAMP/)
   assert.match(sql, /CREATE TRIGGER t_on_update BEFORE UPDATE ON t FOR EACH ROW EXECUTE FUNCTION iznik_on_update_t\(\)/)
+  // A column the statement names is left alone, as in MySQL: statement triggers note it and clear the note.
+  assert.match(sql, /CREATE FUNCTION iznik_on_update_named\(\) RETURNS trigger/)
+  assert.match(sql, /CREATE FUNCTION iznik_on_update_done\(\) RETURNS trigger/)
+  assert.match(sql, /CREATE TRIGGER t_on_update_named_ts BEFORE UPDATE OF ts ON t FOR EACH STATEMENT EXECUTE FUNCTION iznik_on_update_named\('ts'\)/)
+  assert.match(sql, /CREATE TRIGGER t_on_update_done AFTER UPDATE ON t FOR EACH STATEMENT EXECUTE FUNCTION iznik_on_update_done\(\)/)
+  assert.equal(sql.match(/CREATE FUNCTION iznik_on_update_named/g).length, 1)
 })
 
 test('keys: unique and plain indexes are named after the table, prefixes are dropped, spatial is GiST', () => {

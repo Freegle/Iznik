@@ -31,7 +31,7 @@ func TestAuthorReachCapResolution(t *testing.T) {
 	// The production clause, with the two tables it needs faked up as derived tables so the only
 	// thing under test is the clause itself.
 	query := "SELECT 1 FROM (SELECT CAST(? AS JSON) AS settings) au " +
-		"JOIN (SELECT ST_SRID(POINT(?, ?), " + strconv.Itoa(utils.SRID) + ") AS point) ms " +
+		"CROSS JOIN (SELECT ST_SRID(POINT(?, ?), " + strconv.Itoa(utils.SRID) + ") AS point) ms " +
 		"WHERE 1 = 1 " + utils.AuthorReachCapWhere
 
 	cases := []struct {
@@ -105,13 +105,20 @@ func TestAuthorReachCapResolution(t *testing.T) {
 func TestSentinelSurvivesTheDecimalCast(t *testing.T) {
 	db := database.DBConn
 
-	var wide, narrow float64
-	err := db.Raw("SELECT CAST('9007199254740991' AS DECIMAL(30,6)), " +
-		"CAST('9007199254740991' AS DECIMAL(20,6))").Row().Scan(&wide, &narrow)
+	var wide float64
+	err := db.Raw("SELECT CAST('9007199254740991' AS DECIMAL(30,6))").Row().Scan(&wide)
 	assert.NoError(t, err)
-
 	assert.Equal(t, float64(9007199254740991), wide,
 		"DECIMAL(30,6) must hold the sentinel exactly")
+
+	// The narrower width cannot hold it. MySQL saturates below the sentinel; PostgreSQL refuses the cast.
+	var narrow float64
+	err = db.Raw("SELECT CAST('9007199254740991' AS DECIMAL(20,6))").Row().Scan(&narrow)
+	if database.Engine() == database.EnginePostgres {
+		assert.Error(t, err, "DECIMAL(20,6) is expected to refuse the sentinel")
+		return
+	}
+	assert.NoError(t, err)
 	assert.Less(t, narrow, float64(9007199254740991),
 		fmt.Sprintf("DECIMAL(20,6) is expected to saturate below the sentinel (got %v) - "+
 			"this is why utils.AuthorReachCapWhere casts to DECIMAL(30,6)", narrow))

@@ -83,7 +83,9 @@ func TestScrollDepthCurve(t *testing.T) {
 	_, token := CreateTestSession(t, adminID)
 
 	db := database.DBConn
-	ctx := prefix
+	// browse_scroll_depth.context holds 16 characters. MySQL cuts a longer value to fit and PostgreSQL
+	// refuses it, so the value is cut here, which also lets the clean-up below find the rows.
+	ctx := prefix[:16]
 	db.Exec("INSERT INTO browse_scroll_depth (max_position, context) VALUES (0, ?), (5, ?), (10, ?)", ctx, ctx, ctx)
 	defer db.Exec("DELETE FROM browse_scroll_depth WHERE context = ?", ctx)
 

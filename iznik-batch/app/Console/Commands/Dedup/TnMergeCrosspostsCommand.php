@@ -4,6 +4,8 @@ namespace App\Console\Commands\Dedup;
 
 use App\Database\Expressions\Comparison;
 use App\Database\Expressions\Count;
+use App\Database\Sql;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -167,6 +169,30 @@ class TnMergeCrosspostsCommand extends Command
     }
 
     /**
+     * PostgreSQL has no UPDATE IGNORE. Each row is moved by itself in a savepoint, and one that collides
+     * with a unique key is left where it is, which is what MySQL's IGNORE does row by row.
+     */
+    private function moveRowsPostgres(string $table, string $column, int $copyId, int $canonicalId): void
+    {
+        $wrappedTable = Sql::table($table);
+        $wrappedColumn = Sql::col($column);
+
+        // keep-raw: PostgreSQL only; ctid names a row in a table that may have no id column.
+        $rows = DB::select("SELECT ctid::text AS rowid FROM {$wrappedTable} WHERE {$wrappedColumn} = ?", [$copyId]);
+        foreach ($rows as $row) {
+            try {
+                Sql::attempt(fn () => DB::statement(
+                    // keep-raw: PostgreSQL only; one row by its ctid.
+                    "UPDATE {$wrappedTable} SET {$wrappedColumn} = ? WHERE ctid = ?::tid",
+                    [$canonicalId, $row->rowid]
+                ));
+            } catch (UniqueConstraintViolationException) {
+                // The canonical message already has this row's equivalent.
+            }
+        }
+    }
+
+    /**
      * @param  array<int, array{table: string, column: string}>  $references
      */
     private function mergeCopy(int $copyId, int $canonicalId, array $references): void
@@ -178,19 +204,27 @@ class TnMergeCrosspostsCommand extends Command
 
                 // Move what can move. A row that cannot is one the canonical already has
                 // an equivalent of, because the only thing stopping it is a unique key.
-                DB::statement(
-                    "UPDATE IGNORE `{$table}` SET `{$column}` = ? WHERE `{$column}` = ?",
-                    [$canonicalId, $copyId]
-                );
+                if (DB::connection()->getDriverName() === 'pgsql') {
+                    $this->moveRowsPostgres($table, $column, $copyId, $canonicalId);
+                } else {
+                    DB::statement(
+                        "UPDATE IGNORE `{$table}` SET `{$column}` = ? WHERE `{$column}` = ?",
+                        [$canonicalId, $copyId]
+                    );
+                }
 
                 // Anything still pointing at the copy would be orphaned by the soft-delete
                 // below - notably a messages_spatial row, which the browse feed reads and
                 // whose msgid is UNIQUE, so it can never move onto an already-indexed
                 // canonical message.
-                DB::statement(
-                    "DELETE FROM `{$table}` WHERE `{$column}` = ?",
-                    [$copyId]
-                );
+                if (DB::connection()->getDriverName() === 'pgsql') {
+                    DB::table($table)->where($column, $copyId)->delete();
+                } else {
+                    DB::statement(
+                        "DELETE FROM `{$table}` WHERE `{$column}` = ?",
+                        [$copyId]
+                    );
+                }
             }
 
             // Clear tnpostid so the copy can never be picked as canonical again, and

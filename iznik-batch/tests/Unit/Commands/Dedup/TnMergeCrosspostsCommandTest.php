@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Commands\Dedup;
 
+use App\Database\Spatial;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -47,12 +48,16 @@ class TnMergeCrosspostsCommandTest extends TestCase
      */
     private function messageReferences(): array
     {
-        $database = DB::connection()->getDatabaseName();
+        // The same catalogue read as the command: lower-case names are found on both engines, and
+        // PostgreSQL's schema is the one the connection searches, not the database's name.
+        $database = DB::connection()->getDriverName() === 'pgsql'
+            ? DB::selectOne('select current_schema() as name')->name
+            : DB::connection()->getDatabaseName();
 
-        $refs = DB::table('information_schema.COLUMNS')
-            ->select('TABLE_NAME as table_name', 'COLUMN_NAME as column_name')
-            ->where('TABLE_SCHEMA', $database)
-            ->where('COLUMN_NAME', 'msgid')
+        $refs = DB::table('information_schema.columns')
+            ->select('table_name as table_name', 'column_name as column_name')
+            ->where('table_schema', $database)
+            ->where('column_name', 'msgid')
             ->get()
             ->reject(fn ($r) => $r->table_name === 'messages')
             ->map(fn ($r) => ['table' => $r->table_name, 'column' => $r->column_name])
@@ -95,7 +100,7 @@ class TnMergeCrosspostsCommandTest extends TestCase
         foreach ([$canonical, $copy] as $id) {
             DB::statement(
                 'INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival)
-                 VALUES (?, ST_SRID(POINT(-0.1, 51.5), ' . config('freegle.srid') . '), 0, ?, ?, ?)',
+                 VALUES (?, ' . Spatial::point('-0.1', '51.5', (int) config('freegle.srid')) . ', 0, ?, ?, ?)',
                 [$id, $id === $canonical ? $groupA->id : $groupB->id, 'Offer', now()]
             );
         }

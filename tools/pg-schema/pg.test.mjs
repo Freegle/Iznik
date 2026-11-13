@@ -108,9 +108,9 @@ test('a citext column keeps the varchar limit it had in MySQL', { skip }, () => 
   assert.equal(scratch(`INSERT INTO ai_images (name) VALUES ('${'x'.repeat(255)}'); SELECT count(*) FROM ai_images;`), '1')
 })
 
-test('an ON UPDATE column moves unless the statement sets it to a different value; setting it to itself still moves it', { skip }, () => {
-  // MySQL leaves the column alone for SET ts = ts. A BEFORE trigger cannot tell that from not
-  // naming the column, so PostgreSQL moves it. The difference is listed in the docs page.
+test('an ON UPDATE column moves unless the statement names it, whatever value it gives it', { skip }, () => {
+  // MySQL leaves the column alone when the statement names it, SET ts = ts included. Statement triggers
+  // note which columns an UPDATE names, so PostgreSQL does the same.
   const out = scratch(`
     INSERT INTO abtest (uid, variant, shown, action, rate, timestamp) VALUES ('u', 'v', 0, 0, 0, '2020-01-01 00:00:00+00');
     UPDATE abtest SET shown = 1, timestamp = '2020-01-01 00:00:00+00';
@@ -119,7 +119,7 @@ test('an ON UPDATE column moves unless the statement sets it to a different valu
     SELECT timestamp = '2021-02-03 04:05:06+00' FROM abtest;
     UPDATE abtest SET shown = 3;
     SELECT timestamp > '2022-01-01' FROM abtest;`).split('\n')
-  assert.deepEqual(out.slice(-3), ['f', 't', 't'])
+  assert.deepEqual(out.slice(-3), ['t', 't', 't'])
 })
 
 test('a case-sensitive unique column stays case sensitive', { skip }, () => {

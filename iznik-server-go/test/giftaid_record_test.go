@@ -102,7 +102,7 @@ func TestRecordGiftAidNoResponseCanRepeat(t *testing.T) {
 	_, adminToken := CreateTestSession(t, adminID)
 	donorID := CreateTestUser(t, prefix+"_donor", utils.SYSTEMROLE_USER)
 	db := database.DBConn
-	db.Exec("INSERT INTO users_donations (userid, type, Payer, PayerDisplayName, GrossAmount, source) VALUES (?, 'BankTransfer', 'Test', 'Test', 25.00, 'BankTransfer')", donorID)
+	db.Exec("INSERT INTO users_donations (userid, type, Payer, PayerDisplayName, GrossAmount, source) VALUES (?, 'External', 'Test', 'Test', 25.00, 'BankTransfer')", donorID)
 	defer db.Exec("DELETE FROM users_donations WHERE userid = ?", donorID)
 	defer db.Exec("DELETE FROM giftaid_asks WHERE userid = ?", donorID)
 

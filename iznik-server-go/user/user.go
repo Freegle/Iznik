@@ -1135,12 +1135,23 @@ func GetSearchesForUser(c *fiber.Ctx) error {
 			// path whenever the name contains a space or backtick (chainable_api.go),
 			// so a parenthesised subquery with its own bind renders verbatim rather
 			// than being (mis)quoted as an identifier.
-			db.Table("(SELECT * FROM users_searches WHERE userid = ? AND deleted = 0 ORDER BY id desc LIMIT 100) t", id).
-				Select("*").
-				Group("t.term").
-				Order("t.id DESC").
-				Limit(10).
-				Find(&searches)
+			if database.Engine() == database.EnginePostgres {
+				// PostgreSQL refuses GROUP BY on a bare "SELECT *", so it takes the newest row of each
+				// term with ROW_NUMBER. MySQL keeps its statement below, unchanged.
+				db.Table("(SELECT r.* FROM (SELECT l.*, ROW_NUMBER() OVER (PARTITION BY l.term ORDER BY l.id DESC) AS rn "+
+					"FROM (SELECT * FROM users_searches WHERE userid = ? AND deleted = 0 ORDER BY id desc LIMIT 100) l) r WHERE r.rn = 1) t", id).
+					Select("*").
+					Order("t.id DESC").
+					Limit(10).
+					Find(&searches)
+			} else {
+				db.Table("(SELECT * FROM users_searches WHERE userid = ? AND deleted = 0 ORDER BY id desc LIMIT 100) t", id).
+					Select("*").
+					Group("t.term").
+					Order("t.id DESC").
+					Limit(10).
+					Find(&searches)
+			}
 
 			if searches == nil {
 				searches = make([]Search, 0)
@@ -2390,14 +2401,25 @@ func PutUser(c *fiber.Ctx) error {
 
 			// Insert first. Looking for an orphan to claim before inserting would take a gap
 			// lock on a row that is not there, and two racing signups would deadlock on it.
-			insertErr := tx.Table("users_emails").Create(map[string]interface{}{
-				"userid":    newUserID,
-				"email":     email,
-				"preferred": gorm.Expr("1"),
-				"validated": gorm.Expr("NOW()"),
-				"canon":     canon,
-				"backwards": reverseString(canon),
-			}).Error
+			insertAddress := func(tx *gorm.DB) error {
+				return tx.Table("users_emails").Create(map[string]interface{}{
+					"userid":    newUserID,
+					"email":     email,
+					"preferred": gorm.Expr("1"),
+					"validated": gorm.Expr("NOW()"),
+					"canon":     canon,
+					"backwards": reverseString(canon),
+				}).Error
+			}
+			var insertErr error
+			if database.Engine() == database.EnginePostgres {
+				// PostgreSQL abandons the whole transaction when a statement fails, so the insert
+				// goes in a savepoint of its own and the claim below can still run. MySQL carries
+				// on after a failed statement and runs it as it always has.
+				insertErr = tx.Transaction(insertAddress)
+			} else {
+				insertErr = insertAddress(tx)
+			}
 			if insertErr == nil {
 				return createLogin(tx)
 			}
@@ -3611,8 +3633,9 @@ func MergeUsersTx(db *gorm.DB, id1, id2, byuser uint64) error {
 		Where("u2.id = ?", id2).
 		Updates(map[string]interface{}{})
 
-	// lastupdated.
-	tx.Table("users").Where("id = ?", id2).Update("lastupdated", gorm.Expr("NOW()"))
+	// lastupdated. GET /changes compares it with the time a partner last asked, so it is the statement's
+	// time on both engines and not the time this long transaction started.
+	tx.Table("users").Where("id = ?", id2).Update("lastupdated", gorm.Expr(database.StatementNow()))
 
 	// tnuserid: transfer if id2 doesn't have one.
 	if u1Attrs.Tnuserid != nil && u2Attrs.Tnuserid == nil {

@@ -160,6 +160,21 @@ class UpdateAIImageUsageCountsCommand extends Command
                 ->lazyById(500);
 
             foreach ($rows as $row) {
+                if (DB::connection()->getDriverName() === 'pgsql') {
+                    // PostgreSQL has no UPDATE with a join, and Laravel's stand-in for one leaves the joined
+                    // table out of reach of the SET clause. The count is read by a subquery instead. A row
+                    // with no count gets 0, as the left join gives it on MySQL.
+                    // keep-raw: PostgreSQL only; a correlated subquery inside COALESCE has no builder form.
+                    $count = DB::raw('COALESCE((SELECT t.cnt FROM tmp_ai_usage_counts t WHERE t.externaluid = ai_images.externaluid), 0)');
+                    $affected = DB::table('ai_images')
+                        ->where('id', $row->id)
+                        ->where('usage_count', '!=', $count)
+                        ->update(['usage_count' => $count]);
+                    $affected > 0 ? $totalUpdated++ : $totalSkipped++;
+
+                    continue;
+                }
+
                 // The JOIN and WHERE ai.id predicate are expressed via the query builder.
                 $affected = DB::table('ai_images as ai')
                     ->leftJoin('tmp_ai_usage_counts as t', 't.externaluid', '=', 'ai.externaluid')

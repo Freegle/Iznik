@@ -169,7 +169,7 @@ class ReachLabelsTest extends TestCase
         $leaves = DB::table('rippling_reach_leaves')->where('msgid', $msgid)->orderBy('leaf')->get();
         $this->assertSame([7, 42, 88], $leaves->pluck('leaf')->map(fn ($l) => (int) $l)->all());
         foreach ($leaves as $leaf) {
-            $this->assertSame('12345678901234567890', (string) $leaf->fp);
+            $this->assertSame('12345678901234567890', ReachService::fingerprintFromDb($leaf->fp));
         }
         // The request asked with the msgid, so the server could resolve the
         // origin group.

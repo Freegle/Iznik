@@ -15,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/plugin/dbresolver"
 )
 
 const TYPE_PAYPAL = "PayPal"
@@ -369,6 +370,33 @@ type BulkDonation struct {
 	TransactionID string  `json:"transaction_id"`
 }
 
+// bulkDonationRow is the part of a donation that a repeated bulk upload may change.
+type bulkDonationRow struct {
+	Userid      *uint64   `gorm:"column:userid"`
+	Timestamp   time.Time `gorm:"column:timestamp"`
+	Source      string    `gorm:"column:source"`
+	GrossAmount float64   `gorm:"column:GrossAmount"`
+}
+
+func (a bulkDonationRow) same(b bulkDonationRow) bool {
+	sameUser := (a.Userid == nil && b.Userid == nil) || (a.Userid != nil && b.Userid != nil && *a.Userid == *b.Userid)
+	return sameUser && a.Timestamp.Equal(b.Timestamp) && a.Source == b.Source && a.GrossAmount == b.GrossAmount
+}
+
+// readBulkDonationRow reads a donation by its transaction id from the write host, and says whether it is there.
+func readBulkDonationRow(db *gorm.DB, transactionID string) (bulkDonationRow, bool) {
+	var rows []bulkDonationRow
+	db.Clauses(dbresolver.Write).Table("users_donations").
+		Select("userid, timestamp, source, GrossAmount").
+		Where("TransactionID = ?", transactionID).
+		Limit(1).
+		Find(&rows)
+	if len(rows) == 0 {
+		return bulkDonationRow{}, false
+	}
+	return rows[0], true
+}
+
 // BulkUploadDonations records multiple donations from an external source like PayPal Giving Fund.
 // Matches the logic in the legacy V1 PHP paypal_giving_fund script.
 // @Summary Bulk upload donations
@@ -448,14 +476,26 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 		// PayPal Giving Fund donations: type=PayPal, source from program mapping.
 		// Gift Aid is already claimed by PayPal — giftaidconsent defaults to 0
 		// which means GiftAidClaimService will never try to reclaim it.
-		result := db.Table("users_donations").Clauses(clause.OnConflict{
+		onConflict := clause.OnConflict{
 			DoUpdates: clause.Set{
 				{Column: clause.Column{Name: "userid"}, Value: clause.Column{Table: "excluded", Name: "userid"}},
 				{Column: clause.Column{Name: "timestamp"}, Value: clause.Column{Table: "excluded", Name: "timestamp"}},
 				{Column: clause.Column{Name: "source"}, Value: clause.Column{Table: "excluded", Name: "source"}},
 				{Column: clause.Column{Name: "GrossAmount"}, Value: clause.Column{Table: "excluded", Name: "GrossAmount"}},
 			},
-		}).Create(map[string]interface{}{
+		}
+
+		// MySQL says what an upsert did through its row count: 1 inserted, 2 updated, 0 left the row as
+		// it was. PostgreSQL counts 1 for all three. So on PostgreSQL the row is read before and after,
+		// from the write host, and the two are compared.
+		postgres := database.Engine() == database.EnginePostgres
+		var before, after bulkDonationRow
+		existed := false
+		if postgres {
+			before, existed = readBulkDonationRow(db, d.TransactionID)
+		}
+
+		result := db.Table("users_donations").Clauses(onConflict).Create(map[string]interface{}{
 			"userid":           userID,
 			"Payer":            d.Email,
 			"PayerDisplayName": d.DonorName,
@@ -469,6 +509,19 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 		if result.Error != nil {
 			log.Printf("Bulk donation insert failed for txid %s: %v", d.TransactionID, result.Error)
 			skipped++
+			continue
+		}
+
+		if postgres {
+			after, _ = readBulkDonationRow(db, d.TransactionID)
+			switch {
+			case !existed:
+				inserted++
+			case before.same(after):
+				skipped++
+			default:
+				updated++
+			}
 			continue
 		}
 

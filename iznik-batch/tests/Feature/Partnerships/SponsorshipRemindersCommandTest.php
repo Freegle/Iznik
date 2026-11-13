@@ -275,7 +275,9 @@ class SponsorshipRemindersCommandTest extends TestCase
 
     public function test_reminders_go_to_the_teams_own_address(): void
     {
-        DB::table('teams')->where('name', 'Partnerships')->update(['email' => 'newpartnerships@ilovefreegle.org']);
+        // The team is there on MySQL, put in by its migration. A PostgreSQL database is built from the
+        // schema alone, so the row is made when it is missing.
+        DB::table('teams')->updateOrInsert(['name' => 'Partnerships'], ['email' => 'newpartnerships@ilovefreegle.org']);
         $this->partnership(60);
 
         $this->artisan('partnerships:reminders')->assertExitCode(0);

@@ -70,6 +70,32 @@ class ReachLabelsStagingTest extends TestCase
         $this->assertSame('staged', ReachService::pickLabels($this->row('live', 'staged', self::FP)));
     }
 
+    /**
+     * The fingerprint is a 64-bit hash, so half of all values are above the largest PHP integer. Such a
+     * value must still be matched exactly, in PHP and in the SQL.
+     */
+    public function testAFingerprintAboveTheLargestIntegerStillPicksTheStagedLabel(): void
+    {
+        $big = '12345678901234567890';
+        $this->setPairing($big);
+        $stored = ReachService::fingerprintForDb($big);
+
+        $this->assertSame($big, ReachService::livePartitionFingerprint());
+        $this->assertSame($big, ReachService::fingerprintFromDb($stored));
+        $this->assertSame(
+            'COALESCE(CASE WHEN rr.reach_labels_next_fp = '.$stored.' THEN rr.reach_labels_next END, rr.reach_labels)',
+            ReachService::liveLabelsSql('rr.')
+        );
+
+        $row = (object) ['reach_labels' => 'live', 'reach_labels_next' => 'staged', 'reach_labels_next_fp' => $stored];
+        $this->assertSame('staged', ReachService::pickLabels($row));
+
+        // One away is another partition's stamp.
+        $other = (object) ['reach_labels' => 'live', 'reach_labels_next' => 'staged',
+            'reach_labels_next_fp' => ReachService::fingerprintForDb('12345678901234567891')];
+        $this->assertSame('live', ReachService::pickLabels($other));
+    }
+
     public function testStaleStampFallsBackToTheLiveColumn(): void
     {
         $this->setPairing((string) self::FP);

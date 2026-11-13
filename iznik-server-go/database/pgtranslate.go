@@ -357,6 +357,42 @@ func translatePostgres(sql string, cat catalog) string {
 		}
 	}
 
+	// CAST(x AS CHAR) is the whole value as text in MySQL. PostgreSQL reads a bare CHAR as one character and
+	// would keep only the first, so it becomes text. CHAR(n) becomes varchar(n), which cuts to n without padding.
+	for i := 0; i < len(ts); i++ {
+		if !isKw(ts[i], "CHAR") {
+			continue
+		}
+		if p := prevSig(ts, i-1); p < 0 || !isKw(ts[p], "AS") {
+			continue
+		}
+		// Only inside CAST( ... ): "x AS char" elsewhere is an alias and keeps its name.
+		open := -1
+		for k, depth := i-1, 0; k >= 0; k-- {
+			if isP(ts[k], ")") {
+				depth++
+			} else if isP(ts[k], "(") {
+				if depth == 0 {
+					open = k
+					break
+				}
+				depth--
+			}
+		}
+		if open < 0 {
+			continue
+		}
+		if c := prevSig(ts, open-1); c < 0 || !isKw(ts[c], "CAST") {
+			continue
+		}
+		if n := nextSig(ts, i+1); n >= 0 && isP(ts[n], "(") {
+			ts[i].s = "varchar"
+		} else {
+			ts[i].s = "text"
+		}
+		changed = true
+	}
+
 	// INTERVAL <n> <UNIT>.
 	for i := 0; i < len(ts); i++ {
 		if !isKw(ts[i], "INTERVAL") {

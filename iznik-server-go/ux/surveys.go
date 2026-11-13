@@ -269,7 +269,13 @@ func (f problemFilter) apply(q *gorm.DB) *gorm.DB {
 	}
 	if f.q != "" {
 		pattern := "%" + escapeLike(f.q) + "%"
-		q = q.Where("(title LIKE ? OR description LIKE ?)", pattern, pattern)
+		if database.Engine() == database.EnginePostgres {
+			// The search ignores case. MySQL's LIKE does that by itself here; PostgreSQL's needs ILIKE.
+			// keep-raw: PostgreSQL only, ILIKE has no builder form.
+			q = q.Where("(title ILIKE ? OR description ILIKE ?)", pattern, pattern)
+		} else {
+			q = q.Where("(title LIKE ? OR description LIKE ?)", pattern, pattern)
+		}
 	}
 	if f.min > 0 {
 		q = q.Where("mentions >= ?", f.min)

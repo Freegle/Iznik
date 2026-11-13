@@ -3,31 +3,3 @@
 # the run lists them. Regenerate from a CI run with tools/pg-ratchet/ratchet.mjs update; see
 # docs/developers/reference/database-engines.md.
 # total-results: 5442
-test:TestAMPPostChatReplyIsHeldForProcessing
-test:TestAddedOriginEnumMatchesTheGoList
-test:TestAnswerChatPrompt_DeadlineSetsADate
-test:TestAuthorReachCapResolution
-test:TestBulkDonations_SkipsDuplicates
-test:TestBulkDonations_UpdatesChanged
-test:TestBulkUploadDonations
-test:TestForgetPartnerFlow
-test:TestInitDatabase_FailLeavesExistingConnection
-test:TestMergeKeepsBanDates
-test:TestMessageEditRecordsAllColumns
-test:TestMessagesOutcomesFeedbackIndexAvailable
-test:TestNearbyReachFeedDegradedPath
-test:TestPatchGroupConfirmAffiliation
-test:TestPatchGroupMicrovolunteeringoptions
-test:TestPatchGroupSettingsAndRules
-test:TestPutUserConcurrentSignupsMakeOneAccount
-test:TestPutUserTakesOverAnAddressWithNoAccount
-test:TestRecordGiftAidNoResponseCanRepeat
-test:TestReviewChatOwnGroupFirst
-test:TestScrollDepthCurve
-test:TestSentinelSurvivesTheDecimalCast
-test:TestServerArmBothRowsAreReadInOneQuery
-test:TestUserReplies_RippledPostAppearsOnce
-test:TestUserSearch_OwnSearches
-test:TestUserSearch_UniqueTermsReturned
-test:TestUxProblemsFilterByGroupAndSearch
-test:TestWiderReviewShowsMessages

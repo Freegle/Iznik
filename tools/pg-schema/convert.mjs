@@ -44,6 +44,18 @@ export function qi(name) {
 
 // A generated name (index, constraint, function) that must fit in 63 characters. Over-long names
 // are cut and given a short hash of the full name so they stay unique and stable.
+// Shared by every ON UPDATE CURRENT_TIMESTAMP trigger. A statement trigger with a column list fires only
+// when the UPDATE names that column, and before any row is touched: it notes the column for the table.
+// The row trigger reads the note, and the statement trigger at the end clears it. The setting is local to
+// the transaction, so a statement that fails and is rolled back takes its note with it.
+const ON_UPDATE_NAMED_FUNCTIONS =
+  `CREATE FUNCTION iznik_on_update_named() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n` +
+  `  PERFORM set_config('iznik.named_' || TG_TABLE_NAME, coalesce(current_setting('iznik.named_' || TG_TABLE_NAME, true), '') || ',' || TG_ARGV[0] || ',', true);\n` +
+  `  RETURN NULL;\nEND\n$$;\n` +
+  `CREATE FUNCTION iznik_on_update_done() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n` +
+  `  PERFORM set_config('iznik.named_' || TG_TABLE_NAME, '', true);\n` +
+  `  RETURN NULL;\nEND\n$$;`
+
 export function fit(name) {
   if (name.length <= MAX_IDENT) return name
   const h = crypto.createHash('sha1').update(name).digest('hex').slice(0, 8)
@@ -717,17 +729,37 @@ export function convert(dumpText, config = {}, opts = {}) {
     }
 
     if (onUpdate.length) {
+      // The statement triggers keep their note in a setting named after the table, and a setting's name
+      // must be a plain identifier that the row function can spell the same way.
+      if (!/^[a-z_][a-z0-9_]*$/.test(t.name) || `iznik.named_${t.name}`.length > MAX_IDENT) {
+        fail(`ON UPDATE CURRENT_TIMESTAMP on ${t.name}: the table name cannot be used in a setting name`)
+      }
       const fn = fit(`iznik_on_update_${t.name}`)
+      // The statement triggers below record which of these columns the UPDATE names in its SET list, in a
+      // setting that lasts for the statement. MySQL leaves a column the statement names alone, whatever
+      // value it is given, and a row trigger alone cannot tell "SET ts = ts" from not naming the column.
+      const named = `coalesce(current_setting(${ql('iznik.named_' + t.name)}, true), '')`
       const sets = onUpdate
-        .map((cn) => `    IF NEW.${qi(cn)} IS NOT DISTINCT FROM OLD.${qi(cn)} THEN NEW.${qi(cn)} := CURRENT_TIMESTAMP; END IF;`)
+        .map(
+          (cn) =>
+            `    IF NEW.${qi(cn)} IS NOT DISTINCT FROM OLD.${qi(cn)} AND position(${ql(',' + cn + ',')} in ${named}) = 0 THEN NEW.${qi(cn)} := CURRENT_TIMESTAMP; END IF;`
+        )
         .join('\n')
       // Generated columns are left out: they are not yet computed in NEW when a BEFORE trigger runs.
       const stored = t.columns.filter((c) => !c.generated).map((c) => qi(c.name))
       const newRow = `ROW(${stored.map((n) => 'NEW.' + n).join(', ')})`
       const oldRow = `ROW(${stored.map((n) => 'OLD.' + n).join(', ')})`
+      if (!ddlTriggers.length) ddlTriggers.push(ON_UPDATE_NAMED_FUNCTIONS)
       ddlTriggers.push(
         `CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  IF ${newRow} IS DISTINCT FROM ${oldRow} THEN\n${sets}\n  END IF;\n  RETURN NEW;\nEND\n$$;\n` +
-          `CREATE TRIGGER ${fit(`${t.name}_on_update`)} BEFORE UPDATE ON ${qi(t.name)} FOR EACH ROW EXECUTE FUNCTION ${fn}();`
+          `CREATE TRIGGER ${fit(`${t.name}_on_update`)} BEFORE UPDATE ON ${qi(t.name)} FOR EACH ROW EXECUTE FUNCTION ${fn}();\n` +
+          onUpdate
+            .map(
+              (cn) =>
+                `CREATE TRIGGER ${fit(`${t.name}_on_update_named_${cn}`)} BEFORE UPDATE OF ${qi(cn)} ON ${qi(t.name)} FOR EACH STATEMENT EXECUTE FUNCTION iznik_on_update_named(${ql(cn)});\n`
+            )
+            .join('') +
+          `CREATE TRIGGER ${fit(`${t.name}_on_update_done`)} AFTER UPDATE ON ${qi(t.name)} FOR EACH STATEMENT EXECUTE FUNCTION iznik_on_update_done();`
       )
       r.hit('ON UPDATE CURRENT_TIMESTAMP -> BEFORE UPDATE trigger', t.name)
     }

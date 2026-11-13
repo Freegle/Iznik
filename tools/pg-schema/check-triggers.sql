@@ -1,6 +1,6 @@
 -- Fires every ON UPDATE CURRENT_TIMESTAMP trigger the baseline created, on a scratch row, and
 -- checks the MySQL behaviour: the column moves when another column changes, stays when nothing
--- changed, and keeps a value the statement set itself. Run inside a transaction that is rolled
+-- changed, and keeps a value the statement set itself, its own value included. Run inside a transaction that is rolled
 -- back. Foreign keys are switched off for the scratch rows; the converter's triggers are kept on.
 --
 -- Raises an exception that lists every table that misbehaved.
@@ -9,6 +9,7 @@ DO $check$
 DECLARE
   t record;
   col record;
+  st record;
   cols text;
   vals text;
   chg_col text;
@@ -33,6 +34,13 @@ BEGIN
     ORDER BY cl.relname
   LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ALWAYS TRIGGER %I', t.relname, t.tgname);
+    -- The statement triggers that note which columns an UPDATE names, and clear the note after it.
+    FOR st IN
+      SELECT s.tgname FROM pg_trigger s JOIN pg_proc p ON p.oid = s.tgfoid
+      WHERE s.tgrelid = t.oid AND p.proname IN ('iznik_on_update_named', 'iznik_on_update_done')
+    LOOP
+      EXECUTE format('ALTER TABLE %I ENABLE ALWAYS TRIGGER %I', t.relname, st.tgname);
+    END LOOP;
     cols := '';
     vals := '';
     chg_col := NULL;
@@ -119,6 +127,18 @@ BEGIN
       EXECUTE format('SELECT %I FROM %I', tsc, t.relname) INTO after_ts;
       IF after_ts <> timestamptz '2002-02-02 00:00:00+00' THEN
         bad := bad || format(' %s.%s overwrote an explicit value;', t.relname, tsc);
+      END IF;
+      -- 4. So is its own value, when the statement names the column (SET ts = ts).
+      EXECUTE format('UPDATE %I SET %I = %s, %I = %I', t.relname, chg_col, chg_new, tsc, tsc);
+      EXECUTE format('SELECT %I FROM %I', tsc, t.relname) INTO after_ts;
+      IF after_ts <> timestamptz '2002-02-02 00:00:00+00' THEN
+        bad := bad || format(' %s.%s moved although the statement set it to itself;', t.relname, tsc);
+      END IF;
+      -- 5. The next statement, which does not name it, moves it again.
+      EXECUTE format('UPDATE %I SET %I = %s', t.relname, chg_col, chg_old);
+      EXECUTE format('SELECT %I FROM %I', tsc, t.relname) INTO after_ts;
+      IF after_ts IS NULL OR after_ts <= timestamptz '2002-02-03' THEN
+        bad := bad || format(' %s.%s did not move after a statement that had named it;', t.relname, tsc);
       END IF;
       EXECUTE format('UPDATE %I SET %I = %L::timestamptz', t.relname, tsc, '2000-01-01 00:00:00+00');
     END LOOP;

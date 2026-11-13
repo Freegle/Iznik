@@ -40,6 +40,17 @@ func Engine() string {
 	}
 }
 
+// StatementNow is the SQL for the time the current statement started. That is what MySQL's NOW() means.
+// PostgreSQL's NOW() is the time the transaction started, so inside a transaction it can be well before a
+// time the application took a moment ago; statement_timestamp() is its clock for the statement. Use this
+// where a time written inside a transaction is later compared with a time from another clock.
+func StatementNow() string {
+	if Engine() == EnginePostgres {
+		return "statement_timestamp()"
+	}
+	return "NOW()"
+}
+
 func pgEnv(name, def string) string {
 	if v := os.Getenv(name); v != "" {
 		return v

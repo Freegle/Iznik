@@ -1821,6 +1821,23 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			utils.CHAT_TYPE_USER2USER, groupIDs,
 			groupIDs,
 			limit)
+		if database.Engine() == database.EnginePostgres {
+			// One row for each message. MySQL takes it with GROUP BY id over a bare "*", which PostgreSQL
+			// refuses. PostgreSQL numbers the rows of each message instead and keeps the first, the
+			// own-group row (widerchatreview 0) where a message is in both halves. MySQL's statement
+			// above is unchanged.
+			// keep-raw: PostgreSQL only, a window over a UNION has no builder form.
+			tx1ff296c8656c = db.Table("chat_messages").Select(
+				"* FROM (SELECT combined.*, ROW_NUMBER() OVER (PARTITION BY combined.id ORDER BY combined.widerchatreview) AS rn "+
+					"FROM ("+baseQuery+widerQuery+") combined) deduped WHERE deduped.rn = 1 "+
+					"ORDER BY widerchatreview ASC, id ASC LIMIT ?",
+				groupIDs, groupIDs,
+				utils.CHAT_TYPE_USER2MOD, groupIDs,
+				utils.CHAT_TYPE_USER2USER, groupIDs,
+				utils.CHAT_TYPE_USER2USER, groupIDs,
+				groupIDs,
+				limit)
+		}
 		tx1ff296c8656c.Statement.BuildClauses = []string{"SELECT"}
 		result := tx1ff296c8656c.Scan(&msgs)
 		if result.Error != nil {

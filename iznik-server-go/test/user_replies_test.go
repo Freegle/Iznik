@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
@@ -72,7 +73,17 @@ func TestUserReplies_RippledPostAppearsOnce(t *testing.T) {
 		var originArrival string
 		db.Raw("SELECT DATE_FORMAT(MIN(arrival), '%Y-%m-%dT%H:%i:%sZ') FROM messages_groups WHERE msgid = ?",
 			msgID).Scan(&originArrival)
-		assert.Equal(t, originArrival, matched[0]["arrival"], "the origin arrival is shown, not a ripple stamp")
+		if database.Engine() == database.EnginePostgres {
+			// PostgreSQL keeps the fraction of a second NOW() wrote, and the API passes it on, so the
+			// two are compared as moments to the second.
+			want, werr := time.Parse(time.RFC3339, originArrival)
+			got, gerr := time.Parse(time.RFC3339Nano, fmt.Sprint(matched[0]["arrival"]))
+			assert.NoError(t, werr)
+			assert.NoError(t, gerr)
+			assert.Equal(t, want.Unix(), got.Unix(), "the origin arrival is shown, not a ripple stamp")
+		} else {
+			assert.Equal(t, originArrival, matched[0]["arrival"], "the origin arrival is shown, not a ripple stamp")
+		}
 	}
 }
 

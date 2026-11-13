@@ -136,6 +136,8 @@ class MailSuppressionService
         }
 
         try {
+            // The same clock as the Now expression in the inserted rows below: NOW() on MySQL.
+            $now = Sql::render(new Now());
             if ($mailKey !== null) {
                 // Count MAILS, not attempts. The chat notifier skips a suppressed
                 // recipient without advancing chat_roster.lastmsgemailed, so the same
@@ -158,7 +160,7 @@ class MailSuppressionService
                         'count' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('count')} + CASE WHEN {$c('lastkey')} IS NULL OR {$key} > {$c('lastkey')} THEN 1 ELSE 0 END ELSE 1 END"),
                         'lastat' => new Now(),
                         'suppressionid' => $suppressionId,
-                        'firstat' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('firstat')} ELSE NOW() END"),
+                        'firstat' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('firstat')} ELSE {$now} END"),
                         'lastkey' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN GREATEST(COALESCE({$c('lastkey')}, 0), {$key}) ELSE {$key} END"),
                         'caughtup_at' => null,
                     ]
@@ -179,7 +181,7 @@ class MailSuppressionService
                     'count' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('count')} + 1 ELSE 1 END"),
                     'lastat' => new Now(),
                     'suppressionid' => $suppressionId,
-                    'firstat' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('firstat')} ELSE NOW() END"),
+                    'firstat' => new Raw("CASE WHEN {$c('caughtup_at')} IS NULL THEN {$c('firstat')} ELSE {$now} END"),
                     'caughtup_at' => null,
                 ]
             );

@@ -693,7 +693,7 @@ func TestPatchGroupConfirmAffiliation(t *testing.T) {
 	// Verify field was set
 	var confirmed string
 	var confirmedBy uint64
-	db.Raw("SELECT COALESCE(affiliationconfirmed, ''), COALESCE(affiliationconfirmedby, 0) FROM `groups` WHERE id = ?", groupID).Row().Scan(&confirmed, &confirmedBy)
+	db.Raw("SELECT COALESCE(DATE_FORMAT(affiliationconfirmed, '%Y-%m-%d %H:%i:%s'), ''), COALESCE(affiliationconfirmedby, 0) FROM `groups` WHERE id = ?", groupID).Row().Scan(&confirmed, &confirmedBy)
 	assert.NotEmpty(t, confirmed)
 	assert.Equal(t, userID, confirmedBy)
 }
@@ -873,7 +873,7 @@ func TestPatchGroupSettingsAndRules(t *testing.T) {
 
 	// Verify settings and rules stored
 	var storedSettings, storedRules string
-	db.Raw("SELECT COALESCE(settings, ''), COALESCE(rules, '') FROM `groups` WHERE id = ?", groupID).Row().Scan(&storedSettings, &storedRules)
+	db.Raw("SELECT COALESCE(settings, ''), COALESCE(CAST(rules AS CHAR), '') FROM `groups` WHERE id = ?", groupID).Row().Scan(&storedSettings, &storedRules)
 	assert.NotEmpty(t, storedSettings)
 	assert.NotEmpty(t, storedRules)
 	assert.Contains(t, storedSettings, "duplicates")
@@ -1122,7 +1122,7 @@ func TestPatchGroupMicrovolunteeringoptions(t *testing.T) {
 
 	// Verify microvolunteeringoptions was saved to the DB
 	var stored string
-	db.Raw("SELECT COALESCE(microvolunteeringoptions, '') FROM `groups` WHERE id = ?", groupID).Scan(&stored)
+	db.Raw("SELECT COALESCE(CAST(microvolunteeringoptions AS CHAR), '') FROM `groups` WHERE id = ?", groupID).Scan(&stored)
 	assert.NotEmpty(t, stored, "microvolunteeringoptions should be stored after PATCH")
 	assert.Contains(t, stored, "approvedmessages", "stored value should contain approvedmessages key")
 	assert.Contains(t, stored, "wordmatch", "stored value should contain wordmatch key")

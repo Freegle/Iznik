@@ -119,7 +119,12 @@ async function runChunk(chunk) {
 
 async function main() {
   const l = await capture(build(ROOT, ['sh', '-c', 'find tests/Unit tests/Feature -name "*Test.php" | sort']), { timeoutMs: 60000 })
-  const files = l.out.split('\n').map((x) => x.trim()).filter((x) => x.endsWith('Test.php'))
+  // A regexp in /tmp/pg-ratchet-laravel-only narrows the run to the test files whose path matches, for
+  // debugging one failure through the status container, which cannot take the option from its API.
+  const onlyFile = '/tmp/pg-ratchet-laravel-only'
+  const only = args.only || (fs.existsSync(onlyFile) ? fs.readFileSync(onlyFile, 'utf8').trim() : '')
+  const onlyRe = only ? new RegExp(only) : null
+  const files = l.out.split('\n').map((x) => x.trim()).filter((x) => x.endsWith('Test.php') && (!onlyRe || onlyRe.test(x)))
   if (files.length === 0) throw new Error(`no test files found: ${l.out.slice(-500)}`)
   const chunks = groupFiles(files, CHUNK)
   console.log(`FILES laravel ${files.length} files in ${chunks.length} chunks`)

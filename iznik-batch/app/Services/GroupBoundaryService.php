@@ -39,7 +39,7 @@ class GroupBoundaryService
                 DB::select(
                     "SELECT ST_Intersection(ST_GeomFromText(polyofficial, ?), COALESCE(simplified, polygon))
                      FROM " . Sql::table('groups') . "
-                     INNER JOIN `authorities` ON type = 'Freegle' AND publish = 1 AND onmap = 1
+                     INNER JOIN " . Sql::table('authorities') . " ON type = 'Freegle' AND publish = 1 AND onmap = 1
                      WHERE authorities.id = 74579 AND groups.id = ?",
                     [$srid, $group->id]
                 );
@@ -52,7 +52,7 @@ class GroupBoundaryService
                     DB::select(
                         "SELECT ST_Intersection(ST_GeomFromText(poly, ?), COALESCE(simplified, polygon))
                          FROM " . Sql::table('groups') . "
-                         INNER JOIN `authorities` ON type = 'Freegle' AND publish = 1 AND onmap = 1
+                         INNER JOIN " . Sql::table('authorities') . " ON type = 'Freegle' AND publish = 1 AND onmap = 1
                          WHERE authorities.id = 74579 AND groups.id = ?",
                         [$srid, $group->id]
                     );

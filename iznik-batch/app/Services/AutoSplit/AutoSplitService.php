@@ -2,7 +2,7 @@
 
 namespace App\Services\AutoSplit;
 
-use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -213,12 +213,9 @@ class AutoSplitService
 
                 return true;
             });
-        } catch (QueryException $e) {
+        } catch (UniqueConstraintViolationException) {
             // A duplicate msgid means another run decided this post first.
-            if (($e->errorInfo[1] ?? null) === 1062) {
-                return false;
-            }
-            throw $e;
+            return false;
         }
     }
 

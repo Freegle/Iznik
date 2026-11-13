@@ -138,7 +138,7 @@ export function parseJunit(xml) {
     const bad = /<(failure|error)\b([^>]*)>([\s\S]*?)<\/\1>|<(failure|error)\b([^>]*)\/>/.exec(body)
     if (bad) {
       kind = 'FAIL'
-      message = xmlDecode((bad[3] || '').trim()).split('\n').slice(0, 6).join('\n')
+      message = xmlDecode((bad[3] || '').trim()).split('\n').slice(0, 40).join('\n')
     } else if (/<skipped\b/.test(body)) {
       kind = 'SKIP'
     }

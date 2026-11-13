@@ -184,18 +184,12 @@ async function runBigPackage(modulePath) {
     const chunk = remaining.slice(0, CHUNK)
     const pattern = `^(${chunk.join('|')})$`
     let current = null
-    let afterFail = 0
-    let failName = null
     const ring = []
     await stream(build(dir, [BIN, '-test.v', '-test.count=1', '-test.timeout=10m', `-test.run=${pattern}`]), (line) => {
       const e = parseGoLine(line)
       if (!e) {
         ring.push(line)
-        if (ring.length > 60) ring.shift()
-        if (afterFail > 0 && failName) {
-          afterFail--
-          note(line)
-        }
+        if (ring.length > 200) ring.shift()
         return
       }
       if (e.event === 'run') {
@@ -207,9 +201,9 @@ async function runBigPackage(modulePath) {
       if (current === e.name) current = null
       record(`${BIG}:${e.name}`, e.event.toUpperCase())
       if (e.event === 'fail') {
-        failName = e.name
-        afterFail = 10
-        note(`--- ${BIG}:${e.name}`)
+        // A test's own output comes before its FAIL line, so the lines kept since it started are its failure.
+        note(`--- ${BIG}:${e.name}\n${ring.join('\n')}`)
+        ring.length = 0
       }
     }, { timeoutMs: 15 * 60000 })
     if (current) {
