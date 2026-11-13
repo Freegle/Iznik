@@ -2,7 +2,7 @@
 
 Where the work stands, for whoever picks it up next. The plan is
 `plans/token-burn/postgresql-migration.md`. The first-run report is
-`plans/reports/2026-11-12-postgresql-port-first-run.md` in the main checkout (not committed).
+`plans/reports/2026-11-12-postgresql-port-first-run.md`.
 
 ## Branches and PRs
 
