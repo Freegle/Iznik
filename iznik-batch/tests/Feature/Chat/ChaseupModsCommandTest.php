@@ -420,4 +420,86 @@ class ChaseupModsCommandTest extends TestCase
                 && str_contains($mail->chatUrl, '/chats/' . $room->id);
         });
     }
+
+    /**
+     * An unanswered member chat, old enough to chase up, with recent activity, on $group.
+     */
+    private function unansweredMemberChat($member, $group): ChatRoom
+    {
+        $room = $this->createTestChatRoom($member, $member, [
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'groupid' => $group->id,
+        ]);
+
+        $this->createTestChatMessage($room, $member, ['date' => now()->subSeconds(600000)]);
+        $this->createTestChatMessage($room, $member, ['date' => now()->subHours(1)]);
+
+        return $room;
+    }
+
+    public function test_does_not_mail_a_backup_moderator(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $backup = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($member, $group, ['role' => Membership::ROLE_MEMBER]);
+        $this->createMembership($backup, $group, [
+            'role' => Membership::ROLE_MODERATOR,
+            'settings' => ['active' => false],
+        ]);
+        $this->unansweredMemberChat($member, $group);
+
+        $this->artisan('chats:chaseup-mods')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_does_not_mail_a_moderator_who_closed_the_chat(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($member, $group, ['role' => Membership::ROLE_MEMBER]);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $room = $this->unansweredMemberChat($member, $group);
+
+        DB::table('chat_roster')->insert([
+            'chatid' => $room->id,
+            'userid' => $mod->id,
+            'date' => now(),
+            'status' => 'Closed',
+        ]);
+
+        $this->artisan('chats:chaseup-mods')->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_does_not_quote_a_rejected_member_message(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($member, $group, ['role' => Membership::ROLE_MEMBER]);
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $room = $this->unansweredMemberChat($member, $group);
+
+        $this->createTestChatMessage($room, $member, [
+            'message' => 'rejected spam text',
+            'reviewrejected' => 1,
+            'date' => now()->subMinutes(30),
+        ]);
+
+        $this->artisan('chats:chaseup-mods')->assertExitCode(0);
+
+        Mail::assertSent(\App\Mail\Chat\ChaseupModsMail::class, function ($mail) {
+            return !str_contains($mail->textSummary, 'rejected spam text');
+        });
+    }
 }

@@ -321,6 +321,7 @@ class MatchedPostsService
 
         return User::query()
             ->whereIn('id', $ids)
+            ->whereNull('deleted')
             ->where('relevantallowed', 1)
             ->where('lastaccess', '>', $now->copy()->subDays($dormantDays)->toDateTimeString())
             ->where(function ($q) use ($now, $cooldownHours) {

@@ -282,9 +282,15 @@ WHERE live.collection = 'Approved'
   AND m.type IN ('Offer', 'Wanted')
   AND mp.id IS NULL
   AND (
-    EXISTS (
-      SELECT 1 FROM messages_outcomes mo
-      WHERE mo.msgid = m.id AND mo.outcome = ?
+    (
+      EXISTS (
+        SELECT 1 FROM messages_outcomes mo
+        WHERE mo.msgid = m.id AND mo.outcome = ?
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM messages_outcomes mo3
+        WHERE mo3.msgid = m.id AND mo3.outcome != ?
+      )
     )
     OR (
       live.arrival < DATE_SUB(NOW(), INTERVAL 1 DAY)
@@ -324,6 +330,7 @@ SQL;
         return collect(DB::select($sql, [
             self::AGE_EXPIRY_LOOKBACK_DAYS,
             MessageOutcome::OUTCOME_EXPIRED,
+            MessageOutcome::OUTCOME_EXPIRED,
             self::AGE_EXPIRY_BATCH,
         ]))->pluck('msgid');
     }
@@ -339,6 +346,18 @@ SQL;
      */
     protected function processMessageExpiry(int $msgid): void
     {
+        // The candidate list is built once and walked afterwards, so the post may have been
+        // completed (any outcome other than Expired) or promised since. Leave it alone then.
+        $completed = DB::table('messages_outcomes')
+            ->where('msgid', $msgid)
+            ->where('outcome', '!=', MessageOutcome::OUTCOME_EXPIRED)
+            ->exists();
+        $promised = DB::table('messages_promises')->where('msgid', $msgid)->exists();
+
+        if ($completed || $promised) {
+            return;
+        }
+
         DB::table('messages_outcomes_intended')->where('msgid', $msgid)->delete();
         DB::table('messages_outcomes')->where('msgid', $msgid)->delete();
 

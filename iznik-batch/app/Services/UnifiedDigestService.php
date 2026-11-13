@@ -195,7 +195,7 @@ class UnifiedDigestService
                 } elseif ($result['status'] === 'suppressed') {
                     $stats['suppressed']++;
                 }
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 Log::error("UnifiedDigestService: Failed to send digest to user {$user->id}", [
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
@@ -383,6 +383,11 @@ class UnifiedDigestService
             ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->whereNull('users.deleted')
+            ->where('users.bouncing', 0)
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('users.settings->simplemail')
+                  ->orWhere('users.settings->simplemail', '!=', User::SIMPLE_MAIL_NONE);
+            })
             ->where(function ($q) {
                 $q->whereNull('users.lastaccess')
                   ->orWhere('users.lastaccess', '>', now()->subSeconds(365 * 12 * 3600));
@@ -1290,7 +1295,9 @@ class UnifiedDigestService
                          SELECT 1 FROM messages_outcomes mo
                          WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
-                   AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)$onlySql
+                   AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
+                   AND u.bouncing = 0
+                   AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.simplemail')), '') <> 'None'$onlySql
                    AND ($containSql$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n
@@ -1298,7 +1305,7 @@ class UnifiedDigestService
                        )",
                 array_merge(
                     $primaryParams,
-                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90)],
+                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subSeconds(365 * 12 * 3600)],
                     $onlyParams,
                     [$srid],
                     $overflowParams,
@@ -1515,6 +1522,11 @@ class UnifiedDigestService
         $mailed = [];
         foreach ($users as $user) {
             if (!$user->email_preferred) {
+                continue;
+            }
+            // A bouncing address, or a member who turned all our mail off, is not mailed, as in the
+            // daily digest.
+            if ($user->bouncing || $user->getSimpleMail() === User::SIMPLE_MAIL_NONE) {
                 continue;
             }
             if (isset($alreadyHadItem[(int) $user->id])) {
@@ -2124,7 +2136,7 @@ class UnifiedDigestService
         // per-member reach-gate, so they recur every day until the goods are gone. Fetched and
         // deduplicated separately, and never fed to the cursor (updateDigestTracker uses only
         // $allPosts), so a pinned post never suppresses itself on the next run.
-        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user));
+        $pinnedCards = $this->deduplicatePosts($this->getPinnedOpenPostsForUser($user, $mode));
 
         if ($allPosts->isEmpty() && $pinnedCards->isEmpty()) {
             // Everything examined was held back by the reach gate (or there was nothing). The
@@ -2209,7 +2221,7 @@ class UnifiedDigestService
         // Sponsors. The roll-up spans all the user's groups, so the cross-group union is
         // right. (The immediate paths scope sponsors per-post to that post's group instead -
         // V1 parity, one group's email, one group's sponsors.)
-        $sponsors = $this->getSponsorsForUser($user);
+        $sponsors = $this->getSponsorsForUser($user, $mode);
 
         // Put the pinned posts (paid bulk-offer clearances) at the very TOP of the daily
         // digest, dropping any that also appear in the normal window set so they are not
@@ -2636,11 +2648,11 @@ class UnifiedDigestService
      *
      * @return Collection of Message (each with ->groupid, ->arrival, and has_outcome/has_success=0)
      */
-    private function getPinnedOpenPostsForUser(User $user): Collection
+    private function getPinnedOpenPostsForUser(User $user, string $mode = self::MODE_DAILY): Collection
     {
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
+        // Only communities on this digest's cadence: one set to no emails sends nothing, and an
+        // immediate one is already mailed per post.
+        $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
 
         if ($groupIds->isEmpty()) {
             return collect();
@@ -3679,7 +3691,7 @@ class UnifiedDigestService
         // normalized bodies, so genuine cross-posts (same tnpostid) AND same-item
         // reposts (different tnpostid, same body) both merge, while two different
         // items that merely share subject+location stay separate (bodies differ).
-        $normalizedSubject = $this->normalizeSubject($message->subject);
+        $normalizedSubject = $this->normalizeSubject($message->subject ?? '');
 
         return implode('|', [
             $message->fromuser,
@@ -3804,11 +3816,10 @@ class UnifiedDigestService
      * @param User $user
      * @return Collection Deduplicated sponsor records
      */
-    public function getSponsorsForUser(User $user): Collection
+    public function getSponsorsForUser(User $user, string $mode = self::MODE_DAILY): Collection
     {
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
+        // Only communities on this digest's cadence, as for the posts.
+        $groupIds = collect($this->digestGroupIdsForUser($user, $mode));
 
         if ($groupIds->isEmpty()) {
             return collect();

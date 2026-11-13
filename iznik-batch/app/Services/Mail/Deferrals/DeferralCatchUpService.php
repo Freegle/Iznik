@@ -4,6 +4,7 @@ namespace App\Services\Mail\Deferrals;
 
 use App\Mail\Deferrals\UnreadChatCatchUpMail;
 use App\Models\ChatRoom;
+use App\Models\ChatRoster;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\Mail\MailSuppressionService;
@@ -225,10 +226,29 @@ class DeferralCatchUpService
         $q = DB::table('chat_roster')
             ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_roster.chatid')
             ->join('chat_messages', 'chat_messages.chatid', '=', 'chat_roster.chatid')
+            ->join('users as sender', 'sender.id', '=', 'chat_messages.userid')
             ->where('chat_roster.userid', $userId)
+            // A chat they blocked or closed is not one they are told about.
+            ->where(function ($w) {
+                $w->whereNull('chat_roster.status')
+                    ->orWhereNotIn('chat_roster.status', [ChatRoster::STATUS_BLOCKED, ChatRoster::STATUS_CLOSED]);
+            })
             // Their own messages are not something to catch up on.
             ->where('chat_messages.userid', '!=', $userId)
+            // Only what they can open and read: the same rules as the notifier and the member site's
+            // unseen count.
+            ->whereNull('sender.deleted')
+            ->where('chat_messages.deleted', 0)
+            ->where('chat_messages.reviewrequired', 0)
             ->where('chat_messages.reviewrejected', 0)
+            ->where('chat_messages.processingrequired', 0)
+            ->where('chat_messages.processingsuccessful', 1)
+            // An external reply held back by rippling has not been delivered yet.
+            ->whereNotExists(function ($held) {
+                $held->from('rippling_held_replies as rhr')
+                    ->whereColumn('rhr.chatmsgid', 'chat_messages.id')
+                    ->where('rhr.status', '<>', 'released');
+            })
             // Unread: never seen this chat at all, or seen it only up to an
             // earlier message than this one.
             ->where(function ($w) {

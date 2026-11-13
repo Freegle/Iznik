@@ -170,7 +170,7 @@
                     First posted&nbsp;{{ $post['firstPostedFormatted'] }}
                 </div>
                 @endif
-                @if($showReply)
+                @if($showReply && empty($post['isOwnPost']))
                 <div style="margin-top: 10px;">
                     <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 700; padding: 9px 26px; border-radius: 4px; text-decoration: none;">Reply</a>
                 </div>

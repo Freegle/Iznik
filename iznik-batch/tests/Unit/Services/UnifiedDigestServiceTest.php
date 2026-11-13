@@ -5447,4 +5447,151 @@ public function test_a_held_copy_of_an_item_does_not_stop_another_copy_being_sen
         $this->assertSame(0, $stats['retryable']);
         $this->assertNotSame($markBefore, DB::table('config')->where('key', $markKey)->value('value'), 'the mark moved on');
     }
+
+    public function test_reach_mail_goes_to_an_immediate_member_inactive_for_120_days(): void
+    {
+        // The cursor immediate path and the daily path mail anyone active within 182.5 days, so the
+        // reach mail (which delivers rippled posts instead of the cursor path) must too.
+        [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+        $member->lastaccess = now()->subDays(120);
+        $member->save();
+
+        $this->assertSame(1, $this->service->mailNewlyReachedForPost($message->id));
+    }
+
+    public function test_reach_mail_skips_a_member_with_a_bouncing_address(): void
+    {
+        [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+        $member->bouncing = 1;
+        $member->save();
+
+        $this->assertSame(0, $this->service->mailNewlyReachedForPost($message->id));
+    }
+
+    public function test_reach_mail_skips_a_member_who_turned_all_our_mail_off(): void
+    {
+        [$message, $member] = $this->setUpRippledPostWithReachableImmediateMember();
+        $member->settings = array_merge($member->settings, ['simplemail' => User::SIMPLE_MAIL_NONE]);
+        $member->save();
+
+        $this->assertSame(0, $this->service->mailNewlyReachedForPost($message->id));
+    }
+
+    public function test_cursor_immediate_digest_skips_bouncing_and_mail_off_members(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $normal = $this->createTestUser();
+        $bouncing = $this->createTestUser(['bouncing' => 1]);
+        $mailOff = $this->createTestUser(['settings' => ['simplemail' => User::SIMPLE_MAIL_NONE]]);
+
+        $group = $this->createTestGroup();
+        foreach ([$poster, $normal, $bouncing, $mailOff] as $u) {
+            $this->createMembership($u, $group);
+        }
+        $this->seedImmediateCursor($group);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        // The poster and the ordinary member only.
+        $this->assertEquals(2, $stats['emails_sent']);
+    }
+
+    /**
+     * A daily member with one community on a daily cadence and another set to a different frequency:
+     * the pinned post on the other community must not be pulled into the daily digest.
+     *
+     */
+    private function assertPinnedPostOnOtherCommunityNotInDailyDigest(int $otherFrequency): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $dailyGroup = $this->createTestGroup();
+        $otherGroup = $this->createTestGroup();
+        $this->createMembership($recipient, $dailyGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $otherGroup, ['emailfrequency' => $otherFrequency]);
+
+        // Nothing new on the daily community; an open pinned post on the other one only.
+        $pinned = $this->createTestMessage($poster, $otherGroup, [
+            'subject' => 'OFFER: pinned clearance (TestLocation)',
+            'arrival' => now()->subDays(10),
+        ]);
+        DB::table('messages_pinned')->insert(['msgid' => $pinned->id]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(0, $stats['emails_sent'], 'a pinned post on a community that is not on a daily cadence must not make a daily digest');
+    }
+
+    public function test_daily_digest_ignores_a_pinned_post_on_a_community_set_to_no_emails(): void
+    {
+        $this->assertPinnedPostOnOtherCommunityNotInDailyDigest(Membership::EMAIL_FREQUENCY_NEVER);
+    }
+
+    public function test_daily_digest_ignores_a_pinned_post_on_an_immediate_community(): void
+    {
+        $this->assertPinnedPostOnOtherCommunityNotInDailyDigest(Membership::EMAIL_FREQUENCY_IMMEDIATE);
+    }
+
+    public function test_daily_sponsors_come_only_from_communities_on_a_daily_cadence(): void
+    {
+        $recipient = $this->createTestUser();
+        $dailyGroup = $this->createTestGroup();
+        $neverGroup = $this->createTestGroup();
+        $this->createMembership($recipient, $dailyGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createMembership($recipient, $neverGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_NEVER]);
+
+        foreach ([[$dailyGroup, 'Daily Sponsor'], [$neverGroup, 'Never Sponsor']] as [$group, $name]) {
+            DB::table('groups_sponsorship')->insert([
+                'groupid' => $group->id,
+                'name' => $name,
+                'startdate' => now()->subDay(),
+                'enddate' => now()->addMonth(),
+                'contactname' => 'Contact',
+                'contactemail' => 'sponsor@example.com',
+                'amount' => 100,
+                'visible' => TRUE,
+            ]);
+        }
+
+        $names = $this->service->getSponsorsForUser($recipient)->pluck('name')->all();
+
+        $this->assertSame(['Daily Sponsor'], $names);
+    }
+
+    public function test_daily_run_carries_on_past_a_member_whose_digest_throws_an_error(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $badGroup = $this->createTestGroup();
+        $goodGroup = $this->createTestGroup();
+
+        // Created first, so it is reached first. An approved Offer with no subject on this member's
+        // community makes building their digest throw a TypeError, which is an Error and not an
+        // Exception.
+        $broken = $this->createTestUser(['settings' => ['simplemail' => User::SIMPLE_MAIL_BASIC], 'lastaccess' => now()]);
+        $this->createMembership($broken, $badGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createTestMessage($poster, $badGroup, ['subject' => null, 'arrival' => now()->subHours(1)]);
+
+        $fine = $this->createTestUser(['settings' => ['simplemail' => User::SIMPLE_MAIL_BASIC], 'lastaccess' => now()]);
+        $this->createMembership($fine, $goodGroup, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $this->createTestMessage($poster, $goodGroup, ['subject' => 'OFFER: Good item (TestLocation)', 'arrival' => now()->subHours(1)]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+
+        $this->assertEquals(2, $stats['users_processed'], 'one member\'s bad data must not end the run for the rest');
+        $this->assertGreaterThanOrEqual(1, $stats['emails_sent'], 'the member with good data still gets their digest');
+    }
 }
