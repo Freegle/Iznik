@@ -406,10 +406,13 @@ class BackfillOriginCommandTest extends TestCase
     public function test_the_forced_log_indexes_exist(): void
     {
         // The backfill forces two logs indexes by name; it rots if either is renamed.
-        $columns = fn (string $index) => collect(DB::select('SHOW INDEX FROM logs WHERE Key_name = ?', [$index]))
-            ->sortBy('Seq_in_index')->pluck('Column_name')->values()->all();
-        $this->assertSame(['type', 'subtype'], $columns('type'));
-        $this->assertSame(['timestamp', 'type', 'subtype'], $columns('timestamp_2'));
+        // Index hints are a MySQL feature (PostgreSQL ignores them), so the names are only checked there.
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            $columns = fn (string $index) => collect(DB::select('SHOW INDEX FROM logs WHERE Key_name = ?', [$index]))
+                ->sortBy('Seq_in_index')->pluck('Column_name')->values()->all();
+            $this->assertSame(['type', 'subtype'], $columns('type'));
+            $this->assertSame(['timestamp', 'type', 'subtype'], $columns('timestamp_2'));
+        }
 
         [$id] = $this->memberJoinedBy(MembershipOriginBackfillService::JOIN_TEXT_MANUAL, 'self');
 

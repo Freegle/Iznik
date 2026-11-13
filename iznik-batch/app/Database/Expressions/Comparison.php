@@ -31,6 +31,7 @@ use InvalidArgumentException;
  */
 final class Comparison implements ConditionExpression
 {
+    use PostgresDialect;
     use RendersOperands;
     use PostgresDialect;
 
