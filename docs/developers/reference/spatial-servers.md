@@ -214,7 +214,9 @@ the two as a pair, and three things enforce it (`reach_server.go`):
   with their fingerprint; region rows for both layouts coexist in
   `rippling_reach_leaves` because its key includes the fingerprint). Every
   reader — the server's own row loader, and the batch paths that hand a note to
-  it — picks the staged note **only when its stamp is the live fingerprint**, so
+  it — picks the staged note **only when its stamp is the live fingerprint**
+  (a 64-bit unsigned number, compared by its exact digits and never read into a
+  signed integer, which cannot hold half of them), so
   the cutover is the pairing record changing and the artifacts swapping: every
   post switches together, and nothing is rewritten to get there. Posts keep
   arriving while the notes are staged, so the switch is preceded by a top-up:
@@ -223,6 +225,8 @@ the two as a pair, and three things enforce it (`reach_server.go`):
   takes seconds and the switch can follow at once. A post initialised in the
   remaining gap carries a note for the old layout; clearing its note makes it
   new again to the online path, which re-labels it against the live layout.
+  The monthly map refresh runs this whole sequence unattended: the `reach` profile of
+  `freegle-maint` ([automated host maintenance](../../ops/runbooks/automated-host-maintenance.md#road-map-refresh-reach)).
 
 `/health` reports `reach_partition_fp` so an operator can see every node serving
 the same layout as the notes.

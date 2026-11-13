@@ -1,0 +1,16 @@
+# Road map refresh: the day after spatial:update-data downloads the month's map
+# (1st, 03:00 UTC). Install: cp this and freegle-maint-reach.service to
+# /etc/systemd/system/, systemctl daemon-reload, systemctl enable --now
+# freegle-maint-reach.timer. Shipped disabled. Live only when MAINT_LIVE_HOSTS
+# includes "reach".
+[Unit]
+Description=Freegle road map refresh timer
+
+[Timer]
+OnCalendar=*-*-02 01:00:00 UTC
+Persistent=false
+AccuracySec=1min
+Unit=freegle-maint-reach.service
+
+[Install]
+WantedBy=timers.target

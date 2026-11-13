@@ -1342,6 +1342,14 @@ class ProcessBackgroundTasksCommand extends Command
             return;
         }
 
+        // A TrashNothing address belongs to the account holding the TN id TrashNothing names for
+        // it, so nobody adds one in their settings. The API refuses it; a task queued before that
+        // refusal gets no key and no mail, so there is nothing to confirm.
+        if (User::tnUsernameFromEmail($email) !== NULL) {
+            Log::info('Email verify skipped: a TrashNothing address is not added by a member', ['user_id' => $userId]);
+            return;
+        }
+
         // Check if this email is already one of the user's emails.
         $canon = strtolower(trim($email));
         $existingRow = DB::table('users_emails')

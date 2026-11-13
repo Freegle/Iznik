@@ -212,8 +212,8 @@ belongs to another account calls `user.MergeUsersTx`, so it moves the same table
 loser outright and writes the same `User`/`Merged` pair of log rows, one per account with
 `byuser` the member. Do not add a second merge path; the cut-down one is how chats got stranded.
 `docs/developers/reference/account-merge.md` says what a merge does. The PHP `User::merge()`
-in iznik-batch is a separate copy used only by the TrashNothing sync, and nothing checks it
-against the Go one.
+in iznik-batch is a separate copy that nothing in `app/` calls now that `tn:sync` no longer
+merges, and nothing checks it against the Go one.
 
 For merges before October 2026 the loser is not findable from `logs` by name. Two traces
 survive: the loser's `users.deleted` is the same second as the survivor's

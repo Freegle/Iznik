@@ -400,7 +400,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 		// Table() passes its name argument through verbatim (no quoting) once it
 		// contains a space, so a parenthesized UNION subquery can be given as the
 		// "table name" with its own bind args in Table()'s variadic args.
-		// Counted on the same terms as the list: a pair across the TrashNothing line
+		// Counted on the same terms as the list: a pair with a TrashNothing account
 		// cannot be merged, so it is not shown or counted.
 		mergeable := user.MergeableSidesSQL("u1", "u2")
 		db.Table("(SELECT ur.user1, m.groupid FROM users_related ur "+

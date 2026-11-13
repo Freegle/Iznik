@@ -19,6 +19,7 @@ use App\Services\ItemService;
 use App\Services\Ripple\RippleReplyService;
 use App\Services\SpatialQueryService;
 use App\Services\UnsubscribeService;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -1221,6 +1222,8 @@ class IncomingMailService
                 'added' => now(),
                 'canon' => $this->canonicalizeEmail($envFrom),
             ]);
+
+            $this->stampTnUserId($user, $email);
 
             Log::info('Created new user for subscribe', [
                 'user_id' => $user->id,
@@ -3387,6 +3390,52 @@ class IncomingMailService
         $pruned = preg_replace('/^(OFFER|WANTED|TAKEN|RECEIVED)\s*:\s*/i', '', $pruned);
 
         return trim($pruned);
+    }
+
+    /**
+     * Give an account a Subscribe mail has just made the TN user id the mail carries. A partner
+     * call or an API post finds a member only by that id, so without it they would be split from
+     * this account at the next one. Routing is unchanged: nobody is matched by the id here.
+     *
+     * Anyone can write the header, so it needs TN's secret, and with no secret configured nothing
+     * counts. It also needs the sender to be a TN address: TN subscribes its members from their TN
+     * address, so a signed mail from anywhere else is a TN bug or a misused secret, and the id would
+     * land on an account that is not the member's TN one. The id is unique, so if another account
+     * holds it this one goes on without, as it did.
+     */
+    private function stampTnUserId(User $user, ParsedEmail $email): void
+    {
+        $tnUserId = $email->getTrashNothingUserId();
+        $expected = (string) config('freegle.mail.trashnothing_secret');
+
+        if ($tnUserId === null || $expected === '' || ! hash_equals($expected, (string) $email->getTrashNothingSecret())) {
+            return;
+        }
+
+        if (User::tnUsernameFromEmail($email->envelopeFrom) === null) {
+            // TN should never do this, so someone needs to hear about it, not just find it in a log.
+            Log::warning('Signed TN Subscribe mail is not from a TN address, TN user id not stamped', [
+                'user_id' => $user->id,
+                'tn_user_id' => $tnUserId,
+            ]);
+
+            if (app()->bound('sentry')) {
+                app('sentry')->captureMessage("A Subscribe mail signed with TN's secret for TN member {$tnUserId} came from a non-TN address, so user {$user->id} was not given the TN user id");
+            }
+
+            return;
+        }
+
+        try {
+            $user->tnuserid = $tnUserId;
+            $user->save();
+        } catch (UniqueConstraintViolationException) {
+            $user->tnuserid = null;
+            Log::warning('TN user id on a Subscribe mail is held by another account', [
+                'user_id' => $user->id,
+                'tn_user_id' => $tnUserId,
+            ]);
+        }
     }
 
     /**
