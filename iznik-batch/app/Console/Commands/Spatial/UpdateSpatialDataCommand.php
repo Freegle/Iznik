@@ -183,9 +183,23 @@ class UpdateSpatialDataCommand extends Command
         foreach (self::ROAD_PROBES as $name => [$bbox, $minWays]) {
             $cut = "{$dataDir}/probe-{$name}.osm.pbf";
             $roads = "{$dataDir}/probe-{$name}-highways.osm.pbf";
-            Process::timeout(900)->run(['osmium', 'extract', '-b', implode(',', $bbox), '-f', 'pbf', '-o', $cut, '--overwrite', $mergedPath]);
-            Process::timeout(300)->run(['osmium', 'tags-filter', '-f', 'pbf', '-o', $roads, '--overwrite', $cut, 'w/highway']);
-            $info = Process::timeout(300)->run(['osmium', 'fileinfo', '-e', $roads]);
+            // The merged file is still named .tmp, which tells osmium no format: -F says it.
+            $steps = [
+                ['osmium', 'extract', '-b', implode(',', $bbox), '-F', 'pbf', '-f', 'pbf', '-o', $cut, '--overwrite', $mergedPath],
+                ['osmium', 'tags-filter', '-f', 'pbf', '-o', $roads, '--overwrite', $cut, 'w/highway'],
+                ['osmium', 'fileinfo', '-e', $roads],
+            ];
+            foreach ($steps as $step) {
+                $info = Process::timeout(900)->run($step);
+                if (!$info->successful()) {
+                    // A tool failure is not a missing road network: say what failed.
+                    @unlink($cut);
+                    @unlink($roads);
+                    @unlink($mergedPath);
+                    throw new RuntimeException("Road check for {$name} failed: osmium {$step[1]}: "
+                        . trim($info->errorOutput() ?: $info->output()));
+                }
+            }
             @unlink($cut);
             @unlink($roads);
             $ways = preg_match('/Number of ways:\s*(\d+)/', $info->output(), $m) ? (int) $m[1] : 0;
