@@ -1,0 +1,18 @@
+{
+  "name": "discourse-frontline",
+  "license": "AGPL-3.0-or-later",
+  "version": "0.1.0",
+  "description": "First-line support on Discourse: turns volunteers' posts into coherent problem reports. Reads the forum, the wiki and docs/. No production data, no tools for the model.",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "bin": { "frontline": "bin/frontline.mjs" },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.mjs",
+    "eval": "node --disable-warning=ExperimentalWarning bin/frontline.mjs eval",
+    "lap": "node --disable-warning=ExperimentalWarning bin/frontline.mjs lap"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0"
+  }
+}
