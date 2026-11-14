@@ -1,0 +1,119 @@
+{
+  "id": "freegle-chat-flow-offer",
+  "name": "Freegle Chat Flow - OFFER (request a given item)",
+  "description": "Empirical state machine of a single User2User chat started from an OFFER post (the taker replies asking for an offered item). Derived from ~35,400 OFFER-initiated conversations on the live database over one month (2026-05) and validated against read samples. The giver owns the item and issues the system events (Promised, Address, Reneged). Percentages are the approximate share of all OFFER chats that traverse that arm; terminal-state totals are measured, intermediate splits are estimates. NOTE: a 'Completed' system message only closes the POST - a bare 'Interested -> Completed' with no real reply means the item went to SOMEONE ELSE, not this replier.",
+  "initialState": "START",
+  "guardrails": "Never make a commitment on the giver's behalf. Stay factual. A bare 'Completed' is NOT proof this replier collected the item.",
+  "states": {
+    "START": {
+      "nodeType": "start",
+      "description": "Chat room created. The taker replies to an OFFER with an 'Interested' message (a small share open with a plain Default direct message). One chat may carry several items, each looping the arrange->promise->collect arc.",
+      "writeActions": ["send_message"]
+    },
+    "INTEREST_EXPRESSED": {
+      "nodeType": "agent",
+      "description": "Taker has asked for the item (type=Interested). Awaiting the giver to respond.",
+      "prompt": "Confirm availability and move toward arranging a handover, answer any question asked, or say if it has gone.",
+      "readActions": ["get_message", "get_user_info"],
+      "writeActions": ["send_message"],
+      "timeout": { "duration": 172800000, "toState": "GHOSTED" }
+    },
+    "ENQUIRY": {
+      "nodeType": "agent",
+      "description": "Clarifying questions before commitment: size, condition, suitability, location. ~32% of openers contain a question.",
+      "prompt": "Answer the factual question from the listing data, then continue toward arranging a handover.",
+      "readActions": ["get_message"],
+      "writeActions": ["send_message"],
+      "timeout": { "duration": 172800000, "toState": "GHOSTED" }
+    },
+    "WAITLISTED": {
+      "nodeType": "agent",
+      "description": "Giver has promised it to someone ahead: 'I'll let you know if it falls through.' Usually ends with the front-runner getting it.",
+      "prompt": "Keep the taker warm without committing. If the front-runner falls through, re-engage and arrange.",
+      "writeActions": ["send_message"],
+      "timeout": { "duration": 604800000, "toState": "DECLINED_GONE" }
+    },
+    "ARRANGING": {
+      "nodeType": "agent",
+      "description": "Item confirmed available; both negotiating the handover (times, address, transport). Busiest state.",
+      "prompt": "Agree a collection time and share/ask for the address. Do not over-message once settled.",
+      "readActions": ["get_user_info"],
+      "writeActions": ["send_message"],
+      "timeout": { "duration": 259200000, "toState": "STALLED" }
+    },
+    "PROMISED": {
+      "nodeType": "agent",
+      "description": "Giver marked it Promised to this taker (type=Promised, often + Address). Genuine commitment. Present in ~16% of chats.",
+      "prompt": "Confirm the collection details and address. Nudge gently if the taker goes quiet.",
+      "writeActions": ["send_message", "send_address", "nudge"],
+      "timeout": { "duration": 259200000, "toState": "STALLED" }
+    },
+    "HANDOVER_PENDING": {
+      "nodeType": "agent",
+      "description": "Address shared and time agreed; awaiting collection. Reminder/Nudge can fire here.",
+      "prompt": "Remind the collector of time and place. Confirm once collected.",
+      "writeActions": ["send_message", "remind", "nudge"],
+      "timeout": { "duration": 259200000, "toState": "STALLED" }
+    },
+    "COLLECTED": {
+      "nodeType": "end",
+      "description": "SUCCESS - handed over TO THIS REPLIER. ~43% of OFFER chats. Requires real handover evidence in this chat (Promise/Address, bilateral arranging, or collection text). A bare Completed alone does NOT qualify."
+    },
+    "DECLINED_GONE": {
+      "nodeType": "end",
+      "description": "The item did NOT go to this replier. ~29% of OFFER chats. Includes giver 'already gone / given to someone else', the bulk 'sorry, taken' closure, and the bare 'Interested -> Completed' (no engagement = gone elsewhere). Even a bilateral chat that ends 'sorry, gone to someone else' lands here, NOT in COLLECTED."
+    },
+    "WITHDRAWN": {
+      "nodeType": "end",
+      "description": "Taker backs out: not suitable, changed mind, can't collect, too far. ~3%. Amicable."
+    },
+    "RENEGED": {
+      "nodeType": "end",
+      "description": "Giver withdraws a promise (type=Reneged). ~2.3%. Item usually recycles to another taker elsewhere. Occasionally a no-show auto-Reneged is reversed when the taker resurfaces, re-entering ARRANGING."
+    },
+    "GHOSTED": {
+      "nodeType": "end",
+      "description": "No reply and no closure after interest (~11%, mostly a single message). The giver never engaged here - often the item went to a faster responder elsewhere."
+    },
+    "STALLED": {
+      "nodeType": "end",
+      "description": "Two-sided conversation that faded mid-arrangement with no recorded outcome (~12%). Some are latent success (collected but unmarked); some genuine no-shows."
+    }
+  },
+  "transitions": [
+    { "id": "t_open",          "from": "START",              "to": "INTEREST_EXPRESSED", "trigger": "unconditional", "metadata": { "event": "Interested (or a direct Default message)", "approx_share": "100%" } },
+
+    { "id": "t_ie_arrange",    "from": "INTEREST_EXPRESSED", "to": "ARRANGING",        "trigger": "llm_decision", "condition": "Giver confirmed available and is arranging", "metadata": { "approx_share": "~49%" } },
+    { "id": "t_ie_gone",       "from": "INTEREST_EXPRESSED", "to": "DECLINED_GONE",    "trigger": "host_driven",  "condition": "Bare Completed / 'sorry it's gone' with no real reply - item went elsewhere", "metadata": { "event": "Completed (bare)", "approx_share": "~16%" } },
+    { "id": "t_ie_enquiry",    "from": "INTEREST_EXPRESSED", "to": "ENQUIRY",          "trigger": "llm_decision", "condition": "Taker asked a question before committing", "metadata": { "approx_share": "~13%" } },
+    { "id": "t_ie_ghost",      "from": "INTEREST_EXPRESSED", "to": "GHOSTED",          "trigger": "host_driven",  "condition": "No reply and no closure", "metadata": { "signal": "timeout", "approx_share": "~11%" } },
+    { "id": "t_ie_waitlist",   "from": "INTEREST_EXPRESSED", "to": "WAITLISTED",       "trigger": "llm_decision", "condition": "Giver: promised to someone ahead", "metadata": { "approx_share": "~5%" } },
+    { "id": "t_ie_promised",   "from": "INTEREST_EXPRESSED", "to": "PROMISED",         "trigger": "host_driven",  "condition": "Giver immediately marked Promised", "metadata": { "event": "Promised", "approx_share": "~3%" } },
+    { "id": "t_ie_collected",  "from": "INTEREST_EXPRESSED", "to": "COLLECTED",        "trigger": "host_driven",  "condition": "Immediate genuine handover (Promised + Completed)", "metadata": { "approx_share": "~1%" } },
+
+    { "id": "t_enq_arrange",   "from": "ENQUIRY",            "to": "ARRANGING",        "trigger": "llm_decision", "condition": "Answered, proceeding", "metadata": { "approx_share": "~10%" } },
+    { "id": "t_enq_gone",      "from": "ENQUIRY",            "to": "DECLINED_GONE",    "trigger": "llm_decision", "condition": "Gone / unsuitable", "metadata": { "approx_share": "~2%" } },
+    { "id": "t_enq_withdraw",  "from": "ENQUIRY",            "to": "WITHDRAWN",        "trigger": "llm_decision", "condition": "Answer made it unsuitable", "metadata": { "approx_share": "~1%" } },
+
+    { "id": "t_wl_gone",       "from": "WAITLISTED",         "to": "DECLINED_GONE",    "trigger": "llm_decision", "condition": "Front-runner got it / no call-back", "metadata": { "approx_share": "~3%" } },
+    { "id": "t_wl_arrange",    "from": "WAITLISTED",         "to": "ARRANGING",        "trigger": "llm_decision", "condition": "Front-runner fell through; now offered here", "metadata": { "approx_share": "~2%" } },
+
+    { "id": "t_arr_promised",  "from": "ARRANGING",          "to": "PROMISED",         "trigger": "host_driven",  "condition": "Giver marked Promised", "metadata": { "event": "Promised", "approx_share": "~20%" } },
+    { "id": "t_arr_handover",  "from": "ARRANGING",          "to": "HANDOVER_PENDING", "trigger": "llm_decision", "condition": "Address shared and time agreed", "metadata": { "approx_share": "~18%" } },
+    { "id": "t_arr_collected", "from": "ARRANGING",          "to": "COLLECTED",        "trigger": "host_driven",  "condition": "Collected (Completed / text) after real arranging, no contrary 'gone' signal", "metadata": { "approx_share": "~12%" } },
+    { "id": "t_arr_stall",     "from": "ARRANGING",          "to": "STALLED",          "trigger": "host_driven",  "condition": "Goes quiet mid-arrangement", "metadata": { "signal": "timeout", "approx_share": "~8%" } },
+    { "id": "t_arr_gone",      "from": "ARRANGING",          "to": "DECLINED_GONE",    "trigger": "llm_decision", "condition": "Giver gives it to someone else despite the chat", "metadata": { "approx_share": "~5%" } },
+    { "id": "t_arr_withdraw",  "from": "ARRANGING",          "to": "WITHDRAWN",        "trigger": "llm_decision", "condition": "Taker backs out", "metadata": { "approx_share": "~1%" } },
+
+    { "id": "t_pr_collected",  "from": "PROMISED",           "to": "COLLECTED",        "trigger": "host_driven",  "condition": "Collected (Completed / text)", "metadata": { "approx_share": "~10%" } },
+    { "id": "t_pr_handover",   "from": "PROMISED",           "to": "HANDOVER_PENDING", "trigger": "host_driven",  "condition": "Address shared / time agreed", "metadata": { "event": "Address", "approx_share": "~8%" } },
+    { "id": "t_pr_renege",     "from": "PROMISED",           "to": "RENEGED",          "trigger": "host_driven",  "condition": "Giver withdrew the promise", "metadata": { "event": "Reneged", "approx_share": "~2%" } },
+    { "id": "t_pr_withdraw",   "from": "PROMISED",           "to": "WITHDRAWN",        "trigger": "llm_decision", "condition": "Taker backs out after being promised", "metadata": { "approx_share": "~1%" } },
+    { "id": "t_pr_stall",      "from": "PROMISED",           "to": "STALLED",          "trigger": "host_driven",  "condition": "Goes quiet after promise", "metadata": { "signal": "timeout", "approx_share": "~2%" } },
+
+    { "id": "t_ho_collected",  "from": "HANDOVER_PENDING",   "to": "COLLECTED",        "trigger": "host_driven",  "condition": "Completed / collection text ('on my way', 'collected')", "metadata": { "approx_share": "~20%" } },
+    { "id": "t_ho_stall",      "from": "HANDOVER_PENDING",   "to": "STALLED",          "trigger": "host_driven",  "condition": "No-show / went quiet before confirming", "metadata": { "signal": "timeout", "approx_share": "~2%" } },
+    { "id": "t_ho_withdraw",   "from": "HANDOVER_PENDING",   "to": "WITHDRAWN",        "trigger": "llm_decision", "condition": "Taker cancels late", "metadata": { "approx_share": "~0.5%" } },
+    { "id": "t_ho_renege",     "from": "HANDOVER_PENDING",   "to": "RENEGED",          "trigger": "host_driven",  "condition": "Giver pulls out", "metadata": { "event": "Reneged", "approx_share": "~0.3%" } }
+  ]
+}

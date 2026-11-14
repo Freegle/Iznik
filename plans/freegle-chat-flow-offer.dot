@@ -1,0 +1,51 @@
+digraph offer {
+  rankdir=LR; bgcolor="white"; nodesep=0.45; ranksep=1.05; splines=spline;
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, fillcolor="#eef2ff", color="#5566aa", penwidth=1.4];
+  edge [fontname="Helvetica", fontsize=9, color="#9aa0a6"];
+
+  start [shape=circle, width=0.16, label="", fillcolor=black, color=black];
+  INTEREST_EXPRESSED [label="INTEREST_\nEXPRESSED"];
+  HANDOVER_PENDING   [label="HANDOVER_\nPENDING"];
+  COLLECTED     [fillcolor="#d7f5dd", color="#2e7d32", label="COLLECTED\n~43%"];
+  DECLINED_GONE [fillcolor="#fde2e2", color="#c62828", label="DECLINED_\nGONE ~29%"];
+  GHOSTED       [fillcolor="#fde2e2", color="#c62828", label="GHOSTED\n~11%"];
+  WITHDRAWN     [fillcolor="#fde2e2", color="#c62828", label="WITHDRAWN\n~3%"];
+  RENEGED       [fillcolor="#fde2e2", color="#c62828", label="RENEGED\n~2%"];
+  STALLED       [fillcolor="#fff4d6", color="#f9a825", label="STALLED\n~12%"];
+  WAITLISTED    [fillcolor="#fff4d6", color="#f9a825"];
+
+  start -> INTEREST_EXPRESSED [label="100%"];
+  INTEREST_EXPRESSED -> ARRANGING        [weight=8, label="available ~49%"];
+  ARRANGING -> PROMISED                  [weight=8, label="Promised ~20%"];
+  PROMISED -> HANDOVER_PENDING           [weight=8, label="Address ~8%"];
+  HANDOVER_PENDING -> COLLECTED          [weight=8, label="collected ~20%"];
+
+  INTEREST_EXPRESSED -> ENQUIRY    [label="question ~13%"];
+  INTEREST_EXPRESSED -> WAITLISTED [label="behind ~5%"];
+  INTEREST_EXPRESSED -> PROMISED   [label="immediate ~3%"];
+  INTEREST_EXPRESSED -> GHOSTED    [label="no reply ~11%"];
+  INTEREST_EXPRESSED -> DECLINED_GONE [label="gone ~18%"];
+  INTEREST_EXPRESSED -> COLLECTED  [label="immediate ~1%"];
+
+  ENQUIRY -> ARRANGING     [label="answered ~10%"];
+  ENQUIRY -> DECLINED_GONE [label="unsuitable ~2%"];
+  ENQUIRY -> WITHDRAWN     [label="~1%"];
+
+  WAITLISTED -> ARRANGING     [label="freed ~2%"];
+  WAITLISTED -> DECLINED_GONE [label="other got it ~3%"];
+
+  ARRANGING -> HANDOVER_PENDING [label="addr+time ~18%"];
+  ARRANGING -> COLLECTED        [label="collected ~12%"];
+  ARRANGING -> STALLED          [label="quiet ~8%"];
+  ARRANGING -> DECLINED_GONE    [label="given away ~5%"];
+  ARRANGING -> WITHDRAWN        [label="backs out ~1%"];
+
+  PROMISED -> COLLECTED [label="collected ~10%"];
+  PROMISED -> RENEGED   [label="Reneged ~2%"];
+  PROMISED -> WITHDRAWN [label="~1%"];
+  PROMISED -> STALLED   [label="quiet ~2%"];
+
+  HANDOVER_PENDING -> STALLED   [label="no-show ~2%"];
+  HANDOVER_PENDING -> WITHDRAWN [label="cancels ~0.5%"];
+  HANDOVER_PENDING -> RENEGED   [label="~0.3%"];
+}

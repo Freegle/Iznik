@@ -1,0 +1,25 @@
+digraph wanted {
+  rankdir=LR; bgcolor="white"; nodesep=0.45; ranksep=1.1; splines=spline;
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, fillcolor="#eef2ff", color="#5566aa", penwidth=1.4];
+  edge [fontname="Helvetica", fontsize=9, color="#9aa0a6"];
+
+  start [shape=circle, width=0.16, label="", fillcolor=black, color=black];
+  OFFER_MADE      [label="OFFER_MADE\n(offer / signpost)"];
+  RECEIVED        [fillcolor="#d7f5dd", color="#2e7d32", label="RECEIVED\n~24%"];
+  GHOSTED         [fillcolor="#fde2e2", color="#c62828", label="GHOSTED\n~38%"];
+  DECLINED_SORTED [fillcolor="#fde2e2", color="#c62828", label="DECLINED_SORTED\n~6%*"];
+  STALLED         [fillcolor="#fff4d6", color="#f9a825", label="STALLED\n~30%"];
+
+  start -> OFFER_MADE [label="100%"];
+  OFFER_MADE -> ARRANGING [weight=8, label="wanter accepts ~46%"];
+  ARRANGING  -> RECEIVED  [weight=8, label="collected / delivered ~24%"];
+
+  OFFER_MADE -> ENQUIRY         [label="suitable? ~10%"];
+  OFFER_MADE -> GHOSTED         [label="no reply ~38%"];
+  OFFER_MADE -> DECLINED_SORTED [label="sorted ~6%"];
+
+  ENQUIRY -> ARRANGING       [label="suitable ~7%"];
+  ENQUIRY -> DECLINED_SORTED [label="not suitable ~3%"];
+
+  ARRANGING -> STALLED [label="goes quiet ~30%"];
+}
